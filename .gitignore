@@ -1,0 +1,6 @@
+clbb-front/
+clbb-io/
+clbb-projection/
+clbb-remote-controller/
+.venv/
+.env
