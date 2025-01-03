@@ -1,4 +1,4 @@
-# nginx/Dockerfile
+# Usar una imagen ligera basada en Alpine
 FROM nginx:alpine
 
 # Instalar gettext para usar envsubst
@@ -10,11 +10,15 @@ COPY default.conf.template /etc/nginx/templates/default.conf.template
 # Copiar el script de entrada
 COPY entrypoint.sh /entrypoint.sh
 
-# Hacer el script ejecutable
-RUN chmod +x /entrypoint.sh
+# Convertir el script al formato Unix (en caso de que venga de Windows)
+RUN sed -i 's/\r$//' /entrypoint.sh
+# RUN sed -i 's/\r$//' /etc/nginx/templates/default.conf.template
 
-# Exponer el puerto 80
+# Hacer que el script de entrada sea ejecutable
+RUN chmod +x entrypoint.sh
+
+# Exponer el puerto 80 para tráfico HTTP
 EXPOSE 80
 
-# Definir el script de entrada
+# Usar el script de entrada para inicializar el contenedor
 CMD ["./entrypoint.sh"]

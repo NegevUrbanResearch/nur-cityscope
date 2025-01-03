@@ -14,18 +14,18 @@ services:
     networks:
       - clbb_core
 
-  # dashboard-builder:
-  #   container_name: dashboard_builder
-  #   build:
-  #     context: ./clbb-front/frontend
-  #     dockerfile: Dockerfile
-  #   env_file:
-  #     - .env
-  #   volumes:
-  #     - dashboard_build:/app/build  # Monta el volumen para compartir el build
-  #   command: ["npm", "run", "build"]  # Ejecuta el comando de build y sale
-  #   networks:
-  #     - clbb_core
+  dashboard-builder:
+    container_name: dashboard_builder
+    build:
+      context: ./clbb-front/frontend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - dashboard_build:/app/build  # Monta el volumen para compartir el build
+    command: ["npm", "run", "build"]  # Ejecuta el comando de build y sale
+    networks:
+      - clbb_core
 
   nginx:
     build:
@@ -37,12 +37,12 @@ services:
     volumes:
       - ./clbb-projection/frontend:/usr/share/nginx/html/clbb-projection/frontend
       - ./clbb-remote-controller/frontend:/usr/share/nginx/html/clbb-remote-controller/frontend
-      # - dashboard_build:/usr/share/nginx/html/clbb-front/frontend
+      - dashboard_build:/usr/share/nginx/html/clbb-front/frontend
     ports:
       - "${FRONT_PORT}:80"
     depends_on:
       - web
-      # - dashboard-builder
+      - dashboard-builder
     networks:
       - clbb_core
 
@@ -58,9 +58,9 @@ services:
 
   redis:
     image: redis:alpine
-    container_name: redis
-    ports:
-      - "6379:6379"
+    container_name: redis-cs
+    # ports:
+    #   - "6379:6379"
     restart: always
     networks:
       - clbb_core
@@ -72,4 +72,4 @@ networks:
 
 volumes:
   postgres_data_core:
-  # dashboard_build:
+  dashboard_build:

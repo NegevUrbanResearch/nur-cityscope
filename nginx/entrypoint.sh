@@ -1,7 +1,6 @@
-# nginx/entrypoint.sh
 #!/bin/sh
+rm -rf /etc/nginx/conf.d/default.conf
 
-# Reemplazar variables de entorno en la plantilla de configuración
 envsubst '${API_PORT}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
 
 # Iniciar Nginx
