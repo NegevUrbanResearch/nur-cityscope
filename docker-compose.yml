@@ -9,7 +9,21 @@ services:
     volumes:
       - ./clbb-io/core/.:/app
     depends_on:
+      db-migrations:
+        condition: service_completed_successfully
+    networks:
+      - clbb_core
+
+  db-migrations:
+    container_name: db_migrations
+    build: ./clbb-io/core/.
+    env_file:
+      - .env
+    volumes:
+      - ./clbb-io/core/.:/app
+    depends_on:
       - db
+    command: ["python", "manage.py", "migrate"]
     networks:
       - clbb_core
 

@@ -53,6 +53,16 @@ for i in $(seq 0 $((REPO_COUNT - 1))); do
     cd "$SCRIPT_DIR" || exit
 done
 
+# Create necessary migration folders
+echo "Creating required migration folders..."
+mkdir -p "$SCRIPT_DIR/clbb-io/core/external_files"
+mkdir -p "$SCRIPT_DIR/clbb-io/core/migrations"
+mkdir -p "$SCRIPT_DIR/clbb-io/backend/migrations"
+
+# Create empty __init__.py files
+touch "$SCRIPT_DIR/clbb-io/core/migrations/__init__.py"
+touch "$SCRIPT_DIR/clbb-io/backend/migrations/__init__.py"
+
 echo "✅ All repositories have been successfully configured."
 echo "Next step: Run 'docker-compose up -d' to start the services."
 
