@@ -1,57 +1,57 @@
 @echo off
 
-REM Verificar existencia del archivo setup-config.csv
+REM Check if setup-config.csv file exists
 set CONFIG_FILE=setup-config.csv
 if not exist %CONFIG_FILE% (
-    echo El archivo %CONFIG_FILE% no existe.
+    echo File %CONFIG_FILE% does not exist.
     exit /b 1
 )
 
-REM Leer el archivo CSV línea por línea
+REM Read the CSV file line by line
 for /f "skip=1 tokens=1,2,3 delims=," %%a in (%CONFIG_FILE%) do (
     set "NAME=%%a"
     set "URL=%%b"
     set "BRANCH=%%c"
 
-    REM Clonar repositorio si no existe
+    REM Clone repository if it doesn't exist
     if not exist "%%a" (
-        echo Clonando %%a desde %%b...
+        echo Cloning %%a from %%b...
         git clone %%b %%a
     )
 
-    REM Cambiar a la rama especificada
-    echo Cambiando a la rama %%c en %%a...
+    REM Switch to the specified branch
+    echo Switching to branch %%c in %%a...
     pushd %%a
     git fetch origin
     git checkout %%c
     popd
 )
 
-REM Crear la carpeta ./clbb-io/core/external_files si no existe
+REM Create ./clbb-io/core/external_files folder if it doesn't exist
 if not exist "clbb-io/core/external_files" (
     mkdir "clbb-io/core/external_files"
-    echo Carpeta clbb-io/core/external_files creada.
+    echo Folder clbb-io/core/external_files created.
 )
 
-REM Crear la carpeta ./clbb-io/core/migrations si no existe
+REM Create ./clbb-io/core/migrations folder if it doesn't exist
 if not exist "clbb-io/core/migrations" (
     mkdir "clbb-io/core/migrations"
-    echo Carpeta clbb-io/core/migrations creada.
+    echo Folder clbb-io/core/migrations created.
 )
 
-REM Crear el archivo __init__.py vacío en la carpeta ./clbb-io/core/migrations
+REM Create empty __init__.py file in ./clbb-io/core/migrations folder
 if not exist "clbb-io/core/migrations/__init__.py" (
     type nul > "clbb-io/core/migrations/__init__.py"
-    echo Archivo __init__.py creado en clbb-io/core/migrations.
+    echo File __init__.py created in clbb-io/core/migrations.
 )
 
-REM Crear el archivo __init__.py vacío en la carpeta ./clbb-io/core/migrations
+REM Create empty __init__.py file in ./clbb-io/backend/migrations folder
 if not exist "clbb-io/backend/migrations/__init__.py" (
     type nul > "clbb-io/backend/migrations/__init__.py"
-    echo Archivo __init__.py creado en clbb-io/backend/migrations.
+    echo File __init__.py created in clbb-io/backend/migrations.
 )
 
-REM Crear el archivo .env con los parámetros especificados
+REM Create .env file with specified parameters
 set ENV_FILE=.env
 (
     echo DB_CONTAINER_NAME=
@@ -62,6 +62,9 @@ set ENV_FILE=.env
     echo API_PORT=
     echo FRONT_PORT=
 ) > %ENV_FILE%
-echo Archivo .env creado con los parámetros especificados.
+echo .env file created with specified parameters.
 
-echo Todos los repositorios han sido configurados correctamente.
+echo All repositories have been successfully configured.
+
+
+# This is the setup file
