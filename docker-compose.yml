@@ -1,12 +1,11 @@
-
 services:
   web:
     container_name: core_api
     build: ./clbb-io/core/.
     ports:
-      - "${API_PORT}:9900"  # Usa la variable API_PORT desde el archivo .env
+      - "${API_PORT}:9900"  # Uses the API_PORT variable from the .env file
     env_file:
-      - .env  # Declara el archivo .env aquí
+      - .env  # Declares the .env file here
     volumes:
       - ./clbb-io/core/.:/app
     depends_on:
@@ -22,8 +21,8 @@ services:
     env_file:
       - .env
     volumes:
-      - dashboard_build:/app/build  # Monta el volumen para compartir el build
-    command: ["npm", "run", "build"]  # Ejecuta el comando de build y sale
+      - dashboard_build:/app/build  # Mounts the volume to share the build
+    command: ["npm", "run", "build"]  # Runs the build command and exits
     networks:
       - clbb_core
 
@@ -67,7 +66,7 @@ services:
 
 networks:
   clbb_core:
-    name: clbb_core        # Para que la red tenga este nombre EXACTO
+    name: clbb_core        # So that the network has this EXACT name
     driver: bridge
 
 volumes:
