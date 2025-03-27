@@ -1,3 +1,58 @@
+# Python
 .venv/
 .env
 *.txt
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# Docker
+.docker/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+pyrightconfig.json
+
+# Project specific
+cookies.txt
+setup-config.csv
+clbb-io/core/data/
+clbb-io/core/external_files/
+clbb-io/core/migrations/
+**/migrations/*.py
+!**/migrations/__init__.py
+
+# Environment
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
