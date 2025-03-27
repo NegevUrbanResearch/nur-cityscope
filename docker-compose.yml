@@ -8,22 +8,18 @@ services:
       - .env  # Declares the .env file here
     volumes:
       - ./clbb-io/core/.:/app
-    depends_on:
-      db-migrations:
-        condition: service_completed_successfully
-    networks:
-      - clbb_core
-
-  db-migrations:
-    container_name: db_migrations
-    build: ./clbb-io/core/.
-    env_file:
-      - .env
-    volumes:
-      - ./clbb-io/core/.:/app
+      - ./init.sh:/app/init.sh
+      - ./init.bat:/app/init.bat
+      - ./create_sample_data.py:/app/create_sample_data.py
+      - core_api_data:/app/data
     depends_on:
       - db
-    command: ["python", "manage.py", "migrate"]
+    command: >
+      sh -c "if [ -f /app/init.sh ]; then
+        chmod +x /app/init.sh && /app/init.sh;
+      else
+        /app/init.bat;
+      fi"
     networks:
       - clbb_core
 
@@ -86,3 +82,4 @@ networks:
 volumes:
   postgres_data_core:
   dashboard_build:
+  core_api_data:          # New volume for persistent core_api data
