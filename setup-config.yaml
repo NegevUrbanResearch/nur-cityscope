@@ -1,13 +1,13 @@
 repositories:
   - name: clbb-io
-    url: https://github.com/diegoalrv/clbb-io.git
-    branch: v2
+    url: https://github.com/your-org/clbb-io.git
+    branch: master
   - name: clbb-remote-controller
-    url: https://github.com/diegoalrv/clbb-remote-controller.git
-    branch: v2
+    url: https://github.com/your-org/clbb-remote-controller.git
+    branch: master
   - name: clbb-front
-    url: https://github.com/diegoalrv/clbb-front.git
-    branch: v2
+    url: https://github.com/your-org/clbb-front.git
+    branch: master
   - name: clbb-projection
-    url: https://github.com/diegoalrv/clbb-projection.git
-    branch: v2
+    url: https://github.com/your-org/clbb-projection.git
+    branch: master

@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Exit on error
+set -e
+
 # Wait for the database to be ready
 echo "Waiting for database to be ready..."
 while ! nc -z db 5432; do
@@ -26,7 +29,7 @@ if [ ! -f "$INIT_FLAG" ]; then
 
     # Create sample data
     echo "Creating sample data..."
-    python manage.py shell -c "exec(open('/app/create_sample_data.py').read())"
+    python manage.py create_sample_data
 
     # Create default admin user if it doesn't exist
     echo "Creating default admin user..."

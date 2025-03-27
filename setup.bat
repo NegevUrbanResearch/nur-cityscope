@@ -1,70 +1,40 @@
 @echo off
 
-REM Check if setup-config.csv file exists
-set CONFIG_FILE=setup-config.csv
-if not exist %CONFIG_FILE% (
-    echo File %CONFIG_FILE% does not exist.
-    exit /b 1
-)
+REM === CLBB-CityScope Setup Script ===
+REM This script sets up the CLBB-CityScope project using Docker.
 
-REM Read the CSV file line by line
-for /f "skip=1 tokens=1,2,3 delims=," %%a in (%CONFIG_FILE%) do (
-    set "NAME=%%a"
-    set "URL=%%b"
-    set "BRANCH=%%c"
+REM Create necessary migration folders
+echo Creating required migration folders...
+if not exist "clbb-io\core\external_files" mkdir "clbb-io\core\external_files"
+if not exist "clbb-io\core\migrations" mkdir "clbb-io\core\migrations"
+if not exist "clbb-io\backend\migrations" mkdir "clbb-io\backend\migrations"
 
-    REM Clone repository if it doesn't exist
-    if not exist "%%a" (
-        echo Cloning %%a from %%b...
-        git clone %%b %%a
-    )
+REM Create empty __init__.py files
+if not exist "clbb-io\core\migrations\__init__.py" type nul > "clbb-io\core\migrations\__init__.py"
+if not exist "clbb-io\backend\migrations\__init__.py" type nul > "clbb-io\backend\migrations\__init__.py"
 
-    REM Switch to the specified branch
-    echo Switching to branch %%c in %%a...
-    pushd %%a
-    git fetch origin
-    git checkout %%c
-    popd
-)
+REM Start the services
+echo Starting services...
+docker-compose up -d
 
-REM Create ./clbb-io/core/external_files folder if it doesn't exist
-if not exist "clbb-io/core/external_files" (
-    mkdir "clbb-io/core/external_files"
-    echo Folder clbb-io/core/external_files created.
-)
+REM Wait for services to be ready
+echo Waiting for services to be ready...
+timeout /t 10 /nobreak
 
-REM Create ./clbb-io/core/migrations folder if it doesn't exist
-if not exist "clbb-io/core/migrations" (
-    mkdir "clbb-io/core/migrations"
-    echo Folder clbb-io/core/migrations created.
-)
+REM Run migrations
+echo Running database migrations...
+docker exec core_api python manage.py migrate
 
-REM Create empty __init__.py file in ./clbb-io/core/migrations folder
-if not exist "clbb-io/core/migrations/__init__.py" (
-    type nul > "clbb-io/core/migrations/__init__.py"
-    echo File __init__.py created in clbb-io/core/migrations.
-)
+REM Create sample data
+echo Creating sample data...
+docker exec core_api python manage.py create_sample_data
 
-REM Create empty __init__.py file in ./clbb-io/backend/migrations folder
-if not exist "clbb-io/backend/migrations/__init__.py" (
-    type nul > "clbb-io/backend/migrations/__init__.py"
-    echo File __init__.py created in clbb-io/backend/migrations.
-)
-
-REM Create .env file with specified parameters
-set ENV_FILE=.env
-(
-    echo DB_CONTAINER_NAME=
-    echo POSTGRES_USER=
-    echo POSTGRES_PASSWORD=
-    echo POSTGRES_DB=
-    echo DATABASE_URL=
-    echo API_PORT=
-    echo FRONT_PORT=
-) > %ENV_FILE%
-echo .env file created with specified parameters.
-
-echo All repositories have been successfully configured.
+echo ✅ All services have been successfully configured and sample data has been created.
+echo You can now access:
+echo - Dashboard: http://localhost/dashboard/
+echo - Projection: http://localhost/projection/
+echo - Remote Controller: http://localhost/remote/
+echo - Admin Interface: http://localhost:9900/admin
 
 
 # This is the setup file

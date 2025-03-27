@@ -10,7 +10,6 @@ services:
       - ./clbb-io/core/.:/app
       - ./init.sh:/app/init.sh
       - ./init.bat:/app/init.bat
-      - ./create_sample_data.py:/app/create_sample_data.py
       - core_api_data:/app/data
     depends_on:
       - db
