@@ -1,0 +1,14 @@
+version: '3'
+services:
+  clbb-io-modules:
+    image: urban_indicators
+    container_name: clbb-io-modules
+    environment:
+      - JUPYTER_TOKEN=""
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./data:/app/data"
+      - ./modules:/app/modules"
+      - ./assets:/app/assets"
+      - ./backup:/app/backup"

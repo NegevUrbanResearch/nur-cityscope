@@ -1,0 +1,130 @@
+body {
+    margin: 0;
+    padding: 0;
+    color: white;
+    background-color: rgb(0, 0, 0);
+}
+
+.text {
+    font-weight: 100;
+    font-family: Helvetica, sans-serif, "Franklin Gothic Medium", "Arial Narrow",
+        Arial, sans-serif;
+}
+
+.inputDiv {
+    padding: 1em;
+    margin: 1em;
+    width: 50%;
+    margin: 0 auto;
+}
+
+.videoContainer {
+    position: absolute;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
+.mySlides {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.mySlides img {
+    width: 100%;
+    height: 100%;
+    object-fit: fill; /* Mantiene las proporciones de la imagen */
+}
+
+
+video {
+    object-fit: fill;
+}
+
+.UI {
+    margin: 0;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    -ms-transform: translate(-50%, -50%);
+    transform: translate(-50%, -50%);
+}
+.logoImg {
+    width: 30em;
+    height: auto;
+}
+
+.CSlogoImg {
+    padding: 2em;
+    width: 3em;
+    height: auto;
+    display: block;
+    margin: auto;
+}
+
+.keystoneContainer {
+    width: 20em;
+    height: 20em;
+    z-index: -1;
+}
+
+video {
+    width: 100%;
+    height: 100%;
+}
+video::-webkit-media-controls {
+    display: none;
+}
+
+.prev,
+.next {
+    cursor: pointer;
+    position: absolute;
+    top: 50%;
+    width: auto;
+    margin-top: -22px;
+    padding: 16px;
+    color: white;
+    font-weight: bold;
+    font-size: 25px;
+    transition: 0.6s ease;
+    border-radius: 0 3px 3px 0;
+}
+
+.next {
+    right: 0;
+    border-radius: 3px 0 0 3px;
+}
+
+.prev:hover,
+.next:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+}
+
+/* Fading animation */
+.fade {
+    -webkit-animation-name: fade;
+    -webkit-animation-duration: 1s;
+    animation-name: fade;
+    animation-duration: 1s;
+}
+
+@-webkit-keyframes fade {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes fade {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+

@@ -1,0 +1,17 @@
+[
+    { "id": 1, "name": "Diversidad de Suelo" , "states": 1},
+    { "id": 2, "name": "Educación" , "states": 1},
+    { "id": 3, "name": "Proximidad de cultura" , "states": 1},
+    { "id": 4, "name": "Población" , "states": 1},
+    { "id": 5, "name": "Entretenimiento" , "states": 1},
+    { "id": 6, "name": "Parques" , "states": 1},
+    { "id": 7, "name": "Plazas" , "states": 1},
+    { "id": 8, "name": "Aprovisionamiento" , "states": 1},
+    { "id": 9, "name": "Comercio" , "states": 1},
+    { "id": 10, "name": "Edificacion" , "states": 1},
+    { "id": 11, "name": "Salud" , "states": 1},
+    { "id": 12, "name": "Ciclovias Actuales", "states": 0},
+    { "id": 13, "name": "Ciclovias Futuras", "states": 0},
+    { "id": 14, "name": "Ciclovias A+F", "states": 0},
+    { "id": 15, "name": "Agentes", "states": 0}
+]

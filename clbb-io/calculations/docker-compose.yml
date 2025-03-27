@@ -1,0 +1,11 @@
+version: '3'
+services:
+  app:
+    build: .
+    container_name: table_calculations
+    volumes:
+      - ./modules:/app/modules
+      - ./logs:/app/logs
+      - ./assets:/app/assets
+      - ./backup:/app/backup
+      - ./export:/app/export

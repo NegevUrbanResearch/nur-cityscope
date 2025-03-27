@@ -1,0 +1,42 @@
+
+services:
+  api:
+    container_name: core_api
+    build: ./core/.
+    ports:
+      - "${API_PORT}:${API_PORT}"  # Usa la variable API_PORT desde el archivo .env
+    env_file:
+      - ./core/.env  # Declara el archivo .env aquí
+    volumes:
+      - ./core/.:/app
+    depends_on:
+      - db
+    networks:
+      - clbb_core
+
+  db:
+    container_name: core_db
+    image: postgres:latest
+    env_file:
+      - ./core/.env  # También carga el archivo .env para este servicio si es necesario
+    volumes:
+      - postgres_data_core:/var/lib/postgresql/data
+    networks:
+      - clbb_core
+
+  redis:
+    image: redis:alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: always
+    networks:
+      - clbb_core
+
+
+networks:
+  clbb_core:
+    driver: bridge
+
+volumes:
+  postgres_data_core:

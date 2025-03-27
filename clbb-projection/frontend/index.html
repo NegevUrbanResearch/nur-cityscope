@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-height, initial-scale=1.0">
+    <title>Image Display</title>
+    <link rel="stylesheet" href="styles.css"/>
+    <style>
+        #image{
+            transform-origin: center;
+        }
+    </style>
+
+</head>
+<body>
+
+<div id="keystoneContainer" class="keystoneContainer">
+    <img id="displayedImage" src="https://i.postimg.cc/5NTtK0fL/Gilla-con-imagen.png" height="100%" width="100%" alt="Waiting for image...">
+</div>
+
+<script src="maptastic.js"></script>
+<script src="gallery.js"></script>
+
+<script>
+    const $imagen = document.getElementById('displayedImage');
+    Maptastic('keystoneContainer');
+
+    // Escala inicial Tamaño de la escala: 
+    let escalaX = 7.099999999999991;
+    let escalaY = 14.199999999999966;
+    // Accede al elemento por su ID
+    var keystoneContainer = document.getElementById('keystoneContainer');
+    console.log("Posicion X: ", keystoneContainer.offsetLeft);
+    console.log("Posicion Y: ", keystoneContainer.offsetTop);
+
+
+    function renderImagen(image_url) {
+        if ($imagen) {
+            // Añadir un parámetro de tiempo para evitar el caché
+            const imageUrlWithTimestamp = `${image_url}`;
+            $imagen.setAttribute('src', imageUrlWithTimestamp);
+            // Aplicar escala en ambos ejes (horizontal y vertical)
+            $imagen.style.transform = `scale(${escalaX}, ${escalaY})`;
+            console.log(`Tamaño de la escala: (${escalaX}, ${escalaY})`);
+            console.log("Posicion: ", keystoneContainer.style.transform);
+        } else {
+            console.error('Elemento imagen no encontrado');
+        }
+    }
+
+    // Función para obtener y actualizar la imagen
+    function updateImage() {
+        fetch('http://192.168.31.120:8500/api/actions/get_image_data/')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.image_data) {
+                    image_url = "http://192.168.31.120:8500/media/"+data.image_data
+                    console.log(data.image_data);
+                    console.log(image_url);
+                    renderImagen(image_url);
+                } else {
+                    console.error('No se encontró "image_url" en la respuesta de la API');
+                }
+            })
+            .catch(error => console.error('Error al obtener la imagen:', error));
+    }
+
+    // Iniciar la actualización periódica cada 1 segundo (1000 ms)
+    setInterval(updateImage, 1000);
+
+    window.addEventListener('keydown', function (event) {
+        switch (event.key) {
+            case 'd':
+                // Aumentar la escala solo hacia la derecha
+                escalaX += 0.1;
+                renderImagen($imagen.src);
+                break;
+            case 'a':
+                // Disminuir la escala solo hacia la izquierda
+                escalaX -= 0.1;
+                renderImagen($imagen.src);
+                break;
+            case 'w':
+                // Aumentar la escala solo hacia arriba
+                escalaY += 0.1;
+                renderImagen($imagen.src);
+                break;
+            case 's':
+                // Disminuir la escala solo hacia abajo
+                escalaY -= 0.1;
+                renderImagen($imagen.src);
+                break;
+            case 'l':
+                escalaX = 3.300000000000001;
+                escalaY = 4.6;
+                //keystoneContainer.style.transform = `matrix3d(-0.0511682, -1.01624, 0, -1.94e-05, 1.0287, 0.0112344, 0, 9.7e-06, 0, 0, 1, 0, 2628, 1154, 0, 1)`;
+                keystoneContainer.style.transform = `matrix3d(0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 648, 656, 0, 1)`;
+                //keystoneContainer.style.transform = `matrix3d(-0.0767133, -1.02482, 0, -1.94e-05, 1.04147, 0.0155276, 0, 9.7e-06, 0, 0, 1, 0, 3940, 1595, 0, 1)`;
+                renderImagen($imagen.src)
+                break;
+            case 'q':
+                escalaX = 2.6000000000000005;
+                escalaY = 4.200000000000001;
+                //keystoneContainer.style.transform = `matrix3d(0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 407, 1154, 0, 1)`;
+                keystoneContainer.style.transform = `matrix3d(0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 541, 666, 0, 1)`;
+                //keystoneContainer.style.transform = `matrix3d(-0.0149338, -1.02373, 0, -1.94e-05, 1.01058, 0.0149824, 0, 9.7e-06, 0, 0, 1, 0, 767, 1539, 0, 1)`
+                renderImagen($imagen.src)
+                break;
+        }
+    });
+
+</script>
+</body>
+</html>
