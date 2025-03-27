@@ -1,22 +1,28 @@
 import React from 'react';
 import { Doughnut } from 'react-chartjs-2';
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
+
+ChartJS.register(ArcElement, Tooltip, Legend);
 
 const DonutChart = ({ data }) => {
-  const total = data.tipos.reduce((sum, tipo) => sum + tipo.valor, 0);
+  if (!data) {
+    return <div>No data available</div>;
+  }
 
   const chartData = {
-    labels: data.tipos.map(tipo => tipo.nombre),
+    labels: data.labels || ['Green Space', 'Other'],
     datasets: [
       {
-        data: data.tipos.map(tipo => (tipo.valor / total) * 100),
-        backgroundColor: ["#57cc99","#073b4c","#EF476F","#aeb8fe","#eddea4","#6000d9","#cbf3f0","#268df8","#80ffdb","#30daf7"],
-        hoverBackgroundColor: ["#57cc99","#073b4c","#EF476F","#aeb8fe","#eddea4","#6000d9","#cbf3f0","#268df8","#80ffdb","#30daf7"],
+        data: data.datasets?.[0]?.data || [0, 0],
+        backgroundColor: data.datasets?.[0]?.backgroundColor || ['#2ecc71', '#95a5a6'],
         borderWidth: 1,
       },
     ],
   };
 
   const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
     plugins: {
       legend: {
         display: true,
@@ -26,24 +32,19 @@ const DonutChart = ({ data }) => {
       tooltip: {
         callbacks: {
           label: (context) => {
-            const tipo = data.tipos[context.dataIndex];
-            const porcentaje = ((tipo.valor / total) * 100).toFixed(2);
-            return `${tipo.nombre}: ${porcentaje}%`;
+            const value = context.raw;
+            return `${chartData.labels[context.dataIndex]}: ${value.toFixed(2)}%`;
           },
-        },
-      },
-      datalabels: {
-        color: 'white',
-        formatter: (value, context) => {
-          const tipo = data.tipos[context.dataIndex];
-          const porcentaje = ((tipo.valor / total) * 100).toFixed(2);
-          return `${porcentaje}%`;
         },
       },
     },
   };
 
-  return <Doughnut data={chartData} options={chartOptions} />;
+  return (
+    <div style={{ height: '300px', width: '100%' }}>
+      <Doughnut data={chartData} options={chartOptions} />
+    </div>
+  );
 };
 
 export default DonutChart;

@@ -1,10 +1,10 @@
 // scripts.js
 
 /**
- * Dirección del servidor con IP y puerto
- * Ejemplo: 'http://127.0.0.1:8000'
+ * Server address with IP and port
+ * Example: 'http://127.0.0.1:8000'
  */
-const server_address = `http://192.168.31.120:8500`; // Reemplázalo con tu IP y puerto
+const server_address = `http://localhost:9900`; // Updated to use localhost
 
 /**
  * Clase para manejar interacciones con la API

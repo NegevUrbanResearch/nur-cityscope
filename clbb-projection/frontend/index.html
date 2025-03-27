@@ -9,13 +9,20 @@
         #image{
             transform-origin: center;
         }
+        .error-message {
+            color: red;
+            text-align: center;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
     </style>
 
 </head>
 <body>
 
 <div id="keystoneContainer" class="keystoneContainer">
-    <img id="displayedImage" src="https://i.postimg.cc/5NTtK0fL/Gilla-con-imagen.png" height="100%" width="100%" alt="Waiting for image...">
+    <img id="displayedImage" src="" height="100%" width="100%" alt="Waiting for image...">
+    <div id="errorMessage" class="error-message" style="display: none;"></div>
 </div>
 
 <script src="maptastic.js"></script>
@@ -23,34 +30,38 @@
 
 <script>
     const $imagen = document.getElementById('displayedImage');
+    const $errorMessage = document.getElementById('errorMessage');
     Maptastic('keystoneContainer');
 
-    // Escala inicial Tamaño de la escala: 
+    // Initial scale
     let escalaX = 7.099999999999991;
     let escalaY = 14.199999999999966;
-    // Accede al elemento por su ID
+    
     var keystoneContainer = document.getElementById('keystoneContainer');
-    console.log("Posicion X: ", keystoneContainer.offsetLeft);
-    console.log("Posicion Y: ", keystoneContainer.offsetTop);
-
+    console.log("Position X: ", keystoneContainer.offsetLeft);
+    console.log("Position Y: ", keystoneContainer.offsetTop);
 
     function renderImagen(image_url) {
         if ($imagen) {
-            // Añadir un parámetro de tiempo para evitar el caché
-            const imageUrlWithTimestamp = `${image_url}`;
-            $imagen.setAttribute('src', imageUrlWithTimestamp);
-            // Aplicar escala en ambos ejes (horizontal y vertical)
+            $imagen.setAttribute('src', image_url);
             $imagen.style.transform = `scale(${escalaX}, ${escalaY})`;
-            console.log(`Tamaño de la escala: (${escalaX}, ${escalaY})`);
-            console.log("Posicion: ", keystoneContainer.style.transform);
+            console.log(`Scale size: (${escalaX}, ${escalaY})`);
+            console.log("Position: ", keystoneContainer.style.transform);
+            $errorMessage.style.display = 'none';
         } else {
-            console.error('Elemento imagen no encontrado');
+            console.error('Image element not found');
+            showError('Image element not found');
         }
     }
 
-    // Función para obtener y actualizar la imagen
+    function showError(message) {
+        $errorMessage.textContent = message;
+        $errorMessage.style.display = 'block';
+    }
+
+    // Function to get and update the image
     function updateImage() {
-        fetch('http://192.168.31.120:8500/api/actions/get_image_data/')
+        fetch('http://localhost:9900/api/actions/get_image_data/')
             .then(response => {
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
@@ -59,56 +70,58 @@
             })
             .then(data => {
                 if (data.image_data) {
-                    image_url = "http://192.168.31.120:8500/media/"+data.image_data
-                    console.log(data.image_data);
-                    console.log(image_url);
+                    const image_url = "http://localhost:9900/media/" + data.image_data;
+                    console.log("Image data:", data.image_data);
+                    console.log("Image URL:", image_url);
                     renderImagen(image_url);
                 } else {
-                    console.error('No se encontró "image_url" en la respuesta de la API');
+                    console.error('No "image_data" found in API response');
+                    showError('No image data available');
                 }
             })
-            .catch(error => console.error('Error al obtener la imagen:', error));
+            .catch(error => {
+                console.error('Error fetching image:', error);
+                showError('Error loading image: ' + error.message);
+            });
     }
 
-    // Iniciar la actualización periódica cada 1 segundo (1000 ms)
+    // Start periodic updates every 1 second (1000 ms)
     setInterval(updateImage, 1000);
+    // Initial update
+    updateImage();
 
     window.addEventListener('keydown', function (event) {
         switch (event.key) {
             case 'd':
-                // Aumentar la escala solo hacia la derecha
+                // Increase scale to the right
                 escalaX += 0.1;
                 renderImagen($imagen.src);
                 break;
             case 'a':
-                // Disminuir la escala solo hacia la izquierda
+                // Decrease scale to the left
                 escalaX -= 0.1;
                 renderImagen($imagen.src);
                 break;
             case 'w':
-                // Aumentar la escala solo hacia arriba
+                // Increase scale upward
                 escalaY += 0.1;
                 renderImagen($imagen.src);
                 break;
             case 's':
-                // Disminuir la escala solo hacia abajo
+                // Decrease scale downward
                 escalaY -= 0.1;
                 renderImagen($imagen.src);
                 break;
             case 'l':
                 escalaX = 3.300000000000001;
                 escalaY = 4.6;
-                //keystoneContainer.style.transform = `matrix3d(-0.0511682, -1.01624, 0, -1.94e-05, 1.0287, 0.0112344, 0, 9.7e-06, 0, 0, 1, 0, 2628, 1154, 0, 1)`;
                 keystoneContainer.style.transform = `matrix3d(0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 648, 656, 0, 1)`;
-                //keystoneContainer.style.transform = `matrix3d(-0.0767133, -1.02482, 0, -1.94e-05, 1.04147, 0.0155276, 0, 9.7e-06, 0, 0, 1, 0, 3940, 1595, 0, 1)`;
                 renderImagen($imagen.src)
                 break;
             case 'q':
                 escalaX = 2.6000000000000005;
                 escalaY = 4.200000000000001;
-                //keystoneContainer.style.transform = `matrix3d(0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 407, 1154, 0, 1)`;
                 keystoneContainer.style.transform = `matrix3d(0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 541, 666, 0, 1)`;
-                //keystoneContainer.style.transform = `matrix3d(-0.0149338, -1.02373, 0, -1.94e-05, 1.01058, 0.0149824, 0, 9.7e-06, 0, 0, 1, 0, 767, 1539, 0, 1)`
                 renderImagen($imagen.src)
                 break;
         }

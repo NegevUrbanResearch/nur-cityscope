@@ -8,74 +8,111 @@ import './index.css';
 import axios from 'axios';
 import isEqual from 'lodash/isEqual';
 
-// Memoizar los componentes para evitar re-renderizados innecesarios
+// Memoize components to avoid unnecessary re-renders
 const MemoizedRadarChart = React.memo(RadarChart, (prevProps, nextProps) => isEqual(prevProps.data, nextProps.data));
-const MemoizedPieChart = React.memo(PieChart, (prevProps, nextProps) => isEqual(prevProps.data, nextProps.data));
+const MemoizedPieChart = React.memo(PieChart);
 const MemoizedBarChart = React.memo(BarChart, (prevProps, nextProps) => isEqual(prevProps.data, nextProps.data));
 const MemoizedHorizontalStackedBar = React.memo(HorizontalStackedBar, (prevProps, nextProps) => isEqual(prevProps.data, nextProps.data));
 
 const App = () => {
-  const [data, setData] = useState(null); // Estado para los datos del dashboard
-  const [loading, setLoading] = useState(true); // Estado de carga
-  const [error, setError] = useState(null); // Estado de error
-  const [lastUpdate, setLastUpdate] = useState(null); // Estado para la última actualización
-  const prevStateRef = useRef(null); // Referencia para almacenar el estado anterior
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const prevStateRef = useRef(null);
 
   useEffect(() => {
-    const apiUrl = 'http://localhost:9900/api/dashboard_feed_state/'; // Updated API URL
+    const apiUrl = 'http://localhost:9900/api/dashboard_feed_state/';
 
-    let isMounted = true; // Para evitar actualizaciones de estado si el componente está desmontado
-    let intervalId; // ID del intervalo
-    let isFetching = false; // Bandera para rastrear si ya hay una solicitud en curso
+    let isMounted = true;
+    let intervalId;
+    let isFetching = false;
 
     const fetchData = async () => {
-      if (isFetching) return; // Evita múltiples solicitudes concurrentes
+      if (isFetching) return;
       isFetching = true;
-
       try {
+        console.log('Fetching data from:', apiUrl);
         const response = await axios.get(apiUrl);
-        console.log('Datos obtenidos:', response.data);
-        console.log('Estado anterior:', prevStateRef.current);
-        console.log('Nuevo estado:', response.data.state);
-        console.log('¿Hay cambios en el estado?', !isEqual(response.data.state, prevStateRef.current));
-        console.log(isMounted)
+        console.log('Raw API Response:', response.data);
+        
+        // Transform the data to match the expected format
+        const transformedData = {
+          barrasHorizontalesStackeadas: {
+            labels: ['Proximity'],
+            datasets: [{
+              label: 'Value',
+              data: [response.data[0].data.total_population / 10000], // Normalize for display
+              backgroundColor: '#3498db'
+            }]
+          },
+          barrasStackeadas: {
+            labels: ['Density'],
+            datasets: [{
+              label: 'Value',
+              data: [response.data[0].data.average_building_height],
+              backgroundColor: '#2ecc71'
+            }]
+          },
+          radar: {
+            labels: ['Proximity', 'Density', 'Diversity'],
+            datasets: [{
+              label: 'Values',
+              data: [
+                response.data[0].data.total_population / 10000,
+                response.data[0].data.average_building_height,
+                response.data[0].data.green_space_percentage
+              ],
+              backgroundColor: 'rgba(52, 152, 219, 0.2)',
+              borderColor: '#3498db',
+              pointBackgroundColor: '#3498db'
+            }]
+          },
+          graficoDeTorta: {
+            labels: ['Green Space', 'Other'],
+            datasets: [{
+              data: [
+                response.data[0].data.green_space_percentage,
+                100 - response.data[0].data.green_space_percentage
+              ],
+              backgroundColor: ['#2ecc71', '#95a5a6']
+            }]
+          }
+        };
 
-        if (!isMounted) return; // Evita actualizar el estado si el componente está desmontado
+        console.log('Transformed Data:', transformedData);
 
-        const newState = response.data.state; // Ajusta según la estructura de tu respuesta
+        if (!isMounted) return;
 
-        // Comparar el nuevo estado con el anterior
-        if (!prevStateRef.current || !isEqual(newState, prevStateRef.current)) {
-          setData(response.data.data); // Actualiza el estado con los nuevos datos
-          setLastUpdate(new Date()); // Actualiza la hora de la última actualización
-          prevStateRef.current = newState; // Actualiza la referencia con el nuevo estado
-          setLoading(false);
-        } else {
-          console.log('No hay cambios en el estado. No se actualiza el componente.');
-        }
+        setData(transformedData);
+        setLastUpdate(new Date());
+        setLoading(false);
+        setError(null);
       } catch (err) {
-        console.error('Error al obtener los datos:', err);
+        console.error('Error fetching data:', err);
         if (isMounted) {
-          setError(err);
+          setError(err.message);
           setLoading(false);
         }
       } finally {
-        isFetching = false; // Resetea la bandera después de la solicitud
+        isFetching = false;
       }
     };
 
-    // Llamada inicial
+    // Initial fetch
     fetchData();
 
-    // Configurar el intervalo para llamar a fetchData cada 1 segundo (1000 ms)
+    // Set up polling interval
     intervalId = setInterval(fetchData, 1000);
 
-    // Limpiar el intervalo y actualizar isMounted al desmontar
+    // Cleanup function
     return () => {
       isMounted = false;
-      clearInterval(intervalId);
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
     };
-  }, []); // Arreglo vacío para que se ejecute solo una vez al montar
+  }, []);
 
   if (loading) {
     return (
@@ -115,7 +152,7 @@ const App = () => {
         fontSize: '1.2em',
         flexDirection: 'column'
       }}>
-        <div>Error loading data: {error.message}</div>
+        <div>Error loading data: {error}</div>
         <button 
           onClick={() => window.location.reload()} 
           style={{
@@ -157,11 +194,11 @@ const App = () => {
           <div className="columna1">
             <div className="grafico">
               <h3>Proximity</h3>
-              <MemoizedHorizontalStackedBar data={data.barrasHorizontalesStackeadas} />
+              <MemoizedHorizontalStackedBar data={data?.barrasHorizontalesStackeadas} />
             </div>
             <div className="grafico">
               <h3>Density</h3>
-              <MemoizedBarChart data={data.barrasStackeadas} />
+              <MemoizedBarChart data={data?.barrasStackeadas} />
             </div>
           </div>
 
@@ -170,7 +207,7 @@ const App = () => {
               <div style={{ textAlign: 'center' }}>
                 <h3>Radar Chart</h3>
               </div>
-              <MemoizedRadarChart data={data.radar} />
+              <MemoizedRadarChart data={data?.radar} />
               <div
                 style={{
                   position: 'absolute',
@@ -207,16 +244,13 @@ const App = () => {
               >
                 <p>Density</p>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-                {/* <MapLegend leyendas={leyendasData.leyendas} /> */}
-              </div>
             </div>
           </div>
 
           <div className="columna3">
             <div className="grafico">
               <h3>Land Use</h3>
-              <MemoizedPieChart data={data.graficoDeTorta} />
+              <MemoizedPieChart data={data?.graficoDeTorta} />
             </div>
             <div
               style={{
@@ -237,7 +271,6 @@ const App = () => {
         </div>
       </div>
 
-      {/* Mostrar la última actualización */}
       <div style={{ position: 'absolute', bottom: 20, left: 20, color: 'white' }}>
         Last update: {lastUpdate ? lastUpdate.toLocaleTimeString() : 'N/A'}
       </div>

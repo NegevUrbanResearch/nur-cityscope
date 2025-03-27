@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Tu Página</title>
+    <title>Control Panel</title>
     <link rel="stylesheet" href="/static/styles.css"/>
 </head>
 <body>
-    <h1>Datos Django:</h1>
+    <h1>Django Data:</h1>
     {% for dato in datos_django %}
         <button class="glowing-button" onclick="cambiarURL('{{ dato.slider }}')">{{ dato.slider }}. {{ dato.name }}</button>
     {% endfor %}
@@ -15,16 +15,16 @@
 
 <script>
     function cambiarURL(numero) {
-        var url = 'http://192.168.31.120:8500//api/set_map_type/';
+        var url = 'http://localhost:9900/api/set_map_type/';
         if(numero != undefined){
             url += '?map_type=' + numero;
         }
-        // Realizar una solicitud POST utilizando fetch
+        // Make a POST request using fetch
         fetch(url)
         .then(response => response.json())
         .then(data => {
-            // Manejar la respuesta del servidor si es necesario
-            console.log('Respuesta del servidor:', data);
+            // Handle server response if needed
+            console.log('Server response:', data);
         })
         .catch(error => {
             console.error('Error:', error);
@@ -32,19 +32,19 @@
     }
 
     function SS(numero) {
-        var url = 'http://192.168.31.140:8000/';
+        var url = 'http://localhost:9900/api/';
         if(numero == 55){
             url += 'start';
         }
         else{
             url += 'stop';
         }
-        // Realizar una solicitud POST utilizando fetch
+        // Make a POST request using fetch
         fetch(url)
         .then(response => response.json())
         .then(data => {
-            // Manejar la respuesta del servidor si es necesario
-            console.log('Respuesta del servidor:', data);
+            // Handle server response if needed
+            console.log('Server response:', data);
         })
         .catch(error => {
             console.error('Error:', error);
