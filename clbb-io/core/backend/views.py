@@ -1,20 +1,20 @@
 from django.shortcuts import render
 from django.db import models
 from django.http import JsonResponse
-from rest_framework import viewsets
+from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 import json
 
 from .models import (
     Indicator, IndicatorData, IndicatorImage, IndicatorGeojson,
-    State, DashboardFeedState, LayerConfig
+    State, DashboardFeedState, LayerConfig, MapType
 )
 
 from .serializers import (
     IndicatorSerializer, IndicatorDataSerializer, IndicatorImageSerializer,
     IndicatorGeojsonSerializer, StateSerializer, DashboardFeedStateSerializer,
-    StateSerializer, LayerConfigSerializer
+    StateSerializer, LayerConfigSerializer, MapTypeSerializer
 )
 
 class IndicatorViewSet(viewsets.ModelViewSet):
@@ -45,6 +45,10 @@ class DashboardFeedStateViewSet(viewsets.ModelViewSet):
 class LayerConfigViewSet(viewsets.ModelViewSet):
     queryset = LayerConfig.objects.all()
     serializer_class = LayerConfigSerializer
+
+class MapTypeViewSet(viewsets.ModelViewSet):
+    queryset = MapType.objects.all()
+    serializer_class = MapTypeSerializer
 
 # Now lets program the views for the API as an interactive platform
 
@@ -89,13 +93,18 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['post'])
     def set_current_state(self, request):
-        state = request.data.get('state', '')
-        if isinstance(state, str):
-            state = json.loads(state)
-        if self._set_current_state(state):
-            return JsonResponse({'status': 'ok', 'state': state})
-        else:
-            return JsonResponse({'status': 'error', 'message': 'Failed to set current state'})
+        state_id = request.data.get('state_id')
+        try:
+            state = State.objects.get(id=state_id)
+            if self._set_current_state(state.state_values):
+                return JsonResponse({'status': 'ok', 'state': state.state_values})
+            else:
+                return JsonResponse({'status': 'error', 'message': 'Failed to set current state'})
+        except State.DoesNotExist:
+            return JsonResponse({'status': 'error', 'message': 'State not found'}, status=404)
+        except Exception as e:
+            print(e)
+            return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
 
     def _set_current_state(self, state):
         try:

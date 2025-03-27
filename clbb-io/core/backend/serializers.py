@@ -3,7 +3,7 @@ from rest_framework import serializers
 from .models import (
     Indicator, IndicatorData, IndicatorImage,
     IndicatorGeojson, State, DashboardFeedState,
-    LayerConfig
+    LayerConfig, MapType
 )
 
 class IndicatorSerializer(serializers.ModelSerializer):
@@ -39,4 +39,9 @@ class DashboardFeedStateSerializer(serializers.ModelSerializer):
 class LayerConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = LayerConfig
+        fields = '__all__'
+
+class MapTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MapType
         fields = '__all__'
