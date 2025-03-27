@@ -4,3 +4,4 @@ clbb-projection/
 clbb-remote-controller/
 .venv/
 .env
+*.txt
