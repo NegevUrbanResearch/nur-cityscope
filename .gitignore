@@ -1,7 +1,6 @@
 # Python
 .venv/
 .env
-*.txt
 __pycache__/
 *.py[cod]
 *$py.class
@@ -22,6 +21,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+cookies.txt
 
 # Django
 *.log

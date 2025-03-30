@@ -1,0 +1,11 @@
+scipy
+numpy
+pandas==1.5.3
+matplotlib
+geopandas
+osmnx
+networkx
+pandana
+osmnet
+openpyxl
+pyarrow
