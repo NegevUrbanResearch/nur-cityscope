@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
-import RadarChart from './componentes/RadarChart';
-import PieChart from './componentes/PieChart';
-import BarChart from './componentes/BarChart.js';
-import HorizontalStackedBar from './componentes/HorizontalStackedBar';
-import TableComponent from './componentes/tablaHeap.js';
+import React, { useState, useEffect } from 'react';
+import RadarChart from './components/RadarChart';
+import PieChart from './components/PieChart';
+import BarChart from './components/BarChart.js';
+import HorizontalStackedBar from './components/HorizontalStackedBar';
 import './index.css';
 import axios from 'axios';
 import isEqual from 'lodash/isEqual';
+import config from './config';
 
 // Memoize components to avoid unnecessary re-renders
 const MemoizedRadarChart = React.memo(RadarChart, (prevProps, nextProps) => isEqual(prevProps.data, nextProps.data));
@@ -19,39 +19,47 @@ const App = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
-  const prevStateRef = useRef(null);
 
   useEffect(() => {
-    const apiUrl = 'http://localhost:9900/api/dashboard_feed_state/';
+    const apiUrl = config.api.getDashboardFeedUrl();
+    console.log('Attempting to fetch data from:', apiUrl);
 
     let isMounted = true;
     let intervalId;
     let isFetching = false;
 
     const fetchData = async () => {
-      if (isFetching) return;
-      isFetching = true;
+      if (isFetching) {
+        console.log('Previous fetch still in progress, skipping...');
+        return;
+      }
+
       try {
-        console.log('Fetching data from:', apiUrl);
+        console.log('Starting data fetch from:', apiUrl);
+        isFetching = true;
         const response = await axios.get(apiUrl);
-        console.log('Raw API Response:', response.data);
-        
+        console.log('Received response from:', apiUrl);
+        console.log('Response status:', response.status);
+        console.log('Response data:', response.data);
+
+        if (!isMounted) return;
+
         // Transform the data to match the expected format
         const transformedData = {
-          barrasHorizontalesStackeadas: {
+          horizontalStackedBars: {
             labels: ['Proximity'],
             datasets: [{
               label: 'Value',
               data: [response.data[0].data.total_population / 10000], // Normalize for display
-              backgroundColor: '#3498db'
+              backgroundColor: config.charts.colors.primary
             }]
           },
-          barrasStackeadas: {
+          stackedBars: {
             labels: ['Density'],
             datasets: [{
               label: 'Value',
               data: [response.data[0].data.average_building_height],
-              backgroundColor: '#2ecc71'
+              backgroundColor: config.charts.colors.secondary
             }]
           },
           radar: {
@@ -63,36 +71,36 @@ const App = () => {
                 response.data[0].data.average_building_height,
                 response.data[0].data.green_space_percentage
               ],
-              backgroundColor: 'rgba(52, 152, 219, 0.2)',
-              borderColor: '#3498db',
-              pointBackgroundColor: '#3498db'
+              backgroundColor: `rgba(${config.charts.colors.primary}, 0.2)`,
+              borderColor: config.charts.colors.primary,
+              pointBackgroundColor: config.charts.colors.primary
             }]
           },
-          graficoDeTorta: {
+          pieChart: {
             labels: ['Green Space', 'Other'],
             datasets: [{
               data: [
                 response.data[0].data.green_space_percentage,
                 100 - response.data[0].data.green_space_percentage
               ],
-              backgroundColor: ['#2ecc71', '#95a5a6']
+              backgroundColor: [config.charts.colors.secondary, config.charts.colors.tertiary]
             }]
           }
         };
 
-        console.log('Transformed Data:', transformedData);
-
-        if (!isMounted) return;
-
+        console.log('Transformed data:', transformedData);
         setData(transformedData);
-        setLastUpdate(new Date());
-        setLoading(false);
+        setLastUpdate(new Date().toLocaleString());
         setError(null);
       } catch (err) {
-        console.error('Error fetching data:', err);
+        console.error('Error fetching data from:', apiUrl);
+        console.error('Error details:', err.message);
+        if (err.response) {
+          console.error('Response status:', err.response.status);
+          console.error('Response data:', err.response.data);
+        }
         if (isMounted) {
           setError(err.message);
-          setLoading(false);
         }
       } finally {
         isFetching = false;
@@ -103,13 +111,15 @@ const App = () => {
     fetchData();
 
     // Set up polling interval
-    intervalId = setInterval(fetchData, 1000);
+    intervalId = setInterval(fetchData, config.polling.interval);
+    console.log(`Set up polling interval of ${config.polling.interval / 1000} seconds`);
 
-    // Cleanup function
     return () => {
+      console.log('Cleaning up...');
       isMounted = false;
       if (intervalId) {
         clearInterval(intervalId);
+        console.log('Cleared polling interval');
       }
     };
   }, []);
@@ -186,24 +196,24 @@ const App = () => {
               padding: -5,
             }}
           >
-            Dashboard Control Panel
+            {config.frontend.title}
           </h2>
         </div>
 
-        <div className="columna" style={{ position: 'relative', overflow: 'hidden' }}>
-          <div className="columna1">
-            <div className="grafico">
+        <div className="column" style={{ position: 'relative', overflow: 'hidden' }}>
+          <div className="column1">
+            <div className="chart">
               <h3>Proximity</h3>
-              <MemoizedHorizontalStackedBar data={data?.barrasHorizontalesStackeadas} />
+              <MemoizedHorizontalStackedBar data={data?.horizontalStackedBars} />
             </div>
-            <div className="grafico">
+            <div className="chart">
               <h3>Density</h3>
-              <MemoizedBarChart data={data?.barrasStackeadas} />
+              <MemoizedBarChart data={data?.stackedBars} />
             </div>
           </div>
 
-          <div className="columna2" style={{ position: 'relative' }}>
-            <div className="grafico centrado">
+          <div className="column2" style={{ position: 'relative' }}>
+            <div className="chart centered">
               <div style={{ textAlign: 'center' }}>
                 <h3>Radar Chart</h3>
               </div>
@@ -247,10 +257,10 @@ const App = () => {
             </div>
           </div>
 
-          <div className="columna3">
-            <div className="grafico">
+          <div className="column3">
+            <div className="chart">
               <h3>Land Use</h3>
-              <MemoizedPieChart data={data?.graficoDeTorta} />
+              <MemoizedPieChart data={data?.pieChart} />
             </div>
             <div
               style={{
@@ -262,9 +272,9 @@ const App = () => {
               }}
             >
               <img
-                src="https://citylabbiobio.cl/wp-content/uploads/2023/08/logo-CLBB-ch.png"
+                src={config.frontend.logo.url}
                 alt="CityLab Biobío"
-                style={{ width: '200px' }}
+                style={{ width: config.frontend.logo.width }}
               />
             </div>
           </div>
@@ -272,7 +282,7 @@ const App = () => {
       </div>
 
       <div style={{ position: 'absolute', bottom: 20, left: 20, color: 'white' }}>
-        Last update: {lastUpdate ? lastUpdate.toLocaleTimeString() : 'N/A'}
+        Last update: {lastUpdate ? lastUpdate : 'N/A'}
       </div>
     </div>
   );
