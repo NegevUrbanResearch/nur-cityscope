@@ -56,3 +56,8 @@ clbb-io/core/migrations/
 .env.development.local
 .env.test.local
 .env.production.local
+
+# JSON files
+*.json
+!package.json
+!package-lock.json
