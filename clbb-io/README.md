@@ -1,69 +1,235 @@
-# Backend CLBB
+# CLBB-CityScope Backend
 
-Una vez clonado este proyeto se debe ejecutar el siguiente comando para iniciar los contenedores:
+This is the backend service for the CLBB-CityScope system, handling data processing, real-time updates, and API endpoints.
 
-`docker-compose up -d --build`
+## Project Structure
 
-Una vez que las imagenes se descarguen y el proyecto se genere, se deben aplicar las migraciones, para esto ejecutamos el siguiente comando:
+```
+clbb-io/
+├── calculations/              # Data processing modules
+│   ├── modules/              # Processing implementations
+│   │   └── base.py          # Base processor class
+│   └── README.md            # Processing documentation
+├── core/                     # Main Django application
+│   ├── backend/             # Django models and views
+│   │   ├── models.py        # Database models
+│   │   ├── views.py         # API endpoints
+│   │   └── urls.py          # URL routing
+│   ├── core/                # Django project settings
+│   │   ├── settings.py      # Project configuration
+│   │   ├── urls.py          # Main URL routing
+│   │   └── wsgi.py          # WSGI configuration
+│   ├── data/                # Data storage
+│   │   ├── raw/            # Raw input data
+│   │   └── processed/      # Processed output data
+│   ├── external_files/      # External data sources
+│   ├── management/          # Django management commands
+│   ├── media/              # User-uploaded files
+│   ├── migrations/         # Database migrations
+│   ├── websocket_app/      # Real-time updates
+│   │   └── utils/          # WebSocket utilities
+│   │       ├── data_manager.py    # Data management
+│   │       └── data_updater.py    # Real-time updates
+│   ├── init.sh             # Unix initialization script
+│   ├── init.bat            # Windows initialization script
+│   └── manage.py           # Django management
+└── docker-compose.yml      # Docker configuration
+```
 
-`docker exec -it clbb_web python manage.py migrate`
+## Setup Instructions
 
-Para poder hacer las migraciones se debe usar el siguiente comando:
+### Docker Setup (Recommended)
 
-`docker exec -it clbb_web python manage.py makemigrations`
+1. Build and start containers:
+```bash
+docker-compose up -d --build
+```
 
-Luego debemos crear un super usuario para nuestro backend, para eso ejecutamos el siguiente comando y seguir las instrucciones de la linea de comando:
+2. Apply database migrations:
+```bash
+docker exec -it clbb_web python manage.py migrate
+```
 
-`docker exec -it clbb_web python manage.py createsuperuser`
+3. Create superuser (follow prompts):
+```bash
+docker exec -it clbb_web python manage.py createsuperuser
+```
 
-Con este usuario podemos entrar al panel de administracion de django, la ruta para poder acceder es:
+4. Access admin panel:
+```
+http://localhost:8500/admin
+```
 
-`http://localhost:8500/admin`
+### Manual Setup (Development)
 
-En caso de necesitar abri un puerto en windows, la regla usada para dar acceso a los servicios que el pc tiene corriendo fue:
+1. Create virtual environment:
+```bash
+# Unix
+python3 -m venv venv
+source venv/bin/activate
 
-`New-NetFirewallRule -DisplayName "$SERVICE_NAME" -Direction Inbound -LocalPort $SERVICE_PORT -Protocol TCP -Action Allow`
+# Windows
+python -m venv venv
+venv\Scripts\activate
+```
 
-# Captura de imagen
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-## *Para que el equipo que captura la imagen envie se comunique con el pc que tiene los servicios corriendo deben tener la misma base de datos, mas abajo se dejan las instrucciones para la duplicación.*
+3. Initialize database:
+```bash
+# Unix
+./init.sh
 
-Para la captura de las imagenes se usa un ambiente virtual, para su creacion se debe asegurar tener instalado virtualenv, en caso de no tener el paquete, instalar con el siguiente comando:
+# Windows
+init.bat
+```
 
-`python3 install virtualenv`
+## Data Management
 
-Luego para la creacion del ambiente virtual se debe acceder en la terminar a la siguiente ruta y ejecutar:
+### Data Directory Structure
+- `/data/raw/`: Place raw data files here
+- `/data/processed/`: Contains processed data
+- `/external_files/`: External data sources
+- `/media/`: User-uploaded files
 
-`cd $PATH_TO_PROJECT/camera/`
-`python3 -m venv clbb`
+### Data Processing
+1. Place raw data in appropriate directories
+2. Run data processing:
+```bash
+docker exec -it clbb_web python manage.py process_data
+```
 
-Una vez el ambiente creado, si se esta usando Windows, usar:
+### Database Management
 
-`clbb\Scripts\activate`
+#### Export Database
+```bash
+docker exec -it clbb_db pg_dump -U postgres -W -h clbb_db clbb > clbb_db.sql
+```
 
-Para usuarios Unix:
+#### Import Database
+```bash
+# Reset database
+docker exec -i clbb_db psql clbb -U postgres -c "DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;"
 
-`source clbb/bin/activate`
+# Import data
+docker exec -i clbb_db psql clbb -U postgres < clbb_db.sql
+```
 
-Con el ambiente virtual activado, instalar librerias:
+## Development
 
-`pip install -r requirements.txt`
+### Adding New Features
+1. Create new module in `calculations/modules/`
+2. Update data processing pipeline
+3. Add API endpoints in `backend/views.py`
+4. Update WebSocket handlers if needed
 
-Para comenzar a capturar con las camaras se debe ejecutar el comando:
+### Testing
+```bash
+# Run tests
+docker exec -it clbb_web python manage.py test
 
-`python3 capture.py`
+# Run specific test
+docker exec -it clbb_web python manage.py test backend.tests
+```
 
-## Export base de datos 
+### Database Migrations
+```bash
+# Create migrations
+docker exec -it clbb_web python manage.py makemigrations
 
-Ejecucion en server:
+# Apply migrations
+docker exec -it clbb_web python manage.py migrate
+```
 
-`docker exec -it clbb_db pg_dump -U postgres -W -h clbb_db clbb > clbb_db.sql`
+## Troubleshooting
 
+### Windows Firewall
+If services are not accessible, add firewall rules:
+```powershell
+New-NetFirewallRule -DisplayName "CLBB-Service" -Direction Inbound -LocalPort 8500 -Protocol TCP -Action Allow
+```
 
-## Import base de datos
+### Database Issues
+1. Check database logs:
+```bash
+docker logs clbb_db
+```
 
-`docker exec -i clbb_db psql clbb -U postgres -c "DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;"`
-`docker exec -i clbb_db psql clbb -U postgres < clbb_db.sql`
+2. Reset database:
+```bash
+docker-compose down -v
+docker-compose up -d
+```
+
+### WebSocket Issues
+1. Check WebSocket logs:
+```bash
+docker logs clbb_web
+```
+
+2. Verify WebSocket connection:
+```javascript
+// In browser console
+ws = new WebSocket('ws://localhost:8500/ws/');
+ws.onmessage = (e) => console.log(e.data);
+```
+
+## Image Capture System
+
+### Database Synchronization
+*For the image capture system to communicate with the services running on the PC, they must share the same database. Instructions for database duplication are provided below.*
+
+### Setup Instructions
+
+1. Create virtual environment:
+```bash
+# Install virtualenv if not already installed
+python3 install virtualenv
+
+# Navigate to camera directory
+cd $PATH_TO_PROJECT/camera/
+
+# Create virtual environment
+python3 -m venv clbb
+```
+
+2. Activate virtual environment:
+```bash
+# Windows
+clbb\Scripts\activate
+
+# Unix
+source clbb/bin/activate
+```
+
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+4. Start image capture:
+```bash
+python3 capture.py
+```
+
+### Database Synchronization
+
+#### Export Database (Server)
+```bash
+docker exec -it clbb_db pg_dump -U postgres -W -h clbb_db clbb > clbb_db.sql
+```
+
+#### Import Database (Client)
+```bash
+# Reset database
+docker exec -i clbb_db psql clbb -U postgres -c "DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;"
+
+# Import data
+docker exec -i clbb_db psql clbb -U postgres < clbb_db.sql
+```
 
 
 
