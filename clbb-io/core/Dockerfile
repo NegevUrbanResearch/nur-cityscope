@@ -1,10 +1,11 @@
 # Use the official Python image with the desired version
-FROM python:3.11-slim
+FROM python:3.9-slim
 
-# Set environment variables for Django
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
-# Create and set the working directory
+# Set work directory
 WORKDIR /app
 
 # Create a volume for persistent data
