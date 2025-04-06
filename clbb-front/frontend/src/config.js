@@ -3,7 +3,7 @@ const config = {
   // API Configuration
   api: {
     // Get the API URL from environment variable or use a default
-    baseUrl: process.env.REACT_APP_API_URL || 'http://localhost:9901',
+    baseUrl: process.env.REACT_APP_API_URL || 'http://localhost:9900',
     // API endpoints
     endpoints: {
       dashboardFeed: '/api/dashboard_feed_state/',
