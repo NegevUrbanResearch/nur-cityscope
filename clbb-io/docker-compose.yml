@@ -1,28 +1,45 @@
-
 services:
   api:
     container_name: core_api
-    build: ./core/.
+    build: 
+      context: ./core
+      dockerfile: Dockerfile
     ports:
-      - "${API_PORT}:${API_PORT}"  # Usa la variable API_PORT desde el archivo .env
+      - "${API_PORT}:${API_PORT}"  # Uses API_PORT from .env file
     env_file:
-      - ./core/.env  # Declara el archivo .env aquí
+      - ./core/.env
     volumes:
-      - ./core/.:/app
+      - type: bind
+        source: ./core
+        target: /app
     depends_on:
       - db
     networks:
       - clbb_core
+    # Add healthcheck for better container orchestration
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "${API_PORT}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   db:
     container_name: core_db
     image: postgres:latest
     env_file:
-      - ./core/.env  # También carga el archivo .env para este servicio si es necesario
+      - ./core/.env
     volumes:
-      - postgres_data_core:/var/lib/postgresql/data
+      - type: volume
+        source: postgres_data_core
+        target: /var/lib/postgresql/data
     networks:
       - clbb_core
+    # Add healthcheck for database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:alpine
@@ -32,7 +49,12 @@ services:
     restart: always
     networks:
       - clbb_core
-
+    # Add healthcheck for Redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   clbb_core:
@@ -40,3 +62,5 @@ networks:
 
 volumes:
   postgres_data_core:
+    # Using named volume for better platform compatibility
+    name: clbb_postgres_data
