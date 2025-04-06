@@ -27,9 +27,8 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p /app/backend/migrations
 
-# Make init scripts executable
+# Make init script executable
 RUN chmod +x /app/init.sh
-COPY init.bat /app/init.bat
 
 # Set environment variables
 ENV PYTHONPATH=/app
@@ -37,10 +36,6 @@ ENV DJANGO_SETTINGS_MODULE=backend.settings
 
 EXPOSE 9900
 
-# Create a wrapper script that will choose the appropriate init script
-RUN echo '#!/bin/sh\nif [ -f /app/init.sh ]; then\n  /app/init.sh\nelse\n  /app/init.bat\nfi' > /app/init-wrapper.sh && \
-    chmod +x /app/init-wrapper.sh
-
-# Start your application using the wrapper script
-CMD ["/app/init-wrapper.sh"]
+# Start your application using the init script
+CMD ["/app/init.sh"]
 

@@ -9,16 +9,10 @@ services:
     volumes:
       - ./clbb-io/core/.:/app
       - ./init.sh:/app/init.sh
-      - ./init.bat:/app/init.bat
       - core_api_data:/app/data
     depends_on:
       - db
-    command: >
-      sh -c "if [ -f /app/init.sh ]; then
-        chmod +x /app/init.sh && /app/init.sh;
-      else
-        /app/init.bat;
-      fi"
+    command: ["/app/init.sh"]
     networks:
       - clbb_core
 
