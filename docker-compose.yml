@@ -12,7 +12,7 @@ services:
       - core_api_data:/app/data
     depends_on:
       - db
-    command: ["/app/init.sh"]
+    command: ["sh", "-c", "chmod +x /app/init.sh && /app/init.sh"]
     networks:
       - clbb_core
 
