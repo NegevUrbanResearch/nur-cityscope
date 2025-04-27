@@ -46,36 +46,16 @@ const App = () => {
 
         // Transform the data to match the expected format
         const transformedData = {
-          horizontalStackedBars: {
-            labels: ['Proximity'],
-            datasets: [{
-              label: 'Value',
-              data: [response.data[0].data.total_population / 10000], // Normalize for display
-              backgroundColor: config.charts.colors.primary
-            }]
-          },
-          stackedBars: {
-            labels: ['Density'],
-            datasets: [{
-              label: 'Value',
-              data: [response.data[0].data.average_building_height],
-              backgroundColor: config.charts.colors.secondary
-            }]
-          },
-          radar: {
-            labels: ['Proximity', 'Density', 'Diversity'],
-            datasets: [{
-              label: 'Values',
-              data: [
-                response.data[0].data.total_population / 10000,
-                response.data[0].data.average_building_height,
-                response.data[0].data.green_space_percentage
-              ],
-              backgroundColor: `rgba(${config.charts.colors.primary}, 0.2)`,
-              borderColor: config.charts.colors.primary,
-              pointBackgroundColor: config.charts.colors.primary
-            }]
-          },
+          // Direct mapping for radar chart - it expects categories, valuesSet1, valuesSet2
+          radar: response.data[0].data.radar,
+          
+          // Direct mapping for horizontal stacked bar chart - it expects bars with name and values
+          horizontalStackedBars: response.data[0].data.horizontalStackedBar,
+          
+          // Direct mapping for stacked bar chart - it expects bars with name and values
+          stackedBars: response.data[0].data.stackedBar,
+          
+          // Pie chart data transformation
           pieChart: {
             labels: ['Green Space', 'Other'],
             datasets: [{
@@ -92,6 +72,7 @@ const App = () => {
         setData(transformedData);
         setLastUpdate(new Date().toLocaleString());
         setError(null);
+        setLoading(false);
       } catch (err) {
         console.error('Error fetching data from:', apiUrl);
         console.error('Error details:', err.message);
