@@ -21,8 +21,8 @@ The application uses the following data models:
      - Has States: Whether this indicator has different states/scenarios
      - Description: Detailed explanation
 
-3. **States**
-   - Purpose: Define different scenarios or time periods
+3. **States (Present/Future)**
+   - Purpose: Defines different time periods (projections or retrospective)
    - Fields:
      - State Values: JSON object containing:
        - Year: The year this state represents
@@ -205,4 +205,4 @@ docker cp ./backup/media/ core_api:/app/media/
    - Use appropriate zoom levels
    - Consider caching strategies
 
-For additional help, refer to [API_DOCUMENTATION.md](API_DOCUMENTATION.md) or contact the development team. 
+For additional info on the API, refer to [API_DOCUMENTATION.md](API_DOCUMENTATION.md) 

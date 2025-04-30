@@ -162,18 +162,130 @@ class Command(BaseCommand):
                     )
                     self.stdout.write(self.style.SUCCESS(f'Created data for {indicator.name} - {state.state_values["label"]}'))
 
-        # Create sample dashboard feed state
-        feed_state, created = DashboardFeedState.objects.get_or_create(
-            state=states[0],
-            defaults={
-                'data': {
-                    'total_population': 1000000,
-                    'green_space_percentage': 25,
-                    'average_building_height': 15
+        # Create enhanced dashboard feed state with comprehensive data for all visualizations
+        for state in states:
+            # Calculate values with some randomness but based on the state year
+            year_factor = (state.state_values['year'] - 2023) / 17  # Normalized factor (0 to 1)
+            population_base = 800000 + random.uniform(-50000, 50000)
+            population_value = population_base * (1 + year_factor * 0.4)
+            green_space_base = 20 + random.uniform(-5, 5)
+            green_space_value = min(45, green_space_base * (1 + year_factor * 0.5))
+            building_height_base = 10 + random.uniform(-2, 2)
+            building_height_value = building_height_base * (1 + year_factor * 0.7)
+            
+            # Create comprehensive data structure for all chart components
+            dashboard_data = {
+                # Basic metrics used by multiple charts
+                'total_population': int(population_value),
+                'green_space_percentage': float(f"{green_space_value:.2f}"),
+                'average_building_height': float(f"{building_height_value:.2f}"),
+                
+                # Data for radar chart - standardized to English
+                'radar': {
+                    'categories': [
+                        "Population_d", "Amenities_d", "Green_Space_d", 
+                        "Proximity", "Land_Uses", "Mixed-Use", 
+                        "Distance_d", "Building_d", "Walkability",
+                        "Housing_d", "Proximity_Live", "Public_Space",
+                        "Mobility"
+                    ],
+                    'valuesSet1': [
+                        min(100, 45 + year_factor * 25 + random.uniform(-5, 5)),
+                        min(100, 50 + year_factor * 20 + random.uniform(-5, 5)),
+                        min(100, green_space_value * 2),
+                        min(100, 65 + year_factor * 15 + random.uniform(-3, 3)),
+                        min(100, 70 + year_factor * 10 + random.uniform(-3, 3)),
+                        min(100, 55 + year_factor * 20 + random.uniform(-5, 5)),
+                        min(100, 60 + year_factor * 15 + random.uniform(-4, 4)),
+                        min(100, building_height_value + 40 + random.uniform(-5, 5)),
+                        min(100, 65 + year_factor * 15 + random.uniform(-5, 5)),
+                        min(100, 40 + year_factor * 20 + random.uniform(-5, 5)),
+                        min(100, 60 + year_factor * 15 + random.uniform(-5, 5)),
+                        min(100, 50 + year_factor * 20 + random.uniform(-5, 5)),
+                        min(100, 45 + year_factor * 25 + random.uniform(-5, 5))
+                    ],
+                    'valuesSet2': [
+                        92.37, 45.02, 87.30, 69.87, 79.30, 88.09,
+                        79.17, 59.10, 91.54, 7.50, 43.00, 47.17, 55.00
+                    ]
+                },
+                
+                # Data for horizontal stacked bar chart - standardized to English
+                'horizontalStackedBar': {
+                    'bars': [
+                        {"name": "Proximity", "values": [45, 35, 20]},
+                        {"name": "Density", "values": [30, 40, 30]},
+                        {"name": "Mixed-Use", "values": [25, 35, 40]}
+                    ]
+                },
+                
+                # Data for stacked bar chart - standardized to English
+                'stackedBar': {
+                    'bars': [
+                        {"name": "Population", "values": [min(100, (population_value / 20000)), 100 - min(100, (population_value / 20000))]},
+                        {"name": "Buildings", "values": [min(100, building_height_value + 30), 100 - min(100, building_height_value + 30)]},
+                        {"name": "Amenities", "values": [min(100, 50 + year_factor * 20), 100 - min(100, 50 + year_factor * 20)]}
+                    ]
+                },
+                
+                # Data for traffic light table - standardized to English
+                'trafficLight': [
+                    {"name": "Walkability", "value": min(100, 70 + year_factor * 15 + random.uniform(-5, 5))},
+                    {"name": "Public Transport", "value": min(100, 50 + year_factor * 25 + random.uniform(-5, 5))},
+                    {"name": "Green Space", "value": min(100, green_space_value * 1.5 + random.uniform(-3, 3))}
+                ],
+                
+                # Data for regular table component - standardized to English
+                'table': {
+                    "indicators": ["Population", "Buildings", "Amenities"],
+                    "districts": [
+                        {
+                            "name": "District A",
+                            "values": [
+                                min(100, (population_value / 20000) + random.uniform(-5, 5)),
+                                min(100, building_height_value + 30 + random.uniform(-3, 3)),
+                                min(100, 50 + year_factor * 20 + random.uniform(-5, 5))
+                            ]
+                        },
+                        {
+                            "name": "District B",
+                            "values": [
+                                min(100, (population_value / 20000) * 0.7 + random.uniform(-3, 3)),
+                                min(100, (building_height_value + 30) * 0.8 + random.uniform(-3, 3)),
+                                min(100, (50 + year_factor * 20) * 0.9 + random.uniform(-3, 3))
+                            ]
+                        }
+                    ]
+                },
+                
+                # Data for data table with progress bars - standardized to English
+                'dataTable': {
+                    "categories": [
+                        {
+                            "name": "Walkability",
+                            "indicators": {
+                                "value1": min(100, 70 + year_factor * 15 + random.uniform(-5, 5)),
+                                "value2": min(100, 60 + year_factor * 20 + random.uniform(-5, 5))
+                            }
+                        },
+                        {
+                            "name": "Accessibility",
+                            "indicators": {
+                                "value1": min(100, 50 + year_factor * 25 + random.uniform(-5, 5)),
+                                "value2": min(100, 45 + year_factor * 30 + random.uniform(-5, 5))
+                            }
+                        }
+                    ]
                 }
             }
-        )
-        if created:
-            self.stdout.write(self.style.SUCCESS('Created dashboard feed state'))
+            
+            # Create or update dashboard feed state for this state
+            feed_state, created = DashboardFeedState.objects.update_or_create(
+                state=state,
+                defaults={'data': dashboard_data}
+            )
+            
+            status = 'Created' if created else 'Updated'
+            self.stdout.write(self.style.SUCCESS(f'{status} dashboard feed state for {state.state_values["label"]}'))
 
         self.stdout.write(self.style.SUCCESS('Sample data created successfully!')) 
