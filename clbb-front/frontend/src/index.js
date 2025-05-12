@@ -1,7 +1,7 @@
 /*
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import './index.css';
+import './style/index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 
@@ -18,9 +18,22 @@ root.render(
 reportWebVitals();
 */
 
+import React from "react";
+import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from "react-router-dom";
 
-import React from 'react';
-import ReactDOM from 'react-dom';
-import App from './App';
+import App from "./App";
+import { DataProvider } from './DataContext';
 
-ReactDOM.render(<App />, document.getElementById('root'));
+
+
+createRoot(document.getElementById("root")).render(  
+  <BrowserRouter>
+    <DataProvider>
+      <App />
+    </DataProvider>
+  </BrowserRouter>);
+
+
+
+
