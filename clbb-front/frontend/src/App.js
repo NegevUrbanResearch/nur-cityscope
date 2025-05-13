@@ -8,7 +8,7 @@ import {
   Typography,
   Button,
 } from "@mui/material";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 
 import darkTheme from "./theme";
 import { useAppData } from "./DataContext";
@@ -31,8 +31,8 @@ const App = () => {
 
         <Box component="main" sx={{ mt: 8, p: 3 }}>
           <Routes>
-            {/* the default page is now map 1 */}
-            <Route path="/" element={<Mobility />} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Mobility />} />
             <Route path="/climate" element={<Climate />} />
             <Route path="/land_use" element={<LandUse />} />
           </Routes>

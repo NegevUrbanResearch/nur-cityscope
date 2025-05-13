@@ -11,12 +11,10 @@ const Navbar = () => {
           <Button
             color="inherit"
             component={Link}
-            to="/"
+            to="/dashboard"
             sx={{ py: 2, px: 4, textTransform: "none" }}
           >
-            {" "}
-            {/* should map 1 be the default page? */}
-            <Typography variant="h6">mobility</Typography>
+            <Typography variant="h6">Dashboard</Typography>
           </Button>
           <Button
             color="inherit"
@@ -24,7 +22,7 @@ const Navbar = () => {
             to="/climate"
             sx={{ py: 2, px: 4, textTransform: "none" }}
           >
-            <Typography variant="h6">climate </Typography>
+            <Typography variant="h6">Climate</Typography>
           </Button>
           <Button
             color="inherit"
@@ -32,26 +30,12 @@ const Navbar = () => {
             to="/land_use"
             sx={{ py: 2, px: 4, textTransform: "none" }}
           >
-            <Typography variant="h6"> land use </Typography>
+            <Typography variant="h6">Land Use</Typography>
           </Button>
         </Box>
 
         <Typography variant="h5">
-          logo here
-          {/* <Box
-            component="img"
-            src={config.frontend.logo.url}
-            alt="CityLab Biobío"
-            sx={{
-              height: '80px',
-              //width: 350,
-            }}
-          /> */}
-          {/* <img
-          src={config.frontend.logo.url}
-          alt="CityLab Biobío"
-          style={{ width: config.frontend.logo.width }}
-        /> */}
+          <img src={config.frontend.logo.url} alt="nur" style={{ width: '160px', verticalAlign: 'middle', filter: 'brightness(0) invert(1)' }} />
         </Typography>
       </Toolbar>
     </AppBar>

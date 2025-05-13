@@ -2,9 +2,9 @@
 
 server {
     listen 80;
-    server_name _;  # Puedes reemplazar esto con tu dominio real
+    server_name _;  # Replace with your actual domain
 
-    # --- Servir Frontend Estático ---
+    # --- Serve Static Frontend ---
     location /projection/ {
         alias /usr/share/nginx/html/clbb-projection/frontend/;
         index index.html;
@@ -17,13 +17,28 @@ server {
         try_files $uri $uri/ /clbb-front/frontend/index.html;
     }
 
+    location = /dashboard {
+        return 301 /dashboard/;
+    }
+
     location /remote-controller/ {
         alias /usr/share/nginx/html/clbb-remote-controller/frontend/;
         index index.html;
         try_files $uri $uri/ /clbb-remote-controller/frontend/index.html;
     }
 
-    # --- Reverse Proxy para la API de Django ---
+    location /static/ {
+        alias /usr/share/nginx/html/clbb-front/frontend/static/;
+        try_files $uri =404;
+    }
+
+    # --- Serve Logo ---
+    location /media/Nur-Logo_3x-_1_.svg {
+        alias /usr/share/nginx/html/clbb-front/frontend/media/Nur-Logo_3x-_1_.svg;
+        try_files $uri =404;
+    }
+
+    # --- Reverse Proxy for Django API ---
     location /api/ {
         proxy_pass http://core_api:${API_PORT}/api/;  # Updated service name
         proxy_set_header Host $host;
@@ -31,13 +46,13 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         
-        # Permitir métodos POST
+        # Allow POST methods
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
     }
     
-    # --- Reverse Proxy para Media Resources ---
+    # --- Reverse Proxy for Media Resources ---
     location /media/ {
         proxy_pass http://core_api:${API_PORT}/media/;  # Updated service name
         proxy_set_header Host $host;
