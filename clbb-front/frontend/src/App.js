@@ -14,15 +14,14 @@ import darkTheme from "./theme";
 import { useAppData } from "./DataContext";
 
 import Navbar from "./components/Navbar";
-import Map1 from "./pages/map1";
-import Map2 from "./pages/map2";
-import Map3 from "./pages/map3";
+import Mobility from "./pages/Mobility";
+import Climate from "./pages/Climate";
+import LandUse from "./pages/LandUse";
 
 const App = () => {
   const { loading, error } = useAppData();
   if (loading) return <div>Loading...</div>;
   if (error) return <div>Error: {error}</div>;
-  
 
   return (
     <Box>
@@ -33,9 +32,9 @@ const App = () => {
         <Box component="main" sx={{ mt: 8, p: 3 }}>
           <Routes>
             {/* the default page is now map 1 */}
-            <Route path="/" element={<Map1 />} />
-            <Route path="/map2" element={<Map2 />} />
-            <Route path="/map3" element={<Map3 />} />
+            <Route path="/" element={<Mobility />} />
+            <Route path="/climate" element={<Climate />} />
+            <Route path="/land_use" element={<LandUse />} />
           </Routes>
         </Box>
       </ThemeProvider>

@@ -3,12 +3,12 @@ import { Tab, Box, AppBar, Typography, Grid, Paper } from "@mui/material";
 import { TabPanel, TabContext, TabList } from "@mui/lab";
 import isEqual from "lodash/isEqual";
 
-import config from "../config";
-import RadarChart from "../components/RadarChart";
-import PieChart from "../components/PieChart";
+import config from "../config.js";
+import RadarChart from "../components/RadarChart.js";
+import PieChart from "../components/PieChart.js";
 import BarChart from "../components/BarChart.js";
-import HorizontalStackedBar from "../components/HorizontalStackedBar";
-import { useAppData } from "../DataContext";
+import HorizontalStackedBar from "../components/HorizontalStackedBar.js";
+import { useAppData } from "../DataContext.jsx";
 
 // Memoize components to avoid unnecessary re-renders
 const MemoizedRadarChart = React.memo(RadarChart, (prevProps, nextProps) =>
@@ -23,7 +23,7 @@ const MemoizedHorizontalStackedBar = React.memo(
   (prevProps, nextProps) => isEqual(prevProps.data, nextProps.data),
 );
 
-const Map1 = () => {
+const Mobility = () => {
   const { map1data: data } = useAppData();
   const [value, setValue] = React.useState("1");
 
@@ -96,4 +96,4 @@ const Map1 = () => {
   );
 };
 
-export default Map1;
+export default Mobility;

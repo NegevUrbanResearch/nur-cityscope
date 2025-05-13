@@ -1,9 +1,8 @@
-// components/Navbar.jsx
 import React from "react";
 import { AppBar } from "@mui/material";
 
-const Map3 = () => {
+const LandUse = () => {
   return <AppBar position="static">another map will be displayed here</AppBar>;
 };
 
-export default Map3;
+export default LandUse;
