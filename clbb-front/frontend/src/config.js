@@ -30,7 +30,7 @@ const config = {
   frontend: {
     title: 'Dashboard Control Panel',
     logo: {
-      url: 'https://citylabbiobio.cl/wp-content/uploads/2023/08/logo-CLBB-ch.png',
+      url: '/media/Nur-Logo_3x-_1_.svg',
       width: '200px'
     }
   }

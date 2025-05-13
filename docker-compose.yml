@@ -8,11 +8,11 @@ services:
       - .env  # Declares the .env file here
     volumes:
       - ./clbb-io/core/.:/app
-      - ./init.sh:/app/init.sh:ro
+      - ./init.sh:/app/init.sh
       - core_api_data:/app/data
     depends_on:
       - db
-    command: ["sh", "-c", "chmod +x /app/init.sh && /app/init.sh"]
+    command: ["sh", "-c", "cp /app/init.sh /tmp/init.sh && chmod +x /tmp/init.sh && /tmp/init.sh"]
     networks:
       - clbb_core
 
