@@ -1,13 +1,13 @@
 services:
-  web:
+  core_api:  # This is the main API service (previously named "web")
     container_name: core_api
-    build: ./clbb-io/core/.
+    build: ./clbb-io/django_api/.
     ports:
       - "${API_PORT}:9900"  # Uses the API_PORT variable from the .env file
     env_file:
       - .env  # Declares the .env file here
     volumes:
-      - ./clbb-io/core/.:/app
+      - ./clbb-io/django_api/.:/app
       - ./init.sh:/app/init.sh
       - core_api_data:/app/data
     depends_on:
@@ -43,7 +43,7 @@ services:
     ports:
       - "${FRONT_PORT}:80"
     depends_on:
-      - web
+      - core_api
       - dashboard-builder
     networks:
       - clbb_core

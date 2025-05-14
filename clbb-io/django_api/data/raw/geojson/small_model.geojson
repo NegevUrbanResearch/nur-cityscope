@@ -1,0 +1,8 @@
+{
+"type": "FeatureCollection",
+"name": "small_model",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "NoteType": 0, "Name": null, "Notes": null, "created_us": "LINKERR", "created_da": "2024-12-16T00:00:00", "last_edite": "LINKERR", "last_edi_1": "2024-12-16T00:00:00", "Shape_Leng": 0.029498251529299999, "Shape_Area": 4.3099732099300001e-05 }, "geometry": { "type": "Polygon", "coordinates": [ [ [ 34.807651041000042, 31.263005993000036, 0.0 ], [ 34.807651041000042, 31.259009140000046, 0.0 ], [ 34.796921085000065, 31.259023971000033, 0.0 ], [ 34.796913670000038, 31.263057900000035, 0.0 ], [ 34.807651041000042, 31.263005993000036, 0.0 ] ] ] } }
+]
+}
