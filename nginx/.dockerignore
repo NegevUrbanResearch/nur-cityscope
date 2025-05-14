@@ -1,0 +1,24 @@
+# Git and version control
+.git
+.gitignore
+.gitlab-ci.yml
+.github/
+
+# Unnecessary files
+.DS_Store
+*.swp
+*.swo
+*~
+.env*
+*.log
+
+# Node modules and build artifacts (in case they exist)
+node_modules/
+dist/
+build/
+
+# Development resources
+.vscode/
+.idea/
+*.md
+!README.md 
