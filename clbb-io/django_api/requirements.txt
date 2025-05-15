@@ -9,6 +9,8 @@ Pillow>=10.2.0
 drf-yasg==1.21.7
 pytest-django>=4.5
 pytest>=7.0
+pydeck>=0.8.0
+pandas>=2.0.0
 
 # Database
 dj-database-url>=2.1.0
