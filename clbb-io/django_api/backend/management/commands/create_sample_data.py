@@ -5,6 +5,10 @@ from backend.models import (
 )
 import random
 from datetime import datetime
+import os
+import json
+import pydeck as pdk
+import pandas as pd
 
 """
 Dashboard Data Structure Documentation:
@@ -75,7 +79,8 @@ class Command(BaseCommand):
                     'total_population': int(800000 * (1 + year_factor * 0.4)),
                     'air_quality_index': float(f"{min(100, 60 + year_factor * 20):.2f}"),
                     'carbon_emissions': int(1000000 * (1 - year_factor * 0.3)),
-                    'renewable_energy_percentage': float(f"{min(100, 30 + year_factor * 40):.2f}")
+                    'renewable_energy_percentage': float(f"{min(100, 30 + year_factor * 40):.2f}"),
+                    'green_space_percentage': float(f"{min(100, 25 + year_factor * 30):.2f}")
                 },
                 'radar_categories': [
                     "Air Quality", "Green Space", "Carbon Emissions", 
@@ -94,7 +99,8 @@ class Command(BaseCommand):
                     'total_population': int(800000 * (1 + year_factor * 0.4)),
                     'mixed_use_ratio': float(f"{min(100, 30 + year_factor * 40):.2f}"),
                     'population_density': int(5000 * (1 + year_factor * 0.5)),
-                    'public_space_percentage': float(f"{min(100, 25 + year_factor * 35):.2f}")
+                    'public_space_percentage': float(f"{min(100, 25 + year_factor * 35):.2f}"),
+                    'average_building_height': float(f"{15 * (1 + year_factor * 0.5):.2f}")
                 },
                 'radar_categories': [
                     "Density", "Mixed-Use", "Building Height", 
@@ -183,6 +189,96 @@ class Command(BaseCommand):
         
         return dashboard_data
 
+    def generate_pydeck_map(self, indicator_name, state_year, output_dir='media/maps'):
+        """Generate a sample map visualization using PyDeck"""
+        # Create the directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Generate sample data for BioBio region
+        # Center around Concepción, Chile
+        center_lat, center_lon = -36.8274, -73.0498
+        
+        # Create grid of points
+        num_points = 40
+        points = []
+        for i in range(num_points):
+            lat = center_lat + random.uniform(-0.15, 0.15)
+            lon = center_lon + random.uniform(-0.15, 0.15)
+            
+            # Value based on indicator type
+            if 'Population' in indicator_name:
+                value = random.uniform(500, 5000)
+            elif 'Green Space' in indicator_name:
+                value = random.uniform(10, 40)
+            elif 'Building Height' in indicator_name:
+                value = random.uniform(5, 50)
+            elif 'Mobility' in indicator_name:
+                value = random.uniform(0, 100)
+            elif 'Climate' in indicator_name:
+                value = random.uniform(0, 100)
+            elif 'Land Use' in indicator_name:
+                value = random.uniform(0, 100)
+            else:
+                value = random.uniform(0, 100)
+            
+            # Increase values for future projections
+            year_factor = (state_year - 2023) / 17
+            value = value * (1 + year_factor * 0.2)
+            
+            points.append({
+                'lat': lat,
+                'lng': lon,
+                'value': value,
+                'radius': value / 50  # Scale radius according to value
+            })
+        
+        # Convert to DataFrame for PyDeck
+        df = pd.DataFrame(points)
+        
+        # Create the PyDeck visualization
+        layer = pdk.Layer(
+            'ScatterplotLayer',
+            df,
+            get_position=['lng', 'lat'],
+            get_radius='radius',
+            get_fill_color=[
+                'max(0, 255 - value * 2.55)', 
+                'min(255, value * 2.55)', 
+                '100',
+                180
+            ],
+            pickable=True,
+            opacity=0.8,
+            stroked=True,
+            filled=True
+        )
+        
+        # Set the view state
+        view_state = pdk.ViewState(
+            latitude=center_lat,
+            longitude=center_lon,
+            zoom=10,
+            pitch=0
+        )
+        
+        # Create the deck
+        deck = pdk.Deck(
+            layers=[layer],
+            initial_view_state=view_state,
+            tooltip={"text": "{value}"},
+            map_style='mapbox://styles/mapbox/dark-v10'
+        )
+        
+        # Generate HTML file name
+        clean_name = indicator_name.replace('[SAMPLE] ', '').replace(' ', '_').lower()
+        html_path = f"{output_dir}/{clean_name}_{state_year}.html"
+        
+        # Save as HTML
+        deck.to_html(html_path)
+        self.stdout.write(self.style.SUCCESS(f"Created map visualization: {html_path}"))
+        
+        return html_path
+
     def handle(self, *args, **options):
         # Create sample map types
         map_types = []
@@ -208,38 +304,44 @@ class Command(BaseCommand):
             if created:
                 self.stdout.write(self.style.SUCCESS(f'Created map type: {map_type.name}'))
 
-        # Create sample indicators
+        # Create sample indicators for the three main categories
         indicators = []
         sample_indicators = [
             {
                 'indicator_id': 1,
+                'name': '[SAMPLE] Mobility',
+                'has_states': True,
+                'description': 'Transportation and mobility metrics including public transport coverage and bicycle infrastructure'
+            },
+            {
+                'indicator_id': 2,
+                'name': '[SAMPLE] Climate',
+                'has_states': True,
+                'description': 'Environmental and climate metrics including green space coverage and air quality'
+            },
+            {
+                'indicator_id': 3,
+                'name': '[SAMPLE] Land Use',
+                'has_states': True,
+                'description': 'Urban form and land use metrics including building heights and mixed-use development'
+            },
+            {
+                'indicator_id': 4,
                 'name': '[SAMPLE] Population Density',
                 'has_states': True,
                 'description': 'Population density per square kilometer. Sample ranges: 1000-5000 people/km²'
             },
             {
-                'indicator_id': 2,
+                'indicator_id': 5,
                 'name': '[SAMPLE] Green Space Coverage',
                 'has_states': True,
                 'description': 'Percentage of green space in the area. Sample ranges: 10-40%'
             },
             {
-                'indicator_id': 3,
+                'indicator_id': 6,
                 'name': '[SAMPLE] Building Height',
                 'has_states': True,
                 'description': 'Average building height in meters. Sample ranges: 10-50m'
-            },
-            {
-                'indicator_id': 4,
-                'name': '[SAMPLE] Traffic Flow',
-                'has_states': True,
-                'description': 'Average daily traffic flow. Sample ranges: 1000-5000 vehicles/day'
-            },
-            {
-                'indicator_id': 5,
-                'name': '[SAMPLE] Air Quality',
-                'has_states': True,
-                'description': 'Air quality index. Sample ranges: 0-200'
             }
         ]
 
@@ -272,15 +374,16 @@ class Command(BaseCommand):
         def generate_sample_geojson(indicator_name, state_year):
             """Generate sample GeoJSON data based on indicator type and state"""
             base_value = {
+                'Mobility': random.uniform(0, 100),
+                'Climate': random.uniform(0, 100),
+                'Land Use': random.uniform(0, 100),
                 'Population Density': random.uniform(1000, 5000),
                 'Green Space Coverage': random.uniform(10, 40),
-                'Building Height': random.uniform(10, 50),
-                'Traffic Flow': random.uniform(1000, 5000),
-                'Air Quality': random.uniform(0, 200)
+                'Building Height': random.uniform(10, 50)
             }.get(indicator_name.replace('[SAMPLE] ', ''), 100)
             
             # Increase values for future projections
-            year_factor = (state_year - 2023) / 10
+            year_factor = (state_year - 2023) / 17
             value = base_value * (1 + year_factor * 0.2)
             
             return {
@@ -310,7 +413,7 @@ class Command(BaseCommand):
                 ]
             }
 
-        # Create sample indicator data
+        # Create sample indicator data and generate maps
         for indicator in indicators:
             for state in states:
                 data, created = IndicatorData.objects.get_or_create(
@@ -318,23 +421,34 @@ class Command(BaseCommand):
                     state=state
                 )
                 
-                if created:
+                if created or True:  # Always regenerate maps and data
+                    # Generate map visualization
+                    html_path = self.generate_pydeck_map(
+                        indicator.name, 
+                        state.state_values['year']
+                    )
+                    
                     # Add sample geojson data
-                    IndicatorGeojson.objects.create(
+                    IndicatorGeojson.objects.update_or_create(
                         indicatorData=data,
-                        geojson=generate_sample_geojson(indicator.name, state.state_values['year'])
+                        defaults={
+                            'geojson': generate_sample_geojson(indicator.name, state.state_values['year'])
+                        }
                     )
                     
                     # Add sample layer config
-                    LayerConfig.objects.create(
+                    LayerConfig.objects.update_or_create(
                         indicatorData=data,
-                        layer_config={
-                            'opacity': 0.7,
-                            'color': '#ff0000',
-                            'fill': True
+                        defaults={
+                            'layer_config': {
+                                'opacity': 0.7,
+                                'color': '#ff0000',
+                                'fill': True,
+                                'mapUrl': html_path
+                            }
                         }
                     )
-                    self.stdout.write(self.style.SUCCESS(f'Created data for {indicator.name} - {state.state_values["label"]}'))
+                    self.stdout.write(self.style.SUCCESS(f'Created/updated data for {indicator.name} - {state.state_values["label"]}'))
 
         # Create dashboard feed states for each type and state
         for state in states:
