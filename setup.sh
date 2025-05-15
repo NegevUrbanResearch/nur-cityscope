@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# === CLBB-CityScope Setup Script ===
-# This script sets up the CLBB-CityScope project using Docker.
+# === nur-CityScope Setup Script ===
+# This script sets up the nur-CityScope project using Docker.
 
 # Determine script directory (works regardless of where the script is called from)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -11,13 +11,13 @@ cd "$SCRIPT_DIR" || exit
 
 # Create necessary migration folders
 echo "Creating required migration folders..."
-mkdir -p "$SCRIPT_DIR/clbb-io/core/external_files"
-mkdir -p "$SCRIPT_DIR/clbb-io/core/migrations"
-mkdir -p "$SCRIPT_DIR/clbb-io/backend/migrations"
+mkdir -p "$SCRIPT_DIR/nur-io/core/external_files"
+mkdir -p "$SCRIPT_DIR/nur-io/core/migrations"
+mkdir -p "$SCRIPT_DIR/nur-io/backend/migrations"
 
 # Create empty __init__.py files
-touch "$SCRIPT_DIR/clbb-io/core/migrations/__init__.py"
-touch "$SCRIPT_DIR/clbb-io/backend/migrations/__init__.py"
+touch "$SCRIPT_DIR/nur-io/core/migrations/__init__.py"
+touch "$SCRIPT_DIR/nur-io/backend/migrations/__init__.py"
 
 # Start the services
 echo "Starting services..."

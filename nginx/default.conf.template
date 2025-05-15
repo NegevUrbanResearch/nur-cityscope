@@ -6,18 +6,18 @@ server {
 
     # --- Serve Static Frontend ---
     location /projection/ {
-        alias /usr/share/nginx/html/clbb-projection/frontend/;
+        alias /usr/share/nginx/html/nur-projection/frontend/;
         index index.html;
-        try_files $uri $uri/ /clbb-projection/frontend/index.html;
+        try_files $uri $uri/ /nur-projection/frontend/index.html;
     }
 
     # Dashboard application with client-side routing
     location /dashboard/ {
-        alias /usr/share/nginx/html/clbb-front/frontend/;
+        alias /usr/share/nginx/html/nur-front/frontend/;
         index index.html;
         # The key fix: all routes like /dashboard/mobility, /dashboard/climate, etc.
         # should serve the React app's index.html to support client-side routing
-        try_files $uri $uri/ /usr/share/nginx/html/clbb-front/frontend/index.html;
+        try_files $uri $uri/ /usr/share/nginx/html/nur-front/frontend/index.html;
     }
 
     # Redirect /dashboard without trailing slash to /dashboard/
@@ -27,9 +27,9 @@ server {
 
     # Remote controller
     location /remote-controller/ {
-        alias /usr/share/nginx/html/clbb-remote-controller/frontend/;
+        alias /usr/share/nginx/html/nur-remote-controller/frontend/;
         index index.html;
-        try_files $uri $uri/ /clbb-remote-controller/frontend/index.html;
+        try_files $uri $uri/ /nur-remote-controller/frontend/index.html;
     }
 
     # Redirect /remote/ to /remote-controller/
@@ -43,13 +43,13 @@ server {
     }
 
     location /static/ {
-        alias /usr/share/nginx/html/clbb-front/frontend/static/;
+        alias /usr/share/nginx/html/nur-front/frontend/static/;
         try_files $uri =404;
     }
 
     # --- Serve Logo ---
     location /media/Nur-Logo_3x-_1_.svg {
-        alias /usr/share/nginx/html/clbb-front/frontend/media/Nur-Logo_3x-_1_.svg;
+        alias /usr/share/nginx/html/nur-front/frontend/media/Nur-Logo_3x-_1_.svg;
         try_files $uri =404;
     }
     

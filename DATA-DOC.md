@@ -1,6 +1,6 @@
 # Data Documentation
 
-This comprehensive guide explains data models, API endpoints, and management practices for the CLBB-CityScope application.
+This comprehensive guide explains data models, API endpoints, and management practices for the nur-CityScope application.
 
 ## Data Structure
 
@@ -234,7 +234,7 @@ When adding new data, ensure:
 ### Creating a Backup
 ```bash
 # Backup the database
-docker exec core_db pg_dump -U postgres clbb_db > backup.sql
+docker exec core_db pg_dump -U postgres nur_db > backup.sql
 
 # Backup uploaded files
 docker cp core_api:/app/media/ ./backup/media/
@@ -243,7 +243,7 @@ docker cp core_api:/app/media/ ./backup/media/
 ### Restoring from Backup
 ```bash
 # Restore the database
-cat backup.sql | docker exec -i core_db psql -U postgres -d clbb_db
+cat backup.sql | docker exec -i core_db psql -U postgres -d nur_db
 
 # Restore uploaded files
 docker cp ./backup/media/ core_api:/app/media/

@@ -1,4 +1,4 @@
-# CLBB-CityScope - Comprehensive .gitignore
+# nur-CityScope - Comprehensive .gitignore
 # ----------------------------------------
 
 # Python
@@ -96,15 +96,15 @@ data/
 */data/
 */*/data/
 */*/*/data/
-clbb-io/django_api/data/
-clbb-io/core/data/
-clbb-io/core/external_files/
+nur-io/django_api/data/
+nur-io/core/data/
+nur-io/core/external_files/
 screenshots/
 instrucciones.txt
 map_generator/data/output/*
 map_generator/data/raster/*
 map_generator/data/shapefile/indicadores/seguridad/*
-camera/clbb
+camera/nur
 camera/images/*
 api/media/*
 calculations/data/*
