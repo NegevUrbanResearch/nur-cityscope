@@ -2,14 +2,20 @@
 const config = {
   // API Configuration
   api: {
-    // Get the API URL from environment variable or use a default
-    baseUrl: process.env.REACT_APP_API_URL || 'http://localhost:9900',
+    // Get the API URL from environment variable or use window.location.origin for relative paths
+    baseUrl: process.env.REACT_APP_API_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost'),
     // API endpoints
     endpoints: {
       dashboardFeed: '/api/dashboard_feed_state/',
     },
     // Get the full URL for the dashboard feed
     getDashboardFeedUrl: () => `${config.api.baseUrl}${config.api.endpoints.dashboardFeed}`,
+  },
+  
+  // Media Configuration - separate from API
+  media: {
+    // Media files are served by Nginx, use window.location.origin by default
+    baseUrl: process.env.REACT_APP_MEDIA_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost'),
   },
   
   // Polling Configuration

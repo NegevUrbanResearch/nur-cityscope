@@ -1,65 +1,92 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import axios from 'axios';
+import api from './api'; // Import the pre-configured api instance
 
 import config from "./config";
-
 
 const DataContext = createContext();
 
 export const DataProvider = ({ children }) => {
-    
-  const [map1data, setMap1Data] = useState(null);
-  const [map2data, setMap2Data] = useState(null);
+  // Store the current indicator type (mobility, climate, land_use)
+  const [currentIndicator, setCurrentIndicator] = useState('mobility');
   
+  // Store the dashboard data for the current indicator
+  const [dashboardData, setDashboardData] = useState(null);
+  
+  // UI state
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
 
-
-  useEffect(() => {
-    const apiUrl = config.api.getDashboardFeedUrl();
-    console.log("Attempting to fetch data from:", apiUrl);
-
-    let isMounted = true;
-    let intervalId;
-    let isFetching = false;
-
-    const fetchData = async () => {
-      if (isFetching) {
-        console.log("Previous fetch still in progress, skipping...");
-        return;
-      }
-
-      try {
-        console.log("Starting data fetch from:", apiUrl);
-        isFetching = true;
-        const response = await axios.get(apiUrl);
-        console.log("Received response from:", apiUrl);
-        console.log("Response status:", response.status);
-        console.log("Response data:", response.data);
-
-        if (!isMounted) return;
-
+  // Function to fetch data for the current indicator
+  const fetchDashboardData = async (indicator) => {
+    if (!indicator) return;
+    
+    // Use a relative URL with the api instance
+    const endpoint = `/api/dashboard_feed_state/?dashboard_type=${indicator}`;
+    console.log(`Fetching ${indicator} dashboard data from:`, endpoint);
+    
+    try {
+      setLoading(true);
+      const response = await api.get(endpoint);
+      
+      if (response.data && response.data.length > 0) {
         // Transform the data to match the expected format
         const transformedData = {
-          // Direct mapping for radar chart - it expects categories, valuesSet1, valuesSet2
+          // Direct mapping for radar chart
           radar: response.data[0].data.radar,
 
-          // Direct mapping for horizontal stacked bar chart - it expects bars with name and values
+          // Direct mapping for horizontal stacked bar chart
           horizontalStackedBars: response.data[0].data.horizontalStackedBar,
 
-          // Direct mapping for stacked bar chart - it expects bars with name and values
+          // Direct mapping for stacked bar chart
           stackedBars: response.data[0].data.stackedBar,
 
-          // Pie chart data transformation
+          // Metrics data
+          metrics: {
+            total_population: response.data[0].data.total_population || 0,
+            // Include indicator-specific metrics
+            ...(indicator === 'mobility' && {
+              public_transport_coverage: response.data[0].data.public_transport_coverage || 0,
+              average_commute_time: response.data[0].data.average_commute_time || 0,
+              bike_lane_coverage: response.data[0].data.bike_lane_coverage || 0
+            }),
+            ...(indicator === 'climate' && {
+              air_quality_index: response.data[0].data.air_quality_index || 0,
+              carbon_emissions: response.data[0].data.carbon_emissions || 0,
+              renewable_energy_percentage: response.data[0].data.renewable_energy_percentage || 0,
+              green_space_percentage: response.data[0].data.green_space_percentage || 0
+            }),
+            ...(indicator === 'land_use' && {
+              mixed_use_ratio: response.data[0].data.mixed_use_ratio || 0,
+              population_density: response.data[0].data.population_density || 0,
+              public_space_percentage: response.data[0].data.public_space_percentage || 0,
+              average_building_height: response.data[0].data.average_building_height || 0
+            })
+          },
+
+          // Pie chart data using appropriate metric based on indicator
           pieChart: {
-            labels: ["Green Space", "Other"],
+            labels: indicator === 'climate' 
+              ? ["Green Space", "Other"] 
+              : indicator === 'land_use' 
+                ? ["Mixed Use", "Single Use"] 
+                : ["Public Transport Coverage", "No Coverage"],
             datasets: [
               {
-                data: [
-                  response.data[0].data.green_space_percentage,
-                  100 - response.data[0].data.green_space_percentage,
-                ],
+                data: indicator === 'climate' 
+                  ? [
+                    response.data[0].data.green_space_percentage || 0,
+                    100 - (response.data[0].data.green_space_percentage || 0)
+                  ] 
+                  : indicator === 'land_use' 
+                    ? [
+                      response.data[0].data.mixed_use_ratio || 0,
+                      100 - (response.data[0].data.mixed_use_ratio || 0)
+                    ] 
+                    : [
+                      response.data[0].data.public_transport_coverage || 0,
+                      100 - (response.data[0].data.public_transport_coverage || 0)
+                    ],
                 backgroundColor: [
                   config.charts.colors.secondary,
                   config.charts.colors.tertiary,
@@ -67,45 +94,65 @@ export const DataProvider = ({ children }) => {
               },
             ],
           },
+
+          // Additional data
+          trafficLight: response.data[0].data.trafficLight,
+          dataTable: response.data[0].data.dataTable
         };
 
-        console.log("Transformed data:", transformedData);
-        setMap1Data(transformedData);
+        console.log("Transformed dashboard data:", transformedData);
+        setDashboardData(transformedData);
         setLastUpdate(new Date().toLocaleString());
         setError(null);
-        setLoading(false);
-      } catch (err) {
-        console.error("Error fetching data from:", apiUrl);
-        console.error("Error details:", err.message);
-        if (err.response) {
-          console.error("Response status:", err.response.status);
-          console.error("Response data:", err.response.data);
-        }
-        if (isMounted) {
-          setError(err.message);
-        }
-      } finally {
-        isFetching = false;
+      } else {
+        setError("No data available for this indicator");
       }
+    } catch (err) {
+      console.error(`Error fetching ${indicator} dashboard data:`, err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    fetchData();
+  // Fetch data on indicator change
+  useEffect(() => {
+    let isMounted = true;
+    let intervalId;
 
-    intervalId = setInterval(fetchData, config.polling.interval);
-    console.log(`Set polling interval of ${config.polling.interval / 1000} seconds`);
+    const initData = async () => {
+      await fetchDashboardData(currentIndicator);
+      
+      if (isMounted) {
+        // Set up polling
+        intervalId = setInterval(() => {
+          fetchDashboardData(currentIndicator);
+        }, config.polling.interval);
+      }
+    };
+
+    initData();
 
     return () => {
-      console.log("Cleaning up...");
       isMounted = false;
       clearInterval(intervalId);
     };
-  }, []);
+  }, [currentIndicator]);
+
+  // Function to switch indicators
+  const changeIndicator = (newIndicator) => {
+    if (newIndicator !== currentIndicator && 
+        ['mobility', 'climate', 'land_use'].includes(newIndicator)) {
+      setCurrentIndicator(newIndicator);
+    }
+  };
 
   return (
     <DataContext.Provider
       value={{
-        map1data,
-        map2data,
+        dashboardData,
+        currentIndicator,
+        changeIndicator,
         loading,
         error,
         lastUpdate,
@@ -114,12 +161,11 @@ export const DataProvider = ({ children }) => {
       {children}
     </DataContext.Provider>
   );
-}
+};
 
-
-export const useAppData = ()=> {
+export const useAppData = () => {
   return useContext(DataContext);
-}
+};
 
 
 
