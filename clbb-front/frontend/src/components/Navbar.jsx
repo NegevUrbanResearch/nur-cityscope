@@ -1,9 +1,13 @@
 import React from "react";
 import { AppBar, Toolbar, Typography, Button, Box } from "@mui/material";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import config from "../config";
+import { useAppData } from "../DataContext";
 
 const Navbar = () => {
+  const location = useLocation();
+  const { currentIndicator } = useAppData();
+
   return (
     <AppBar position="fixed">
       <Toolbar>
@@ -11,24 +15,39 @@ const Navbar = () => {
           <Button
             color="inherit"
             component={Link}
-            to="/dashboard"
-            sx={{ py: 2, px: 4, textTransform: "none" }}
+            to="/dashboard/mobility"
+            sx={{ 
+              py: 2, 
+              px: 4, 
+              textTransform: "none",
+              backgroundColor: currentIndicator === "mobility" ? "rgba(255, 255, 255, 0.1)" : "transparent"
+            }}
           >
-            <Typography variant="h6">Dashboard</Typography>
+            <Typography variant="h6">Mobility</Typography>
           </Button>
           <Button
             color="inherit"
             component={Link}
-            to="/climate"
-            sx={{ py: 2, px: 4, textTransform: "none" }}
+            to="/dashboard/climate"
+            sx={{ 
+              py: 2, 
+              px: 4, 
+              textTransform: "none",
+              backgroundColor: currentIndicator === "climate" ? "rgba(255, 255, 255, 0.1)" : "transparent"
+            }}
           >
             <Typography variant="h6">Climate</Typography>
           </Button>
           <Button
             color="inherit"
             component={Link}
-            to="/land_use"
-            sx={{ py: 2, px: 4, textTransform: "none" }}
+            to="/dashboard/land_use"
+            sx={{ 
+              py: 2, 
+              px: 4, 
+              textTransform: "none",
+              backgroundColor: currentIndicator === "land_use" ? "rgba(255, 255, 255, 0.1)" : "transparent"
+            }}
           >
             <Typography variant="h6">Land Use</Typography>
           </Button>
