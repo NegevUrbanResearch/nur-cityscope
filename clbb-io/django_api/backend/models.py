@@ -1,4 +1,26 @@
 from django.db import models
+import os
+from django.utils import timezone
+
+def indicator_image_path(instance, filename):
+    """
+    Organize uploaded images by category/indicator name/state year
+    """
+    # Get indicator name and category
+    indicator_name = instance.indicatorData.indicator.name.replace(' ', '_').lower()
+    category = instance.indicatorData.indicator.category
+    
+    # Try to get year from state, default to 2023
+    try:
+        state_year = instance.indicatorData.state.state_values.get('year', 2023)
+    except (AttributeError, KeyError, TypeError):
+        state_year = 2023
+    
+    # Get file extension
+    ext = os.path.splitext(filename)[1].lower()
+    
+    # Generate path: indicators/category/indicator_name_year.ext
+    return f'indicators/{category}/{indicator_name}_{state_year}{ext}'
 
 class Indicator(models.Model):
     id = models.AutoField(primary_key=True)
@@ -33,10 +55,15 @@ class IndicatorData(models.Model):
 class IndicatorImage(models.Model):
     id = models.AutoField(primary_key=True)
     indicatorData = models.ForeignKey(IndicatorData, on_delete=models.CASCADE, related_name='images')
-    image = models.ImageField(upload_to='indicators/')
-
+    image = models.ImageField(upload_to=indicator_image_path)
+    uploaded_at = models.DateTimeField(default=timezone.now)
+    
     def __str__(self):
-        return f"Image {self.id}"
+        indicator_name = self.indicatorData.indicator.name
+        return f"Image for {indicator_name}"
+    
+    class Meta:
+        ordering = ['-uploaded_at']
 
 class IndicatorGeojson(models.Model):
     id = models.AutoField(primary_key=True)

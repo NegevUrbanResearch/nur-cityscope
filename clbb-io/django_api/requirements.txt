@@ -1,16 +1,23 @@
-Django>=4.2.0
-djangorestframework>=3.14.0
-channels[daphne]>=4.0.0
-channels-redis>=4.1.0
-djangochannelsrestframework>=0.1.0
-django-cors-headers>=4.3.0
-requests>=2.31.0
-Pillow>=10.2.0
+django==4.2.21
+dj-database-url==2.1.0
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+pip==24.0
+asgiref==3.7.2
+Pillow==10.1.0
+psycopg2-binary==2.9.9
+setuptools==68.2.2
+sqlparse==0.4.4
+typing_extensions==4.8.0
+wheel==0.41.3
+daphne==4.0.0
+channels==4.0.0
+channels-redis==4.1.0
 drf-yasg==1.21.7
-pytest-django>=4.5
-pytest>=7.0
-pydeck>=0.8.0
-pandas>=2.0.0
+Matplotlib==3.8.2
+pydeck==0.8.0
+pandas==2.1.4
+numpy==1.26.3
 
 # Database
 dj-database-url>=2.1.0

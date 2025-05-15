@@ -1,10 +1,14 @@
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from rest_framework import routers
+from . import views
 from .views import (
     DashboardFeedStateViewSet, IndicatorGeojsonViewSet, MapTypeViewSet,
     CustomActionsViewSet, IndicatorViewSet, StateViewSet,
-    IndicatorDataViewSet, IndicatorImageViewSet, LayerConfigViewSet
+    IndicatorDataViewSet, IndicatorImageViewSet, LayerConfigViewSet,
+    ImageUploadView,  # Import the new view
+    serve_map_file
 )
 
 from rest_framework import permissions
@@ -43,4 +47,8 @@ urlpatterns = [
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
     path('redoc/', schema_view.with_ui('redoc', cache_timeout=0), name='schema-redoc'),
     path('swagger.json', schema_view.without_ui(cache_timeout=0), name='schema-json'),
+    # Add the new image upload endpoint
+    path('upload_image/', ImageUploadView.as_view(), name='upload_image'),
+    # For serving map files directly
+    path('maps/<path:path>', serve_map_file, name='serve_map_file'),
 ]

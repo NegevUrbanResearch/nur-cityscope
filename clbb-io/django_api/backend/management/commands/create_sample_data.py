@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand
 from backend.models import (
     Indicator, State, IndicatorData, IndicatorGeojson,
-    LayerConfig, DashboardFeedState, MapType
+    LayerConfig, DashboardFeedState, MapType, IndicatorImage
 )
 import random
 from datetime import datetime
@@ -9,6 +9,12 @@ import os
 import json
 import pydeck as pdk
 import pandas as pd
+from PIL import Image
+import numpy as np
+from django.core.files.base import ContentFile
+import io
+import matplotlib.pyplot as plt
+from matplotlib import cm
 
 """
 Dashboard Data Structure Documentation:
@@ -279,7 +285,153 @@ class Command(BaseCommand):
         
         return html_path
 
+    def generate_synthetic_image(self, indicator_name, state_year, output_dir='media/indicators'):
+        """Generate a synthetic visualization image based on indicator type and state"""
+        # Create main directory and subdirectories by indicator category
+        category = 'mobility'
+        if 'Climate' in indicator_name or 'Green Space' in indicator_name:
+            category = 'climate'
+        elif 'Land Use' in indicator_name or 'Building Height' in indicator_name or 'Population' in indicator_name:
+            category = 'land_use'
+            
+        # Create subdirectory for this category if it doesn't exist
+        category_dir = f"{output_dir}/{category}"
+        os.makedirs(category_dir, exist_ok=True)
+        
+        # Generate file name
+        clean_name = indicator_name.replace('[SAMPLE] ', '').replace(' ', '_').lower()
+        # Make sure the path includes indicators/ prefix
+        img_path = f"indicators/{category}/{clean_name}_{state_year}.png"
+        full_path = f"media/{img_path}"
+        
+        # Different visualization styles based on indicator type
+        # Create a figure with a specific size
+        plt.figure(figsize=(10, 8))
+        
+        # Year factor - affects visualization appearance based on future vs current
+        year_factor = (state_year - 2023) / 17
+        
+        # Create different visualizations based on indicator type
+        if 'Mobility' in indicator_name:
+            # Create a mobility heatmap
+            x = np.linspace(-3, 3, 100)
+            y = np.linspace(-3, 3, 100)
+            X, Y = np.meshgrid(x, y)
+            
+            # Road network-like pattern, more developed in future
+            Z = np.sin(X*3) * np.cos(Y*3) * np.exp(-(X**2 + Y**2)/10)
+            Z += year_factor * (np.sin(X*5) * np.cos(Y*5)) * 0.5
+            
+            plt.contourf(X, Y, Z, 20, cmap='viridis')
+            plt.colorbar(label='Mobility Index')
+            plt.title(f"Mobility Visualization - {state_year}")
+            
+        elif 'Climate' in indicator_name or 'Green Space' in indicator_name:
+            # Create a climate visualization with more green in future projections
+            x = np.linspace(-3, 3, 100)
+            y = np.linspace(-3, 3, 100)
+            X, Y = np.meshgrid(x, y)
+            
+            # Climate pattern, greener in future
+            base = np.exp(-(X**2 + Y**2)/5)
+            future_enhancement = year_factor * 0.5
+            Z = base + future_enhancement
+            
+            # More green in future projections
+            colors = [(0.8, 0.2, 0.2), (0.8, 0.8, 0.2), (0.2, 0.8, 0.2)]
+            if year_factor > 0.5:
+                colors = [(0.5, 0.5, 0.2), (0.3, 0.7, 0.2), (0.1, 0.8, 0.1)]
+                
+            cmap = cm.colors.LinearSegmentedColormap.from_list('custom_cmap', colors, N=256)
+            plt.contourf(X, Y, Z, 20, cmap=cmap)
+            plt.colorbar(label='Green Index')
+            plt.title(f"Climate/Green Space - {state_year}")
+            
+        elif 'Land Use' in indicator_name or 'Building Height' in indicator_name:
+            # Create a land use visualization with building blocks
+            # Generate random building heights, taller in future
+            np.random.seed(42)  # For reproducibility
+            building_count = 100
+            x = np.random.uniform(-5, 5, building_count)
+            y = np.random.uniform(-5, 5, building_count)
+            heights = np.random.uniform(1, 5, building_count) * (1 + year_factor * 2)
+            
+            # Make it look like a city grid
+            plt.scatter(x, y, s=heights*30, c=heights, cmap='plasma', alpha=0.7)
+            plt.colorbar(label='Building Height')
+            plt.title(f"Land Use / Building Height - {state_year}")
+            
+        elif 'Population' in indicator_name:
+            # Population density map
+            x = np.linspace(-3, 3, 100)
+            y = np.linspace(-3, 3, 100)
+            X, Y = np.meshgrid(x, y)
+            
+            # Create population centers
+            Z1 = np.exp(-((X-1)**2 + (Y-1)**2))
+            Z2 = np.exp(-((X+1)**2 + (Y+1)**2)/2)
+            Z = (Z1 + Z2) * (1 + year_factor * 0.7)  # Higher density in future
+            
+            plt.contourf(X, Y, Z, 20, cmap='YlOrRd')
+            plt.colorbar(label='Population Density')
+            plt.title(f"Population Density - {state_year}")
+        
+        else:
+            # Generic visualization for other indicator types
+            x = np.linspace(-3, 3, 100)
+            y = np.linspace(-3, 3, 100)
+            X, Y = np.meshgrid(x, y)
+            Z = np.sin(X) * np.cos(Y) * (1 + year_factor)
+            
+            plt.contourf(X, Y, Z, 20, cmap='viridis')
+            plt.colorbar()
+            plt.title(f"{indicator_name} - {state_year}")
+        
+        # Remove axes for cleaner visualization
+        plt.axis('off')
+        
+        # Save the image
+        plt.savefig(full_path, bbox_inches='tight', transparent=False)
+        plt.close()
+        
+        self.stdout.write(self.style.SUCCESS(f"Created synthetic image: {full_path}"))
+        return img_path
+
     def handle(self, *args, **options):
+        # Clean up existing data before regenerating
+        self.stdout.write(self.style.SUCCESS("Cleaning up existing data..."))
+        Indicator.objects.all().delete()
+        State.objects.all().delete()
+        IndicatorData.objects.all().delete()
+        IndicatorGeojson.objects.all().delete()
+        IndicatorImage.objects.all().delete()
+        LayerConfig.objects.all().delete()
+        DashboardFeedState.objects.all().delete()
+        MapType.objects.all().delete()
+        
+        # Ensure media directories exist with proper permissions
+        from django.conf import settings
+        media_root = settings.MEDIA_ROOT
+        
+        # Create main media directory
+        os.makedirs(media_root, exist_ok=True)
+        
+        # Create subdirectories
+        dirs_to_create = [
+            os.path.join(media_root, 'indicators'),
+            os.path.join(media_root, 'indicators/mobility'),
+            os.path.join(media_root, 'indicators/climate'),
+            os.path.join(media_root, 'indicators/land_use'),
+            os.path.join(media_root, 'maps'),
+        ]
+        
+        for directory in dirs_to_create:
+            os.makedirs(directory, exist_ok=True)
+            # Set permissions to ensure nginx can read the files
+            os.chmod(directory, 0o755)
+            
+        self.stdout.write(self.style.SUCCESS("Created necessary directories with proper permissions"))
+        
         # Create sample map types
         map_types = []
         sample_map_types = [
@@ -304,44 +456,29 @@ class Command(BaseCommand):
             if created:
                 self.stdout.write(self.style.SUCCESS(f'Created map type: {map_type.name}'))
 
-        # Create sample indicators for the three main categories
+        # Create sample indicators - limited to 3 as requested
         indicators = []
         sample_indicators = [
             {
                 'indicator_id': 1,
                 'name': '[SAMPLE] Mobility',
                 'has_states': True,
-                'description': 'Transportation and mobility metrics including public transport coverage and bicycle infrastructure'
+                'description': 'Transportation and mobility metrics including public transport coverage',
+                'category': 'mobility'
             },
             {
                 'indicator_id': 2,
                 'name': '[SAMPLE] Climate',
                 'has_states': True,
-                'description': 'Environmental and climate metrics including green space coverage and air quality'
+                'description': 'Environmental and climate metrics including green space',
+                'category': 'climate'
             },
             {
                 'indicator_id': 3,
                 'name': '[SAMPLE] Land Use',
                 'has_states': True,
-                'description': 'Urban form and land use metrics including building heights and mixed-use development'
-            },
-            {
-                'indicator_id': 4,
-                'name': '[SAMPLE] Population Density',
-                'has_states': True,
-                'description': 'Population density per square kilometer. Sample ranges: 1000-5000 people/km²'
-            },
-            {
-                'indicator_id': 5,
-                'name': '[SAMPLE] Green Space Coverage',
-                'has_states': True,
-                'description': 'Percentage of green space in the area. Sample ranges: 10-40%'
-            },
-            {
-                'indicator_id': 6,
-                'name': '[SAMPLE] Building Height',
-                'has_states': True,
-                'description': 'Average building height in meters. Sample ranges: 10-50m'
+                'description': 'Urban form and land use metrics including mixed-use development',
+                'category': 'land_use'
             }
         ]
 
@@ -354,13 +491,11 @@ class Command(BaseCommand):
             if created:
                 self.stdout.write(self.style.SUCCESS(f'Created indicator: {indicator.name}'))
 
-        # Create sample states
+        # Create sample states - limited to 2 as requested
         states = []
         sample_states = [
-            {'year': 2023, 'scenario': 'current', 'label': '[SAMPLE] Current State'},
-            {'year': 2025, 'scenario': 'projected', 'label': '[SAMPLE] Near Future'},
-            {'year': 2030, 'scenario': 'projected', 'label': '[SAMPLE] Future'},
-            {'year': 2040, 'scenario': 'projected', 'label': '[SAMPLE] Long-term Future'}
+            {'year': 2023, 'scenario': 'current', 'label': 'Current State'},
+            {'year': 2040, 'scenario': 'projected', 'label': 'Future State'}
         ]
 
         for state_data in sample_states:
@@ -414,41 +549,57 @@ class Command(BaseCommand):
             }
 
         # Create sample indicator data and generate maps
+        self.stdout.write(self.style.SUCCESS("Creating sample data..."))
         for indicator in indicators:
             for state in states:
+                # Create or get indicator data
                 data, created = IndicatorData.objects.get_or_create(
                     indicator=indicator,
                     state=state
                 )
                 
-                if created or True:  # Always regenerate maps and data
-                    # Generate map visualization
-                    html_path = self.generate_pydeck_map(
-                        indicator.name, 
-                        state.state_values['year']
-                    )
-                    
-                    # Add sample geojson data
-                    IndicatorGeojson.objects.update_or_create(
-                        indicatorData=data,
-                        defaults={
-                            'geojson': generate_sample_geojson(indicator.name, state.state_values['year'])
+                # Generate map visualization
+                html_path = self.generate_pydeck_map(
+                    indicator.name, 
+                    state.state_values['year']
+                )
+                
+                # Generate synthetic image
+                img_path = self.generate_synthetic_image(
+                    indicator.name,
+                    state.state_values['year']
+                )
+                
+                # Create image record in database
+                image_obj, created = IndicatorImage.objects.get_or_create(
+                    indicatorData=data,
+                    defaults={'image': img_path}
+                )
+                if not created:
+                    image_obj.image = img_path
+                    image_obj.save()
+                
+                # Add sample geojson data
+                IndicatorGeojson.objects.update_or_create(
+                    indicatorData=data,
+                    defaults={
+                        'geojson': generate_sample_geojson(indicator.name, state.state_values['year'])
+                    }
+                )
+                
+                # Add sample layer config
+                LayerConfig.objects.update_or_create(
+                    indicatorData=data,
+                    defaults={
+                        'layer_config': {
+                            'opacity': 0.7,
+                            'color': '#ff0000',
+                            'fill': True,
+                            'mapUrl': html_path
                         }
-                    )
-                    
-                    # Add sample layer config
-                    LayerConfig.objects.update_or_create(
-                        indicatorData=data,
-                        defaults={
-                            'layer_config': {
-                                'opacity': 0.7,
-                                'color': '#ff0000',
-                                'fill': True,
-                                'mapUrl': html_path
-                            }
-                        }
-                    )
-                    self.stdout.write(self.style.SUCCESS(f'Created/updated data for {indicator.name} - {state.state_values["label"]}'))
+                    }
+                )
+                self.stdout.write(self.style.SUCCESS(f'Created/updated data for {indicator.name} - {state.state_values["label"]}'))
 
         # Create dashboard feed states for each type and state
         for state in states:
