@@ -87,10 +87,10 @@ function changeIndicator(indicatorId) {
 
 /**
  * Change the current state by sending a POST request to the API
- * @param {Object.<string, number>} currentState - An object where keys are state IDs (as strings) and values are 0 or 1
+ * @param {number} stateId - The ID of the state to set
  */
-function changeState(currentState) {
-    const payload = { state: currentState };
+function changeState(stateId) {
+    const payload = { state_id: stateId };
 
     apiClient.post('/actions/set_current_state/', payload)
         .then(data => {
@@ -101,18 +101,37 @@ function changeState(currentState) {
         });
 }
 
+/**
+ * Change the visualization mode by sending a POST request to the API
+ * @param {string} mode - The visualization mode to set (image or map)
+ */
+function changeVisualizationMode(mode) {
+    const payload = { mode: mode };
+
+    apiClient.post('/actions/set_visualization_mode/', payload)
+        .then(data => {
+            console.log('Visualization mode changed successfully:', data);
+        })
+        .catch(error => {
+            console.error('Error changing visualization mode:', error);
+        });
+}
+
 // Fetch indicators from the server and create buttons
 apiClient.get('/indicators', {})
     .then(data => {
         const buttonsContainer = document.querySelector('.buttons-container');
         buttonsContainer.innerHTML = '';
 
-        data.forEach(indicator => {
+        // Only use the first 3 indicators as requested
+        const limitedData = data.slice(0, 3);
+
+        limitedData.forEach(indicator => {
             const button = document.createElement('button');
             button.classList.add('layer-button');
             button.classList.add('glowing-button');
             button.dataset.indicatorId = indicator.indicator_id;
-            button.textContent = indicator.name;
+            button.textContent = indicator.name.replace('[SAMPLE] ', '');
 
             button.addEventListener('click', () => {
                 const indicatorId = parseInt(button.dataset.indicatorId, 10);
@@ -196,113 +215,95 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(updateCurrentIndicator, 1000);
 });
 
-
 /**
- * Generate the state control buttons in the 'state-buttons-container'
+ * Fetch and display state buttons
  */
 function generateStateButtons() {
+    // Get the states container
     const stateButtonsContainer = document.querySelector('.state-buttons-container');
     stateButtonsContainer.innerHTML = '';
 
-    for (let i = 1; i <= 7; i++) {
-        const button = document.createElement('button');
-        button.classList.add('state-button');
-        button.classList.add('glowing-button');
-        button.textContent = `State ${i}`;
-        button.dataset.stateId = i;
-        button.dataset.stateBin = 0
-
-        button.addEventListener('click', () => {
-            button.dataset.stateBin = button.dataset.stateBin === '0' ? '1' : '0';
-            const currentState = Array.from(document.querySelectorAll('.state-button')).reduce((acc, button) => {
-                const stateId = button.dataset.stateId;
-                acc[stateId] = button.dataset.stateBin === '1' ? 1 : 0;
-                return acc;
-            }, {});
-            console.log('Current state of buttons:', currentState);
-            
-            if(button.dataset.stateBin === '1') {
-                button.classList.remove('glowing-button');
-                button.classList.add('neon-button');
-            }
-            else {
-                button.classList.remove('neon-button');
+    // Fetch states from the API
+    apiClient.get('/states', {})
+        .then(states => {
+            // Create a button for each state
+            states.forEach(state => {
+                const button = document.createElement('button');
+                button.classList.add('state-button');
                 button.classList.add('glowing-button');
-            }
-
-            if (currentState && typeof currentState === 'object' && Object.keys(currentState).length > 0) {
-                changeState(currentState);
-            } else {
-                console.error('Invalid state data');
-            }
+                button.dataset.stateId = state.id;
+                
+                // Display a more user-friendly label
+                const yearLabel = state.state_values.year;
+                button.textContent = state.state_values.label.replace('[SAMPLE] ', '');
+                
+                button.addEventListener('click', () => {
+                    // Update active button styling
+                    document.querySelectorAll('.state-button').forEach(btn => {
+                        btn.classList.remove('active');
+                        btn.classList.remove('neon-button');
+                        btn.classList.add('glowing-button');
+                    });
+                    
+                    button.classList.remove('glowing-button');
+                    button.classList.add('neon-button');
+                    button.classList.add('active');
+                    
+                    // Call the API to change the state
+                    changeState(state.id);
+                });
+                
+                stateButtonsContainer.appendChild(button);
+            });
+        })
+        .catch(error => {
+            console.error('Error fetching states:', error);
         });
-
-        stateButtonsContainer.appendChild(button);
-    }
 }
 
 // Generate state buttons when the page loads
 document.addEventListener('DOMContentLoaded', generateStateButtons);
 
 /**
- * Generate the quick action buttons in the 'reset-buttons-container'
+ * Generate configuration buttons for visualization modes
  */
-function generateQuickActionButtons() {
-    const resetButtonsContainer = document.querySelector('.reset-buttons-container');
-    resetButtonsContainer.innerHTML = '';
+function generateConfigButtons() {
+    const configContainer = document.querySelector('.reset-buttons-container');
+    configContainer.innerHTML = '';
 
-    // Current state button
-    const currentButton = document.createElement('button');
-    currentButton.classList.add('reset-button');
-    currentButton.classList.add('glowing-button');
-    currentButton.textContent = `Current State`;
+    // Define configuration options
+    const configs = [
+        { name: "Image View", value: "image" },
+        { name: "Map View", value: "map" }
+    ];
 
-    currentButton.addEventListener('click', () => {
-        const currentState = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0};
-        console.log('Setting current state:', currentState);
-        
-        // Update button states visually
-        document.querySelectorAll('.state-button').forEach(btn => {
-            btn.dataset.stateBin = '0';
-            btn.classList.remove('neon-button');
-            btn.classList.add('glowing-button');
+    // Create buttons for each configuration
+    configs.forEach(config => {
+        const button = document.createElement('button');
+        button.classList.add('config-button');
+        button.classList.add('glowing-button');
+        button.dataset.configValue = config.value;
+        button.textContent = config.name;
+
+        button.addEventListener('click', () => {
+            // Update active button styling
+            document.querySelectorAll('.config-button').forEach(btn => {
+                btn.classList.remove('active');
+                btn.classList.remove('neon-button');
+                btn.classList.add('glowing-button');
+            });
+            
+            button.classList.remove('glowing-button');
+            button.classList.add('neon-button');
+            button.classList.add('active');
+            
+            // In a real implementation, this would call an API to change the view mode
+            console.log(`Configuration changed to: ${config.value}`);
         });
-        
-        if (currentState && typeof currentState === 'object' && Object.keys(currentState).length > 0) {
-            changeState(currentState);
-        } else {
-            console.error('Invalid state data');
-        }
+
+        configContainer.appendChild(button);
     });
-
-    resetButtonsContainer.appendChild(currentButton);
-    
-    // Future state button
-    const futureButton = document.createElement('button');
-    futureButton.classList.add('reset-button');
-    futureButton.classList.add('glowing-button');
-    futureButton.textContent = `Future State`;
-
-    futureButton.addEventListener('click', () => {
-        const futureState = {"1": 1, "2": 1, "3": 1, "4": 1, "5": 1, "6": 1, "7": 1};
-        console.log('Setting future state:', futureState);
-        
-        // Update button states visually
-        document.querySelectorAll('.state-button').forEach(btn => {
-            btn.dataset.stateBin = '1';
-            btn.classList.remove('glowing-button');
-            btn.classList.add('neon-button');
-        });
-        
-        if (futureState && typeof futureState === 'object' && Object.keys(futureState).length > 0) {
-            changeState(futureState);
-        } else {
-            console.error('Invalid state data');
-        }
-    });
-
-    resetButtonsContainer.appendChild(futureButton);
 }
 
-// Generate quick action buttons when the page loads
-document.addEventListener('DOMContentLoaded', generateQuickActionButtons);
+// Generate configuration buttons when the page loads
+document.addEventListener('DOMContentLoaded', generateConfigButtons);

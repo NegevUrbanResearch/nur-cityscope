@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CityScope Control Panel</title>
+    <link rel="stylesheet" href="/static/styles.css"/>
+    <style>
+        .control-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .section {
+            background-color: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            padding: 15px;
+        }
+        
+        .section-title {
+            margin-top: 0;
+            color: #ddd;
+            font-size: 1.2em;
+            margin-bottom: 15px;
+        }
+        
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="control-panel">
+        <div class="section">
+            <h2 class="section-title">Indicators</h2>
+            <div class="button-group">
+                <button class="glowing-button" onclick="changeIndicator(1)">Mobility</button>
+                <button class="glowing-button" onclick="changeIndicator(2)">Climate</button>
+                <button class="glowing-button" onclick="changeIndicator(3)">Land Use</button>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2 class="section-title">Time Periods</h2>
+            <div class="button-group">
+                <button class="glowing-button" onclick="changeState(1)">Current State (2023)</button>
+                <button class="glowing-button" onclick="changeState(2)">Future State (2040)</button>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2 class="section-title">Visualization Mode</h2>
+            <div class="button-group">
+                <button class="glowing-button" onclick="changeVisualizationMode('image')">Image View</button>
+                <button class="glowing-button" onclick="changeVisualizationMode('map')">Map View</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // Change indicator function
+    function changeIndicator(indicatorId) {
+        const url = 'http://localhost:9900/api/actions/set_current_indicator/';
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ indicator_id: indicatorId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('Indicator changed:', data);
+            // Highlight the active button
+            highlightButton('indicator', indicatorId);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+        });
+    }
+
+    // Change state function
+    function changeState(stateId) {
+        const url = 'http://localhost:9900/api/actions/set_current_state/';
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ state_id: stateId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('State changed:', data);
+            // Highlight the active button
+            highlightButton('state', stateId);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+        });
+    }
+
+    // Change visualization mode function
+    function changeVisualizationMode(mode) {
+        const url = 'http://localhost:9900/api/actions/set_visualization_mode/';
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ mode: mode })
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log('Visualization mode changed:', data);
+            // Highlight the active button
+            highlightButton('mode', mode);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+        });
+    }
+
+    // Helper function to highlight the active button
+    function highlightButton(type, value) {
+        // Reset all buttons of this type
+        const sections = {
+            'indicator': 0,
+            'state': 1,
+            'mode': 2
+        };
+        
+        const sectionIndex = sections[type];
+        const buttons = document.querySelectorAll(`.section:nth-child(${sectionIndex + 1}) button`);
+        
+        buttons.forEach((button, index) => {
+            if (type === 'indicator' && index + 1 === value) {
+                button.classList.add('active');
+                button.classList.add('neon-button');
+            } else if (type === 'state' && index + 1 === value) {
+                button.classList.add('active');
+                button.classList.add('neon-button');
+            } else if (type === 'mode') {
+                const buttonMode = button.textContent.toLowerCase().includes('image') ? 'image' : 'map';
+                if (buttonMode === value) {
+                    button.classList.add('active');
+                    button.classList.add('neon-button');
+                } else {
+                    button.classList.remove('active');
+                    button.classList.remove('neon-button');
+                }
+            } else {
+                button.classList.remove('active');
+                button.classList.remove('neon-button');
+            }
+        });
+    }
+
+    // Get current state on page load and highlight the appropriate buttons
+    document.addEventListener('DOMContentLoaded', function() {
+        fetch('http://localhost:9900/api/actions/get_global_variables/')
+        .then(response => response.json())
+        .then(data => {
+            if (data.indicator_id) {
+                highlightButton('indicator', data.indicator_id);
+            }
+            if (data.visualization_mode) {
+                highlightButton('mode', data.visualization_mode);
+            }
+            
+            // For state, we need to get the state ID
+            fetch('http://localhost:9900/api/states/')
+            .then(response => response.json())
+            .then(states => {
+                const currentState = states.find(state => 
+                    JSON.stringify(state.state_values) === JSON.stringify(data.indicator_state)
+                );
+                if (currentState) {
+                    highlightButton('state', currentState.id);
+                }
+            });
+        })
+        .catch(error => {
+            console.error('Error getting current state:', error);
+        });
+    });
+</script>
+</body>
+</html>
+
+
