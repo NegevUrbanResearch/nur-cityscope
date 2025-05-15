@@ -13,7 +13,7 @@
     font-weight: bold;
     position: relative;
     border-radius: 12px;
-    margin-bottom: 10px; /* Espaciado entre botones */
+    margin-bottom: 10px; /* Spacing between buttons */
 }
 
 .glowing-button:active {
@@ -57,6 +57,35 @@
     animation: glowing-hover 5s ease infinite;
 }
 
+/* Active button style */
+.glowing-button.active {
+    background: #006699;
+    color: white;
+    box-shadow: 0 0 15px #0099ff, 0 0 30px #0099ff;
+    transform: scale(1.05);
+}
+
+.glowing-button.active::before {
+    background: linear-gradient(
+        45deg,
+        #0099ff, #00ccff, #33ddff, #0099ff
+    );
+    filter: blur(10px);
+    animation: glowing-active 10s ease infinite;
+}
+
+@keyframes glowing-active {
+    0% {
+        background-position: 0 0;
+    }
+    50% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: 0 0;
+    }
+}
+
 @keyframes glowing {
     0% {
         background-position: 0 0;
@@ -68,6 +97,7 @@
         background-position: 0 0;
     }
 }
+
 a{
     color: black;
     text-decoration: none;
@@ -91,7 +121,7 @@ b{
     font-weight: bold;
     position: relative;
     border-radius: 12px;
-    margin-bottom: 10px; /* Espaciado entre botones */
+    margin-bottom: 10px; /* Spacing between buttons */
     box-shadow: 0 0 10px #00ffc6, 0 0 40px #00ffc6, 0 0 80px #00ffc6;
     transition: all 0.3s ease;
 }
@@ -143,4 +173,35 @@ b{
     color: #ffffff;
     box-shadow: 0 0 30px #a833ff, 0 0 90px #a833ff, 0 0 150px #a833ff;
     transform: scale(0.95);
+}
+
+/* Container styles */
+.indicator-announcement {
+    background-color: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 10px;
+    margin: 20px 0;
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
+}
+
+.buttons-container, .state-buttons-container, .reset-buttons-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 15px 0;
+    justify-content: center;
+}
+
+h1, h2 {
+    color: white;
+    text-align: center;
+    margin-top: 20px;
+}
+
+body {
+    background: linear-gradient(135deg, #333, #111);
+    font-family: Arial, sans-serif;
+    padding: 20px;
+    color: white;
 }

@@ -1,13 +1,12 @@
-// scripts.js
+// CityScope Remote Controller script
 
 /**
- * Server address with IP and port
- * Example: 'http://127.0.0.1:8000'
+ * Server address configuration
  */
-const server_address = `http://localhost:9900`; // Updated to use localhost
+const server_address = `http://localhost:9900`;
 
 /**
- * Clase para manejar interacciones con la API
+ * API Client class for managing interactions with the backend
  */
 class APIClient {
     constructor(baseUrl) {
@@ -30,15 +29,15 @@ class APIClient {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRFToken': this.getCSRFToken(), // Añade el token CSRF
+                'X-CSRFToken': this.getCSRFToken(), // Add CSRF token
             },
-            credentials: 'include', // Incluye cookies si es necesario
+            credentials: 'include', // Include cookies if needed
             body: JSON.stringify(data),
         })
         .then(response => {
             if (!response.ok) {
                 return response.text().then(text => {
-                    throw new Error(`Error en la petición: ${response.status} - ${text}`);
+                    throw new Error(`Request error: ${response.status} - ${text}`);
                 });
             }
             return response.json();
@@ -52,14 +51,14 @@ class APIClient {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRFToken': this.getCSRFToken(), // Añade el token CSRF
+                'X-CSRFToken': this.getCSRFToken(), // Add CSRF token
             },
-            credentials: 'include', // Incluye cookies si es necesario
+            credentials: 'include', // Include cookies if needed
         })
         .then(response => {
             if (!response.ok) {
                 return response.text().then(text => {
-                    throw new Error(`Error en la petición: ${response.status} - ${text}`);
+                    throw new Error(`Request error: ${response.status} - ${text}`);
                 });
             }
             return response.json();
@@ -67,42 +66,42 @@ class APIClient {
     }
 }
 
-// Inicialización de la clase APIClient con la URL base
+// Initialize the APIClient with the base URL
 const apiClient = new APIClient(`${server_address}/api`);
 
 /**
- * Cambia el layer enviando un POST request a la API con el indicator_id.
- * @param {number} indicator_id - El ID del indicador a enviar.
+ * Change the active indicator layer by sending a POST request to the API
+ * @param {number} indicatorId - The ID of the indicator to set
  */
-function cambiarLayer(indicator_id) {
-    const payload = { indicator_id: indicator_id };
+function changeIndicator(indicatorId) {
+    const payload = { indicator_id: indicatorId };
 
     apiClient.post('/actions/set_current_indicator/', payload)
         .then(data => {
-            console.log('Layer cambiado con éxito:', data);
+            console.log('Indicator changed successfully:', data);
         })
         .catch(error => {
-            console.error('Error al cambiar el layer:', error);
+            console.error('Error changing indicator:', error);
         });
 }
 
 /**
- * Cambia el estado enviando un POST request a la API con el estado actual.
- * @param {Object.<string, number>} currentState - Un objeto donde las claves son IDs de estado (como string) y los valores son 0 o 1.
+ * Change the current state by sending a POST request to the API
+ * @param {Object.<string, number>} currentState - An object where keys are state IDs (as strings) and values are 0 or 1
  */
-function cambiarState(currentState) {
+function changeState(currentState) {
     const payload = { state: currentState };
 
     apiClient.post('/actions/set_current_state/', payload)
         .then(data => {
-            console.log('Layer cambiado con éxito:', data);
+            console.log('State changed successfully:', data);
         })
         .catch(error => {
-            console.error('Error al cambiar el layer:', error);
+            console.error('Error changing state:', error);
         });
 }
 
-// Obtener los indicadores desde el servidor y actualizar los botones
+// Fetch indicators from the server and create buttons
 apiClient.get('/indicators', {})
     .then(data => {
         const buttonsContainer = document.querySelector('.buttons-container');
@@ -118,9 +117,15 @@ apiClient.get('/indicators', {})
             button.addEventListener('click', () => {
                 const indicatorId = parseInt(button.dataset.indicatorId, 10);
                 if (!isNaN(indicatorId)) {
-                    cambiarLayer(indicatorId);
+                    changeIndicator(indicatorId);
+                    
+                    // Update active button styling
+                    document.querySelectorAll('.layer-button').forEach(btn => {
+                        btn.classList.remove('active');
+                    });
+                    button.classList.add('active');
                 } else {
-                    console.error('Indicator ID no es válido');
+                    console.error('Invalid indicator ID');
                 }
             });
 
@@ -128,11 +133,11 @@ apiClient.get('/indicators', {})
         });
     })
     .catch(error => {
-        console.error('Error al obtener los indicadores:', error);
+        console.error('Error fetching indicators:', error);
     });
 
 
-// Event listeners para manejar clicks
+// Set up event listeners for layer buttons
 document.addEventListener('DOMContentLoaded', () => {
     const buttons = document.querySelectorAll('.layer-button');
 
@@ -140,18 +145,18 @@ document.addEventListener('DOMContentLoaded', () => {
         button.addEventListener('click', () => {
             const indicatorId = parseInt(button.dataset.indicatorId, 10);
             if (!isNaN(indicatorId)) {
-                cambiarLayer(indicatorId);
+                changeIndicator(indicatorId);
             } else {
-                console.error('Indicator ID no es válido');
+                console.error('Invalid indicator ID');
             }
         });
     });
 });
 
 /**
- * Actualiza el indicador actual en el DOM.
+ * Update the current indicator display in the DOM
  */
-function actualizarIndicadorActual() {
+function updateCurrentIndicator() {
     apiClient.get('/actions/get_global_variables/')
         .then(data => {
             const indicatorId = data.indicator_id;
@@ -162,31 +167,40 @@ function actualizarIndicadorActual() {
                     const currentIndicator = indicators.find(indicator => indicator.indicator_id === indicatorId);
                     if (currentIndicator) {
                         indicatorElement.textContent = currentIndicator.name;
+                        
+                        // Update active button styling
+                        document.querySelectorAll('.layer-button').forEach(btn => {
+                            if (parseInt(btn.dataset.indicatorId, 10) === indicatorId) {
+                                btn.classList.add('active');
+                            } else {
+                                btn.classList.remove('active');
+                            }
+                        });
                     } else {
-                        indicatorElement.textContent = 'Desconocido';
+                        indicatorElement.textContent = 'Unknown';
                     }
                 })
                 .catch(error => {
-                    console.error('Error al obtener los indicadores:', error);
+                    console.error('Error fetching indicators:', error);
                     indicatorElement.textContent = 'Error';
                 });
         })
         .catch(error => {
-            console.error('Error al obtener las variables globales:', error);
+            console.error('Error fetching global variables:', error);
         });
 }
 
-// Llamar a la función para actualizar el indicador actual al cargar la página y cada 1 segundo
+// Update the current indicator when the page loads and every second
 document.addEventListener('DOMContentLoaded', () => {
-    actualizarIndicadorActual();
-    setInterval(actualizarIndicadorActual, 1000);
+    updateCurrentIndicator();
+    setInterval(updateCurrentIndicator, 1000);
 });
 
 
 /**
- * Genera los 7 botones en el contenedor 'state-buttons-container'.
+ * Generate the state control buttons in the 'state-buttons-container'
  */
-function generarStateButtons() {
+function generateStateButtons() {
     const stateButtonsContainer = document.querySelector('.state-buttons-container');
     stateButtonsContainer.innerHTML = '';
 
@@ -194,7 +208,7 @@ function generarStateButtons() {
         const button = document.createElement('button');
         button.classList.add('state-button');
         button.classList.add('glowing-button');
-        button.textContent = `P-${i}`;
+        button.textContent = `State ${i}`;
         button.dataset.stateId = i;
         button.dataset.stateBin = 0
 
@@ -214,13 +228,12 @@ function generarStateButtons() {
             else {
                 button.classList.remove('neon-button');
                 button.classList.add('glowing-button');
-
             }
 
             if (currentState && typeof currentState === 'object' && Object.keys(currentState).length > 0) {
-                cambiarState(currentState);
+                changeState(currentState);
             } else {
-                console.error('State ID no es válido');
+                console.error('Invalid state data');
             }
         });
 
@@ -228,50 +241,68 @@ function generarStateButtons() {
     }
 }
 
-// Llamar a la función para generar los botones de estado al cargar la página
-document.addEventListener('DOMContentLoaded', generarStateButtons);
+// Generate state buttons when the page loads
+document.addEventListener('DOMContentLoaded', generateStateButtons);
 
 /**
- * Genera los 2 botones en el contenedor 'reset-buttons-container'.
+ * Generate the quick action buttons in the 'reset-buttons-container'
  */
-function generarResetButtons() {
-    const stateButtonsContainer = document.querySelector('.reset-buttons-container');
-    stateButtonsContainer.innerHTML = '';
+function generateQuickActionButtons() {
+    const resetButtonsContainer = document.querySelector('.reset-buttons-container');
+    resetButtonsContainer.innerHTML = '';
 
-    const button_actual = document.createElement('button');
-    button_actual.classList.add('reset-button');
-    button_actual.classList.add('glowing-button');
-    button_actual.textContent = `ACTUAL`;
+    // Current state button
+    const currentButton = document.createElement('button');
+    currentButton.classList.add('reset-button');
+    currentButton.classList.add('glowing-button');
+    currentButton.textContent = `Current State`;
 
-    button_actual.addEventListener('click', () => {
-        currentState = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0};
-        console.log('Current state of buttons:', currentState);
+    currentButton.addEventListener('click', () => {
+        const currentState = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0};
+        console.log('Setting current state:', currentState);
+        
+        // Update button states visually
+        document.querySelectorAll('.state-button').forEach(btn => {
+            btn.dataset.stateBin = '0';
+            btn.classList.remove('neon-button');
+            btn.classList.add('glowing-button');
+        });
+        
         if (currentState && typeof currentState === 'object' && Object.keys(currentState).length > 0) {
-            cambiarState(currentState);
+            changeState(currentState);
         } else {
-            console.error('State ID no es válido');
+            console.error('Invalid state data');
         }
     });
 
-    stateButtonsContainer.appendChild(button_actual);
+    resetButtonsContainer.appendChild(currentButton);
     
-    const button_futuro = document.createElement('button');
-    button_futuro.classList.add('reset-button');
-    button_futuro.classList.add('glowing-button');
-    button_futuro.textContent = `FUTURO`;
+    // Future state button
+    const futureButton = document.createElement('button');
+    futureButton.classList.add('reset-button');
+    futureButton.classList.add('glowing-button');
+    futureButton.textContent = `Future State`;
 
-    button_futuro.addEventListener('click', () => {
-        currentState = {"1": 1, "2": 1, "3": 1, "4": 1, "5": 1, "6": 1, "7": 1};
-        console.log('Current state of buttons:', currentState);
-        if (currentState && typeof currentState === 'object' && Object.keys(currentState).length > 0) {
-            cambiarState(currentState);
+    futureButton.addEventListener('click', () => {
+        const futureState = {"1": 1, "2": 1, "3": 1, "4": 1, "5": 1, "6": 1, "7": 1};
+        console.log('Setting future state:', futureState);
+        
+        // Update button states visually
+        document.querySelectorAll('.state-button').forEach(btn => {
+            btn.dataset.stateBin = '1';
+            btn.classList.remove('glowing-button');
+            btn.classList.add('neon-button');
+        });
+        
+        if (futureState && typeof futureState === 'object' && Object.keys(futureState).length > 0) {
+            changeState(futureState);
         } else {
-            console.error('State ID no es válido');
+            console.error('Invalid state data');
         }
     });
 
-    stateButtonsContainer.appendChild(button_futuro);
+    resetButtonsContainer.appendChild(futureButton);
 }
 
-// Llamar a la función para generar los botones de estado al cargar la página
-document.addEventListener('DOMContentLoaded', generarResetButtons);
+// Generate quick action buttons when the page loads
+document.addEventListener('DOMContentLoaded', generateQuickActionButtons);
