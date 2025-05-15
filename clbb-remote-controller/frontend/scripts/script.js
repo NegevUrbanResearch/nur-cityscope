@@ -3,14 +3,17 @@
 /**
  * Server address configuration
  */
-const server_address = `http://localhost:9900`;
+// Use relative URLs for API requests instead of hardcoded hostname and port
+// This allows the controller to work correctly behind Nginx
+const server_address = ``;  // Empty string for relative URLs
 
 /**
  * API Client class for managing interactions with the backend
  */
 class APIClient {
     constructor(baseUrl) {
-        this.baseUrl = baseUrl;
+        // Use window.location.origin if baseUrl is empty
+        this.baseUrl = baseUrl || window.location.origin;
     }
 
     getCSRFToken() {
