@@ -1,24 +1,30 @@
-# Usar una imagen ligera basada en Alpine
+# Use a lightweight Alpine-based image
 FROM nginx:alpine
 
-# Instalar gettext para usar envsubst
+# Install gettext for envsubst and other necessary tools
 RUN apk add --no-cache gettext
 
-# Copiar la plantilla de configuración de Nginx
+# Copy the Nginx configuration template
 COPY default.conf.template /etc/nginx/templates/default.conf.template
 
-# Copiar el script de entrada
+# Copy the entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 
-# Convertir el script al formato Unix (en caso de que venga de Windows)
+# Convert scripts to Unix format (in case they come from Windows)
 RUN sed -i 's/\r$//' /entrypoint.sh
 # RUN sed -i 's/\r$//' /etc/nginx/templates/default.conf.template
 
-# Hacer que el script de entrada sea ejecutable
-RUN chmod +x entrypoint.sh
+# Make the entrypoint script executable
+RUN chmod +x /entrypoint.sh
 
-# Exponer el puerto 80 para tráfico HTTP
+# Create necessary directories with proper permissions
+RUN mkdir -p /var/cache/nginx/ /var/run/nginx/ && \
+    chmod -R 777 /var/cache/nginx/ /var/run/nginx/ && \
+    mkdir -p /usr/share/nginx/html/media && \
+    chmod -R 755 /usr/share/nginx/html/
+
+# Expose port 80 for HTTP traffic
 EXPOSE 80
 
-# Usar el script de entrada para inicializar el contenedor
+# Use the entrypoint script to initialize the container
 CMD ["./entrypoint.sh"]
