@@ -207,7 +207,6 @@ To create fresh sample data:
 docker exec -it core_api python manage.py shell < create_sample_data.py
 ```
 
-To remove sample data, use the admin interface to delete items marked with [SAMPLE].
 
 ## Data Validation
 

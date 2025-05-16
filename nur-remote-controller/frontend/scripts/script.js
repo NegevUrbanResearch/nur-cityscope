@@ -134,7 +134,7 @@ apiClient.get('/indicators', {})
             button.classList.add('layer-button');
             button.classList.add('glowing-button');
             button.dataset.indicatorId = indicator.indicator_id;
-            button.textContent = indicator.name.replace('[SAMPLE] ', '');
+            button.textContent = indicator.name.replace(' ', '');
 
             button.addEventListener('click', () => {
                 const indicatorId = parseInt(button.dataset.indicatorId, 10);
@@ -238,7 +238,7 @@ function generateStateButtons() {
                 
                 // Display a more user-friendly label
                 const yearLabel = state.state_values.year;
-                button.textContent = state.state_values.label.replace('[SAMPLE] ', '');
+                button.textContent = state.state_values.label.replace(' ', '');
                 
                 button.addEventListener('click', () => {
                     // Update active button styling
