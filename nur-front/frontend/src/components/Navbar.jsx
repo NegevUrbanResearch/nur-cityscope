@@ -14,8 +14,8 @@ const Navbar = () => {
     // Change the indicator (which will also update the remote controller)
     changeIndicator(indicator);
     
-    // Update the URL to match
-    navigate(`/dashboard/${indicator}`);
+    // Update the URL to match - note the correct URL without "dashboard" prefix
+    navigate(`/${indicator}`);
   };
 
   return (

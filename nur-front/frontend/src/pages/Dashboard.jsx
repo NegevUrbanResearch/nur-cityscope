@@ -177,8 +177,8 @@ const Dashboard = () => {
     // Set body and html styling to ensure full viewport coverage
     document.body.style.margin = '0';
     document.body.style.padding = '0';
-    // Remove overflow: hidden to enable scrolling
-    // document.body.style.overflow = 'hidden';
+    // Ensure scrolling is enabled
+    document.body.style.overflow = 'auto';
     document.body.style.backgroundColor = '#111116';
     document.documentElement.style.height = '100%';
     
@@ -186,7 +186,7 @@ const Dashboard = () => {
       // Clean up styles when component unmounts
       document.body.style.margin = '';
       document.body.style.padding = '';
-      // document.body.style.overflow = '';
+      document.body.style.overflow = '';
       document.body.style.backgroundColor = '';
       document.documentElement.style.height = '';
     };
@@ -270,7 +270,11 @@ const Dashboard = () => {
             width: "100%", 
             position: "relative",
             overflow: "hidden",
-            borderRadius: 1
+            borderRadius: 1,
+            "& > div": {
+              position: "relative !important",
+              height: "100% !important"
+            }
           }}>
             <DeckGLMap 
               indicatorType={currentIndicator} 
@@ -379,7 +383,7 @@ const Dashboard = () => {
 
   return (
     <AppBar position="static" sx={{ backgroundColor: "#111116", maxHeight: "none", overflow: "auto" }}>
-      <Box sx={{ flexGrow: 1, bgcolor: "#1a1a22", p: 2, color: "white", height: "auto", minHeight: "100vh" }}>
+      <Box sx={{ flexGrow: 1, bgcolor: "#1a1a22", p: 2, color: "white", height: "auto", minHeight: "100vh", overflow: "visible" }}>
         <Grid
           container
           direction="column"

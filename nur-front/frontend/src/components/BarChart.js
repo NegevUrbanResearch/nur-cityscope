@@ -13,7 +13,9 @@ const StackedBarChart = ({ data }) => {
     }
 
     const ctx = canvasRef.current.getContext('2d');
-    const xLabels = ['Population', 'Buildings', 'Amenities'];
+    
+    // Use labels from data if available, otherwise use defaults
+    const xLabels = data.labels || data.categories || ['Category 1', 'Category 2', 'Category 3'];
     const colors = ['#0077B6', '#00B4D8', '#90E0EF'];
 
     // Clean up any existing chart

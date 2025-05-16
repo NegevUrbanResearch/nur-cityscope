@@ -95,6 +95,23 @@ export const DataProvider = ({ children }) => {
       const response = await api.get(endpoint);
       
       if (response.data && response.data.length > 0) {
+        // Generate category labels based on indicator type
+        let categoryLabels = ['Category 1', 'Category 2', 'Category 3'];
+        
+        switch (indicator) {
+          case 'mobility':
+            categoryLabels = ['Transit Modes', 'Access Points', 'Coverage'];
+            break;
+          case 'climate':
+            categoryLabels = ['Emissions', 'Green Space', 'Renewable Energy'];
+            break;
+          case 'land_use':
+            categoryLabels = ['Buildings', 'Public Space', 'Density'];
+            break;
+          default:
+            categoryLabels = ['Category 1', 'Category 2', 'Category 3'];
+        }
+        
         // Transform the data to match the expected format
         const transformedData = {
           // Direct mapping for radar chart
@@ -103,8 +120,11 @@ export const DataProvider = ({ children }) => {
           // Direct mapping for horizontal stacked bar chart
           horizontalStackedBars: response.data[0].data.horizontalStackedBar,
 
-          // Direct mapping for stacked bar chart
-          stackedBars: response.data[0].data.stackedBar,
+          // Add labels to stackedBar data
+          stackedBars: {
+            ...response.data[0].data.stackedBar,
+            labels: categoryLabels
+          },
 
           // Metrics data
           metrics: {
@@ -295,8 +315,13 @@ export const DataProvider = ({ children }) => {
     if (newIndicator !== currentIndicator && 
         Object.keys(INDICATOR_CONFIG).includes(newIndicator)) {
       
+      console.log(`Changing indicator to: ${newIndicator}`);
+      
       // Set loading state first to prevent flickering
       setLoading(true);
+      
+      // Clear existing dashboard data to prevent showing stale data
+      setDashboardData(null);
       
       // Set the indicator locally
       setCurrentIndicator(newIndicator);
@@ -309,6 +334,9 @@ export const DataProvider = ({ children }) => {
           .then(() => {
             console.log(`Updated remote controller to ${newIndicator} (ID: ${indicatorId})`);
             
+            // Trigger a data fetch for the new indicator
+            fetchDashboardData(newIndicator);
+            
             // Give the system time to complete the transition before clearing loading state
             setTimeout(() => {
               setLoading(false);
@@ -319,10 +347,14 @@ export const DataProvider = ({ children }) => {
             setLoading(false);
           });
       } else {
-        setLoading(false);
+        // Even if we can't update the remote, we should fetch data for the new indicator
+        fetchDashboardData(newIndicator);
+        setTimeout(() => {
+          setLoading(false);
+        }, 500);
       }
     }
-  }, [currentIndicator]);
+  }, [currentIndicator, fetchDashboardData]);
 
   // Value object with additional helpers for the new indicator system
   const contextValue = {

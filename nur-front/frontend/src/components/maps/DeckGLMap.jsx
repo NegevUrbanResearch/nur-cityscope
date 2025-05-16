@@ -9,7 +9,7 @@ import { Map } from 'react-map-gl';
 import { Box, Typography, CircularProgress } from '@mui/material';
 import api from '../../api';
 
-// Default mapbox style - you might want to get a Mapbox token for production
+// Use Carto dark matter style which doesn't require an API token
 const MAPBOX_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 
 // Default initial view state (Ben Gurion University coordinates)
@@ -308,12 +308,20 @@ const DeckGLMap = ({ indicatorType, state }) => {
   }
 
   return (
-    <Box sx={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+    <Box sx={{ 
+      position: 'relative', 
+      width: '100%', 
+      height: '100%', 
+      overflow: 'hidden',
+      '& canvas': {
+        position: 'static !important'
+      } 
+    }}>
       <DeckGL
         layers={layers}
         initialViewState={viewState}
         controller={true}
-        style={{ position: 'absolute', width: '100%', height: '100%' }}
+        style={{ position: 'relative', width: '100%', height: '100%' }}
         effects={[
           new LightingEffect({
             ambientLight: {
