@@ -3,6 +3,7 @@ import api from './api'; // Import the pre-configured api instance
 import isEqual from 'lodash/isEqual';
 
 import config from "./config";
+import globals from "./globals";
 
 const DataContext = createContext();
 
@@ -77,8 +78,11 @@ export const DataProvider = ({ children }) => {
   const fetchDashboardData = useCallback(async (indicator) => {
     if (!indicator) return;
     
+    // Check if we have a specific year to use
+    const currentYear = globals.INDICATOR_STATE?.year || 2023;
+    
     // Use a relative URL with the api instance
-    const endpoint = `/api/dashboard_feed_state/?dashboard_type=${indicator}`;
+    const endpoint = `/api/dashboard_feed_state/?dashboard_type=${indicator}&year=${currentYear}`;
     console.log(`Fetching ${indicator} dashboard data from:`, endpoint);
     
     try {
@@ -193,24 +197,45 @@ export const DataProvider = ({ children }) => {
     
     try {
       const response = await api.get('/api/actions/get_global_variables/');
-      if (response.data && response.data.indicator_id !== undefined) {
-        // Convert indicator_id to number if it's a string
-        const indicatorId = parseInt(response.data.indicator_id, 10);
-        const newIndicator = ID_TO_INDICATOR[indicatorId];
+      if (response.data) {
+        // Update our local globals to match server
+        if (response.data.indicator_state) {
+          globals.INDICATOR_STATE = response.data.indicator_state;
+        }
+        if (response.data.visualization_mode) {
+          globals.VISUALIZATION_MODE = response.data.visualization_mode;
+        }
         
-        if (newIndicator && newIndicator !== indicatorRef.current) {
-          console.log(`Remote controller changed indicator to: ${newIndicator}`);
+        // Handle indicator changes
+        if (response.data.indicator_id !== undefined) {
+          globals.INDICATOR_ID = response.data.indicator_id;
           
-          // Clear any pending timer to prevent race conditions
-          if (debounceTimerRef.current) {
-            clearTimeout(debounceTimerRef.current);
+          // Convert indicator_id to number if it's a string
+          const indicatorId = parseInt(response.data.indicator_id, 10);
+          const newIndicator = ID_TO_INDICATOR[indicatorId];
+          
+          if (newIndicator && newIndicator !== indicatorRef.current) {
+            console.log(`Remote controller changed indicator to: ${newIndicator}`);
+            
+            // Clear any pending timer to prevent race conditions
+            if (debounceTimerRef.current) {
+              clearTimeout(debounceTimerRef.current);
+            }
+            
+            // Update state after a small delay to allow the previous operations to complete
+            debounceTimerRef.current = setTimeout(() => {
+              // Set loading state before changing the indicator to prevent flickering
+              setLoading(true);
+              
+              // Update the indicator
+              setCurrentIndicator(newIndicator);
+              
+              // Give a small delay before allowing new data fetches to complete the transition
+              setTimeout(() => {
+                setLoading(false);
+              }, 500);
+            }, 100);
           }
-          
-          // Simple state update without prefetching - reduces complexity
-          setCurrentIndicator(newIndicator);
-          
-          // No need to fetch data immediately - the indicator change will trigger
-          // the effect that fetches data with the appropriate loading states
         }
       }
     } catch (err) {
@@ -270,6 +295,9 @@ export const DataProvider = ({ children }) => {
     if (newIndicator !== currentIndicator && 
         Object.keys(INDICATOR_CONFIG).includes(newIndicator)) {
       
+      // Set loading state first to prevent flickering
+      setLoading(true);
+      
       // Set the indicator locally
       setCurrentIndicator(newIndicator);
       
@@ -280,10 +308,18 @@ export const DataProvider = ({ children }) => {
         api.post('/api/actions/set_current_indicator/', { indicator_id: indicatorId })
           .then(() => {
             console.log(`Updated remote controller to ${newIndicator} (ID: ${indicatorId})`);
+            
+            // Give the system time to complete the transition before clearing loading state
+            setTimeout(() => {
+              setLoading(false);
+            }, 500);
           })
           .catch(err => {
             console.error('Error updating remote controller:', err);
+            setLoading(false);
           });
+      } else {
+        setLoading(false);
       }
     }
   }, [currentIndicator]);

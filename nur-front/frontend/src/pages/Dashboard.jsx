@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Tab, Box, AppBar, Typography, Grid, Paper, Alert } from "@mui/material";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Tab, Box, AppBar, Typography, Grid, Paper, Alert, ToggleButtonGroup, ToggleButton } from "@mui/material";
 import { TabPanel, TabContext, TabList } from "@mui/lab";
 import isEqual from "lodash/isEqual";
 import api from "../api";
+import MapIcon from '@mui/icons-material/Map';
+import ImageIcon from '@mui/icons-material/Image';
 
 import RadarChart from "../components/RadarChart";
 import PieChart from "../components/PieChart";
 import BarChart from "../components/BarChart";
 import HorizontalStackedBar from "../components/HorizontalStackedBar";
+import DeckGLMap from "../components/maps/DeckGLMap";
 import { useAppData } from "../DataContext";
 import config from "../config";
 
@@ -46,6 +49,53 @@ const Dashboard = () => {
   const lastIndicatorRef = useRef(currentIndicator);
   const loadingTimerRef = useRef(null);
 
+  // Preload image and track its loading state - memoize to avoid dependency issues
+  const preloadImage = useCallback((url) => {
+    // First clear any previous loading state for this URL
+    imageStates.current.delete(url);
+    
+    // Mark this URL as loading
+    imageStates.current.set(url, 'loading');
+    
+    const img = new Image();
+    img.onload = () => {
+      // Only proceed if this is still the current indicator's image
+      if (url.includes(currentIndicator)) {
+        // Mark as loaded and update state to show this image
+        imageStates.current.set(url, 'loaded');
+        setCurrentImageUrl(url);
+        setShowLoadingMessage(false);
+      }
+      
+      // Clear any pending loading timer
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+        loadingTimerRef.current = null;
+      }
+    };
+    
+    img.onerror = () => {
+      console.error(`Failed to load image: ${url}`);
+      
+      // Mark as error but still try to show it
+      imageStates.current.set(url, 'error');
+      
+      // Only update UI if this is still the current indicator's image
+      if (url.includes(currentIndicator)) {
+        setCurrentImageUrl(url);
+        setShowLoadingMessage(false);
+      }
+      
+      // Clear any pending loading timer
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+        loadingTimerRef.current = null;
+      }
+    };
+    
+    img.src = url;
+  }, [currentIndicator]);
+
   // Fetch map data from API when indicator changes
   useEffect(() => {
     // Clear any existing loading timer
@@ -56,13 +106,12 @@ const Dashboard = () => {
     // Store a reference to any new timer we create
     let currentLoadingTimer = null;
     
-    // When the indicator changes, we don't immediately show loading
-    // Only show loading if it takes more than 300ms to load
+    // When the indicator changes, we should show loading immediately 
+    // to prevent showing stale content
     if (lastIndicatorRef.current !== currentIndicator) {
-      loadingTimerRef.current = setTimeout(() => {
-        setShowLoadingMessage(true);
-      }, 300);
-      currentLoadingTimer = loadingTimerRef.current;
+      setShowLoadingMessage(true);
+      // Clear the current image URL to prevent showing stale content
+      setCurrentImageUrl(null);
     }
 
     lastIndicatorRef.current = currentIndicator;
@@ -72,7 +121,7 @@ const Dashboard = () => {
         // Add cache-busting timestamp parameter
         const timestamp = Date.now();
         // Use our pre-configured api instance with relative URL
-        const response = await api.get(`/api/actions/get_image_data/?_=${timestamp}`);
+        const response = await api.get(`/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}`);
         
         if (response.data && response.data.image_data) {
           // Correctly construct the URL using config.media.baseUrl
@@ -87,14 +136,9 @@ const Dashboard = () => {
             error: false
           });
           
-          // If this URL hasn't been loaded before, preload it now
-          if (!imageStates.current.has(url)) {
-            preloadImage(url);
-          } else if (imageStates.current.get(url) === 'loaded') {
-            // Image is already loaded, set it as current immediately
-            setCurrentImageUrl(url);
-            setShowLoadingMessage(false);
-          }
+          // Always preload the new image regardless of previous state
+          // This ensures we always have the latest image for the current indicator
+          preloadImage(url);
         }
       } catch (err) {
         console.error("Error fetching map data:", err);
@@ -114,9 +158,12 @@ const Dashboard = () => {
       }
     };
 
-    if (currentIndicator) {
-      fetchMapData();
-    }
+    // Add a slight delay to allow the indicator change to propagate through the system
+    setTimeout(() => {
+      if (currentIndicator) {
+        fetchMapData();
+      }
+    }, 100);
     
     return () => {
       // Use our local reference to the timer
@@ -124,42 +171,26 @@ const Dashboard = () => {
         clearTimeout(currentLoadingTimer);
       }
     };
-  }, [currentIndicator]);
+  }, [currentIndicator, preloadImage]);
 
-  // Preload image and track its loading state
-  const preloadImage = (url) => {
-    // Mark this URL as loading
-    imageStates.current.set(url, 'loading');
+  useEffect(() => {
+    // Set body and html styling to ensure full viewport coverage
+    document.body.style.margin = '0';
+    document.body.style.padding = '0';
+    // Remove overflow: hidden to enable scrolling
+    // document.body.style.overflow = 'hidden';
+    document.body.style.backgroundColor = '#111116';
+    document.documentElement.style.height = '100%';
     
-    const img = new Image();
-    img.onload = () => {
-      // Mark as loaded and update state to show this image
-      imageStates.current.set(url, 'loaded');
-      setCurrentImageUrl(url);
-      setShowLoadingMessage(false);
-      
-      // Clear any pending loading timer
-      if (loadingTimerRef.current) {
-        clearTimeout(loadingTimerRef.current);
-        loadingTimerRef.current = null;
-      }
+    return () => {
+      // Clean up styles when component unmounts
+      document.body.style.margin = '';
+      document.body.style.padding = '';
+      // document.body.style.overflow = '';
+      document.body.style.backgroundColor = '';
+      document.documentElement.style.height = '';
     };
-    
-    img.onerror = () => {
-      // Mark as error but still show it (will use fallback in the render method)
-      imageStates.current.set(url, 'error');
-      setCurrentImageUrl(url);
-      setShowLoadingMessage(false);
-      
-      // Clear any pending loading timer
-      if (loadingTimerRef.current) {
-        clearTimeout(loadingTimerRef.current);
-        loadingTimerRef.current = null;
-      }
-    };
-    
-    img.src = url;
-  };
+  }, []);
 
   const handleChange = (event, newValue) => {
     setValue(newValue);
@@ -170,6 +201,7 @@ const Dashboard = () => {
 
   // Handle map or image rendering
   const renderVisualization = () => {
+    // Add a switch for visualization mode (deck.gl or traditional)
     if (mapData.error) {
       return (
         <>
@@ -192,63 +224,98 @@ const Dashboard = () => {
       );
     }
     
-    if (mapData.type === 'image') {
-      return (
-        <Box sx={{ height: "100%", width: "100%" }}>
-          {/* Only show loading message after delay (if still loading) */}
-          {showLoadingMessage && (
-            <Box sx={{ 
-              display: 'flex', 
-              justifyContent: 'center', 
-              alignItems: 'center', 
-              height: '100%' 
-            }}>
-              <Typography variant="body1">
-                Loading visualization...
-              </Typography>
-            </Box>
-          )}
-          
-          {/* Always render the current image when available */}
-          {currentImageUrl && (
-            <Box
-              component="img"
-              src={currentImageUrl}
-              alt={`${currentIndicator} visualization`}
-              sx={{
-                width: "100%",
-                height: "100%",
-                objectFit: "contain",
-                display: showLoadingMessage ? 'none' : 'block'
-              }}
-              onError={(e) => {
-                console.error("Failed to load image:", e);
-                // Add cache-busting to fallback image
-                e.target.src = `/media/Nur-Logo_3x-_1_.svg?_=${Date.now()}`;
-              }}
-            />
-          )}
-        </Box>
-      );
+    // Always render DeckGLMap for interactive visualizations
+    const state = {
+      year: 2023, // Default to 2023
+      scenario: 'current'
+    };
+    
+    // Try to get the state from the lastUpdate or the current indicator's data
+    if (data?.metrics) {
+      // We derive current year from formatted metrics
+      // This assumes that the metrics are updated when the state changes
+      if (data.metrics.year) {
+        state.year = data.metrics.year;
+      }
+      if (data.metrics.scenario) {
+        state.scenario = data.metrics.scenario;
+      }
     }
     
-    // Default to map (iframe)
-    const timestamp = Date.now();
     return (
-      <iframe 
-        src={mapData.url}
-        style={{
-          width: "100%",
-          height: "90%",
-          border: "none"
-        }}
-        title={`${currentIndicator} map visualization`}
-        onError={(e) => {
-          console.error("Failed to load map:", e);
-          // Try the other naming pattern as fallback with cache busting
-          e.target.src = `${config.media.baseUrl}/media/maps/map_${currentIndicator}.html?_=${timestamp}`;
-        }}
-      />
+      <Box sx={{ height: "100%", width: "100%" }}>
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <ToggleButtonGroup
+            value={visualizationMode}
+            exclusive
+            onChange={handleVisualizationModeChange}
+            size="small"
+            aria-label="visualization mode"
+          >
+            <ToggleButton value="deck" aria-label="interactive map">
+              <MapIcon fontSize="small" />
+              <Typography variant="caption" sx={{ ml: 1 }}>Interactive</Typography>
+            </ToggleButton>
+            <ToggleButton value="image" aria-label="static image">
+              <ImageIcon fontSize="small" />
+              <Typography variant="caption" sx={{ ml: 1 }}>Image</Typography>
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
+        
+        {/* Show interactive Deck.GL map when in deck mode */}
+        {visualizationMode === 'deck' ? (
+          <Box sx={{ 
+            height: "calc(100% - 40px)", 
+            width: "100%", 
+            position: "relative",
+            overflow: "hidden",
+            borderRadius: 1
+          }}>
+            <DeckGLMap 
+              indicatorType={currentIndicator} 
+              state={state}
+            />
+          </Box>
+        ) : (
+          // Show traditional image/iframe view
+          <>
+            {/* Only show loading message after delay (if still loading) */}
+            {showLoadingMessage && (
+              <Box sx={{ 
+                display: 'flex', 
+                justifyContent: 'center', 
+                alignItems: 'center', 
+                height: '100%' 
+              }}>
+                <Typography variant="body1">
+                  Loading visualization...
+                </Typography>
+              </Box>
+            )}
+            
+            {/* Always render the current image when available */}
+            {currentImageUrl && (
+              <Box
+                component="img"
+                src={currentImageUrl}
+                alt={`${currentIndicator} visualization`}
+                sx={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                  display: showLoadingMessage ? 'none' : 'block'
+                }}
+                onError={(e) => {
+                  console.error("Failed to load image:", e);
+                  // Add cache-busting to fallback image
+                  e.target.src = `/media/Nur-Logo_3x-_1_.svg?_=${Date.now()}`;
+                }}
+              />
+            )}
+          </>
+        )}
+      </Box>
     );
   };
 
@@ -295,9 +362,24 @@ const Dashboard = () => {
   // Get tab labels directly from the context helper
   const tabLabels = getTabLabels();
 
+  // Add the following new state and handler to the Dashboard component before the return statement
+  const [visualizationMode, setVisualizationMode] = useState('deck');
+
+  const handleVisualizationModeChange = useCallback((event, newMode) => {
+    if (newMode !== null) {
+      setVisualizationMode(newMode);
+      
+      // Optionally update the backend visualization mode
+      api.post('/api/actions/set_visualization_mode/', { mode: newMode === 'deck' ? 'map' : 'image' })
+        .catch(err => {
+          console.error('Error setting visualization mode:', err);
+        });
+    }
+  }, []);
+
   return (
-    <AppBar position="static">
-      <Box sx={{ flexGrow: 1, bgcolor: "background.default", p: 2 }}>
+    <AppBar position="static" sx={{ backgroundColor: "#111116", maxHeight: "none", overflow: "auto" }}>
+      <Box sx={{ flexGrow: 1, bgcolor: "#1a1a22", p: 2, color: "white", height: "auto", minHeight: "100vh" }}>
         <Grid
           container
           direction="column"
@@ -308,20 +390,29 @@ const Dashboard = () => {
           spacing={2}
         >
           <Grid item>
-            <Typography variant="h4" component="div" gutterBottom>
+            <Typography variant="h4" component="div" gutterBottom sx={{ color: "#fff", fontWeight: 300 }}>
               {getDashboardTitle()}
             </Typography>
           </Grid>
 
           <Grid item>
-            <Paper sx={{ padding: 2, margin: 1 }} elevation={3}>
+            <Paper sx={{ padding: 2, margin: 1, backgroundColor: "#252530", color: "white" }} elevation={4}>
               {getMetricDisplay()}
             </Paper>
           </Grid>
 
           <Grid item size="8" width={"80%"} height={"40vh"}>
-            <Paper sx={{ padding: 2, margin: 1, height: "100%" }} elevation={3}>
-              <Typography variant="h6">Interactive Map</Typography>
+            <Paper 
+              sx={{ 
+                padding: 2, 
+                margin: 1, 
+                height: "100%",
+                backgroundColor: "#1a1a22",
+                color: "white"
+              }} 
+              elevation={4}
+            >
+              <Typography variant="h6" sx={{ color: "#fff" }}>Interactive Map</Typography>
               <Box 
                 sx={{ 
                   height: "90%", 
@@ -329,9 +420,10 @@ const Dashboard = () => {
                   display: "flex", 
                   alignItems: "center", 
                   justifyContent: "center",
-                  backgroundColor: "rgba(0,0,0,0.1)",
+                  backgroundColor: "#111116",
                   borderRadius: 1,
-                  overflow: "hidden"
+                  overflow: "hidden",
+                  border: "1px solid rgba(255,255,255,0.1)"
                 }}
               >
                 {renderVisualization()}
@@ -340,17 +432,25 @@ const Dashboard = () => {
           </Grid>
 
           <Grid item size="4" width={"80%"}>
-            <Paper sx={{ padding: 2, margin: 1, height: "100%" }} elevation={3}>
+            <Paper sx={{ padding: 2, margin: 1, height: "100%", backgroundColor: "#252530", color: "white" }} elevation={4}>
               <TabContext value={value}>
                 <Box
                   sx={{
                     borderBottom: 1,
-                    borderColor: "divider",
+                    borderColor: "rgba(255,255,255,0.1)",
                     width: "100%",
-                    bgcolor: "background.paper",
+                    bgcolor: "#252530",
                   }}
                 >
-                  <TabList onChange={handleChange} centered>
+                  <TabList 
+                    onChange={handleChange} 
+                    centered
+                    sx={{ 
+                      '& .MuiTab-root': { color: 'rgba(255,255,255,0.7)' },
+                      '& .Mui-selected': { color: '#fff' },
+                      '& .MuiTabs-indicator': { backgroundColor: '#4cc9c0' }
+                    }}
+                  >
                     <Tab label={tabLabels[0]} value="1" />
                     <Tab label={tabLabels[1]} value="2" />
                     <Tab label={tabLabels[2]} value="3" />

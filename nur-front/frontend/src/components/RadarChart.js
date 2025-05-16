@@ -7,14 +7,27 @@ const RadarChart = ({ data }) => {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    if (!data || !data.categories || !data.valuesSet1 || !data.valuesSet2) {
-      console.error('Invalid data for radar chart');
+    // Basic data validation
+    if (!data || !data.categories || !Array.isArray(data.categories) || 
+        !data.valuesSet1 || !Array.isArray(data.valuesSet1) || 
+        !data.valuesSet2 || !Array.isArray(data.valuesSet2)) {
+      console.error('Invalid data for radar chart', data);
+      return;
+    }
+
+    // Make sure we have a valid canvas reference
+    if (!canvasRef.current) {
+      console.error('Canvas reference is not available');
       return;
     }
 
     const ctx = canvasRef.current.getContext('2d');
+    if (!ctx) {
+      console.error('Unable to get 2D context from canvas');
+      return;
+    }
 
-    // Keep original labels
+    // Keep original labels for color determination
     const originalLabels = [...data.categories];
     const formattedLabels = data.categories.map(cat => cat.replace("_d", " "));
 
@@ -25,12 +38,13 @@ const RadarChart = ({ data }) => {
       return '#00BFFF'; // Light blue color
     };
 
-    if (chartRef.current) {
-      chartRef.current.data.labels = formattedLabels;
-      chartRef.current.data.datasets[0].data = data.valuesSet2;
-      chartRef.current.data.datasets[1].data = data.valuesSet1;
-      chartRef.current.update();
-    } else {
+    try {
+      // Cleanup existing chart
+      if (chartRef.current) {
+        chartRef.current.destroy();
+      }
+
+      // Create new chart
       chartRef.current = new Chart(ctx, {
         type: 'radar',
         data: {
@@ -38,30 +52,27 @@ const RadarChart = ({ data }) => {
           datasets: [
             {
               label: 'Base Scenario',
-              data: [
-                92.37882356694679,
-                45.02786321781106,
-                87.30392858205424,
-                69.87082768095237,
-                79.30676120759283,
-                88.09045053202583,
-                79.17090795757836,
-                59.10384280638403,
-                91.54,
-                7.5,
-                43.0,
-                47.175760344491,
-                55.0
-              ],
+              data: data.valuesSet2,
+              backgroundColor: 'rgba(255, 0, 0, 0.2)',
               borderColor: 'rgba(255, 0, 0, 1)',
-              borderWidth: 3,
+              borderWidth: 2,
+              pointBackgroundColor: 'rgba(255, 0, 0, 1)',
+              pointBorderColor: '#fff',
+              pointHoverBackgroundColor: '#fff',
+              pointHoverBorderColor: 'rgba(255, 0, 0, 1)',
+              pointRadius: 3,
             },
             {
-              label: 'Waterfront',
+              label: 'Current Scenario',
               data: data.valuesSet1,
-              backgroundColor: 'rgba(59, 40, 204, 0.8)',
+              backgroundColor: 'rgba(59, 40, 204, 0.5)',
               borderColor: 'rgba(255, 255, 255, 1)',
-              borderWidth: 1,
+              borderWidth: 2,
+              pointBackgroundColor: 'rgba(59, 40, 204, 1)',
+              pointBorderColor: '#fff',
+              pointHoverBackgroundColor: '#fff',
+              pointHoverBorderColor: 'rgba(59, 40, 204, 1)',
+              pointRadius: 3,
             },
           ],
         },
@@ -71,6 +82,7 @@ const RadarChart = ({ data }) => {
           elements: {
             line: {
               borderWidth: 2,
+              tension: 0.1,
             },
           },
           scales: {
@@ -79,27 +91,66 @@ const RadarChart = ({ data }) => {
               min: 0,
               max: 100,
               ticks: {
-                stepSize: 10,
+                stepSize: 20,
+                backdropColor: 'rgba(0, 0, 0, 0)', // Make background transparent
+                color: 'rgba(255, 255, 255, 0.7)',
               },
               grid: {
-                color: '#cccccc',
+                color: 'rgba(255, 255, 255, 0.3)',
+              },
+              angleLines: {
+                color: 'rgba(255, 255, 255, 0.3)', 
               },
               pointLabels: {
                 font: {
-                  size: 15,
+                  size: 14,
+                  weight: 'bold',
                 },
                 color: (ctx) => {
                   const index = ctx.index;
-                  const originalLabel = originalLabels[index]; // Use original label
+                  if (index >= originalLabels.length) {
+                    return '#FFFFFF'; // Default color
+                  }
+                  const originalLabel = originalLabels[index];
                   return getColorForLabel(originalLabel);
                 },
               },
             },
           },
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: {
+                color: '#FFFFFF',
+                font: {
+                  size: 12,
+                },
+                boxWidth: 15,
+                padding: 15,
+              },
+            },
+            tooltip: {
+              callbacks: {
+                label: (context) => {
+                  const value = context.raw;
+                  return `${context.dataset.label}: ${value.toFixed(1)}`;
+                },
+              },
+              titleFont: {
+                size: 14,
+              },
+              bodyFont: {
+                size: 13,
+              },
+            },
+          },
         },
       });
+    } catch (error) {
+      console.error('Error creating radar chart:', error);
     }
 
+    // Cleanup function
     return () => {
       if (chartRef.current) {
         chartRef.current.destroy();
@@ -108,6 +159,7 @@ const RadarChart = ({ data }) => {
     };
   }, [data]);
 
+  // Return a container with appropriate sizing
   return (
     <div style={{ position: 'relative', width: '100%', height: '600px' }}>
       <canvas ref={canvasRef}></canvas>
