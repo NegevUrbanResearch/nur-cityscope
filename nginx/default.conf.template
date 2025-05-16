@@ -4,11 +4,22 @@ server {
     listen 80;
     server_name _;  # Replace with your actual domain
 
+    # Add cache control headers for entire server
+    add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";
+    add_header Pragma "no-cache";
+    add_header Expires "0";
+    
     # --- Serve Static Frontend ---
     location /projection/ {
         alias /usr/share/nginx/html/nur-projection/frontend/;
         index index.html;
         try_files $uri $uri/ /nur-projection/frontend/index.html;
+        
+        # Disable cache for HTML files
+        location ~* \.(?:html)$ {
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+            expires -1;
+        }
     }
 
     # Dashboard application with client-side routing
@@ -18,6 +29,12 @@ server {
         # The key fix: all routes like /dashboard/mobility, /dashboard/climate, etc.
         # should serve the React app's index.html to support client-side routing
         try_files $uri $uri/ /usr/share/nginx/html/nur-front/frontend/index.html;
+        
+        # Disable cache for HTML files
+        location ~* \.(?:html)$ {
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+            expires -1;
+        }
     }
 
     # Redirect /dashboard without trailing slash to /dashboard/
@@ -30,6 +47,12 @@ server {
         alias /usr/share/nginx/html/nur-remote-controller/frontend/;
         index index.html;
         try_files $uri $uri/ /nur-remote-controller/frontend/index.html;
+        
+        # Disable cache for HTML files
+        location ~* \.(?:html)$ {
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+            expires -1;
+        }
     }
 
     # Redirect /remote/ to /remote-controller/

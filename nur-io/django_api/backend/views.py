@@ -268,7 +268,9 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 globals.INDICATOR_ID = indicator.indicator_id
                 print(f"Using fallback indicator: {indicator.name} (ID: {indicator.indicator_id})")
             else:
-                return JsonResponse({'error': 'No indicators found'}, status=404)
+                response = JsonResponse({'error': 'No indicators found'}, status=404)
+                self._add_no_cache_headers(response)
+                return response
             
         indicator_obj = indicator.first()
         # Try to find a state matching the current indicator state
@@ -297,7 +299,9 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 globals.INDICATOR_STATE = state.state_values
                 print(f"Using fallback state: {state.state_values}")
             else:
-                return JsonResponse({'error': 'No states found'}, status=404)
+                response = JsonResponse({'error': 'No states found'}, status=404)
+                self._add_no_cache_headers(response)
+                return response
         
         state_obj = state.first()
         indicator_data = IndicatorData.objects.filter(
@@ -312,7 +316,9 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 print(f"Found alternative indicator data with state {indicator_data.first().state.state_values}")
             else:
                 print(f"No indicator data found for {indicator_obj.name}")
-                return JsonResponse({'error': 'No indicator data found'}, status=404)
+                response = JsonResponse({'error': 'No indicator data found'}, status=404)
+                self._add_no_cache_headers(response)
+                return response
         
         # Use globals.VISUALIZATION_MODE to determine what to return
         if globals.VISUALIZATION_MODE == 'image':
@@ -327,7 +333,9 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     # Ensure the path has the indicators/ prefix if not already present
                     if not image_path.startswith('indicators/'):
                         image_path = f'indicators/{image_path}'
-                    return JsonResponse({'image_data': image_path, 'type': 'image'})
+                    response = JsonResponse({'image_data': image_path, 'type': 'image'})
+                    self._add_no_cache_headers(response)
+                    return response
                 except (AttributeError, ValueError) as e:
                     print(f"Error with image data: {e}")
                     # Continue to map fallback
@@ -358,7 +366,9 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 full_path = os.path.join(settings.MEDIA_ROOT, map_path)
                 if os.path.exists(full_path):
                     print(f"Found map: {map_path}")
-                    return JsonResponse({'image_data': map_path, 'type': 'map'})
+                    response = JsonResponse({'image_data': map_path, 'type': 'map'})
+                    self._add_no_cache_headers(response)
+                    return response
             
             # Last resort - check all .html files in the maps directory and use any one
             maps_dir = os.path.join(settings.MEDIA_ROOT, 'maps')
@@ -367,17 +377,28 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 if html_files:
                     map_path = f"maps/{html_files[0]}"
                     print(f"Using fallback map: {map_path}")
-                    return JsonResponse({'image_data': map_path, 'type': 'map'})
+                    response = JsonResponse({'image_data': map_path, 'type': 'map'})
+                    self._add_no_cache_headers(response)
+                    return response
         except Exception as e:
             print(f"Error finding map: {e}")
         
         # If we get here, no suitable files were found
-        return JsonResponse({
+        response = JsonResponse({
             'error': 'No visualization found',
             'indicator': indicator_obj.name,
             'state': state_obj.state_values if state_obj and hasattr(state_obj, 'state_values') else {},
             'media_root': settings.MEDIA_ROOT
         }, status=404)
+        self._add_no_cache_headers(response)
+        return response
+        
+    def _add_no_cache_headers(self, response):
+        """Add cache control headers to prevent browser caching"""
+        response['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+        response['Pragma'] = 'no-cache'
+        response['Expires'] = '0'
+        return response
 
     @action(detail=False, methods=['get'])
     def get_geojson_data(self, request):

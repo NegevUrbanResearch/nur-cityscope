@@ -8,8 +8,28 @@ const api = axios.create({
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0'
   }
 });
+
+// Add request interceptor to add cache-busting parameter to all GET requests
+api.interceptors.request.use(
+  config => {
+    if (config.method === 'get') {
+      // Add timestamp parameter to prevent caching
+      config.params = {
+        ...config.params,
+        _: Date.now()
+      };
+    }
+    return config;
+  },
+  error => {
+    return Promise.reject(error);
+  }
+);
 
 // Add response interceptor to help with debugging
 api.interceptors.response.use(
