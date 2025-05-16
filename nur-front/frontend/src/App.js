@@ -17,19 +17,44 @@ import Navbar from "./components/Navbar";
 import Dashboard from "./pages/Dashboard";
 
 const App = () => {
-  const { loading, error, changeIndicator } = useAppData();
+  const { loading, error, changeIndicator, currentIndicator } = useAppData();
   const location = useLocation();
+  const remoteControlActive = React.useRef(false);
+  
+  // Keep track of the last indicator the remote set
+  const lastRemoteIndicator = React.useRef(null);
 
-  // Update the current indicator based on the route
+  // Monitor if remote controller has activated
   React.useEffect(() => {
-    if (location.pathname === "/dashboard/mobility") {
-      changeIndicator("mobility");
-    } else if (location.pathname === "/dashboard/climate") {
-      changeIndicator("climate");
-    } else if (location.pathname === "/dashboard/land_use") {
-      changeIndicator("land_use");
+    // If currentIndicator doesn't match URL path, remote controller must be active
+    const pathIndicator = getIndicatorFromPath(location.pathname);
+    if (pathIndicator && pathIndicator !== currentIndicator) {
+      console.log('Remote controller is active');
+      remoteControlActive.current = true;
+      lastRemoteIndicator.current = currentIndicator;
     }
-  }, [location.pathname, changeIndicator]);
+  }, [currentIndicator, location.pathname]);
+
+  // Helper to extract indicator from path
+  const getIndicatorFromPath = (path) => {
+    if (path.includes('/mobility')) return 'mobility';
+    if (path.includes('/climate')) return 'climate';
+    if (path.includes('/land_use')) return 'land_use';
+    return null;
+  };
+  
+  // Update the current indicator based on the route, but only if remote controller isn't active
+  React.useEffect(() => {
+    // Skip this if remote controller is active
+    if (remoteControlActive.current) {
+      return;
+    }
+
+    const pathIndicator = getIndicatorFromPath(location.pathname);
+    if (pathIndicator && pathIndicator !== currentIndicator) {
+      changeIndicator(pathIndicator);
+    }
+  }, [location.pathname, changeIndicator, currentIndicator]);
 
   if (loading) {
     return (
@@ -74,9 +99,9 @@ const App = () => {
 
         <Box component="main" sx={{ mt: 8, p: 3 }}>
           <Routes>
-            {/* Default route redirects to mobility dashboard */}
-            <Route path="/" element={<Navigate to="/dashboard/mobility" replace />} />
-            <Route path="/dashboard" element={<Navigate to="/dashboard/mobility" replace />} />
+            {/* Default route redirects to the current indicator */}
+            <Route path="/" element={<Navigate to={`/dashboard/${currentIndicator}`} replace />} />
+            <Route path="/dashboard" element={<Navigate to={`/dashboard/${currentIndicator}`} replace />} />
             
             {/* All dashboard routes use the same Dashboard component */}
             <Route path="/dashboard/mobility" element={<Dashboard />} />
@@ -84,7 +109,7 @@ const App = () => {
             <Route path="/dashboard/land_use" element={<Dashboard />} />
             
             {/* Fallback for unknown routes */}
-            <Route path="*" element={<Navigate to="/dashboard/mobility" replace />} />
+            <Route path="*" element={<Navigate to={`/dashboard/${currentIndicator}`} replace />} />
           </Routes>
         </Box>
       </ThemeProvider>

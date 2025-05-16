@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Tab, Box, AppBar, Typography, Grid, Paper, Alert } from "@mui/material";
 import { TabPanel, TabContext, TabList } from "@mui/lab";
 import isEqual from "lodash/isEqual";
@@ -25,7 +25,12 @@ const MemoizedHorizontalStackedBar = React.memo(
 );
 
 const Dashboard = () => {
-  const { dashboardData: data, currentIndicator } = useAppData();
+  const { 
+    dashboardData: data, 
+    currentIndicator, 
+    getIndicatorTitle, 
+    getTabLabels 
+  } = useAppData();
   const [value, setValue] = React.useState("1");
   const [mapData, setMapData] = useState({
     url: null,
@@ -33,21 +38,47 @@ const Dashboard = () => {
     loading: true,
     error: false
   });
+  
+  // Refs to track image loading state
+  const imageStates = useRef(new Map());
+  const [currentImageUrl, setCurrentImageUrl] = useState(null);
+  const [showLoadingMessage, setShowLoadingMessage] = useState(true);
+  const lastIndicatorRef = useRef(currentIndicator);
+  const loadingTimerRef = useRef(null);
 
   // Fetch map data from API when indicator changes
   useEffect(() => {
+    // Clear any existing loading timer
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current);
+    }
+    
+    // Store a reference to any new timer we create
+    let currentLoadingTimer = null;
+    
+    // When the indicator changes, we don't immediately show loading
+    // Only show loading if it takes more than 300ms to load
+    if (lastIndicatorRef.current !== currentIndicator) {
+      loadingTimerRef.current = setTimeout(() => {
+        setShowLoadingMessage(true);
+      }, 300);
+      currentLoadingTimer = loadingTimerRef.current;
+    }
+
+    lastIndicatorRef.current = currentIndicator;
+    
     const fetchMapData = async () => {
-      setMapData(prev => ({ ...prev, loading: true, error: false }));
-      
       try {
+        // Add cache-busting timestamp parameter
+        const timestamp = Date.now();
         // Use our pre-configured api instance with relative URL
-        const response = await api.get('/api/actions/get_image_data/');
+        const response = await api.get(`/api/actions/get_image_data/?_=${timestamp}`);
         
         if (response.data && response.data.image_data) {
           // Correctly construct the URL using config.media.baseUrl
           const url = response.data.image_data.startsWith('/')
-            ? `${config.media.baseUrl}${response.data.image_data}`
-            : `${config.media.baseUrl}/media/${response.data.image_data}`;
+            ? `${config.media.baseUrl}${response.data.image_data}?_=${timestamp}`
+            : `${config.media.baseUrl}/media/${response.data.image_data}?_=${timestamp}`;
             
           setMapData({
             url,
@@ -56,16 +87,21 @@ const Dashboard = () => {
             error: false
           });
           
-          // Debug the URL construction
-          console.log('Media URL:', url);
-          console.log('Media Base URL:', config.media.baseUrl);
-          console.log('Image data:', response.data.image_data);
+          // If this URL hasn't been loaded before, preload it now
+          if (!imageStates.current.has(url)) {
+            preloadImage(url);
+          } else if (imageStates.current.get(url) === 'loaded') {
+            // Image is already loaded, set it as current immediately
+            setCurrentImageUrl(url);
+            setShowLoadingMessage(false);
+          }
         }
       } catch (err) {
         console.error("Error fetching map data:", err);
         
         // Fallback to default map based on indicator if API fails
-        const fallbackUrl = `${config.media.baseUrl}/media/maps/${currentIndicator}_2023.html`;
+        const timestamp = Date.now();
+        const fallbackUrl = `${config.media.baseUrl}/media/maps/${currentIndicator}_2023.html?_=${timestamp}`;
         
         setMapData({
           url: fallbackUrl,
@@ -74,42 +110,66 @@ const Dashboard = () => {
           error: true,
           errorMessage: err.message
         });
+        setShowLoadingMessage(false);
       }
     };
 
     if (currentIndicator) {
       fetchMapData();
     }
+    
+    return () => {
+      // Use our local reference to the timer
+      if (currentLoadingTimer) {
+        clearTimeout(currentLoadingTimer);
+      }
+    };
   }, [currentIndicator]);
+
+  // Preload image and track its loading state
+  const preloadImage = (url) => {
+    // Mark this URL as loading
+    imageStates.current.set(url, 'loading');
+    
+    const img = new Image();
+    img.onload = () => {
+      // Mark as loaded and update state to show this image
+      imageStates.current.set(url, 'loaded');
+      setCurrentImageUrl(url);
+      setShowLoadingMessage(false);
+      
+      // Clear any pending loading timer
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+        loadingTimerRef.current = null;
+      }
+    };
+    
+    img.onerror = () => {
+      // Mark as error but still show it (will use fallback in the render method)
+      imageStates.current.set(url, 'error');
+      setCurrentImageUrl(url);
+      setShowLoadingMessage(false);
+      
+      // Clear any pending loading timer
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+        loadingTimerRef.current = null;
+      }
+    };
+    
+    img.src = url;
+  };
 
   const handleChange = (event, newValue) => {
     setValue(newValue);
   };
 
-  // Get dashboard-specific titles and metrics based on the current indicator
-  const getDashboardTitle = () => {
-    switch (currentIndicator) {
-      case 'mobility':
-        return "Mobility Dashboard";
-      case 'climate':
-        return "Climate Dashboard";
-      case 'land_use':
-        return "Land Use Dashboard";
-      default:
-        return "Dashboard";
-    }
-  };
+  // Get dashboard title directly from the context helper
+  const getDashboardTitle = () => getIndicatorTitle();
 
   // Handle map or image rendering
   const renderVisualization = () => {
-    if (mapData.loading) {
-      return (
-        <Typography variant="body1">
-          Loading visualization...
-        </Typography>
-      );
-    }
-    
     if (mapData.error) {
       return (
         <>
@@ -134,24 +194,46 @@ const Dashboard = () => {
     
     if (mapData.type === 'image') {
       return (
-        <Box
-          component="img"
-          src={mapData.url}
-          alt={`${currentIndicator} visualization`}
-          sx={{
-            width: "100%",
-            height: "100%",
-            objectFit: "contain"
-          }}
-          onError={(e) => {
-            console.error("Failed to load image:", e);
-            e.target.src = '/media/Nur-Logo_3x-_1_.svg'; // Fallback image
-          }}
-        />
+        <Box sx={{ height: "100%", width: "100%" }}>
+          {/* Only show loading message after delay (if still loading) */}
+          {showLoadingMessage && (
+            <Box sx={{ 
+              display: 'flex', 
+              justifyContent: 'center', 
+              alignItems: 'center', 
+              height: '100%' 
+            }}>
+              <Typography variant="body1">
+                Loading visualization...
+              </Typography>
+            </Box>
+          )}
+          
+          {/* Always render the current image when available */}
+          {currentImageUrl && (
+            <Box
+              component="img"
+              src={currentImageUrl}
+              alt={`${currentIndicator} visualization`}
+              sx={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                display: showLoadingMessage ? 'none' : 'block'
+              }}
+              onError={(e) => {
+                console.error("Failed to load image:", e);
+                // Add cache-busting to fallback image
+                e.target.src = `/media/Nur-Logo_3x-_1_.svg?_=${Date.now()}`;
+              }}
+            />
+          )}
+        </Box>
       );
     }
     
     // Default to map (iframe)
+    const timestamp = Date.now();
     return (
       <iframe 
         src={mapData.url}
@@ -163,8 +245,8 @@ const Dashboard = () => {
         title={`${currentIndicator} map visualization`}
         onError={(e) => {
           console.error("Failed to load map:", e);
-          // Try the other naming pattern as fallback
-          e.target.src = `${config.media.baseUrl}/media/maps/map_${currentIndicator}.html`;
+          // Try the other naming pattern as fallback with cache busting
+          e.target.src = `${config.media.baseUrl}/media/maps/map_${currentIndicator}.html?_=${timestamp}`;
         }}
       />
     );
@@ -210,20 +292,7 @@ const Dashboard = () => {
     }
   };
 
-  // Get tab labels based on indicator type
-  const getTabLabels = () => {
-    switch (currentIndicator) {
-      case 'mobility':
-        return ["Accessibility", "Modal Split", "Radar Analysis", "Coverage"];
-      case 'climate':
-        return ["Emissions", "Green Space", "Radar Analysis", "Sustainability"];
-      case 'land_use':
-        return ["Density", "Land Use Mix", "Radar Analysis", "Building Types"];
-      default:
-        return ["Tab 1", "Tab 2", "Tab 3", "Tab 4"];
-    }
-  };
-
+  // Get tab labels directly from the context helper
   const tabLabels = getTabLabels();
 
   return (
