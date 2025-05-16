@@ -1,56 +1,52 @@
 import React from "react";
-import { AppBar, Toolbar, Typography, Button, Box } from "@mui/material";
-import { Link, useLocation } from "react-router-dom";
+import { AppBar, Toolbar, Typography, Button, Box, Tooltip } from "@mui/material";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import config from "../config";
 import { useAppData } from "../DataContext";
 
 const Navbar = () => {
   const location = useLocation();
-  const { currentIndicator } = useAppData();
+  const navigate = useNavigate();
+  const { currentIndicator, changeIndicator, indicatorConfig } = useAppData();
+
+  // Handle direct indicator change from navbar
+  const handleIndicatorChange = (indicator) => {
+    // Change the indicator (which will also update the remote controller)
+    changeIndicator(indicator);
+    
+    // Update the URL to match
+    navigate(`/dashboard/${indicator}`);
+  };
 
   return (
     <AppBar position="fixed">
       <Toolbar>
         <Box sx={{ flexGrow: 1 }}>
-          <Button
-            color="inherit"
-            component={Link}
-            to="/dashboard/mobility"
-            sx={{ 
-              py: 2, 
-              px: 4, 
-              textTransform: "none",
-              backgroundColor: currentIndicator === "mobility" ? "rgba(255, 255, 255, 0.1)" : "transparent"
-            }}
-          >
-            <Typography variant="h6">Mobility</Typography>
-          </Button>
-          <Button
-            color="inherit"
-            component={Link}
-            to="/dashboard/climate"
-            sx={{ 
-              py: 2, 
-              px: 4, 
-              textTransform: "none",
-              backgroundColor: currentIndicator === "climate" ? "rgba(255, 255, 255, 0.1)" : "transparent"
-            }}
-          >
-            <Typography variant="h6">Climate</Typography>
-          </Button>
-          <Button
-            color="inherit"
-            component={Link}
-            to="/dashboard/land_use"
-            sx={{ 
-              py: 2, 
-              px: 4, 
-              textTransform: "none",
-              backgroundColor: currentIndicator === "land_use" ? "rgba(255, 255, 255, 0.1)" : "transparent"
-            }}
-          >
-            <Typography variant="h6">Land Use</Typography>
-          </Button>
+          {Object.entries(indicatorConfig).map(([key, config]) => (
+            <Tooltip 
+              key={key}
+              title="Click to change indicator (also updates remote controller)"
+              arrow
+              placement="bottom"
+            >
+              <Button
+                color="inherit"
+                onClick={() => handleIndicatorChange(key)}
+                sx={{ 
+                  py: 2, 
+                  px: 4, 
+                  textTransform: "none",
+                  backgroundColor: currentIndicator === key ? "rgba(255, 255, 255, 0.1)" : "transparent",
+                  transition: "background-color 0.3s ease",
+                  "&:hover": {
+                    backgroundColor: "rgba(255, 255, 255, 0.15)"
+                  }
+                }}
+              >
+                <Typography variant="h6">{config.name.replace('Dashboard', '').trim()}</Typography>
+              </Button>
+            </Tooltip>
+          ))}
         </Box>
 
         <Typography variant="h5">
