@@ -276,7 +276,7 @@ class Command(BaseCommand):
         )
         
         # Generate HTML file name
-        clean_name = indicator_name.replace('[SAMPLE] ', '').replace(' ', '_').lower()
+        clean_name = indicator_name.replace(' ', '').replace(' ', '_').lower()
         html_path = f"{output_dir}/{clean_name}_{state_year}.html"
         
         # Save as HTML
@@ -299,7 +299,7 @@ class Command(BaseCommand):
         os.makedirs(category_dir, exist_ok=True)
         
         # Generate file name
-        clean_name = indicator_name.replace('[SAMPLE] ', '').replace(' ', '_').lower()
+        clean_name = indicator_name.replace(' ', '').replace(' ', '_').lower()
         # Make sure the path includes indicators/ prefix
         img_path = f"indicators/{category}/{clean_name}_{state_year}.png"
         full_path = f"media/{img_path}"
@@ -436,12 +436,12 @@ class Command(BaseCommand):
         map_types = []
         sample_map_types = [
             {
-                'name': '[SAMPLE] Current State',
+                'name': ' Current State',
                 'description': 'Shows the current state of urban indicators',
                 'is_active': True
             },
             {
-                'name': '[SAMPLE] Future Projection',
+                'name': ' Future Projection',
                 'description': 'Shows projected future state of urban indicators',
                 'is_active': True
             }
@@ -461,21 +461,21 @@ class Command(BaseCommand):
         sample_indicators = [
             {
                 'indicator_id': 1,
-                'name': '[SAMPLE] Mobility',
+                'name': ' Mobility',
                 'has_states': True,
                 'description': 'Transportation and mobility metrics including public transport coverage',
                 'category': 'mobility'
             },
             {
                 'indicator_id': 2,
-                'name': '[SAMPLE] Climate',
+                'name': ' Climate',
                 'has_states': True,
                 'description': 'Environmental and climate metrics including green space',
                 'category': 'climate'
             },
             {
                 'indicator_id': 3,
-                'name': '[SAMPLE] Land Use',
+                'name': ' Land Use',
                 'has_states': True,
                 'description': 'Urban form and land use metrics including mixed-use development',
                 'category': 'land_use'
@@ -515,7 +515,7 @@ class Command(BaseCommand):
                 'Population Density': random.uniform(1000, 5000),
                 'Green Space Coverage': random.uniform(10, 40),
                 'Building Height': random.uniform(10, 50)
-            }.get(indicator_name.replace('[SAMPLE] ', ''), 100)
+            }.get(indicator_name.replace(' ', ''), 100)
             
             # Increase values for future projections
             year_factor = (state_year - 2023) / 17
