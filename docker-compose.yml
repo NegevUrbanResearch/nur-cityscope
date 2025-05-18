@@ -74,7 +74,6 @@ networks:
   nur_core:
     name: nur_core        # So that the network has this EXACT name
     driver: bridge
-    external: true        # Add this line to use existing network
 
 volumes:
   postgres_data_core:

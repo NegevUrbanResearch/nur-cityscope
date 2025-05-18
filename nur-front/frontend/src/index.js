@@ -28,7 +28,7 @@ import { DataProvider } from './DataContext';
 
 
 createRoot(document.getElementById("root")).render(  
-  <BrowserRouter>
+  <BrowserRouter basename="/dashboard">
     <DataProvider>
       <App />
     </DataProvider>

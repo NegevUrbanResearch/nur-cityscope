@@ -131,18 +131,18 @@ const App = () => {
           ) : (
             <Routes>
               {/* Add specific routes for each indicator */}
-              <Route path="/mobility" element={<DashboardWrapper />} />
-              <Route path="/climate" element={<DashboardWrapper />} />
-              <Route path="/land_use" element={<DashboardWrapper />} />
+              <Route path="mobility" element={<DashboardWrapper />} />
+              <Route path="climate" element={<DashboardWrapper />} />
+              <Route path="land_use" element={<DashboardWrapper />} />
               
               {/* Generic indicator route */}
-              <Route path="/:indicator" element={<DashboardWrapper />} />
+              <Route path=":indicator" element={<DashboardWrapper />} />
               
               {/* Default route redirects to mobility */}
-              <Route path="/" element={<Navigate to="/mobility" replace />} />
+              <Route path="/" element={<Navigate to="mobility" replace />} />
               
               {/* Catch-all route */}
-              <Route path="*" element={<Navigate to="/mobility" replace />} />
+              <Route path="*" element={<Navigate to="mobility" replace />} />
             </Routes>
           )}
         </Box>
