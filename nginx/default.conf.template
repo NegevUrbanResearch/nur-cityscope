@@ -72,8 +72,16 @@ server {
 
     # --- Serve Logo ---
     location /media/Nur-Logo_3x-_1_.svg {
-        alias /usr/share/nginx/html/nur-front/frontend/media/Nur-Logo_3x-_1_.svg;
-        try_files $uri =404;
+        # Try multiple locations for the logo file
+        root /usr/share/nginx/html;
+        try_files /nur-front/frontend/media/Nur-Logo_3x-_1_.svg 
+                  /nur-front/frontend/Nur-Logo_3x-_1_.svg 
+                  /media/Nur-Logo_3x-_1_.svg 
+                  /nur-front/frontend/build/media/Nur-Logo_3x-_1_.svg 
+                  /nur-front/frontend/build/Nur-Logo_3x-_1_.svg 
+                  /nur-front/frontend/public/media/Nur-Logo_3x-_1_.svg 
+                  /nur-front/frontend/public/Nur-Logo_3x-_1_.svg 
+                  =404;
     }
     
     # --- Serve Media Files Directly with proper MIME types ---

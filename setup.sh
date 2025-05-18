@@ -47,6 +47,16 @@ docker-compose up -d
 echo "Waiting for services to be ready..."
 sleep 10
 
+# Copy logo file directly into nginx container if it exists, checks multiple locations
+echo "Ensuring logo is accessible in nginx container..."
+if [ -f "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" ]; then
+  docker cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
+elif [ -f "$SCRIPT_DIR/nur-front/frontend/public/media/Nur-Logo_3x-_1_.svg" ]; then
+  docker cp "$SCRIPT_DIR/nur-front/frontend/public/media/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
+elif [ -f "$SCRIPT_DIR/nur-io/django_api/media/Nur-Logo_3x-_1_.svg" ]; then
+  docker cp "$SCRIPT_DIR/nur-io/django_api/media/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
+fi
+
 # Run migrations
 echo "Running database migrations..."
 docker exec core_api python manage.py migrate
