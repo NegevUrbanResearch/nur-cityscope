@@ -89,7 +89,8 @@ const App = () => {
             flexGrow: 1, 
             overflow: "auto", 
             position: "relative",
-            height: "calc(100vh - 64px)" // 64px is the navbar height
+            mt: '76px',  
+            height: "calc(100vh - 76px)" // 76px is the navbar height
           }}
         >
           {loading ? (
