@@ -1,11 +1,10 @@
 import React from "react";
 import { AppBar, Toolbar, Typography, Button, Box, Tooltip } from "@mui/material";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import config from "../config";
 import { useAppData } from "../DataContext";
 
 const Navbar = () => {
-  const location = useLocation();
   const navigate = useNavigate();
   const { currentIndicator, changeIndicator, indicatorConfig } = useAppData();
 

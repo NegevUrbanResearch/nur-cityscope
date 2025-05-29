@@ -1,18 +1,12 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Tab, Box, AppBar, Typography, Grid, Paper, Alert, ToggleButtonGroup, ToggleButton } from "@mui/material";
+import React from "react";
+import { Tab, Box, Paper } from "@mui/material";
 import { TabPanel, TabContext, TabList } from "@mui/lab";
 import isEqual from "lodash/isEqual";
-import api from "../api";
-import MapIcon from '@mui/icons-material/Map';
-import ImageIcon from '@mui/icons-material/Image';
-
 import RadarChart from "../components/RadarChart";
 import PieChart from "../components/PieChart";
 import BarChart from "../components/BarChart";
 import HorizontalStackedBar from "../components/HorizontalStackedBar";
-import DeckGLMap from "../components/maps/DeckGLMap";
 import { useAppData } from "../DataContext";
-import config from "../config";
 
 // Memoize components to avoid unnecessary re-renders
 const MemoizedRadarChart = React.memo(RadarChart, (prevProps, nextProps) =>

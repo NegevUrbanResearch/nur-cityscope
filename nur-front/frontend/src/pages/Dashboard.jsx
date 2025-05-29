@@ -1,41 +1,21 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Tab, Box, AppBar, Typography, Grid, Paper, Alert, ToggleButtonGroup, ToggleButton } from "@mui/material";
-import { TabPanel, TabContext, TabList } from "@mui/lab";
-import isEqual from "lodash/isEqual";
+import {  Box, AppBar, Typography, Grid, Paper, Alert, ToggleButtonGroup, ToggleButton } from "@mui/material";
 import api from "../api";
 import MapIcon from '@mui/icons-material/Map';
 import ImageIcon from '@mui/icons-material/Image';
-
-import RadarChart from "../components/RadarChart";
-import PieChart from "../components/PieChart";
-import BarChart from "../components/BarChart";
-import HorizontalStackedBar from "../components/HorizontalStackedBar";
 import DeckGLMap from "../components/maps/DeckGLMap";
 import TabComponent from "../components/TabComponent";
 import { useAppData } from "../DataContext";
 import config from "../config";
 
-// Memoize components to avoid unnecessary re-renders
-const MemoizedRadarChart = React.memo(RadarChart, (prevProps, nextProps) =>
-  isEqual(prevProps.data, nextProps.data)
-);
-const MemoizedPieChart = React.memo(PieChart);
-const MemoizedBarChart = React.memo(BarChart, (prevProps, nextProps) =>
-  isEqual(prevProps.data, nextProps.data)
-);
-const MemoizedHorizontalStackedBar = React.memo(
-  HorizontalStackedBar,
-  (prevProps, nextProps) => isEqual(prevProps.data, nextProps.data)
-);
 
 const Dashboard = () => {
   const { 
     dashboardData: data, 
     currentIndicator, 
     getIndicatorTitle, 
-    getTabLabels 
+     
   } = useAppData();
-  const [value, setValue] = React.useState("1");
   const [mapData, setMapData] = useState({
     url: null,
     type: null,
@@ -193,9 +173,6 @@ const Dashboard = () => {
     };
   }, []);
 
-  const handleChange = (event, newValue) => {
-    setValue(newValue);
-  };
 
   // Get dashboard title directly from the context helper
   const getDashboardTitle = () => getIndicatorTitle();
@@ -364,8 +341,6 @@ const Dashboard = () => {
     }
   };
 
-  // Get tab labels directly from the context helper
-  const tabLabels = getTabLabels();
 
   // Add the following new state and handler to the Dashboard component before the return statement
   const [visualizationMode, setVisualizationMode] = useState('deck');
