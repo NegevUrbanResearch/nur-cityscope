@@ -1,21 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import {  Box, AppBar, Typography, Grid, Paper, Alert, ToggleButtonGroup, ToggleButton } from "@mui/material";
+import {  Box, AppBar, Typography, Grid, Paper } from "@mui/material";
 import api from "../api";
-import MapIcon from '@mui/icons-material/Map';
-import ImageIcon from '@mui/icons-material/Image';
-import DeckGLMap from "../components/maps/DeckGLMap";
 import TabComponent from "../components/TabComponent";
 import { useAppData } from "../DataContext";
 import config from "../config";
+import MapVisualization from "../components/MapVisualization";
+import MetricDisplay from "../components/MetricDisplay";
 
 
 const Dashboard = () => {
-  const { 
-    dashboardData: data, 
-    currentIndicator, 
-    getIndicatorTitle, 
-     
-  } = useAppData();
+  const { dashboardData: data, currentIndicator,getIndicatorTitle} = useAppData();
   const [mapData, setMapData] = useState({
     url: null,
     type: null,
@@ -173,202 +167,13 @@ const Dashboard = () => {
     };
   }, []);
 
-
   // Get dashboard title directly from the context helper
   const getDashboardTitle = () => getIndicatorTitle();
-
-  // Handle map or image rendering
-  const renderVisualization = () => {
-    // Add a switch for visualization mode (deck.gl or traditional)
-    if (mapData.error) {
-      return (
-        <>
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            Error loading visualization: Using fallback map
-          </Alert>
-          <iframe 
-            src={mapData.url}
-            style={{
-              width: "100%",
-              height: "90%",
-              border: "none"
-            }}
-            title={`${currentIndicator} map visualization`}
-            onError={(e) => {
-              console.error("Failed to load fallback map:", e);
-            }}
-          />
-        </>
-      );
-    }
-    
-    // Always render DeckGLMap for interactive visualizations
-    const state = {
-      year: 2023, // Default to 2023
-      scenario: 'current'
-    };
-    
-    // Try to get the state from the lastUpdate or the current indicator's data
-    if (data?.metrics) {
-      // We derive current year from formatted metrics
-      // This assumes that the metrics are updated when the state changes
-      if (data.metrics.year) {
-        state.year = data.metrics.year;
-      }
-      if (data.metrics.scenario) {
-        state.scenario = data.metrics.scenario;
-      }
-    }
-    
-    return (
-      <Box sx={{ height: "100%", width: "100%" }}>
-        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
-          <ToggleButtonGroup
-            value={visualizationMode}
-            exclusive
-            onChange={handleVisualizationModeChange}
-            size="small"
-            aria-label="visualization mode"
-          >
-            <ToggleButton value="deck" aria-label="interactive map">
-              <MapIcon fontSize="small" />
-              <Typography variant="caption" sx={{ ml: 1 }}>Interactive</Typography>
-            </ToggleButton>
-            <ToggleButton value="image" aria-label="static image">
-              <ImageIcon fontSize="small" />
-              <Typography variant="caption" sx={{ ml: 1 }}>Image</Typography>
-            </ToggleButton>
-          </ToggleButtonGroup>
-        </Box>
-        
-        {/* Show interactive Deck.GL map when in deck mode */}
-        {visualizationMode === 'deck' ? (
-          <Box sx={{ 
-            height: "calc(100% - 40px)", 
-            width: "100%", 
-            position: "relative",
-            overflow: "hidden",
-            borderRadius: 1,
-            "& > div": {
-              position: "relative !important",
-              height: "100% !important"
-            }
-          }}>
-            <DeckGLMap 
-              indicatorType={currentIndicator} 
-              state={state}
-            />
-          </Box>
-        ) : (
-          // Show traditional image/iframe view
-          <>
-            {/* Only show loading message after delay (if still loading) */}
-            {showLoadingMessage && (
-              <Box sx={{ 
-                display: 'flex', 
-                justifyContent: 'center', 
-                alignItems: 'center', 
-                height: '100%' 
-              }}>
-                <Typography variant="body1">
-                  Loading visualization...
-                </Typography>
-              </Box>
-            )}
-            
-            {/* Always render the current image when available */}
-            {currentImageUrl && (
-              <Box
-                component="img"
-                src={currentImageUrl}
-                alt={`${currentIndicator} visualization`}
-                sx={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "contain",
-                  display: showLoadingMessage ? 'none' : 'block'
-                }}
-                onError={(e) => {
-                  console.error("Failed to load image:", e);
-                  // Add cache-busting to fallback image
-                  e.target.src = `/media/Nur-Logo_3x-_1_.svg?_=${Date.now()}`;
-                }}
-              />
-            )}
-          </>
-        )}
-      </Box>
-    );
-  };
-
-  const getMetricDisplay = () => {
-    if (!data || !data.metrics) return null;
-    
-    const metrics = data.metrics;
-    
-    switch (currentIndicator) {
-      case 'mobility':
-        return (
-          <>
-            <Typography variant="body1">Population: {metrics.total_population?.toLocaleString()}</Typography>
-            <Typography variant="body1">Public Transport Coverage: {metrics.public_transport_coverage}%</Typography>
-            <Typography variant="body1">Average Commute Time: {metrics.average_commute_time} min</Typography>
-            <Typography variant="body1">Bike Lane Coverage: {metrics.bike_lane_coverage}%</Typography>
-          </>
-        );
-      case 'climate':
-        return (
-          <>
-            <Typography variant="body1">Population: {metrics.total_population?.toLocaleString()}</Typography>
-            <Typography variant="body1">Air Quality Index: {metrics.air_quality_index}</Typography>
-            <Typography variant="body1">Carbon Emissions: {metrics.carbon_emissions?.toLocaleString()} tons</Typography>
-            <Typography variant="body1">Renewable Energy: {metrics.renewable_energy_percentage}%</Typography>
-            <Typography variant="body1">Green Space: {metrics.green_space_percentage}%</Typography>
-          </>
-        );
-      case 'land_use':
-        return (
-          <>
-            <Typography variant="body1">Population: {metrics.total_population?.toLocaleString()}</Typography>
-            <Typography variant="body1">Mixed Use Ratio: {metrics.mixed_use_ratio}%</Typography>
-            <Typography variant="body1">Population Density: {metrics.population_density} people/km²</Typography>
-            <Typography variant="body1">Public Space: {metrics.public_space_percentage}%</Typography>
-            <Typography variant="body1">Avg Building Height: {metrics.average_building_height} m</Typography>
-          </>
-        );
-      default:
-        return null;
-    }
-  };
-
-
-  // Add the following new state and handler to the Dashboard component before the return statement
-  const [visualizationMode, setVisualizationMode] = useState('deck');
-
-  const handleVisualizationModeChange = useCallback((event, newMode) => {
-    if (newMode !== null) {
-      setVisualizationMode(newMode);
-      
-      // Optionally update the backend visualization mode
-      api.post('/api/actions/set_visualization_mode/', { mode: newMode === 'deck' ? 'map' : 'image' })
-        .catch(err => {
-          console.error('Error setting visualization mode:', err);
-        });
-    }
-  }, []);
 
   return (
     <AppBar position="static" sx={{ backgroundColor: "#111116", maxHeight: "none", overflow: "auto" }}>
       <Box sx={{ flexGrow: 1, bgcolor: "#1a1a22", p: 2, color: "white", height: "auto", minHeight: "100vh", overflow: "visible" }}>
-        <Grid
-          container
-          direction="column"
-          sx={{
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-          spacing={2}
-        >
+        <Grid container direction="column"  spacing={2} sx={{ justifyContent: "center", alignItems: "center",}} >
           <Grid item>
             <Typography variant="h4" component="div" gutterBottom sx={{ color: "#fff", fontWeight: 300 }}>
               {getDashboardTitle()}
@@ -377,36 +182,22 @@ const Dashboard = () => {
 
           <Grid item>
             <Paper sx={{ padding: 2, margin: 1, backgroundColor: "#252530", color: "white" }} elevation={4}>
-              {getMetricDisplay()}
+              <MetricDisplay data={data} currentIndicator={currentIndicator} />
             </Paper>
           </Grid>
 
           <Grid item size="8" width={"80%"} height={"40vh"}>
-            <Paper 
-              sx={{ 
-                padding: 2, 
-                margin: 1, 
-                height: "100%",
-                backgroundColor: "#1a1a22",
-                color: "white"
-              }} 
-              elevation={4}
-            >
+            <Paper elevation={4} sx={{  padding: 2, margin: 1, height: "100%",backgroundColor: "#1a1a22",color: "white" }} >
               <Typography variant="h6" sx={{ color: "#fff" }}>Interactive Map</Typography>
-              <Box 
-                sx={{ 
-                  height: "90%", 
-                  width: "100%", 
-                  display: "flex", 
-                  alignItems: "center", 
-                  justifyContent: "center",
-                  backgroundColor: "#111116",
-                  borderRadius: 1,
-                  overflow: "hidden",
-                  border: "1px solid rgba(255,255,255,0.1)"
-                }}
-              >
-                {renderVisualization()}
+              <Box sx={{ height: "90%", width: "100%", display: "flex", alignItems: "center", justifyContent: "center",backgroundColor: "#111116",borderRadius: 1,overflow: "hidden",border: "1px solid rgba(255,255,255,0.1)"}}>
+                <MapVisualization  
+                  error={mapData.error} 
+                  mapDataUrl={mapData.url} 
+                  imageUrl= {currentImageUrl} 
+                  currentIndicator = {currentIndicator}
+                  data = {data}
+                  showLoadingMessage = {showLoadingMessage}
+                /> 
               </Box>
             </Paper>
           </Grid>
@@ -414,6 +205,7 @@ const Dashboard = () => {
           <Grid item size="4" width={"80%"}>
             <TabComponent/>
           </Grid>
+          
         </Grid>
       </Box>
     </AppBar>
