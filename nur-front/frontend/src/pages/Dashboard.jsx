@@ -188,9 +188,7 @@ const Dashboard = () => {
 
           <Grid item size="8" width={"80%"} height={"40vh"}>
             <Paper elevation={4} sx={{  padding: 2, margin: 1, height: "100%",backgroundColor: "#1a1a22",color: "white" }} >
-              <Typography variant="h6" sx={{ color: "#fff" }}>Interactive Map</Typography>
-              <Box sx={{ height: "90%", width: "100%", display: "flex", alignItems: "center", justifyContent: "center",backgroundColor: "#111116",borderRadius: 1,overflow: "hidden",border: "1px solid rgba(255,255,255,0.1)"}}>
-                <MapVisualization  
+              <MapVisualization  
                   error={mapData.error} 
                   mapDataUrl={mapData.url} 
                   imageUrl= {currentImageUrl} 
@@ -198,7 +196,7 @@ const Dashboard = () => {
                   data = {data}
                   showLoadingMessage = {showLoadingMessage}
                 /> 
-              </Box>
+
             </Paper>
           </Grid>
 
