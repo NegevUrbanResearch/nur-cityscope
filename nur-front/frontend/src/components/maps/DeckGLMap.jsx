@@ -8,9 +8,11 @@ import { LightingEffect } from '@deck.gl/core';
 import { Map } from 'react-map-gl';
 import { Box, Typography, CircularProgress } from '@mui/material';
 import api from '../../api';
+import config from '../../config';
+import 'mapbox-gl/dist/mapbox-gl.css';
 
-// Use Carto dark matter style which doesn't require an API token
-const MAPBOX_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+// Use the default style from config
+const MAPBOX_STYLE = config.map.defaultStyle;
 
 // Default initial view state (Ben Gurion University coordinates)
 const INITIAL_VIEW_STATE = {
@@ -135,7 +137,8 @@ const DeckGLMap = ({ indicatorType, state }) => {
             getColor: [255, 153, 51],  // Brighter orange
             opacity: 0.9,
             widthMinPixels: 3,
-            rounded: true,
+            jointRounded: true,
+            capRounded: true,
             trailLength: 200,
             currentTime: animationTime
           }),
@@ -151,7 +154,7 @@ const DeckGLMap = ({ indicatorType, state }) => {
             lineWidthMinPixels: 2,
             getFillColor: d => d.properties?.color || [80, 210, 200, 180],  // Teal CityScope color
             getLineColor: [255, 255, 255],
-            getRadius: 100,
+            getPointRadius: 100,
             getLineWidth: 1,
             getElevation: 40
           })
@@ -342,6 +345,7 @@ const DeckGLMap = ({ indicatorType, state }) => {
           mapStyle={MAPBOX_STYLE}
           preventStyleDiffing={true}
           reuseMaps
+          mapboxAccessToken={config.map.accessToken}
           mapOptions={{
             logoPosition: 'bottom-right',
             style: {

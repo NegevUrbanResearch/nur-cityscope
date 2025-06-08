@@ -1,4 +1,33 @@
 // Frontend configuration
+
+// Assert required environment variables
+const assertRequiredEnvVars = () => {
+  const requiredVars = {
+    'REACT_APP_MAPBOX_ACCESS_TOKEN': process.env.REACT_APP_MAPBOX_ACCESS_TOKEN
+  };
+
+  const missingVars = Object.entries(requiredVars)
+    .filter(([_, value]) => !value)
+    .map(([key]) => key);
+
+  if (missingVars.length > 0) {
+    console.error('Environment variables check failed:', {
+      missingVars,
+      env: process.env,
+      nodeEnv: process.env.NODE_ENV
+    });
+    throw new Error(
+      `Missing required environment variables: ${missingVars.join(', ')}\n` +
+      'Please check that your .env file exists and ensure that your mapbox access token is set.'
+    );
+  }
+};
+
+// Only run assertions in production
+if (process.env.NODE_ENV === 'production') {
+  assertRequiredEnvVars();
+}
+
 const config = {
   // API Configuration
   api: {
@@ -16,6 +45,14 @@ const config = {
   media: {
     // Media files are served by Nginx, use window.location.origin by default
     baseUrl: process.env.REACT_APP_MEDIA_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost'),
+  },
+  
+  // Map Configuration
+  map: {
+    // Mapbox access token from environment variable with fallback
+    accessToken: process.env.REACT_APP_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1Ijoibm9hbWpnYWwiLCJhIjoiY20zbHJ5MzRvMHBxZTJrcW9uZ21pMzMydiJ9.B_aBdP5jxu9nwTm3CoNhlg',
+    // Default map style (Carto dark matter)
+    defaultStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
   },
   
   // Polling Configuration
