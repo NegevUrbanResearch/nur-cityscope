@@ -72,8 +72,14 @@ services:
 
 networks:
   nur_core:
-    name: nur_core        # So that the network has this EXACT name
+    name: nur_core
     driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: nur_core
+    labels:
+      com.docker.compose.network: "nur_core"
+    # This ensures the network is recreated if it exists
+    external: false
 
 volumes:
   postgres_data_core:
