@@ -26,9 +26,14 @@ server {
     location /dashboard/ {
         alias /usr/share/nginx/html/nur-front/frontend/;
         index index.html;
-        # The key fix: all routes like /dashboard/mobility, /dashboard/climate, etc.
-        # should serve the React app's index.html to support client-side routing
-        try_files $uri $uri/ /usr/share/nginx/html/nur-front/frontend/index.html;
+        
+        # Handle all routes by serving index.html
+        try_files $uri $uri/ /dashboard/index.html;
+        
+        # Add CORS headers
+        add_header Access-Control-Allow-Origin *;
+        add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
+        add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization";
         
         # Disable cache for HTML files
         location ~* \.(?:html)$ {
@@ -65,8 +70,11 @@ server {
         return 301 /remote-controller/;
     }
 
-    location /static/ {
+    # Static files for dashboard
+    location /dashboard/static/ {
         alias /usr/share/nginx/html/nur-front/frontend/static/;
+        expires 1y;
+        add_header Cache-Control "public, no-transform";
         try_files $uri =404;
     }
 

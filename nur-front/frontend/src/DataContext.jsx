@@ -52,9 +52,18 @@ const ID_TO_INDICATOR = Object.fromEntries(
   Object.entries(INDICATOR_CONFIG).map(([key, config]) => [config.id, key])
 );
 
+// Helper to get initial indicator from URL
+const getInitialIndicator = () => {
+  if (typeof window !== "undefined") {
+    const match = window.location.pathname.match(/dashboard\/(mobility|climate|land_use)/);
+    if (match) return match[1];
+  }
+  return "mobility";
+};
+
 export const DataProvider = ({ children }) => {
   // Store the current indicator type (mobility, climate, land_use)
-  const [currentIndicator, setCurrentIndicator] = useState('mobility');
+  const [currentIndicator, setCurrentIndicator] = useState(getInitialIndicator());
   
   // Store the dashboard data for the current indicator
   const [dashboardData, setDashboardData] = useState(null);

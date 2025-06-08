@@ -25,8 +25,7 @@ services:
     env_file:
       - .env
     volumes:
-      - dashboard_build:/app/build  # Mounts the volume to share the build
-    command: ["npm", "run", "build"]  # Runs the build command and exits
+      - dashboard_build:/app/build-volume  # Mount the volume to share the build
     networks:
       - nur_core
 
