@@ -1,59 +1,77 @@
 import React from "react";
-import { AppBar, Toolbar, Typography, Button, Box, Tooltip } from "@mui/material";
-import { useNavigate } from "react-router-dom";
-import config from "../config";
-import { useAppData } from "../DataContext";
+import {
+  AppBar,
+  Toolbar,
+  Typography,
+  Box,
+  IconButton,
+  Grid,
+} from "@mui/material";
+import MenuIcon from "@mui/icons-material/Menu";
+// import config from "../config";
+import MenuDrawer from "./MenuDrawer";
+import ChartsDrawer from "./ChartsDrawer";
 
 const Navbar = () => {
-  const navigate = useNavigate();
-  const { currentIndicator, changeIndicator, indicatorConfig } = useAppData();
+  const [openMenu, setOpenMenu] = React.useState(false);
+  const [openCharts, setOpenCharts] = React.useState(false);
 
-  // Handle direct indicator change from navbar
-  const handleIndicatorChange = (indicator) => {
-    // Change the indicator (which will also update the remote controller)
-    changeIndicator(indicator);
-    
-    // Update the URL to match - note the correct URL without "dashboard" prefix
-    navigate(`/${indicator}`);
+  const handleMenuClick = () => {
+    setOpenMenu(!openMenu);
+  };
+  const handleChartsClick = () => {
+    setOpenCharts(!openCharts);
   };
 
   return (
-    <AppBar position="fixed">
-      <Toolbar>
-        <Box sx={{ flexGrow: 1 }}>
-          {Object.entries(indicatorConfig).map(([key, config]) => (
-            <Tooltip 
-              key={key}
-              title="Click to change indicator (also updates remote controller)"
-              arrow
-              placement="bottom"
-            >
-              <Button
-                color="inherit"
-                onClick={() => handleIndicatorChange(key)}
-                sx={{ 
-                  py: 2, 
-                  px: 4, 
-                  textTransform: "none",
-                  backgroundColor: currentIndicator === key ? "rgba(255, 255, 255, 0.1)" : "transparent",
-                  transition: "background-color 0.3s ease",
-                  "&:hover": {
-                    backgroundColor: "rgba(255, 255, 255, 0.15)"
-                  }
-                }}
-              >
-                <Typography variant="h6">{config.name.replace('Dashboard', '').trim()}</Typography>
-              </Button>
-            </Tooltip>
-          ))}
-        </Box>
+    <Box>
+      <AppBar
+        position="fixed"
+        openMenu={openMenu}
+        openCharts={openCharts}>
+        <Toolbar>
+          <Grid
+            container
+            width="100%"
+            justifyContent="space-between">
+            <Grid item>
+              <IconButton onClick={handleMenuClick}>
+                <MenuIcon />
+              </IconButton>
+            </Grid>
+            <Grid item>
+              <Typography
+                variant="h6"
+                component="div"
+                sx={{ flexGrow: 1 }}>
+                title
+              </Typography>
+            </Grid>
+            <Grid item>
+              <IconButton
+                edge="end"
+                onClick={handleChartsClick}>
+                <MenuIcon />
+              </IconButton>
+            </Grid>
+          </Grid>
+        </Toolbar>
+      </AppBar>
 
-        <Typography variant="h5">
-          <img src={config.frontend.logo.url} alt="nur" style={{ width: '160px', verticalAlign: 'middle', filter: 'brightness(0) invert(1)' }} />
-        </Typography>
-      </Toolbar>
-    </AppBar>
+      <MenuDrawer
+        openMenu={openMenu}
+        handleMenuClick={handleMenuClick}
+      />
+      <ChartsDrawer
+        openCharts={openCharts}
+        handleChartsClick={handleChartsClick}
+      />
+    </Box>
   );
 };
 
 export default Navbar;
+
+//       <Typography variant="h5">
+//         <img src={config.frontend.logo.url} alt="nur" style={{ width: '160px', verticalAlign: 'middle', filter: 'brightness(0) invert(1)' }} />
+//       </Typography>

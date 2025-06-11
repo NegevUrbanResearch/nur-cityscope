@@ -13,22 +13,9 @@ import {
   CircularProgress,
   Typography,
   Button,
-  Toolbar,
-  IconButton,
-  Drawer,
-  Divider,
-  Grid,
 } from "@mui/material";
-import MenuIcon from "@mui/icons-material/Menu";
-import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 
 import darkTheme from "./theme";
-import {
-  Main,
-  AppBar,
-  DrawerHeader,
-  drawerWidth,
-} from "./style/styled_components/DrawerComponents";
 import Navbar from "./components/Navbar";
 import Dashboard from "./pages/Dashboard";
 import { useAppData } from "./DataContext";
@@ -52,8 +39,6 @@ const App = () => {
   const location = useLocation();
   const remoteControlActive = React.useRef(false);
 
-  const [openMenu, setOpenMenu] = React.useState(false);
-  const [openCharts, setOpenCharts] = React.useState(false);
 
   // Keep track of the last indicator the remote set
   const lastRemoteIndicator = React.useRef(null);
@@ -90,13 +75,6 @@ const App = () => {
     }
   }, [location.pathname, changeIndicator, currentIndicator]);
 
-  const handleMenuClick = () => {
-    setOpenMenu(!openMenu);
-  };
-  const handleChartsClick = () => {
-    setOpenCharts(!openCharts);
-  };
-
   return (
     <ThemeProvider theme={darkTheme}>
       <Box
@@ -110,71 +88,8 @@ const App = () => {
           height: "calc(100vh - 76px)", // 76px is the navbar height
         }}>
         <CssBaseline />
-        <AppBar
-          position="fixed"
-          openMenu={openMenu}
-          openCharts={openCharts}>
-          <Toolbar>
-            <Grid
-              container
-              width="100%"
-              justifyContent="space-between">
-              <Grid item>
-                <IconButton
-                  onClick={handleMenuClick}
-                  sx={[
-                    {
-                      mr: 2,
-                    },
-                    openMenu && { display: "none" },
-                  ]}>
-                  <MenuIcon />
-                </IconButton>
-              </Grid>
-              <Grid item>
-                <Typography
-                  variant="h6"
-                  noWrap
-                  component="div"
-                  sx={{ flexGrow: 1 }}>
-                  title
-                </Typography>
-              </Grid>
-              <Grid item>
-                <IconButton
-                  edge="end"
-                  onClick={handleChartsClick}
-                  sx={[openCharts && { display: "none" }]}>
-                  <MenuIcon />
-                </IconButton>
-              </Grid>
-            </Grid>
-          </Toolbar>
-        </AppBar>
-        <Drawer
-          sx={{
-            width: drawerWidth,
-            flexShrink: 0,
-            "& .MuiDrawer-paper": {
-              width: drawerWidth,
-              boxSizing: "border-box",
-            },
-          }}
-          variant="persistent"
-          anchor="left"
-          open={openMenu}>
-          <DrawerHeader>
-            <IconButton onClick={handleMenuClick}>
-              <ChevronLeftIcon />
-            </IconButton>
-          </DrawerHeader>
-          <Divider />
-          menu will be here
-        </Drawer>
-        <Main
-          openMenu={openMenu}
-          openCharts={openCharts}>
-          <DrawerHeader />
+        <Navbar />
+        <main>
           {loading ? (
             <Box
               sx={{
@@ -259,26 +174,7 @@ const App = () => {
               />
             </Routes>
           )}
-        </Main>
-        <Drawer
-          sx={{
-            width: drawerWidth,
-            flexShrink: 0,
-            "& .MuiDrawer-paper": {
-              width: drawerWidth,
-            },
-          }}
-          variant="persistent"
-          anchor="right"
-          open={openCharts}>
-          <DrawerHeader>
-            <IconButton onClick={handleChartsClick}>
-              <ChevronLeftIcon />
-            </IconButton>
-          </DrawerHeader>
-          <Divider />
-          charts will be here
-        </Drawer>
+        </main>
       </Box>
     </ThemeProvider>
   );
