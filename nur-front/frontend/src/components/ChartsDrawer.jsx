@@ -14,6 +14,7 @@ import ImageIcon from "@mui/icons-material/Image";
 import { useAppData } from "../DataContext";
 
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import TabComponent from "./TabComponent";
 
 const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
   const { visualizationMode, handleVisualizationModeChange } = useAppData();
@@ -30,42 +31,59 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
       variant="persistent"
       anchor="right"
       open={openCharts}>
-      <div>
-        <IconButton onClick={handleChartsClick}>
+      <Grid
+        container
+        sx={{ height: "64px", width: "100%" }}>
+        <IconButton
+          onClick={handleChartsClick}
+          sx={{ backgroundColor: "transparent" }}>
           <ChevronRightIcon />
         </IconButton>
-      </div>
+      </Grid>
       <Divider />
       <Grid
         container
+        direction="row"
         sx={{ justifyContent: "space-between" }}>
-        <ToggleButtonGroup
-          value={visualizationMode}
-          exclusive
-          onChange={handleVisualizationModeChange}
-          size="small"
-          aria-label="visualization mode">
-          <ToggleButton
-            value="deck"
-            aria-label="interactive map">
-            <MapIcon fontSize="small" />
-            <Typography
-              variant="caption"
-              sx={{ ml: 1 }}>
-              Interactive
-            </Typography>
-          </ToggleButton>
-          <ToggleButton
-            value="image"
-            aria-label="static image">
-            <ImageIcon fontSize="small" />
-            <Typography
-              variant="caption"
-              sx={{ ml: 1 }}>
-              Image
-            </Typography>
-          </ToggleButton>
-        </ToggleButtonGroup>
+        <Grid
+          item
+          container>
+          <ToggleButtonGroup
+            value={visualizationMode}
+            exclusive
+            onChange={handleVisualizationModeChange}
+            size="small"
+            aria-label="visualization mode">
+            <ToggleButton
+              value="deck"
+              aria-label="interactive map">
+              <MapIcon fontSize="small" />
+              <Typography
+                variant="caption"
+                sx={{ ml: 1 }}>
+                Interactive
+              </Typography>
+            </ToggleButton>
+            <ToggleButton
+              value="image"
+              aria-label="static image">
+              <ImageIcon fontSize="small" />
+              <Typography
+                variant="caption"
+                sx={{ ml: 1 }}>
+                Image
+              </Typography>
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Grid>
+        <Grid
+          item
+          container>
+          {/* <TabComponent /> */}
+          <Grid item>chart a</Grid>
+          <Grid item>chart b</Grid>
+          <Grid item>chart c</Grid>
+        </Grid>
       </Grid>
     </Drawer>
   );

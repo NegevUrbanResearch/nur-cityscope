@@ -2,10 +2,10 @@ import React from "react";
 import { Tab, Box, Paper } from "@mui/material";
 import { TabPanel, TabContext, TabList } from "@mui/lab";
 import isEqual from "lodash/isEqual";
-import RadarChart from "../components/RadarChart";
-import PieChart from "../components/PieChart";
-import BarChart from "../components/BarChart";
-import HorizontalStackedBar from "../components/HorizontalStackedBar";
+import RadarChart from "./charts/RadarChart";
+import PieChart from "./charts/PieChart";
+import BarChart from "./charts/BarChart";
+import HorizontalStackedBar from "./charts/HorizontalStackedBar";
 import { useAppData } from "../DataContext";
 
 // Memoize components to avoid unnecessary re-renders
