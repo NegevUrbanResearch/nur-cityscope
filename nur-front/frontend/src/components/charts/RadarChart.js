@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from 'react';
-import PropTypes from 'prop-types';
-import Chart from 'chart.js/auto';
+import React, { useEffect, useRef } from "react";
+import PropTypes from "prop-types";
+import Chart from "chart.js/auto";
+import { chartsDrawerWidth } from "../../style/drawersStyles";
 
 const RadarChart = ({ data }) => {
   const chartRef = useRef(null);
@@ -8,34 +9,42 @@ const RadarChart = ({ data }) => {
 
   useEffect(() => {
     // Basic data validation
-    if (!data || !data.categories || !Array.isArray(data.categories) || 
-        !data.valuesSet1 || !Array.isArray(data.valuesSet1) || 
-        !data.valuesSet2 || !Array.isArray(data.valuesSet2)) {
-      console.error('Invalid data for radar chart', data);
+    if (
+      !data ||
+      !data.categories ||
+      !Array.isArray(data.categories) ||
+      !data.valuesSet1 ||
+      !Array.isArray(data.valuesSet1) ||
+      !data.valuesSet2 ||
+      !Array.isArray(data.valuesSet2)
+    ) {
+      console.error("Invalid data for radar chart", data);
       return;
     }
 
     // Make sure we have a valid canvas reference
     if (!canvasRef.current) {
-      console.error('Canvas reference is not available');
+      console.error("Canvas reference is not available");
       return;
     }
 
-    const ctx = canvasRef.current.getContext('2d');
+    const ctx = canvasRef.current.getContext("2d");
     if (!ctx) {
-      console.error('Unable to get 2D context from canvas');
+      console.error("Unable to get 2D context from canvas");
       return;
     }
 
     // Keep original labels for color determination
     const originalLabels = [...data.categories];
-    const formattedLabels = data.categories.map(cat => cat.replace("_d", " "));
+    const formattedLabels = data.categories.map((cat) =>
+      cat.replace("_d", " "),
+    );
 
     // Function to determine the color of each label
     const getColorForLabel = (label) => {
-      if (label.endsWith('_d')) return '#FFFFFF'; // White color
-      if (label === 'Land Uses') return '#FFFF00'; // Yellow color
-      return '#00BFFF'; // Light blue color
+      if (label.endsWith("_d")) return "#FFFFFF"; // White color
+      if (label === "Land Uses") return "#FFFF00"; // Yellow color
+      return "#00BFFF"; // Light blue color
     };
 
     try {
@@ -46,32 +55,32 @@ const RadarChart = ({ data }) => {
 
       // Create new chart
       chartRef.current = new Chart(ctx, {
-        type: 'radar',
+        type: "radar",
         data: {
           labels: formattedLabels,
           datasets: [
             {
-              label: 'Base Scenario',
+              label: "Base Scenario",
               data: data.valuesSet2,
-              backgroundColor: 'rgba(255, 0, 0, 0.2)',
-              borderColor: 'rgba(255, 0, 0, 1)',
+              backgroundColor: "rgba(255, 0, 0, 0.2)",
+              borderColor: "rgba(255, 0, 0, 1)",
               borderWidth: 2,
-              pointBackgroundColor: 'rgba(255, 0, 0, 1)',
-              pointBorderColor: '#fff',
-              pointHoverBackgroundColor: '#fff',
-              pointHoverBorderColor: 'rgba(255, 0, 0, 1)',
+              pointBackgroundColor: "rgba(255, 0, 0, 1)",
+              pointBorderColor: "#fff",
+              pointHoverBackgroundColor: "#fff",
+              pointHoverBorderColor: "rgba(255, 0, 0, 1)",
               pointRadius: 3,
             },
             {
-              label: 'Current Scenario',
+              label: "Current Scenario",
               data: data.valuesSet1,
-              backgroundColor: 'rgba(59, 40, 204, 0.5)',
-              borderColor: 'rgba(255, 255, 255, 1)',
+              backgroundColor: "rgba(59, 40, 204, 0.5)",
+              borderColor: "rgba(255, 255, 255, 1)",
               borderWidth: 2,
-              pointBackgroundColor: 'rgba(59, 40, 204, 1)',
-              pointBorderColor: '#fff',
-              pointHoverBackgroundColor: '#fff',
-              pointHoverBorderColor: 'rgba(59, 40, 204, 1)',
+              pointBackgroundColor: "rgba(59, 40, 204, 1)",
+              pointBorderColor: "#fff",
+              pointHoverBackgroundColor: "#fff",
+              pointHoverBorderColor: "rgba(59, 40, 204, 1)",
               pointRadius: 3,
             },
           ],
@@ -92,24 +101,24 @@ const RadarChart = ({ data }) => {
               max: 100,
               ticks: {
                 stepSize: 20,
-                backdropColor: 'rgba(0, 0, 0, 0)', // Make background transparent
-                color: 'rgba(255, 255, 255, 0.7)',
+                backdropColor: "rgba(0, 0, 0, 0)", // Make background transparent
+                color: "rgba(255, 255, 255, 0.7)",
               },
               grid: {
-                color: 'rgba(255, 255, 255, 0.3)',
+                color: "rgba(255, 255, 255, 0.3)",
               },
               angleLines: {
-                color: 'rgba(255, 255, 255, 0.3)', 
+                color: "rgba(255, 255, 255, 0.3)",
               },
               pointLabels: {
                 font: {
                   size: 14,
-                  weight: 'bold',
+                  weight: "bold",
                 },
                 color: (ctx) => {
                   const index = ctx.index;
                   if (index >= originalLabels.length) {
-                    return '#FFFFFF'; // Default color
+                    return "#FFFFFF"; // Default color
                   }
                   const originalLabel = originalLabels[index];
                   return getColorForLabel(originalLabel);
@@ -119,9 +128,9 @@ const RadarChart = ({ data }) => {
           },
           plugins: {
             legend: {
-              position: 'bottom',
+              position: "bottom",
               labels: {
-                color: '#FFFFFF',
+                color: "#FFFFFF",
                 font: {
                   size: 12,
                 },
@@ -147,7 +156,7 @@ const RadarChart = ({ data }) => {
         },
       });
     } catch (error) {
-      console.error('Error creating radar chart:', error);
+      console.error("Error creating radar chart:", error);
     }
 
     // Cleanup function
@@ -161,7 +170,12 @@ const RadarChart = ({ data }) => {
 
   // Return a container with appropriate sizing
   return (
-    <div style={{ position: 'relative', width: '100%', height: '600px' }}>
+    <div
+      style={{
+        position: "relative",
+        width: `calc(${chartsDrawerWidth}-100px)`,
+        //height: "400px",
+      }}>
       <canvas ref={canvasRef}></canvas>
     </div>
   );

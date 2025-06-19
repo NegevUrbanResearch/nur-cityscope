@@ -1,5 +1,4 @@
 import React from "react";
-
 import {
   IconButton,
   Drawer,
@@ -11,21 +10,36 @@ import {
 } from "@mui/material";
 import MapIcon from "@mui/icons-material/Map";
 import ImageIcon from "@mui/icons-material/Image";
-import { useAppData } from "../DataContext";
-
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
-import TabComponent from "./TabComponent";
+
+import isEqual from "lodash/isEqual";
+
+import { useAppData } from "../DataContext";
+import { chartsDrawerWidth } from "../style/drawersStyles";
+
+import RadarChart from "./charts/RadarChart";
+import PieChart from "./charts/PieChart";
+import HorizontalStackedBar from "./charts/HorizontalStackedBar";
+import StackedBarChart from "./charts/BarChart";
+import ChartCard from "./ChartCard";
 
 const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
-  const { visualizationMode, handleVisualizationModeChange } = useAppData();
+  const {
+    visualizationMode,
+    handleVisualizationModeChange,
+    dashboardData: data,
+    getTabLabels,
+  } = useAppData();
+
+  const tabLabels = getTabLabels();
 
   return (
     <Drawer
       sx={{
-        width: "240px",
+        width: chartsDrawerWidth,
         flexShrink: 0,
         "& .MuiDrawer-paper": {
-          width: "240px",
+          width: chartsDrawerWidth,
         },
       }}
       variant="persistent"
@@ -43,7 +57,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
       <Divider />
       <Grid
         container
-        direction="row"
+        direction="column"
         sx={{ justifyContent: "space-between" }}>
         <Grid
           item
@@ -78,11 +92,59 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         </Grid>
         <Grid
           item
-          container>
-          {/* <TabComponent /> */}
-          <Grid item>chart a</Grid>
-          <Grid item>chart b</Grid>
-          <Grid item>chart c</Grid>
+          container
+          direction="column">
+          <Grid item>
+            <ChartCard
+              title={tabLabels[0]}
+              data={data?.horizontalStackedBars}
+              MemoizedChart={MemoizedHorizontalStackedBar}
+            />
+
+            {/* <Card>
+              <CardHeader
+                title="bar chart"
+                action={
+                  <ExpandMore
+                    expand={expanded}
+                    onClick={handleExpandClick}
+                    //aria-expanded={expanded}
+                    //aria-label="show more"
+                  >
+                    <ExpandMoreIcon />
+                  </ExpandMore>
+                }></CardHeader>
+              <Collapse
+                in={expanded}
+                timeout="auto"
+                unmountOnExit>
+                <CardContent>
+                  <MemoizedBarChart data={data?.stackedBars} />
+                </CardContent>
+              </Collapse>
+            </Card> */}
+          </Grid>
+          <Grid item>
+            <ChartCard
+              title={tabLabels[1]}
+              data={data?.stackedBars}
+              MemoizedChart={MemoizedBarChart}
+            />
+          </Grid>
+          <Grid item>
+            <ChartCard
+              title={tabLabels[2]}
+              data={data?.radar}
+              MemoizedChart={MemoizedRadarChart}
+            />
+          </Grid>
+          <Grid item>
+            <ChartCard
+              title={tabLabels[3]}
+              data={data?.pieChart}
+              MemoizedChart={MemoizedPieChart}
+            />
+          </Grid>
         </Grid>
       </Grid>
     </Drawer>
@@ -90,3 +152,16 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
 };
 
 export default ChartsDrawer;
+
+// Memoize components to avoid unnecessary re-renders
+const MemoizedRadarChart = React.memo(RadarChart, (prevProps, nextProps) =>
+  isEqual(prevProps.data, nextProps.data),
+);
+const MemoizedPieChart = React.memo(PieChart);
+const MemoizedBarChart = React.memo(StackedBarChart, (prevProps, nextProps) =>
+  isEqual(prevProps.data, nextProps.data),
+);
+const MemoizedHorizontalStackedBar = React.memo(
+  HorizontalStackedBar,
+  (prevProps, nextProps) => isEqual(prevProps.data, nextProps.data),
+);

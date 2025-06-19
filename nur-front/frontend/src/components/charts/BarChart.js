@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from 'react';
-import Chart from 'chart.js/auto';
+import React, { useEffect, useRef } from "react";
+import Chart from "chart.js/auto";
+import { chartsDrawerWidth } from "../../style/drawersStyles";
 
 const StackedBarChart = ({ data }) => {
   const chartRef = useRef(null);
@@ -8,15 +9,16 @@ const StackedBarChart = ({ data }) => {
   useEffect(() => {
     // Data validation
     if (!data || !data.bars || !Array.isArray(data.bars)) {
-      console.error('Invalid data structure for BarChart', data);
+      console.error("Invalid data structure for BarChart", data);
       return;
     }
 
-    const ctx = canvasRef.current.getContext('2d');
-    
+    const ctx = canvasRef.current.getContext("2d");
+
     // Use labels from data if available, otherwise use defaults
-    const xLabels = data.labels || data.categories || ['Category 1', 'Category 2', 'Category 3'];
-    const colors = ['#0077B6', '#00B4D8', '#90E0EF'];
+    const xLabels = data.labels ||
+      data.categories || ["Category 1", "Category 2", "Category 3"];
+    const colors = ["#0077B6", "#00B4D8", "#90E0EF"];
 
     // Clean up any existing chart
     if (chartRef.current) {
@@ -26,7 +28,7 @@ const StackedBarChart = ({ data }) => {
     try {
       // Create and store the chart instance
       chartRef.current = new Chart(ctx, {
-        type: 'bar',
+        type: "bar",
         data: {
           labels: xLabels,
           datasets: data.bars.map((bar, index) => ({
@@ -52,7 +54,7 @@ const StackedBarChart = ({ data }) => {
               suggestedMax: 160,
               grid: {
                 display: true,
-                color: 'rgba(255, 255, 255, 1)',
+                color: "rgba(255, 255, 255, 1)",
                 drawBorder: false,
                 drawTicks: false,
               },
@@ -63,8 +65,8 @@ const StackedBarChart = ({ data }) => {
           },
           plugins: {
             legend: {
-              position: 'bottom',
-              align: 'start',
+              position: "bottom",
+              align: "start",
               labels: {
                 boxWidth: 15,
                 padding: 15,
@@ -74,7 +76,7 @@ const StackedBarChart = ({ data }) => {
         },
       });
     } catch (error) {
-      console.error('Error creating bar chart:', error);
+      console.error("Error creating bar chart:", error);
     }
 
     // Cleanup function
@@ -87,7 +89,11 @@ const StackedBarChart = ({ data }) => {
   }, [data]);
 
   return (
-    <div style={{ height: '300px', width: '100%' }}>
+    <div
+      style={{
+        width: `calc(${chartsDrawerWidth}-100px)`,
+        //height: "400px",
+      }}>
       <canvas ref={canvasRef}></canvas>
     </div>
   );

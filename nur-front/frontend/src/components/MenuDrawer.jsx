@@ -11,9 +11,8 @@ import {
 
 import { useNavigate } from "react-router-dom";
 import { useAppData } from "../DataContext";
-
+import { menuDrawerWidth } from "../style/drawersStyles";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
-
 
 const MenuDrawer = ({ handleMenuClick, openMenu }) => {
   const navigate = useNavigate();
@@ -31,21 +30,24 @@ const MenuDrawer = ({ handleMenuClick, openMenu }) => {
   return (
     <Drawer
       sx={{
-        width: "240px",
+        width: menuDrawerWidth,
         flexShrink: 0,
         "& .MuiDrawer-paper": {
-          width: "240px",
+          width: menuDrawerWidth,
           boxSizing: "border-box",
         },
       }}
       variant="persistent"
       anchor="left"
       open={openMenu}>
-      <div>
+      <Grid
+        container
+        sx={{ height: "64px", width: "100%" }}>
         <IconButton onClick={handleMenuClick}>
           <ChevronLeftIcon />
         </IconButton>
-      </div>
+      </Grid>
+
       <Divider />
       <Grid container>
         {Object.entries(indicatorConfig).map(([key, config]) => (

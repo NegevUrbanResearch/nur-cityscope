@@ -1,6 +1,7 @@
-import React, { useRef, useEffect } from 'react';
-import { Doughnut } from 'react-chartjs-2';
-import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
+import React, { useRef, useEffect } from "react";
+import { Doughnut } from "react-chartjs-2";
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
+import {chartsDrawerWidth} from "../../style/drawersStyles";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -8,34 +9,44 @@ const DonutChart = ({ data }) => {
   const chartRef = useRef(null);
 
   // More robust data validation
-  const isValidData = data && 
-    data.labels && 
-    Array.isArray(data.labels) && 
-    data.datasets && 
-    Array.isArray(data.datasets) && 
+  const isValidData =
+    data &&
+    data.labels &&
+    Array.isArray(data.labels) &&
+    data.datasets &&
+    Array.isArray(data.datasets) &&
     data.datasets.length > 0 &&
     data.datasets[0].data &&
     Array.isArray(data.datasets[0].data);
 
   // Create default data if invalid
   const defaultData = {
-    labels: ['No Data Available'],
-    datasets: [{
-      data: [100],
-      backgroundColor: ['#95a5a6'],
-      borderWidth: 1,
-    }]
+    labels: ["No Data Available"],
+    datasets: [
+      {
+        data: [100],
+        backgroundColor: ["#95a5a6"],
+        borderWidth: 1,
+      },
+    ],
   };
 
   // Use validated data or defaults
-  const chartData = isValidData ? {
-    labels: data.labels,
-    datasets: [{
-      data: data.datasets[0].data,
-      backgroundColor: data.datasets[0].backgroundColor || ['#2ecc71', '#95a5a6'],
-      borderWidth: 1,
-    }]
-  } : defaultData;
+  const chartData = isValidData
+    ? {
+        labels: data.labels,
+        datasets: [
+          {
+            data: data.datasets[0].data,
+            backgroundColor: data.datasets[0].backgroundColor || [
+              "#2ecc71",
+              "#95a5a6",
+            ],
+            borderWidth: 1,
+          },
+        ],
+      }
+    : defaultData;
 
   const chartOptions = {
     responsive: true,
@@ -43,15 +54,15 @@ const DonutChart = ({ data }) => {
     plugins: {
       legend: {
         display: true,
-        position: 'bottom',
-        align: 'start',
+        position: "bottom",
+        align: "start",
         labels: {
           boxWidth: 15,
           padding: 10,
           font: {
-            size: 12
-          }
-        }
+            size: 12,
+          },
+        },
       },
       tooltip: {
         callbacks: {
@@ -62,47 +73,53 @@ const DonutChart = ({ data }) => {
           },
         },
         titleFont: {
-          size: 14
+          size: 14,
         },
         bodyFont: {
-          size: 13
+          size: 13,
         },
         padding: 10,
         displayColors: true,
-        backgroundColor: 'rgba(0, 0, 0, 0.8)'
+        backgroundColor: "rgba(0, 0, 0, 0.8)",
       },
     },
-    cutout: '60%', // Donut hole size
+    cutout: "60%", // Donut hole size
     animation: {
       animateRotate: true,
-      animateScale: true
-    }
+      animateScale: true,
+    },
   };
 
   // Log validation errors but don't show them to users
   useEffect(() => {
     if (!isValidData && data) {
-      console.error('Invalid data structure for PieChart:', data);
+      console.error("Invalid data structure for PieChart:", data);
     }
   }, [data, isValidData]);
 
   return (
-    <div style={{ height: '300px', width: '100%', position: 'relative' }}>
-      <Doughnut 
-        data={chartData} 
-        options={chartOptions} 
+    <div
+      style={{
+        width: `calc(${chartsDrawerWidth}-100px)`,
+        //height: "400px",
+        position: "relative",
+      }}>
+      <Doughnut
+        data={chartData}
+        options={chartOptions}
         ref={chartRef}
       />
       {!isValidData && (
-        <div style={{ 
-          position: 'absolute', 
-          top: '50%', 
-          left: '50%', 
-          transform: 'translate(-50%, -50%)', 
-          textAlign: 'center',
-          fontSize: '12px',
-          color: '#666'
-        }}>
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            textAlign: "center",
+            fontSize: "12px",
+            color: "#666",
+          }}>
           No data available
         </div>
       )}

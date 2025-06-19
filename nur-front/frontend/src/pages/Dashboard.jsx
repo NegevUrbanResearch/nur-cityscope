@@ -6,6 +6,7 @@ import { useAppData } from "../DataContext";
 import config from "../config";
 import MetricDisplay from "../components/MetricDisplay";
 import DeckGLMap from "../components/maps/DeckGLMap";
+import { chartsDrawerWidth } from "../style/drawersStyles";
 
 const Dashboard = () => {
   const {
@@ -227,7 +228,7 @@ const Dashboard = () => {
     <Box
       sx={{
         width: "99vw",
-        marginLeft: "-240px",
+        marginLeft: `-${chartsDrawerWidth}`,
         height: "calc(100vh - 64px)",
       }}>
       {visualizationMode === "deck" ? (
