@@ -7,6 +7,7 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Typography,
+  Tooltip,
 } from "@mui/material";
 import MapIcon from "@mui/icons-material/Map";
 import ImageIcon from "@mui/icons-material/Image";
@@ -29,9 +30,17 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
     handleVisualizationModeChange,
     dashboardData: data,
     getTabLabels,
+    currentIndicator,
   } = useAppData();
 
   const tabLabels = getTabLabels();
+
+  let disableInteractiveMode = false;
+
+  if (currentIndicator == "climate") {
+    handleVisualizationModeChange(null, "image");
+    disableInteractiveMode = true;
+  }
 
   return (
     <Drawer
@@ -68,16 +77,38 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
             onChange={handleVisualizationModeChange}
             size="small"
             aria-label="visualization mode">
-            <ToggleButton
-              value="deck"
-              aria-label="interactive map">
-              <MapIcon fontSize="small" />
-              <Typography
-                variant="caption"
-                sx={{ ml: 1 }}>
-                Interactive
-              </Typography>
-            </ToggleButton>
+            {disableInteractiveMode ? (
+              <Tooltip
+                title="This indicator does not support interactive mode"
+                placement="top"
+                arrow>
+                <span>
+                  <ToggleButton
+                    value="deck"
+                    disabled={disableInteractiveMode}
+                    aria-label="interactive map">
+                    <MapIcon fontSize="small" />
+                    <Typography
+                      variant="caption"
+                      sx={{ ml: 1 }}>
+                      Interactive
+                    </Typography>
+                  </ToggleButton>
+                </span>
+              </Tooltip>
+            ) : (
+              <ToggleButton
+                value="deck"
+                disabled={disableInteractiveMode}
+                aria-label="interactive map">
+                <MapIcon fontSize="small" />
+                <Typography
+                  variant="caption"
+                  sx={{ ml: 1 }}>
+                  Interactive
+                </Typography>
+              </ToggleButton>
+            )}
             <ToggleButton
               value="image"
               aria-label="static image">
@@ -100,29 +131,6 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
               data={data?.horizontalStackedBars}
               MemoizedChart={MemoizedHorizontalStackedBar}
             />
-
-            {/* <Card>
-              <CardHeader
-                title="bar chart"
-                action={
-                  <ExpandMore
-                    expand={expanded}
-                    onClick={handleExpandClick}
-                    //aria-expanded={expanded}
-                    //aria-label="show more"
-                  >
-                    <ExpandMoreIcon />
-                  </ExpandMore>
-                }></CardHeader>
-              <Collapse
-                in={expanded}
-                timeout="auto"
-                unmountOnExit>
-                <CardContent>
-                  <MemoizedBarChart data={data?.stackedBars} />
-                </CardContent>
-              </Collapse>
-            </Card> */}
           </Grid>
           <Grid item>
             <ChartCard
