@@ -1,6 +1,6 @@
 services:
-  core_api:  # This is the main API service (previously named "web")
-    container_name: core_api
+  nur-api:  # This is the main API service (previously named "web")
+    container_name: nur-api
     build: ./nur-io/django_api/.
     ports:
       - "${API_PORT}:9900"  # Uses the API_PORT variable from the .env file
@@ -9,7 +9,7 @@ services:
     volumes:
       - ./nur-io/django_api/.:/app
       - ./init.sh:/app/init.sh
-      - core_api_data:/app/data
+      - nur-api_data:/app/data
       - media_files:/app/media  # Share media files with nginx
     depends_on:
       - db
@@ -48,14 +48,14 @@ services:
     ports:
       - "${FRONT_PORT}:80"
     depends_on:
-      - core_api
+      - nur-api
       - dashboard-builder
     restart: always  # Add restart policy to ensure it restarts if it crashes
     networks:
       - nur_core
 
   db:
-    container_name: core_db
+    container_name: db
     image: postgres:latest
     env_file:
       - .env
@@ -87,5 +87,5 @@ networks:
 volumes:
   postgres_data_core:
   dashboard_build:
-  core_api_data:          # New volume for persistent core_api data
+  nur-api_data:          # New volume for persistent nur-api data
   media_files:            # New volume for sharing media files

@@ -50,7 +50,6 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',  # Añade esta línea
     'backend',
-    'management',
 ]
 
 MIDDLEWARE = [
@@ -144,7 +143,7 @@ CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            "hosts": [('redis', 6379)],  # Asegúrate de que Redis esté corriendo en el puerto correcto
+            "hosts": [('redis', 6379)],
         },
     },
 }
