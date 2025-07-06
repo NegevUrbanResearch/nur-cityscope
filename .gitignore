@@ -120,4 +120,4 @@ calculations/export/*
 
 # Specific file types to ignore (unless explicitly included)
 *.msi
-*-to-load/*
+*-to-load*
