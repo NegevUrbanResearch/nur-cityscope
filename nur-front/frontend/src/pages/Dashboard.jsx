@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Box, AppBar, Typography, Grid, Paper, Alert } from "@mui/material";
 import api from "../api";
-import TabComponent from "../components/TabComponent";
+//import TabComponent from "../components/TabComponent";
 import { useAppData } from "../DataContext";
 import config from "../config";
-import MetricDisplay from "../components/MetricDisplay";
+//import MetricDisplay from "../components/MetricDisplay";
 import DeckGLMap from "../components/maps/DeckGLMap";
 import { chartsDrawerWidth } from "../style/drawersStyles";
 

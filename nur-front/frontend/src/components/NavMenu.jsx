@@ -1,15 +1,23 @@
 import React from "react";
 
-import { Grid, Typography, Button } from "@mui/material";
+import { Grid, Typography, Button, MenuItem, Menu } from "@mui/material";
 
 import { useNavigate } from "react-router-dom";
 import { useAppData } from "../DataContext";
 import { chartsDrawerWidth } from "../style/drawersStyles";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 
 const NavMenu = () => {
   const navigate = useNavigate();
   const { currentIndicator, changeIndicator, indicatorConfig } = useAppData();
-
+  const [anchorEl, setAnchorEl] = React.useState(null);
+  const open = Boolean(anchorEl);
+  const handleClick = (event) => {
+    setAnchorEl(event.currentTarget);
+  };
+  const handleClose = () => {
+    setAnchorEl(null);
+  };
   // Handle direct indicator change from navbar
   const handleIndicatorChange = (indicator) => {
     // Change the indicator (which will also update the remote controller)
@@ -24,29 +32,27 @@ const NavMenu = () => {
       container
       item
       width={`calc(100% - ${chartsDrawerWidth})`}
-      justifyContent="space-around">
-      {Object.entries(indicatorConfig).map(([key, config]) => (
-        <Grid item  xs={12}>
-          <Button
-            color="inherit"
-            onClick={() => handleIndicatorChange(key)}
-            sx={{
-              textTransform: "none",
-              backgroundColor:
-                currentIndicator === key
-                  ? "rgba(255, 255, 255, 0.1)"
-                  : "transparent",
-              transition: "background-color 0.3s ease",
-              "&:hover": {
-                backgroundColor: "rgba(255, 255, 255, 0.15)",
-              },
-            }}>
-            <Typography variant="h5">
-              {config.name.replace("Dashboard", "").trim()}
-            </Typography>
-          </Button>
-        </Grid>
-      ))}
+      justifyContent="space-around"
+      direction="row">
+      <Typography variant="h6"> Indicator </Typography>
+      <Button
+        sx={{ height: "7vh" }}
+        onClick={handleClick}
+        color="inherit"
+        size="large"
+        startIcon={<ArrowDropDownIcon />}>
+        {currentIndicator}
+      </Button>
+      <Menu
+        anchorEl={anchorEl}
+        open={open}
+        onClose={handleClose}>
+        {Object.entries(indicatorConfig).map(([key, config]) => (
+          <MenuItem onClick={() => handleIndicatorChange(key)}>
+            {config.name.replace("Dashboard", "").trim()}{" "}
+          </MenuItem>
+        ))}
+      </Menu>
     </Grid>
   );
 };
