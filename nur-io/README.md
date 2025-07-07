@@ -61,16 +61,16 @@ docker exec -it nur-api python manage.py create_sample_data
 
 #### Export Database
 ```bash
-docker exec -it nur-db pg_dump -U postgres -W -h localhost nur_db > nur_db.sql
+docker exec -it nur-db pg_dump -U postgres -W -h localhost db > db.sql
 ```
 
 #### Import Database
 ```bash
 # Reset database
-docker exec -i nur-db psql nur_db -U postgres -c "DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;"
+docker exec -i nur-db psql db -U postgres -c "DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;"
 
 # Import data
-docker exec -i nur-db psql nur_db -U postgres < nur_db.sql
+docker exec -i nur-db psql db -U postgres < db.sql
 ```
 
 ## Development

@@ -32,7 +32,7 @@ RUN chmod +x /app/init.sh
 
 # Set environment variables
 ENV PYTHONPATH=/app
-ENV DJANGO_SETTINGS_MODULE=backend.settings
+ENV DJANGO_SETTINGS_MODULE=core.settings
 
 EXPOSE 9900
 

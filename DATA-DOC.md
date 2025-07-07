@@ -126,9 +126,7 @@ The application provides the following REST API endpoints:
    - PUT/PATCH `/{id}/`: Update layer configuration
    - DELETE `/{id}/`: Delete layer configuration
 
-## Managing Data
-
-### Through Admin Interface
+## Managing Data Through Admin Interface
 
 1. Access the admin interface at [http://localhost:9900/admin](http://localhost:9900/admin)
 2. Log in with your admin credentials
@@ -144,21 +142,13 @@ The application provides the following REST API endpoints:
 2. Make your changes
 3. Click "Save"
 
-### Through Remote Controller
-
-1. Access the remote controller at [http://localhost/remote/](http://localhost/remote/)
-2. Use the interface to:
-   - Toggle between different map types
-   - Change states
-   - Start/Stop the projection system
-
 
 ## Backup and Restore
 
 ### Creating a Backup
 ```bash
 # Backup the database
-docker exec db pg_dump -U postgres nur_db > backup.sql
+docker exec db pg_dump -U postgres db > backup.sql
 
 # Backup uploaded files
 docker cp nur-api:/app/media/ ./backup/media/
@@ -167,42 +157,8 @@ docker cp nur-api:/app/media/ ./backup/media/
 ### Restoring from Backup
 ```bash
 # Restore the database
-cat backup.sql | docker exec -i db psql -U postgres -d nur_db
+cat backup.sql | docker exec -i db psql -U postgres -d db
 
 # Restore uploaded files
 docker cp ./backup/media/ nur-api:/app/media/
 ```
-
-## Sample Data
-
-The application includes sample data that demonstrates the system's capabilities:
-
-1. **Indicators**:
-   - Population Density (with states)
-   - Green Space Coverage (with states)
-   - Building Height (without states)
-
-2. **States**:
-   - 2020 Summer
-   - 2020 Winter
-   - 2021 Summer
-
-3. **Indicator Data**:
-   - 9 entries (3 indicators × 3 states)
-   - Each entry includes:
-     - Associated indicator
-     - Associated state
-     - Sample GeoJSON data
-     - Layer configuration
-
-4. **Dashboard Feed State**:
-   - Sample data for the current state including:
-     - Total population
-     - Green space percentage
-     - Average building height
-
-To create fresh sample data:
-```bash
-docker exec -it nur-api python manage.py shell < create_sample_data.py
-```
-

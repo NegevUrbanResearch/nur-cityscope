@@ -39,7 +39,7 @@ router.register(r'actions', CustomActionsViewSet, basename='actions')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include((router.urls, 'api'))),
+    path('', include((router.urls, 'api'))),
     # API Documentation endpoints
     # Visit /swagger/ for interactive API explorer (Swagger UI)
     # Visit /redoc/ for a clean, readable API reference (ReDoc UI)
