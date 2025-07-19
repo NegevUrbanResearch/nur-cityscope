@@ -1,10 +1,9 @@
 import React from "react";
 
-import { Grid, Typography, Button, MenuItem, Menu } from "@mui/material";
+import { Grid, Button, MenuItem, Menu, Typography } from "@mui/material";
 
 import { useNavigate } from "react-router-dom";
 import { useAppData } from "../DataContext";
-import { chartsDrawerWidth } from "../style/drawersStyles";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 
 const NavMenu = () => {
@@ -28,20 +27,14 @@ const NavMenu = () => {
   };
 
   return (
-    <Grid
-      container
-      item
-      width={`calc(100% - ${chartsDrawerWidth})`}
-      justifyContent="space-around"
-      direction="row">
-      <Typography variant="h6"> Indicator </Typography>
+    <Grid item>
       <Button
-        sx={{ height: "7vh" }}
+        sx={{ height: "7vh", textTransform: "none" }}
         onClick={handleClick}
         color="inherit"
         size="large"
         startIcon={<ArrowDropDownIcon />}>
-        {currentIndicator}
+        <Typography variant="h6">{currentIndicator}</Typography>
       </Button>
       <Menu
         anchorEl={anchorEl}
@@ -49,7 +42,9 @@ const NavMenu = () => {
         onClose={handleClose}>
         {Object.entries(indicatorConfig).map(([key, config]) => (
           <MenuItem onClick={() => handleIndicatorChange(key)}>
-            {config.name.replace("Dashboard", "").trim()}{" "}
+            <Typography variant="h6">
+              {config.name.replace("Dashboard", "").trim()}
+            </Typography>
           </MenuItem>
         ))}
       </Menu>

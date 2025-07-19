@@ -56,7 +56,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
       open={openCharts}>
       <Grid
         container
-        sx={{ height: "64px", width: "100%" }}>
+        sx={{ height: "76px", width: "100%" }}>
         <IconButton
           onClick={handleChartsClick}
           sx={{ backgroundColor: "transparent" }}>

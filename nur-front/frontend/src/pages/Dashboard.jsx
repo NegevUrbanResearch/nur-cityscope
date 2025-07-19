@@ -229,7 +229,7 @@ const Dashboard = () => {
       sx={{
         width: "99vw",
         marginLeft: `-${chartsDrawerWidth}`,
-        height: "calc(100vh - 64px)",
+        height: "calc(100vh - 76px)",
       }}>
       {visualizationMode === "deck" ? (
         // Show interactive Deck.GL map when in deck mode

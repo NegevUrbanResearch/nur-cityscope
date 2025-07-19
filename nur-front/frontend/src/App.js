@@ -84,8 +84,8 @@ const App = () => {
           overflow: "auto",
           position: "relative",
           display: "flex",
-          mt: "64px",
-          height: "calc(100vh - 64px)", // 76px is the navbar height
+          mt: "76px",
+          height: "calc(100vh - 76px)", // 76px is the navbar height
         }}>
         <CssBaseline />
         <Navbar />
