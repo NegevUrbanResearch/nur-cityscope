@@ -49,13 +49,12 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'corsheaders',
     'rest_framework',  # Añade esta línea
+    'drf_yasg',  # API documentation templates
     'backend',
-    'management',
 ]
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
-    'django.middleware.common.CommonMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -140,11 +139,17 @@ MEDIA_URL = '/media/'
 
 ASGI_APPLICATION = "core.asgi.application"
 
+# Session Configuration
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'  # Use database sessions
+SESSION_COOKIE_AGE = 3600  # 1 hour
+SESSION_SAVE_EVERY_REQUEST = False
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            "hosts": [('redis', 6379)],  # Asegúrate de que Redis esté corriendo en el puerto correcto
+            "hosts": [('redis', 6379)],
         },
     },
 }

@@ -6,231 +6,139 @@ This is the backend service for the nur-CityScope system, handling data processi
 
 ```
 nur-io/
-├── calculations/              # Data processing modules
-│   ├── modules/              # Processing implementations
-│   │   └── base.py          # Base processor class
-│   └── README.md            # Processing documentation
-├── core/                     # Main Django application
-│   ├── backend/             # Django models and views
-│   │   ├── models.py        # Database models
-│   │   ├── views.py         # API endpoints
-│   │   └── urls.py          # URL routing
-│   ├── core/                # Django project settings
-│   │   ├── settings.py      # Project configuration
-│   │   ├── urls.py          # Main URL routing
-│   │   └── wsgi.py          # WSGI configuration
-│   ├── data/                # Data storage
-│   │   ├── raw/            # Raw input data
-│   │   └── processed/      # Processed output data
-│   ├── external_files/      # External data sources
-│   ├── management/          # Django management commands
-│   ├── media/              # User-uploaded files
-│   ├── migrations/         # Database migrations
-│   ├── websocket_app/      # Real-time updates
-│   │   └── utils/          # WebSocket utilities
-│   │       ├── data_manager.py    # Data management
-│   │       └── data_updater.py    # Real-time updates
-│   ├── init.sh             # Unix initialization script
-│   ├── init.bat            # Windows initialization script
-│   └── manage.py           # Django management
-└── docker-compose.yml      # Docker configuration
+└── django_api/                 # Django project root
+    ├── core/                   # Django project settings
+    │   ├── settings.py         # Project configuration
+    │   ├── urls.py             # Main URL routing
+    │   ├── asgi.py             # ASGI configuration (WebSockets)
+    │   └── wsgi.py             # WSGI configuration
+    ├── backend/                # Main Django application
+    │   ├── management/         # Django management commands
+    │   │   └── commands/
+    │   │       └── create_sample_data.py  # Data creation command
+    │   ├── migrations/         # Database migrations
+    │   ├── models.py           # Database models
+    │   ├── views.py            # API endpoints
+    │   ├── serializers.py      # DRF serializers
+    │   ├── urls.py             # App URL routing
+    │   ├── admin.py            # Django admin
+    │   ├── globals.py          # Global variables
+    │   └── tests.py            # Unit tests
+    ├── websocket_app/          # Real-time WebSocket functionality
+    │   ├── consumers.py        # WebSocket consumers
+    │   ├── routing.py          # WebSocket URL routing
+    │   └── utils/              # WebSocket utilities
+    │       ├── data_manager.py    # Data management
+    │       └── data_updater.py    # Real-time updates
+    ├── manage.py               # Django management script
+    ├── requirements.txt        # Python dependencies
+    ├── init.sh                 # Initialization script
+    └── Dockerfile              # Docker configuration
 ```
+**Note**: A `django_api/media/` directory is created automatically at runtime when Django generates images, maps, and other media files, but is not in the source code.
 
-## Setup Instructions
 
-### Docker Setup (Recommended)
+## API Endpoints
 
-1. Build and start containers:
-```bash
-docker-compose up -d --build
-```
+### Main Endpoints
+- `/api/indicators/` - Indicator management
+- `/api/dashboard_feed_state/` - Dashboard data
+- `/api/actions/` - Interactive actions (state changes, data retrieval)
 
-2. Apply database migrations:
-```bash
-docker exec -it nur_web python manage.py migrate
-```
-
-3. Create superuser (follow prompts):
-```bash
-docker exec -it nur_web python manage.py createsuperuser
-```
-
-4. Access admin panel:
-```
-http://localhost:8500/admin
-```
-
-### Manual Setup (Development)
-
-1. Create virtual environment:
-```bash
-# Unix
-python3 -m venv venv
-source venv/bin/activate
-
-# Windows
-python -m venv venv
-venv\Scripts\activate
-```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Initialize database:
-```bash
-# Unix
-./init.sh
-
-# Windows
-init.bat
-```
+### WebSocket Endpoints
+- `/ws/dashboard/` - Dashboard real-time updates
+- `/ws/map/` - Map real-time updates
 
 ## Data Management
 
-### Data Directory Structure
-- `/data/raw/`: Place raw data files here
-- `/data/processed/`: Contains processed data
-- `/external_files/`: External data sources
-- `/media/`: User-uploaded files
+#### Sample Data Creation
+The system includes a comprehensive sample data generator:
 
-### Data Processing
-1. Place raw data in appropriate directories
-2. Run data processing:
 ```bash
-docker exec -it nur_web python manage.py process_data
+# Generate all sample data (indicators, states, dashboard data, images, GeoJSON)
+docker exec -it nur-api python manage.py create_sample_data
 ```
-
-### Database Management
 
 #### Export Database
 ```bash
-docker exec -it nur_db pg_dump -U postgres -W -h nur_db nur > nur_db.sql
+docker exec -it nur-db pg_dump -U postgres -W -h localhost db > db.sql
 ```
 
 #### Import Database
 ```bash
 # Reset database
-docker exec -i nur_db psql nur -U postgres -c "DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;"
+docker exec -i nur-db psql db -U postgres -c "DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;"
 
 # Import data
-docker exec -i nur_db psql nur -U postgres < nur_db.sql
+docker exec -i nur-db psql db -U postgres < db.sql
 ```
 
 ## Development
 
+### Project Architecture
+
+The backend follows a clean Django architecture:
+
+1. **Core Project** (`core/`): Django project settings and configuration
+2. **Backend App** (`backend/`): Main application with models, views, and APIs
+3. **WebSocket App** (`websocket_app/`): Real-time communication handling
+4. **Management Commands**: Data generation and management utilities
+
 ### Adding New Features
-1. Create new module in `calculations/modules/`
-2. Update data processing pipeline
-3. Add API endpoints in `backend/views.py`
-4. Update WebSocket handlers if needed
+
+1. **Models**: Add to `backend/models.py`
+2. **API Endpoints**: Add to `backend/views.py` and `backend/urls.py`
+3. **Real-time Features**: Update `websocket_app/consumers.py`
+4. **Data Processing**: Add management commands in `backend/management/commands/`
 
 ### Testing
 ```bash
-# Run tests
-docker exec -it nur_web python manage.py test
+# Run all tests
+docker exec -it nur-api python manage.py test
 
-# Run specific test
-docker exec -it nur_web python manage.py test backend.tests
+# Run specific app tests
+docker exec -it nur-api python manage.py test backend
+docker exec -it nur-api python manage.py test websocket_app
+
+# Check Django configuration
+docker exec -it nur-api python manage.py check
 ```
 
 ### Database Migrations
 ```bash
-# Create migrations
-docker exec -it nur_web python manage.py makemigrations
+# Create migrations for model changes
+docker exec -it nur-api python manage.py makemigrations
 
 # Apply migrations
-docker exec -it nur_web python manage.py migrate
+docker exec -it nur-api python manage.py migrate
+
+# View migration status
+docker exec -it nur-api python manage.py showmigrations
 ```
 
-## Troubleshooting
+## Configuration
 
-### Windows Firewall
-If services are not accessible, add firewall rules:
-```powershell
-New-NetFirewallRule -DisplayName "nur-Service" -Direction Inbound -LocalPort 8500 -Protocol TCP -Action Allow
-```
+### Environment Variables
+Key environment variables (set in `.env`):
 
-### Database Issues
-1. Check database logs:
-```bash
-docker logs nur_db
-```
+- `API_PORT`: Backend API port (default: 9900)
+- `FRONT_PORT`: Frontend port (default: 8500)
+- `POSTGRES_DB`: Database name
+- `POSTGRES_USER`: Database user
+- `POSTGRES_PASSWORD`: Database password
+- `DATABASE_URL`: Full database connection string
 
-2. Reset database:
-```bash
-docker-compose down -v
-docker-compose up -d
-```
+### Django Settings
+Main settings are in `core/settings.py`:
 
-### WebSocket Issues
-1. Check WebSocket logs:
-```bash
-docker logs nur_web
-```
-
-2. Verify WebSocket connection:
-```javascript
-// In browser console
-ws = new WebSocket('ws://localhost:8500/ws/');
-ws.onmessage = (e) => console.log(e.data);
-```
-
-## Image Capture System
-
-### Database Synchronization
-*For the image capture system to communicate with the services running on the PC, they must share the same database. Instructions for database duplication are provided below.*
-
-### Setup Instructions
-
-1. Create virtual environment:
-```bash
-# Install virtualenv if not already installed
-python3 install virtualenv
-
-# Navigate to camera directory
-cd $PATH_TO_PROJECT/camera/
-
-# Create virtual environment
-python3 -m venv nur
-```
-
-2. Activate virtual environment:
-```bash
-# Windows
-nur\Scripts\activate
-
-# Unix
-source nur/bin/activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-4. Start image capture:
-```bash
-python3 capture.py
-```
-
-### Database Synchronization
-
-#### Export Database (Server)
-```bash
-docker exec -it nur_db pg_dump -U postgres -W -h nur_db nur > nur_db.sql
-```
-
-#### Import Database (Client)
-```bash
-# Reset database
-docker exec -i nur_db psql nur -U postgres -c "DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;"
-
-# Import data
-docker exec -i nur_db psql nur -U postgres < nur_db.sql
-```
+- Database configuration using `dj_database_url`
+- CORS settings for frontend communication
+- Django Channels configuration for WebSockets
+- Media file handling
 
 
+## API Documentation
 
-
+### Interactive API Documentation
+- Swagger UI: `http://localhost:8500/api/swagger/`
+- ReDoc: `http://localhost:8500/api/redoc/`

@@ -126,31 +126,7 @@ The application provides the following REST API endpoints:
    - PUT/PATCH `/{id}/`: Update layer configuration
    - DELETE `/{id}/`: Delete layer configuration
 
-### Common API Request Examples
-
-```bash
-# List all indicators
-curl http://localhost:9900/api/indicators/
-
-# Create a new indicator
-curl -X POST http://localhost:9900/api/indicators/ \
-  -H "Content-Type: application/json" \
-  -d '{"indicator_id": 4, "name": "New Indicator", "has_states": true, "description": "New description"}'
-
-# Create a new state
-curl -X POST http://localhost:9900/api/states/ \
-  -H "Content-Type: application/json" \
-  -d '{"state_values": {"year": 2024, "scenario": "projected", "label": "2024 Projection"}}'
-
-# Create a new map type
-curl -X POST http://localhost:9900/api/map_type/ \
-  -H "Content-Type: application/json" \
-  -d '{"name": "New Map Type", "description": "Description", "is_active": true}'
-```
-
-## Managing Data
-
-### Through Admin Interface
+## Managing Data Through Admin Interface
 
 1. Access the admin interface at [http://localhost:9900/admin](http://localhost:9900/admin)
 2. Log in with your admin credentials
@@ -166,101 +142,23 @@ curl -X POST http://localhost:9900/api/map_type/ \
 2. Make your changes
 3. Click "Save"
 
-### Through Remote Controller
-
-1. Access the remote controller at [http://localhost/remote/](http://localhost/remote/)
-2. Use the interface to:
-   - Toggle between different map types
-   - Change states
-   - Start/Stop the projection system
-
-## Sample Data
-
-The application includes sample data that demonstrates the system's capabilities:
-
-1. **Indicators**:
-   - Population Density (with states)
-   - Green Space Coverage (with states)
-   - Building Height (without states)
-
-2. **States**:
-   - 2020 Summer
-   - 2020 Winter
-   - 2021 Summer
-
-3. **Indicator Data**:
-   - 9 entries (3 indicators × 3 states)
-   - Each entry includes:
-     - Associated indicator
-     - Associated state
-     - Sample GeoJSON data
-     - Layer configuration
-
-4. **Dashboard Feed State**:
-   - Sample data for the current state including:
-     - Total population
-     - Green space percentage
-     - Average building height
-
-To create fresh sample data:
-```bash
-docker exec -it core_api python manage.py shell < create_sample_data.py
-```
-
-
-## Data Validation
-
-When adding new data, ensure:
-
-1. **GeoJSON Data**
-   - Valid GeoJSON format
-   - Coordinates in correct range
-   - Required properties included
-   - Reasonable value ranges
-
-2. **Layer Configuration**
-   - Valid color codes (hex format)
-   - Opacity between 0 and 1
-   - Proper legend configuration
-
-3. **Dashboard Feed State**
-   - All required metrics included
-   - Values within reasonable ranges
-   - Proper timestamp format
 
 ## Backup and Restore
 
 ### Creating a Backup
 ```bash
 # Backup the database
-docker exec core_db pg_dump -U postgres nur_db > backup.sql
+docker exec db pg_dump -U postgres db > backup.sql
 
 # Backup uploaded files
-docker cp core_api:/app/media/ ./backup/media/
+docker cp nur-api:/app/media/ ./backup/media/
 ```
 
 ### Restoring from Backup
 ```bash
 # Restore the database
-cat backup.sql | docker exec -i core_db psql -U postgres -d nur_db
+cat backup.sql | docker exec -i db psql -U postgres -d db
 
 # Restore uploaded files
-docker cp ./backup/media/ core_api:/app/media/
+docker cp ./backup/media/ nur-api:/app/media/
 ```
-
-## Troubleshooting
-
-1. **Data Not Showing Up**
-   - Check if the data is properly linked (Indicator → State → IndicatorData)
-   - Verify GeoJSON format
-   - Check layer configuration
-
-2. **Invalid Data**
-   - Use the admin interface to verify data integrity
-   - Check API responses for error messages
-   - Verify value ranges
-
-3. **Performance Issues**
-   - Optimize GeoJSON size
-   - Use appropriate zoom levels
-   - Consider caching strategies 

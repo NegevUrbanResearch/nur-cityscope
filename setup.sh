@@ -59,11 +59,11 @@ fi
 
 # Run migrations
 echo "Running database migrations..."
-docker exec core_api python manage.py migrate
+docker exec nur-api python manage.py migrate
 
 # Create sample data
 echo "Creating sample data..."
-docker exec core_api python manage.py create_sample_data
+docker exec nur-api python manage.py create_sample_data
 
 echo "✅ All services have been successfully configured and sample data has been created."
 echo "You can now access:"
