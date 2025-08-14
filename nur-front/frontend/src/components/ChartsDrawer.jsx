@@ -23,6 +23,7 @@ import PieChart from "./charts/PieChart";
 import HorizontalStackedBar from "./charts/HorizontalStackedBar";
 import StackedBarChart from "./charts/BarChart";
 import ChartCard from "./ChartCard";
+import NavMenu from "./NavMenu";
 
 const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
   const {
@@ -62,6 +63,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           sx={{ backgroundColor: "transparent" }}>
           <ChevronRightIcon />
         </IconButton>
+        <NavMenu />
       </Grid>
       <Divider />
       <Grid

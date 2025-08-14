@@ -227,9 +227,9 @@ const Dashboard = () => {
   return (
     <Box
       sx={{
-        width: "99vw",
+        width: "100vw",
         marginLeft: `-${chartsDrawerWidth}`,
-        height: "calc(100vh - 76px)",
+        height: "100vh",
       }}>
       {visualizationMode === "deck" ? (
         // Show interactive Deck.GL map when in deck mode

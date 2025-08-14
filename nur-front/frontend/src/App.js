@@ -39,7 +39,6 @@ const App = () => {
   const location = useLocation();
   const remoteControlActive = React.useRef(false);
 
-
   // Keep track of the last indicator the remote set
   const lastRemoteIndicator = React.useRef(null);
 
@@ -84,8 +83,7 @@ const App = () => {
           overflow: "auto",
           position: "relative",
           display: "flex",
-          mt: "76px",
-          height: "calc(100vh - 76px)", // 76px is the navbar height
+          height: "100vh",
         }}>
         <CssBaseline />
         <Navbar />

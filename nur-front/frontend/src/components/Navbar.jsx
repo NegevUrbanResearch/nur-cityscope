@@ -16,13 +16,13 @@ const Navbar = () => {
   return (
     <Box>
       <AppBar
+        elevation={0}
+        color="transparent"
         position="fixed"
         openCharts={openCharts}>
         <Toolbar>
           <Grid
-            item
             width="100vw"
-            height="76px"
             container
             direction="row"
             sx={{
@@ -39,9 +39,6 @@ const Navbar = () => {
                   filter: "brightness(0) invert(1)",
                 }}
               />
-            </Grid>
-            <Grid item>
-              <NavMenu />
             </Grid>
             <Grid item>
               <IconButton
