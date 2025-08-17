@@ -2,7 +2,6 @@ import React from "react";
 import {
   IconButton,
   Drawer,
-  Divider,
   Grid,
   ToggleButton,
   ToggleButtonGroup,
@@ -12,6 +11,8 @@ import {
 import MapIcon from "@mui/icons-material/Map";
 import ImageIcon from "@mui/icons-material/Image";
 import CloseIcon from "@mui/icons-material/Close";
+//import OpenInFullIcon from "@mui/icons-material/OpenInFull";
+import InfoOutlineIcon from "@mui/icons-material/InfoOutline";
 
 import isEqual from "lodash/isEqual";
 
@@ -69,20 +70,27 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           <CloseIcon />
         </IconButton>
         <NavMenu />
+
+        <IconButton sx={{ backgroundColor: "transparent" }}>
+          <InfoOutlineIcon />
+        </IconButton>
       </Grid>
-      {/* <Divider /> */}
+
       <Grid
         container
         direction="column"
         sx={{ justifyContent: "space-between" }}>
         <Grid
           item
-          container>
+          container
+          width={`calc(${chartsDrawerWidth} - 1vw)`}>
           <ToggleButtonGroup
+            sx={{ paddingLeft: "0.6vw" }}
             value={visualizationMode}
             exclusive
             onChange={handleVisualizationModeChange}
             size="small"
+            fullWidth={true}
             aria-label="visualization mode">
             {disableInteractiveMode ? (
               <Tooltip
