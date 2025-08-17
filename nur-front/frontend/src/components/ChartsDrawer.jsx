@@ -69,6 +69,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           sx={{ backgroundColor: "transparent" }}>
           <CloseIcon />
         </IconButton>
+
         <NavMenu />
 
         <IconButton sx={{ backgroundColor: "transparent" }}>
@@ -82,10 +83,12 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         sx={{ justifyContent: "space-between" }}>
         <Grid
           item
-          container
-          width={`calc(${chartsDrawerWidth} - 1vw)`}>
+          container>
           <ToggleButtonGroup
-            sx={{ paddingLeft: "0.6vw" }}
+            sx={{
+              marginLeft: "0.5vw",
+              width: `calc(${chartsDrawerWidth} - 1vw)`,
+            }}
             value={visualizationMode}
             exclusive
             onChange={handleVisualizationModeChange}

@@ -29,7 +29,7 @@ const NavMenu = () => {
   return (
     <Grid item>
       <Button
-        sx={{ height: "7vh", textTransform: "none" }}
+        sx={{ height: "7vh", textTransform: "none", width: "25vw" }}
         onClick={handleClick}
         color="inherit"
         size="large"
@@ -41,7 +41,7 @@ const NavMenu = () => {
         open={open}
         onClose={handleClose}>
         {Object.entries(indicatorConfig).map(([key, config]) => (
-          <MenuItem onClick={() => handleIndicatorChange(key)}>
+          <MenuItem onClick={() => handleIndicatorChange(key)} sx={{ width: "25vw" }} key={key}>
             <Typography variant="h6">
               {config.name.replace("Dashboard", "").trim()}
             </Typography>
