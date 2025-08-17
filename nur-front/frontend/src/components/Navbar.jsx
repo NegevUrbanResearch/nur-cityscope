@@ -2,9 +2,7 @@ import React from "react";
 import { AppBar, Toolbar, Box, IconButton, Grid } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
 import config from "../config";
-import NavMenu from "./NavMenu";
 import ChartsDrawer from "./ChartsDrawer";
-import { chartsDrawerWidth } from "../style/drawersStyles";
 
 const Navbar = () => {
   const [openCharts, setOpenCharts] = React.useState(true);

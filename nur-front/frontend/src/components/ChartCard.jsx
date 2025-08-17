@@ -18,7 +18,9 @@ const ChartCard = ({ title, data, MemoizedChart }) => {
   };
 
   return (
-    <Card sx={{ maxWidth: chartsDrawerWidth }}>
+    <Card
+      sx={{ width: `calc(${chartsDrawerWidth} - 1vw)` }}
+      id={`chart-card-${title}`}>
       <CardHeader
         subheader={title}
         action={
@@ -29,10 +31,11 @@ const ChartCard = ({ title, data, MemoizedChart }) => {
           </ExpandMore>
         }></CardHeader>
       <Collapse
+        sx={{ width: `calc(${chartsDrawerWidth} - 1vw)` }}
         in={expanded}
         timeout="auto"
         unmountOnExit>
-        <CardContent>
+        <CardContent sx={{ width: `calc(${chartsDrawerWidth} - 1vw)` }}>
           <MemoizedChart data={data} />
         </CardContent>
       </Collapse>

@@ -11,7 +11,7 @@ import {
 } from "@mui/material";
 import MapIcon from "@mui/icons-material/Map";
 import ImageIcon from "@mui/icons-material/Image";
-import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import CloseIcon from "@mui/icons-material/Close";
 
 import isEqual from "lodash/isEqual";
 
@@ -57,15 +57,20 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
       open={openCharts}>
       <Grid
         container
-        sx={{ height: "76px", width: "100%" }}>
+        sx={{
+          justifyContent: "space-between",
+          alignItems: "center",
+          height: "76px",
+          width: "100%",
+        }}>
         <IconButton
           onClick={handleChartsClick}
           sx={{ backgroundColor: "transparent" }}>
-          <ChevronRightIcon />
+          <CloseIcon />
         </IconButton>
         <NavMenu />
       </Grid>
-      <Divider />
+      {/* <Divider /> */}
       <Grid
         container
         direction="column"
@@ -126,35 +131,30 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         <Grid
           item
           container
-          direction="column">
-          <Grid item>
-            <ChartCard
-              title={tabLabels[0]}
-              data={data?.horizontalStackedBars}
-              MemoizedChart={MemoizedHorizontalStackedBar}
-            />
-          </Grid>
-          <Grid item>
-            <ChartCard
-              title={tabLabels[1]}
-              data={data?.stackedBars}
-              MemoizedChart={MemoizedBarChart}
-            />
-          </Grid>
-          <Grid item>
-            <ChartCard
-              title={tabLabels[2]}
-              data={data?.radar}
-              MemoizedChart={MemoizedRadarChart}
-            />
-          </Grid>
-          <Grid item>
-            <ChartCard
-              title={tabLabels[3]}
-              data={data?.pieChart}
-              MemoizedChart={MemoizedPieChart}
-            />
-          </Grid>
+          direction="column"
+          sx={{
+            alignItems: "center",
+          }}>
+          <ChartCard
+            title={tabLabels[0]}
+            data={data?.horizontalStackedBars}
+            MemoizedChart={MemoizedHorizontalStackedBar}
+          />
+          <ChartCard
+            title={tabLabels[1]}
+            data={data?.stackedBars}
+            MemoizedChart={MemoizedBarChart}
+          />
+          <ChartCard
+            title={tabLabels[2]}
+            data={data?.radar}
+            MemoizedChart={MemoizedRadarChart}
+          />
+          <ChartCard
+            title={tabLabels[3]}
+            data={data?.pieChart}
+            MemoizedChart={MemoizedPieChart}
+          />
         </Grid>
       </Grid>
     </Drawer>

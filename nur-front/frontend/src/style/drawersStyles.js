@@ -1,4 +1,3 @@
-const chartsDrawerWidth = "350px";
-const menuDrawerWidth = "240px";
+const chartsDrawerWidth = "35vw";
 
-export { chartsDrawerWidth, menuDrawerWidth };
+export { chartsDrawerWidth };
