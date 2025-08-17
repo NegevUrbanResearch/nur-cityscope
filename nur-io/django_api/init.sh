@@ -56,9 +56,9 @@ EOF
     echo "Running database migrations..."
     python manage.py migrate --no-input
 
-    # Create sample data
-    echo "Generating sample data..."
-    python manage.py create_sample_data
+    # Create data (loads real data from public/ if available)
+    echo "Generating data..."
+    python manage.py create_data || python manage.py create_sample_data
     
     # Create default admin user if it doesn't exist
     echo "Creating default admin user..."

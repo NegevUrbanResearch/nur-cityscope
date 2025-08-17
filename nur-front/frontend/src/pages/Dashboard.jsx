@@ -258,8 +258,12 @@ const Dashboard = () => {
               }}
               onError={(e) => {
                 console.error("Failed to load image:", e);
-                // Add cache-busting to fallback image
-                e.target.src = `/media/Nur-Logo_3x-_1_.svg?_=${Date.now()}`;
+                // Don't use a fallback - let the user know there's an issue
+                setMapData(prev => ({
+                  ...prev,
+                  error: true,
+                  errorMessage: "Failed to load visualization image"
+                }));
               }}
             />
           )}
