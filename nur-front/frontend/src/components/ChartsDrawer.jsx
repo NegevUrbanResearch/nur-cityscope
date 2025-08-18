@@ -11,7 +11,6 @@ import {
 import MapIcon from "@mui/icons-material/Map";
 import ImageIcon from "@mui/icons-material/Image";
 import CloseIcon from "@mui/icons-material/Close";
-//import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import InfoOutlineIcon from "@mui/icons-material/InfoOutline";
 
 import isEqual from "lodash/isEqual";

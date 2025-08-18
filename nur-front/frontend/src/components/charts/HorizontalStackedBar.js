@@ -1,6 +1,5 @@
 import React, { useEffect, useRef } from "react";
 import Chart from "chart.js/auto";
-import { chartsDrawerWidth } from "../../style/drawersStyles";
 
 const HorizontalStackedBarChart = ({ data }) => {
   const chartRef = useRef(null);
@@ -109,11 +108,7 @@ const HorizontalStackedBarChart = ({ data }) => {
   }, [data]);
 
   return (
-    <div
-      style={{
-        width: `calc(${chartsDrawerWidth}-100px)`,
-        //height: "400px",
-      }}>
+    <div>
       <canvas ref={canvasRef}></canvas>
     </div>
   );

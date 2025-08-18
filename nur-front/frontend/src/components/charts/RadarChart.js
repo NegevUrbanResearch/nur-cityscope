@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import Chart from "chart.js/auto";
-import { chartsDrawerWidth } from "../../style/drawersStyles";
 
 const RadarChart = ({ data }) => {
   const chartRef = useRef(null);
@@ -170,12 +169,7 @@ const RadarChart = ({ data }) => {
 
   // Return a container with appropriate sizing
   return (
-    <div
-      style={{
-        position: "relative",
-        width: `calc(${chartsDrawerWidth}-100px)`,
-        //height: "400px",
-      }}>
+    <div>
       <canvas ref={canvasRef}></canvas>
     </div>
   );

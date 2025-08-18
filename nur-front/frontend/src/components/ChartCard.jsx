@@ -7,11 +7,22 @@ import {
   CardHeader,
   CardContent,
   styled,
+  DialogTitle,
+  Dialog,
+  DialogContent,
+  Slide,
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import OpenInFullIcon from "@mui/icons-material/OpenInFull";
+
 import { chartsDrawerWidth } from "../style/drawersStyles";
 const ChartCard = ({ title, data, MemoizedChart }) => {
   const [expanded, setExpanded] = React.useState(false);
+  const [openDialog, setOpenDialog] = React.useState(false);
+
+  const handleClickDialog = () => {
+    setOpenDialog(!openDialog);
+  };
 
   const handleExpandClick = () => {
     setExpanded(!expanded);
@@ -24,11 +35,30 @@ const ChartCard = ({ title, data, MemoizedChart }) => {
       <CardHeader
         subheader={title}
         action={
-          <ExpandMore
-            expand={expanded}
-            onClick={handleExpandClick}>
-            <ExpandMoreIcon />
-          </ExpandMore>
+          <>
+            <IconButton
+              size="small"
+              onClick={handleClickDialog}>
+              <OpenInFullIcon />
+            </IconButton>
+            <Dialog
+              open={openDialog}
+              slots={{
+                transition: Transition,
+              }}
+              keepMounted
+              onClose={handleClickDialog}>
+              <DialogTitle>{title}</DialogTitle>
+              <DialogContent>
+                <MemoizedChart data={data} />
+              </DialogContent>
+            </Dialog>
+            <ExpandMore
+              expand={expanded}
+              onClick={handleExpandClick}>
+              <ExpandMoreIcon />
+            </ExpandMore>
+          </>
         }></CardHeader>
       <Collapse
         sx={{ width: `calc(${chartsDrawerWidth} - 1vw)` }}
@@ -45,6 +75,15 @@ const ChartCard = ({ title, data, MemoizedChart }) => {
 
 export default ChartCard;
 
+const Transition = React.forwardRef(function Transition(props, ref) {
+  return (
+    <Slide
+      direction="up"
+      ref={ref}
+      {...props}
+    />
+  );
+});
 const ExpandMore = styled((props) => {
   const { expand, ...other } = props;
   return <IconButton {...other} />;

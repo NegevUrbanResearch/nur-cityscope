@@ -1,7 +1,6 @@
 import React, { useRef, useEffect } from "react";
 import { Doughnut } from "react-chartjs-2";
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
-import {chartsDrawerWidth} from "../../style/drawersStyles";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -98,12 +97,7 @@ const DonutChart = ({ data }) => {
   }, [data, isValidData]);
 
   return (
-    <div
-      style={{
-        width: `calc(${chartsDrawerWidth}-100px)`,
-        //height: "400px",
-        position: "relative",
-      }}>
+    <div>
       <Doughnut
         data={chartData}
         options={chartOptions}
