@@ -25,6 +25,7 @@ import HorizontalStackedBar from "./charts/HorizontalStackedBar";
 import StackedBarChart from "./charts/BarChart";
 import ChartCard from "./ChartCard";
 import NavMenu from "./NavMenu";
+import InfoDialog from "./InfoDialog";
 
 const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
   const {
@@ -36,6 +37,11 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
   } = useAppData();
 
   const tabLabels = getTabLabels();
+  const [openInfo, setOpenInfo] = React.useState(false);
+
+  const handleClickInfo = () => {
+    setOpenInfo(!openInfo);
+  };
 
   let disableInteractiveMode = false;
 
@@ -72,9 +78,15 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
 
         <NavMenu />
 
-        <IconButton sx={{ backgroundColor: "transparent" }}>
+        <IconButton
+          sx={{ backgroundColor: "transparent" }}
+          onClick={handleClickInfo}>
           <InfoOutlineIcon />
         </IconButton>
+        <InfoDialog
+          openInfo={openInfo}
+          handleCloseInfo={handleClickInfo}
+        />
       </Grid>
 
       <Grid
