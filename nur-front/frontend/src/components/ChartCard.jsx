@@ -43,6 +43,9 @@ const ChartCard = ({ title, data, MemoizedChart }) => {
             </IconButton>
             <Dialog
               open={openDialog}
+              slotProps={{
+                paper: { sx: { width: "95vw", minHeight: "50vh" } },
+              }}
               slots={{
                 transition: Transition,
               }}
@@ -84,6 +87,7 @@ const Transition = React.forwardRef(function Transition(props, ref) {
     />
   );
 });
+
 const ExpandMore = styled((props) => {
   const { expand, ...other } = props;
   return <IconButton {...other} />;
