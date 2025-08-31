@@ -29,19 +29,31 @@ const NavMenu = () => {
   return (
     <Grid item>
       <Button
-        sx={{ height: "7vh", textTransform: "none", width: "25vw" }}
+        sx={{
+          height: "7vh",
+          textTransform: "none",
+          width: "25vw",
+          border: "0.1px solid white",
+        }}
         onClick={handleClick}
         color="inherit"
         size="large"
-        startIcon={<ArrowDropDownIcon />}>
-        <Typography variant="h6">{currentIndicator}</Typography>
+        endIcon={<ArrowDropDownIcon />}>
+        <Typography variant="h6">Change Indicator</Typography>
       </Button>
       <Menu
         anchorEl={anchorEl}
         open={open}
         onClose={handleClose}>
         {Object.entries(indicatorConfig).map(([key, config]) => (
-          <MenuItem onClick={() => handleIndicatorChange(key)} sx={{ width: "25vw" }} key={key}>
+          <MenuItem
+            onClick={() => handleIndicatorChange(key)}
+            sx={{
+              width: "25vw",
+              backgroundColor:
+                key === currentIndicator ? "#ffffff1a" : "#1e1e1e",
+            }}
+            key={key}>
             <Typography variant="h6">
               {config.name.replace("Dashboard", "").trim()}
             </Typography>
