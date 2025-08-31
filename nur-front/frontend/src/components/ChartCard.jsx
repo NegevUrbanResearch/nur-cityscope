@@ -13,7 +13,7 @@ import {
   Slide,
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import OpenInFullIcon from "@mui/icons-material/OpenInFull";
+import VisibilityIcon from "@mui/icons-material/Visibility";
 
 import { chartsDrawerWidth } from "../style/drawersStyles";
 const ChartCard = ({ title, data, MemoizedChart }) => {
@@ -39,7 +39,7 @@ const ChartCard = ({ title, data, MemoizedChart }) => {
             <IconButton
               size="small"
               onClick={handleClickDialog}>
-              <OpenInFullIcon />
+              <VisibilityIcon />
             </IconButton>
             <Dialog
               open={openDialog}
