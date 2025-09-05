@@ -7,12 +7,14 @@ import {
   ToggleButtonGroup,
   Typography,
   Tooltip,
+  Card,
 } from "@mui/material";
 import MapIcon from "@mui/icons-material/Map";
 import ImageIcon from "@mui/icons-material/Image";
 import CloseIcon from "@mui/icons-material/Close";
 import InfoOutlineIcon from "@mui/icons-material/InfoOutline";
-
+import Highcharts from "highcharts";
+import HighchartsReact from "highcharts-react-official";
 import isEqual from "lodash/isEqual";
 
 import { useAppData } from "../DataContext";
@@ -34,6 +36,24 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
     getTabLabels,
     currentIndicator,
   } = useAppData();
+
+  const options = {
+    chart: {
+      width: null,
+      height: "100%",
+      reflow: true,
+      spacing: [6, 6, 6, 6],
+      animation: false,
+    },
+    title: {
+      text: "My chart",
+    },
+    series: [
+      {
+        data: [1, 2, 3],
+      },
+    ],
+  };
 
   const tabLabels = getTabLabels();
   const [openInfo, setOpenInfo] = React.useState(false);
@@ -157,26 +177,43 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           sx={{
             alignItems: "center",
           }}>
-          <ChartCard
-            title={tabLabels[0]}
-            data={data?.horizontalStackedBars}
-            MemoizedChart={MemoizedHorizontalStackedBar}
-          />
-          <ChartCard
-            title={tabLabels[1]}
-            data={data?.stackedBars}
-            MemoizedChart={MemoizedBarChart}
-          />
-          <ChartCard
-            title={tabLabels[2]}
-            data={data?.radar}
-            MemoizedChart={MemoizedRadarChart}
-          />
-          <ChartCard
-            title={tabLabels[3]}
-            data={data?.pieChart}
-            MemoizedChart={MemoizedPieChart}
-          />
+          {currentIndicator === "climate" ? (
+            <div
+              style={{
+                width: "35vw",
+                //overflow: "hidden",
+                height: "40vh",
+              }}>
+              <HighchartsReact
+                highcharts={Highcharts}
+                options={options}
+                // containerProps={{ style: { width: "70%", height: "70%" } }}
+              />
+            </div>
+          ) : (
+            <>
+              <ChartCard
+                title={tabLabels[0]}
+                data={data?.horizontalStackedBars}
+                MemoizedChart={MemoizedHorizontalStackedBar}
+              />
+              <ChartCard
+                title={tabLabels[1]}
+                data={data?.stackedBars}
+                MemoizedChart={MemoizedBarChart}
+              />
+              <ChartCard
+                title={tabLabels[2]}
+                data={data?.radar}
+                MemoizedChart={MemoizedRadarChart}
+              />
+              <ChartCard
+                title={tabLabels[3]}
+                data={data?.pieChart}
+                MemoizedChart={MemoizedPieChart}
+              />
+            </>
+          )}
         </Grid>
       </Grid>
     </Drawer>

@@ -36,6 +36,7 @@ const config = {
     // API endpoints
     endpoints: {
       dashboardFeed: '/api/dashboard_feed_state/',
+      climateData: '../public/climate_data/',
     },
     // Get the full URL for the dashboard feed
     getDashboardFeedUrl: () => `${config.api.baseUrl}${config.api.endpoints.dashboardFeed}`,
