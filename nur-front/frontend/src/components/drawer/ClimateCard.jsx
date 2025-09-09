@@ -15,8 +15,9 @@ import {
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 
-import { chartsDrawerWidth } from "../style/drawersStyles";
-const ClimateChartCard = ({ title, data, MemoizedChart }) => {
+import { chartsDrawerWidth } from "../../style/drawersStyles";
+
+const ClimateCard = ({ title , children }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [openDialog, setOpenDialog] = React.useState(false);
 
@@ -53,7 +54,7 @@ const ClimateChartCard = ({ title, data, MemoizedChart }) => {
               onClose={handleClickDialog}>
               <DialogTitle>{title}</DialogTitle>
               <DialogContent>
-                <MemoizedChart data={data} />
+                {children}
               </DialogContent>
             </Dialog>
             <ExpandMore
@@ -69,14 +70,14 @@ const ClimateChartCard = ({ title, data, MemoizedChart }) => {
         timeout="auto"
         unmountOnExit>
         <CardContent sx={{ width: `calc(${chartsDrawerWidth} - 1vw)` }}>
-          <MemoizedChart data={data} />
+         {children}
         </CardContent>
       </Collapse>
     </Card>
   );
 };
 
-export default ClimateChartCard;
+export default ClimateCard;
 
 const Transition = React.forwardRef(function Transition(props, ref) {
   return (
