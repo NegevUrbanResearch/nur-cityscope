@@ -100,7 +100,7 @@ const useClimateData = (url = `${process.env.PUBLIC_URL}${config.api.endpoints.c
 
 
 const MetricLineChart = ({ title, data, xLabel, yLabel, seriesKeys }) => {
-    const colors = ["red","blue"]; // add more colors if needed
+    const colors = ["#AED581","#F06292",,"#64B5F6","#BA68C8","#FFB74D"]; // add more colors if needed
     return (
         <div style={{ width: "100%", height: 360, marginBottom: 24 }}>
             <ResponsiveContainer>

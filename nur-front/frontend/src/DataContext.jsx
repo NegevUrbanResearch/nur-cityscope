@@ -54,6 +54,13 @@ const INDICATOR_CONFIG = {
   // Add new indicators here following the same pattern
 };
 
+const STATE_CONFIG = {
+  mobility: [],
+  climate: ['state1','state2'],
+  land_use: [],  
+}
+
+
 // Reverse mapping from ID to indicator type
 const ID_TO_INDICATOR = Object.fromEntries(
   Object.entries(INDICATOR_CONFIG).map(([key, config]) => [config.id, key]),
@@ -428,6 +435,7 @@ export const DataProvider = ({ children }) => {
     changeIndicator,
     loading,
     error,
+    StateConfig: STATE_CONFIG,
     lastUpdate,
     indicatorConfig: INDICATOR_CONFIG,
     // Helper methods for getting indicator-specific information
