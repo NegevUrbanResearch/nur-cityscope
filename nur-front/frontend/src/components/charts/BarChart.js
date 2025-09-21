@@ -17,7 +17,14 @@ const StackedBarChart = ({ data }) => {
     // Use labels from data if available, otherwise use defaults
     const xLabels = data.labels ||
       data.categories || ["Category 1", "Category 2", "Category 3"];
-    const colors = ["#0077B6", "#00B4D8", "#90E0EF"];
+    const colors = data.colors || [
+      "#42E2B8",
+      "#FFB74D",
+      "#E53E3E",
+      "#3182CE",
+      "#805AD5",
+      "#38B2AC",
+    ];
 
     // Clean up any existing chart
     if (chartRef.current) {
@@ -46,29 +53,53 @@ const StackedBarChart = ({ data }) => {
               grid: {
                 display: false,
               },
+              ticks: {
+                color: "#ffffff",
+                maxRotation: 45,
+                minRotation: 0,
+              },
             },
             y: {
               stacked: true,
               beginAtZero: true,
-              suggestedMax: 160,
               grid: {
                 display: true,
-                color: "rgba(255, 255, 255, 1)",
+                color: "rgba(255, 255, 255, 0.1)",
                 drawBorder: false,
                 drawTicks: false,
               },
               ticks: {
-                display: false, // Hide y-axis numbers
+                color: "#ffffff",
+                callback: function (value) {
+                  return value.toLocaleString();
+                },
               },
             },
           },
           plugins: {
             legend: {
+              display: true,
               position: "bottom",
-              align: "start",
+              align: "center",
               labels: {
                 boxWidth: 15,
                 padding: 15,
+                color: "#ffffff",
+                font: {
+                  size: 12,
+                },
+              },
+            },
+            tooltip: {
+              backgroundColor: "rgba(0, 0, 0, 0.8)",
+              titleColor: "#ffffff",
+              bodyColor: "#ffffff",
+              callbacks: {
+                label: function (context) {
+                  return `${
+                    context.dataset.label
+                  }: ${context.parsed.y.toLocaleString()}`;
+                },
               },
             },
           },

@@ -7,55 +7,56 @@ import PieChart from "../charts/PieChart";
 import HorizontalStackedBar from "../charts/HorizontalStackedBar";
 import StackedBarChart from "../charts/BarChart";
 import ChartCard from "./ChartCard";
-
+import MobilityGraphs from "./MobilityGraphs";
 
 const IndicatorGraphs = () => {
-    const {
-        dashboardData: data,
-        getTabLabels,
-    } = useAppData();
+  const { dashboardData: data, getTabLabels, currentIndicator } = useAppData();
 
-    const tabLabels = getTabLabels();
-    const [openInfo, setOpenInfo] = React.useState(false);
+  const tabLabels = getTabLabels();
+  const [openInfo, setOpenInfo] = React.useState(false);
 
+  // Use real mobility data for mobility indicator, synthetic data for others
+  if (currentIndicator === "mobility") {
+    return <MobilityGraphs />;
+  }
 
-    return (
-        <>
-            <ChartCard
-                title={tabLabels[0]}
-                data={data?.horizontalStackedBars}
-                MemoizedChart={MemoizedHorizontalStackedBar}
-            />
-            <ChartCard
-                title={tabLabels[1]}
-                data={data?.stackedBars}
-                MemoizedChart={MemoizedBarChart}
-            />
-            <ChartCard
-                title={tabLabels[2]}
-                data={data?.radar}
-                MemoizedChart={MemoizedRadarChart}
-            />
-            <ChartCard
-                title={tabLabels[3]}
-                data={data?.pieChart}
-                MemoizedChart={MemoizedPieChart}
-            />
-        </>
-    );
+  return (
+    <>
+      <ChartCard
+        title={tabLabels[0]}
+        data={data?.horizontalStackedBars}
+        MemoizedChart={MemoizedHorizontalStackedBar}
+      />
+      <ChartCard
+        title={tabLabels[1]}
+        data={data?.stackedBars}
+        MemoizedChart={MemoizedBarChart}
+      />
+      <ChartCard
+        title={tabLabels[2]}
+        data={data?.radar}
+        MemoizedChart={MemoizedRadarChart}
+      />
+      <ChartCard
+        title={tabLabels[3]}
+        data={data?.pieChart}
+        MemoizedChart={MemoizedPieChart}
+      />
+    </>
+  );
 };
 
 export default IndicatorGraphs;
 
 // Memoize components to avoid unnecessary re-renders
 const MemoizedRadarChart = React.memo(RadarChart, (prevProps, nextProps) =>
-    isEqual(prevProps.data, nextProps.data),
+  isEqual(prevProps.data, nextProps.data)
 );
 const MemoizedPieChart = React.memo(PieChart);
 const MemoizedBarChart = React.memo(StackedBarChart, (prevProps, nextProps) =>
-    isEqual(prevProps.data, nextProps.data),
+  isEqual(prevProps.data, nextProps.data)
 );
 const MemoizedHorizontalStackedBar = React.memo(
-    HorizontalStackedBar,
-    (prevProps, nextProps) => isEqual(prevProps.data, nextProps.data),
+  HorizontalStackedBar,
+  (prevProps, nextProps) => isEqual(prevProps.data, nextProps.data)
 );

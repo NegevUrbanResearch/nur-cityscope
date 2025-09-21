@@ -16,7 +16,7 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 
 import { chartsDrawerWidth } from "../../style/drawersStyles";
-const ChartCard = ({ title, data, MemoizedChart }) => {
+const ChartCard = ({ title, data, MemoizedChart, customHeader }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [openDialog, setOpenDialog] = React.useState(false);
 
@@ -31,14 +31,13 @@ const ChartCard = ({ title, data, MemoizedChart }) => {
   return (
     <Card
       sx={{ width: `calc(${chartsDrawerWidth} - 1vw)` }}
-      id={`chart-card-${title}`}>
+      id={`chart-card-${title}`}
+    >
       <CardHeader
         subheader={title}
         action={
           <>
-            <IconButton
-              size="small"
-              onClick={handleClickDialog}>
+            <IconButton size="small" onClick={handleClickDialog}>
               <VisibilityIcon />
             </IconButton>
             <Dialog
@@ -50,25 +49,27 @@ const ChartCard = ({ title, data, MemoizedChart }) => {
                 transition: Transition,
               }}
               keepMounted
-              onClose={handleClickDialog}>
+              onClose={handleClickDialog}
+            >
               <DialogTitle>{title}</DialogTitle>
               <DialogContent>
                 <MemoizedChart data={data} />
               </DialogContent>
             </Dialog>
-            <ExpandMore
-              expand={expanded}
-              onClick={handleExpandClick}>
+            <ExpandMore expand={expanded} onClick={handleExpandClick}>
               <ExpandMoreIcon />
             </ExpandMore>
           </>
-        }></CardHeader>
+        }
+      ></CardHeader>
       <Collapse
         sx={{ width: `calc(${chartsDrawerWidth} - 1vw)` }}
         in={expanded}
         timeout="auto"
-        unmountOnExit>
+        unmountOnExit
+      >
         <CardContent sx={{ width: `calc(${chartsDrawerWidth} - 1vw)` }}>
+          {customHeader}
           <MemoizedChart data={data} />
         </CardContent>
       </Collapse>
@@ -79,13 +80,7 @@ const ChartCard = ({ title, data, MemoizedChart }) => {
 export default ChartCard;
 
 const Transition = React.forwardRef(function Transition(props, ref) {
-  return (
-    <Slide
-      direction="up"
-      ref={ref}
-      {...props}
-    />
-  );
+  return <Slide direction="up" ref={ref} {...props} />;
 });
 
 const ExpandMore = styled((props) => {

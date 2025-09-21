@@ -24,7 +24,11 @@ const INDICATOR_CONFIG = {
       "average_commute_time",
       "bike_lane_coverage",
     ],
-    tabLabels: ["Accessibility", "Modal Split", "Radar Analysis", "Coverage"],
+    tabLabels: [
+      "Trips Over Time",
+      "Mode Split by Destination",
+      "Distance Distribution",
+    ],
     pieChartLabels: ["Public Transport Coverage", "No Coverage"],
   },
   climate: {
@@ -56,21 +60,20 @@ const INDICATOR_CONFIG = {
 
 const STATE_CONFIG = {
   mobility: [],
-  climate: ['state1','state2'],
-  land_use: [],  
-}
-
+  climate: ["state1", "state2"],
+  land_use: [],
+};
 
 // Reverse mapping from ID to indicator type
 const ID_TO_INDICATOR = Object.fromEntries(
-  Object.entries(INDICATOR_CONFIG).map(([key, config]) => [config.id, key]),
+  Object.entries(INDICATOR_CONFIG).map(([key, config]) => [config.id, key])
 );
 
 // Helper to get initial indicator from URL
 const getInitialIndicator = () => {
   if (typeof window !== "undefined") {
     const match = window.location.pathname.match(
-      /dashboard\/(mobility|climate|land_use)/,
+      /dashboard\/(mobility|climate|land_use)/
     );
     if (match) return match[1];
   }
@@ -80,7 +83,7 @@ const getInitialIndicator = () => {
 export const DataProvider = ({ children }) => {
   // Store the current indicator type (mobility, climate, land_use)
   const [currentIndicator, setCurrentIndicator] = useState(
-    getInitialIndicator(),
+    getInitialIndicator()
   );
 
   // Store the dashboard data for the current indicator
@@ -251,7 +254,7 @@ export const DataProvider = ({ children }) => {
         }
       }
     },
-    [dashboardData, loading],
+    [dashboardData, loading]
   );
 
   const handleVisualizationModeChange = useCallback((event, newMode) => {
@@ -297,7 +300,7 @@ export const DataProvider = ({ children }) => {
 
           if (newIndicator && newIndicator !== indicatorRef.current) {
             console.log(
-              `Remote controller changed indicator to: ${newIndicator}`,
+              `Remote controller changed indicator to: ${newIndicator}`
             );
 
             // Clear any pending timer to prevent race conditions
@@ -401,7 +404,7 @@ export const DataProvider = ({ children }) => {
             })
             .then(() => {
               console.log(
-                `Updated remote controller to ${newIndicator} (ID: ${indicatorId})`,
+                `Updated remote controller to ${newIndicator} (ID: ${indicatorId})`
               );
 
               // Trigger a data fetch for the new indicator
@@ -425,7 +428,7 @@ export const DataProvider = ({ children }) => {
         }
       }
     },
-    [currentIndicator, fetchDashboardData],
+    [currentIndicator, fetchDashboardData]
   );
 
   // Value object with additional helpers for the new indicator system

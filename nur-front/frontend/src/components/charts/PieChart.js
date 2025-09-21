@@ -54,7 +54,7 @@ const DonutChart = ({ data }) => {
       legend: {
         display: true,
         position: "bottom",
-        align: "start",
+        align: "center",
         labels: {
           boxWidth: 15,
           padding: 10,
@@ -98,11 +98,7 @@ const DonutChart = ({ data }) => {
 
   return (
     <div>
-      <Doughnut
-        data={chartData}
-        options={chartOptions}
-        ref={chartRef}
-      />
+      <Doughnut data={chartData} options={chartOptions} ref={chartRef} />
       {!isValidData && (
         <div
           style={{
@@ -113,7 +109,8 @@ const DonutChart = ({ data }) => {
             textAlign: "center",
             fontSize: "12px",
             color: "#666",
-          }}>
+          }}
+        >
           No data available
         </div>
       )}

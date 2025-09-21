@@ -20,7 +20,7 @@ services:
         "cp /app/init.sh /tmp/init.sh && chmod +x /tmp/init.sh && /tmp/init.sh",
       ]
     networks:
-      - nur_corn e
+      - nur_core
 
   dashboard-builder:
     container_name: dashboard_builder
