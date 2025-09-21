@@ -97,7 +97,16 @@ const DonutChart = ({ data }) => {
   }, [data, isValidData]);
 
   return (
-    <div>
+    <div
+      style={{
+        width: "100%",
+        height: 320,
+        marginBottom: 24,
+        position: "relative",
+        padding: "8px",
+        overflow: "hidden",
+      }}
+    >
       <Doughnut data={chartData} options={chartOptions} ref={chartRef} />
       {!isValidData && (
         <div

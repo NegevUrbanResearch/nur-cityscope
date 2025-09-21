@@ -19,18 +19,51 @@ import { chartsDrawerWidth } from "../../style/drawersStyles";
 const ChartCard = ({ title, data, MemoizedChart, customHeader }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [openDialog, setOpenDialog] = React.useState(false);
+  const cardRef = React.useRef(null);
 
   const handleClickDialog = () => {
     setOpenDialog(!openDialog);
   };
 
   const handleExpandClick = () => {
+    const wasExpanded = expanded;
     setExpanded(!expanded);
+
+    // Auto-scroll to show expanded content after animation
+    if (!wasExpanded && cardRef.current) {
+      setTimeout(() => {
+        // Find the drawer container to scroll within
+        const drawerPaper = cardRef.current.closest(".MuiDrawer-paper");
+        if (drawerPaper) {
+          const cardRect = cardRef.current.getBoundingClientRect();
+          const drawerRect = drawerPaper.getBoundingClientRect();
+
+          // Check if card will be cut off when expanded (more generous threshold)
+          if (cardRect.bottom > drawerRect.bottom - 200) {
+            // Scroll the drawer container instead of using scrollIntoView
+            const scrollTop = drawerPaper.scrollTop;
+            const targetScrollTop =
+              scrollTop + (cardRect.bottom - drawerRect.bottom) + 50;
+
+            drawerPaper.scrollTo({
+              top: targetScrollTop,
+              behavior: "smooth",
+            });
+          }
+        }
+      }, 400); // Wait for collapse animation to complete
+    }
   };
 
   return (
     <Card
-      sx={{ width: `calc(${chartsDrawerWidth} - 1vw)` }}
+      ref={cardRef}
+      sx={{
+        width: "100%",
+        maxWidth: "100%",
+        marginBottom: "16px",
+        overflow: "hidden",
+      }}
       id={`chart-card-${title}`}
     >
       <CardHeader
@@ -63,12 +96,26 @@ const ChartCard = ({ title, data, MemoizedChart, customHeader }) => {
         }
       ></CardHeader>
       <Collapse
-        sx={{ width: `calc(${chartsDrawerWidth} - 1vw)` }}
+        sx={{
+          width: "100%",
+          maxWidth: "100%",
+          overflow: "hidden",
+        }}
         in={expanded}
         timeout="auto"
         unmountOnExit
       >
-        <CardContent sx={{ width: `calc(${chartsDrawerWidth} - 1vw)` }}>
+        <CardContent
+          sx={{
+            width: "100%",
+            maxWidth: "100%",
+            padding: "16px",
+            overflow: "hidden",
+            "&:last-child": {
+              paddingBottom: "16px",
+            },
+          }}
+        >
           {customHeader}
           <MemoizedChart data={data} />
         </CardContent>

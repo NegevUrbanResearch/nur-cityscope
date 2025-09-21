@@ -13,7 +13,6 @@ const IndicatorGraphs = () => {
   const { dashboardData: data, getTabLabels, currentIndicator } = useAppData();
 
   const tabLabels = getTabLabels();
-  const [openInfo, setOpenInfo] = React.useState(false);
 
   // Use real mobility data for mobility indicator, synthetic data for others
   if (currentIndicator === "mobility") {

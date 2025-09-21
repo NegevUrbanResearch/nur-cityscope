@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Box, AppBar, Typography, Grid, Paper, Alert } from "@mui/material";
+import { Box, Alert, Typography } from "@mui/material";
 import api from "../api";
-//import TabComponent from "../components/TabComponent";
 import { useAppData } from "../DataContext";
 import config from "../config";
 //import MetricDisplay from "../components/MetricDisplay";
@@ -76,7 +75,7 @@ const Dashboard = () => {
 
       img.src = url;
     },
-    [currentIndicator],
+    [currentIndicator]
   );
 
   // Fetch map data from API when indicator changes
@@ -105,7 +104,7 @@ const Dashboard = () => {
         const timestamp = Date.now();
         // Use our pre-configured api instance with relative URL
         const response = await api.get(
-          `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}`,
+          `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}`
         );
 
         if (response.data && response.data.image_data) {
@@ -181,9 +180,7 @@ const Dashboard = () => {
     return (
       <>
         <Box sx={{ height: "100%", width: "100%" }}>
-          <Alert
-            severity="warning"
-            sx={{ mb: 2 }}>
+          <Alert severity="warning" sx={{ mb: 2 }}>
             Error loading visualization: Using fallback map
           </Alert>
           <iframe
@@ -221,22 +218,17 @@ const Dashboard = () => {
     }
   }
 
-  // Get dashboard title directly from the context helper
-  const getDashboardTitle = () => getIndicatorTitle();
-
   return (
     <Box
       sx={{
         width: "100vw",
         marginLeft: `-${chartsDrawerWidth}`,
         height: "100vh",
-      }}>
+      }}
+    >
       {visualizationMode === "deck" ? (
         // Show interactive Deck.GL map when in deck mode
-        <DeckGLMap
-          indicatorType={currentIndicator}
-          state={state}
-        />
+        <DeckGLMap indicatorType={currentIndicator} state={state} />
       ) : (
         // Show traditional image/iframe view
         <>
@@ -259,10 +251,10 @@ const Dashboard = () => {
               onError={(e) => {
                 console.error("Failed to load image:", e);
                 // Don't use a fallback - let the user know there's an issue
-                setMapData(prev => ({
+                setMapData((prev) => ({
                   ...prev,
                   error: true,
-                  errorMessage: "Failed to load visualization image"
+                  errorMessage: "Failed to load visualization image",
                 }));
               }}
             />

@@ -6,9 +6,18 @@ const StackedBarChart = ({ data }) => {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    // Data validation
-    if (!data || !data.bars || !Array.isArray(data.bars)) {
+    // Data validation - only log errors if data is provided but invalid
+    if (
+      data !== null &&
+      data !== undefined &&
+      (!data.bars || !Array.isArray(data.bars))
+    ) {
       console.error("Invalid data structure for BarChart", data);
+      return;
+    }
+
+    // Skip rendering if no data provided
+    if (!data || !data.bars || !Array.isArray(data.bars)) {
       return;
     }
 
@@ -47,6 +56,10 @@ const StackedBarChart = ({ data }) => {
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          interaction: {
+            mode: "index",
+            intersect: false,
+          },
           scales: {
             x: {
               stacked: true,
@@ -57,6 +70,9 @@ const StackedBarChart = ({ data }) => {
                 color: "#ffffff",
                 maxRotation: 45,
                 minRotation: 0,
+                font: {
+                  size: 11,
+                },
               },
             },
             y: {
@@ -70,6 +86,9 @@ const StackedBarChart = ({ data }) => {
               },
               ticks: {
                 color: "#ffffff",
+                font: {
+                  size: 11,
+                },
                 callback: function (value) {
                   return value.toLocaleString();
                 },
@@ -91,9 +110,20 @@ const StackedBarChart = ({ data }) => {
               },
             },
             tooltip: {
-              backgroundColor: "rgba(0, 0, 0, 0.8)",
+              backgroundColor: "rgba(0, 0, 0, 0.9)",
               titleColor: "#ffffff",
               bodyColor: "#ffffff",
+              borderColor: "rgba(255, 255, 255, 0.2)",
+              borderWidth: 1,
+              cornerRadius: 6,
+              titleFont: {
+                size: 13,
+                weight: "bold",
+              },
+              bodyFont: {
+                size: 12,
+              },
+              padding: 10,
               callbacks: {
                 label: function (context) {
                   return `${
@@ -119,7 +149,15 @@ const StackedBarChart = ({ data }) => {
   }, [data]);
 
   return (
-    <div>
+    <div
+      style={{
+        width: "100%",
+        height: 320,
+        marginBottom: 24,
+        padding: "8px",
+        overflow: "hidden",
+      }}
+    >
       <canvas ref={canvasRef}></canvas>
     </div>
   );

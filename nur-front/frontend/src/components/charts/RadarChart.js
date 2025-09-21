@@ -7,7 +7,22 @@ const RadarChart = ({ data }) => {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    // Basic data validation
+    // Basic data validation - only log errors if data is provided but invalid
+    if (
+      data !== null &&
+      data !== undefined &&
+      (!data.categories ||
+        !Array.isArray(data.categories) ||
+        !data.valuesSet1 ||
+        !Array.isArray(data.valuesSet1) ||
+        !data.valuesSet2 ||
+        !Array.isArray(data.valuesSet2))
+    ) {
+      console.error("Invalid data for radar chart", data);
+      return;
+    }
+
+    // Skip rendering if no data provided
     if (
       !data ||
       !data.categories ||
@@ -17,7 +32,6 @@ const RadarChart = ({ data }) => {
       !data.valuesSet2 ||
       !Array.isArray(data.valuesSet2)
     ) {
-      console.error("Invalid data for radar chart", data);
       return;
     }
 
@@ -36,7 +50,7 @@ const RadarChart = ({ data }) => {
     // Keep original labels for color determination
     const originalLabels = [...data.categories];
     const formattedLabels = data.categories.map((cat) =>
-      cat.replace("_d", " "),
+      cat.replace("_d", " ")
     );
 
     // Function to determine the color of each label
@@ -169,7 +183,15 @@ const RadarChart = ({ data }) => {
 
   // Return a container with appropriate sizing
   return (
-    <div>
+    <div
+      style={{
+        width: "100%",
+        height: 320,
+        marginBottom: 24,
+        padding: "8px",
+        overflow: "hidden",
+      }}
+    >
       <canvas ref={canvasRef}></canvas>
     </div>
   );

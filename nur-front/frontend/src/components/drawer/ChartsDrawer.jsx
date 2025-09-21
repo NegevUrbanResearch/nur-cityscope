@@ -22,11 +22,8 @@ import IndicatorGraphs from "./IndicatorGraphs";
 import ClimateGraphs from "./ClimateGraphs";
 
 const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
-  const {
-    visualizationMode,
-    handleVisualizationModeChange,
-    currentIndicator,
-  } = useAppData();
+  const { visualizationMode, handleVisualizationModeChange, currentIndicator } =
+    useAppData();
 
   const [openInfo, setOpenInfo] = React.useState(false);
 
@@ -36,7 +33,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
 
   let disableInteractiveMode = false;
 
-  if (currentIndicator == "climate") {
+  if (currentIndicator === "climate") {
     handleVisualizationModeChange(null, "image");
     disableInteractiveMode = true;
   }
@@ -48,11 +45,14 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         flexShrink: 0,
         "& .MuiDrawer-paper": {
           width: chartsDrawerWidth,
+          overflowX: "hidden",
+          overflowY: "auto",
         },
       }}
       variant="persistent"
       anchor="right"
-      open={openCharts}>
+      open={openCharts}
+    >
       <Grid
         container
         sx={{
@@ -60,10 +60,12 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           alignItems: "center",
           height: "76px",
           width: "100%",
-        }}>
+        }}
+      >
         <IconButton
           onClick={handleChartsClick}
-          sx={{ backgroundColor: "transparent" }}>
+          sx={{ backgroundColor: "transparent" }}
+        >
           <CloseIcon />
         </IconButton>
 
@@ -71,22 +73,19 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
 
         <IconButton
           sx={{ backgroundColor: "transparent" }}
-          onClick={handleClickInfo}>
+          onClick={handleClickInfo}
+        >
           <InfoOutlineIcon />
         </IconButton>
-        <InfoDialog
-          openInfo={openInfo}
-          handleCloseInfo={handleClickInfo}
-        />
+        <InfoDialog openInfo={openInfo} handleCloseInfo={handleClickInfo} />
       </Grid>
 
       <Grid
         container
         direction="column"
-        sx={{ justifyContent: "space-between" }}>
-        <Grid
-          item
-          container>
+        sx={{ justifyContent: "space-between" }}
+      >
+        <Grid item container>
           <ToggleButtonGroup
             sx={{
               marginLeft: "0.5vw",
@@ -97,21 +96,22 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
             onChange={handleVisualizationModeChange}
             size="small"
             fullWidth={true}
-            aria-label="visualization mode">
+            aria-label="visualization mode"
+          >
             {disableInteractiveMode ? (
               <Tooltip
                 title="This indicator does not support interactive mode"
                 placement="top"
-                arrow>
+                arrow
+              >
                 <span>
                   <ToggleButton
                     value="deck"
                     disabled={disableInteractiveMode}
-                    aria-label="interactive map">
+                    aria-label="interactive map"
+                  >
                     <MapIcon fontSize="small" />
-                    <Typography
-                      variant="caption"
-                      sx={{ ml: 1 }}>
+                    <Typography variant="caption" sx={{ ml: 1 }}>
                       Interactive
                     </Typography>
                   </ToggleButton>
@@ -121,22 +121,17 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
               <ToggleButton
                 value="deck"
                 disabled={disableInteractiveMode}
-                aria-label="interactive map">
+                aria-label="interactive map"
+              >
                 <MapIcon fontSize="small" />
-                <Typography
-                  variant="caption"
-                  sx={{ ml: 1 }}>
+                <Typography variant="caption" sx={{ ml: 1 }}>
                   Interactive
                 </Typography>
               </ToggleButton>
             )}
-            <ToggleButton
-              value="image"
-              aria-label="static image">
+            <ToggleButton value="image" aria-label="static image">
               <ImageIcon fontSize="small" />
-              <Typography
-                variant="caption"
-                sx={{ ml: 1 }}>
+              <Typography variant="caption" sx={{ ml: 1 }}>
                 Image
               </Typography>
             </ToggleButton>
@@ -147,9 +142,18 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           container
           direction="column"
           sx={{
-            alignItems: "center",
-          }}>
-          {currentIndicator === "climate" ? (<ClimateGraphs/>) : (<IndicatorGraphs/>)}
+            alignItems: "stretch",
+            overflowX: "hidden",
+            overflowY: "visible",
+            maxWidth: "100%",
+            padding: "0 8px",
+          }}
+        >
+          {currentIndicator === "climate" ? (
+            <ClimateGraphs />
+          ) : (
+            <IndicatorGraphs />
+          )}
         </Grid>
       </Grid>
     </Drawer>

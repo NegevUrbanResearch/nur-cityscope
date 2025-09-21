@@ -114,7 +114,7 @@ const TemporalLineChart = ({ data }) => {
 
   return (
     <div style={{ width: "100%", height: 300, marginBottom: 24 }}>
-      <ResponsiveContainer>
+      <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={data.chartData}
           margin={{ top: 16, right: 24, bottom: 8, left: 12 }}
@@ -131,6 +131,8 @@ const TemporalLineChart = ({ data }) => {
           <YAxis
             tick={{ fill: "#ffffff", fontSize: 12 }}
             axisLine={{ stroke: "#ffffff" }}
+            width={60}
+            domain={[0, "dataMax + 2"]}
             label={{
               value: "Trips (%)",
               angle: -90,
@@ -139,6 +141,7 @@ const TemporalLineChart = ({ data }) => {
             }}
           />
           <Tooltip
+            animationDuration={0}
             contentStyle={{
               backgroundColor: "rgba(0, 0, 0, 0.8)",
               border: "none",
@@ -159,6 +162,8 @@ const TemporalLineChart = ({ data }) => {
               stroke={MOBILITY_COLORS.destinations[dest] || "#42E2B8"}
               strokeWidth={2}
               dot={false}
+              connectNulls={false}
+              animationDuration={0}
               activeDot={{
                 r: 4,
                 fill: MOBILITY_COLORS.destinations[dest] || "#42E2B8",
@@ -437,7 +442,6 @@ const processTemporal = (data) => {
   // Ensure consistent ordering: BGU, Soroka Hospital, Gav Yam
   const destinationOrder = ["BGU", "Soroka Hospital", "Gav Yam"];
   const destinations = destinationOrder.filter((dest) => destinationData[dest]);
-  const hourLabels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
 
   // Create Recharts-compatible format
   const chartData = Array.from({ length: 24 }, (_, hour) => {

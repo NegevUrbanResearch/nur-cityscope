@@ -6,17 +6,26 @@ const HorizontalStackedBarChart = ({ data }) => {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    // Data validation
+    // Data validation - only log errors if data is provided but invalid
+    if (
+      data !== null &&
+      data !== undefined &&
+      (!data.bars || !Array.isArray(data.bars) || data.bars.length === 0)
+    ) {
+      console.error(
+        "Invalid data structure for HorizontalStackedBarChart",
+        data
+      );
+      return;
+    }
+
+    // Skip rendering if no data provided
     if (
       !data ||
       !data.bars ||
       !Array.isArray(data.bars) ||
       data.bars.length === 0
     ) {
-      console.error(
-        "Invalid data structure for HorizontalStackedBarChart",
-        data,
-      );
       return;
     }
 
@@ -33,7 +42,7 @@ const HorizontalStackedBarChart = ({ data }) => {
 
       // Validate that all bars have values array
       const validData = data.bars.every(
-        (bar) => Array.isArray(bar.values) && bar.values.length > 0,
+        (bar) => Array.isArray(bar.values) && bar.values.length > 0
       );
 
       if (!validData) {
@@ -57,20 +66,40 @@ const HorizontalStackedBarChart = ({ data }) => {
           responsive: true,
           maintainAspectRatio: false,
           indexAxis: "y",
+          interaction: {
+            mode: "nearest",
+            intersect: false,
+          },
           scales: {
             x: {
               stacked: true,
               min: 0,
               max: 100,
               grid: {
-                color: "rgba(255, 255, 255, 0.3)",
+                color: "rgba(255, 255, 255, 0.2)",
+                lineWidth: 1,
+              },
+              ticks: {
+                color: "#ffffff",
+                font: {
+                  size: 11,
+                },
+                callback: function (value) {
+                  return value + "%";
+                },
               },
             },
             y: {
               stacked: true,
-              min: 0,
               grid: {
-                color: "rgba(255, 255, 255, 0.3)",
+                color: "rgba(255, 255, 255, 0.1)",
+                lineWidth: 1,
+              },
+              ticks: {
+                color: "#ffffff",
+                font: {
+                  size: 11,
+                },
               },
             },
           },
@@ -81,9 +110,27 @@ const HorizontalStackedBarChart = ({ data }) => {
               labels: {
                 boxWidth: 15,
                 padding: 15,
+                color: "#ffffff",
+                font: {
+                  size: 12,
+                },
               },
             },
             tooltip: {
+              backgroundColor: "rgba(0, 0, 0, 0.9)",
+              titleColor: "#ffffff",
+              bodyColor: "#ffffff",
+              borderColor: "rgba(255, 255, 255, 0.2)",
+              borderWidth: 1,
+              cornerRadius: 6,
+              titleFont: {
+                size: 13,
+                weight: "bold",
+              },
+              bodyFont: {
+                size: 12,
+              },
+              padding: 10,
               callbacks: {
                 label: (context) => {
                   const value = context.raw || 0;
@@ -108,7 +155,15 @@ const HorizontalStackedBarChart = ({ data }) => {
   }, [data]);
 
   return (
-    <div>
+    <div
+      style={{
+        width: "100%",
+        height: 320,
+        marginBottom: 24,
+        padding: "8px",
+        overflow: "hidden",
+      }}
+    >
       <canvas ref={canvasRef}></canvas>
     </div>
   );
