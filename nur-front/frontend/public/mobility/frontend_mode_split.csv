@@ -1,0 +1,19 @@
+destination,mode,percentage,trips
+BGU,Public Transit,8.83,934.5
+BGU,Car,61.9,6550.2
+BGU,Shared Mobility,0.09,9.4
+BGU,Train,4.35,460.1
+BGU,Walking,23.62,2499.1
+BGU,Bike,1.22,129.2
+Soroka Hospital,Public Transit,18.2,1895.6
+Soroka Hospital,Car,73.09,7611.4
+Soroka Hospital,Train,1.72,178.7
+Soroka Hospital,Shared Mobility,0.41,42.6
+Soroka Hospital,Bike,0.83,86.9
+Soroka Hospital,Walking,5.75,598.5
+Gav Yam,Car,77.45,1677.9
+Gav Yam,Public Transit,15.04,325.9
+Gav Yam,Shared Mobility,0.38,8.2
+Gav Yam,Train,0.99,21.4
+Gav Yam,Bike,0.36,7.7
+Gav Yam,Walking,5.78,125.3
