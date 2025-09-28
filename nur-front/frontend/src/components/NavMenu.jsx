@@ -8,14 +8,24 @@ import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 
 const NavMenu = () => {
   const navigate = useNavigate();
-  const { currentIndicator, changeIndicator, indicatorConfig } = useAppData();
-  const [anchorEl, setAnchorEl] = React.useState(null);
-  const open = Boolean(anchorEl);
-  const handleClick = (event) => {
-    setAnchorEl(event.currentTarget);
+  const { currentIndicator, changeIndicator, indicatorConfig, StateConfig } = useAppData();
+  const [indicatorAnchorEl, setIndicatorAnchorEl] = React.useState(null);
+  const [stateAnchorEl, setStateAnchorEl] = React.useState(null);
+
+  const openIndicator = Boolean(indicatorAnchorEl);
+  const openState = Boolean(stateAnchorEl);
+
+  const handleClickIndicator = (event) => {
+    setIndicatorAnchorEl(event.currentTarget);
   };
-  const handleClose = () => {
-    setAnchorEl(null);
+  const handleCloseIndicator = () => {
+    setIndicatorAnchorEl(null);
+  };
+  const handleClickState = (event) => {
+    setStateAnchorEl(event.currentTarget);
+  };
+  const handleCloseState = () => {
+    setStateAnchorEl(null);
   };
   // Handle direct indicator change from navbar
   const handleIndicatorChange = (indicator) => {
@@ -26,30 +36,49 @@ const NavMenu = () => {
     navigate(`/${indicator}`);
   };
 
+  // need to add state change handler and current state to context (and different image for each state)
+
   return (
-    <Grid item>
+    <Grid item container justifyContent="space-between" alignItems="center" spacing={3}>
+
       <Button
         sx={{
           height: "7vh",
           textTransform: "none",
-          width: "25vw",
+          width: "12.5vw",
           border: "0.1px solid white",
         }}
-        onClick={handleClick}
+        onClick={handleClickIndicator}
         color="inherit"
         size="large"
         endIcon={<ArrowDropDownIcon />}>
-        <Typography variant="h6">Change Indicator</Typography>
+        <Typography variant="h6">Indicator</Typography>
       </Button>
+
+      <Button
+        sx={{
+          height: "7vh",
+          textTransform: "none",
+          width: "12.5vw",
+          border: "0.1px solid white",
+        }}
+        onClick={handleClickState}
+        color="inherit"
+        size="large"
+        disabled={StateConfig[currentIndicator]?.length === 0}
+        endIcon={<ArrowDropDownIcon />}>
+        <Typography variant="h6">State</Typography>
+      </Button>
+
       <Menu
-        anchorEl={anchorEl}
-        open={open}
-        onClose={handleClose}>
+        anchorEl={indicatorAnchorEl}
+        open={openIndicator}
+        onClose={handleCloseIndicator}>
         {Object.entries(indicatorConfig).map(([key, config]) => (
           <MenuItem
             onClick={() => handleIndicatorChange(key)}
             sx={{
-              width: "25vw",
+              width: "12.5vw",
               backgroundColor:
                 key === currentIndicator ? "#ffffff1a" : "#1e1e1e",
             }}
@@ -60,6 +89,29 @@ const NavMenu = () => {
           </MenuItem>
         ))}
       </Menu>
+
+      <Menu
+        anchorEl={stateAnchorEl}
+        open={openState}
+        onClose={handleCloseState}>
+        {StateConfig[currentIndicator].map(element => (
+          <MenuItem
+            //onClick={() => handleIndicatorChange(key)}
+            sx={{
+              width: "12.5vw",
+              height: "7vh",
+              //backgroundColor:
+              // key === currentIndicator ? "#ffffff1a" : "#1e1e1e",
+            }}
+            key={element}>
+            <Typography variant="h6">
+              {element}
+            </Typography>
+          </MenuItem>
+        ))}
+
+      </Menu>
+
     </Grid>
   );
 };

@@ -27,8 +27,8 @@ server {
         alias /usr/share/nginx/html/nur-front/frontend/;
         index index.html;
         
-        # Handle all routes by serving index.html
-        try_files $uri $uri/ /dashboard/index.html;
+        # Handle all routes by serving index.html for SPA routing
+        try_files $uri @dashboard_fallback;
         
         # Add CORS headers
         add_header Access-Control-Allow-Origin *;
@@ -40,6 +40,18 @@ server {
             add_header Cache-Control "no-store, no-cache, must-revalidate";
             expires -1;
         }
+    }
+
+    # Fallback for SPA routing - serve index.html for any unmatched dashboard routes
+    location @dashboard_fallback {
+        root /usr/share/nginx/html/nur-front/frontend;
+        try_files /index.html =404;
+        
+        # Add same headers as dashboard location
+        add_header Access-Control-Allow-Origin *;
+        add_header Access-Control-Allow-Methods "GET, POST, OPTIONS";
+        add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization";
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
     }
 
     # Redirect /dashboard without trailing slash to /dashboard/

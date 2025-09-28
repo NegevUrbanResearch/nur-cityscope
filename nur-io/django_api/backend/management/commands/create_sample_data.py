@@ -110,12 +110,17 @@ class Command(BaseCommand):
         # Image
         image_dir = base / "image"
         if image_dir.exists() and image_dir.is_dir():
-            # Pick first common image extension
+            # Collect all image files with supported extensions
             candidates = []
             for ext in ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg"]:
                 candidates.extend(list(image_dir.glob(ext)))
             if candidates:
-                src = str(sorted(candidates)[0])
+                assert len(candidates) <= 1, (
+                    f"Expected zero or one image file in {image_dir}, "
+                    f"but found {len(candidates)}: {[Path(c).name for c in candidates]}. "
+                    f"Please ensure only one image file exists in this directory (or none to use synthetic)."
+                )
+                src = str(candidates[0])
                 indicator_name = indicator.name.replace(" ", "_").lower()
                 state_year = (state.state_values or {}).get("year", 2023)
                 dst_rel = f"indicators/{category}/{indicator_name}_{state_year}{Path(src).suffix.lower()}"
@@ -126,7 +131,12 @@ class Command(BaseCommand):
         if map_dir.exists() and map_dir.is_dir():
             maps = list(map_dir.glob("*.html"))
             if maps:
-                src = str(sorted(maps)[0])
+                assert len(maps) <= 1, (
+                    f"Expected zero or one HTML map file in {map_dir}, "
+                    f"but found {len(maps)}: {[Path(m).name for m in maps]}. "
+                    f"Please ensure only one HTML file exists in this directory (or none to skip map)."
+                )
+                src = str(maps[0])
                 indicator_name = (
                     indicator.name.replace(" ", "").replace(" ", "_").lower()
                 )
@@ -139,6 +149,11 @@ class Command(BaseCommand):
         if geojson_dir.exists() and geojson_dir.is_dir():
             gj_files = list(geojson_dir.glob("*.json"))
             if gj_files:
+                assert len(gj_files) <= 1, (
+                    f"Expected zero or one GeoJSON file in {geojson_dir}, "
+                    f"but found {len(gj_files)}: {[Path(f).name for f in gj_files]}. "
+                    f"Please ensure only one JSON file exists in this directory (or none to skip geojson)."
+                )
                 try:
                     with open(gj_files[0]) as f:
                         results["geojson_dict"] = json.load(f)
@@ -806,13 +821,21 @@ class Command(BaseCommand):
                     scenario_key = self._scenario_key_from_state(
                         getattr(state, "state_values", {})
                     )
-                    candidate = (
-                        Path(public_dir)
-                        / "processed"
-                        / dashboard_type
-                        / scenario_key
-                        / "dashboard.json"
+                    dashboard_dir = (
+                        Path(public_dir) / "processed" / dashboard_type / scenario_key
                     )
+                    candidate = dashboard_dir / "dashboard.json"
+
+                    # Validate that there's only one dashboard.json file in the directory
+                    if dashboard_dir.exists() and dashboard_dir.is_dir():
+                        dashboard_files = list(dashboard_dir.glob("dashboard*.json"))
+                        if dashboard_files:
+                            assert len(dashboard_files) <= 1, (
+                                f"Expected zero or one dashboard JSON file in {dashboard_dir}, "
+                                f"but found {len(dashboard_files)}: {[f.name for f in dashboard_files]}. "
+                                f"Please ensure only one dashboard.json file exists in this directory (or none to use synthetic)."
+                            )
+
                     if candidate.exists():
                         with open(candidate) as f:
                             dashboard_data = json.load(f)

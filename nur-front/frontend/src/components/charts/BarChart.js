@@ -6,9 +6,18 @@ const StackedBarChart = ({ data }) => {
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    // Data validation
-    if (!data || !data.bars || !Array.isArray(data.bars)) {
+    // Data validation - only log errors if data is provided but invalid
+    if (
+      data !== null &&
+      data !== undefined &&
+      (!data.bars || !Array.isArray(data.bars))
+    ) {
       console.error("Invalid data structure for BarChart", data);
+      return;
+    }
+
+    // Skip rendering if no data provided
+    if (!data || !data.bars || !Array.isArray(data.bars)) {
       return;
     }
 
@@ -17,7 +26,14 @@ const StackedBarChart = ({ data }) => {
     // Use labels from data if available, otherwise use defaults
     const xLabels = data.labels ||
       data.categories || ["Category 1", "Category 2", "Category 3"];
-    const colors = ["#0077B6", "#00B4D8", "#90E0EF"];
+    const colors = data.colors || [
+      "#42E2B8",
+      "#FFB74D",
+      "#E53E3E",
+      "#3182CE",
+      "#805AD5",
+      "#38B2AC",
+    ];
 
     // Clean up any existing chart
     if (chartRef.current) {
@@ -40,35 +56,80 @@ const StackedBarChart = ({ data }) => {
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          interaction: {
+            mode: "index",
+            intersect: false,
+          },
           scales: {
             x: {
               stacked: true,
               grid: {
                 display: false,
               },
+              ticks: {
+                color: "#ffffff",
+                maxRotation: 45,
+                minRotation: 0,
+                font: {
+                  size: 11,
+                },
+              },
             },
             y: {
               stacked: true,
               beginAtZero: true,
-              suggestedMax: 160,
               grid: {
                 display: true,
-                color: "rgba(255, 255, 255, 1)",
+                color: "rgba(255, 255, 255, 0.1)",
                 drawBorder: false,
                 drawTicks: false,
               },
               ticks: {
-                display: false, // Hide y-axis numbers
+                color: "#ffffff",
+                font: {
+                  size: 11,
+                },
+                callback: function (value) {
+                  return value.toLocaleString();
+                },
               },
             },
           },
           plugins: {
             legend: {
+              display: true,
               position: "bottom",
-              align: "start",
+              align: "center",
               labels: {
                 boxWidth: 15,
                 padding: 15,
+                color: "#ffffff",
+                font: {
+                  size: 12,
+                },
+              },
+            },
+            tooltip: {
+              backgroundColor: "rgba(0, 0, 0, 0.9)",
+              titleColor: "#ffffff",
+              bodyColor: "#ffffff",
+              borderColor: "rgba(255, 255, 255, 0.2)",
+              borderWidth: 1,
+              cornerRadius: 6,
+              titleFont: {
+                size: 13,
+                weight: "bold",
+              },
+              bodyFont: {
+                size: 12,
+              },
+              padding: 10,
+              callbacks: {
+                label: function (context) {
+                  return `${
+                    context.dataset.label
+                  }: ${context.parsed.y.toLocaleString()}`;
+                },
               },
             },
           },
@@ -88,7 +149,15 @@ const StackedBarChart = ({ data }) => {
   }, [data]);
 
   return (
-    <div>
+    <div
+      style={{
+        width: "100%",
+        height: 320,
+        marginBottom: 24,
+        padding: "8px",
+        overflow: "hidden",
+      }}
+    >
       <canvas ref={canvasRef}></canvas>
     </div>
   );

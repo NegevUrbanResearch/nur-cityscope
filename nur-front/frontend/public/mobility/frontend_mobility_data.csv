@@ -1,0 +1,151 @@
+data_type,destination,mode,hour,distance_range,value,trips
+mode_split,BGU,Public Transit,,,8.83,934.5
+mode_split,BGU,Car,,,61.9,6550.2
+mode_split,BGU,Shared Mobility,,,0.09,9.4
+mode_split,BGU,Train,,,4.35,460.1
+mode_split,BGU,Walking,,,23.62,2499.1
+mode_split,BGU,Bike,,,1.22,129.2
+mode_split,Soroka Hospital,Public Transit,,,18.2,1895.6
+mode_split,Soroka Hospital,Car,,,73.09,7611.4
+mode_split,Soroka Hospital,Train,,,1.72,178.7
+mode_split,Soroka Hospital,Shared Mobility,,,0.41,42.6
+mode_split,Soroka Hospital,Bike,,,0.83,86.9
+mode_split,Soroka Hospital,Walking,,,5.75,598.5
+mode_split,Gav Yam,Car,,,77.45,1677.9
+mode_split,Gav Yam,Public Transit,,,15.04,325.9
+mode_split,Gav Yam,Shared Mobility,,,0.38,8.2
+mode_split,Gav Yam,Train,,,0.99,21.4
+mode_split,Gav Yam,Bike,,,0.36,7.7
+mode_split,Gav Yam,Walking,,,5.78,125.3
+temporal,BGU,,0.0,,0.0,
+temporal,BGU,,1.0,,5.7e-05,
+temporal,BGU,,2.0,,0.0,
+temporal,BGU,,3.0,,0.0,
+temporal,BGU,,4.0,,0.000142,
+temporal,BGU,,5.0,,0.00464,
+temporal,BGU,,6.0,,0.006549,
+temporal,BGU,,7.0,,0.052048,
+temporal,BGU,,8.0,,0.177349,
+temporal,BGU,,9.0,,0.166407,
+temporal,BGU,,10.0,,0.124696,
+temporal,BGU,,11.0,,0.086341,
+temporal,BGU,,12.0,,0.082523,
+temporal,BGU,,13.0,,0.075795,
+temporal,BGU,,14.0,,0.06215,
+temporal,BGU,,15.0,,0.035294,
+temporal,BGU,,16.0,,0.042457,
+temporal,BGU,,17.0,,0.029955,
+temporal,BGU,,18.0,,0.026374,
+temporal,BGU,,19.0,,0.016792,
+temporal,BGU,,20.0,,0.006076,
+temporal,BGU,,21.0,,0.002655,
+temporal,BGU,,22.0,,0.000822,
+temporal,BGU,,23.0,,0.000879,
+temporal,Soroka Hospital,,0.0,,0.000163,
+temporal,Soroka Hospital,,1.0,,0.001143,
+temporal,Soroka Hospital,,2.0,,0.001402,
+temporal,Soroka Hospital,,3.0,,0.001124,
+temporal,Soroka Hospital,,4.0,,0.001277,
+temporal,Soroka Hospital,,5.0,,0.003947,
+temporal,Soroka Hospital,,6.0,,0.0365,
+temporal,Soroka Hospital,,7.0,,0.154393,
+temporal,Soroka Hospital,,8.0,,0.147748,
+temporal,Soroka Hospital,,9.0,,0.097112,
+temporal,Soroka Hospital,,10.0,,0.074287,
+temporal,Soroka Hospital,,11.0,,0.069677,
+temporal,Soroka Hospital,,12.0,,0.051797,
+temporal,Soroka Hospital,,13.0,,0.054351,
+temporal,Soroka Hospital,,14.0,,0.060526,
+temporal,Soroka Hospital,,15.0,,0.039448,
+temporal,Soroka Hospital,,16.0,,0.042185,
+temporal,Soroka Hospital,,17.0,,0.036001,
+temporal,Soroka Hospital,,18.0,,0.033494,
+temporal,Soroka Hospital,,19.0,,0.038315,
+temporal,Soroka Hospital,,20.0,,0.022336,
+temporal,Soroka Hospital,,21.0,,0.009603,
+temporal,Soroka Hospital,,22.0,,0.019551,
+temporal,Soroka Hospital,,23.0,,0.00362,
+temporal,Gav Yam,,0.0,,0.0,
+temporal,Gav Yam,,1.0,,0.0,
+temporal,Gav Yam,,2.0,,0.0,
+temporal,Gav Yam,,3.0,,0.0,
+temporal,Gav Yam,,4.0,,0.000692,
+temporal,Gav Yam,,5.0,,0.006693,
+temporal,Gav Yam,,6.0,,0.024372,
+temporal,Gav Yam,,7.0,,0.090842,
+temporal,Gav Yam,,8.0,,0.194609,
+temporal,Gav Yam,,9.0,,0.123615,
+temporal,Gav Yam,,10.0,,0.068962,
+temporal,Gav Yam,,11.0,,0.032958,
+temporal,Gav Yam,,12.0,,0.036374,
+temporal,Gav Yam,,13.0,,0.036928,
+temporal,Gav Yam,,14.0,,0.032081,
+temporal,Gav Yam,,15.0,,0.039374,
+temporal,Gav Yam,,16.0,,0.06527,
+temporal,Gav Yam,,17.0,,0.073855,
+temporal,Gav Yam,,18.0,,0.044775,
+temporal,Gav Yam,,19.0,,0.038359,
+temporal,Gav Yam,,20.0,,0.041405,
+temporal,Gav Yam,,21.0,,0.036051,
+temporal,Gav Yam,,22.0,,0.006924,
+temporal,Gav Yam,,23.0,,0.005862,
+distance_histogram,BGU,Walking,,0-0.5,,172.0
+distance_histogram,BGU,Walking,,0.5-1,,243.1
+distance_histogram,BGU,Walking,,1-2,,214.0
+distance_histogram,BGU,Walking,,2-3,,3.0
+distance_histogram,BGU,Walking,,>3,,8.0
+distance_histogram,BGU,Bike,,0-1,,17.8
+distance_histogram,BGU,Bike,,1-2,,49.8
+distance_histogram,BGU,Bike,,2-3,,19.0
+distance_histogram,BGU,Bike,,3-5,,23.5
+distance_histogram,BGU,Bike,,>5,,0.0
+distance_histogram,BGU,Car,,0-10,,4325.3
+distance_histogram,BGU,Car,,10-25,,743.0
+distance_histogram,BGU,Car,,25-50,,1188.4
+distance_histogram,BGU,Car,,50-75,,838.4
+distance_histogram,BGU,Car,,>75,,2708.5
+distance_histogram,BGU,Public Transit,,0-10,,1124.6
+distance_histogram,BGU,Public Transit,,10-25,,257.0
+distance_histogram,BGU,Public Transit,,25-50,,711.6
+distance_histogram,BGU,Public Transit,,50-75,,561.6
+distance_histogram,BGU,Public Transit,,>75,,1591.5
+distance_histogram,Soroka Hospital,Walking,,0-0.5,,167.8
+distance_histogram,Soroka Hospital,Walking,,0.5-1,,177.3
+distance_histogram,Soroka Hospital,Walking,,1-2,,150.7
+distance_histogram,Soroka Hospital,Walking,,2-3,,17.6
+distance_histogram,Soroka Hospital,Walking,,>3,,4.7
+distance_histogram,Soroka Hospital,Bike,,0-1,,9.0
+distance_histogram,Soroka Hospital,Bike,,1-2,,25.9
+distance_histogram,Soroka Hospital,Bike,,2-3,,16.5
+distance_histogram,Soroka Hospital,Bike,,3-5,,7.9
+distance_histogram,Soroka Hospital,Bike,,>5,,0.0
+distance_histogram,Soroka Hospital,Car,,0-10,,4837.4
+distance_histogram,Soroka Hospital,Car,,10-25,,1884.4
+distance_histogram,Soroka Hospital,Car,,25-50,,2281.1
+distance_histogram,Soroka Hospital,Car,,50-75,,790.1
+distance_histogram,Soroka Hospital,Car,,>75,,3141.2
+distance_histogram,Soroka Hospital,Public Transit,,0-10,,1085.0
+distance_histogram,Soroka Hospital,Public Transit,,10-25,,615.6
+distance_histogram,Soroka Hospital,Public Transit,,25-50,,918.9
+distance_histogram,Soroka Hospital,Public Transit,,50-75,,809.9
+distance_histogram,Soroka Hospital,Public Transit,,>75,,2058.8
+distance_histogram,Gav Yam,Walking,,0-0.5,,29.2
+distance_histogram,Gav Yam,Walking,,0.5-1,,243.5
+distance_histogram,Gav Yam,Walking,,1-2,,77.6
+distance_histogram,Gav Yam,Walking,,2-3,,19.0
+distance_histogram,Gav Yam,Walking,,>3,,0.0
+distance_histogram,Gav Yam,Bike,,0-1,,2.3
+distance_histogram,Gav Yam,Bike,,1-2,,0.0
+distance_histogram,Gav Yam,Bike,,2-3,,0.0
+distance_histogram,Gav Yam,Bike,,3-5,,11.4
+distance_histogram,Gav Yam,Bike,,>5,,0.0
+distance_histogram,Gav Yam,Car,,0-10,,4611.0
+distance_histogram,Gav Yam,Car,,10-25,,659.6
+distance_histogram,Gav Yam,Car,,25-50,,925.3
+distance_histogram,Gav Yam,Car,,50-75,,1179.5
+distance_histogram,Gav Yam,Car,,>75,,2610.6
+distance_histogram,Gav Yam,Public Transit,,0-10,,606.0
+distance_histogram,Gav Yam,Public Transit,,10-25,,140.4
+distance_histogram,Gav Yam,Public Transit,,25-50,,574.7
+distance_histogram,Gav Yam,Public Transit,,50-75,,120.5
+distance_histogram,Gav Yam,Public Transit,,>75,,389.4

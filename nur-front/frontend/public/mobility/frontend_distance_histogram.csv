@@ -1,0 +1,61 @@
+destination,mode,distance_range,trips
+BGU,Walking,0-0.5,172.0
+BGU,Walking,0.5-1,243.1
+BGU,Walking,1-2,214.0
+BGU,Walking,2-3,3.0
+BGU,Walking,>3,8.0
+BGU,Bike,0-1,17.8
+BGU,Bike,1-2,49.8
+BGU,Bike,2-3,19.0
+BGU,Bike,3-5,23.5
+BGU,Bike,>5,0.0
+BGU,Car,0-10,4325.3
+BGU,Car,10-25,743.0
+BGU,Car,25-50,1188.4
+BGU,Car,50-75,838.4
+BGU,Car,>75,2708.5
+BGU,Public Transit,0-10,1124.6
+BGU,Public Transit,10-25,257.0
+BGU,Public Transit,25-50,711.6
+BGU,Public Transit,50-75,561.6
+BGU,Public Transit,>75,1591.5
+Soroka Hospital,Walking,0-0.5,167.8
+Soroka Hospital,Walking,0.5-1,177.3
+Soroka Hospital,Walking,1-2,150.7
+Soroka Hospital,Walking,2-3,17.6
+Soroka Hospital,Walking,>3,4.7
+Soroka Hospital,Bike,0-1,9.0
+Soroka Hospital,Bike,1-2,25.9
+Soroka Hospital,Bike,2-3,16.5
+Soroka Hospital,Bike,3-5,7.9
+Soroka Hospital,Bike,>5,0.0
+Soroka Hospital,Car,0-10,4837.4
+Soroka Hospital,Car,10-25,1884.4
+Soroka Hospital,Car,25-50,2281.1
+Soroka Hospital,Car,50-75,790.1
+Soroka Hospital,Car,>75,3141.2
+Soroka Hospital,Public Transit,0-10,1085.0
+Soroka Hospital,Public Transit,10-25,615.6
+Soroka Hospital,Public Transit,25-50,918.9
+Soroka Hospital,Public Transit,50-75,809.9
+Soroka Hospital,Public Transit,>75,2058.8
+Gav Yam,Walking,0-0.5,29.2
+Gav Yam,Walking,0.5-1,243.5
+Gav Yam,Walking,1-2,77.6
+Gav Yam,Walking,2-3,19.0
+Gav Yam,Walking,>3,0.0
+Gav Yam,Bike,0-1,2.3
+Gav Yam,Bike,1-2,0.0
+Gav Yam,Bike,2-3,0.0
+Gav Yam,Bike,3-5,11.4
+Gav Yam,Bike,>5,0.0
+Gav Yam,Car,0-10,4611.0
+Gav Yam,Car,10-25,659.6
+Gav Yam,Car,25-50,925.3
+Gav Yam,Car,50-75,1179.5
+Gav Yam,Car,>75,2610.6
+Gav Yam,Public Transit,0-10,606.0
+Gav Yam,Public Transit,10-25,140.4
+Gav Yam,Public Transit,25-50,574.7
+Gav Yam,Public Transit,50-75,120.5
+Gav Yam,Public Transit,>75,389.4
