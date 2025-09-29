@@ -60,7 +60,7 @@ const INDICATOR_CONFIG = {
 
 const STATE_CONFIG = {
   mobility: [],
-  climate: ["state1", "state2"],
+  climate: ["state1", "state2", "state3", "state4", "state5", "state6", "state7"],
   land_use: [],
 };
 

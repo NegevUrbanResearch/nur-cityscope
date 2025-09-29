@@ -20,6 +20,8 @@ import NavMenu from "../NavMenu";
 import InfoDialog from "../InfoDialog";
 import IndicatorGraphs from "./IndicatorGraphs";
 import ClimateGraphs from "./ClimateGraphs";
+import config from "../../config";
+
 
 const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
   const { visualizationMode, handleVisualizationModeChange, currentIndicator } =
@@ -62,22 +64,37 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           width: "100%",
         }}
       >
-        <IconButton
-          onClick={handleChartsClick}
-          sx={{ backgroundColor: "transparent" }}
-        >
-          <CloseIcon />
-        </IconButton>
+        <Grid item container >
+          <IconButton
+            onClick={handleChartsClick}
+            sx={{ backgroundColor: "transparent" }}
+          >
+            <CloseIcon />
+          </IconButton>
+
+          <IconButton
+            sx={{ backgroundColor: "transparent" }}
+            onClick={handleClickInfo}
+          >
+            <InfoOutlineIcon />
+          </IconButton>
+        </Grid>
+
 
         <NavMenu />
 
-        <IconButton
-          sx={{ backgroundColor: "transparent" }}
-          onClick={handleClickInfo}
-        >
-          <InfoOutlineIcon />
-        </IconButton>
+        <img
+          src={config.frontend.logo.url}
+          alt="nur"
+          style={{
+            width: "80px",
+            verticalAlign: "middle",
+            filter: "brightness(0) invert(1)",
+          }}
+        />
+
         <InfoDialog openInfo={openInfo} handleCloseInfo={handleClickInfo} />
+
       </Grid>
 
       <Grid

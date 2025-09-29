@@ -45,8 +45,8 @@ const NavMenu = () => {
         sx={{
           height: "7vh",
           textTransform: "none",
-          width: "12.5vw",
-          border: "0.1px solid white",
+          width: "9vw",
+          border: "0.1px solid white",minHeight: 0, minWidth: 0, padding: 0 
         }}
         onClick={handleClickIndicator}
         color="inherit"
@@ -59,8 +59,8 @@ const NavMenu = () => {
         sx={{
           height: "7vh",
           textTransform: "none",
-          width: "12.5vw",
-          border: "0.1px solid white",
+          width: "9vw",
+          border: "0.1px solid white",minHeight: 0, minWidth: 0, padding: 0 
         }}
         onClick={handleClickState}
         color="inherit"

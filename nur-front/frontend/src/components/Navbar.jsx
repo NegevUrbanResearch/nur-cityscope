@@ -1,7 +1,6 @@
 import React from "react";
 import { AppBar, Toolbar, Box, IconButton, Grid } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
-import config from "../config";
 import ChartsDrawer from "./drawer/ChartsDrawer";
 
 const Navbar = () => {
@@ -27,17 +26,6 @@ const Navbar = () => {
               justifyContent: "space-between",
               alignItems: "center",
             }}>
-            <Grid item>
-              <img
-                src={config.frontend.logo.url}
-                alt="nur"
-                style={{
-                  width: "80px",
-                  verticalAlign: "middle",
-                  filter: "brightness(0) invert(1)",
-                }}
-              />
-            </Grid>
             <Grid item>
               <IconButton
                 edge="end"
