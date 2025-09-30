@@ -22,7 +22,7 @@ import { useAppData } from "./DataContext";
 import "./style/index.css";
 
 // Wrapper component to handle indicator from URL params
-const DashboardWrapper = ({openCharts}) => {
+const DashboardWrapper = ({ openCharts }) => {
   const { indicator } = useParams();
   const { changeIndicator, currentIndicator } = useAppData();
   // Set the indicator based on URL when component mounts
@@ -31,7 +31,7 @@ const DashboardWrapper = ({openCharts}) => {
       changeIndicator(indicator);
     }
   }, [indicator, changeIndicator, currentIndicator]);
-  return <Dashboard  openCharts={openCharts}/>;
+  return <Dashboard openCharts={openCharts} />;
 };
 
 const App = () => {
@@ -90,12 +90,11 @@ const App = () => {
           position: "relative",
           display: "flex",
           height: "100vh",
-        }}>
+        }}
+      >
         <CssBaseline />
 
-        <Navbar 
-          openCharts={openCharts}
-          handleChartsClick={handleChartsClick} />
+        <Navbar openCharts={openCharts} handleChartsClick={handleChartsClick} />
 
         <main>
           {loading ? (
@@ -105,7 +104,8 @@ const App = () => {
                 justifyContent: "center",
                 alignItems: "center",
                 height: "100%",
-              }}>
+              }}
+            >
               <CircularProgress />
             </Box>
           ) : error ? (
@@ -117,23 +117,19 @@ const App = () => {
                 alignItems: "center",
                 height: "100%",
                 p: 3,
-              }}>
-              <Typography
-                variant="h6"
-                color="error"
-                gutterBottom>
+              }}
+            >
+              <Typography variant="h6" color="error" gutterBottom>
                 Error loading application data
               </Typography>
-              <Typography
-                variant="body1"
-                gutterBottom
-                paragraph>
+              <Typography variant="body1" gutterBottom paragraph>
                 {error}
               </Typography>
               <Button
                 variant="contained"
                 color="primary"
-                onClick={() => window.location.reload()}>
+                onClick={() => window.location.reload()}
+              >
                 Retry
               </Button>
             </Box>
@@ -150,36 +146,20 @@ const App = () => {
               />
               <Route
                 path="land_use"
-                element={<DashboardWrapper openCharts={openCharts}/>}
+                element={<DashboardWrapper openCharts={openCharts} />}
               />
 
               {/* Generic indicator route */}
               <Route
                 path=":indicator"
-                element={<DashboardWrapper openCharts={openCharts}/>}
+                element={<DashboardWrapper openCharts={openCharts} />}
               />
 
               {/* Default route redirects to mobility */}
-              <Route
-                path="/"
-                element={
-                  <Navigate
-                    to="mobility"
-                    replace
-                  />
-                }
-              />
+              <Route path="/" element={<Navigate to="mobility" replace />} />
 
               {/* Catch-all route */}
-              <Route
-                path="*"
-                element={
-                  <Navigate
-                    to="mobility"
-                    replace
-                  />
-                }
-              />
+              <Route path="*" element={<Navigate to="mobility" replace />} />
             </Routes>
           )}
         </main>

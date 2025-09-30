@@ -37,6 +37,8 @@ const DeckGLMap = ({ indicatorType, state }) => {
   const [viewState, setViewState] = useState(INITIAL_VIEW_STATE);
   // Use a state variable to control animation time instead of dynamic function
   const [animationTime, setAnimationTime] = useState(0);
+  // check if URL is HTML animation
+  const isHtmlAnimation = (url) => url && url.includes(".html");
 
   // Animation timer effect
   useEffect(() => {
@@ -59,7 +61,8 @@ const DeckGLMap = ({ indicatorType, state }) => {
       try {
         // Add cache-busting query param and include year if available
         const timestamp = Date.now();
-        const yearParam = state && state.year ? `&year=${state.year}` : "";
+        const year = state?.year || 2023;
+        const yearParam = `&year=${year}`;
 
         // Fetch data from our new endpoint that does the processing in the backend
         const response = await api.get(
@@ -69,9 +72,15 @@ const DeckGLMap = ({ indicatorType, state }) => {
         if (response.data) {
           // Check if this is an HTML map that should be displayed in iframe
           if (response.data.type === "html_map") {
+            // Remove cache-busting from HTML map URLs to prevent reloads
+            let mapUrl = response.data.map_url;
+            if (isHtmlAnimation(mapUrl)) {
+              mapUrl = mapUrl.split("?")[0]; // Remove query parameters
+            }
+
             setData({
               type: "html_map",
-              map_url: response.data.map_url,
+              map_url: mapUrl,
               metadata: response.data.metadata,
             });
             return;
@@ -136,7 +145,7 @@ const DeckGLMap = ({ indicatorType, state }) => {
     };
 
     fetchData();
-  }, [indicatorType, state]);
+  }, [indicatorType, state?.year]); // Only depend on year, not entire state object
 
   // Get appropriate layers based on indicator type
   const layers = useMemo(() => {
@@ -326,7 +335,7 @@ const DeckGLMap = ({ indicatorType, state }) => {
     );
   }
 
-  // If we have an HTML map, render it in an iframe with referrerpolicy to help with CORS
+  // If we have an HTML map, render it using the cached component
   if (data && data.type === "html_map") {
     return (
       <Box
@@ -338,6 +347,7 @@ const DeckGLMap = ({ indicatorType, state }) => {
         }}
       >
         <iframe
+          key={data.map_url} // Stable key to prevent recreation
           src={data.map_url}
           style={{
             width: "100%",
@@ -345,9 +355,6 @@ const DeckGLMap = ({ indicatorType, state }) => {
             border: "none",
           }}
           title={`${indicatorType} interactive map visualization`}
-          sandbox="allow-scripts allow-same-origin allow-downloads allow-forms allow-modals allow-popups allow-top-navigation"
-          allow="web-share; fullscreen; accelerometer; gyroscope; magnetometer; camera; microphone; geolocation"
-          referrerPolicy="no-referrer"
           onError={(e) => {
             console.error("Failed to load HTML map:", e);
             setError("Failed to load interactive map");

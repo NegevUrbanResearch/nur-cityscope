@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { Box, Alert, Typography } from "@mui/material";
 import api from "../api";
 import { useAppData } from "../DataContext";
@@ -11,8 +17,10 @@ const Dashboard = ({ openCharts }) => {
   const {
     dashboardData: data,
     currentIndicator,
-    getIndicatorTitle,
+    visualizationMode,
   } = useAppData();
+  // Simple function to check if URL is HTML animation
+  const isHtmlAnimation = (url) => url && url.includes(".html");
   const [mapData, setMapData] = useState({
     url: null,
     type: null,
@@ -26,7 +34,6 @@ const Dashboard = ({ openCharts }) => {
   const [showLoadingMessage, setShowLoadingMessage] = useState(true);
   const lastIndicatorRef = useRef(currentIndicator);
   const loadingTimerRef = useRef(null);
-  const { visualizationMode } = useAppData();
 
   // Preload image and track its loading state - memoize to avoid dependency issues
   const preloadImage = useCallback(
@@ -109,9 +116,16 @@ const Dashboard = ({ openCharts }) => {
 
         if (response.data && response.data.image_data) {
           // Correctly construct the URL using config.media.baseUrl
-          const url = response.data.image_data.startsWith("/")
-            ? `${config.media.baseUrl}${response.data.image_data}?_=${timestamp}`
-            : `${config.media.baseUrl}/media/${response.data.image_data}?_=${timestamp}`;
+          let url = response.data.image_data.startsWith("/")
+            ? `${config.media.baseUrl}${response.data.image_data}`
+            : `${config.media.baseUrl}/media/${response.data.image_data}`;
+
+          // Don't add cache-busting for HTML animations to prevent reloads
+          const isHtml = isHtmlAnimation(url);
+
+          if (!isHtml) {
+            url += `?_=${timestamp}`;
+          }
 
           setMapData({
             url,
@@ -120,16 +134,17 @@ const Dashboard = ({ openCharts }) => {
             error: false,
           });
 
-          // Always preload the new image regardless of previous state
-          // This ensures we always have the latest image for the current indicator
-          preloadImage(url);
+          // Only preload images (not HTML animations)
+          if (!isHtml) {
+            preloadImage(url);
+          }
         }
       } catch (err) {
         console.error("Error fetching map data:", err);
 
         // Fallback to default map based on indicator if API fails
-        const timestamp = Date.now();
-        const fallbackUrl = `${config.media.baseUrl}/media/maps/${currentIndicator}_2023.html?_=${timestamp}`;
+        // Don't add cache-busting to HTML fallback URLs either
+        const fallbackUrl = `${config.media.baseUrl}/media/maps/${currentIndicator}_2023.html`;
 
         setMapData({
           url: fallbackUrl,
@@ -155,7 +170,31 @@ const Dashboard = ({ openCharts }) => {
         clearTimeout(currentLoadingTimer);
       }
     };
-  }, [currentIndicator, preloadImage]);
+  }, [currentIndicator, visualizationMode, preloadImage]);
+
+  // Memoize state object to prevent unnecessary re-renders and iframe reloads
+  // Must be called before any early returns (Rules of Hooks)
+  const state = useMemo(() => {
+    const stateObj = {
+      year: 2023, // Default to 2023
+      scenario: "current",
+    };
+
+    // Try to get the state from the lastUpdate or the current indicator's data
+    if (data?.metrics) {
+      // We derive current year from formatted metrics
+      // This assumes that the metrics are updated when the state changes
+      if (data.metrics.year) {
+        stateObj.year = data.metrics.year;
+      }
+      if (data.metrics.scenario) {
+        stateObj.scenario = data.metrics.scenario;
+      }
+    }
+
+    return stateObj;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.metrics?.year, data?.metrics?.scenario]);
 
   useEffect(() => {
     // Set body and html styling to ensure full viewport coverage
@@ -184,6 +223,7 @@ const Dashboard = ({ openCharts }) => {
             Error loading visualization: Using fallback map
           </Alert>
           <iframe
+            key={mapData.url} // Stable key to prevent recreation
             src={mapData.url}
             style={{
               width: "100%",
@@ -198,24 +238,6 @@ const Dashboard = ({ openCharts }) => {
         </Box>
       </>
     );
-  }
-
-  // Always render DeckGLMap for interactive visualizations
-  const state = {
-    year: 2023, // Default to 2023
-    scenario: "current",
-  };
-
-  // Try to get the state from the lastUpdate or the current indicator's data
-  if (data?.metrics) {
-    // We derive current year from formatted metrics
-    // This assumes that the metrics are updated when the state changes
-    if (data.metrics.year) {
-      state.year = data.metrics.year;
-    }
-    if (data.metrics.scenario) {
-      state.scenario = data.metrics.scenario;
-    }
   }
 
   return (
@@ -235,34 +257,64 @@ const Dashboard = ({ openCharts }) => {
         // Show interactive Deck.GL map when in deck mode
         <DeckGLMap indicatorType={currentIndicator} state={state} />
       ) : (
-        // Show traditional image/iframe view
+        // Show traditional image/iframe view with caching for HTML animations
         <>
-          {showLoadingMessage && ( // Only show loading message after delay (if still loading)
-            <Box sx={{ display: "flex", height: "100%" }}>
-              <Typography variant="body1">Loading visualization...</Typography>
-            </Box>
-          )}
-          {currentImageUrl && ( // Always render the current image when available
-            <Box
-              component="img"
-              src={currentImageUrl}
-              alt={`${currentIndicator} visualization`}
-              sx={{
+          {mapData.url && isHtmlAnimation(mapData.url) ? (
+            // Use simple iframe for HTML animations (no cache-busting = no reloads)
+            <iframe
+              key={mapData.url} // Stable key to prevent recreation on sidebar toggle
+              src={mapData.url}
+              style={{
                 width: "100%",
                 height: "100%",
-                objectFit: "contain",
-                display: showLoadingMessage ? "none" : "block",
+                border: "none",
+              }}
+              title={`${currentIndicator} visualization`}
+              onLoad={() => {
+                setShowLoadingMessage(false);
               }}
               onError={(e) => {
-                console.error("Failed to load image:", e);
-                // Don't use a fallback - let the user know there's an issue
+                console.error("Failed to load HTML animation:", e);
                 setMapData((prev) => ({
                   ...prev,
                   error: true,
-                  errorMessage: "Failed to load visualization image",
+                  errorMessage: "Failed to load visualization animation",
                 }));
               }}
             />
+          ) : (
+            // Use traditional image loading for non-HTML content
+            <>
+              {showLoadingMessage && ( // Only show loading message after delay (if still loading)
+                <Box sx={{ display: "flex", height: "100%" }}>
+                  <Typography variant="body1">
+                    Loading visualization...
+                  </Typography>
+                </Box>
+              )}
+              {currentImageUrl && ( // Always render the current image when available
+                <Box
+                  component="img"
+                  src={currentImageUrl}
+                  alt={`${currentIndicator} visualization`}
+                  sx={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "contain",
+                    display: showLoadingMessage ? "none" : "block",
+                  }}
+                  onError={(e) => {
+                    console.error("Failed to load image:", e);
+                    // Don't use a fallback - let the user know there's an issue
+                    setMapData((prev) => ({
+                      ...prev,
+                      error: true,
+                      errorMessage: "Failed to load visualization image",
+                    }));
+                  }}
+                />
+              )}
+            </>
           )}
         </>
       )}
