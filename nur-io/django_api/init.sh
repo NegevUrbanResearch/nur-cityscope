@@ -19,7 +19,6 @@ chown -R root:root /app/media
 # Set up subdirectories for indicators by category
 mkdir -p /app/media/indicators/mobility
 mkdir -p /app/media/indicators/climate
-mkdir -p /app/media/indicators/land_use
 
 # Set permissions for all media subdirectories
 chmod -R 775 /app/media/indicators
@@ -58,7 +57,7 @@ EOF
 
     # Create data (loads real data from public/ if available)
     echo "Generating data..."
-    python manage.py create_data || python manage.py create_sample_data
+    python manage.py create_data || echo "No create_data command available, skipping..."
     
     # Create default admin user if it doesn't exist
     echo "Creating default admin user..."
@@ -88,7 +87,6 @@ fi
 echo "Setting up media directories..."
 mkdir -p /app/media/indicators/mobility
 mkdir -p /app/media/indicators/climate
-mkdir -p /app/media/indicators/land_use
 mkdir -p /app/media/maps
 
 # Set permissions to ensure nginx can read these files
@@ -98,7 +96,7 @@ find /app/media -type f -exec chmod 644 {} \;
 
 # Verify directories exist and have correct permissions
 echo "Verifying media directory setup..."
-for dir in "/app/media" "/app/media/indicators" "/app/media/indicators/mobility" "/app/media/indicators/climate" "/app/media/indicators/land_use" "/app/media/maps"; do
+for dir in "/app/media" "/app/media/indicators" "/app/media/indicators/mobility" "/app/media/indicators/climate" "/app/media/maps"; do
     if [ ! -d "$dir" ]; then
         echo "ERROR: Directory $dir does not exist!"
         exit 1

@@ -35,7 +35,6 @@ class Indicator(models.Model):
         choices=[
             ("mobility", "Mobility"),
             ("climate", "Climate"),
-            ("land_use", "Land Use"),
         ],
         default="mobility",
     )
@@ -113,7 +112,6 @@ class DashboardFeedState(models.Model):
         choices=[
             ("mobility", "Mobility"),
             ("climate", "Climate"),
-            ("land_use", "Land Use"),
         ],
         default="mobility",
     )

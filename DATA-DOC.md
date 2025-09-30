@@ -2,7 +2,7 @@
 
 ## Core Models
 
-- **Indicator**: Measurable urban metrics (Mobility, Climate, Land Use)
+- **Indicator**: Measurable urban metrics (Mobility, Climate)
 - **State**: Different scenarios/time periods for indicators
 - **IndicatorData**: Links indicators with states
 - **IndicatorImage**: Images for visualizations

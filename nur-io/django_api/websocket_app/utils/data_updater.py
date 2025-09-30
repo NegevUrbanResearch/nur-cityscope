@@ -1,6 +1,7 @@
 from backend import models
 from asgiref.sync import sync_to_async
 
+
 class DataUpdater:
     def __init__(self):
         self.indicator_id = None
@@ -14,15 +15,16 @@ class DataUpdater:
     # Método para realizar la consulta de los datos del indicador
     @sync_to_async
     def get_indicator_data(self, indicator_id, states):
-        return list(models.IndicatorData.objects.get(
-            indicator__indicator_id=indicator_id,
-            state__state_values=states
-        ))
-    
+        return list(
+            models.IndicatorData.objects.get(
+                indicator__indicator_id=indicator_id, state__state_values=states
+            )
+        )
+
     async def find_map(self, event):
-        message = event.get('message', [])
+        message = event.get("message", [])
         print(message)
-        self.indicator_id = message.get('indicator_id', 0)
+        self.indicator_id = message.get("indicator_id", 0)
         print(self.indicator_id)
 
         # # Obtener el indicador usando el método asíncrono
@@ -39,16 +41,16 @@ class DataUpdater:
         #     states = {}
 
         # indicator_result = await self.get_indicator_data(self.indicator_id, states)
-        
-        # indicator_result = indicator_results[0]        
+
+        # indicator_result = indicator_results[0]
         # print(indicator_result)
         # self.indicator_result = indicator_result
         pass
 
     async def find_dashboard(self, event):
-        message = event.get('message', [])
-        
-        states = message.get('states', {})
+        message = event.get("message", [])
+
+        states = message.get("states", {})
 
         dashboard_object = models.DashboardFeedState.objects.get(
             state__state_values=states
@@ -60,13 +62,13 @@ class DataUpdater:
 
     async def input_event(self, event):
         print(event)
-        self.channel_type = event.get('channel_type', '')
+        self.channel_type = event.get("channel_type", "")
 
-        if 'map' in self.channel_type:
+        if "map" in self.channel_type:
             await self.find_map(event)
-        elif 'dashboard' in self.channel_type:
+        elif "dashboard" in self.channel_type:
             await self.find_dashboard(event)
-        
+
         try:
             return await self.get_source()
         except Exception as e:
@@ -74,24 +76,21 @@ class DataUpdater:
             return None
 
     async def get_source(self):
-        channel_id = self.channel_type.replace('_channel', '')
+        channel_id = self.channel_type.replace("_channel", "")
         try:
-            if channel_id == 'map_image':
+            if channel_id == "map_image":
                 data = models.IndicatorImage.objects.filter(
-                        indicatorData=self.indicator_result
-                    )
+                    indicatorData=self.indicator_result
+                )
                 return data[0].image.url
-            elif channel_id == 'map_geojson':
-                data = models.IndicatorGeojson.objects.filter(
-                        indicatorData=self.indicator_result
-                    )
-                return data[0].geojson
-            elif channel_id == 'dashboard_feed':
+            # elif channel_id == 'map_geojson':
+            #     # IndicatorGeojson model has been removed
+            #     return None
+            elif channel_id == "dashboard_feed":
                 data = models.DashboardFeedState.objects.filter(
-                        state=self.indicator_result
-                    )
+                    state=self.indicator_result
+                )
                 return data[0].data
         except Exception as e:
             print(e)
             return None
-        

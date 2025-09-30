@@ -41,13 +41,51 @@ else
 fi
 
 if [ "$NEED_INIT" = true ]; then
-    # Clean up existing data
+    # Clean up existing data (preserve climate scenario states created by migrations)
     echo "Cleaning up existing data..."
-    python manage.py shell -c "from backend.models import Indicator, State, IndicatorData, IndicatorGeojson, LayerConfig, DashboardFeedState, IndicatorImage; IndicatorImage.objects.all().delete(); DashboardFeedState.objects.all().delete(); LayerConfig.objects.all().delete(); IndicatorGeojson.objects.all().delete(); IndicatorData.objects.all().delete(); State.objects.all().delete(); Indicator.objects.all().delete();"
+    python manage.py shell -c "from backend.models import Indicator, State, IndicatorData, LayerConfig, DashboardFeedState, IndicatorImage; IndicatorImage.objects.all().delete(); DashboardFeedState.objects.all().delete(); LayerConfig.objects.all().delete(); IndicatorData.objects.all().delete(); State.objects.filter(scenario_type='general').delete(); Indicator.objects.all().delete();"
 
-    # Create sample data
-    echo "Creating sample data..."
-    python manage.py create_sample_data
+    # Create basic indicators and states
+    echo "Creating indicators and states..."
+    python manage.py shell -c "
+from backend.models import Indicator, State
+
+# Create indicators
+Indicator.objects.get_or_create(
+    indicator_id=1,
+    defaults={
+        'name': 'Mobility',
+        'has_states': True,
+        'description': 'Transportation and mobility metrics',
+        'category': 'mobility'
+    }
+)
+print('✓ Created Mobility indicator')
+
+Indicator.objects.get_or_create(
+    indicator_id=2,
+    defaults={
+        'name': 'Climate',
+        'has_states': True,
+        'description': 'Climate and thermal comfort scenarios',
+        'category': 'climate'
+    }
+)
+print('✓ Created Climate indicator')
+
+# Create mobility states (Present and Future)
+State.objects.get_or_create(
+    state_values={'year': 2023, 'scenario': 'present', 'label': 'Present'},
+    scenario_type='general'
+)
+print('✓ Created Present state')
+
+State.objects.get_or_create(
+    state_values={'year': 2040, 'scenario': 'future', 'label': 'Future'},
+    scenario_type='general'
+)
+print('✓ Created Future state')
+"
 
     # Create default admin user if it doesn't exist
     echo "Creating default admin user..."

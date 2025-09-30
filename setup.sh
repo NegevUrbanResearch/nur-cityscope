@@ -61,11 +61,11 @@ fi
 echo "Running database migrations..."
 docker exec nur-api python manage.py migrate
 
-# Create sample data
-echo "Creating sample data..."
-docker exec nur-api python manage.py create_sample_data
+# Create data (loads real data from public/)
+echo "Creating data structure..."
+docker exec nur-api python manage.py create_data
 
-echo "✅ All services have been successfully configured and sample data has been created."
+echo "✅ All services have been successfully configured and data has been loaded."
 echo "You can now access:"
 echo "- Dashboard: http://localhost/dashboard/"
 echo "- Projection: http://localhost/projection/"
