@@ -3,12 +3,8 @@ import { AppBar, Toolbar, Box, IconButton, Grid } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
 import ChartsDrawer from "./drawer/ChartsDrawer";
 
-const Navbar = () => {
-  const [openCharts, setOpenCharts] = React.useState(true);
-
-  const handleChartsClick = () => {
-    setOpenCharts(!openCharts);
-  };
+const Navbar = ({ handleChartsClick, openCharts }) => {
+ 
 
   return (
     <Box>
@@ -28,7 +24,7 @@ const Navbar = () => {
             }}>
             <Grid item>
               <IconButton
-                edge="end"
+                edge="end" // fix this - should be at the left side and not right
                 onClick={handleChartsClick}>
                 <MenuIcon />
               </IconButton>

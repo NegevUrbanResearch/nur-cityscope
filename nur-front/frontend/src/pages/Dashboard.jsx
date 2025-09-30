@@ -7,7 +7,7 @@ import config from "../config";
 import DeckGLMap from "../components/maps/DeckGLMap";
 import { chartsDrawerWidth } from "../style/drawersStyles";
 
-const Dashboard = () => {
+const Dashboard = ({ openCharts }) => {
   const {
     dashboardData: data,
     currentIndicator,
@@ -221,9 +221,14 @@ const Dashboard = () => {
   return (
     <Box
       sx={{
-        width: "100vw",
+        width: openCharts ? `calc(100vw - ${chartsDrawerWidth})` : "100vw",
         marginLeft: `-${chartsDrawerWidth}`,
         height: "100vh",
+        transition: (theme) =>
+          theme.transitions.create("width", {
+            duration: theme.transitions.duration.standard,
+            easing: theme.transitions.easing.easeInOut,
+          }),
       }}
     >
       {visualizationMode === "deck" ? (

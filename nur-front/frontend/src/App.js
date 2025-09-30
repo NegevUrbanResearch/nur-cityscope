@@ -22,7 +22,7 @@ import { useAppData } from "./DataContext";
 import "./style/index.css";
 
 // Wrapper component to handle indicator from URL params
-const DashboardWrapper = () => {
+const DashboardWrapper = ({openCharts}) => {
   const { indicator } = useParams();
   const { changeIndicator, currentIndicator } = useAppData();
   // Set the indicator based on URL when component mounts
@@ -31,13 +31,19 @@ const DashboardWrapper = () => {
       changeIndicator(indicator);
     }
   }, [indicator, changeIndicator, currentIndicator]);
-  return <Dashboard />;
+  return <Dashboard  openCharts={openCharts}/>;
 };
 
 const App = () => {
   const { loading, error, changeIndicator, currentIndicator } = useAppData();
   const location = useLocation();
   const remoteControlActive = React.useRef(false);
+
+  const [openCharts, setOpenCharts] = React.useState(true);
+
+  const handleChartsClick = () => {
+    setOpenCharts(!openCharts);
+  };
 
   // Keep track of the last indicator the remote set
   const lastRemoteIndicator = React.useRef(null);
@@ -86,7 +92,11 @@ const App = () => {
           height: "100vh",
         }}>
         <CssBaseline />
-        <Navbar />
+
+        <Navbar 
+          openCharts={openCharts}
+          handleChartsClick={handleChartsClick} />
+
         <main>
           {loading ? (
             <Box
@@ -132,21 +142,21 @@ const App = () => {
               {/* Add specific routes for each indicator */}
               <Route
                 path="mobility"
-                element={<DashboardWrapper />}
+                element={<DashboardWrapper openCharts={openCharts} />}
               />
               <Route
                 path="climate"
-                element={<DashboardWrapper />}
+                element={<DashboardWrapper openCharts={openCharts} />}
               />
               <Route
                 path="land_use"
-                element={<DashboardWrapper />}
+                element={<DashboardWrapper openCharts={openCharts}/>}
               />
 
               {/* Generic indicator route */}
               <Route
                 path=":indicator"
-                element={<DashboardWrapper />}
+                element={<DashboardWrapper openCharts={openCharts}/>}
               />
 
               {/* Default route redirects to mobility */}
