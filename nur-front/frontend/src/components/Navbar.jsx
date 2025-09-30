@@ -4,7 +4,7 @@ import MenuIcon from "@mui/icons-material/Menu";
 import ChartsDrawer from "./drawer/ChartsDrawer";
 
 const Navbar = ({ handleChartsClick, openCharts }) => {
- 
+
 
   return (
     <Box>
@@ -18,13 +18,12 @@ const Navbar = ({ handleChartsClick, openCharts }) => {
             width="100vw"
             container
             direction="row"
-            sx={{
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}>
+            justifyContent="end"
+            alignItems="center"
+          >
             <Grid item>
               <IconButton
-                edge="end" // fix this - should be at the left side and not right
+                edge="flex-start"
                 onClick={handleChartsClick}>
                 <MenuIcon />
               </IconButton>
