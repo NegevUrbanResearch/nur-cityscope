@@ -8,7 +8,7 @@ import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 
 const NavMenu = () => {
   const navigate = useNavigate();
-  const { currentIndicator, changeIndicator, indicatorConfig, StateConfig } = useAppData();
+  const { currentIndicator, changeIndicator, changeState, indicatorConfig, StateConfig } = useAppData();
   const [indicatorAnchorEl, setIndicatorAnchorEl] = React.useState(null);
   const [stateAnchorEl, setStateAnchorEl] = React.useState(null);
 
@@ -96,12 +96,17 @@ const NavMenu = () => {
         onClose={handleCloseState}>
         {StateConfig[currentIndicator].map(element => (
           <MenuItem
-            //onClick={() => handleIndicatorChange(key)}
+            onClick={() => {
+              changeState(element);
+              handleCloseState();
+            }}
             sx={{
               width: "12.5vw",
               height: "7vh",
-              //backgroundColor:
-              // key === currentIndicator ? "#ffffff1a" : "#1e1e1e",
+              backgroundColor: "#1e1e1e",
+              "&:hover": {
+                backgroundColor: "#ffffff1a",
+              },
             }}
             key={element}>
             <Typography variant="h6">
