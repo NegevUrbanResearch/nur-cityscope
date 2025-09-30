@@ -368,8 +368,22 @@ const Dashboard = ({ openCharts }) => {
   return (
     <Box
       sx={{
-        width: openCharts ? `calc(100vw - ${chartsDrawerWidth})` : "100vw",
-        marginLeft: `-${chartsDrawerWidth}`,
+        width: openCharts
+          ? {
+              xs: 0,
+              sm: `calc(100vw - ${chartsDrawerWidth.sm})`,
+              md: `calc(100vw - ${chartsDrawerWidth.md})`,
+              lg: `calc(100vw - ${chartsDrawerWidth.lg})`,
+              xl: `calc(100vw - ${chartsDrawerWidth.xl})`,
+            }
+          : "100vw",
+        marginLeft: {
+          xs: 0,
+          sm: `-${chartsDrawerWidth.sm}`,
+          md: `-${chartsDrawerWidth.md}`,
+          lg: `-${chartsDrawerWidth.lg}`,
+          xl: `-${chartsDrawerWidth.xl}`,
+        },
         height: "100vh",
         transition: (theme) =>
           theme.transitions.create("width", {

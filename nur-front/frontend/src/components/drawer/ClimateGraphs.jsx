@@ -11,115 +11,13 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
-import {
-  Box,
-  ToggleButton,
-  ToggleButtonGroup,
-  Typography,
-  Paper,
-} from "@mui/material";
 import config from "../../config";
-import api from "../../api";
-import globals from "../../globals";
 
 const ClimateGraphs = () => {
   const { tempRows, humidRows, windRows, dates } = useClimateData();
-  const [scenarioType, setScenarioType] = useState(
-    globals.INDICATOR_STATE?.type || "utci"
-  );
-
-  // Fetch the current climate state from the backend on mount
-  useEffect(() => {
-    const fetchCurrentState = async () => {
-      try {
-        const response = await api.get(
-          "/api/actions/get_current_dashboard_data/"
-        );
-        if (response.data && response.data.state) {
-          const backendType = response.data.state.type || "utci";
-          console.log(`✓ Synced climate type from backend: ${backendType}`);
-          setScenarioType(backendType);
-
-          // Update global state to match backend
-          globals.INDICATOR_STATE = {
-            ...globals.INDICATOR_STATE,
-            ...response.data.state,
-          };
-        }
-      } catch (error) {
-        console.error("Error fetching current climate state:", error);
-        // On error, keep the default "utci" state
-      }
-    };
-
-    fetchCurrentState();
-  }, []); // Run only once on mount
-
-  const handleTypeChange = async (event, newType) => {
-    if (newType !== null) {
-      setScenarioType(newType);
-
-      // Get current scenario (or default to 'existing')
-      const currentScenario = globals.INDICATOR_STATE?.scenario || "existing";
-
-      // Update the state on the backend
-      try {
-        await api.post("/api/actions/set_climate_scenario/", {
-          scenario: currentScenario,
-          type: newType,
-        });
-        console.log(`✓ Updated to ${newType} view for ${currentScenario}`);
-
-        // Update global state
-        globals.INDICATOR_STATE = {
-          ...globals.INDICATOR_STATE,
-          type: newType,
-          scenario: currentScenario,
-        };
-
-        // Trigger a custom event to notify Dashboard of the change
-        window.dispatchEvent(new CustomEvent("climateStateChanged"));
-      } catch (error) {
-        console.error("Error updating climate scenario type:", error);
-      }
-    }
-  };
 
   return (
     <>
-      <Paper sx={{ p: 2, mb: 2, backgroundColor: "rgba(0, 0, 0, 0.3)" }}>
-        <Typography variant="h6" sx={{ mb: 2, color: "#fff" }}>
-          Climate Visualization Type
-        </Typography>
-
-        <Box sx={{ mb: 2 }}>
-          <Typography variant="body2" sx={{ mb: 1, color: "#ddd" }}>
-            Map Type
-          </Typography>
-          <ToggleButtonGroup
-            value={scenarioType}
-            exclusive
-            onChange={handleTypeChange}
-            aria-label="scenario type"
-            fullWidth
-            sx={{
-              "& .MuiToggleButton-root": {
-                color: "#fff",
-                borderColor: "rgba(255, 255, 255, 0.3)",
-                "&.Mui-selected": {
-                  backgroundColor: "rgba(100, 181, 246, 0.3)",
-                  color: "#64B5F6",
-                  borderColor: "#64B5F6",
-                },
-              },
-            }}
-          >
-            <ToggleButton value="utci">UTCI Scenarios</ToggleButton>
-            <ToggleButton value="plan">Plan Visualizations</ToggleButton>
-          </ToggleButtonGroup>
-        </Box>
-      </Paper>
-
       <ChartCard
         title="Temperature"
         data={{

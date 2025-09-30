@@ -60,22 +60,66 @@ const ChartCard = ({ title, data, MemoizedChart, customHeader }) => {
       sx={{
         width: "100%",
         maxWidth: "100%",
-        marginBottom: "16px",
+        marginBottom: { xs: "12px", sm: "16px" },
         overflow: "hidden",
+        backgroundColor: "rgba(30, 30, 30, 0.6)",
+        borderRadius: "12px",
+        border: "1px solid rgba(255, 255, 255, 0.1)",
+        backdropFilter: "blur(10px)",
+        transition: "all 0.3s ease",
+        "&:hover": {
+          borderColor: "rgba(255, 255, 255, 0.2)",
+          boxShadow: "0 4px 20px rgba(0, 0, 0, 0.3)",
+        },
       }}
       id={`chart-card-${title}`}
     >
       <CardHeader
         subheader={title}
+        subheaderTypographyProps={{
+          sx: {
+            fontWeight: 600,
+            fontSize: { xs: "0.95rem", sm: "1rem", md: "1.1rem" },
+            color: "rgba(255, 255, 255, 0.95)",
+          },
+        }}
+        sx={{
+          py: { xs: 1, sm: 1.5 },
+          px: { xs: 1.5, sm: 2 },
+          borderBottom: expanded
+            ? "1px solid rgba(255, 255, 255, 0.1)"
+            : "none",
+        }}
         action={
           <>
-            <IconButton size="small" onClick={handleClickDialog}>
-              <VisibilityIcon />
+            <IconButton
+              size="small"
+              onClick={handleClickDialog}
+              sx={{
+                backgroundColor: "rgba(255, 255, 255, 0.05)",
+                mr: 0.5,
+                transition: "all 0.2s ease",
+                "&:hover": {
+                  backgroundColor: "rgba(100, 181, 246, 0.15)",
+                  color: "#64B5F6",
+                  transform: "scale(1.1)",
+                },
+              }}
+            >
+              <VisibilityIcon fontSize="small" />
             </IconButton>
             <Dialog
               open={openDialog}
               slotProps={{
-                paper: { sx: { width: "95vw", minHeight: "50vh" } },
+                paper: {
+                  sx: {
+                    width: { xs: "95vw", sm: "90vw", md: "85vw" },
+                    minHeight: { xs: "60vh", sm: "50vh" },
+                    backgroundColor: "rgba(18, 18, 18, 0.98)",
+                    borderRadius: "16px",
+                    border: "1px solid rgba(255, 255, 255, 0.1)",
+                  },
+                },
               }}
               slots={{
                 transition: Transition,
@@ -83,13 +127,32 @@ const ChartCard = ({ title, data, MemoizedChart, customHeader }) => {
               keepMounted
               onClose={handleClickDialog}
             >
-              <DialogTitle>{title}</DialogTitle>
-              <DialogContent>
+              <DialogTitle
+                sx={{
+                  fontSize: { xs: "1.1rem", sm: "1.3rem" },
+                  fontWeight: 600,
+                  borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+                }}
+              >
+                {title}
+              </DialogTitle>
+              <DialogContent sx={{ pt: 3 }}>
                 <MemoizedChart data={data} />
               </DialogContent>
             </Dialog>
-            <ExpandMore expand={expanded} onClick={handleExpandClick}>
-              <ExpandMoreIcon />
+            <ExpandMore
+              expand={expanded}
+              onClick={handleExpandClick}
+              sx={{
+                backgroundColor: "rgba(255, 255, 255, 0.05)",
+                transition: "all 0.2s ease",
+                "&:hover": {
+                  backgroundColor: "rgba(100, 181, 246, 0.15)",
+                  color: "#64B5F6",
+                },
+              }}
+            >
+              <ExpandMoreIcon fontSize="small" />
             </ExpandMore>
           </>
         }
@@ -108,10 +171,10 @@ const ChartCard = ({ title, data, MemoizedChart, customHeader }) => {
           sx={{
             width: "100%",
             maxWidth: "100%",
-            padding: "16px",
+            padding: { xs: "12px", sm: "16px" },
             overflow: "hidden",
             "&:last-child": {
-              paddingBottom: "16px",
+              paddingBottom: { xs: "12px", sm: "16px" },
             },
           }}
         >

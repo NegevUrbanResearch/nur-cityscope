@@ -623,8 +623,8 @@ function generateQuickActions() {
   if (currentIndicatorCategory === "climate") {
     // For climate: toggle between UTCI and Plan
     const climateTypes = [
-      { name: "UTCI Scenarios", value: "utci" },
-      { name: "Plan Visualizations", value: "plan" },
+      { name: "UTCI", value: "utci" },
+      { name: "Plan", value: "plan" },
     ];
 
     climateTypes.forEach((type) => {

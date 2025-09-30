@@ -159,13 +159,16 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def get_global_variables(self, request):
-        return JsonResponse(
+        """Get current global variables (indicator, state, visualization mode)"""
+        response = JsonResponse(
             {
                 "indicator_id": globals.INDICATOR_ID,
                 "indicator_state": globals.INDICATOR_STATE,
                 "visualization_mode": globals.VISUALIZATION_MODE,
             }
         )
+        self._add_no_cache_headers(response)
+        return response
 
     @action(detail=False, methods=["post"])
     def set_visualization_mode(self, request):
@@ -183,6 +186,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
         globals.VISUALIZATION_MODE = mode
         self.check_and_send_data()
+        print(f"✓ Visualization mode set to: {mode}")
 
         return JsonResponse({"status": "ok", "visualization_mode": mode})
 
@@ -199,10 +203,11 @@ class CustomActionsViewSet(viewsets.ViewSet):
     def _set_current_indicator(self, indicator_id):
         try:
             globals.INDICATOR_ID = indicator_id
+            print(f"✓ Indicator set to ID: {indicator_id}")
             self.check_and_send_data()
             return True
         except Exception as e:
-            print(e)
+            print(f"❌ Error setting indicator: {e}")
             return False
 
     @action(detail=False, methods=["post"])
@@ -287,12 +292,14 @@ class CustomActionsViewSet(viewsets.ViewSet):
             return JsonResponse({"status": "error", "message": str(e)}, status=500)
 
     def _set_current_state(self, state):
+        """Set the current indicator state globally"""
         try:
             globals.INDICATOR_STATE = state
+            print(f"✓ State updated to: {state}")
             self.check_and_send_data()
             return True
         except Exception as e:
-            print(e)
+            print(f"❌ Error setting state: {e}")
             return False
 
     @action(detail=False, methods=["get"], url_path="set_map_state")
@@ -456,10 +463,13 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
         if not state or (hasattr(state, "exists") and not state.exists()) or not state:
             # Default to the first available state
+            # WARNING: Do NOT modify globals.INDICATOR_STATE here - GET endpoints should not have side effects
             state = State.objects.first()
             if state:
-                globals.INDICATOR_STATE = state.state_values
-                print(f"Using first available state: {state.state_values}")
+                print(f"⚠️ No matching state found for {globals.INDICATOR_STATE}")
+                print(
+                    f"   Using first available state for image lookup: {state.state_values}"
+                )
             else:
                 response = JsonResponse({"error": "No states found"}, status=404)
                 self._add_no_cache_headers(response)
@@ -703,23 +713,46 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     return response
 
         # If no year param or no match found, use the current global state
-        state = State.objects.filter(state_values=globals.INDICATOR_STATE)
-        dashboard_data = DashboardFeedState.objects.filter(state=state.first()).first()
+        # IMPORTANT: Always return globals.INDICATOR_STATE directly for real-time updates
+        # DO NOT return state.first().state_values as it may be stale
+        try:
+            state = State.objects.filter(state_values=globals.INDICATOR_STATE).first()
 
-        if not dashboard_data:
-            return JsonResponse(
+            if state:
+                dashboard_data = DashboardFeedState.objects.filter(state=state).first()
+
+                if dashboard_data:
+                    response = JsonResponse(
+                        {"data": dashboard_data.data, "state": globals.INDICATOR_STATE}
+                    )
+                    self._add_no_cache_headers(response)
+                    return response
+
+            # If no exact match in DB, still return the current global state
+            # This handles cases where the state was just updated
+            print(f"⚠️ No database match for state: {globals.INDICATOR_STATE}")
+            response = JsonResponse(
                 {
-                    "error": "No dashboard data found for the current state",
+                    "data": {},  # Empty data if no match
+                    "state": globals.INDICATOR_STATE,
+                    "warning": "No dashboard data found for current state",
+                }
+            )
+            self._add_no_cache_headers(response)
+            return response
+
+        except Exception as e:
+            print(f"❌ Error in get_current_dashboard_data: {e}")
+            # Always return current state even on error
+            response = JsonResponse(
+                {
+                    "error": str(e),
                     "state": globals.INDICATOR_STATE,
                 },
-                status=404,
+                status=500,
             )
-
-        response = JsonResponse(
-            {"data": dashboard_data.data, "state": state.first().state_values}
-        )
-        self._add_no_cache_headers(response)
-        return response
+            self._add_no_cache_headers(response)
+            return response
 
 
 # Custom view to serve map files directly

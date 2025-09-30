@@ -1,6 +1,14 @@
 import React from "react";
 
-import { Grid, Button, MenuItem, Menu, Typography } from "@mui/material";
+import {
+  Button,
+  MenuItem,
+  Menu,
+  Typography,
+  useTheme,
+  useMediaQuery,
+  Box,
+} from "@mui/material";
 
 import { useNavigate } from "react-router-dom";
 import { useAppData } from "../DataContext";
@@ -8,7 +16,17 @@ import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 
 const NavMenu = () => {
   const navigate = useNavigate();
-  const { currentIndicator, changeIndicator, changeState, indicatorConfig, StateConfig } = useAppData();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const isTablet = useMediaQuery(theme.breakpoints.between("sm", "md"));
+
+  const {
+    currentIndicator,
+    changeIndicator,
+    changeState,
+    indicatorConfig,
+    StateConfig,
+  } = useAppData();
   const [indicatorAnchorEl, setIndicatorAnchorEl] = React.useState(null);
   const [stateAnchorEl, setStateAnchorEl] = React.useState(null);
 
@@ -27,97 +45,200 @@ const NavMenu = () => {
   const handleCloseState = () => {
     setStateAnchorEl(null);
   };
-  // Handle direct indicator change from navbar
-  const handleIndicatorChange = (indicator) => {
-    // Change the indicator (which will also update the remote controller)
-    changeIndicator(indicator);
 
-    // Update the URL to match - note the correct URL without "dashboard" prefix
+  const handleIndicatorChange = (indicator) => {
+    changeIndicator(indicator);
     navigate(`/${indicator}`);
+    handleCloseIndicator();
   };
 
-  // need to add state change handler and current state to context (and different image for each state)
+  const buttonStyles = {
+    textTransform: "none",
+    minWidth: { xs: "90px", sm: "100px" },
+    height: { xs: "32px", sm: "36px" },
+    py: 0,
+    px: { xs: 1.5, sm: 2 },
+    border: "1px solid rgba(255, 255, 255, 0.2)",
+    borderRadius: "6px",
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+    "&:hover": {
+      backgroundColor: "rgba(100, 181, 246, 0.12)",
+      borderColor: "rgba(100, 181, 246, 0.5)",
+      transform: "translateY(-1px)",
+      boxShadow: "0 4px 12px rgba(100, 181, 246, 0.15)",
+    },
+    "&:disabled": {
+      borderColor: "rgba(255, 255, 255, 0.1)",
+      color: "rgba(255, 255, 255, 0.3)",
+      backgroundColor: "rgba(255, 255, 255, 0.02)",
+    },
+  };
 
   return (
-    <Grid item container justifyContent="space-between" alignItems="center" spacing={3}>
-
-      <Button
+    <Box sx={{ width: "100%" }}>
+      <Box
         sx={{
-          height: "7vh",
-          textTransform: "none",
-          width: "9vw",
-          border: "0.1px solid white",minHeight: 0, minWidth: 0, padding: 0 
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: { xs: 2, sm: 2.5 },
+          width: "100%",
         }}
-        onClick={handleClickIndicator}
-        color="inherit"
-        size="large"
-        endIcon={<ArrowDropDownIcon />}>
-        <Typography variant="h6">Indicator</Typography>
-      </Button>
+      >
+        <Button
+          sx={buttonStyles}
+          onClick={handleClickIndicator}
+          color="inherit"
+          endIcon={<ArrowDropDownIcon fontSize="small" />}
+        >
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: 600,
+              fontSize: { xs: "0.95rem", sm: "1rem" },
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              letterSpacing: "0.3px",
+            }}
+          >
+            Indicator
+          </Typography>
+        </Button>
 
-      <Button
-        sx={{
-          height: "7vh",
-          textTransform: "none",
-          width: "9vw",
-          border: "0.1px solid white",minHeight: 0, minWidth: 0, padding: 0 
-        }}
-        onClick={handleClickState}
-        color="inherit"
-        size="large"
-        disabled={StateConfig[currentIndicator]?.length === 0}
-        endIcon={<ArrowDropDownIcon />}>
-        <Typography variant="h6">State</Typography>
-      </Button>
+        <Button
+          sx={buttonStyles}
+          onClick={handleClickState}
+          color="inherit"
+          disabled={StateConfig[currentIndicator]?.length === 0}
+          endIcon={<ArrowDropDownIcon fontSize="small" />}
+        >
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: 600,
+              fontSize: { xs: "0.95rem", sm: "1rem" },
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              letterSpacing: "0.3px",
+            }}
+          >
+            State
+          </Typography>
+        </Button>
+      </Box>
 
+      {/* Indicator Menu */}
       <Menu
         anchorEl={indicatorAnchorEl}
         open={openIndicator}
-        onClose={handleCloseIndicator}>
+        onClose={handleCloseIndicator}
+        PaperProps={{
+          sx: {
+            mt: 0.5,
+            minWidth: isMobile ? "80vw" : isTablet ? "180px" : "200px",
+            backgroundColor: "rgba(25, 25, 25, 0.98)",
+            backdropFilter: "blur(16px)",
+            border: "1px solid rgba(255, 255, 255, 0.12)",
+            borderRadius: "8px",
+            boxShadow:
+              "0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3)",
+          },
+        }}
+      >
         {Object.entries(indicatorConfig).map(([key, config]) => (
           <MenuItem
             onClick={() => handleIndicatorChange(key)}
             sx={{
-              width: "12.5vw",
+              py: 1,
+              px: 2,
               backgroundColor:
-                key === currentIndicator ? "#ffffff1a" : "#1e1e1e",
+                key === currentIndicator
+                  ? "rgba(100, 181, 246, 0.12)"
+                  : "transparent",
+              borderLeft:
+                key === currentIndicator
+                  ? "3px solid #64B5F6"
+                  : "3px solid transparent",
+              transition: "all 0.15s ease",
+              "&:hover": {
+                backgroundColor: "rgba(100, 181, 246, 0.18)",
+                borderLeft: "3px solid #64B5F6",
+              },
             }}
-            key={key}>
-            <Typography variant="h6">
+            key={key}
+          >
+            <Typography
+              variant="body1"
+              sx={{
+                fontWeight: key === currentIndicator ? 600 : 500,
+                fontSize: { xs: "0.9rem", sm: "0.95rem" },
+                color:
+                  key === currentIndicator
+                    ? "#64B5F6"
+                    : "rgba(255, 255, 255, 0.85)",
+                letterSpacing: "0.2px",
+              }}
+            >
               {config.name.replace("Dashboard", "").trim()}
             </Typography>
           </MenuItem>
         ))}
       </Menu>
 
+      {/* State Menu */}
       <Menu
         anchorEl={stateAnchorEl}
         open={openState}
-        onClose={handleCloseState}>
-        {StateConfig[currentIndicator].map(element => (
+        onClose={handleCloseState}
+        PaperProps={{
+          sx: {
+            mt: 0.5,
+            minWidth: isMobile ? "80vw" : isTablet ? "180px" : "200px",
+            backgroundColor: "rgba(25, 25, 25, 0.98)",
+            backdropFilter: "blur(16px)",
+            border: "1px solid rgba(255, 255, 255, 0.12)",
+            borderRadius: "8px",
+            boxShadow:
+              "0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3)",
+          },
+        }}
+      >
+        {StateConfig[currentIndicator]?.map((element) => (
           <MenuItem
             onClick={() => {
               changeState(element);
               handleCloseState();
             }}
             sx={{
-              width: "12.5vw",
-              height: "7vh",
-              backgroundColor: "#1e1e1e",
+              py: 1,
+              px: 2,
+              borderLeft: "3px solid transparent",
+              transition: "all 0.15s ease",
               "&:hover": {
-                backgroundColor: "#ffffff1a",
+                backgroundColor: "rgba(100, 181, 246, 0.18)",
+                borderLeft: "3px solid #64B5F6",
               },
             }}
-            key={element}>
-            <Typography variant="h6">
+            key={element}
+          >
+            <Typography
+              variant="body1"
+              sx={{
+                fontSize: { xs: "0.9rem", sm: "0.95rem" },
+                fontWeight: 500,
+                color: "rgba(255, 255, 255, 0.85)",
+                letterSpacing: "0.2px",
+              }}
+            >
               {element}
             </Typography>
           </MenuItem>
         ))}
-
       </Menu>
-
-    </Grid>
+    </Box>
   );
 };
 
