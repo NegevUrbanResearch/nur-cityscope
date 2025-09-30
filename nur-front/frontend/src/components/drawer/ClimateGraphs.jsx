@@ -11,13 +11,143 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
+import {
+  Box,
+  ToggleButton,
+  ToggleButtonGroup,
+  FormControl,
+  Select,
+  MenuItem,
+  Typography,
+  Paper,
+} from "@mui/material";
 import config from "../../config";
+import api from "../../api";
+
+// Climate scenario configuration
+const CLIMATE_SCENARIOS = {
+  dense_highrise: { display_name: "Dense Highrise" },
+  existing: { display_name: "Existing" },
+  high_rises: { display_name: "High Rises" },
+  lowrise: { display_name: "Low Rise Dense" },
+  mass_tree_planting: { display_name: "Mass Tree Planting" },
+  open_public_space: { display_name: "Open Public Space" },
+  placemaking: { display_name: "Placemaking" },
+};
 
 const ClimateGraphs = () => {
   const { tempRows, humidRows, windRows, dates } = useClimateData();
+  const [scenarioType, setScenarioType] = useState("utci");
+  const [selectedScenario, setSelectedScenario] = useState("existing");
+
+  const handleTypeChange = async (event, newType) => {
+    if (newType !== null) {
+      setScenarioType(newType);
+
+      // Update the state on the backend
+      try {
+        await api.post("/api/actions/set_climate_scenario/", {
+          scenario: selectedScenario,
+          type: newType,
+        });
+        console.log(`✓ Updated to ${newType} view for ${selectedScenario}`);
+      } catch (error) {
+        console.error("Error updating climate scenario type:", error);
+      }
+    }
+  };
+
+  const handleScenarioChange = async (event) => {
+    const newScenario = event.target.value;
+    setSelectedScenario(newScenario);
+
+    // Update the state on the backend
+    try {
+      await api.post("/api/actions/set_climate_scenario/", {
+        scenario: newScenario,
+        type: scenarioType,
+      });
+      console.log(`✓ Updated to scenario ${newScenario}`);
+    } catch (error) {
+      console.error("Error updating climate scenario:", error);
+    }
+  };
 
   return (
     <>
+      <Paper sx={{ p: 2, mb: 2, backgroundColor: "rgba(0, 0, 0, 0.3)" }}>
+        <Typography variant="h6" sx={{ mb: 2, color: "#fff" }}>
+          Climate Scenario Selector
+        </Typography>
+
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="body2" sx={{ mb: 1, color: "#ddd" }}>
+            Map Type
+          </Typography>
+          <ToggleButtonGroup
+            value={scenarioType}
+            exclusive
+            onChange={handleTypeChange}
+            aria-label="scenario type"
+            fullWidth
+            sx={{
+              "& .MuiToggleButton-root": {
+                color: "#fff",
+                borderColor: "rgba(255, 255, 255, 0.3)",
+                "&.Mui-selected": {
+                  backgroundColor: "rgba(100, 181, 246, 0.3)",
+                  color: "#64B5F6",
+                  borderColor: "#64B5F6",
+                  "&:hover": {
+                    backgroundColor: "rgba(100, 181, 246, 0.4)",
+                  },
+                },
+              },
+            }}
+          >
+            <ToggleButton value="utci" aria-label="utci map">
+              UTCI Map
+            </ToggleButton>
+            <ToggleButton value="plan" aria-label="plan map">
+              Plan Map
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
+
+        <Box>
+          <Typography variant="body2" sx={{ mb: 1, color: "#ddd" }}>
+            Scenario
+          </Typography>
+          <FormControl fullWidth>
+            <Select
+              value={selectedScenario}
+              onChange={handleScenarioChange}
+              sx={{
+                color: "#fff",
+                ".MuiOutlinedInput-notchedOutline": {
+                  borderColor: "rgba(255, 255, 255, 0.3)",
+                },
+                "&:hover .MuiOutlinedInput-notchedOutline": {
+                  borderColor: "rgba(255, 255, 255, 0.5)",
+                },
+                "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
+                  borderColor: "#64B5F6",
+                },
+                ".MuiSvgIcon-root": {
+                  color: "#fff",
+                },
+              }}
+            >
+              {Object.entries(CLIMATE_SCENARIOS).map(([key, value]) => (
+                <MenuItem key={key} value={key}>
+                  {value.display_name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Box>
+      </Paper>
+
       <ChartCard
         title="Temperature"
         data={{

@@ -1,195 +1,379 @@
 <!DOCTYPE html>
 <html>
-<head>
+  <head>
     <title>CityScope Control Panel</title>
-    <link rel="stylesheet" href="/static/styles.css"/>
+    <link rel="stylesheet" href="/static/styles.css" />
     <style>
-        .control-panel {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            padding: 20px;
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        
-        .section {
-            background-color: rgba(0, 0, 0, 0.2);
-            border-radius: 10px;
-            padding: 15px;
-        }
-        
-        .section-title {
-            margin-top: 0;
-            color: #ddd;
-            font-size: 1.2em;
-            margin-bottom: 15px;
-        }
-        
-        .button-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
+      .control-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        padding: 20px;
+        max-width: 800px;
+        margin: 0 auto;
+      }
+
+      .section {
+        background-color: rgba(0, 0, 0, 0.2);
+        border-radius: 10px;
+        padding: 15px;
+      }
+
+      .section-title {
+        margin-top: 0;
+        color: #ddd;
+        font-size: 1.2em;
+        margin-bottom: 15px;
+      }
+
+      .button-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div class="control-panel">
-        <div class="section">
-            <h2 class="section-title">Indicators</h2>
-            <div class="button-group">
-                <button class="glowing-button" onclick="changeIndicator(1)">Mobility</button>
-                <button class="glowing-button" onclick="changeIndicator(2)">Climate</button>
-                <button class="glowing-button" onclick="changeIndicator(3)">Land Use</button>
-            </div>
+      <div class="section">
+        <h2 class="section-title">Indicators</h2>
+        <div class="button-group">
+          <button class="glowing-button" onclick="changeIndicator(1)">
+            Mobility
+          </button>
+          <button class="glowing-button" onclick="changeIndicator(2)">
+            Climate
+          </button>
+          <button class="glowing-button" onclick="changeIndicator(3)">
+            Land Use
+          </button>
         </div>
-        
-        <div class="section">
-            <h2 class="section-title">Time Periods</h2>
-            <div class="button-group">
-                <button class="glowing-button" onclick="changeState(1)">Current State (2023)</button>
-                <button class="glowing-button" onclick="changeState(2)">Future State (2040)</button>
-            </div>
+      </div>
+
+      <div class="section" id="time-periods-section">
+        <h2 class="section-title">Time Periods</h2>
+        <div class="button-group">
+          <button class="glowing-button" onclick="changeState(1)">
+            Current State (2023)
+          </button>
+          <button class="glowing-button" onclick="changeState(2)">
+            Future State (2040)
+          </button>
         </div>
-        
-        <div class="section">
-            <h2 class="section-title">Visualization Mode</h2>
-            <div class="button-group">
-                <button class="glowing-button" onclick="changeVisualizationMode('image')">Image View</button>
-                <button class="glowing-button" onclick="changeVisualizationMode('map')">Map View</button>
-            </div>
+      </div>
+
+      <div class="section" id="climate-scenarios-section" style="display: none">
+        <h2 class="section-title">Climate Scenarios</h2>
+        <div class="button-group">
+          <button
+            class="glowing-button"
+            onclick="changeClimateScenario('existing')"
+          >
+            Existing
+          </button>
+          <button
+            class="glowing-button"
+            onclick="changeClimateScenario('dense_highrise')"
+          >
+            Dense Highrise
+          </button>
+          <button
+            class="glowing-button"
+            onclick="changeClimateScenario('high_rises')"
+          >
+            High Rises
+          </button>
+          <button
+            class="glowing-button"
+            onclick="changeClimateScenario('lowrise')"
+          >
+            Low Rise Dense
+          </button>
+          <button
+            class="glowing-button"
+            onclick="changeClimateScenario('mass_tree_planting')"
+          >
+            Mass Tree Planting
+          </button>
+          <button
+            class="glowing-button"
+            onclick="changeClimateScenario('open_public_space')"
+          >
+            Open Public Space
+          </button>
+          <button
+            class="glowing-button"
+            onclick="changeClimateScenario('placemaking')"
+          >
+            Placemaking
+          </button>
         </div>
+      </div>
+
+      <div class="section" id="climate-type-section" style="display: none">
+        <h2 class="section-title">Climate Map Type</h2>
+        <div class="button-group">
+          <button class="glowing-button" onclick="changeClimateType('utci')">
+            UTCI Map
+          </button>
+          <button class="glowing-button" onclick="changeClimateType('plan')">
+            Plan Map
+          </button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2 class="section-title">Visualization Mode</h2>
+        <div class="button-group">
+          <button
+            class="glowing-button"
+            onclick="changeVisualizationMode('image')"
+          >
+            Image View
+          </button>
+          <button
+            class="glowing-button"
+            onclick="changeVisualizationMode('map')"
+          >
+            Map View
+          </button>
+        </div>
+      </div>
     </div>
 
-<script>
-    // Change indicator function
-    function changeIndicator(indicatorId) {
-        const url = 'http://localhost:9900/api/actions/set_current_indicator/';
-        fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ indicator_id: indicatorId })
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log('Indicator changed:', data);
-            // Highlight the active button
-            highlightButton('indicator', indicatorId);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-        });
-    }
+    <script>
+      let currentIndicator = 1;
+      let currentClimateScenario = "existing";
+      let currentClimateType = "utci";
 
-    // Change state function
-    function changeState(stateId) {
-        const url = 'http://localhost:9900/api/actions/set_current_state/';
-        fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ state_id: stateId })
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log('State changed:', data);
-            // Highlight the active button
-            highlightButton('state', stateId);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-        });
-    }
+      // Change indicator function
+      function changeIndicator(indicatorId) {
+        currentIndicator = indicatorId;
 
-    // Change visualization mode function
-    function changeVisualizationMode(mode) {
-        const url = 'http://localhost:9900/api/actions/set_visualization_mode/';
-        fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ mode: mode })
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log('Visualization mode changed:', data);
-            // Highlight the active button
-            highlightButton('mode', mode);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-        });
-    }
+        // Show/hide climate-specific controls
+        const timePeriodSection = document.getElementById(
+          "time-periods-section"
+        );
+        const climateScenariosSection = document.getElementById(
+          "climate-scenarios-section"
+        );
+        const climateTypeSection = document.getElementById(
+          "climate-type-section"
+        );
 
-    // Helper function to highlight the active button
-    function highlightButton(type, value) {
-        // Reset all buttons of this type
-        const sections = {
-            'indicator': 0,
-            'state': 1,
-            'mode': 2
-        };
-        
-        const sectionIndex = sections[type];
-        const buttons = document.querySelectorAll(`.section:nth-child(${sectionIndex + 1}) button`);
-        
+        if (indicatorId === 2) {
+          // Climate indicator selected
+          timePeriodSection.style.display = "none";
+          climateScenariosSection.style.display = "block";
+          climateTypeSection.style.display = "block";
+        } else {
+          // Other indicators
+          timePeriodSection.style.display = "block";
+          climateScenariosSection.style.display = "none";
+          climateTypeSection.style.display = "none";
+        }
+
+        const url = "http://localhost:9900/api/actions/set_current_indicator/";
+        fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ indicator_id: indicatorId }),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            console.log("Indicator changed:", data);
+            // Highlight the active button
+            highlightButton("indicator", indicatorId);
+          })
+          .catch((error) => {
+            console.error("Error:", error);
+          });
+      }
+
+      // Change climate scenario function
+      function changeClimateScenario(scenario) {
+        currentClimateScenario = scenario;
+        const url = "http://localhost:9900/api/actions/set_climate_scenario/";
+        fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            scenario: scenario,
+            type: currentClimateType,
+          }),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            console.log("Climate scenario changed:", data);
+            highlightButton("climate-scenario", scenario);
+          })
+          .catch((error) => {
+            console.error("Error:", error);
+          });
+      }
+
+      // Change climate type function (UTCI/Plan toggle)
+      function changeClimateType(type) {
+        currentClimateType = type;
+        const url = "http://localhost:9900/api/actions/set_climate_scenario/";
+        fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            scenario: currentClimateScenario,
+            type: type,
+          }),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            console.log("Climate type changed:", data);
+            highlightButton("climate-type", type);
+          })
+          .catch((error) => {
+            console.error("Error:", error);
+          });
+      }
+
+      // Change state function
+      function changeState(stateId) {
+        const url = "http://localhost:9900/api/actions/set_current_state/";
+        fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ state_id: stateId }),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            console.log("State changed:", data);
+            // Highlight the active button
+            highlightButton("state", stateId);
+          })
+          .catch((error) => {
+            console.error("Error:", error);
+          });
+      }
+
+      // Change visualization mode function
+      function changeVisualizationMode(mode) {
+        const url = "http://localhost:9900/api/actions/set_visualization_mode/";
+        fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ mode: mode }),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            console.log("Visualization mode changed:", data);
+            // Highlight the active button
+            highlightButton("mode", mode);
+          })
+          .catch((error) => {
+            console.error("Error:", error);
+          });
+      }
+
+      // Helper function to highlight the active button
+      function highlightButton(type, value) {
+        let selector;
+
+        if (type === "indicator") {
+          selector = ".section:nth-child(1) button";
+        } else if (type === "state") {
+          selector = "#time-periods-section button";
+        } else if (type === "climate-scenario") {
+          selector = "#climate-scenarios-section button";
+        } else if (type === "climate-type") {
+          selector = "#climate-type-section button";
+        } else if (type === "mode") {
+          selector = ".section:last-child button";
+        }
+
+        if (!selector) return;
+
+        const buttons = document.querySelectorAll(selector);
+
         buttons.forEach((button, index) => {
-            if (type === 'indicator' && index + 1 === value) {
-                button.classList.add('active');
-                button.classList.add('neon-button');
-            } else if (type === 'state' && index + 1 === value) {
-                button.classList.add('active');
-                button.classList.add('neon-button');
-            } else if (type === 'mode') {
-                const buttonMode = button.textContent.toLowerCase().includes('image') ? 'image' : 'map';
-                if (buttonMode === value) {
-                    button.classList.add('active');
-                    button.classList.add('neon-button');
-                } else {
-                    button.classList.remove('active');
-                    button.classList.remove('neon-button');
-                }
-            } else {
-                button.classList.remove('active');
-                button.classList.remove('neon-button');
-            }
-        });
-    }
+          let shouldHighlight = false;
 
-    // Get current state on page load and highlight the appropriate buttons
-    document.addEventListener('DOMContentLoaded', function() {
-        fetch('http://localhost:9900/api/actions/get_global_variables/')
-        .then(response => response.json())
-        .then(data => {
+          if (type === "indicator" && index + 1 === value) {
+            shouldHighlight = true;
+          } else if (type === "state" && index + 1 === value) {
+            shouldHighlight = true;
+          } else if (type === "climate-scenario") {
+            const buttonScenario = button
+              .getAttribute("onclick")
+              .match(/'([^']+)'/)[1];
+            if (buttonScenario === value) {
+              shouldHighlight = true;
+            }
+          } else if (type === "climate-type") {
+            const buttonType = button
+              .getAttribute("onclick")
+              .match(/'([^']+)'/)[1];
+            if (buttonType === value) {
+              shouldHighlight = true;
+            }
+          } else if (type === "mode") {
+            const buttonMode = button.textContent
+              .toLowerCase()
+              .includes("image")
+              ? "image"
+              : "map";
+            if (buttonMode === value) {
+              shouldHighlight = true;
+            }
+          }
+
+          if (shouldHighlight) {
+            button.classList.add("active");
+            button.classList.add("neon-button");
+          } else {
+            button.classList.remove("active");
+            button.classList.remove("neon-button");
+          }
+        });
+      }
+
+      // Get current state on page load and highlight the appropriate buttons
+      document.addEventListener("DOMContentLoaded", function () {
+        fetch("http://localhost:9900/api/actions/get_global_variables/")
+          .then((response) => response.json())
+          .then((data) => {
             if (data.indicator_id) {
-                highlightButton('indicator', data.indicator_id);
+              highlightButton("indicator", data.indicator_id);
             }
             if (data.visualization_mode) {
-                highlightButton('mode', data.visualization_mode);
+              highlightButton("mode", data.visualization_mode);
             }
-            
+
             // For state, we need to get the state ID
-            fetch('http://localhost:9900/api/states/')
-            .then(response => response.json())
-            .then(states => {
-                const currentState = states.find(state => 
-                    JSON.stringify(state.state_values) === JSON.stringify(data.indicator_state)
+            fetch("http://localhost:9900/api/states/")
+              .then((response) => response.json())
+              .then((states) => {
+                const currentState = states.find(
+                  (state) =>
+                    JSON.stringify(state.state_values) ===
+                    JSON.stringify(data.indicator_state)
                 );
                 if (currentState) {
-                    highlightButton('state', currentState.id);
+                  highlightButton("state", currentState.id);
                 }
-            });
-        })
-        .catch(error => {
-            console.error('Error getting current state:', error);
-        });
-    });
-</script>
-</body>
+              });
+          })
+          .catch((error) => {
+            console.error("Error getting current state:", error);
+          });
+      });
+    </script>
+  </body>
 </html>
-
-
