@@ -63,7 +63,6 @@ const App = () => {
   const getIndicatorFromPath = (path) => {
     if (path.includes("/mobility")) return "mobility";
     if (path.includes("/climate")) return "climate";
-    if (path.includes("/land_use")) return "land_use";
     return null;
   };
 
@@ -142,10 +141,6 @@ const App = () => {
               />
               <Route
                 path="climate"
-                element={<DashboardWrapper openCharts={openCharts} />}
-              />
-              <Route
-                path="land_use"
                 element={<DashboardWrapper openCharts={openCharts} />}
               />
 

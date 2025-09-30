@@ -43,25 +43,23 @@ const INDICATOR_CONFIG = {
     tabLabels: ["Emissions", "Green Space", "Radar Analysis", "Sustainability"],
     pieChartLabels: ["Green Space", "Other"],
   },
-  land_use: {
-    id: 3,
-    name: "Land Use Dashboard",
-    metrics: [
-      "mixed_use_ratio",
-      "population_density",
-      "public_space_percentage",
-      "average_building_height",
-    ],
-    tabLabels: ["Density", "Land Use Mix", "Radar Analysis", "Building Types"],
-    pieChartLabels: ["Mixed Use", "Single Use"],
-  },
   // Add new indicators here following the same pattern
 };
 
+// Climate scenarios configuration  
+const CLIMATE_SCENARIOS = {
+  dense_highrise: "Dense Highrise",
+  existing: "Existing",
+  high_rises: "High Rises",
+  lowrise: "Low Rise Dense",
+  mass_tree_planting: "Mass Tree Planting",
+  open_public_space: "Open Public Space",
+  placemaking: "Placemaking",
+};
+
 const STATE_CONFIG = {
-  mobility: [],
-  climate: ["state1", "state2", "state3", "state4", "state5", "state6", "state7"],
-  land_use: [],
+  mobility: ["Present", "Future"],
+  climate: Object.values(CLIMATE_SCENARIOS),
 };
 
 // Reverse mapping from ID to indicator type
@@ -137,9 +135,6 @@ export const DataProvider = ({ children }) => {
             case "climate":
               categoryLabels = ["Emissions", "Green Space", "Renewable Energy"];
               break;
-            case "land_use":
-              categoryLabels = ["Buildings", "Public Space", "Density"];
-              break;
             default:
               categoryLabels = ["Category 1", "Category 2", "Category 3"];
           }
@@ -178,15 +173,6 @@ export const DataProvider = ({ children }) => {
                 green_space_percentage:
                   response.data[0].data.green_space_percentage || 0,
               }),
-              ...(indicator === "land_use" && {
-                mixed_use_ratio: response.data[0].data.mixed_use_ratio || 0,
-                population_density:
-                  response.data[0].data.population_density || 0,
-                public_space_percentage:
-                  response.data[0].data.public_space_percentage || 0,
-                average_building_height:
-                  response.data[0].data.average_building_height || 0,
-              }),
             },
 
             // Pie chart data using appropriate metric based on indicator
@@ -203,11 +189,6 @@ export const DataProvider = ({ children }) => {
                           response.data[0].data.green_space_percentage || 0,
                           100 -
                             (response.data[0].data.green_space_percentage || 0),
-                        ]
-                      : indicator === "land_use"
-                      ? [
-                          response.data[0].data.mixed_use_ratio || 0,
-                          100 - (response.data[0].data.mixed_use_ratio || 0),
                         ]
                       : [
                           response.data[0].data.public_transport_coverage || 0,
@@ -376,6 +357,42 @@ export const DataProvider = ({ children }) => {
     };
   }, [currentIndicator, fetchDashboardData, checkRemoteChanges]);
 
+  // Function to change climate state (scenario)
+  const changeState = useCallback(
+    async (stateName) => {
+      if (currentIndicator === "climate") {
+        // Find the scenario key from the display name
+        const scenarioKey = Object.entries(CLIMATE_SCENARIOS).find(
+          ([key, displayName]) => displayName === stateName
+        )?.[0];
+
+        if (scenarioKey) {
+          try {
+            // Get current visualization type (default to 'utci')
+            const currentType = globals.INDICATOR_STATE?.type || "utci";
+            
+            await api.post("/api/actions/set_climate_scenario/", {
+              scenario: scenarioKey,
+              type: currentType,
+            });
+            console.log(`✓ Changed climate state to ${stateName} (${scenarioKey})`);
+            
+            // Update local globals
+            globals.INDICATOR_STATE = {
+              scenario: scenarioKey,
+              type: currentType,
+              label: `${stateName} - ${currentType.toUpperCase()}`,
+            };
+          } catch (error) {
+            console.error("Error changing climate state:", error);
+          }
+        }
+      }
+      // For other indicators, implement similar state changes as needed
+    },
+    [currentIndicator]
+  );
+
   // Function to switch indicators
   const changeIndicator = useCallback(
     (newIndicator) => {
@@ -436,9 +453,11 @@ export const DataProvider = ({ children }) => {
     dashboardData,
     currentIndicator,
     changeIndicator,
+    changeState,
     loading,
     error,
     StateConfig: STATE_CONFIG,
+    ClimateScenarios: CLIMATE_SCENARIOS,
     lastUpdate,
     indicatorConfig: INDICATOR_CONFIG,
     // Helper methods for getting indicator-specific information

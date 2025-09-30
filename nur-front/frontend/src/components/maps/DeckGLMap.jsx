@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { DeckGL } from "@deck.gl/react";
 import { ScatterplotLayer, GeoJsonLayer } from "@deck.gl/layers";
-import { HexagonLayer } from "@deck.gl/aggregation-layers";
 import { TripsLayer } from "@deck.gl/geo-layers";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { LightingEffect } from "@deck.gl/core";
@@ -27,7 +26,7 @@ const INITIAL_VIEW_STATE = {
  * DeckGLMap component renders different visualizations based on indicator type
  *
  * @param {Object} props - Component props
- * @param {string} props.indicatorType - Type of indicator ('mobility', 'climate', 'land_use')
+ * @param {string} props.indicatorType - Type of indicator ('mobility', 'climate')
  * @param {Object} props.state - Current state (year, scenario, etc.)
  */
 const DeckGLMap = ({ indicatorType, state }) => {
@@ -220,52 +219,6 @@ const DeckGLMap = ({ indicatorType, state }) => {
               d.properties?.colorArray || [120, 120, 220, 40], // Bluish tint
             getLineColor: [200, 200, 255],
             getLineWidth: 1,
-          }),
-        ];
-
-      case "land_use":
-        return [
-          // Hexagon layer for land use density
-          new HexagonLayer({
-            id: "hexagon-layer",
-            data: data.points || data.features || [],
-            getPosition: (d) => d.coordinates || d.geometry?.coordinates,
-            getElevationWeight: (d) => d.properties?.height || 1,
-            getColorWeight: (d) => d.properties?.color_value || 1,
-            elevationScale: 120,
-            extruded: true,
-            radius: 80,
-            coverage: 0.85,
-            upperPercentile: 90,
-            material: {
-              ambient: 0.64,
-              diffuse: 0.6,
-              shininess: 32,
-              specularColor: [51, 51, 51],
-            },
-            colorRange: [
-              [29, 145, 192], // CityScope blue
-              [65, 182, 196], // CityScope teal
-              [127, 205, 187], // CityScope light green
-              [199, 233, 180], // CityScope pale green
-              [252, 174, 97], // CityScope orange
-              [244, 109, 67], // CityScope red
-            ],
-          }),
-          // Buildings as 3D extrusions
-          new GeoJsonLayer({
-            id: "buildings-layer",
-            data: data.buildings || data.features || [],
-            pickable: true,
-            stroked: true,
-            filled: true,
-            extruded: true,
-            lineWidthScale: 20,
-            lineWidthMinPixels: 2,
-            getFillColor: (d) => d.properties?.color || [160, 160, 180, 200],
-            getLineColor: [255, 255, 255],
-            getLineWidth: 1,
-            getElevation: (d) => d.properties?.height || 10,
           }),
         ];
 

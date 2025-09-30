@@ -43,26 +43,6 @@ const MetricDisplay = ({ data, currentIndicator }) => {
           </Typography>
         </>
       );
-    case "land_use":
-      return (
-        <>
-          <Typography variant="body1">
-            Population: {metrics.total_population?.toLocaleString()}
-          </Typography>
-          <Typography variant="body1">
-            Mixed Use Ratio: {metrics.mixed_use_ratio}%
-          </Typography>
-          <Typography variant="body1">
-            Population Density: {metrics.population_density} people/km²
-          </Typography>
-          <Typography variant="body1">
-            Public Space: {metrics.public_space_percentage}%
-          </Typography>
-          <Typography variant="body1">
-            Avg Building Height: {metrics.average_building_height} m
-          </Typography>
-        </>
-      );
     default:
       return null;
   }
