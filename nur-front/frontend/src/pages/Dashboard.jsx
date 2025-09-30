@@ -176,16 +176,25 @@ const Dashboard = ({ openCharts }) => {
   useEffect(() => {
     const handleClimateStateChange = async () => {
       if (currentIndicator === "climate") {
-        console.log("Climate state changed, refreshing image...");
+        console.log(
+          "🌡️ Climate state changed event received, refreshing image..."
+        );
+
+        // Add a small delay to ensure backend has updated globals.INDICATOR_STATE
+        await new Promise((resolve) => setTimeout(resolve, 100));
 
         // Fetch new image data
         try {
           const timestamp = Date.now();
+          console.log(
+            `📡 Fetching new climate image with timestamp: ${timestamp}`
+          );
           const response = await api.get(
             `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}`
           );
 
           if (response.data && response.data.image_data) {
+            console.log(`✓ Received image data: ${response.data.image_data}`);
             let url = response.data.image_data.startsWith("/")
               ? `${config.media.baseUrl}${response.data.image_data}`
               : `${config.media.baseUrl}/media/${response.data.image_data}`;
@@ -196,6 +205,7 @@ const Dashboard = ({ openCharts }) => {
               url += `?_=${timestamp}`;
             }
 
+            console.log(`🖼️ Setting new image URL: ${url}`);
             setMapData({
               url,
               type: response.data.type || "map",
@@ -208,7 +218,7 @@ const Dashboard = ({ openCharts }) => {
             }
           }
         } catch (err) {
-          console.error("Error refreshing climate image:", err);
+          console.error("❌ Error refreshing climate image:", err);
         }
       }
     };
@@ -219,6 +229,70 @@ const Dashboard = ({ openCharts }) => {
       window.removeEventListener(
         "climateStateChanged",
         handleClimateStateChange
+      );
+    };
+  }, [currentIndicator, preloadImage]);
+
+  // Listen for general indicator state changes (for mobility and other indicators)
+  useEffect(() => {
+    const handleIndicatorStateChange = async () => {
+      if (currentIndicator !== "climate") {
+        console.log(
+          `📊 Indicator state changed event received for ${currentIndicator}, refreshing image...`
+        );
+
+        // Add a small delay to ensure backend has updated globals.INDICATOR_STATE
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // Fetch new image data
+        try {
+          const timestamp = Date.now();
+          console.log(
+            `📡 Fetching new ${currentIndicator} image with timestamp: ${timestamp}`
+          );
+          const response = await api.get(
+            `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}`
+          );
+
+          if (response.data && response.data.image_data) {
+            console.log(`✓ Received image data: ${response.data.image_data}`);
+            let url = response.data.image_data.startsWith("/")
+              ? `${config.media.baseUrl}${response.data.image_data}`
+              : `${config.media.baseUrl}/media/${response.data.image_data}`;
+
+            const isHtml = isHtmlAnimation(url);
+
+            if (!isHtml) {
+              url += `?_=${timestamp}`;
+            }
+
+            console.log(`🖼️ Setting new image URL: ${url}`);
+            setMapData({
+              url,
+              type: response.data.type || "map",
+              loading: false,
+              error: false,
+            });
+
+            if (!isHtml) {
+              preloadImage(url);
+            }
+          }
+        } catch (err) {
+          console.error(`❌ Error refreshing ${currentIndicator} image:`, err);
+        }
+      }
+    };
+
+    window.addEventListener(
+      "indicatorStateChanged",
+      handleIndicatorStateChange
+    );
+
+    return () => {
+      window.removeEventListener(
+        "indicatorStateChanged",
+        handleIndicatorStateChange
       );
     };
   }, [currentIndicator, preloadImage]);

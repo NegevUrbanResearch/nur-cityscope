@@ -97,11 +97,16 @@ export const DataProvider = ({ children }) => {
   const lastCheckedRef = useRef(Date.now());
   const debounceTimerRef = useRef(null);
   const [visualizationMode, setVisualizationMode] = useState("deck");
+  const visualizationModeRef = useRef(visualizationMode);
 
-  // Update ref when state changes
+  // Update refs when state changes
   useEffect(() => {
     indicatorRef.current = currentIndicator;
   }, [currentIndicator]);
+
+  useEffect(() => {
+    visualizationModeRef.current = visualizationMode;
+  }, [visualizationMode]);
 
   // Function to initialize dashboard data
   // Note: Chart data is loaded directly from CSV files in the components (MobilityGraphs, ClimateGraphs)
@@ -156,6 +161,12 @@ export const DataProvider = ({ children }) => {
     }
   }, []);
 
+  // Track previous climate state to detect changes
+  const prevClimateStateRef = useRef({ scenario: null, type: null });
+
+  // Track previous indicator state for all indicators to detect changes
+  const prevIndicatorStateRef = useRef(null);
+
   // Check for remote controller changes with debouncing to reduce flickering
   const checkRemoteChanges = useCallback(async () => {
     // Limit API calls to prevent overloading
@@ -170,8 +181,20 @@ export const DataProvider = ({ children }) => {
         if (response.data.indicator_state) {
           globals.INDICATOR_STATE = response.data.indicator_state;
         }
+
+        // Handle visualization mode changes from remote controller
         if (response.data.visualization_mode) {
           globals.VISUALIZATION_MODE = response.data.visualization_mode;
+
+          // Update local state if different from current
+          const newMode =
+            response.data.visualization_mode === "map" ? "deck" : "image";
+          if (newMode !== visualizationModeRef.current) {
+            console.log(
+              `Remote controller changed visualization mode to: ${newMode}`
+            );
+            setVisualizationMode(newMode);
+          }
         }
 
         // Handle indicator changes
@@ -205,6 +228,68 @@ export const DataProvider = ({ children }) => {
                 setLoading(false);
               }, 500);
             }, 100);
+          }
+        }
+
+        // Check for climate state changes (scenario or type) - this should happen regardless of indicator change
+        // Only check if we're currently on the climate indicator
+        if (
+          indicatorRef.current === "climate" &&
+          response.data.indicator_state
+        ) {
+          const currentScenario = response.data.indicator_state.scenario;
+          const currentType = response.data.indicator_state.type;
+          const prevScenario = prevClimateStateRef.current.scenario;
+          const prevType = prevClimateStateRef.current.type;
+
+          // Detect if scenario or type changed
+          if (
+            (currentScenario && currentScenario !== prevScenario) ||
+            (currentType && currentType !== prevType)
+          ) {
+            console.log(
+              `🌡️ Climate state changed: ${prevScenario}(${prevType}) → ${currentScenario}(${currentType})`
+            );
+
+            // Update tracked state
+            prevClimateStateRef.current = {
+              scenario: currentScenario,
+              type: currentType,
+            };
+
+            // Trigger the climateStateChanged event
+            window.dispatchEvent(new CustomEvent("climateStateChanged"));
+          } else if (!prevScenario && currentScenario) {
+            // Initial state setup
+            prevClimateStateRef.current = {
+              scenario: currentScenario,
+              type: currentType,
+            };
+          }
+        }
+
+        // Check for general indicator state changes (for mobility and other indicators)
+        // This handles state changes like mobility Present/Future
+        if (
+          indicatorRef.current !== "climate" &&
+          response.data.indicator_state
+        ) {
+          const currentStateStr = JSON.stringify(response.data.indicator_state);
+          const prevStateStr = prevIndicatorStateRef.current;
+
+          if (prevStateStr && currentStateStr !== prevStateStr) {
+            console.log(
+              `📊 Indicator state changed for ${indicatorRef.current}: ${prevStateStr} → ${currentStateStr}`
+            );
+
+            // Update tracked state
+            prevIndicatorStateRef.current = currentStateStr;
+
+            // Trigger a general state change event
+            window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
+          } else if (!prevStateStr) {
+            // Initial state setup
+            prevIndicatorStateRef.current = currentStateStr;
           }
         }
       }

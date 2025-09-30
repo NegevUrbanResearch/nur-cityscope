@@ -266,6 +266,10 @@ class CustomActionsViewSet(viewsets.ViewSet):
             }
 
             if self._set_current_state(new_state):
+                print(
+                    f"✓ Climate scenario set successfully: {scenario_name} ({scenario_type})"
+                )
+                print(f"✓ globals.INDICATOR_STATE is now: {globals.INDICATOR_STATE}")
                 return JsonResponse(
                     {
                         "status": "ok",
@@ -388,6 +392,11 @@ class CustomActionsViewSet(viewsets.ViewSet):
             scenario_name = globals.INDICATOR_STATE.get("scenario")
             scenario_type = globals.INDICATOR_STATE.get("type", "utci")
 
+            print(
+                f"🌡️ get_image_data for climate - scenario: {scenario_name}, type: {scenario_type}"
+            )
+            print(f"🌡️ Full INDICATOR_STATE: {globals.INDICATOR_STATE}")
+
             if scenario_name:
                 # Find state by scenario
                 state = State.objects.filter(
@@ -396,7 +405,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
                 if state:
                     print(
-                        f"Found climate scenario state: {state.scenario_name} ({state.scenario_type})"
+                        f"✓ Found climate scenario state: {state.scenario_name} ({state.scenario_type})"
                     )
                 else:
                     # Fallback to default climate scenario
