@@ -9,7 +9,7 @@ import backend.models
 def populate_climate_scenarios(apps, schema_editor):
     """Create the 14 climate scenario states (7 scenarios × 2 types)"""
     State = apps.get_model("backend", "State")
-    
+
     # Climate scenario definitions
     scenarios = {
         "dense_highrise": "Dense Highrise",
@@ -20,7 +20,7 @@ def populate_climate_scenarios(apps, schema_editor):
         "open_public_space": "Open Public Space",
         "placemaking": "Placemaking",
     }
-    
+
     # Create UTCI and Plan states for each scenario
     for scenario_key, display_name in scenarios.items():
         # Create UTCI state
@@ -35,7 +35,7 @@ def populate_climate_scenarios(apps, schema_editor):
                 }
             },
         )
-        
+
         # Create Plan state
         State.objects.get_or_create(
             scenario_type="plan",
@@ -48,7 +48,7 @@ def populate_climate_scenarios(apps, schema_editor):
                 }
             },
         )
-    
+
     print(f"✓ Created {len(scenarios) * 2} climate scenario states")
 
 
@@ -178,8 +178,14 @@ class Migration(migrations.Migration):
             name="IndicatorImage",
             fields=[
                 ("id", models.AutoField(primary_key=True, serialize=False)),
-                ("image", models.ImageField(upload_to=backend.models.indicator_image_path)),
-                ("uploaded_at", models.DateTimeField(default=django.utils.timezone.now)),
+                (
+                    "image",
+                    models.ImageField(upload_to=backend.models.indicator_image_path),
+                ),
+                (
+                    "uploaded_at",
+                    models.DateTimeField(default=django.utils.timezone.now),
+                ),
                 (
                     "indicatorData",
                     models.ForeignKey(

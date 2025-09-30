@@ -46,7 +46,7 @@ const INDICATOR_CONFIG = {
   // Add new indicators here following the same pattern
 };
 
-// Climate scenarios configuration  
+// Climate scenarios configuration
 const CLIMATE_SCENARIOS = {
   dense_highrise: "Dense Highrise",
   existing: "Existing",
@@ -103,136 +103,39 @@ export const DataProvider = ({ children }) => {
     indicatorRef.current = currentIndicator;
   }, [currentIndicator]);
 
-  // Function to fetch data for the current indicator
+  // Function to initialize dashboard data
+  // Note: Chart data is loaded directly from CSV files in the components (MobilityGraphs, ClimateGraphs)
+  // This function just sets up the basic state
   const fetchDashboardData = useCallback(
     async (indicator) => {
       if (!indicator) return;
 
-      // Check if we have a specific year to use
-      const currentYear = globals.INDICATOR_STATE?.year || 2023;
-
-      // Use a relative URL with the api instance
-      const endpoint = `/api/dashboard_feed_state/?dashboard_type=${indicator}&year=${currentYear}`;
-      console.log(`Fetching ${indicator} dashboard data from:`, endpoint);
-
       try {
-        // Only show loading on initial load or on error recovery, not during polling
+        // Only show loading on initial load
         const isInitialLoad = !dashboardData;
         if (isInitialLoad) {
           setLoading(true);
         }
 
-        const response = await api.get(endpoint);
+        // For now, we just set a minimal data structure
+        // The actual chart data is loaded from CSV files in the individual graph components
+        const transformedData = {
+          indicator: indicator,
+          // Metrics can be loaded from CSV or set as placeholders
+          metrics: {},
+        };
 
-        if (response.data && response.data.length > 0) {
-          // Generate category labels based on indicator type
-          let categoryLabels = ["Category 1", "Category 2", "Category 3"];
-
-          switch (indicator) {
-            case "mobility":
-              categoryLabels = ["Transit Modes", "Access Points", "Coverage"];
-              break;
-            case "climate":
-              categoryLabels = ["Emissions", "Green Space", "Renewable Energy"];
-              break;
-            default:
-              categoryLabels = ["Category 1", "Category 2", "Category 3"];
-          }
-
-          // Transform the data to match the expected format
-          const transformedData = {
-            // Direct mapping for radar chart
-            radar: response.data[0].data.radar,
-
-            // Direct mapping for horizontal stacked bar chart
-            horizontalStackedBars: response.data[0].data.horizontalStackedBar,
-
-            // Add labels to stackedBar data
-            stackedBars: {
-              ...response.data[0].data.stackedBar,
-              labels: categoryLabels,
-            },
-
-            // Metrics data
-            metrics: {
-              total_population: response.data[0].data.total_population || 0,
-              // Include indicator-specific metrics
-              ...(indicator === "mobility" && {
-                public_transport_coverage:
-                  response.data[0].data.public_transport_coverage || 0,
-                average_commute_time:
-                  response.data[0].data.average_commute_time || 0,
-                bike_lane_coverage:
-                  response.data[0].data.bike_lane_coverage || 0,
-              }),
-              ...(indicator === "climate" && {
-                air_quality_index: response.data[0].data.air_quality_index || 0,
-                carbon_emissions: response.data[0].data.carbon_emissions || 0,
-                renewable_energy_percentage:
-                  response.data[0].data.renewable_energy_percentage || 0,
-                green_space_percentage:
-                  response.data[0].data.green_space_percentage || 0,
-              }),
-            },
-
-            // Pie chart data using appropriate metric based on indicator
-            pieChart: {
-              labels: INDICATOR_CONFIG[indicator]?.pieChartLabels || [
-                "Data",
-                "Other",
-              ],
-              datasets: [
-                {
-                  data:
-                    indicator === "climate"
-                      ? [
-                          response.data[0].data.green_space_percentage || 0,
-                          100 -
-                            (response.data[0].data.green_space_percentage || 0),
-                        ]
-                      : [
-                          response.data[0].data.public_transport_coverage || 0,
-                          100 -
-                            (response.data[0].data.public_transport_coverage ||
-                              0),
-                        ],
-                  backgroundColor: [
-                    config.charts.colors.secondary,
-                    config.charts.colors.tertiary,
-                  ],
-                },
-              ],
-            },
-
-            // Additional data
-            trafficLight: response.data[0].data.trafficLight,
-            dataTable: response.data[0].data.dataTable,
-          };
-
-          // Only log on initial load to reduce console noise during polling
-          if (isInitialLoad) {
-            console.log("Transformed dashboard data:", transformedData);
-          }
-
-          // Deep compare the new data with existing data to avoid unnecessary renders
-          if (!dashboardData || !isEqual(dashboardData, transformedData)) {
-            setDashboardData(transformedData);
-            setLastUpdate(new Date().toLocaleString());
-          }
-
-          setError(null);
-        } else {
-          if (isInitialLoad) {
-            setError("No data available for this indicator");
-          }
+        if (!dashboardData || !isEqual(dashboardData, transformedData)) {
+          setDashboardData(transformedData);
+          setLastUpdate(new Date().toLocaleString());
         }
+
+        setError(null);
+        setLoading(false);
       } catch (err) {
-        console.error(`Error fetching ${indicator} dashboard data:`, err);
+        console.error(`Error initializing ${indicator} dashboard:`, err);
         setError(err.message);
-      } finally {
-        if (loading) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
     },
     [dashboardData, loading]
@@ -313,7 +216,6 @@ export const DataProvider = ({ children }) => {
   // Initialize data and polling
   useEffect(() => {
     let isMounted = true;
-    let dataIntervalId;
     let checkIntervalId;
     // Capture the current timer ID to avoid cleanup issues
     const currentTimerRef = debounceTimerRef.current;
@@ -321,26 +223,19 @@ export const DataProvider = ({ children }) => {
     const initData = async () => {
       if (isMounted) {
         try {
+          // Initialize basic dashboard state
           await fetchDashboardData(currentIndicator);
         } catch (err) {
-          console.error("Error in initial data fetch:", err);
+          console.error("Error in initial data setup:", err);
         }
 
-        // Set up polling for dashboard data - at a slower rate
-        dataIntervalId = setInterval(() => {
-          if (isMounted) {
-            fetchDashboardData(currentIndicator).catch((err) => {
-              console.error("Error in dashboard data polling:", err);
-            });
-          }
-        }, config.polling.interval);
-
-        // Set up frequent polling for remote controller changes
+        // Set up polling for remote controller changes only
+        // (Chart data is loaded from CSV files in components, no polling needed)
         checkIntervalId = setInterval(() => {
           if (isMounted) {
             checkRemoteChanges();
           }
-        }, 200); // Poll every 200ms for good balance between responsiveness and performance
+        }, 200); // Poll every 200ms for remote controller responsiveness
       }
     };
 
@@ -348,7 +243,6 @@ export const DataProvider = ({ children }) => {
 
     return () => {
       isMounted = false;
-      clearInterval(dataIntervalId);
       clearInterval(checkIntervalId);
       // Clear the timer that was active when this effect ran
       if (currentTimerRef) {
@@ -370,13 +264,15 @@ export const DataProvider = ({ children }) => {
           try {
             // Get current visualization type (default to 'utci')
             const currentType = globals.INDICATOR_STATE?.type || "utci";
-            
+
             await api.post("/api/actions/set_climate_scenario/", {
               scenario: scenarioKey,
               type: currentType,
             });
-            console.log(`✓ Changed climate state to ${stateName} (${scenarioKey})`);
-            
+            console.log(
+              `✓ Changed climate state to ${stateName} (${scenarioKey})`
+            );
+
             // Update local globals
             globals.INDICATOR_STATE = {
               scenario: scenarioKey,

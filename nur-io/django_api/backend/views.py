@@ -603,440 +603,62 @@ class CustomActionsViewSet(viewsets.ViewSet):
         layer_config = LayerConfig.objects.filter(indicatorData=indicator_data).first()
         if layer_config and layer_config.layer_config.get("mapUrl"):
             map_url = layer_config.layer_config["mapUrl"]
-            # Check if this is an HTML file (real map) vs synthetic
-            if map_url.endswith(".html") and os.path.exists(
-                os.path.join(settings.MEDIA_ROOT, map_url)
-            ):
-                # Return HTML map URL for iframe display
-                response = JsonResponse(
-                    {
-                        "type": "html_map",
-                        "map_url": f"/media/{map_url}",
-                        "metadata": {
-                            "timestamp": datetime.now().isoformat(),
-                            "year": year,
-                            "indicator_type": indicator.category or "default",
-                        },
-                    }
-                )
-                self._add_no_cache_headers(response)
-                return response
+            # Check if this is an HTML file (real map)
+            if map_url.endswith(".html"):
+                # Construct proper path
+                if map_url.startswith("/media/"):
+                    map_url = map_url[7:]  # Remove /media/ prefix
 
-        # Fallback to synthetic deck.gl data generation
-        indicator_type = indicator.category if indicator.category else "default"
-        processed_data = self._process_data_for_deckgl(
-            indicator_data, indicator_type, year
-        )
+                file_path = os.path.join(settings.MEDIA_ROOT, map_url)
+                if os.path.exists(file_path):
+                    # Return HTML map URL for iframe display
+                    response = JsonResponse(
+                        {
+                            "type": "html_map",
+                            "map_url": f"/media/{map_url}",
+                            "metadata": {
+                                "timestamp": datetime.now().isoformat(),
+                                "year": year,
+                                "indicator_type": indicator.category or "default",
+                            },
+                        }
+                    )
+                    self._add_no_cache_headers(response)
+                    return response
+                else:
+                    print(f"Warning: HTML map file not found at {file_path}")
 
-        # Return processed data with cache control headers
+        # No real map data available - return error instead of synthetic data
         response = JsonResponse(
-            processed_data, safe=False, json_dumps_params={"default": str}
+            {
+                "error": "No visualization data available",
+                "indicator": indicator.name,
+                "state": state.state_values if hasattr(state, "state_values") else {},
+                "help": "Please upload visualization data for this indicator and state",
+            },
+            status=404,
         )
         self._add_no_cache_headers(response)
         return response
 
     def _process_data_for_deckgl(self, indicator_data, indicator_type, year):
-        """Process data for different indicator types into deck.gl compatible format"""
-        import numpy as np
-        import json
+        """
+        DEPRECATED: This method previously generated synthetic data.
+        Real data should be stored in LayerConfig and served via get_deckgl_data.
+        This is kept for backward compatibility but should not be used.
+        """
         from datetime import datetime
-        import random
 
-        try:
-            # Common bounds for all visualizations - can be overridden per indicator
-            bounds = {
-                "west": -74.056,
-                "south": 40.6628,
-                "east": -73.956,
-                "north": 40.7628,
-            }
-
-            # Start with basic metadata
-            result = {
-                "metadata": {
-                    "timestamp": datetime.now().isoformat(),
-                    "year": year,
-                    "bounds": bounds,
-                    "indicator_type": indicator_type,
-                }
-            }
-
-            # Generate appropriate data based on indicator type
-            if indicator_type == "mobility":
-                # Generate mobility data if not already in result
-                if "trips" not in result:
-                    # Create synthetic trip data
-                    center_lon, center_lat = -74.006, 40.7128
-                    trips = []
-
-                    # Generate synthetic trip paths
-                    for i in range(100):
-                        # Random start and end points around the center
-                        start_lon = center_lon + (random.random() - 0.5) * 0.1
-                        start_lat = center_lat + (random.random() - 0.5) * 0.1
-                        end_lon = center_lon + (random.random() - 0.5) * 0.1
-                        end_lat = center_lat + (random.random() - 0.5) * 0.1
-
-                        # Generate some waypoints
-                        num_waypoints = random.randint(1, 3)
-                        path = [[start_lon, start_lat]]
-
-                        for j in range(num_waypoints):
-                            way_lon = start_lon + (end_lon - start_lon) * (j + 1) / (
-                                num_waypoints + 1
-                            )
-                            way_lat = start_lat + (end_lat - start_lat) * (j + 1) / (
-                                num_waypoints + 1
-                            )
-                            # Add some randomness to waypoints
-                            way_lon += (random.random() - 0.5) * 0.01
-                            way_lat += (random.random() - 0.5) * 0.01
-                            path.append([way_lon, way_lat])
-
-                        path.append([end_lon, end_lat])
-
-                        # Generate timestamps for animation
-                        timestamps = [i * 20 for i in range(len(path))]
-
-                        trips.append(
-                            {
-                                "path": path,
-                                "timestamps": timestamps,
-                                "mode": random.choice(
-                                    ["walk", "bike", "car", "transit"]
-                                ),
-                                "duration": timestamps[-1],
-                            }
-                        )
-
-                    result["trips"] = trips
-
-                # Add transit network if not present
-                if "transit" not in result:
-                    # Simplified transit network
-                    result["transit"] = {"type": "FeatureCollection", "features": []}
-
-                    # Generate some transit lines
-                    for i in range(10):
-                        # Main axis
-                        start_lon = bounds["west"] + random.random() * (
-                            bounds["east"] - bounds["west"]
-                        )
-                        start_lat = bounds["south"] + random.random() * (
-                            bounds["north"] - bounds["south"]
-                        )
-                        end_lon = bounds["west"] + random.random() * (
-                            bounds["east"] - bounds["west"]
-                        )
-                        end_lat = bounds["south"] + random.random() * (
-                            bounds["north"] - bounds["south"]
-                        )
-
-                        # Pre-compute the color array to avoid serialization issues
-                        color_array = random.choice(
-                            [
-                                [255, 0, 0],  # Red
-                                [0, 255, 0],  # Green
-                                [0, 0, 255],  # Blue
-                                [255, 255, 0],  # Yellow
-                                [0, 255, 255],  # Cyan
-                                [255, 0, 255],  # Magenta
-                            ]
-                        )
-
-                        # Create line feature
-                        line_feature = {
-                            "type": "Feature",
-                            "geometry": {
-                                "type": "LineString",
-                                "coordinates": [
-                                    [start_lon, start_lat],
-                                    [end_lon, end_lat],
-                                ],
-                            },
-                            "properties": {
-                                "id": f"line_{i}",
-                                "name": f"Transit Line {i+1}",
-                                "type": random.choice(["subway", "bus", "rail"]),
-                                "color": color_array,
-                            },
-                        }
-                        result["transit"]["features"].append(line_feature)
-
-            elif indicator_type == "climate":
-                # Generate climate data if not already in result
-                if "points" not in result:
-                    # Create synthetic heat map data
-                    points = []
-
-                    # Generate heat map points with varying intensity
-                    for i in range(1000):
-                        lon = bounds["west"] + random.random() * (
-                            bounds["east"] - bounds["west"]
-                        )
-                        lat = bounds["south"] + random.random() * (
-                            bounds["north"] - bounds["south"]
-                        )
-
-                        # Make intensity higher in center and lower at edges
-                        dx = (lon - (bounds["west"] + bounds["east"]) / 2) / (
-                            (bounds["east"] - bounds["west"]) / 2
-                        )
-                        dy = (lat - (bounds["south"] + bounds["north"]) / 2) / (
-                            (bounds["north"] - bounds["south"]) / 2
-                        )
-                        dist = np.sqrt(dx * dx + dy * dy)
-                        intensity = float(max(0, 10 * (1 - dist) + random.random() * 3))
-
-                        points.append(
-                            {
-                                "coordinates": [lon, lat],
-                                "properties": {
-                                    "intensity": intensity,
-                                    "category": random.choice(
-                                        ["temperature", "pollution", "co2"]
-                                    ),
-                                },
-                            }
-                        )
-
-                    result["points"] = points
-
-                # Add boundary data if not present
-                if "boundaries" not in result:
-                    # Create boundary polygons for climate zones
-                    result["boundaries"] = {"type": "FeatureCollection", "features": []}
-
-                    # Create a few climate zone boundaries
-                    for i in range(5):
-                        # Create a random polygon within bounds
-                        west = bounds["west"] + random.random() * 0.7 * (
-                            bounds["east"] - bounds["west"]
-                        )
-                        south = bounds["south"] + random.random() * 0.7 * (
-                            bounds["north"] - bounds["south"]
-                        )
-                        width = (
-                            random.random() * 0.3 * (bounds["east"] - bounds["west"])
-                        )
-                        height = (
-                            random.random() * 0.3 * (bounds["north"] - bounds["south"])
-                        )
-
-                        # Pre-compute color array
-                        color_value = random.random() * 100
-                        if color_value < 33:
-                            colorArray = [50, 100, 200, 100]  # Blue for low values
-                        elif color_value < 66:
-                            colorArray = [100, 200, 100, 100]  # Green for medium values
-                        else:
-                            colorArray = [200, 100, 50, 100]  # Red for high values
-
-                        polygon_feature = {
-                            "type": "Feature",
-                            "geometry": {
-                                "type": "Polygon",
-                                "coordinates": [
-                                    [
-                                        [west, south],
-                                        [west + width, south],
-                                        [west + width, south + height],
-                                        [west, south + height],
-                                        [west, south],
-                                    ]
-                                ],
-                            },
-                            "properties": {
-                                "id": f"zone_{i}",
-                                "name": f"Climate Zone {i+1}",
-                                "category": random.choice(
-                                    ["urban", "suburban", "park", "industrial"]
-                                ),
-                                "value": float(random.random() * 100),
-                                "colorArray": colorArray,
-                            },
-                        }
-                        result["boundaries"]["features"].append(polygon_feature)
-
-            elif indicator_type == "land_use":
-                # Generate land use data if not already in result
-                if "points" not in result:
-                    # Create synthetic point data for hexagon layer
-                    points = []
-
-                    # Generate dense points for hexagon aggregation
-                    for i in range(2000):
-                        lon = bounds["west"] + random.random() * (
-                            bounds["east"] - bounds["west"]
-                        )
-                        lat = bounds["south"] + random.random() * (
-                            bounds["north"] - bounds["south"]
-                        )
-
-                        # Random height and color values
-                        height = float(random.random() * 200)  # Building height
-                        color_value = float(random.random() * 10)  # For color gradients
-
-                        points.append(
-                            {
-                                "coordinates": [lon, lat],
-                                "properties": {
-                                    "height": height,
-                                    "color_value": color_value,
-                                    "type": random.choice(
-                                        [
-                                            "residential",
-                                            "commercial",
-                                            "industrial",
-                                            "mixed",
-                                        ]
-                                    ),
-                                },
-                            }
-                        )
-
-                    result["points"] = points
-
-                # Add building data if not present
-                if "buildings" not in result:
-                    # Create 3D building data
-                    result["buildings"] = {"type": "FeatureCollection", "features": []}
-
-                    # Generate building polygons
-                    building_count = 100  # Reduced from 200 to improve performance
-                    for i in range(building_count):
-                        # Create a random polygon for a building
-                        center_lon = bounds["west"] + random.random() * (
-                            bounds["east"] - bounds["west"]
-                        )
-                        center_lat = bounds["south"] + random.random() * (
-                            bounds["north"] - bounds["south"]
-                        )
-
-                        # Random building size
-                        size = random.random() * 0.005 + 0.001
-
-                        # Create polygon with slight irregularity
-                        vertices = []
-                        vertex_count = random.randint(4, 6)
-                        for j in range(vertex_count):
-                            angle = j * 2 * np.pi / vertex_count
-                            dist = size * (0.8 + 0.4 * random.random())
-                            lon = center_lon + dist * np.cos(angle)
-                            lat = center_lat + dist * np.sin(angle)
-                            vertices.append([lon, lat])
-
-                        # Close the polygon
-                        vertices.append(vertices[0])
-
-                        # Assign building height and type
-                        height = float(
-                            random.random() * 100 + 10
-                        )  # Range from 10 to 110
-
-                        # Assign different colors based on building type
-                        building_type = random.choice(
-                            ["residential", "commercial", "industrial", "mixed"]
-                        )
-                        if building_type == "residential":
-                            color = [66, 135, 245, 200]  # Blue
-                        elif building_type == "commercial":
-                            color = [240, 149, 12, 200]  # Orange
-                        elif building_type == "industrial":
-                            color = [120, 120, 120, 200]  # Gray
-                        else:  # mixed
-                            color = [20, 160, 90, 200]  # Green
-
-                        building_feature = {
-                            "type": "Feature",
-                            "geometry": {"type": "Polygon", "coordinates": [vertices]},
-                            "properties": {
-                                "id": f"building_{i}",
-                                "height": height,
-                                "color": color,
-                                "type": building_type,
-                            },
-                        }
-                        result["buildings"]["features"].append(building_feature)
-
-            else:
-                # Default visualization with points of interest
-                if "features" not in result:
-                    result["features"] = []
-
-                    # Generate random points
-                    for i in range(100):
-                        lon = bounds["west"] + random.random() * (
-                            bounds["east"] - bounds["west"]
-                        )
-                        lat = bounds["south"] + random.random() * (
-                            bounds["north"] - bounds["south"]
-                        )
-
-                        # Pre-compute color array
-                        color = [
-                            int(random.random() * 255),
-                            int(random.random() * 255),
-                            int(random.random() * 255),
-                        ]
-
-                        result["features"].append(
-                            {
-                                "geometry": {
-                                    "type": "Point",
-                                    "coordinates": [lon, lat],
-                                },
-                                "properties": {
-                                    "id": f"poi_{i}",
-                                    "name": f"Point {i+1}",
-                                    "radius": float(random.random() * 100 + 20),
-                                    "color": color,
-                                },
-                            }
-                        )
-
-            # Verify the entire result is serializable
-            try:
-                # Convert non-serializable types to strings
-                json_str = json.dumps(
-                    result,
-                    default=lambda obj: (
-                        str(obj)
-                        if not isinstance(
-                            obj, (dict, list, str, int, float, bool, type(None))
-                        )
-                        else obj
-                    ),
-                )
-                # Parse back to ensure valid
-                test_result = json.loads(json_str)
-                # Return the validated result
-                return test_result
-            except Exception as e:
-                print(f"Error serializing result: {e}")
-                # Return a simplified version without the problematic parts
-                return {
-                    "error": f"Data serialization error: {e}",
-                    "metadata": result.get("metadata", {}),
-                }
-
-            return result
-
-        except Exception as e:
-            print(f"Error processing data for deck.gl: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-            # Return a minimal result with error info
-            return {
-                "error": str(e),
-                "metadata": {
-                    "timestamp": datetime.now().isoformat(),
-                    "indicator_type": indicator_type,
-                    "year": year,
-                },
-            }
+        # Return minimal metadata with deprecation warning
+        return {
+            "error": "Synthetic data generation has been removed",
+            "message": "Please use real visualization data stored in LayerConfig",
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "year": year,
+                "indicator_type": indicator_type,
+            },
+        }
 
     @action(detail=False, methods=["get"])
     def get_current_dashboard_data(self, request):

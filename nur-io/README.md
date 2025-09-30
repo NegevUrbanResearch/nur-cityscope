@@ -15,7 +15,6 @@ nur-io/
     ├── backend/                # Main Django application
     │   ├── management/         # Django management commands
     │   │   └── commands/
-    │   │       └── create_sample_data.py  # Data creation command
     │   ├── migrations/         # Database migrations
     │   ├── models.py           # Database models
     │   ├── views.py            # API endpoints
@@ -35,36 +34,32 @@ nur-io/
     ├── init.sh                 # Initialization script
     └── Dockerfile              # Docker configuration
 ```
-**Note**: A `django_api/media/` directory is created automatically at runtime when Django generates images, maps, and other media files, but is not in the source code.
 
+**Note**: A `django_api/media/` directory is created automatically at runtime when Django generates images, maps, and other media files, but is not in the source code.
 
 ## API Endpoints
 
 ### Main Endpoints
+
 - `/api/indicators/` - Indicator management
 - `/api/dashboard_feed_state/` - Dashboard data
 - `/api/actions/` - Interactive actions (state changes, data retrieval)
 
 ### WebSocket Endpoints
+
 - `/ws/dashboard/` - Dashboard real-time updates
 - `/ws/map/` - Map real-time updates
 
 ## Data Management
 
-#### Sample Data Creation
-The system includes a comprehensive sample data generator:
-
-```bash
-# Generate all sample data (indicators, states, dashboard data, images, GeoJSON)
-docker exec -it nur-api python manage.py create_sample_data
-```
-
 #### Export Database
+
 ```bash
 docker exec -it nur-db pg_dump -U postgres -W -h localhost db > db.sql
 ```
 
 #### Import Database
+
 ```bash
 # Reset database
 docker exec -i nur-db psql db -U postgres -c "DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;"
@@ -92,6 +87,7 @@ The backend follows a clean Django architecture:
 4. **Data Processing**: Add management commands in `backend/management/commands/`
 
 ### Testing
+
 ```bash
 # Run all tests
 docker exec -it nur-api python manage.py test
@@ -105,6 +101,7 @@ docker exec -it nur-api python manage.py check
 ```
 
 ### Database Migrations
+
 ```bash
 # Create migrations for model changes
 docker exec -it nur-api python manage.py makemigrations
@@ -119,6 +116,7 @@ docker exec -it nur-api python manage.py showmigrations
 ## Configuration
 
 ### Environment Variables
+
 Key environment variables (set in `.env`):
 
 - `API_PORT`: Backend API port (default: 9900)
@@ -129,6 +127,7 @@ Key environment variables (set in `.env`):
 - `DATABASE_URL`: Full database connection string
 
 ### Django Settings
+
 Main settings are in `core/settings.py`:
 
 - Database configuration using `dj_database_url`
@@ -136,9 +135,9 @@ Main settings are in `core/settings.py`:
 - Django Channels configuration for WebSockets
 - Media file handling
 
-
 ## API Documentation
 
 ### Interactive API Documentation
+
 - Swagger UI: `http://localhost:8500/api/swagger/`
 - ReDoc: `http://localhost:8500/api/redoc/`
