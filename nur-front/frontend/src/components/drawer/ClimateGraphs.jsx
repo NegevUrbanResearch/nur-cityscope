@@ -28,6 +28,33 @@ const ClimateGraphs = () => {
     globals.INDICATOR_STATE?.type || "utci"
   );
 
+  // Fetch the current climate state from the backend on mount
+  useEffect(() => {
+    const fetchCurrentState = async () => {
+      try {
+        const response = await api.get(
+          "/api/actions/get_current_dashboard_data/"
+        );
+        if (response.data && response.data.state) {
+          const backendType = response.data.state.type || "utci";
+          console.log(`✓ Synced climate type from backend: ${backendType}`);
+          setScenarioType(backendType);
+
+          // Update global state to match backend
+          globals.INDICATOR_STATE = {
+            ...globals.INDICATOR_STATE,
+            ...response.data.state,
+          };
+        }
+      } catch (error) {
+        console.error("Error fetching current climate state:", error);
+        // On error, keep the default "utci" state
+      }
+    };
+
+    fetchCurrentState();
+  }, []); // Run only once on mount
+
   const handleTypeChange = async (event, newType) => {
     if (newType !== null) {
       setScenarioType(newType);
