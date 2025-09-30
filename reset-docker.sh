@@ -22,5 +22,12 @@ docker system prune -f
 echo ""
 echo "✅ Reset complete!"
 echo ""
-echo "Now run: docker-compose up --build"
+echo "5️⃣  Rebuilding and starting containers..."
+docker-compose up --build -d
+
+echo ""
+echo "✅ All done! Containers are running in the background."
+echo ""
+echo "View logs with: docker-compose logs -f"
+echo "Stop containers with: docker-compose down"
 echo ""
