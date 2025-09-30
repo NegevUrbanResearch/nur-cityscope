@@ -1,5 +1,12 @@
 from django.core.management.base import BaseCommand
-from backend.models import Indicator, State, IndicatorData, IndicatorImage, DashboardFeedState, LayerConfig
+from backend.models import (
+    Indicator,
+    State,
+    IndicatorData,
+    IndicatorImage,
+    DashboardFeedState,
+    LayerConfig,
+)
 from django.conf import settings
 import os
 import json
@@ -9,168 +16,162 @@ class Command(BaseCommand):
     help = "Creates data structure and loads real data from public/processed/"
 
     def handle(self, *args, **options):
-        self.stdout.write(self.style.SUCCESS("Setting up data structure from public/processed..."))
+        self.stdout.write(
+            self.style.SUCCESS("Setting up data structure from public/processed...")
+        )
 
         # Get indicators and states
-        mobility = Indicator.objects.filter(category='mobility').first()
-        climate = Indicator.objects.filter(category='climate').first()
-        
-        general_states = State.objects.filter(scenario_type='general').order_by('id')
-        climate_states = State.objects.filter(scenario_type__in=['utci', 'plan']).order_by('scenario_name', 'scenario_type')
+        mobility = Indicator.objects.filter(category="mobility").first()
+        climate = Indicator.objects.filter(category="climate").first()
+
+        general_states = State.objects.filter(scenario_type="general").order_by("id")
+        climate_states = State.objects.filter(
+            scenario_type__in=["utci", "plan"]
+        ).order_by("scenario_name", "scenario_type")
 
         if not mobility or not climate:
-            self.stdout.write(self.style.ERROR("❌ Indicators not found! Run migrations first."))
+            self.stdout.write(
+                self.style.ERROR("❌ Indicators not found! Run migrations first.")
+            )
             return
 
         # Process Mobility data (Present/Future states)
         self.stdout.write(self.style.SUCCESS("\n📊 Processing Mobility data..."))
         for state in general_states:
-            scenario = state.state_values.get('scenario', 'present')
-            label = state.state_values.get('label', scenario)
-            
+            scenario = state.state_values.get("scenario", "present")
+            label = state.state_values.get("label", scenario)
+
             # Create IndicatorData link
             ind_data, created = IndicatorData.objects.get_or_create(
-                indicator=mobility,
-                state=state
+                indicator=mobility, state=state
             )
             if created:
                 self.stdout.write(f"  ✓ Created IndicatorData: Mobility - {label}")
-            
+
             # Load image
             image_path = self._find_mobility_image(scenario)
             if image_path:
                 img, img_created = IndicatorImage.objects.get_or_create(
-                    indicatorData=ind_data,
-                    defaults={'image': image_path}
+                    indicatorData=ind_data, defaults={"image": image_path}
                 )
                 if img_created or img.image != image_path:
                     img.image = image_path
                     img.save()
                 self.stdout.write(f"    🖼️  Image: {image_path}")
             else:
-                self.stdout.write(self.style.WARNING(f"    ⚠️  No image found for {scenario}"))
-            
+                self.stdout.write(
+                    self.style.WARNING(f"    ⚠️  No image found for {scenario}")
+                )
+
             # Load HTML map if exists
             map_path = self._find_mobility_map(scenario)
             if map_path:
                 LayerConfig.objects.update_or_create(
                     indicatorData=ind_data,
                     defaults={
-                        'layer_config': {
-                            'mapUrl': f'/media/{map_path}',
-                            'type': 'html'
+                        "layer_config": {
+                            "mapUrl": f"/media/indicators/{map_path}",
+                            "type": "html",
                         }
-                    }
+                    },
                 )
                 self.stdout.write(f"    🗺️  Map: {map_path}")
-            
-            # Load dashboard data
-            dashboard_data = self._find_dashboard_data('mobility', scenario)
-            if dashboard_data:
-                DashboardFeedState.objects.update_or_create(
-                    state=state,
-                    dashboard_type='mobility',
-                    defaults={'data': dashboard_data}
-                )
-                self.stdout.write(f"    📈 Dashboard data loaded")
-            else:
-                self.stdout.write(self.style.WARNING(f"    ⚠️  No dashboard.json found for {scenario}"))
 
         # Process Climate data (scenario states)
         self.stdout.write(self.style.SUCCESS("\n🌡️  Processing Climate data..."))
         for state in climate_states:
             scenario_name = state.scenario_name
             scenario_type = state.scenario_type
-            
+
             # Create IndicatorData link
             ind_data, created = IndicatorData.objects.get_or_create(
-                indicator=climate,
-                state=state
+                indicator=climate, state=state
             )
             if created:
-                self.stdout.write(f"  ✓ Created IndicatorData: {scenario_name} ({scenario_type})")
-            
+                self.stdout.write(
+                    f"  ✓ Created IndicatorData: {scenario_name} ({scenario_type})"
+                )
+
             # Load climate image
             image_path = self._find_climate_image(scenario_name, scenario_type)
             if image_path:
                 img, img_created = IndicatorImage.objects.get_or_create(
-                    indicatorData=ind_data,
-                    defaults={'image': image_path}
+                    indicatorData=ind_data, defaults={"image": image_path}
                 )
                 if img_created or img.image != image_path:
                     img.image = image_path
                     img.save()
                 self.stdout.write(f"    🖼️  Image: {image_path}")
             else:
-                self.stdout.write(self.style.WARNING(f"    ⚠️  No image found for {scenario_name} ({scenario_type})"))
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"    ⚠️  No image found for {scenario_name} ({scenario_type})"
+                    )
+                )
 
-        self.stdout.write(self.style.SUCCESS("\n✅ Data structure created and real data loaded successfully!"))
-        self.stdout.write(self.style.SUCCESS(f"   📊 {IndicatorData.objects.count()} IndicatorData entries"))
-        self.stdout.write(self.style.SUCCESS(f"   🖼️  {IndicatorImage.objects.count()} images linked"))
+        self.stdout.write(
+            self.style.SUCCESS(
+                "\n✅ Data structure created and real data loaded successfully!"
+            )
+        )
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"   📊 {IndicatorData.objects.count()} IndicatorData entries"
+            )
+        )
+        self.stdout.write(
+            self.style.SUCCESS(f"   🖼️  {IndicatorImage.objects.count()} images linked")
+        )
 
     def _find_mobility_image(self, scenario):
         """Find mobility image in public/processed/mobility/{scenario}/image/"""
-        base_path = os.path.join(settings.BASE_DIR, 'public', 'processed', 'mobility', scenario, 'image')
-        
+        base_path = os.path.join(
+            settings.BASE_DIR, "public", "processed", "mobility", scenario, "image"
+        )
+
         if os.path.exists(base_path):
             for filename in os.listdir(base_path):
-                if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                    return f'processed/mobility/{scenario}/image/{filename}'
+                if filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
+                    return f"processed/mobility/{scenario}/image/{filename}"
         return None
 
     def _find_mobility_map(self, scenario):
         """Find mobility HTML map in public/processed/mobility/{scenario}/map/"""
-        base_path = os.path.join(settings.BASE_DIR, 'public', 'processed', 'mobility', scenario, 'map')
-        
+        base_path = os.path.join(
+            settings.BASE_DIR, "public", "processed", "mobility", scenario, "map"
+        )
+
         if os.path.exists(base_path):
             for filename in os.listdir(base_path):
-                if filename.lower().endswith('.html'):
-                    return f'processed/mobility/{scenario}/map/{filename}'
+                if filename.lower().endswith(".html"):
+                    return f"processed/mobility/{scenario}/map/{filename}"
         return None
 
     def _find_climate_image(self, scenario_name, scenario_type):
         """Find climate image in public/processed/climate/{type}/"""
         # Directory is now just 'utci' or 'plan' instead of 'utci-scenarios'
-        base_path = os.path.join(settings.BASE_DIR, 'public', 'processed', 'climate', scenario_type)
-        
+        base_path = os.path.join(
+            settings.BASE_DIR, "public", "processed", "climate", scenario_type
+        )
+
         if not os.path.exists(base_path):
             return None
-        
+
         # Build search patterns for the scenario
         search_patterns = [
-            scenario_name.replace('_', ' '),  # e.g., "dense highrise"
-            scenario_name.replace('_', '-'),  # e.g., "dense-highrise"
-            scenario_name.replace('_', ''),   # e.g., "densehighrise"
+            scenario_name.replace("_", " "),  # e.g., "dense highrise"
+            scenario_name.replace("_", "-"),  # e.g., "dense-highrise"
+            scenario_name.replace("_", ""),  # e.g., "densehighrise"
         ]
-        
+
         for filename in os.listdir(base_path):
-            if not filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+            if not filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
                 continue
-            
+
             filename_lower = filename.lower()
             # Check if any pattern matches
             for pattern in search_patterns:
                 if pattern.lower() in filename_lower:
-                    return f'processed/climate/{scenario_type}/{filename}'
-        
-        return None
+                    return f"processed/climate/{scenario_type}/{filename}"
 
-    def _find_dashboard_data(self, category, scenario):
-        """Find dashboard.json in public/processed/{category}/{scenario}/"""
-        dashboard_file = os.path.join(
-            settings.BASE_DIR, 
-            'public', 
-            'processed', 
-            category, 
-            scenario, 
-            'dashboard.json'
-        )
-        
-        if os.path.exists(dashboard_file):
-            try:
-                with open(dashboard_file, 'r') as f:
-                    return json.load(f)
-            except Exception as e:
-                self.stdout.write(self.style.WARNING(f"    ⚠️  Error loading {dashboard_file}: {e}"))
-        
         return None
