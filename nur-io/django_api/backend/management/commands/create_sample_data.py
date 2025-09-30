@@ -3,7 +3,6 @@ from backend.models import (
     Indicator,
     State,
     IndicatorData,
-    IndicatorGeojson,
     LayerConfig,
     DashboardFeedState,
     MapType,
@@ -597,7 +596,6 @@ class Command(BaseCommand):
         Indicator.objects.all().delete()
         State.objects.all().delete()
         IndicatorData.objects.all().delete()
-        IndicatorGeojson.objects.all().delete()
         IndicatorImage.objects.all().delete()
         LayerConfig.objects.all().delete()
         DashboardFeedState.objects.all().delete()
@@ -785,13 +783,6 @@ class Command(BaseCommand):
                 if not created:
                     image_obj.image = img_path
                     image_obj.save()
-
-                # GeoJSON: only store if real is available; never generate
-                if real_assets.get("geojson_dict"):
-                    IndicatorGeojson.objects.update_or_create(
-                        indicatorData=data,
-                        defaults={"geojson": real_assets["geojson_dict"]},
-                    )
 
                 # Add layer config
                 LayerConfig.objects.update_or_create(
