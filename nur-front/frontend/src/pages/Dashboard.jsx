@@ -172,6 +172,57 @@ const Dashboard = ({ openCharts }) => {
     };
   }, [currentIndicator, visualizationMode, preloadImage]);
 
+  // Listen for climate state changes (scenario or type changes)
+  useEffect(() => {
+    const handleClimateStateChange = async () => {
+      if (currentIndicator === "climate") {
+        console.log("Climate state changed, refreshing image...");
+
+        // Fetch new image data
+        try {
+          const timestamp = Date.now();
+          const response = await api.get(
+            `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}`
+          );
+
+          if (response.data && response.data.image_data) {
+            let url = response.data.image_data.startsWith("/")
+              ? `${config.media.baseUrl}${response.data.image_data}`
+              : `${config.media.baseUrl}/media/${response.data.image_data}`;
+
+            const isHtml = isHtmlAnimation(url);
+
+            if (!isHtml) {
+              url += `?_=${timestamp}`;
+            }
+
+            setMapData({
+              url,
+              type: response.data.type || "map",
+              loading: false,
+              error: false,
+            });
+
+            if (!isHtml) {
+              preloadImage(url);
+            }
+          }
+        } catch (err) {
+          console.error("Error refreshing climate image:", err);
+        }
+      }
+    };
+
+    window.addEventListener("climateStateChanged", handleClimateStateChange);
+
+    return () => {
+      window.removeEventListener(
+        "climateStateChanged",
+        handleClimateStateChange
+      );
+    };
+  }, [currentIndicator, preloadImage]);
+
   // Memoize state object to prevent unnecessary re-renders and iframe reloads
   // Must be called before any early returns (Rules of Hooks)
   const state = useMemo(() => {

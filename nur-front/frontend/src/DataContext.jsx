@@ -279,6 +279,9 @@ export const DataProvider = ({ children }) => {
               type: currentType,
               label: `${stateName} - ${currentType.toUpperCase()}`,
             };
+
+            // Trigger a custom event to notify Dashboard of the change
+            window.dispatchEvent(new CustomEvent("climateStateChanged"));
           } catch (error) {
             console.error("Error changing climate state:", error);
           }
