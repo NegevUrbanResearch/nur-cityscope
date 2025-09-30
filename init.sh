@@ -45,6 +45,18 @@ if [ "$NEED_INIT" = true ]; then
     echo "Cleaning up existing data..."
     python manage.py shell -c "from backend.models import Indicator, State, IndicatorData, LayerConfig, DashboardFeedState, IndicatorImage; IndicatorImage.objects.all().delete(); DashboardFeedState.objects.all().delete(); LayerConfig.objects.all().delete(); IndicatorData.objects.all().delete(); State.objects.filter(scenario_type='general').delete(); Indicator.objects.all().delete();"
 
+    # Copy media files from public to media directory
+    echo "Copying media files from public to media directory..."
+    mkdir -p /app/media/indicators
+    if [ -d "/app/public/processed" ]; then
+        cp -rf /app/public/processed /app/media/indicators/
+        # Set proper permissions
+        chmod -R 755 /app/media/indicators
+        echo "✓ Copied files from /app/public/processed to /app/media/indicators/processed"
+    else
+        echo "⚠️  Warning: /app/public/processed directory not found"
+    fi
+
     # Create basic indicators and states
     echo "Creating indicators and states..."
     python manage.py shell -c "
@@ -86,6 +98,10 @@ State.objects.get_or_create(
 )
 print('✓ Created Future state')
 "
+
+    # Run the create_data management command to load all data
+    echo "Loading data from processed files..."
+    python manage.py create_data
 
     # Create default admin user if it doesn't exist
     echo "Creating default admin user..."

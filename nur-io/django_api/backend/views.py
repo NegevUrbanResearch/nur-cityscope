@@ -137,14 +137,14 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     globals.INDICATOR_STATE = state.state_values
                     print(f"Initialized state: {globals.INDICATOR_STATE}")
                 else:
-                    # Fallback to using the default state values directly
+                    # Use the default state values directly
                     globals.INDICATOR_STATE = globals.DEFAULT_STATES
                     print(
-                        f"No states in database. Using fallback default: {globals.INDICATOR_STATE}"
+                        f"No states in database. Using default: {globals.INDICATOR_STATE}"
                     )
             except Exception as e:
                 print(f"Error initializing default state: {e}")
-                # Minimal fallback
+                # Use minimal default state
                 globals.INDICATOR_STATE = {"year": 2023}
 
     def check_and_send_data(self):
@@ -374,7 +374,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             if indicator:
                 globals.INDICATOR_ID = indicator.indicator_id
                 print(
-                    f"Using fallback indicator: {indicator.name} (ID: {indicator.indicator_id})"
+                    f"Using first available indicator: {indicator.name} (ID: {indicator.indicator_id})"
                 )
             else:
                 response = JsonResponse({"error": "No indicators found"}, status=404)
@@ -450,7 +450,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             state = State.objects.first()
             if state:
                 globals.INDICATOR_STATE = state.state_values
-                print(f"Using fallback state: {state.state_values}")
+                print(f"Using first available state: {state.state_values}")
             else:
                 response = JsonResponse({"error": "No states found"}, status=404)
                 self._add_no_cache_headers(response)
@@ -492,7 +492,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 return response
             except (AttributeError, ValueError) as e:
                 print(f"Error with image data: {e}")
-                # Continue to map fallback
 
         # If no static image is found, return an error
         response = JsonResponse(
@@ -571,7 +570,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     state_values=globals.INDICATOR_STATE
                 ).first()
 
-            # Fallback to any state if still not found
+            # Use first available state if none match
             if not state:
                 state = State.objects.first()
 
