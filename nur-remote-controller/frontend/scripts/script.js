@@ -249,6 +249,7 @@ function updateCurrentIndicator(shouldRegenerateButtons = false) {
     .then((data) => {
       const indicatorId = data.indicator_id;
       const indicatorState = data.indicator_state || {};
+      const visualizationMode = data.visualization_mode || "image";
       const indicatorElement = document.querySelector(".indicator");
 
       // Use cached indicators if available
@@ -312,6 +313,9 @@ function updateCurrentIndicator(shouldRegenerateButtons = false) {
           if (shouldRegenerateButtons || categoryChanged) {
             generateStateButtons();
             generateQuickActions();
+          } else {
+            // Even if not regenerating, update the active states
+            updateButtonStates(indicatorState, visualizationMode);
           }
         } else {
           indicatorElement.textContent = "Unknown";
@@ -321,6 +325,71 @@ function updateCurrentIndicator(shouldRegenerateButtons = false) {
     .catch((error) => {
       console.error("Error fetching global variables:", error);
     });
+}
+
+/**
+ * Update button active states based on current backend state
+ * @param {Object} indicatorState - Current indicator state from backend
+ * @param {string} visualizationMode - Current visualization mode (image or map)
+ */
+function updateButtonStates(indicatorState, visualizationMode) {
+  // Update state buttons based on current state
+  if (currentIndicatorCategory === "climate") {
+    // Highlight the active climate scenario button
+    const activeScenario = indicatorState.scenario || "existing";
+    document.querySelectorAll(".state-button").forEach((btn) => {
+      if (btn.dataset.scenario === activeScenario) {
+        btn.classList.remove("glowing-button");
+        btn.classList.add("neon-button");
+        btn.classList.add("active");
+      } else {
+        btn.classList.remove("neon-button");
+        btn.classList.remove("active");
+        btn.classList.add("glowing-button");
+      }
+    });
+
+    // Highlight the active climate type button (utci or plan)
+    const activeType = indicatorState.type || "utci";
+    document.querySelectorAll(".config-button").forEach((btn) => {
+      if (btn.dataset.configValue === activeType) {
+        btn.classList.remove("glowing-button");
+        btn.classList.add("neon-button");
+        btn.classList.add("active");
+      } else {
+        btn.classList.remove("neon-button");
+        btn.classList.remove("active");
+        btn.classList.add("glowing-button");
+      }
+    });
+  } else if (currentIndicatorCategory === "mobility") {
+    // Highlight the active mobility state button (present or future)
+    const activeScenario = indicatorState.scenario || "present";
+    document.querySelectorAll(".state-button").forEach((btn) => {
+      if (btn.dataset.scenario === activeScenario) {
+        btn.classList.remove("glowing-button");
+        btn.classList.add("neon-button");
+        btn.classList.add("active");
+      } else {
+        btn.classList.remove("neon-button");
+        btn.classList.remove("active");
+        btn.classList.add("glowing-button");
+      }
+    });
+
+    // Highlight the active visualization mode button (image or map)
+    document.querySelectorAll(".config-button").forEach((btn) => {
+      if (btn.dataset.configValue === visualizationMode) {
+        btn.classList.remove("glowing-button");
+        btn.classList.add("neon-button");
+        btn.classList.add("active");
+      } else {
+        btn.classList.remove("neon-button");
+        btn.classList.remove("active");
+        btn.classList.add("glowing-button");
+      }
+    });
+  }
 }
 
 // Initialize on page load
@@ -341,6 +410,33 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Update indicator display every second (but don't regenerate buttons unless category changed)
   setInterval(() => updateCurrentIndicator(false), 1000);
+
+  // Listen for climate state changes from the dashboard
+  window.addEventListener("climateStateChanged", () => {
+    console.log(
+      "🌡️ Remote controller received climate state change event from dashboard"
+    );
+    // Fetch updated state and update buttons
+    updateCurrentIndicator(false);
+  });
+
+  // Listen for general indicator state changes from the dashboard
+  window.addEventListener("indicatorStateChanged", () => {
+    console.log(
+      "📊 Remote controller received indicator state change event from dashboard"
+    );
+    // Fetch updated state and update buttons
+    updateCurrentIndicator(false);
+  });
+
+  // Listen for visualization mode changes from the dashboard
+  window.addEventListener("visualizationModeChanged", (event) => {
+    console.log(
+      "🗺️ Remote controller received visualization mode change event from dashboard"
+    );
+    // Fetch updated state and update buttons
+    updateCurrentIndicator(false);
+  });
 });
 
 /**
@@ -392,6 +488,18 @@ function generateStateButtons() {
 
       stateButtonsContainer.appendChild(button);
     });
+
+    // Fetch current state and update button highlighting
+    apiClient
+      .get("/actions/get_global_variables/")
+      .then((data) => {
+        const indicatorState = data.indicator_state || {};
+        const visualizationMode = data.visualization_mode || "image";
+        updateButtonStates(indicatorState, visualizationMode);
+      })
+      .catch((err) => {
+        console.error("Error fetching state for button highlighting:", err);
+      });
   } else if (currentIndicatorCategory === "mobility") {
     // For mobility: show Present and Future
     const mobilityStates = [
@@ -449,6 +557,18 @@ function generateStateButtons() {
 
       stateButtonsContainer.appendChild(button);
     });
+
+    // Fetch current state and update button highlighting
+    apiClient
+      .get("/actions/get_global_variables/")
+      .then((data) => {
+        const indicatorState = data.indicator_state || {};
+        const visualizationMode = data.visualization_mode || "image";
+        updateButtonStates(indicatorState, visualizationMode);
+      })
+      .catch((err) => {
+        console.error("Error fetching state for button highlighting:", err);
+      });
   }
 }
 
@@ -504,6 +624,18 @@ function generateQuickActions() {
 
       configContainer.appendChild(button);
     });
+
+    // Fetch current state and update button highlighting
+    apiClient
+      .get("/actions/get_global_variables/")
+      .then((data) => {
+        const indicatorState = data.indicator_state || {};
+        const visualizationMode = data.visualization_mode || "image";
+        updateButtonStates(indicatorState, visualizationMode);
+      })
+      .catch((err) => {
+        console.error("Error fetching state for button highlighting:", err);
+      });
   } else if (currentIndicatorCategory === "mobility") {
     // For mobility: toggle between Image and Map (static vs interactive)
     const mobilityModes = [
@@ -538,5 +670,17 @@ function generateQuickActions() {
 
       configContainer.appendChild(button);
     });
+
+    // Fetch current state and update button highlighting
+    apiClient
+      .get("/actions/get_global_variables/")
+      .then((data) => {
+        const indicatorState = data.indicator_state || {};
+        const visualizationMode = data.visualization_mode || "image";
+        updateButtonStates(indicatorState, visualizationMode);
+      })
+      .catch((err) => {
+        console.error("Error fetching state for button highlighting:", err);
+      });
   }
 }

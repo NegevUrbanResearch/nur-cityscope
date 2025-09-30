@@ -150,10 +150,19 @@ export const DataProvider = ({ children }) => {
     if (newMode !== null) {
       setVisualizationMode(newMode);
 
-      // Optionally update the backend visualization mode
+      // Update the backend visualization mode
+      const backendMode = newMode === "deck" ? "map" : "image";
       api
         .post("/api/actions/set_visualization_mode/", {
-          mode: newMode === "deck" ? "map" : "image",
+          mode: backendMode,
+        })
+        .then(() => {
+          // Trigger event for remote controller to update
+          window.dispatchEvent(
+            new CustomEvent("visualizationModeChanged", {
+              detail: { mode: backendMode },
+            })
+          );
         })
         .catch((err) => {
           console.error("Error setting visualization mode:", err);
