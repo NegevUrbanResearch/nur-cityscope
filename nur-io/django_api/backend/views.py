@@ -13,7 +13,6 @@ from .models import (
     Indicator,
     IndicatorData,
     IndicatorImage,
-    IndicatorGeojson,
     State,
     DashboardFeedState,
     LayerConfig,
@@ -24,7 +23,6 @@ from .serializers import (
     IndicatorSerializer,
     IndicatorDataSerializer,
     IndicatorImageSerializer,
-    IndicatorGeojsonSerializer,
     StateSerializer,
     DashboardFeedStateSerializer,
     StateSerializer,
@@ -53,11 +51,6 @@ class IndicatorDataViewSet(viewsets.ModelViewSet):
 class IndicatorImageViewSet(viewsets.ModelViewSet):
     queryset = IndicatorImage.objects.all()
     serializer_class = IndicatorImageSerializer
-
-
-class IndicatorGeojsonViewSet(viewsets.ModelViewSet):
-    queryset = IndicatorGeojson.objects.all()
-    serializer_class = IndicatorGeojsonSerializer
 
 
 class DashboardFeedStateViewSet(viewsets.ModelViewSet):
@@ -231,6 +224,64 @@ class CustomActionsViewSet(viewsets.ViewSet):
             print(e)
             return JsonResponse({"status": "error", "message": str(e)}, status=500)
 
+    @action(detail=False, methods=["post"])
+    def set_climate_scenario(self, request):
+        """Set climate scenario by scenario name and type (utci/plan)"""
+        scenario_name = request.data.get("scenario")
+        scenario_type = request.data.get("type", "utci")
+
+        if not scenario_name:
+            return JsonResponse(
+                {"status": "error", "message": "Scenario name is required"}, status=400
+            )
+
+        if scenario_type not in ["utci", "plan"]:
+            return JsonResponse(
+                {"status": "error", "message": "Type must be 'utci' or 'plan'"},
+                status=400,
+            )
+
+        try:
+            # Find the state by scenario name and type
+            state = State.objects.filter(
+                scenario_name=scenario_name, scenario_type=scenario_type
+            ).first()
+
+            if not state:
+                return JsonResponse(
+                    {
+                        "status": "error",
+                        "message": f"Climate scenario '{scenario_name}' with type '{scenario_type}' not found",
+                    },
+                    status=404,
+                )
+
+            # Update global state
+            new_state = {
+                "scenario": scenario_name,
+                "type": scenario_type,
+                "label": state.state_values.get(
+                    "label", f"{scenario_name} - {scenario_type}"
+                ),
+            }
+
+            if self._set_current_state(new_state):
+                return JsonResponse(
+                    {
+                        "status": "ok",
+                        "scenario": scenario_name,
+                        "type": scenario_type,
+                        "state": new_state,
+                    }
+                )
+            else:
+                return JsonResponse(
+                    {"status": "error", "message": "Failed to set climate scenario"}
+                )
+        except Exception as e:
+            print(f"Error setting climate scenario: {e}")
+            return JsonResponse({"status": "error", "message": str(e)}, status=500)
+
     def _set_current_state(self, state):
         try:
             globals.INDICATOR_STATE = state
@@ -331,28 +382,70 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 return response
 
         indicator_obj = indicator.first()
-        # Try to find a state matching the current indicator state
-        if indicator_obj.has_states == False:
-            state = State.objects.filter(state_values={})
-        else:
-            # Try exact match first
-            state = State.objects.filter(state_values=globals.INDICATOR_STATE)
 
-            # If no exact match, try matching just the year field
-            if not state.exists():
-                print(
-                    f"No exact state match for {globals.INDICATOR_STATE}, trying year match..."
+        # Special handling for climate scenarios
+        if indicator_obj.category == "climate":
+            scenario_name = globals.INDICATOR_STATE.get("scenario")
+            scenario_type = globals.INDICATOR_STATE.get("type", "utci")
+
+            if scenario_name:
+                # Find state by scenario
+                state = State.objects.filter(
+                    scenario_name=scenario_name, scenario_type=scenario_type
+                ).first()
+
+                if state:
+                    print(
+                        f"Found climate scenario state: {state.scenario_name} ({state.scenario_type})"
+                    )
+                else:
+                    # Fallback to default climate scenario
+                    from backend.climate_scenarios import (
+                        DEFAULT_CLIMATE_SCENARIO,
+                        DEFAULT_CLIMATE_TYPE,
+                    )
+
+                    state = State.objects.filter(
+                        scenario_name=DEFAULT_CLIMATE_SCENARIO,
+                        scenario_type=DEFAULT_CLIMATE_TYPE,
+                    ).first()
+                    print(f"Using default climate scenario")
+            else:
+                # No scenario specified, use default
+                from backend.climate_scenarios import (
+                    DEFAULT_CLIMATE_SCENARIO,
+                    DEFAULT_CLIMATE_TYPE,
                 )
-                year = globals.INDICATOR_STATE.get("year")
-                if year:
-                    states = State.objects.all()
-                    for s in states:
-                        if s.state_values.get("year") == year:
-                            state = State.objects.filter(id=s.id)
-                            print(f"Found state with matching year: {s.state_values}")
-                            break
 
-        if not state.exists() or not state.first():
+                state = State.objects.filter(
+                    scenario_name=DEFAULT_CLIMATE_SCENARIO,
+                    scenario_type=DEFAULT_CLIMATE_TYPE,
+                ).first()
+        else:
+            # Try to find a state matching the current indicator state (non-climate)
+            if indicator_obj.has_states == False:
+                state = State.objects.filter(state_values={})
+            else:
+                # Try exact match first
+                state = State.objects.filter(state_values=globals.INDICATOR_STATE)
+
+                # If no exact match, try matching just the year field
+                if not state.exists():
+                    print(
+                        f"No exact state match for {globals.INDICATOR_STATE}, trying year match..."
+                    )
+                    year = globals.INDICATOR_STATE.get("year")
+                    if year:
+                        states = State.objects.all()
+                        for s in states:
+                            if s.state_values.get("year") == year:
+                                state = State.objects.filter(id=s.id)
+                                print(
+                                    f"Found state with matching year: {s.state_values}"
+                                )
+                                break
+
+        if not state or (hasattr(state, "exists") and not state.exists()) or not state:
             # Default to the first available state
             state = State.objects.first()
             if state:
@@ -363,7 +456,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 self._add_no_cache_headers(response)
                 return response
 
-        state_obj = state.first()
+        state_obj = state if not hasattr(state, "first") else state.first()
         indicator_data = IndicatorData.objects.filter(
             indicator=indicator_obj, state=state_obj
         )
@@ -423,22 +516,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
         response["Pragma"] = "no-cache"
         response["Expires"] = "0"
         return response
-
-    @action(detail=False, methods=["get"])
-    def get_geojson_data(self, request):
-        indicator = Indicator.objects.filter(indicator_id=globals.INDICATOR_ID)
-        if indicator.first().has_states == False:
-            state = State.objects.filter(state_values={})
-        else:
-            state = State.objects.filter(state_values=globals.INDICATOR_STATE)
-
-        indicator_data = IndicatorData.objects.filter(
-            indicator=indicator.first(), state=state.first()
-        )
-        geojson_data = IndicatorGeojson.objects.filter(
-            indicatorData=indicator_data.first()
-        )
-        return JsonResponse({"geojson_data": geojson_data.first().geojson})
 
     @action(detail=False, methods=["get"])
     def get_deckgl_data(self, request):
@@ -583,33 +660,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     "indicator_type": indicator_type,
                 }
             }
-
-            # Try to load existing GeoJSON if available
-            try:
-                geojson = IndicatorGeojson.objects.filter(
-                    indicatorData=indicator_data
-                ).first()
-                if geojson and geojson.geojson:
-                    # Use the existing geojson but augment with additional deck.gl data
-                    try:
-                        # Handle both string and dict cases
-                        if isinstance(geojson.geojson, str):
-                            base_data = json.loads(geojson.geojson)
-                        elif isinstance(geojson.geojson, dict):
-                            base_data = geojson.geojson
-                        else:
-                            raise ValueError(
-                                f"Unexpected geojson type: {type(geojson.geojson)}"
-                            )
-
-                        # Ensure data is JSON serializable by converting to string first
-                        result.update(base_data)
-                    except Exception as e:
-                        print(f"Error processing GeoJSON: {e}")
-                        # Don't use the existing geojson if it can't be processed
-            except Exception as e:
-                print(f"Error loading GeoJSON: {e}")
-                # Continue with synthetic data
 
             # Generate appropriate data based on indicator type
             if indicator_type == "mobility":
