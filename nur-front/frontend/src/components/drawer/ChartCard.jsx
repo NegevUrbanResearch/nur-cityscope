@@ -15,7 +15,6 @@ import {
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 
-import { chartsDrawerWidth } from "../../style/drawersStyles";
 const ChartCard = ({ title, data, MemoizedChart, customHeader }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [openDialog, setOpenDialog] = React.useState(false);
