@@ -466,6 +466,13 @@ function generateStateButtons() {
       button.dataset.scenario = scenarioKey;
       button.textContent = CLIMATE_SCENARIOS[scenarioKey];
 
+      // Highlight if this matches current scenario
+      if (scenarioKey === currentClimateScenario) {
+        button.classList.remove("glowing-button");
+        button.classList.add("neon-button");
+        button.classList.add("active");
+      }
+
       button.addEventListener("click", () => {
         console.log(
           `🌡️ Climate scenario clicked: ${scenarioKey} (type: ${currentClimateType})`
@@ -489,17 +496,19 @@ function generateStateButtons() {
       stateButtonsContainer.appendChild(button);
     });
 
-    // Fetch current state and update button highlighting
-    apiClient
-      .get("/actions/get_global_variables/")
-      .then((data) => {
-        const indicatorState = data.indicator_state || {};
-        const visualizationMode = data.visualization_mode || "image";
-        updateButtonStates(indicatorState, visualizationMode);
-      })
-      .catch((err) => {
-        console.error("Error fetching state for button highlighting:", err);
-      });
+    // Fetch current state and update button highlighting (with slight delay to ensure DOM is ready)
+    setTimeout(() => {
+      apiClient
+        .get("/actions/get_global_variables/")
+        .then((data) => {
+          const indicatorState = data.indicator_state || {};
+          const visualizationMode = data.visualization_mode || "image";
+          updateButtonStates(indicatorState, visualizationMode);
+        })
+        .catch((err) => {
+          console.error("Error fetching state for button highlighting:", err);
+        });
+    }, 100);
   } else if (currentIndicatorCategory === "mobility") {
     // For mobility: show Present and Future
     const mobilityStates = [
@@ -507,67 +516,90 @@ function generateStateButtons() {
       { key: "future", label: "Future" },
     ];
 
-    mobilityStates.forEach((state) => {
-      const button = document.createElement("button");
-      button.classList.add("state-button");
-      button.classList.add("glowing-button");
-      button.dataset.scenario = state.key;
-      button.textContent = state.label;
-
-      button.addEventListener("click", () => {
-        console.log(`🚗 Mobility state clicked: ${state.key}`);
-
-        // Update active button styling
-        document.querySelectorAll(".state-button").forEach((btn) => {
-          btn.classList.remove("active");
-          btn.classList.remove("neon-button");
-          btn.classList.add("glowing-button");
-        });
-
-        button.classList.remove("glowing-button");
-        button.classList.add("neon-button");
-        button.classList.add("active");
-
-        // Find the state ID for this scenario
-        apiClient
-          .get("/states", {})
-          .then((states) => {
-            console.log(`📋 States from API:`, states);
-            const targetState = states.find(
-              (s) => s.state_values && s.state_values.scenario === state.key
-            );
-            if (targetState) {
-              console.log(`✓ Found state for ${state.key}:`, targetState);
-              changeState(targetState.id);
-            } else {
-              console.error(
-                `❌ State not found for ${state.key}. Available states:`,
-                states.map((s) => ({
-                  id: s.id,
-                  scenario: s.state_values?.scenario,
-                  label: s.state_values?.label,
-                }))
-              );
-            }
-          })
-          .catch((error) => {
-            console.error("❌ Error fetching states:", error);
-          });
-      });
-
-      stateButtonsContainer.appendChild(button);
-    });
-
-    // Fetch current state and update button highlighting
+    // Fetch current state first to know what to highlight
     apiClient
       .get("/actions/get_global_variables/")
       .then((data) => {
         const indicatorState = data.indicator_state || {};
-        const visualizationMode = data.visualization_mode || "image";
-        updateButtonStates(indicatorState, visualizationMode);
+        const currentScenario = indicatorState.scenario || "present";
+
+        mobilityStates.forEach((state) => {
+          const button = document.createElement("button");
+          button.classList.add("state-button");
+          button.classList.add("glowing-button");
+          button.dataset.scenario = state.key;
+          button.textContent = state.label;
+
+          // Highlight if this matches current state
+          if (state.key === currentScenario) {
+            button.classList.remove("glowing-button");
+            button.classList.add("neon-button");
+            button.classList.add("active");
+          }
+
+          button.addEventListener("click", () => {
+            console.log(`🚗 Mobility state clicked: ${state.key}`);
+
+            // Update active button styling
+            document.querySelectorAll(".state-button").forEach((btn) => {
+              btn.classList.remove("active");
+              btn.classList.remove("neon-button");
+              btn.classList.add("glowing-button");
+            });
+
+            button.classList.remove("glowing-button");
+            button.classList.add("neon-button");
+            button.classList.add("active");
+
+            // Find the state ID for this scenario
+            apiClient
+              .get("/states", {})
+              .then((states) => {
+                console.log(`📋 States from API:`, states);
+                const targetState = states.find(
+                  (s) => s.state_values && s.state_values.scenario === state.key
+                );
+                if (targetState) {
+                  console.log(`✓ Found state for ${state.key}:`, targetState);
+                  changeState(targetState.id);
+                } else {
+                  console.error(
+                    `❌ State not found for ${state.key}. Available states:`,
+                    states.map((s) => ({
+                      id: s.id,
+                      scenario: s.state_values?.scenario,
+                      label: s.state_values?.label,
+                    }))
+                  );
+                }
+              })
+              .catch((error) => {
+                console.error("❌ Error fetching states:", error);
+              });
+          });
+
+          stateButtonsContainer.appendChild(button);
+        });
+
+        // Fetch current state and update button highlighting (with slight delay to ensure DOM is ready)
+        setTimeout(() => {
+          apiClient
+            .get("/actions/get_global_variables/")
+            .then((data) => {
+              const indicatorState = data.indicator_state || {};
+              const visualizationMode = data.visualization_mode || "image";
+              updateButtonStates(indicatorState, visualizationMode);
+            })
+            .catch((err) => {
+              console.error(
+                "Error fetching state for button highlighting:",
+                err
+              );
+            });
+        }, 100);
       })
       .catch((err) => {
-        console.error("Error fetching state for button highlighting:", err);
+        console.error("Error fetching state for mobility buttons:", err);
       });
   }
 }
@@ -601,6 +633,13 @@ function generateQuickActions() {
       button.classList.add("glowing-button");
       button.dataset.configValue = type.value;
       button.textContent = type.name;
+
+      // Highlight if this matches current type
+      if (type.value === currentClimateType) {
+        button.classList.remove("glowing-button");
+        button.classList.add("neon-button");
+        button.classList.add("active");
+      }
 
       button.addEventListener("click", () => {
         console.log(
@@ -643,44 +682,68 @@ function generateQuickActions() {
       { name: "Interactive Map", value: "map" },
     ];
 
-    mobilityModes.forEach((mode) => {
-      const button = document.createElement("button");
-      button.classList.add("config-button");
-      button.classList.add("glowing-button");
-      button.dataset.configValue = mode.value;
-      button.textContent = mode.name;
-
-      button.addEventListener("click", () => {
-        console.log(`🗺️ Mobility visualization mode clicked: ${mode.value}`);
-
-        // Update active button styling
-        document.querySelectorAll(".config-button").forEach((btn) => {
-          btn.classList.remove("active");
-          btn.classList.remove("neon-button");
-          btn.classList.add("glowing-button");
-        });
-
-        button.classList.remove("glowing-button");
-        button.classList.add("neon-button");
-        button.classList.add("active");
-
-        // Call the API to change the visualization mode
-        changeVisualizationMode(mode.value);
-      });
-
-      configContainer.appendChild(button);
-    });
-
-    // Fetch current state and update button highlighting
+    // Fetch current visualization mode first
     apiClient
       .get("/actions/get_global_variables/")
       .then((data) => {
-        const indicatorState = data.indicator_state || {};
         const visualizationMode = data.visualization_mode || "image";
-        updateButtonStates(indicatorState, visualizationMode);
+
+        mobilityModes.forEach((mode) => {
+          const button = document.createElement("button");
+          button.classList.add("config-button");
+          button.classList.add("glowing-button");
+          button.dataset.configValue = mode.value;
+          button.textContent = mode.name;
+
+          // Highlight if this matches current mode
+          if (mode.value === visualizationMode) {
+            button.classList.remove("glowing-button");
+            button.classList.add("neon-button");
+            button.classList.add("active");
+          }
+
+          button.addEventListener("click", () => {
+            console.log(
+              `🗺️ Mobility visualization mode clicked: ${mode.value}`
+            );
+
+            // Update active button styling
+            document.querySelectorAll(".config-button").forEach((btn) => {
+              btn.classList.remove("active");
+              btn.classList.remove("neon-button");
+              btn.classList.add("glowing-button");
+            });
+
+            button.classList.remove("glowing-button");
+            button.classList.add("neon-button");
+            button.classList.add("active");
+
+            // Call the API to change the visualization mode
+            changeVisualizationMode(mode.value);
+          });
+
+          configContainer.appendChild(button);
+        });
+
+        // Fetch current state and update button highlighting (with slight delay to ensure DOM is ready)
+        setTimeout(() => {
+          apiClient
+            .get("/actions/get_global_variables/")
+            .then((data) => {
+              const indicatorState = data.indicator_state || {};
+              const visualizationMode = data.visualization_mode || "image";
+              updateButtonStates(indicatorState, visualizationMode);
+            })
+            .catch((err) => {
+              console.error(
+                "Error fetching state for button highlighting:",
+                err
+              );
+            });
+        }, 100);
       })
       .catch((err) => {
-        console.error("Error fetching state for button highlighting:", err);
+        console.error("Error fetching state for mobility mode buttons:", err);
       });
   }
 }
