@@ -9,12 +9,14 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
 } from "recharts";
 import config from "../../config";
 
 const ClimateGraphs = () => {
   const { tempRows, humidRows, windRows, dates } = useClimateData();
+
+  // Get the date for display in x-axis label
+  const displayDate = dates.length > 0 ? dates[0] : "";
 
   return (
     <>
@@ -23,8 +25,9 @@ const ClimateGraphs = () => {
         data={{
           chartData: tempRows,
           seriesKeys: dates,
-          xLabel: "Hour of day",
+          xLabel: `Hour of day on ${displayDate}`,
           yLabel: "Temperature (°C)",
+          chartType: "temperature",
         }}
         MemoizedChart={MetricLineChart}
       />
@@ -34,8 +37,9 @@ const ClimateGraphs = () => {
         data={{
           chartData: humidRows,
           seriesKeys: dates,
-          xLabel: "Hour of day",
+          xLabel: `Hour of day on ${displayDate}`,
           yLabel: "Relative Humidity (%)",
+          chartType: "humidity",
         }}
         MemoizedChart={MetricLineChart}
       />
@@ -45,8 +49,9 @@ const ClimateGraphs = () => {
         data={{
           chartData: windRows,
           seriesKeys: dates,
-          xLabel: "Hour of day",
+          xLabel: `Hour of day on ${displayDate}`,
           yLabel: "Wind Speed (m/s)",
+          chartType: "wind",
         }}
         MemoizedChart={MetricLineChart}
       />
@@ -126,7 +131,21 @@ const MetricLineChart = ({ data }) => {
     return <div>Loading climate data...</div>;
   }
 
-  const colors = ["#AED581", "#F06292", "#64B5F6", "#BA68C8", "#FFB74D"];
+  // Define color schemes for different chart types
+  const getColorScheme = (chartType) => {
+    switch (chartType) {
+      case "temperature":
+        return "#FF6B6B"; // Red for temperature
+      case "humidity":
+        return "#4ECDC4"; // Teal for humidity
+      case "wind":
+        return "#45B7D1"; // Blue for wind
+      default:
+        return "#AED581"; // Default green
+    }
+  };
+
+  const primaryColor = getColorScheme(data.chartType);
 
   return (
     <div
@@ -141,7 +160,7 @@ const MetricLineChart = ({ data }) => {
       <ResponsiveContainer width="100%" height="100%">
         <LineChart
           data={data.chartData}
-          margin={{ top: 16, right: 24, bottom: 8, left: 12 }}
+          margin={{ top: 16, right: 24, bottom: 32, left: 12 }}
         >
           <CartesianGrid
             strokeDasharray="3 3"
@@ -149,7 +168,12 @@ const MetricLineChart = ({ data }) => {
           />
           <XAxis
             dataKey="Hour"
-            label={{ value: data.xLabel, position: "insideBottom", offset: -2 }}
+            label={{
+              value: data.xLabel,
+              angle: 0,
+              position: "insideBottom",
+              style: { textAnchor: "middle", fill: "#ffffff" },
+            }}
             tick={{ fill: "#ffffff", fontSize: 12 }}
             axisLine={{ stroke: "#ffffff" }}
           />
@@ -175,23 +199,21 @@ const MetricLineChart = ({ data }) => {
             }}
             formatter={(value, name) => [`${value?.toFixed(2)}`, name]}
           />
-          <Legend
-            wrapperStyle={{ paddingTop: "20px", textAlign: "center" }}
-            iconType="line"
-          />
           {data.seriesKeys.map((k, i) => (
             <Line
               key={k}
               type="monotone"
               dataKey={k}
               dot={false}
-              strokeWidth={2}
-              stroke={colors[i % colors.length]}
+              strokeWidth={3}
+              stroke={primaryColor}
               connectNulls={false}
               animationDuration={0}
               activeDot={{
-                r: 4,
-                fill: colors[i % colors.length],
+                r: 5,
+                fill: primaryColor,
+                stroke: primaryColor,
+                strokeWidth: 2,
               }}
             />
           ))}
