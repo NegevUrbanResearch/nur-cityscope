@@ -171,7 +171,7 @@ const MetricLineChart = ({ data }) => {
             label={{
               value: data.xLabel,
               angle: 0,
-              position: "insideBottom",
+              position: "bottom",
               style: { textAnchor: "middle", fill: "#ffffff" },
             }}
             tick={{ fill: "#ffffff", fontSize: 12 }}

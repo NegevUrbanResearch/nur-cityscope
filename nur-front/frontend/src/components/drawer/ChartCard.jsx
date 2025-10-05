@@ -8,12 +8,13 @@ import {
   CardContent,
   styled,
   DialogTitle,
+  Button ,
   Dialog,
   DialogContent,
   Slide,
 } from "@mui/material";
+import buttonStyles from "../../style/buttonStyles";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import VisibilityIcon from "@mui/icons-material/Visibility";
 
 const ChartCard = ({ title, data, MemoizedChart, customHeader }) => {
   const [expanded, setExpanded] = React.useState(false);
@@ -92,29 +93,16 @@ const ChartCard = ({ title, data, MemoizedChart, customHeader }) => {
         }}
         action={
           <>
-            <IconButton
-              size="small"
-              onClick={handleClickDialog}
-              sx={{
-                backgroundColor: "rgba(255, 255, 255, 0.05)",
-                mr: 0.5,
-                transition: "all 0.2s ease",
-                "&:hover": {
-                  backgroundColor: "rgba(100, 181, 246, 0.15)",
-                  color: "#64B5F6",
-                  transform: "scale(1.1)",
-                },
-              }}
-            >
-              <VisibilityIcon fontSize="small" />
-            </IconButton>
+
             <Dialog
               open={openDialog}
+              maxWidth="95vw"
+              maxHeight="60vh"
               slotProps={{
                 paper: {
                   sx: {
-                    width: { xs: "95vw", sm: "90vw", md: "85vw" },
-                    minHeight: { xs: "60vh", sm: "50vh" },
+                    width: "95vw",
+                    minHeight: "60vh",
                     backgroundColor: "rgba(18, 18, 18, 0.98)",
                     borderRadius: "16px",
                     border: "1px solid rgba(255, 255, 255, 0.1)",
@@ -136,7 +124,7 @@ const ChartCard = ({ title, data, MemoizedChart, customHeader }) => {
               >
                 {title}
               </DialogTitle>
-              <DialogContent sx={{ pt: 3 }}>
+              <DialogContent sx={{ pt: 3, height: "20vh" }}>
                 <MemoizedChart data={data} />
               </DialogContent>
             </Dialog>
@@ -179,9 +167,13 @@ const ChartCard = ({ title, data, MemoizedChart, customHeader }) => {
           }}
         >
           {customHeader}
-          <MemoizedChart data={data} />
+          <Button  onClick={handleClickDialog} fullWidth sx={buttonStyles} >
+          <MemoizedChart data={data} /></Button >
         </CardContent>
       </Collapse>
+
+
+
     </Card>
   );
 };
