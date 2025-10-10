@@ -1,0 +1,59 @@
+{
+  "title": "Most Important Factors in Choosing Walking Routes",
+  "description": "Students ranked factors from 1 (most important) to 5 (least important)",
+  "factors": [
+    {
+      "factor": "Time",
+      "original_mean": 1.7142857142857142,
+      "inverted_mean": 4.285714285714286,
+      "response_count": 140,
+      "std": 0.732451430223313
+    },
+    {
+      "factor": "Distance",
+      "original_mean": 1.7615384615384615,
+      "inverted_mean": 4.2384615384615385,
+      "response_count": 130,
+      "std": 0.9048006860380793
+    },
+    {
+      "factor": "Shade",
+      "original_mean": 2.623853211009174,
+      "inverted_mean": 3.376146788990826,
+      "response_count": 109,
+      "std": 1.0696918111522007
+    },
+    {
+      "factor": "Convenience",
+      "original_mean": 3.0970873786407767,
+      "inverted_mean": 2.9029126213592233,
+      "response_count": 103,
+      "std": 1.0526769154724305
+    },
+    {
+      "factor": "Friends",
+      "original_mean": 4.205882352941177,
+      "inverted_mean": 1.7941176470588234,
+      "response_count": 34,
+      "std": 1.0668393354005707
+    },
+    {
+      "factor": "Work",
+      "original_mean": 4.333333333333333,
+      "inverted_mean": 1.666666666666667,
+      "response_count": 15,
+      "std": 0.6172133998483675
+    },
+    {
+      "factor": "Stores",
+      "original_mean": 4.583333333333333,
+      "inverted_mean": 1.416666666666667,
+      "response_count": 12,
+      "std": 0.7929614610987591
+    }
+  ],
+  "summary": {
+    "most_important": "Time",
+    "total_factors": 7
+  }
+}

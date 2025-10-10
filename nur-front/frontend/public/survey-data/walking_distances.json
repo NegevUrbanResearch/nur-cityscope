@@ -1,0 +1,119 @@
+{
+  "title": "Walking Distance to Campus Distribution",
+  "description": "Distribution of 66 walking trips to campus",
+  "statistics": {
+    "average": 0.9468380303030304,
+    "median": 0.87252,
+    "max": 2.2447799999999996,
+    "min": 0.1818,
+    "std": 0.4062711178595272,
+    "count": 66
+  },
+  "histogram": [
+    {
+      "bin_center": 0.05611949999999999,
+      "count": 0,
+      "percentage": 0.0
+    },
+    {
+      "bin_center": 0.16835849999999997,
+      "count": 1,
+      "percentage": 1.5151515151515151
+    },
+    {
+      "bin_center": 0.28059749999999994,
+      "count": 2,
+      "percentage": 3.0303030303030303
+    },
+    {
+      "bin_center": 0.3928364999999999,
+      "count": 4,
+      "percentage": 6.0606060606060606
+    },
+    {
+      "bin_center": 0.5050754999999999,
+      "count": 6,
+      "percentage": 9.090909090909092
+    },
+    {
+      "bin_center": 0.6173144999999999,
+      "count": 3,
+      "percentage": 4.545454545454546
+    },
+    {
+      "bin_center": 0.7295534999999999,
+      "count": 8,
+      "percentage": 12.121212121212121
+    },
+    {
+      "bin_center": 0.8417924999999998,
+      "count": 10,
+      "percentage": 15.151515151515152
+    },
+    {
+      "bin_center": 0.9540314999999998,
+      "count": 7,
+      "percentage": 10.606060606060606
+    },
+    {
+      "bin_center": 1.0662705,
+      "count": 3,
+      "percentage": 4.545454545454546
+    },
+    {
+      "bin_center": 1.1785094999999997,
+      "count": 6,
+      "percentage": 9.090909090909092
+    },
+    {
+      "bin_center": 1.2907484999999999,
+      "count": 5,
+      "percentage": 7.575757575757576
+    },
+    {
+      "bin_center": 1.4029874999999996,
+      "count": 3,
+      "percentage": 4.545454545454546
+    },
+    {
+      "bin_center": 1.5152264999999998,
+      "count": 5,
+      "percentage": 7.575757575757576
+    },
+    {
+      "bin_center": 1.6274654999999996,
+      "count": 0,
+      "percentage": 0.0
+    },
+    {
+      "bin_center": 1.7397044999999998,
+      "count": 2,
+      "percentage": 3.0303030303030303
+    },
+    {
+      "bin_center": 1.8519434999999995,
+      "count": 0,
+      "percentage": 0.0
+    },
+    {
+      "bin_center": 1.9641824999999997,
+      "count": 0,
+      "percentage": 0.0
+    },
+    {
+      "bin_center": 2.0764214999999995,
+      "count": 0,
+      "percentage": 0.0
+    },
+    {
+      "bin_center": 2.1886604999999997,
+      "count": 1,
+      "percentage": 1.5151515151515151
+    }
+  ],
+  "summary": {
+    "total_trips": 105,
+    "walking_trips": 66,
+    "walking_percentage": 62.857142857142854
+  }
+}

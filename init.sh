@@ -85,7 +85,7 @@ Indicator.objects.get_or_create(
 )
 print('✓ Created Climate indicator')
 
-# Create mobility states (Present and Future)
+# Create mobility states (Present and Survey)
 State.objects.get_or_create(
     state_values={'year': 2023, 'scenario': 'present', 'label': 'Present'},
     scenario_type='general'
@@ -93,10 +93,10 @@ State.objects.get_or_create(
 print('✓ Created Present state')
 
 State.objects.get_or_create(
-    state_values={'year': 2040, 'scenario': 'future', 'label': 'Future'},
+    state_values={'year': 2023, 'scenario': 'survey', 'label': 'Survey'},
     scenario_type='general'
 )
-print('✓ Created Future state')
+print('✓ Created Survey state')
 "
 
     # Run the create_data management command to load all data

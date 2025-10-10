@@ -4,7 +4,7 @@
  */
 const globals = {
   // Current indicator state (year, parameters, etc.)
-  INDICATOR_STATE: { year: 2023, scenario: 'current', label: 'Current State' },
+  INDICATOR_STATE: { year: 2023, scenario: 'present', label: 'Present' },
   
   // Current indicator ID
   INDICATOR_ID: 1,

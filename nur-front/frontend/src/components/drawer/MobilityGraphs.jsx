@@ -3,6 +3,7 @@ import Papa from "papaparse";
 import ChartCard from "./ChartCard";
 import StackedBarChart from "../charts/BarChart";
 import PieChart from "../charts/PieChart";
+import SurveyGraphs from "./SurveyGraphs";
 import { FormControl, InputLabel, Select, MenuItem, Box } from "@mui/material";
 import {
   ResponsiveContainer,
@@ -14,6 +15,7 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
+import globals from "../../globals";
 
 // Color scheme for mobility charts - distinct colors for better visibility
 const MOBILITY_COLORS = {
@@ -38,6 +40,51 @@ const MobilityGraphs = () => {
   const { distanceHistogramData, modeSplitData, temporalData } =
     useMobilityData();
   const [selectedDestination, setSelectedDestination] = useState("All");
+  const [currentState, setCurrentState] = useState(
+    globals.INDICATOR_STATE?.scenario || "current"
+  );
+
+  // Listen for state changes
+  useEffect(() => {
+    const handleStateChange = () => {
+      console.log(
+        "MobilityGraphs - State change event received, globals.INDICATOR_STATE:",
+        globals.INDICATOR_STATE
+      );
+      const newState = globals.INDICATOR_STATE?.scenario || "current";
+      console.log("MobilityGraphs - Setting currentState to:", newState);
+      setCurrentState(newState);
+    };
+
+    // Also listen for the general state change event
+    const handleGeneralStateChange = () => {
+      console.log(
+        "MobilityGraphs - General state change event received, globals.INDICATOR_STATE:",
+        globals.INDICATOR_STATE
+      );
+      const newState = globals.INDICATOR_STATE?.scenario || "current";
+      console.log("MobilityGraphs - Setting currentState to:", newState);
+      setCurrentState(newState);
+    };
+
+    window.addEventListener("indicatorStateChanged", handleStateChange);
+    window.addEventListener("stateChanged", handleGeneralStateChange);
+    
+    // Also poll for state changes every 500ms to ensure sync
+    const pollInterval = setInterval(() => {
+      const newState = globals.INDICATOR_STATE?.scenario || "current";
+      if (newState !== currentState) {
+        console.log("MobilityGraphs - Polling detected state change:", currentState, "->", newState);
+        setCurrentState(newState);
+      }
+    }, 500);
+    
+    return () => {
+      window.removeEventListener("indicatorStateChanged", handleStateChange);
+      window.removeEventListener("stateChanged", handleGeneralStateChange);
+      clearInterval(pollInterval);
+    };
+  }, [currentState]);
 
   // Get pie chart data for selected destination
   const getPieChartData = () => {
@@ -50,6 +97,13 @@ const MobilityGraphs = () => {
   const handleDestinationChange = (event) => {
     setSelectedDestination(event.target.value);
   };
+
+  // Show survey graphs when state is "survey"
+  console.log("MobilityGraphs - currentState:", currentState);
+  if (currentState === "survey") {
+    console.log("MobilityGraphs - Showing survey graphs");
+    return <SurveyGraphs />;
+  }
 
   return (
     <>

@@ -58,7 +58,7 @@ const CLIMATE_SCENARIOS = {
 };
 
 const STATE_CONFIG = {
-  mobility: ["Present", "Future"],
+  mobility: ["Present", "Survey"],
   climate: Object.values(CLIMATE_SCENARIOS),
 };
 
@@ -278,7 +278,7 @@ export const DataProvider = ({ children }) => {
         }
 
         // Check for general indicator state changes (for mobility and other indicators)
-        // This handles state changes like mobility Present/Future
+        // This handles state changes like mobility Present/Survey
         if (
           indicatorRef.current !== "climate" &&
           response.data.indicator_state
@@ -296,6 +296,8 @@ export const DataProvider = ({ children }) => {
 
             // Trigger a general state change event
             window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
+            // Also trigger the stateChanged event for compatibility with remote controller
+            window.dispatchEvent(new CustomEvent("stateChanged"));
           } else if (!prevStateStr) {
             // Initial state setup
             prevIndicatorStateRef.current = currentStateStr;
@@ -345,7 +347,7 @@ export const DataProvider = ({ children }) => {
     };
   }, [currentIndicator, fetchDashboardData, checkRemoteChanges]);
 
-  // Function to change climate state (scenario)
+  // Function to change state (climate scenario or mobility state)
   const changeState = useCallback(
     async (stateName) => {
       if (currentIndicator === "climate") {
@@ -380,8 +382,46 @@ export const DataProvider = ({ children }) => {
             console.error("Error changing climate state:", error);
           }
         }
+      } else if (currentIndicator === "mobility") {
+        // Handle mobility states (Present/Survey)
+        const scenarioKey = stateName.toLowerCase(); // "Present" -> "present", "Survey" -> "survey"
+
+        try {
+          // Get the state ID from the backend
+          const response = await api.get("/api/states/");
+          const targetState = response.data.find(
+            (s) => s.state_values && s.state_values.scenario === scenarioKey
+          );
+
+          if (targetState) {
+            console.log(`✓ Found state for ${scenarioKey}:`, targetState);
+
+            // Send the state change request
+            await api.post("/api/actions/set_current_state/", {
+              state_id: targetState.id,
+            });
+
+            console.log(
+              `✓ Changed mobility state to ${stateName} (${scenarioKey})`
+            );
+
+            // Update local globals
+            globals.INDICATOR_STATE = {
+              year: 2023,
+              scenario: scenarioKey,
+              label: stateName,
+            };
+
+            // Trigger events to notify components of the change
+            window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
+            window.dispatchEvent(new CustomEvent("stateChanged"));
+          } else {
+            console.error(`❌ State not found for ${scenarioKey}`);
+          }
+        } catch (error) {
+          console.error("Error changing mobility state:", error);
+        }
       }
-      // For other indicators, implement similar state changes as needed
     },
     [currentIndicator]
   );

@@ -19,7 +19,7 @@ list_temp = []
 VISUALIZATION_MODE = "image"
 
 # Default states for fallback
-DEFAULT_STATES = {"year": 2023, "scenario": "current", "label": "Current State"}
+DEFAULT_STATES = {"year": 2023, "scenario": "present", "label": "Present"}
 
 # Default climate scenario state
 DEFAULT_CLIMATE_STATE = {

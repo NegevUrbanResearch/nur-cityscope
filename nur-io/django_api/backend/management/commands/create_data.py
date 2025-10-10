@@ -35,7 +35,7 @@ class Command(BaseCommand):
             )
             return
 
-        # Process Mobility data (Present/Future states)
+        # Process Mobility data (Present/Survey states)
         self.stdout.write(self.style.SUCCESS("\n📊 Processing Mobility data..."))
         for state in general_states:
             scenario = state.state_values.get("scenario", "present")

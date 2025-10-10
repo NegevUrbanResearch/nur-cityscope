@@ -363,7 +363,7 @@ function updateButtonStates(indicatorState, visualizationMode) {
       }
     });
   } else if (currentIndicatorCategory === "mobility") {
-    // Highlight the active mobility state button (present or future)
+    // Highlight the active mobility state button (present or survey)
     const activeScenario = indicatorState.scenario || "present";
     document.querySelectorAll(".state-button").forEach((btn) => {
       if (btn.dataset.scenario === activeScenario) {
@@ -510,10 +510,10 @@ function generateStateButtons() {
         });
     }, 100);
   } else if (currentIndicatorCategory === "mobility") {
-    // For mobility: show Present and Future
+    // For mobility: show Present and Survey
     const mobilityStates = [
       { key: "present", label: "Present" },
-      { key: "future", label: "Future" },
+      { key: "survey", label: "Survey" },
     ];
 
     // Fetch current state first to know what to highlight

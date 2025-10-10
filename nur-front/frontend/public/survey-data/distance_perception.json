@@ -1,0 +1,553 @@
+{
+  "title": "Student Distance Perception vs Reality",
+  "description": "How students perceive distance importance vs actual distances",
+  "data_points": [
+    {
+      "submission_id": 836154,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.19660873441922383,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 841106,
+      "perceived_importance": 3.0,
+      "actual_distance": 1.318258982143453,
+      "original_importance": 3.0
+    },
+    {
+      "submission_id": 841110,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.5928184659626314,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 841111,
+      "perceived_importance": 3.0,
+      "actual_distance": 2.595604811981056,
+      "original_importance": 3.0
+    },
+    {
+      "submission_id": 841116,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.9444493888160007,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 841118,
+      "perceived_importance": 3.0,
+      "actual_distance": 1.1432300889703149,
+      "original_importance": 3.0
+    },
+    {
+      "submission_id": 841121,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.5376580062481178,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 841125,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.7355039435015297,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 841130,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.9713790470309572,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 841134,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.3142999839166886,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 841146,
+      "perceived_importance": 2.0,
+      "actual_distance": 1.0432226121425974,
+      "original_importance": 4.0
+    },
+    {
+      "submission_id": 841153,
+      "perceived_importance": 4.0,
+      "actual_distance": 1.1725907192015907,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 853074,
+      "perceived_importance": 5.0,
+      "actual_distance": 2.7764165772576574,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 853078,
+      "perceived_importance": 3.0,
+      "actual_distance": 1.1873631823187347,
+      "original_importance": 3.0
+    },
+    {
+      "submission_id": 853099,
+      "perceived_importance": 3.0,
+      "actual_distance": 0.5609573118072229,
+      "original_importance": 3.0
+    },
+    {
+      "submission_id": 853159,
+      "perceived_importance": 5.0,
+      "actual_distance": 1.2692407698339223,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 853312,
+      "perceived_importance": 3.0,
+      "actual_distance": 1.4096988273158213,
+      "original_importance": 3.0
+    },
+    {
+      "submission_id": 853355,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.6713026149196973,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 853372,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.9615677947362072,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 853411,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.6783441770927978,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 853415,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.4172598992829516,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 853444,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.49125191139904617,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 853566,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.5847901439897417,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 853621,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.22041946022991307,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 853838,
+      "perceived_importance": 4.0,
+      "actual_distance": 1.0707188461820678,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 854340,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.25575860383060867,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 856300,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.8290277563918342,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 856343,
+      "perceived_importance": 5.0,
+      "actual_distance": 1.0919474273689347,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 856634,
+      "perceived_importance": 3.0,
+      "actual_distance": 1.0514044037663837,
+      "original_importance": 3.0
+    },
+    {
+      "submission_id": 859290,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.45176890031072353,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 859317,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.5310667293215617,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 859831,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.562397391845399,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 859968,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.7675279644773724,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 860040,
+      "perceived_importance": 5.0,
+      "actual_distance": 1.0649892085902963,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 860047,
+      "perceived_importance": 5.0,
+      "actual_distance": 1.054978671716156,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 860238,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.5472517695827953,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 860303,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.5094304037025462,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 860362,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.8677178382518711,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 863556,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.2201847530594614,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 863862,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.6655939626536871,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 863887,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.6353058241173803,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 864950,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.9900909380442863,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 865454,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.47890468756403437,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 866939,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.7884289900666915,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 869858,
+      "perceived_importance": 5.0,
+      "actual_distance": 3.8101074083182898,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 869956,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.5568320326288102,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 869961,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.7671737594660228,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 870232,
+      "perceived_importance": 5.0,
+      "actual_distance": 1.7731473773808906,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 870233,
+      "perceived_importance": 5.0,
+      "actual_distance": 41.76259420526531,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 870235,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.36669249175373836,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 870237,
+      "perceived_importance": 4.0,
+      "actual_distance": 1.1854744939451525,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 870242,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.7800267490196165,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 870258,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.5426973978213154,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 871978,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.5010294735352354,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 878413,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.24577996774035532,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 878457,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.27641748743447636,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 887967,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.65924324841804,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 888010,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.8232653179917975,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 888014,
+      "perceived_importance": 5.0,
+      "actual_distance": 1.3413056276534907,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 888022,
+      "perceived_importance": 3.0,
+      "actual_distance": 0.8875303927226957,
+      "original_importance": 3.0
+    },
+    {
+      "submission_id": 888134,
+      "perceived_importance": 3.0,
+      "actual_distance": 0.7168157180966449,
+      "original_importance": 3.0
+    },
+    {
+      "submission_id": 888466,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.7768459700577828,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 898103,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.565127296751956,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 898106,
+      "perceived_importance": 3.0,
+      "actual_distance": 1.067401091688775,
+      "original_importance": 3.0
+    },
+    {
+      "submission_id": 898157,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.5030319551127922,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 898199,
+      "perceived_importance": 5.0,
+      "actual_distance": 1.2386036475157,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 898297,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.7390833030089606,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 899225,
+      "perceived_importance": 3.0,
+      "actual_distance": 3.605325513653241,
+      "original_importance": 3.0
+    },
+    {
+      "submission_id": 899295,
+      "perceived_importance": 2.0,
+      "actual_distance": 1.101397946042092,
+      "original_importance": 4.0
+    },
+    {
+      "submission_id": 899867,
+      "perceived_importance": 2.0,
+      "actual_distance": 1.2129921724184833,
+      "original_importance": 4.0
+    },
+    {
+      "submission_id": 899962,
+      "perceived_importance": 5.0,
+      "actual_distance": 1.1524695021151214,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 905091,
+      "perceived_importance": 4.0,
+      "actual_distance": 5.007816295772267,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 916366,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.8824207647645214,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 916374,
+      "perceived_importance": 5.0,
+      "actual_distance": 2.457400326841246,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 916375,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.4586274310128669,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 916390,
+      "perceived_importance": 5.0,
+      "actual_distance": 76.30143862503265,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 916391,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.9858525505787079,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 916403,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.5122319165143194,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 916414,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.6604295272924998,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 916415,
+      "perceived_importance": 5.0,
+      "actual_distance": 1.1612952715241625,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 916742,
+      "perceived_importance": 5.0,
+      "actual_distance": 33.942075629478374,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 916897,
+      "perceived_importance": 2.0,
+      "actual_distance": 0.39516380029957476,
+      "original_importance": 4.0
+    },
+    {
+      "submission_id": 917594,
+      "perceived_importance": 5.0,
+      "actual_distance": 1.2039420575352362,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 919603,
+      "perceived_importance": 5.0,
+      "actual_distance": 0.992541660692622,
+      "original_importance": 1.0
+    },
+    {
+      "submission_id": 919616,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.4218261759869098,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 919635,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.42917351471444803,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 919680,
+      "perceived_importance": 4.0,
+      "actual_distance": 0.3685729969990784,
+      "original_importance": 2.0
+    },
+    {
+      "submission_id": 919758,
+      "perceived_importance": 4.0,
+      "actual_distance": 1.2316791346702303,
+      "original_importance": 2.0
+    }
+  ],
+  "statistics": {
+    "perceived_importance": {
+      "mean": 4.340909090909091,
+      "std": 0.8645330273459197,
+      "count": 88
+    },
+    "actual_distances": {
+      "mean": 2.654541269916233,
+      "median": 0.784227869543154,
+      "std": 9.6693490784849,
+      "count": 88
+    },
+    "linked_responses": 88
+  },
+  "summary": {
+    "total_survey_responses": 307,
+    "distance_perception_responses": 130,
+    "successfully_linked": 88
+  }
+}

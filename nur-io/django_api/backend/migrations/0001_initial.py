@@ -6,6 +6,27 @@ import django.utils.timezone
 import backend.models
 
 
+def populate_general_states(apps, schema_editor):
+    """Create the general states for mobility (Present/Survey)"""
+    State = apps.get_model("backend", "State")
+
+    # General states for mobility
+    general_states = [
+        {"scenario": "present", "label": "Present", "year": 2023},
+        {"scenario": "survey", "label": "Survey", "year": 2023},
+    ]
+
+    # Create general states
+    for state_data in general_states:
+        State.objects.get_or_create(
+            scenario_type="general",
+            scenario_name=state_data["scenario"],
+            defaults={"state_values": state_data},
+        )
+
+    print(f"✓ Created {len(general_states)} general states")
+
+
 def populate_climate_scenarios(apps, schema_editor):
     """Create the 14 climate scenario states (7 scenarios × 2 types)"""
     State = apps.get_model("backend", "State")
@@ -50,6 +71,12 @@ def populate_climate_scenarios(apps, schema_editor):
         )
 
     print(f"✓ Created {len(scenarios) * 2} climate scenario states")
+
+
+def reverse_general_states(apps, schema_editor):
+    """Remove general states"""
+    State = apps.get_model("backend", "State")
+    State.objects.filter(scenario_type="general").delete()
 
 
 def reverse_climate_scenarios(apps, schema_editor):
@@ -225,6 +252,8 @@ class Migration(migrations.Migration):
                 ),
             ],
         ),
+        # Populate general states after model creation
+        migrations.RunPython(populate_general_states, reverse_general_states),
         # Populate climate scenarios after model creation
         migrations.RunPython(populate_climate_scenarios, reverse_climate_scenarios),
     ]
