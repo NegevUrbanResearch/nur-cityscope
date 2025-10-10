@@ -144,7 +144,7 @@ const DeckGLMap = ({ indicatorType, state }) => {
     };
 
     fetchData();
-  }, [indicatorType, state?.year]); // Only depend on year, not entire state object
+  }, [indicatorType, state?.year, state?.scenario]); // Depend on year and scenario
 
   // Get appropriate layers based on indicator type
   const layers = useMemo(() => {

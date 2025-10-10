@@ -582,19 +582,28 @@ class CustomActionsViewSet(viewsets.ViewSet):
         if indicator.has_states == False:
             state = State.objects.filter(state_values={}).first()
         else:
-            # Try to find a state with the specified year
-            state = None
-            states = State.objects.all()
-            for s in states:
-                if s.state_values.get("year") == year:
-                    state = s
-                    break
-
-            # If no state found with the year, use current indicator state
+            # Try to find a state that matches the current indicator state (year + scenario)
+            state = State.objects.filter(
+                state_values=globals.INDICATOR_STATE
+            ).first()
+            
+            # If no exact match found, try to find a state with the specified year and scenario
             if not state:
-                state = State.objects.filter(
-                    state_values=globals.INDICATOR_STATE
-                ).first()
+                current_scenario = globals.INDICATOR_STATE.get("scenario")
+                states = State.objects.all()
+                for s in states:
+                    if (s.state_values.get("year") == year and 
+                        s.state_values.get("scenario") == current_scenario):
+                        state = s
+                        break
+
+            # If still no state found, use the first state with the year
+            if not state:
+                states = State.objects.all()
+                for s in states:
+                    if s.state_values.get("year") == year:
+                        state = s
+                        break
 
             # Use first available state if none match
             if not state:

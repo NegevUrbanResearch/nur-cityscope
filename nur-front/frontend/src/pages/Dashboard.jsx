@@ -307,12 +307,40 @@ const Dashboard = ({ openCharts }) => {
     };
   }, [currentIndicator, preloadImage]);
 
+  // State for tracking current indicator state
+  const [currentState, setCurrentState] = useState({
+    year: 2023,
+    scenario: "current",
+  });
+
+  // Listen for state changes and update currentState
+  useEffect(() => {
+    const handleStateChange = () => {
+      console.log("Dashboard - State change event received, updating state");
+      // Get the current state from globals or data
+      const newState = {
+        year: data?.metrics?.year || 2023,
+        scenario: data?.metrics?.scenario || "current",
+      };
+      console.log("Dashboard - Setting state to:", newState);
+      setCurrentState(newState);
+    };
+
+    window.addEventListener("indicatorStateChanged", handleStateChange);
+    window.addEventListener("stateChanged", handleStateChange);
+
+    return () => {
+      window.removeEventListener("indicatorStateChanged", handleStateChange);
+      window.removeEventListener("stateChanged", handleStateChange);
+    };
+  }, [data?.metrics]);
+
   // Memoize state object to prevent unnecessary re-renders and iframe reloads
   // Must be called before any early returns (Rules of Hooks)
   const state = useMemo(() => {
     const stateObj = {
-      year: 2023, // Default to 2023
-      scenario: "current",
+      year: currentState.year,
+      scenario: currentState.scenario,
     };
 
     // Try to get the state from the lastUpdate or the current indicator's data
@@ -329,7 +357,12 @@ const Dashboard = ({ openCharts }) => {
 
     return stateObj;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.metrics?.year, data?.metrics?.scenario]);
+  }, [
+    currentState.year,
+    currentState.scenario,
+    data?.metrics?.year,
+    data?.metrics?.scenario,
+  ]);
 
   useEffect(() => {
     // Set body and html styling to ensure full viewport coverage
@@ -366,6 +399,7 @@ const Dashboard = ({ openCharts }) => {
               border: "none",
             }}
             title={`${currentIndicator} map visualization`}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             onError={(e) => {
               console.error("Failed to load fallback map:", e);
             }}
@@ -419,6 +453,7 @@ const Dashboard = ({ openCharts }) => {
                 border: "none",
               }}
               title={`${currentIndicator} visualization`}
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
               onLoad={() => {
                 setShowLoadingMessage(false);
               }}
