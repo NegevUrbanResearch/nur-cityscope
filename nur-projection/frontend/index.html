@@ -2,7 +2,7 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-height, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Map Projection</title>
     <link rel="stylesheet" href="styles.css" />
     <style>
@@ -141,6 +141,11 @@
       const maptastic = Maptastic("keystoneContainer");
       let configActive = false;
 
+      // Add the main display elements as layers to maptastic
+      maptastic.addLayer("displayedImage");
+      maptastic.addLayer("displayedVideo");
+      maptastic.addLayer("mapContainer");
+
       // Get the current origin (protocol + hostname) to handle both development and production
       const origin = window.location.origin;
       // Use relative paths for API requests
@@ -257,28 +262,111 @@
 
       // Save calibration settings manually
       function saveCalibration() {
-        localStorage.setItem(
-          "maptastic.layers",
-          JSON.stringify(maptastic.getLayout())
-        );
-        alert("Calibration settings saved!");
+        console.log("saveCalibration function called");
+        console.log("maptastic object:", maptastic);
+        console.log("maptastic.getLayout:", typeof maptastic.getLayout);
+
+        try {
+          const layout = maptastic.getLayout();
+          console.log("Saving layout:", layout);
+          console.log("Layout length:", layout ? layout.length : "undefined");
+
+          if (layout && layout.length > 0) {
+            localStorage.setItem("maptastic.layers", JSON.stringify(layout));
+            console.log("Saved to localStorage successfully");
+            alert("Calibration settings saved!");
+          } else {
+            console.log("No layout data found");
+            alert(
+              "No calibration data to save. Please adjust the projection first."
+            );
+          }
+        } catch (error) {
+          console.error("Error saving calibration:", error);
+          alert("Error saving calibration: " + error.message);
+        }
       }
 
       // Reset calibration to defaults
       function resetCalibration() {
+        console.log("resetCalibration function called");
         if (confirm("Are you sure you want to reset the calibration?")) {
+          console.log("User confirmed reset");
           localStorage.removeItem("maptastic.layers");
+          console.log("Cleared localStorage, reloading page");
           location.reload();
+        } else {
+          console.log("User cancelled reset");
+        }
+      }
+
+      // Auto-reset calibration on page load to fix sideways display
+      function autoResetCalibration() {
+        // Only reset if there's problematic saved data
+        const savedData = localStorage.getItem("maptastic.layers");
+        if (savedData) {
+          try {
+            const layout = JSON.parse(savedData);
+            // Check if any layer has been rotated 90 degrees (sideways)
+            let hasProblematicRotation = false;
+
+            for (let i = 0; i < layout.length; i++) {
+              const layer = layout[i];
+              if (layer.targetPoints && layer.sourcePoints) {
+                // Check if the layer has been rotated 90 degrees
+                // This is a simple heuristic - if the aspect ratio is significantly different
+                const sourceWidth =
+                  layer.sourcePoints[1][0] - layer.sourcePoints[0][0];
+                const sourceHeight =
+                  layer.sourcePoints[2][1] - layer.sourcePoints[0][1];
+                const targetWidth =
+                  layer.targetPoints[1][0] - layer.targetPoints[0][0];
+                const targetHeight =
+                  layer.targetPoints[2][1] - layer.targetPoints[0][1];
+
+                const sourceRatio = sourceWidth / sourceHeight;
+                const targetRatio = targetWidth / targetHeight;
+
+                // If ratios are very different, it might be rotated
+                if (Math.abs(sourceRatio - 1 / targetRatio) < 0.1) {
+                  hasProblematicRotation = true;
+                  break;
+                }
+              }
+            }
+
+            // Only reset if we detect problematic rotation
+            if (hasProblematicRotation) {
+              console.log("Detected sideways rotation, resetting to default");
+              localStorage.removeItem("maptastic.layers");
+            }
+          } catch (error) {
+            console.log("Error parsing saved data, clearing it");
+            localStorage.removeItem("maptastic.layers");
+          }
         }
       }
 
       // Event listeners for calibration panel
       $toggleConfigBtn.addEventListener("click", toggleConfigMode);
-      $saveCalibrationBtn.addEventListener("click", saveCalibration);
-      $resetCalibrationBtn.addEventListener("click", resetCalibration);
+
+      // Add debugging to save button
+      $saveCalibrationBtn.addEventListener("click", function () {
+        console.log("Save button clicked!");
+        saveCalibration();
+      });
+
+      // Add debugging to reset button
+      $resetCalibrationBtn.addEventListener("click", function () {
+        console.log("Reset button clicked!");
+        resetCalibration();
+      });
 
       // Start periodic updates every 5 seconds (5000 ms) to reduce unnecessary reloads
       setInterval(updateImage, 5000);
+
+      // Auto-reset calibration to fix sideways display
+      autoResetCalibration();
 
       // Initial update
       updateImage();
