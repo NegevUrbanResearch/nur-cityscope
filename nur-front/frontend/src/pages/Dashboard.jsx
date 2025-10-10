@@ -12,6 +12,7 @@ import config from "../config";
 //import MetricDisplay from "../components/MetricDisplay";
 import DeckGLMap from "../components/maps/DeckGLMap";
 import { chartsDrawerWidth } from "../style/drawersStyles";
+import globals from "../globals";
 
 const Dashboard = ({ openCharts }) => {
   const {
@@ -317,10 +318,19 @@ const Dashboard = ({ openCharts }) => {
   useEffect(() => {
     const handleStateChange = () => {
       console.log("Dashboard - State change event received, updating state");
+      console.log("Dashboard - Current data?.metrics:", data?.metrics);
+      console.log(
+        "Dashboard - Current globals.INDICATOR_STATE:",
+        globals.INDICATOR_STATE
+      );
+
       // Get the current state from globals or data
       const newState = {
-        year: data?.metrics?.year || 2023,
-        scenario: data?.metrics?.scenario || "current",
+        year: globals.INDICATOR_STATE?.year || data?.metrics?.year || 2023,
+        scenario:
+          globals.INDICATOR_STATE?.scenario ||
+          data?.metrics?.scenario ||
+          "current",
       };
       console.log("Dashboard - Setting state to:", newState);
       setCurrentState(newState);
@@ -329,11 +339,42 @@ const Dashboard = ({ openCharts }) => {
     window.addEventListener("indicatorStateChanged", handleStateChange);
     window.addEventListener("stateChanged", handleStateChange);
 
+    // Also poll for state changes every 1 second to ensure sync
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await api.get("/api/actions/get_global_variables/");
+        if (response.data?.indicator_state) {
+          const backendState = response.data.indicator_state;
+          const newState = {
+            year: backendState.year || 2023,
+            scenario: backendState.scenario || "current",
+          };
+
+          // Only update if different from current state
+          if (
+            newState.scenario !== currentState.scenario ||
+            newState.year !== currentState.year
+          ) {
+            console.log(
+              "Dashboard - Polling detected state change:",
+              currentState,
+              "->",
+              newState
+            );
+            setCurrentState(newState);
+          }
+        }
+      } catch (error) {
+        console.error("Dashboard - Error polling backend state:", error);
+      }
+    }, 1000);
+
     return () => {
       window.removeEventListener("indicatorStateChanged", handleStateChange);
       window.removeEventListener("stateChanged", handleStateChange);
+      clearInterval(pollInterval);
     };
-  }, [data?.metrics]);
+  }, [data?.metrics, currentState]);
 
   // Memoize state object to prevent unnecessary re-renders and iframe reloads
   // Must be called before any early returns (Rules of Hooks)
@@ -343,8 +384,8 @@ const Dashboard = ({ openCharts }) => {
       scenario: currentState.scenario,
     };
 
-    // Try to get the state from the lastUpdate or the current indicator's data
-    if (data?.metrics) {
+    // Only use data?.metrics as fallback if currentState is not set
+    if (data?.metrics && (!currentState.year || !currentState.scenario)) {
       // We derive current year from formatted metrics
       // This assumes that the metrics are updated when the state changes
       if (data.metrics.year) {
@@ -355,6 +396,7 @@ const Dashboard = ({ openCharts }) => {
       }
     }
 
+    console.log("Dashboard - Final state object:", stateObj);
     return stateObj;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [

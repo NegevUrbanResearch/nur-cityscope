@@ -53,6 +53,7 @@ const DeckGLMap = ({ indicatorType, state }) => {
 
   // Fetch data when indicator or state changes
   useEffect(() => {
+    console.log("DeckGLMap - useEffect triggered with state:", state);
     const fetchData = async () => {
       setLoading(true);
       setError(null);
@@ -61,7 +62,12 @@ const DeckGLMap = ({ indicatorType, state }) => {
         // Add cache-busting query param and include year if available
         const timestamp = Date.now();
         const year = state?.year || 2023;
+        const scenario = state?.scenario || "current";
         const yearParam = `&year=${year}`;
+
+        console.log(
+          `DeckGLMap - Fetching data for year: ${year}, scenario: ${scenario}`
+        );
 
         // Fetch data from our new endpoint that does the processing in the backend
         const response = await api.get(
