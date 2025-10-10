@@ -443,7 +443,7 @@ const Dashboard = ({ openCharts }) => {
               style={{
                 width: "100%",
                 height: "100%",
-                objectFit: "contain",
+                objectFit: "cover",
               }}
               onLoadedData={() => {
                 setShowLoadingMessage(false);
