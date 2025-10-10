@@ -506,7 +506,14 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 # Ensure the path has the indicators/ prefix if not already present
                 if not image_path.startswith("indicators/"):
                     image_path = f"indicators/{image_path}"
-                response = JsonResponse({"image_data": image_path, "type": "image"})
+
+                # Determine if this is a video file
+                file_extension = os.path.splitext(image_path)[1].lower()
+                is_video = file_extension in [".mp4", ".webm", ".ogg", ".avi", ".mov"]
+
+                response = JsonResponse(
+                    {"image_data": image_path, "type": "video" if is_video else "image"}
+                )
                 self._add_no_cache_headers(response)
                 return response
             except (AttributeError, ValueError) as e:

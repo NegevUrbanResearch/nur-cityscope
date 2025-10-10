@@ -1,93 +1,110 @@
 <!DOCTYPE html>
 <html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-height, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-height, initial-scale=1.0" />
     <title>Map Projection</title>
-    <link rel="stylesheet" href="styles.css"/>
+    <link rel="stylesheet" href="styles.css" />
     <style>
-        #calibrationPanel {
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            background-color: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 15px;
-            border-radius: 5px;
-            font-family: Arial, sans-serif;
-            z-index: 10000;
-            display: none;
-        }
-        #calibrationPanel h3 {
-            margin-top: 0;
-            margin-bottom: 10px;
-        }
-        #calibrationPanel p {
-            margin: 5px 0;
-            font-size: 14px;
-        }
-        .control-row {
-            display: flex;
-            justify-content: space-between;
-            margin: 5px 0;
-        }
-        .control-button {
-            background-color: #444;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            margin: 2px;
-            border-radius: 3px;
-            cursor: pointer;
-        }
-        .control-button:hover {
-            background-color: #666;
-        }
-        .error-message {
-            color: red;
-            text-align: center;
-            padding: 20px;
-            font-family: Arial, sans-serif;
-        }
-        #keystoneContainer {
-            width: 100%;
-            height: 100%;
-        }
-        #mapContainer {
-            width: 100%;
-            height: 100%;
-            display: none;
-        }
-        #displayedImage {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-        }
+      #calibrationPanel {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background-color: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 15px;
+        border-radius: 5px;
+        font-family: Arial, sans-serif;
+        z-index: 10000;
+        display: none;
+      }
+      #calibrationPanel h3 {
+        margin-top: 0;
+        margin-bottom: 10px;
+      }
+      #calibrationPanel p {
+        margin: 5px 0;
+        font-size: 14px;
+      }
+      .control-row {
+        display: flex;
+        justify-content: space-between;
+        margin: 5px 0;
+      }
+      .control-button {
+        background-color: #444;
+        color: white;
+        border: none;
+        padding: 5px 10px;
+        margin: 2px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .control-button:hover {
+        background-color: #666;
+      }
+      .error-message {
+        color: red;
+        text-align: center;
+        padding: 20px;
+        font-family: Arial, sans-serif;
+      }
+      #keystoneContainer {
+        width: 100%;
+        height: 100%;
+      }
+      #mapContainer {
+        width: 100%;
+        height: 100%;
+        display: none;
+      }
+      #displayedImage {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      #displayedVideo {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
     </style>
-</head>
-<body>
-
-<div id="keystoneContainer" class="keystoneContainer">
-    <img id="displayedImage" src="" alt="Waiting for map...">
-    <iframe id="mapContainer" frameborder="0"></iframe>
-    <div id="errorMessage" class="error-message" style="display: none;"></div>
-    <div id="calibrationGrid" class="calibration-grid"></div>
-</div>
-
-<div id="calibrationPanel">
-    <h3>Calibration Panel</h3>
-    <p><strong>Status:</strong> <span id="calibrationStatus">Configuration Mode OFF</span></p>
-    <div class="control-row">
-        <button class="control-button" id="toggleConfigBtn">Toggle Config Mode (Shift+Z)</button>
+  </head>
+  <body>
+    <div id="keystoneContainer" class="keystoneContainer">
+      <img id="displayedImage" src="" alt="Waiting for map..." />
+      <video
+        id="displayedVideo"
+        autoplay
+        loop
+        muted
+        playsinline
+        style="display: none"
+      ></video>
+      <iframe id="mapContainer" frameborder="0"></iframe>
+      <div id="errorMessage" class="error-message" style="display: none"></div>
+      <div id="calibrationGrid" class="calibration-grid"></div>
     </div>
-    <p>In config mode:</p>
-    <ul>
+
+    <div id="calibrationPanel">
+      <h3>Calibration Panel</h3>
+      <p>
+        <strong>Status:</strong>
+        <span id="calibrationStatus">Configuration Mode OFF</span>
+      </p>
+      <div class="control-row">
+        <button class="control-button" id="toggleConfigBtn">
+          Toggle Config Mode (Shift+Z)
+        </button>
+      </div>
+      <p>In config mode:</p>
+      <ul>
         <li>Drag corners to warp projection</li>
         <li>Alt+drag to rotate/scale</li>
         <li>Arrow keys to move selected quad</li>
-    </ul>
-    <p><strong>Keyboard Shortcuts:</strong></p>
-    <ul>
+      </ul>
+      <p><strong>Keyboard Shortcuts:</strong></p>
+      <ul>
         <li><strong>R</strong> - Rotate 90°</li>
         <li><strong>H</strong> - Flip horizontal</li>
         <li><strong>V</strong> - Flip vertical</li>
@@ -95,141 +112,189 @@
         <li><strong>C</strong> - Toggle crosshairs</li>
         <li><strong>B</strong> - Toggle bounds</li>
         <li><strong>F</strong> - Fullscreen</li>
-    </ul>
-    <div class="control-row">
-        <button class="control-button" id="saveCalibrationBtn">Save Calibration</button>
+      </ul>
+      <div class="control-row">
+        <button class="control-button" id="saveCalibrationBtn">
+          Save Calibration
+        </button>
         <button class="control-button" id="resetCalibrationBtn">Reset</button>
+      </div>
     </div>
-</div>
 
-<script src="maptastic.js"></script>
-<script src="gallery.js"></script>
+    <script src="maptastic.js"></script>
+    <script src="gallery.js"></script>
 
-<script>
-    const $imagen = document.getElementById('displayedImage');
-    const $mapContainer = document.getElementById('mapContainer');
-    const $errorMessage = document.getElementById('errorMessage');
-    const $calibrationPanel = document.getElementById('calibrationPanel');
-    const $calibrationStatus = document.getElementById('calibrationStatus');
-    const $toggleConfigBtn = document.getElementById('toggleConfigBtn');
-    const $saveCalibrationBtn = document.getElementById('saveCalibrationBtn');
-    const $resetCalibrationBtn = document.getElementById('resetCalibrationBtn');
-    
-    // Initialize Maptastic for projection mapping
-    const maptastic = Maptastic('keystoneContainer');
-    let configActive = false;
-    
-    // Get the current origin (protocol + hostname) to handle both development and production 
-    const origin = window.location.origin;
-    // Use relative paths for API requests
-    const apiEndpoint = '/api/actions/get_image_data/';
-    
-    function renderImagen(url, isMap) {
+    <script>
+      const $imagen = document.getElementById("displayedImage");
+      const $video = document.getElementById("displayedVideo");
+      const $mapContainer = document.getElementById("mapContainer");
+      const $errorMessage = document.getElementById("errorMessage");
+      const $calibrationPanel = document.getElementById("calibrationPanel");
+      const $calibrationStatus = document.getElementById("calibrationStatus");
+      const $toggleConfigBtn = document.getElementById("toggleConfigBtn");
+      const $saveCalibrationBtn = document.getElementById("saveCalibrationBtn");
+      const $resetCalibrationBtn = document.getElementById(
+        "resetCalibrationBtn"
+      );
+
+      // Initialize Maptastic for projection mapping
+      const maptastic = Maptastic("keystoneContainer");
+      let configActive = false;
+
+      // Get the current origin (protocol + hostname) to handle both development and production
+      const origin = window.location.origin;
+      // Use relative paths for API requests
+      const apiEndpoint = "/api/actions/get_image_data/";
+
+      function renderImagen(url, isMap) {
         if (isMap) {
-            // Display the map in an iframe
-            $imagen.style.display = 'none';
-            $mapContainer.style.display = 'block';
-            $mapContainer.src = url;
+          // Display the map in an iframe
+          $imagen.style.display = "none";
+          $video.style.display = "none";
+          $mapContainer.style.display = "block";
+          $mapContainer.src = url;
+        } else if (isVideoFile(url)) {
+          // Display as a video with looping
+          $imagen.style.display = "none";
+          $mapContainer.style.display = "none";
+          $video.style.display = "block";
+
+          // Only reload video if the URL has actually changed
+          if ($video.src !== url) {
+            $video.src = url;
+            $video.load(); // Reload the video to ensure it starts playing
+          }
         } else {
-            // Display as an image
-            $imagen.style.display = 'block';
-            $mapContainer.style.display = 'none';
-            $imagen.setAttribute('src', url);
+          // Display as an image
+          $imagen.style.display = "block";
+          $video.style.display = "none";
+          $mapContainer.style.display = "none";
+          $imagen.setAttribute("src", url);
         }
-        
-        $errorMessage.style.display = 'none';
-    }
 
-    function showError(message) {
+        $errorMessage.style.display = "none";
+      }
+
+      function isVideoFile(url) {
+        if (!url) return false;
+        const videoExtensions = [".mp4", ".webm", ".ogg", ".avi", ".mov"];
+        return videoExtensions.some((ext) => url.toLowerCase().includes(ext));
+      }
+
+      function showError(message) {
         $errorMessage.textContent = message;
-        $errorMessage.style.display = 'block';
-    }
+        $errorMessage.style.display = "block";
+      }
 
-    // Function to get and update the image
-    function updateImage() {
+      // Track current content to avoid unnecessary reloads
+      let currentContent = null;
+      let currentType = null;
+
+      // Function to get and update the image
+      function updateImage() {
         fetch(apiEndpoint)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.json();
-            })
-            .then(data => {
-                if (data.image_data) {
-                    // Properly construct the media URL using origin
-                    const mediaUrl = `${origin}/media/${data.image_data}`;
-                    
-                    console.log("Image data received:", data.image_data);
-                    console.log("Type:", data.type);
-                    console.log("Media URL:", mediaUrl);
-                    
-                    // Use the type field directly from the API response
-                    const isMap = data.type === 'map';
-                    
-                    // Always use the correct URL
-                    renderImagen(mediaUrl, isMap);
-                } else if (data.error) {
-                    console.error('Error from API:', data.error);
-                    showError('Server error: ' + data.error);
-                } else {
-                    console.error('No "image_data" found in API response');
-                    showError('No visualization data available');
-                }
-            })
-            .catch(error => {
-                console.error('Error fetching data:', error);
-                showError('Error loading visualization: ' + error.message);
-            });
-    }
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+          })
+          .then((data) => {
+            if (data.image_data) {
+              // Check if content has actually changed
+              if (
+                currentContent === data.image_data &&
+                currentType === data.type
+              ) {
+                return; // No need to reload if content is the same
+              }
 
-    // Toggle calibration config mode
-    function toggleConfigMode() {
+              // Properly construct the media URL using origin
+              const mediaUrl = `${origin}/media/${data.image_data}`;
+
+              console.log("Image data received:", data.image_data);
+              console.log("Type:", data.type);
+              console.log("Media URL:", mediaUrl);
+
+              // Update current content tracking
+              currentContent = data.image_data;
+              currentType = data.type;
+
+              // Use the type field directly from the API response
+              const isMap = data.type === "map";
+              const isVideo = data.type === "video";
+
+              // Always use the correct URL
+              renderImagen(mediaUrl, isMap);
+            } else if (data.error) {
+              console.error("Error from API:", data.error);
+              showError("Server error: " + data.error);
+            } else {
+              console.error('No "image_data" found in API response');
+              showError("No visualization data available");
+            }
+          })
+          .catch((error) => {
+            console.error("Error fetching data:", error);
+            showError("Error loading visualization: " + error.message);
+          });
+      }
+
+      // Toggle calibration config mode
+      function toggleConfigMode() {
         configActive = !configActive;
         maptastic.setConfigEnabled(configActive);
-        $calibrationStatus.textContent = configActive ? 'Configuration Mode ON' : 'Configuration Mode OFF';
-        $calibrationPanel.style.display = configActive ? 'block' : 'none';
-        
-        // Show calibration grid when in config mode
-        document.getElementById('calibrationGrid').style.display = configActive ? 'block' : 'none';
-    }
-    
-    // Save calibration settings manually
-    function saveCalibration() {
-        localStorage.setItem('maptastic.layers', JSON.stringify(maptastic.getLayout()));
-        alert('Calibration settings saved!');
-    }
-    
-    // Reset calibration to defaults
-    function resetCalibration() {
-        if (confirm('Are you sure you want to reset the calibration?')) {
-            localStorage.removeItem('maptastic.layers');
-            location.reload();
-        }
-    }
-    
-    // Event listeners for calibration panel
-    $toggleConfigBtn.addEventListener('click', toggleConfigMode);
-    $saveCalibrationBtn.addEventListener('click', saveCalibration);
-    $resetCalibrationBtn.addEventListener('click', resetCalibration);
-    
-    // Start periodic updates every 1 second (1000 ms)
-    setInterval(updateImage, 1000);
-    
-    // Initial update
-    updateImage();
+        $calibrationStatus.textContent = configActive
+          ? "Configuration Mode ON"
+          : "Configuration Mode OFF";
+        $calibrationPanel.style.display = configActive ? "block" : "none";
 
-    // Keyboard event listener for calibration toggle and other shortcuts
-    window.addEventListener('keydown', function(event) {
-        // Shift+Z to toggle configuration mode
-        if (event.key === 'Z' && event.shiftKey) {
-            toggleConfigMode();
+        // Show calibration grid when in config mode
+        document.getElementById("calibrationGrid").style.display = configActive
+          ? "block"
+          : "none";
+      }
+
+      // Save calibration settings manually
+      function saveCalibration() {
+        localStorage.setItem(
+          "maptastic.layers",
+          JSON.stringify(maptastic.getLayout())
+        );
+        alert("Calibration settings saved!");
+      }
+
+      // Reset calibration to defaults
+      function resetCalibration() {
+        if (confirm("Are you sure you want to reset the calibration?")) {
+          localStorage.removeItem("maptastic.layers");
+          location.reload();
         }
-        
+      }
+
+      // Event listeners for calibration panel
+      $toggleConfigBtn.addEventListener("click", toggleConfigMode);
+      $saveCalibrationBtn.addEventListener("click", saveCalibration);
+      $resetCalibrationBtn.addEventListener("click", resetCalibration);
+
+      // Start periodic updates every 5 seconds (5000 ms) to reduce unnecessary reloads
+      setInterval(updateImage, 5000);
+
+      // Initial update
+      updateImage();
+
+      // Keyboard event listener for calibration toggle and other shortcuts
+      window.addEventListener("keydown", function (event) {
+        // Shift+Z to toggle configuration mode
+        if (event.key === "Z" && event.shiftKey) {
+          toggleConfigMode();
+        }
+
         // F key for fullscreen
         if (event.keyCode === 70) {
-            toggleFullScreen();
+          toggleFullScreen();
         }
-    });
-</script>
-</body>
+      });
+    </script>
+  </body>
 </html>

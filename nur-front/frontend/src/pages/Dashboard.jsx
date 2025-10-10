@@ -21,6 +21,13 @@ const Dashboard = ({ openCharts }) => {
   } = useAppData();
   // Simple function to check if URL is HTML animation
   const isHtmlAnimation = (url) => url && url.includes(".html");
+
+  // Function to check if URL is a video file
+  const isVideoFile = (url) => {
+    if (!url) return false;
+    const videoExtensions = [".mp4", ".webm", ".ogg", ".avi", ".mov"];
+    return videoExtensions.some((ext) => url.toLowerCase().includes(ext));
+  };
   const [mapData, setMapData] = useState({
     url: null,
     type: null,
@@ -120,10 +127,11 @@ const Dashboard = ({ openCharts }) => {
             ? `${config.media.baseUrl}${response.data.image_data}`
             : `${config.media.baseUrl}/media/${response.data.image_data}`;
 
-          // Don't add cache-busting for HTML animations to prevent reloads
+          // Don't add cache-busting for HTML animations or videos to prevent reloads
           const isHtml = isHtmlAnimation(url);
+          const isVideo = response.data.type === "video";
 
-          if (!isHtml) {
+          if (!isHtml && !isVideo) {
             url += `?_=${timestamp}`;
           }
 
@@ -134,8 +142,8 @@ const Dashboard = ({ openCharts }) => {
             error: false,
           });
 
-          // Only preload images (not HTML animations)
-          if (!isHtml) {
+          // Only preload images (not HTML animations or videos)
+          if (!isHtml && !isVideo) {
             preloadImage(url);
           }
         }
@@ -200,8 +208,9 @@ const Dashboard = ({ openCharts }) => {
               : `${config.media.baseUrl}/media/${response.data.image_data}`;
 
             const isHtml = isHtmlAnimation(url);
+            const isVideo = response.data.type === "video";
 
-            if (!isHtml) {
+            if (!isHtml && !isVideo) {
               url += `?_=${timestamp}`;
             }
 
@@ -213,7 +222,7 @@ const Dashboard = ({ openCharts }) => {
               error: false,
             });
 
-            if (!isHtml) {
+            if (!isHtml && !isVideo) {
               preloadImage(url);
             }
           }
@@ -261,8 +270,9 @@ const Dashboard = ({ openCharts }) => {
               : `${config.media.baseUrl}/media/${response.data.image_data}`;
 
             const isHtml = isHtmlAnimation(url);
+            const isVideo = response.data.type === "video";
 
-            if (!isHtml) {
+            if (!isHtml && !isVideo) {
               url += `?_=${timestamp}`;
             }
 
@@ -274,7 +284,7 @@ const Dashboard = ({ openCharts }) => {
               error: false,
             });
 
-            if (!isHtml) {
+            if (!isHtml && !isVideo) {
               preloadImage(url);
             }
           }
@@ -396,7 +406,7 @@ const Dashboard = ({ openCharts }) => {
         // Show interactive Deck.GL map when in deck mode
         <DeckGLMap indicatorType={currentIndicator} state={state} />
       ) : (
-        // Show traditional image/iframe view with caching for HTML animations
+        // Show traditional image/iframe/video view with caching for HTML animations
         <>
           {mapData.url && isHtmlAnimation(mapData.url) ? (
             // Use simple iframe for HTML animations (no cache-busting = no reloads)
@@ -421,8 +431,34 @@ const Dashboard = ({ openCharts }) => {
                 }));
               }}
             />
+          ) : mapData.url && isVideoFile(mapData.url) ? (
+            // Use video element for video files with looping
+            <Box
+              component="video"
+              src={mapData.url}
+              autoPlay
+              loop
+              muted
+              playsInline
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+              }}
+              onLoadedData={() => {
+                setShowLoadingMessage(false);
+              }}
+              onError={(e) => {
+                console.error("Failed to load video:", e);
+                setMapData((prev) => ({
+                  ...prev,
+                  error: true,
+                  errorMessage: "Failed to load visualization video",
+                }));
+              }}
+            />
           ) : (
-            // Use traditional image loading for non-HTML content
+            // Use traditional image loading for non-HTML, non-video content
             <>
               {showLoadingMessage && ( // Only show loading message after delay (if still loading)
                 <Box sx={{ display: "flex", height: "100%" }}>

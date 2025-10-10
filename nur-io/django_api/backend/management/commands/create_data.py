@@ -124,12 +124,18 @@ class Command(BaseCommand):
         )
 
     def _find_mobility_image(self, scenario):
-        """Find mobility image in public/processed/mobility/{scenario}/image/"""
+        """Find mobility image/video in public/processed/mobility/{scenario}/image/"""
         base_path = os.path.join(
             settings.BASE_DIR, "public", "processed", "mobility", scenario, "image"
         )
 
         if os.path.exists(base_path):
+            # First try to find video files (preferred)
+            for filename in os.listdir(base_path):
+                if filename.lower().endswith((".mp4", ".webm", ".ogg")):
+                    return f"processed/mobility/{scenario}/image/{filename}"
+
+            # Fallback to image files
             for filename in os.listdir(base_path):
                 if filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
                     return f"processed/mobility/{scenario}/image/{filename}"
