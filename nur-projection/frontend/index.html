@@ -57,6 +57,9 @@
         width: 100%;
         height: 100%;
         display: none;
+        position: absolute;
+        top: 0;
+        left: 0;
       }
       #displayedImage {
         width: 100%;
@@ -111,14 +114,15 @@
         <li><strong>S</strong> - Solo/unsolo layer</li>
         <li><strong>C</strong> - Toggle crosshairs</li>
         <li><strong>B</strong> - Toggle bounds</li>
+        <li><strong>X</strong> - Reset calibration</li>
         <li><strong>F</strong> - Fullscreen</li>
       </ul>
-      <div class="control-row">
-        <button class="control-button" id="saveCalibrationBtn">
-          Save Calibration
-        </button>
-        <button class="control-button" id="resetCalibrationBtn">Reset</button>
-      </div>
+      <p>
+        <em
+          >Note: Calibration is automatically saved as you make adjustments.
+          Press <strong>X</strong> to reset.</em
+        >
+      </p>
     </div>
 
     <script src="maptastic.js"></script>
@@ -132,10 +136,6 @@
       const $calibrationPanel = document.getElementById("calibrationPanel");
       const $calibrationStatus = document.getElementById("calibrationStatus");
       const $toggleConfigBtn = document.getElementById("toggleConfigBtn");
-      const $saveCalibrationBtn = document.getElementById("saveCalibrationBtn");
-      const $resetCalibrationBtn = document.getElementById(
-        "resetCalibrationBtn"
-      );
 
       // Initialize Maptastic for projection mapping
       const maptastic = Maptastic("keystoneContainer");
@@ -226,7 +226,7 @@
               currentType = data.type;
 
               // Use the type field directly from the API response
-              const isMap = data.type === "map";
+              const isMap = false; // Maps not used in projection interface
               const isVideo = data.type === "video";
 
               // Always use the correct URL
@@ -260,41 +260,36 @@
           : "none";
       }
 
-      // Save calibration settings manually
-      function saveCalibration() {
-        console.log("saveCalibration function called");
-        console.log("maptastic object:", maptastic);
-        console.log("maptastic.getLayout:", typeof maptastic.getLayout);
-
-        try {
-          const layout = maptastic.getLayout();
-          console.log("Saving layout:", layout);
-          console.log("Layout length:", layout ? layout.length : "undefined");
-
-          if (layout && layout.length > 0) {
-            localStorage.setItem("maptastic.layers", JSON.stringify(layout));
-            console.log("Saved to localStorage successfully");
-            alert("Calibration settings saved!");
-          } else {
-            console.log("No layout data found");
-            alert(
-              "No calibration data to save. Please adjust the projection first."
-            );
-          }
-        } catch (error) {
-          console.error("Error saving calibration:", error);
-          alert("Error saving calibration: " + error.message);
-        }
-      }
-
       // Reset calibration to defaults
       function resetCalibration() {
         console.log("resetCalibration function called");
         if (confirm("Are you sure you want to reset the calibration?")) {
           console.log("User confirmed reset");
           localStorage.removeItem("maptastic.layers");
-          console.log("Cleared localStorage, reloading page");
-          location.reload();
+          console.log("Cleared localStorage");
+
+          // Reset the maptastic layout to default without page reload
+          if (maptastic && maptastic.getLayout) {
+            const currentLayout = maptastic.getLayout();
+            console.log("Current layout before reset:", currentLayout);
+
+            // Reset each layer to default positions
+            for (let i = 0; i < currentLayout.length; i++) {
+              const layer = currentLayout[i];
+              if (layer.targetPoints && layer.sourcePoints) {
+                // Reset target points to match source points (no transformation)
+                layer.targetPoints = layer.sourcePoints.map((point) => [
+                  ...point,
+                ]);
+              }
+            }
+
+            console.log("Layout after reset:", currentLayout);
+            maptastic.setLayout(currentLayout);
+            console.log("Applied reset layout");
+          }
+
+          alert("Calibration reset to defaults!");
         } else {
           console.log("User cancelled reset");
         }
@@ -350,18 +345,6 @@
       // Event listeners for calibration panel
       $toggleConfigBtn.addEventListener("click", toggleConfigMode);
 
-      // Add debugging to save button
-      $saveCalibrationBtn.addEventListener("click", function () {
-        console.log("Save button clicked!");
-        saveCalibration();
-      });
-
-      // Add debugging to reset button
-      $resetCalibrationBtn.addEventListener("click", function () {
-        console.log("Reset button clicked!");
-        resetCalibration();
-      });
-
       // Start periodic updates every 5 seconds (5000 ms) to reduce unnecessary reloads
       setInterval(updateImage, 5000);
 
@@ -376,6 +359,12 @@
         // Shift+Z to toggle configuration mode
         if (event.key === "Z" && event.shiftKey) {
           toggleConfigMode();
+        }
+
+        // X key for reset calibration
+        if (event.key === "X" || event.keyCode === 88) {
+          console.log("X key pressed - resetting calibration");
+          resetCalibration();
         }
 
         // F key for fullscreen
