@@ -12,7 +12,8 @@ services:
       - nur-api_data:/app/data
       - media_files:/app/media # Share media files with nginx
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     command:
       [
         "sh",
@@ -65,7 +66,13 @@ services:
     env_file:
       - .env
     volumes:
-      - postgres_data_core:/var/lib/postgresql/data
+      - postgres_data_core:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     networks:
       - nur_core
 
