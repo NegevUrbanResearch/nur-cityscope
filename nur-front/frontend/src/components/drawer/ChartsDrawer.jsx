@@ -9,6 +9,7 @@ import {
   Box,
   useTheme,
   useMediaQuery,
+  Button
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import InfoOutlineIcon from "@mui/icons-material/InfoOutline";
@@ -23,7 +24,33 @@ import ClimateGraphs from "./ClimateGraphs";
 import config from "../../config";
 import ClimateMapTypeSelector from "./ClimateMapTypeSelector";
 
-const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
+const PresentationModeSettings = () => (
+    <Box sx={{ p: 3, textAlign: 'center', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <Typography variant="h6" color="#64B5F6" gutterBottom sx={{ fontWeight: 600 }}>
+            Presentation Configuration
+        </Typography>
+        <Typography variant="body2" color="rgba(255, 255, 255, 0.7)" sx={{ mb: 4 }}>
+            Configure the automated sequence of indicators and states.
+        </Typography>
+        
+        <Box sx={{ 
+            width: '100%', 
+            p: 2, 
+            border: '1px dashed rgba(255,255,255,0.2)', 
+            borderRadius: '12px',
+            bgcolor: 'rgba(0,0,0,0.2)',
+            flexGrow: 1
+        }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                [Sequence List Placeholder]
+            </Typography>
+            {/* כאן נבנה בהמשך את רשימת הרצף הניתנת לעריכה */}
+        </Box>
+    </Box>
+);
+
+
+const ChartsDrawer = ({ handleChartsClick, openCharts, isPresentationMode,togglePresentationMode  }) => {
   const { visualizationMode, handleVisualizationModeChange, currentIndicator } =
     useAppData();
 
@@ -37,9 +64,16 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
     setOpenInfo(!openInfo);
   };
 
+    const handlePresentationMode = () => {
+    console.log("Entering Presentation Mode...");
+     if (togglePresentationMode) {
+        togglePresentationMode(!isPresentationMode);
+    }
+  };
+
   let disableInteractiveMode = false;
 
-  if (currentIndicator === "climate") {
+  if (currentIndicator === "climate" && !isPresentationMode) {
     handleVisualizationModeChange(null, "image");
     disableInteractiveMode = true;
   }
@@ -52,10 +86,12 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         "& .MuiDrawer-paper": {
           width: chartsDrawerWidth,
           overflowX: "hidden",
-          overflowY: "auto",
+          overflowY: "hidden",
           backgroundImage:
             "linear-gradient(to bottom, rgba(30, 30, 30, 0.98), rgba(18, 18, 18, 0.95))",
           borderLeft: "1px solid rgba(255, 255, 255, 0.1)",
+          display: "flex",
+          flexDirection: "column",
         },
       }}
       variant="persistent"
@@ -73,6 +109,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           p: { xs: 1, sm: 1.5 },
           borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
           backgroundColor: "rgba(0, 0, 0, 0.2)",
+           flexShrink: 0,
         }}
       >
         {/* Left: Close/Info Buttons */}
@@ -110,7 +147,13 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
 
         {/* Center: Navigation Menu */}
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <NavMenu />
+          {!isPresentationMode ? (
+              <NavMenu />
+          ) : (
+              <Typography variant="subtitle1" color="white" sx={{ textAlign: 'center', fontWeight: 600, letterSpacing: 1 }}>
+                  Presentation Mode
+              </Typography>
+          )}
         </Box>
 
         {/* Right: Logo */}
@@ -131,6 +174,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
       </Box>
 
       {/* Climate Map Type Selector or Visualization Mode Toggle */}
+      {!isPresentationMode && ( <>
       {currentIndicator === "climate" ? (
         <ClimateMapTypeSelector />
       ) : (
@@ -140,6 +184,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
             pt: { xs: 1.5, sm: 2 },
             pb: { xs: 1, sm: 1.5 },
             borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+            flexShrink: 0,
           }}
         >
           <ToggleButtonGroup
@@ -223,6 +268,8 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           </ToggleButtonGroup>
         </Box>
       )}
+       </>
+      )}
 
       {/* Charts Content */}
       <Box
@@ -230,14 +277,57 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           px: { xs: 1, sm: 1.5, md: 2 },
           pb: 2,
           overflowX: "hidden",
-          overflowY: "visible",
+          overflowY: "auto",
+          flexGrow: 1,
+          minHeight: 0
         }}
       >
+        {isPresentationMode ? (
+            <PresentationModeSettings />
+        ) : (
+            <>
         {currentIndicator === "climate" ? (
           <ClimateGraphs />
         ) : (
           <IndicatorGraphs />
         )}
+        </>)}
+      </Box>
+
+ <Box
+        sx={{
+          p: 2,
+          borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+          display: 'flex',
+          justifyContent: 'center',
+          flexShrink: 0,
+          backgroundColor: 'rgba(18, 18, 18, 0.95)',
+        }}
+      >
+        <Button
+          variant="contained"
+          color="primary"
+          onClick={handlePresentationMode}
+          sx={{
+            width: '80%',
+            maxWidth: '300px',
+            fontWeight: 700,
+            fontSize: '1rem',
+            backgroundColor: '#64B5F6', 
+            color: '#121212',
+            padding: '10px 20px',
+            borderRadius: '6px',
+            boxShadow: '0 4px 10px #2a86d19c',
+            '&:hover': {
+              backgroundColor: '#2a86d1ff', 
+              transform: 'translateY(-2px)',
+              boxShadow: '0 6px 15px #2a86d17d',
+            },
+            transition: 'all 0.2s ease',
+          }}
+        >
+          {isPresentationMode ? "Exit Presentation Mode" : "Presentation Mode"}
+        </Button>
       </Box>
     </Drawer>
   );

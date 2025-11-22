@@ -14,7 +14,7 @@ import DeckGLMap from "../components/maps/DeckGLMap";
 import { chartsDrawerWidth } from "../style/drawersStyles";
 import globals from "../globals";
 
-const Dashboard = ({ openCharts }) => {
+const Dashboard = ({ openCharts, isPresentationMode, togglePresentationMode }) => {
   const {
     dashboardData: data,
     currentIndicator,
@@ -478,6 +478,9 @@ const Dashboard = ({ openCharts }) => {
           }),
       }}
     >
+
+      {/* Conditional rendering based on presentation mode */}
+      
       {visualizationMode === "deck" ? (
         // Show interactive Deck.GL map when in deck mode
         <DeckGLMap indicatorType={currentIndicator} state={state} />

@@ -3,7 +3,7 @@ import { AppBar, Toolbar, Box, IconButton, Grid } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
 import ChartsDrawer from "./drawer/ChartsDrawer";
 
-const Navbar = ({ handleChartsClick, openCharts }) => {
+const Navbar = ({ handleChartsClick, openCharts, isPresentationMode,togglePresentationMode }) => {
 
 
   return (
@@ -35,6 +35,9 @@ const Navbar = ({ handleChartsClick, openCharts }) => {
       <ChartsDrawer
         openCharts={openCharts}
         handleChartsClick={handleChartsClick}
+        isPresentationMode={isPresentationMode}
+        togglePresentationMode={togglePresentationMode}
+
       />
     </Box>
   );
