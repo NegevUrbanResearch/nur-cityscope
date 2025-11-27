@@ -17,37 +17,13 @@ import InfoOutlineIcon from "@mui/icons-material/InfoOutline";
 import { useAppData } from "../../DataContext";
 import { chartsDrawerWidth } from "../../style/drawersStyles";
 
+import PresentationModeSettings from "./PresentationModeSettings";
 import NavMenu from "../NavMenu";
 import InfoDialog from "../InfoDialog";
 import IndicatorGraphs from "./IndicatorGraphs";
 import ClimateGraphs from "./ClimateGraphs";
 import config from "../../config";
 import ClimateMapTypeSelector from "./ClimateMapTypeSelector";
-
-const PresentationModeSettings = () => (
-    <Box sx={{ p: 3, textAlign: 'center', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        <Typography variant="h6" color="#64B5F6" gutterBottom sx={{ fontWeight: 600 }}>
-            Presentation Configuration
-        </Typography>
-        <Typography variant="body2" color="rgba(255, 255, 255, 0.7)" sx={{ mb: 4 }}>
-            Configure the automated sequence of indicators and states.
-        </Typography>
-        
-        <Box sx={{ 
-            width: '100%', 
-            p: 2, 
-            border: '1px dashed rgba(255,255,255,0.2)', 
-            borderRadius: '12px',
-            bgcolor: 'rgba(0,0,0,0.2)',
-            flexGrow: 1
-        }}>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                [Sequence List Placeholder]
-            </Typography>
-            {/* כאן נבנה בהמשך את רשימת הרצף הניתנת לעריכה */}
-        </Box>
-    </Box>
-);
 
 
 const ChartsDrawer = ({ handleChartsClick, openCharts, isPresentationMode,togglePresentationMode  }) => {
