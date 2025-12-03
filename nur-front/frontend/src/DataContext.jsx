@@ -92,12 +92,30 @@ export const DataProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
 
+  // presentation mode state
+  const [isPresentationMode, setIsPresentationMode] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+
   // Use refs to prevent unnecessary re-renders during frequent polling
+  const defaultInd = Object.keys(INDICATOR_CONFIG)[0];
+  const defaultSt = STATE_CONFIG[defaultInd]?.[0];
+  const [presentationSequence, setPresentationSequence] = useState([
+    { indicator: defaultInd, state: defaultSt }
+  ]);
+
+  const [sequenceIndex, setSequenceIndex] = useState(0);
+  const [globalDuration, setGlobalDuration] = useState(10);
+
+  const presentationTimerRef = useRef(null);
   const indicatorRef = useRef(currentIndicator);
   const lastCheckedRef = useRef(Date.now());
   const debounceTimerRef = useRef(null);
   const [visualizationMode, setVisualizationMode] = useState("deck");
   const visualizationModeRef = useRef(visualizationMode);
+
+  const [prevIndicator, setPrevIndicator] = useState(null);
+  const [prevVisualizationMode, setPrevVisualizationMode] = useState(null);
+  
 
   // Update refs when state changes
   useEffect(() => {
@@ -481,6 +499,78 @@ export const DataProvider = ({ children }) => {
     [currentIndicator, fetchDashboardData]
   );
 
+    // presentation timer logic
+    useEffect(() => {
+      if (presentationTimerRef.current) {
+          clearTimeout(presentationTimerRef.current);
+          presentationTimerRef.current = null;
+      }
+  
+      if (isPresentationMode && isPlaying && presentationSequence.length > 0) {
+          const currentStep = presentationSequence[sequenceIndex];
+          
+          console.log(`[Presentation] Playing Step ${sequenceIndex + 1}/${presentationSequence.length}:`, currentStep);
+  
+          if (currentStep.indicator !== indicatorRef.current) { 
+              changeIndicator(currentStep.indicator);
+          }
+          
+          setTimeout(() => {
+              changeState(currentStep.state);
+          }, 500);
+  
+          const durationMs = globalDuration * 1000;
+          presentationTimerRef.current = setTimeout(() => {
+              setSequenceIndex((prevIndex) => (prevIndex + 1) % presentationSequence.length);
+          }, durationMs);
+      }
+  
+      return () => {
+          if (presentationTimerRef.current) {
+              clearTimeout(presentationTimerRef.current);
+          }
+      };
+    }, [
+        isPresentationMode, 
+        isPlaying, 
+        sequenceIndex, 
+        presentationSequence, 
+        globalDuration, 
+        changeIndicator, 
+        changeState 
+    ]);
+  
+    const togglePresentationMode = useCallback((isEntering) => {
+        if (isEntering) {
+            console.log("✓ Starting Presentation Mode");
+            // Save current state
+            setPrevIndicator(indicatorRef.current);
+            setPrevVisualizationMode(visualizationModeRef.current);
+            
+            setSequenceIndex(0);
+            setIsPlaying(false); // Start paused to allow setup
+            
+            // FIX: Force 'image' mode for presentation
+            if (visualizationModeRef.current !== 'image') {
+                 handleVisualizationModeChange(null, 'image');
+            }
+  
+            setIsPresentationMode(true);
+        } else {
+            console.log("✓ Stopping Presentation Mode");
+            setIsPlaying(false);
+            setIsPresentationMode(false);
+            
+            // Restore state
+            setTimeout(() => {
+                if (prevIndicator) changeIndicator(prevIndicator);
+                if (prevVisualizationMode) handleVisualizationModeChange(null, prevVisualizationMode);
+            }, 100);
+        }
+    }, [prevIndicator, prevVisualizationMode, changeIndicator, handleVisualizationModeChange]);
+  
+  
+
   // Value object with additional helpers for the new indicator system
   const contextValue = {
     dashboardData,
@@ -504,7 +594,8 @@ export const DataProvider = ({ children }) => {
         "Tab 4",
       ],
     visualizationMode,
-    handleVisualizationModeChange,
+    handleVisualizationModeChange,isPresentationMode, togglePresentationMode, presentationSequence, setPresentationSequence,
+    isPlaying, setIsPlaying, sequenceIndex, globalDuration, setGlobalDuration
   };
 
   return (

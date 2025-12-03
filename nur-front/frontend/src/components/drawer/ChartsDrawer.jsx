@@ -26,8 +26,8 @@ import config from "../../config";
 import ClimateMapTypeSelector from "./ClimateMapTypeSelector";
 
 
-const ChartsDrawer = ({ handleChartsClick, openCharts, isPresentationMode,togglePresentationMode  }) => {
-  const { visualizationMode, handleVisualizationModeChange, currentIndicator } =
+const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
+  const { visualizationMode, handleVisualizationModeChange, currentIndicator, isPresentationMode,togglePresentationMode } =
     useAppData();
 
   const theme = useTheme();
@@ -49,11 +49,16 @@ const ChartsDrawer = ({ handleChartsClick, openCharts, isPresentationMode,toggle
 
   let disableInteractiveMode = false;
 
-  if (currentIndicator === "climate" && !isPresentationMode) {
-    handleVisualizationModeChange(null, "image");
-    disableInteractiveMode = true;
-  }
+ React.useEffect(() => {
+      if (currentIndicator === "climate" && !isPresentationMode && visualizationMode !== 'image') {
+          handleVisualizationModeChange(null, "image");
+      }
+  }, [currentIndicator, isPresentationMode, visualizationMode, handleVisualizationModeChange]);
 
+  if (currentIndicator === "climate" && !isPresentationMode) {
+      disableInteractiveMode = true;
+  }
+  
   return (
     <Drawer
       sx={{
@@ -273,7 +278,6 @@ const ChartsDrawer = ({ handleChartsClick, openCharts, isPresentationMode,toggle
  <Box
         sx={{
           p: 2,
-          borderTop: '1px solid rgba(255, 255, 255, 0.1)',
           display: 'flex',
           justifyContent: 'center',
           flexShrink: 0,

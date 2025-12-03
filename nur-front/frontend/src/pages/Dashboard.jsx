@@ -14,7 +14,7 @@ import DeckGLMap from "../components/maps/DeckGLMap";
 import { chartsDrawerWidth } from "../style/drawersStyles";
 import globals from "../globals";
 
-const Dashboard = ({ openCharts, isPresentationMode, togglePresentationMode }) => {
+const Dashboard = ({ openCharts}) => {
   const {
     dashboardData: data,
     currentIndicator,
