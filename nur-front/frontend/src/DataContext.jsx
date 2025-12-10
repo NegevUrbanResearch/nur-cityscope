@@ -569,6 +569,21 @@ export const DataProvider = ({ children }) => {
         }
     }, [prevIndicator, prevVisualizationMode, changeIndicator, handleVisualizationModeChange]);
   
+    const skipToNextStep = useCallback(() => {
+      if (presentationTimerRef.current) {
+          clearTimeout(presentationTimerRef.current);
+          presentationTimerRef.current = null;
+      }
+      
+      // Update the sequence index to the next step (including looping)
+      setSequenceIndex((prevIndex) => {
+          // ensure the sequence exists and has length > 0
+          if (!presentationSequence || presentationSequence.length === 0) return 0;
+          return (prevIndex + 1) % presentationSequence.length;
+      });
+      
+      // Note: This index change will automatically trigger the main timer useEffect.
+  }, [presentationSequence]);
   
 
   // Value object with additional helpers for the new indicator system
@@ -595,7 +610,7 @@ export const DataProvider = ({ children }) => {
       ],
     visualizationMode,
     handleVisualizationModeChange,isPresentationMode, togglePresentationMode, presentationSequence, setPresentationSequence,
-    isPlaying, setIsPlaying, sequenceIndex, globalDuration, setGlobalDuration
+    isPlaying, setIsPlaying, sequenceIndex, globalDuration, setGlobalDuration,skipToNextStep
   };
 
   return (

@@ -3,7 +3,6 @@ import PresentationMenuItem from "./PresentationMenuItem.jsx"
 
 import {
   IconButton,
-  Typography,
   Box,
   Menu,
   MenuItem,
@@ -11,7 +10,8 @@ import {
   Stack,
   InputAdornment
 } from "@mui/material";
-import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import AddIcon from '@mui/icons-material/Add';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
@@ -30,7 +30,8 @@ const PresentationModeSettings = () => {
         setIsPlaying,
         globalDuration,
         setGlobalDuration,
-        setSequenceIndex 
+        setSequenceIndex,
+        skipToNextStep
     } = useAppData();
     
     const defaultIndicator = Object.keys(indicatorConfig)[0];
@@ -87,6 +88,12 @@ const PresentationModeSettings = () => {
         console.log("Presentation sequence reset to start and edit mode enabled.");
     };
 
+      const handleSkip = () => {
+        skipToNextStep();
+        console.log("Presentation sequence skipped to next step.");
+    };
+
+
     return (
         <Box sx={{ 
             p: 2, 
@@ -95,9 +102,6 @@ const PresentationModeSettings = () => {
             flexDirection: 'column', 
             color: 'white' 
         }}>
-            <Typography variant="h6" sx={{ color: '#64B5F6', fontWeight: 600, mb: 3, textAlign: 'center' }}>
-                Presentation Setup
-            </Typography>
 
             <Box sx={{ mb: 3, px: 1 }}>
                 <TextField
@@ -152,7 +156,7 @@ const PresentationModeSettings = () => {
                             } 
                         }}
                     >
-                        <AddCircleOutlineIcon fontSize="large" />
+                        <AddIcon fontSize="large" />
                     </IconButton>
                 </Box>
             </Box>
@@ -203,6 +207,9 @@ const PresentationModeSettings = () => {
                     >
                         {isPlaying ? <PauseIcon fontSize="large" /> : <PlayArrowIcon fontSize="large" />}
                     </IconButton>
+                    <IconButton onClick={handleSkip}  sx={{ color: 'rgba(255,255,255,0.7)', '&:hover': { color: 'white' } }}>
+                        <NavigateNextIcon />
+                        </IconButton>
                 </Stack>
             </Box>
         </Box>
