@@ -1,10 +1,10 @@
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import {
   IconButton,
   Drawer,
   ToggleButton,
   ToggleButtonGroup,
-  Typography,
   Tooltip,
   Box,
   useTheme,
@@ -13,11 +13,11 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import InfoOutlineIcon from "@mui/icons-material/InfoOutline";
+import SlideshowIcon from "@mui/icons-material/Slideshow";
 
 import { useAppData } from "../../DataContext";
 import { chartsDrawerWidth } from "../../style/drawersStyles";
 
-import PresentationModeSettings from "./PresentationModeSettings";
 import NavMenu from "../NavMenu";
 import InfoDialog from "../InfoDialog";
 import IndicatorGraphs from "./IndicatorGraphs";
@@ -27,7 +27,8 @@ import ClimateMapTypeSelector from "./ClimateMapTypeSelector";
 
 
 const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
-  const { visualizationMode, handleVisualizationModeChange, currentIndicator, isPresentationMode,togglePresentationMode } =
+  const navigate = useNavigate();
+  const { visualizationMode, handleVisualizationModeChange, currentIndicator } =
     useAppData();
 
   const theme = useTheme();
@@ -40,23 +41,20 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
     setOpenInfo(!openInfo);
   };
 
-    const handlePresentationMode = () => {
-    console.log("Entering Presentation Mode...");
-     if (togglePresentationMode) {
-        togglePresentationMode(!isPresentationMode);
-    }
+  const handleOpenPresentation = () => {
+    navigate('/presentation');
   };
 
   let disableInteractiveMode = false;
 
- React.useEffect(() => {
-      if (currentIndicator === "climate" && !isPresentationMode && visualizationMode !== 'image') {
-          handleVisualizationModeChange(null, "image");
-      }
-  }, [currentIndicator, isPresentationMode, visualizationMode, handleVisualizationModeChange]);
+  React.useEffect(() => {
+    if (currentIndicator === "climate" && visualizationMode !== 'image') {
+      handleVisualizationModeChange(null, "image");
+    }
+  }, [currentIndicator, visualizationMode, handleVisualizationModeChange]);
 
-  if (currentIndicator === "climate" && !isPresentationMode) {
-      disableInteractiveMode = true;
+  if (currentIndicator === "climate") {
+    disableInteractiveMode = true;
   }
   
   return (
@@ -90,7 +88,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           p: { xs: 1, sm: 1.5 },
           borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
           backgroundColor: "rgba(0, 0, 0, 0.2)",
-           flexShrink: 0,
+          flexShrink: 0,
         }}
       >
         {/* Left: Close/Info Buttons */}
@@ -128,13 +126,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
 
         {/* Center: Navigation Menu */}
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          {!isPresentationMode ? (
-              <NavMenu />
-          ) : (
-              <Typography variant="subtitle1" color="white" sx={{ textAlign: 'center', fontWeight: 600, letterSpacing: 1 }}>
-                  Presentation Mode
-              </Typography>
-          )}
+          <NavMenu />
         </Box>
 
         {/* Right: Logo */}
@@ -155,7 +147,6 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
       </Box>
 
       {/* Climate Map Type Selector or Visualization Mode Toggle */}
-      {!isPresentationMode && ( <>
       {currentIndicator === "climate" ? (
         <ClimateMapTypeSelector />
       ) : (
@@ -249,8 +240,6 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           </ToggleButtonGroup>
         </Box>
       )}
-       </>
-      )}
 
       {/* Charts Content */}
       <Box
@@ -263,50 +252,46 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           minHeight: 0
         }}
       >
-        {isPresentationMode ? (
-            <PresentationModeSettings />
-        ) : (
-            <>
         {currentIndicator === "climate" ? (
           <ClimateGraphs />
         ) : (
           <IndicatorGraphs />
         )}
-        </>)}
       </Box>
 
- <Box
+      {/* Presentation Mode Link */}
+      <Box
         sx={{
           p: 2,
           display: 'flex',
           justifyContent: 'center',
           flexShrink: 0,
+          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
           backgroundColor: 'rgba(18, 18, 18, 0.95)',
         }}
       >
         <Button
-          variant="contained"
-          color="primary"
-          onClick={handlePresentationMode}
+          variant="outlined"
+          onClick={handleOpenPresentation}
+          startIcon={<SlideshowIcon />}
           sx={{
             width: '80%',
             maxWidth: '300px',
-            fontWeight: 700,
-            fontSize: '1rem',
-            backgroundColor: '#64B5F6', 
-            color: '#121212',
+            fontWeight: 600,
+            fontSize: '0.9rem',
+            color: 'rgba(255,255,255,0.8)',
+            borderColor: 'rgba(255,255,255,0.2)',
             padding: '10px 20px',
             borderRadius: '6px',
-            boxShadow: '0 4px 10px #2a86d19c',
             '&:hover': {
-              backgroundColor: '#2a86d1ff', 
-              transform: 'translateY(-2px)',
-              boxShadow: '0 6px 15px #2a86d17d',
+              borderColor: '#64B5F6',
+              color: '#64B5F6',
+              backgroundColor: 'rgba(100, 181, 246, 0.08)',
             },
             transition: 'all 0.2s ease',
           }}
         >
-          {isPresentationMode ? "Exit Presentation Mode" : "Presentation Mode"}
+          Presentation Mode
         </Button>
       </Box>
     </Drawer>

@@ -1,4 +1,4 @@
-import React, { useEffect,useCallback,useRef , useState} from "react";
+import React, { useEffect, useCallback, useRef, useState } from "react";
 import {
   Routes,
   Route,
@@ -19,19 +19,21 @@ import {
 import darkTheme from "./theme";
 import Navbar from "./components/Navbar";
 import Dashboard from "./pages/Dashboard";
+import PresentationMode from "./pages/PresentationMode";
 import { useAppData } from "./DataContext";
 import "./style/index.css";
 
 // Wrapper component to handle indicator from URL params
-const DashboardWrapper = ({ openCharts  }) => {
+const DashboardWrapper = ({ openCharts }) => {
   const { indicator } = useParams();
   const { changeIndicator, currentIndicator } = useAppData();
-  // Set the indicator based on URL when component mounts
+  
   useEffect(() => {
-    if (indicator && indicator !== currentIndicator && indicator !== 'presentation') {
+    if (indicator && indicator !== currentIndicator) {
       changeIndicator(indicator);
     }
   }, [indicator, changeIndicator, currentIndicator]);
+  
   return <Dashboard openCharts={openCharts} />;
 };
 
@@ -40,27 +42,35 @@ const App = () => {
   const location = useLocation();
   
   const { 
-      loading, 
-      error, 
-      changeIndicator, 
-      currentIndicator, 
-      isPresentationMode, 
-      togglePresentationMode 
+    loading, 
+    error, 
+    changeIndicator, 
+    currentIndicator, 
+    isPresentationMode
   } = useAppData();
-  
-  const isPresentationModeRef = useRef(isPresentationMode);
-  
-  useEffect(() => {
-      isPresentationModeRef.current = isPresentationMode;
-  }, [isPresentationMode]);
 
   const remoteControlActive = useRef(false);
-  const lastRemoteIndicator = useRef(null);
   const [openCharts, setOpenCharts] = useState(true);
+  const prevOpenChartsRef = useRef(openCharts);
 
   const handleChartsClick = () => {
     setOpenCharts(!openCharts);
   };
+
+  // Save drawer state when entering presentation mode
+  useEffect(() => {
+    if (isPresentationMode) {
+      prevOpenChartsRef.current = openCharts;
+    }
+  }, [isPresentationMode, openCharts]);
+
+  // Restore drawer state when exiting presentation mode
+  useEffect(() => {
+    if (!isPresentationMode && !location.pathname.includes('/presentation')) {
+      // Restore the drawer state
+      setOpenCharts(prevOpenChartsRef.current);
+    }
+  }, [isPresentationMode, location.pathname]);
 
   const getIndicatorFromPath = useCallback((path) => {
     if (path.includes("/mobility")) return "mobility";
@@ -69,64 +79,43 @@ const App = () => {
     return null;
   }, []);
 
-
-  // Effect 0: Monitor remote control
+  // Effect: Monitor remote control
   useEffect(() => {
     const pathIndicator = getIndicatorFromPath(location.pathname);
     
     if (pathIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation') {
       console.log("Remote controller is active");
       remoteControlActive.current = true;
-      lastRemoteIndicator.current = currentIndicator;
     }
   }, [currentIndicator, location.pathname, getIndicatorFromPath]);
 
-  // Effect 1: Sync Context -> URL
+  // Effect: Sync Context -> URL (only when not in presentation mode)
   useEffect(() => {
     if (isPresentationMode) return; 
 
     const pathIndicator = getIndicatorFromPath(location.pathname);
-    if (currentIndicator && pathIndicator !== currentIndicator){
+    if (currentIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation') {
       console.log(`Context changed to '${currentIndicator}'. Navigating to sync URL.`);
-      if (currentIndicator !== 'presentation') {
-         navigate(`/${currentIndicator}`, { replace: true }); 
-      }
+      navigate(`/${currentIndicator}`, { replace: true }); 
     }
   }, [currentIndicator, location.pathname, navigate, getIndicatorFromPath, isPresentationMode]);
 
-  // Effect 2: Sync URL -> Context
+  // Effect: Sync URL -> Context (for non-presentation routes)
   useEffect(() => {
     if (remoteControlActive.current) return;
 
     const pathIndicator = getIndicatorFromPath(location.pathname);
     
-    if (pathIndicator && pathIndicator !== currentIndicator) {
-       if (pathIndicator === 'presentation') {
-           if (!isPresentationModeRef.current) {
-               console.log("URL is /presentation. Setting context state.");
-               togglePresentationMode(true);
-           }
-       } else {
-           changeIndicator(pathIndicator);
-           if (isPresentationModeRef.current) {
-               togglePresentationMode(false);
-           }
-       }
+    if (pathIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation') {
+      changeIndicator(pathIndicator);
     }
-  }, [location.pathname, changeIndicator, currentIndicator, togglePresentationMode, getIndicatorFromPath]);
+  }, [location.pathname, changeIndicator, currentIndicator, getIndicatorFromPath]);
 
-  // Effect 3: Handle Presentation Mode URL Management
-  useEffect(() => {
-    const pathIndicator = getIndicatorFromPath(location.pathname);
-    
-    if (isPresentationMode && pathIndicator !== 'presentation') {
-        console.log("Presentation Mode active, routing to /presentation.");
-        navigate("/presentation", { replace: true }); 
-    } else if (!isPresentationMode && pathIndicator === 'presentation') {
-        console.log(`Exiting Presentation Mode. Routing to /${currentIndicator}.`);
-        navigate(`/${currentIndicator}`, { replace: true });
-    }
-  }, [isPresentationMode, currentIndicator, location.pathname, navigate, getIndicatorFromPath]);
+  // Check if we're in presentation mode (either by state or URL)
+  const isInPresentationMode = isPresentationMode || location.pathname.includes('/presentation');
+  
+  // Don't show navbar in presentation mode
+  const showNavbar = !isInPresentationMode;
 
   return (
     <ThemeProvider theme={darkTheme}>
@@ -142,13 +131,15 @@ const App = () => {
       >
         <CssBaseline />
 
-        <Navbar 
+        {showNavbar && (
+          <Navbar 
             openCharts={openCharts} 
             handleChartsClick={handleChartsClick} 
-        />
+          />
+        )}
 
-        <main>
-          {loading ? (
+        <main style={{ flex: 1 }}>
+          {loading && !isInPresentationMode ? (
             <Box
               sx={{
                 display: "flex",
@@ -186,7 +177,7 @@ const App = () => {
             </Box>
           ) : (
             <Routes>
-              <Route path="presentation" element={<DashboardWrapper openCharts={openCharts} />} />
+              <Route path="presentation" element={<PresentationMode />} />
               <Route path="mobility" element={<DashboardWrapper openCharts={openCharts} />} />
               <Route path="climate" element={<DashboardWrapper openCharts={openCharts} />} />
               <Route path=":indicator" element={<DashboardWrapper openCharts={openCharts} />} />
