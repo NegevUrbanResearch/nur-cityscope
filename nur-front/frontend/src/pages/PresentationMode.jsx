@@ -382,42 +382,41 @@ const PresentationMode = () => {
     const isVideo = thumbnailUrl?.includes('.mp4');
 
     return (
-        <Box sx={{ minHeight: '100vh', bgcolor: '#0a0a0f', display: 'flex', flexDirection: 'column' }}>
+        <Box sx={{ height: '100vh', bgcolor: '#0a0a0f', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             {/* Header */}
-            <Box sx={{ display: 'flex', alignItems: 'center', px: 3, py: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 3, py: 2, flexShrink: 0 }}>
                 <img
                     src={config.frontend.logo.url}
                     alt="nur"
                     style={{ width: '80px', filter: 'brightness(0) invert(1)' }}
                 />
-                <Typography variant="h4" sx={{ color: 'white', fontWeight: 600, flex: 1, textAlign: 'center', letterSpacing: 1 }}>
-                    Presentation Mode
-                </Typography>
-                <IconButton 
-                    onClick={() => setOpenInfo(true)}
-                    sx={{ color: 'rgba(255,255,255,0.6)', '&:hover': { color: 'white' } }}
-                >
-                    <InfoOutlinedIcon sx={{ fontSize: 28 }} />
-                </IconButton>
-                <IconButton 
-                    onClick={handleExit}
-                    sx={{ color: 'rgba(255,255,255,0.6)', '&:hover': { color: 'white' } }}
-                >
-                    <CloseIcon sx={{ fontSize: 28 }} />
-                </IconButton>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                    <IconButton 
+                        onClick={() => setOpenInfo(true)}
+                        sx={{ color: 'rgba(255,255,255,0.6)', '&:hover': { color: 'white' } }}
+                    >
+                        <InfoOutlinedIcon sx={{ fontSize: 28 }} />
+                    </IconButton>
+                    <IconButton 
+                        onClick={handleExit}
+                        sx={{ color: 'rgba(255,255,255,0.6)', '&:hover': { color: 'white' } }}
+                    >
+                        <CloseIcon sx={{ fontSize: 28 }} />
+                    </IconButton>
+                </Box>
             </Box>
 
             {/* Main Content */}
-            <Box sx={{ flex: 1, display: 'flex', p: 3, gap: 3 }}>
+            <Box sx={{ flex: 1, display: 'flex', p: 3, gap: 3, overflow: 'hidden', minHeight: 0 }}>
                 {/* Left Panel - Current Slide */}
-                <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                     {/* Large Thumbnail */}
                     {thumbnailUrl && (
                         <Box sx={{ 
-                            width: '100%',
-                            maxWidth: 720,
+                            width: '90%',
+                            maxWidth: 900,
                             aspectRatio: '16/10',
-                            mb: 3, 
+                            mb: 2, 
                             borderRadius: 2, 
                             overflow: 'hidden',
                             boxShadow: '0 8px 32px rgba(0,0,0,0.4)'
@@ -440,58 +439,68 @@ const PresentationMode = () => {
                         </Box>
                     )}
 
-                    <Typography variant="body1" sx={{ color: 'rgba(255,255,255,0.5)', mb: 1, letterSpacing: 2, textTransform: 'uppercase' }}>
+                    <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.4)', letterSpacing: 2, textTransform: 'uppercase' }}>
                         Now Showing
                     </Typography>
-                    <Typography variant="h3" sx={{ color: 'white', mb: 4, fontWeight: 500 }}>
+                    <Typography variant="h5" sx={{ color: 'white', mb: 3, fontWeight: 500 }}>
                         {indicatorConfig[currentStep?.indicator]?.name.replace(' Dashboard', '')} - {currentStep?.state}
                     </Typography>
 
                     {/* Navigation & Timer Controls */}
-                    <Stack direction="row" spacing={3} alignItems="center">
+                    <Stack direction="row" spacing={2} alignItems="center">
                         <IconButton 
                             onClick={skipToPrevStep}  
                             sx={{ 
                                 color: 'white', 
                                 bgcolor: 'rgba(255,255,255,0.08)', 
-                                width: 56, 
-                                height: 56,
+                                width: 64, 
+                                height: 64,
                                 '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' } 
                             }}
                         >
-                            <NavigateBeforeIcon sx={{ fontSize: 32 }} />
+                            <NavigateBeforeIcon sx={{ fontSize: 36 }} />
                         </IconButton>
                         
                         <Box sx={{ 
                             display: 'flex', 
                             alignItems: 'center', 
-                            gap: 2,
+                            gap: 3,
                             bgcolor: 'rgba(255,255,255,0.05)',
-                            borderRadius: 2,
-                            px: 3,
-                            py: 1.5
+                            borderRadius: 3,
+                            px: 4,
+                            py: 2
                         }}>
-                            <Typography variant="h5" sx={{ color: 'white', fontWeight: 500, minWidth: 70, textAlign: 'center' }}>
+                            <Typography variant="h4" sx={{ color: 'white', fontWeight: 600, minWidth: 90, textAlign: 'center' }}>
                                 {sequenceIndex + 1} / {presentationSequence.length}
                             </Typography>
-                            <Box sx={{ width: 1, height: 30, bgcolor: 'rgba(255,255,255,0.15)' }} />
-                            <Stack direction="row" alignItems="center" spacing={1}>
+                            <Box sx={{ width: 2, height: 40, bgcolor: 'rgba(255,255,255,0.15)', borderRadius: 1 }} />
+                            <Stack direction="row" alignItems="center" spacing={1.5}>
                                 <IconButton 
-                                    size="small"
                                     onClick={() => setGlobalDuration(Math.max(1, globalDuration - 1))}
-                                    sx={{ color: 'rgba(255,255,255,0.6)', '&:hover': { color: 'white' } }}
+                                    sx={{ 
+                                        color: 'rgba(255,255,255,0.7)', 
+                                        bgcolor: 'rgba(255,255,255,0.08)',
+                                        width: 40,
+                                        height: 40,
+                                        '&:hover': { color: 'white', bgcolor: 'rgba(255,255,255,0.15)' } 
+                                    }}
                                 >
-                                    <Typography variant="h6">−</Typography>
+                                    <Typography variant="h5" sx={{ fontWeight: 300 }}>−</Typography>
                                 </IconButton>
-                                <Typography variant="h5" sx={{ color: 'white', minWidth: 60, textAlign: 'center' }}>
+                                <Typography variant="h4" sx={{ color: 'white', minWidth: 70, textAlign: 'center', fontWeight: 500 }}>
                                     {globalDuration}s
                                 </Typography>
                                 <IconButton 
-                                    size="small"
                                     onClick={() => setGlobalDuration(globalDuration + 1)}
-                                    sx={{ color: 'rgba(255,255,255,0.6)', '&:hover': { color: 'white' } }}
+                                    sx={{ 
+                                        color: 'rgba(255,255,255,0.7)', 
+                                        bgcolor: 'rgba(255,255,255,0.08)',
+                                        width: 40,
+                                        height: 40,
+                                        '&:hover': { color: 'white', bgcolor: 'rgba(255,255,255,0.15)' } 
+                                    }}
                                 >
-                                    <Typography variant="h6">+</Typography>
+                                    <Typography variant="h5" sx={{ fontWeight: 300 }}>+</Typography>
                                 </IconButton>
                             </Stack>
                         </Box>
@@ -501,23 +510,54 @@ const PresentationMode = () => {
                             sx={{ 
                                 color: 'white', 
                                 bgcolor: 'rgba(255,255,255,0.08)', 
-                                width: 56, 
-                                height: 56,
+                                width: 64, 
+                                height: 64,
                                 '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' } 
                             }}
                         >
-                            <NavigateNextIcon sx={{ fontSize: 32 }} />
+                            <NavigateNextIcon sx={{ fontSize: 36 }} />
                         </IconButton>
                     </Stack>
                 </Box>
 
                 {/* Right Panel - Slide List */}
-                <Box sx={{ width: 380, display: 'flex', flexDirection: 'column', bgcolor: 'rgba(255,255,255,0.02)', borderRadius: 2, overflow: 'hidden' }}>
-                    <Typography variant="h6" sx={{ color: 'white', fontWeight: 600, p: 2, bgcolor: 'rgba(0,0,0,0.2)' }}>
+                <Box sx={{ 
+                    width: 380, 
+                    height: '100%',
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    bgcolor: 'rgba(255,255,255,0.02)', 
+                    borderRadius: 2, 
+                    overflow: 'hidden',
+                    flexShrink: 0
+                }}>
+                    <Typography variant="h6" sx={{ color: 'white', fontWeight: 600, p: 2, bgcolor: 'rgba(0,0,0,0.2)', flexShrink: 0 }}>
                         Slide Sequence
                     </Typography>
                     
-                    <Box sx={{ flex: 1, overflowY: 'auto', p: 1.5 }} onDragLeave={() => setDropTargetIndex(null)}>
+                    <Box 
+                        sx={{ 
+                            flex: 1, 
+                            overflowY: 'auto', 
+                            minHeight: 0,
+                            p: 1.5,
+                            '&::-webkit-scrollbar': {
+                                width: 8,
+                            },
+                            '&::-webkit-scrollbar-track': {
+                                bgcolor: 'rgba(255,255,255,0.05)',
+                                borderRadius: 4,
+                            },
+                            '&::-webkit-scrollbar-thumb': {
+                                bgcolor: 'rgba(255,255,255,0.2)',
+                                borderRadius: 4,
+                                '&:hover': {
+                                    bgcolor: 'rgba(255,255,255,0.35)',
+                                }
+                            }
+                        }} 
+                        onDragLeave={() => setDropTargetIndex(null)}
+                    >
                         <Stack spacing={1}>
                             {presentationSequence.map((step, index) => (
                                 <Box
