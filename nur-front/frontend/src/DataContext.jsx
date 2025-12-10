@@ -548,14 +548,15 @@ export const DataProvider = ({ children }) => {
             setPrevVisualizationMode(visualizationModeRef.current);
             
             setSequenceIndex(0);
-            setIsPlaying(false); // Start paused to allow setup
             
-            // FIX: Force 'image' mode for presentation
+            // Force 'image' mode for presentation
             if (visualizationModeRef.current !== 'image') {
                  handleVisualizationModeChange(null, 'image');
             }
   
             setIsPresentationMode(true);
+            // Auto-start playing when entering presentation mode
+            setIsPlaying(true);
         } else {
             console.log("✓ Stopping Presentation Mode");
             setIsPlaying(false);
@@ -577,12 +578,22 @@ export const DataProvider = ({ children }) => {
       
       // Update the sequence index to the next step (including looping)
       setSequenceIndex((prevIndex) => {
-          // ensure the sequence exists and has length > 0
           if (!presentationSequence || presentationSequence.length === 0) return 0;
           return (prevIndex + 1) % presentationSequence.length;
       });
+  }, [presentationSequence]);
+
+    const skipToPrevStep = useCallback(() => {
+      if (presentationTimerRef.current) {
+          clearTimeout(presentationTimerRef.current);
+          presentationTimerRef.current = null;
+      }
       
-      // Note: This index change will automatically trigger the main timer useEffect.
+      // Update the sequence index to the previous step (including looping)
+      setSequenceIndex((prevIndex) => {
+          if (!presentationSequence || presentationSequence.length === 0) return 0;
+          return (prevIndex - 1 + presentationSequence.length) % presentationSequence.length;
+      });
   }, [presentationSequence]);
   
 
@@ -609,8 +620,19 @@ export const DataProvider = ({ children }) => {
         "Tab 4",
       ],
     visualizationMode,
-    handleVisualizationModeChange,isPresentationMode, togglePresentationMode, presentationSequence, setPresentationSequence,
-    isPlaying, setIsPlaying, sequenceIndex, globalDuration, setGlobalDuration,skipToNextStep
+    handleVisualizationModeChange,
+    isPresentationMode, 
+    togglePresentationMode, 
+    presentationSequence, 
+    setPresentationSequence,
+    isPlaying, 
+    setIsPlaying, 
+    sequenceIndex, 
+    setSequenceIndex,
+    globalDuration, 
+    setGlobalDuration,
+    skipToNextStep,
+    skipToPrevStep
   };
 
   return (
