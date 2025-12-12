@@ -51,105 +51,138 @@ const DeckGLMap = ({ indicatorType, state }) => {
     }
   }, [indicatorType, data]);
 
-  // Fetch data when indicator or state changes
+  // Fetch data when indicator or state changes with retry logic
   useEffect(() => {
     console.log("DeckGLMap - useEffect triggered with state:", state);
+    let isMounted = true;
+    let retryCount = 0;
+    const maxRetries = 3;
+    const baseDelay = 500; // Start with 500ms delay
+
     const fetchData = async () => {
+      if (!isMounted) return;
+      
       setLoading(true);
       setError(null);
 
-      try {
-        // Add cache-busting query param and include year if available
-        const timestamp = Date.now();
-        const year = state?.year || 2023;
-        const scenario = state?.scenario || "current";
-        const yearParam = `&year=${year}`;
+      const attemptFetch = async () => {
+        try {
+          // Add cache-busting query param and include year if available
+          const timestamp = Date.now();
+          const year = state?.year || 2023;
+          const scenario = state?.scenario || "current";
+          const yearParam = `&year=${year}`;
 
-        console.log(
-          `DeckGLMap - Fetching data for year: ${year}, scenario: ${scenario}`
-        );
+          console.log(
+            `DeckGLMap - Fetching data for year: ${year}, scenario: ${scenario}${retryCount > 0 ? ` (retry ${retryCount})` : ''}`
+          );
 
-        // Fetch data from our new endpoint that does the processing in the backend
-        const response = await api.get(
-          `/api/actions/get_deckgl_data/?_=${timestamp}&indicator=${indicatorType}${yearParam}`
-        );
+          // Fetch data from our new endpoint that does the processing in the backend
+          const response = await api.get(
+            `/api/actions/get_deckgl_data/?_=${timestamp}&indicator=${indicatorType}${yearParam}`
+          );
 
-        if (response.data) {
-          // Check if this is an HTML map that should be displayed in iframe
-          if (response.data.type === "html_map") {
-            // Remove cache-busting from HTML map URLs to prevent reloads
-            let mapUrl = response.data.map_url;
-            if (isHtmlAnimation(mapUrl)) {
-              mapUrl = mapUrl.split("?")[0]; // Remove query parameters
+          if (!isMounted) return;
+
+          if (response.data) {
+            // Check if this is an HTML map that should be displayed in iframe
+            if (response.data.type === "html_map") {
+              // Remove cache-busting from HTML map URLs to prevent reloads
+              let mapUrl = response.data.map_url;
+              if (isHtmlAnimation(mapUrl)) {
+                mapUrl = mapUrl.split("?")[0]; // Remove query parameters
+              }
+
+              setData({
+                type: "html_map",
+                map_url: mapUrl,
+                metadata: response.data.metadata,
+              });
+              setLoading(false);
+              return;
             }
 
-            setData({
-              type: "html_map",
-              map_url: mapUrl,
-              metadata: response.data.metadata,
-            });
+            // Data is already processed by the backend
+            setData(response.data);
+
+            // Update view state if bounds are provided
+            if (response.data.metadata && response.data.metadata.bounds) {
+              const { west, south, east, north } = response.data.metadata.bounds;
+
+              // Check if Ben Gurion University is within the bounds
+              const bguLng = 34.7996;
+              const bguLat = 31.2614;
+
+              // Set longitude and latitude
+              let longitude, latitude;
+
+              if (
+                bguLng >= west &&
+                bguLng <= east &&
+                bguLat >= south &&
+                bguLat <= north
+              ) {
+                // BGU is within bounds, use it as center
+                longitude = bguLng;
+                latitude = bguLat;
+              } else {
+                // Otherwise use the center of the bounds
+                longitude = (west + east) / 2;
+                latitude = (south + north) / 2;
+              }
+
+              // Calculate appropriate zoom level
+              const latDiff = Math.abs(north - south);
+              const lngDiff = Math.abs(east - west);
+              const maxDiff = Math.max(latDiff, lngDiff);
+              const zoom = Math.floor(8 - Math.log2(maxDiff));
+
+              setViewState({
+                longitude,
+                latitude,
+                zoom: Math.min(Math.max(zoom, 12), 15), // Keep zoom relatively close
+                pitch: 35,
+                bearing: 0,
+              });
+            }
+            setLoading(false);
+          } else {
+            throw new Error("No data found in response");
+          }
+        } catch (err) {
+          if (!isMounted) return;
+
+          // Check if it's a 404 error and we have retries left
+          const is404 = err.response?.status === 404 || err.message?.includes('404');
+          
+          if (is404 && retryCount < maxRetries) {
+            retryCount++;
+            const delay = baseDelay * Math.pow(2, retryCount - 1); // Exponential backoff
+            console.log(`DeckGLMap - 404 error, retrying in ${delay}ms (attempt ${retryCount}/${maxRetries})`);
+            
+            setTimeout(() => {
+              if (isMounted) {
+                attemptFetch();
+              }
+            }, delay);
             return;
           }
 
-          // Data is already processed by the backend
-          setData(response.data);
-
-          // Update view state if bounds are provided
-          if (response.data.metadata && response.data.metadata.bounds) {
-            const { west, south, east, north } = response.data.metadata.bounds;
-
-            // Check if Ben Gurion University is within the bounds
-            const bguLng = 34.7996;
-            const bguLat = 31.2614;
-
-            // Set longitude and latitude
-            let longitude, latitude;
-
-            if (
-              bguLng >= west &&
-              bguLng <= east &&
-              bguLat >= south &&
-              bguLat <= north
-            ) {
-              // BGU is within bounds, use it as center
-              longitude = bguLng;
-              latitude = bguLat;
-            } else {
-              // Otherwise use the center of the bounds
-              longitude = (west + east) / 2;
-              latitude = (south + north) / 2;
-            }
-
-            // Calculate appropriate zoom level
-            const latDiff = Math.abs(north - south);
-            const lngDiff = Math.abs(east - west);
-            const maxDiff = Math.max(latDiff, lngDiff);
-            const zoom = Math.floor(8 - Math.log2(maxDiff));
-
-            setViewState({
-              longitude,
-              latitude,
-              zoom: Math.min(Math.max(zoom, 12), 15), // Keep zoom relatively close
-              pitch: 35,
-              bearing: 0,
-            });
-          }
-        } else {
-          throw new Error("No data found in response");
+          console.error("Error fetching map data:", err);
+          setError(err.message);
+          setViewState(INITIAL_VIEW_STATE);
+          setLoading(false);
         }
-      } catch (err) {
-        console.error("Error fetching map data:", err);
-        setError(err.message);
+      };
 
-        // We don't need fallback data as the backend generates it
-        // But we could still set default view state
-        setViewState(INITIAL_VIEW_STATE);
-      } finally {
-        setLoading(false);
-      }
+      attemptFetch();
     };
 
     fetchData();
+
+    return () => {
+      isMounted = false;
+    };
   }, [indicatorType, state?.year, state?.scenario]); // Depend on year and scenario
 
   // Get appropriate layers based on indicator type

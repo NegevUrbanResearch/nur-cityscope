@@ -120,7 +120,10 @@ const Dashboard = ({ openCharts}) => {
 
     lastIndicatorRef.current = currentIndicator;
 
-    const fetchMapData = async () => {
+    const fetchMapData = async (retryCount = 0) => {
+      const maxRetries = 3;
+      const baseDelay = 300;
+
       try {
         // Add cache-busting timestamp parameter
         const timestamp = Date.now();
@@ -156,6 +159,16 @@ const Dashboard = ({ openCharts}) => {
           }
         }
       } catch (err) {
+        // Check if it's a 404 and we have retries left
+        const is404 = err.response?.status === 404;
+        
+        if (is404 && retryCount < maxRetries) {
+          const delay = baseDelay * Math.pow(2, retryCount);
+          console.log(`Dashboard - 404 error, retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})`);
+          setTimeout(() => fetchMapData(retryCount + 1), delay);
+          return;
+        }
+
         console.error("Error fetching map data:", err);
 
         // Fallback to default map based on indicator if API fails

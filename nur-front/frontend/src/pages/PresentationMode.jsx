@@ -254,6 +254,8 @@ const PresentationMode = () => {
     const [openInfo, setOpenInfo] = useState(false);
     const [thumbnailUrl, setThumbnailUrl] = useState(null);
 
+    const currentStep = presentationSequence[sequenceIndex];
+
     // Enter presentation mode when page loads
     useEffect(() => {
         if (!isPresentationMode) {
@@ -261,9 +263,12 @@ const PresentationMode = () => {
         }
     }, [isPresentationMode, togglePresentationMode]);
 
-    // Fetch thumbnail for current slide
+    // Fetch thumbnail after state changes complete (uses existing event system)
     useEffect(() => {
         const fetchThumbnail = async () => {
+            // Small delay to ensure backend state is fully updated
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
             try {
                 const timestamp = Date.now();
                 const response = await api.get(
@@ -279,8 +284,19 @@ const PresentationMode = () => {
                 console.error("Error fetching thumbnail:", err);
             }
         };
-        fetchThumbnail();
-    }, [currentIndicator, sequenceIndex]);
+
+        // Listen for state change events (fired AFTER backend state is updated)
+        // This ensures we fetch only after the backend has the correct state
+        window.addEventListener("climateStateChanged", fetchThumbnail);
+        window.addEventListener("stateChanged", fetchThumbnail);
+        window.addEventListener("indicatorStateChanged", fetchThumbnail);
+
+        return () => {
+            window.removeEventListener("climateStateChanged", fetchThumbnail);
+            window.removeEventListener("stateChanged", fetchThumbnail);
+            window.removeEventListener("indicatorStateChanged", fetchThumbnail);
+        };
+    }, [currentIndicator]);
 
     const handleExit = () => {
         togglePresentationMode(false);
@@ -378,7 +394,6 @@ const PresentationMode = () => {
         setDropTargetIndex(null);
     };
 
-    const currentStep = presentationSequence[sequenceIndex];
     const allSlidesUsed = allValidSlides.every(slide => 
         isSlideUsed(slide.indicator, slide.state)
     );
@@ -453,13 +468,15 @@ const PresentationMode = () => {
                     {/* Navigation & Timer Controls */}
                     <Stack direction="row" spacing={2} alignItems="center">
                         <IconButton 
-                            onClick={skipToPrevStep}  
+                            onClick={skipToPrevStep}
+                            disabled={!isPlaying}
                             sx={{ 
-                                color: 'white', 
+                                color: isPlaying ? 'white' : 'rgba(255,255,255,0.3)', 
                                 bgcolor: 'rgba(255,255,255,0.08)', 
                                 width: 64, 
                                 height: 64,
-                                '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' } 
+                                '&:hover': { bgcolor: isPlaying ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.08)' },
+                                '&.Mui-disabled': { color: 'rgba(255,255,255,0.3)' }
                             }}
                         >
                             <NavigateBeforeIcon sx={{ fontSize: 36 }} />
@@ -526,13 +543,15 @@ const PresentationMode = () => {
                         </Box>
                         
                         <IconButton 
-                            onClick={skipToNextStep}  
+                            onClick={skipToNextStep}
+                            disabled={!isPlaying}
                             sx={{ 
-                                color: 'white', 
+                                color: isPlaying ? 'white' : 'rgba(255,255,255,0.3)', 
                                 bgcolor: 'rgba(255,255,255,0.08)', 
                                 width: 64, 
                                 height: 64,
-                                '&:hover': { bgcolor: 'rgba(255,255,255,0.15)' } 
+                                '&:hover': { bgcolor: isPlaying ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.08)' },
+                                '&.Mui-disabled': { color: 'rgba(255,255,255,0.3)' }
                             }}
                         >
                             <NavigateNextIcon sx={{ fontSize: 36 }} />

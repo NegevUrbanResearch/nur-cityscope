@@ -159,12 +159,13 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def get_global_variables(self, request):
-        """Get current global variables (indicator, state, visualization mode)"""
+        """Get current global variables (indicator, state, visualization mode, presentation state)"""
         response = JsonResponse(
             {
                 "indicator_id": globals.INDICATOR_ID,
                 "indicator_state": globals.INDICATOR_STATE,
                 "visualization_mode": globals.VISUALIZATION_MODE,
+                "presentation_playing": globals.PRESENTATION_PLAYING,
             }
         )
         self._add_no_cache_headers(response)
@@ -189,6 +190,21 @@ class CustomActionsViewSet(viewsets.ViewSet):
         print(f"✓ Visualization mode set to: {mode}")
 
         return JsonResponse({"status": "ok", "visualization_mode": mode})
+
+    @action(detail=False, methods=["get"])
+    def get_presentation_state(self, request):
+        """Get current presentation playing state"""
+        response = JsonResponse({"is_playing": globals.PRESENTATION_PLAYING})
+        self._add_no_cache_headers(response)
+        return response
+
+    @action(detail=False, methods=["post"])
+    def set_presentation_state(self, request):
+        """Set the presentation playing state (play/pause)"""
+        is_playing = request.data.get("is_playing", True)
+        globals.PRESENTATION_PLAYING = bool(is_playing)
+        print(f"✓ Presentation playing state set to: {globals.PRESENTATION_PLAYING}")
+        return JsonResponse({"status": "ok", "is_playing": globals.PRESENTATION_PLAYING})
 
     @action(detail=False, methods=["post"])
     def set_current_indicator(self, request):

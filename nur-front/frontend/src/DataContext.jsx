@@ -112,6 +112,8 @@ export const DataProvider = ({ children }) => {
   const debounceTimerRef = useRef(null);
   const [visualizationMode, setVisualizationMode] = useState("deck");
   const visualizationModeRef = useRef(visualizationMode);
+  const isPresentationModeRef = useRef(isPresentationMode);
+  const isPlayingRef = useRef(isPlaying);
 
   const [prevIndicator, setPrevIndicator] = useState(null);
   const [prevVisualizationMode, setPrevVisualizationMode] = useState(null);
@@ -125,6 +127,14 @@ export const DataProvider = ({ children }) => {
   useEffect(() => {
     visualizationModeRef.current = visualizationMode;
   }, [visualizationMode]);
+
+  useEffect(() => {
+    isPresentationModeRef.current = isPresentationMode;
+  }, [isPresentationMode]);
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
 
   // Function to initialize dashboard data
   // Note: Chart data is loaded directly from CSV files in the components (MobilityGraphs, ClimateGraphs)
@@ -221,6 +231,16 @@ export const DataProvider = ({ children }) => {
               `Remote controller changed visualization mode to: ${newMode}`
             );
             setVisualizationMode(newMode);
+          }
+        }
+
+        // Handle presentation playing state changes (for cross-tab sync)
+        if (response.data.presentation_playing !== undefined) {
+          const backendPlaying = response.data.presentation_playing;
+          // Only update if we're in presentation mode and state differs
+          if (isPresentationModeRef.current && backendPlaying !== isPlayingRef.current) {
+            console.log(`🎬 Presentation state synced from backend: ${backendPlaying ? 'playing' : 'paused'}`);
+            setIsPlaying(backendPlaying);
           }
         }
 
@@ -365,31 +385,70 @@ export const DataProvider = ({ children }) => {
     };
   }, [currentIndicator, fetchDashboardData, checkRemoteChanges]);
 
-  // Pause presentation mode - call this explicitly from UI click handlers
-  // Only pauses auto-advance, doesn't exit presentation mode entirely
-  const pausePresentationMode = useCallback(() => {
-    if (isPresentationMode && isPlaying) {
-      console.log("📌 Manual override: pausing presentation mode");
+  // Pause presentation mode via backend API (works across browser tabs)
+  const pausePresentationMode = useCallback(async () => {
+    // Always try to pause via backend, even if local state thinks we're not playing
+    // This ensures cross-tab sync works
+    console.log("📌 Manual override: pausing presentation mode via backend");
+    try {
+      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: false });
+      if (response.data?.status === "ok") {
+        setIsPlaying(false);
+      }
+    } catch (err) {
+      console.error("Error pausing presentation:", err);
+      // Still set local state to false to be safe
       setIsPlaying(false);
     }
-  }, [isPresentationMode, isPlaying]);
+  }, []);
 
-  // Resume presentation mode auto-advance
-  const resumePresentationMode = useCallback(() => {
-    if (isPresentationMode && !isPlaying) {
-      console.log("▶️ Resuming presentation mode");
-      setIsPlaying(true);
+  // Resume presentation mode via backend API
+  const resumePresentationMode = useCallback(async () => {
+    // Guard: only resume if in presentation mode
+    if (!isPresentationModeRef.current) {
+      console.log("⚠️ Resume blocked: not in presentation mode");
+      return;
     }
-  }, [isPresentationMode, isPlaying]);
+    
+    console.log("▶️ Resuming presentation mode via backend");
+    try {
+      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: true });
+      if (response.data?.status === "ok") {
+        setIsPlaying(true);
+      }
+    } catch (err) {
+      console.error("Error resuming presentation:", err);
+    }
+  }, []);
 
-  // Toggle play/pause
-  const togglePlayPause = useCallback(() => {
-    if (isPlaying) {
-      setIsPlaying(false);
-    } else {
-      setIsPlaying(true);
+  // Toggle play/pause via backend API
+  const togglePlayPause = useCallback(async () => {
+    // Guard: only allow toggle in presentation mode
+    if (!isPresentationModeRef.current) {
+      console.log("⚠️ Toggle blocked: not in presentation mode");
+      return;
     }
-  }, [isPlaying]);
+    
+    const newState = !isPlayingRef.current;
+    try {
+      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: newState });
+      if (response.data?.status === "ok") {
+        setIsPlaying(newState);
+        console.log(`✓ Presentation ${newState ? 'resumed' : 'paused'}`);
+      }
+    } catch (err) {
+      console.error("Error toggling presentation:", err);
+      // Attempt to sync state from backend on error
+      try {
+        const syncResponse = await api.get("/api/actions/get_presentation_state/");
+        if (syncResponse.data?.is_playing !== undefined) {
+          setIsPlaying(syncResponse.data.is_playing);
+        }
+      } catch (syncErr) {
+        console.error("Error syncing presentation state:", syncErr);
+      }
+    }
+  }, []);
 
   // Function to change state (climate scenario or mobility state)
   const changeState = useCallback(
@@ -527,33 +586,55 @@ export const DataProvider = ({ children }) => {
 
     // presentation timer logic
     useEffect(() => {
+      // Always clear any existing timer first
       if (presentationTimerRef.current) {
           clearTimeout(presentationTimerRef.current);
           presentationTimerRef.current = null;
       }
   
-      if (isPresentationMode && isPlaying && presentationSequence.length > 0) {
-          const currentStep = presentationSequence[sequenceIndex];
-          
-          console.log(`[Presentation] Playing Step ${sequenceIndex + 1}/${presentationSequence.length}:`, currentStep);
-  
-          if (currentStep.indicator !== indicatorRef.current) { 
-              changeIndicator(currentStep.indicator);
-          }
-          
-          setTimeout(() => {
-              changeState(currentStep.state);
-          }, 500);
-  
-          const durationMs = globalDuration * 1000;
-          presentationTimerRef.current = setTimeout(() => {
-              setSequenceIndex((prevIndex) => (prevIndex + 1) % presentationSequence.length);
-          }, durationMs);
+      // Guard: only run when presentation mode is active, playing, and has slides
+      if (!isPresentationMode || !isPlaying || !presentationSequence || presentationSequence.length === 0) {
+          return;
       }
+
+      // Validate sequence index is in bounds
+      const safeIndex = Math.max(0, Math.min(sequenceIndex, presentationSequence.length - 1));
+      const currentStep = presentationSequence[safeIndex];
+      
+      // Guard: validate currentStep exists and has required properties
+      if (!currentStep || !currentStep.indicator || !currentStep.state) {
+          console.error("⚠️ Invalid presentation step:", currentStep);
+          return;
+      }
+      
+      console.log(`[Presentation] Playing Step ${safeIndex + 1}/${presentationSequence.length}:`, currentStep);
+
+      // Change indicator if needed
+      if (currentStep.indicator !== indicatorRef.current) { 
+          changeIndicator(currentStep.indicator);
+      }
+      
+      // Change state after a short delay to allow indicator change to settle
+      setTimeout(() => {
+          // Double-check we're still playing before changing state
+          if (isPlayingRef.current) {
+              changeState(currentStep.state);
+          }
+      }, 500);
+
+      // Set up timer for next slide
+      const durationMs = Math.max(1000, globalDuration * 1000); // Minimum 1 second
+      presentationTimerRef.current = setTimeout(() => {
+          // Guard: verify still playing before advancing
+          if (isPlayingRef.current && isPresentationModeRef.current) {
+              setSequenceIndex((prevIndex) => (prevIndex + 1) % presentationSequence.length);
+          }
+      }, durationMs);
   
       return () => {
           if (presentationTimerRef.current) {
               clearTimeout(presentationTimerRef.current);
+              presentationTimerRef.current = null;
           }
       };
     }, [
@@ -566,7 +647,7 @@ export const DataProvider = ({ children }) => {
         changeState 
     ]);
   
-    const togglePresentationMode = useCallback((isEntering) => {
+    const togglePresentationMode = useCallback(async (isEntering) => {
         if (isEntering) {
             console.log("✓ Starting Presentation Mode");
             // Save current state
@@ -583,10 +664,22 @@ export const DataProvider = ({ children }) => {
             setIsPresentationMode(true);
             // Auto-start playing when entering presentation mode
             setIsPlaying(true);
+            // Sync with backend so other tabs know presentation is playing
+            try {
+                await api.post("/api/actions/set_presentation_state/", { is_playing: true });
+            } catch (err) {
+                console.error("Error syncing presentation state:", err);
+            }
         } else {
             console.log("✓ Stopping Presentation Mode");
             setIsPlaying(false);
             setIsPresentationMode(false);
+            // Sync with backend
+            try {
+                await api.post("/api/actions/set_presentation_state/", { is_playing: false });
+            } catch (err) {
+                console.error("Error syncing presentation state:", err);
+            }
             
             // Restore state
             setTimeout(() => {
@@ -597,6 +690,12 @@ export const DataProvider = ({ children }) => {
     }, [prevIndicator, prevVisualizationMode, changeIndicator, handleVisualizationModeChange]);
   
     const skipToNextStep = useCallback(() => {
+      // Guard: only allow skipping when playing
+      if (!isPlayingRef.current) {
+          console.log("⚠️ Skip blocked: presentation is paused");
+          return;
+      }
+      
       if (presentationTimerRef.current) {
           clearTimeout(presentationTimerRef.current);
           presentationTimerRef.current = null;
@@ -610,6 +709,12 @@ export const DataProvider = ({ children }) => {
   }, [presentationSequence]);
 
     const skipToPrevStep = useCallback(() => {
+      // Guard: only allow skipping when playing
+      if (!isPlayingRef.current) {
+          console.log("⚠️ Skip blocked: presentation is paused");
+          return;
+      }
+      
       if (presentationTimerRef.current) {
           clearTimeout(presentationTimerRef.current);
           presentationTimerRef.current = null;

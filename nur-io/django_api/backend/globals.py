@@ -18,6 +18,9 @@ list_temp = []
 # Visualization mode (image or map)
 VISUALIZATION_MODE = "image"
 
+# Presentation mode playing state (shared across tabs via backend)
+PRESENTATION_PLAYING = True
+
 # Default states for fallback
 DEFAULT_STATES = {"year": 2023, "scenario": "present", "label": "Present"}
 
