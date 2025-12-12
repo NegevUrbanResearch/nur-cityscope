@@ -42,6 +42,8 @@ const Dashboard = ({ openCharts}) => {
   const [showLoadingMessage, setShowLoadingMessage] = useState(true);
   const lastIndicatorRef = useRef(currentIndicator);
   const loadingTimerRef = useRef(null);
+  // Track the expected URL to prevent showing stale images
+  const expectedUrlRef = useRef(null);
 
   // Preload image and track its loading state - memoize to avoid dependency issues
   const preloadImage = useCallback(
@@ -49,13 +51,18 @@ const Dashboard = ({ openCharts}) => {
       // First clear any previous loading state for this URL
       imageStates.current.delete(url);
 
-      // Mark this URL as loading
+      // Mark this URL as loading and track expected URL
       imageStates.current.set(url, "loading");
+      expectedUrlRef.current = url;
+
+      // Clear current image while new one loads to prevent flashing old content
+      setCurrentImageUrl(null);
+      setShowLoadingMessage(true);
 
       const img = new Image();
       img.onload = () => {
-        // Only proceed if this is still the current indicator's image
-        if (url.includes(currentIndicator)) {
+        // Only proceed if this is still the expected URL (prevents stale images)
+        if (url === expectedUrlRef.current) {
           // Mark as loaded and update state to show this image
           imageStates.current.set(url, "loaded");
           setCurrentImageUrl(url);
@@ -72,11 +79,11 @@ const Dashboard = ({ openCharts}) => {
       img.onerror = () => {
         console.error(`Failed to load image: ${url}`);
 
-        // Mark as error but still try to show it
+        // Mark as error but still try to show it if it's the expected URL
         imageStates.current.set(url, "error");
 
-        // Only update UI if this is still the current indicator's image
-        if (url.includes(currentIndicator)) {
+        // Only update UI if this is still the expected URL
+        if (url === expectedUrlRef.current) {
           setCurrentImageUrl(url);
           setShowLoadingMessage(false);
         }
@@ -90,7 +97,7 @@ const Dashboard = ({ openCharts}) => {
 
       img.src = url;
     },
-    [currentIndicator]
+    []
   );
 
   // Fetch map data from API when indicator changes
@@ -189,6 +196,10 @@ const Dashboard = ({ openCharts}) => {
           "🌡️ Climate state changed event received, refreshing image..."
         );
 
+        // Immediately clear current image to prevent flashing old content
+        setCurrentImageUrl(null);
+        setShowLoadingMessage(true);
+
         // Add a small delay to ensure backend has updated globals.INDICATOR_STATE
         await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -250,6 +261,10 @@ const Dashboard = ({ openCharts}) => {
         console.log(
           `📊 Indicator state changed event received for ${currentIndicator}, refreshing image...`
         );
+
+        // Immediately clear current image to prevent flashing old content
+        setCurrentImageUrl(null);
+        setShowLoadingMessage(true);
 
         // Add a small delay to ensure backend has updated globals.INDICATOR_STATE
         await new Promise((resolve) => setTimeout(resolve, 100));

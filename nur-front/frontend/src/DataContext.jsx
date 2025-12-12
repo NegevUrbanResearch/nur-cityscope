@@ -366,8 +366,16 @@ export const DataProvider = ({ children }) => {
   }, [currentIndicator, fetchDashboardData, checkRemoteChanges]);
 
   // Function to change state (climate scenario or mobility state)
+  // When called from dashboard controls (not presentation mode), stops presentation
   const changeState = useCallback(
-    async (stateName) => {
+    async (stateName, fromPresentationMode = false) => {
+      // Manual override: stop presentation mode if user changes state from dashboard
+      if (!fromPresentationMode && isPresentationMode) {
+        console.log("📌 Manual override: stopping presentation mode due to state change");
+        setIsPlaying(false);
+        setIsPresentationMode(false);
+      }
+
       if (currentIndicator === "climate") {
         // Find the scenario key from the display name
         const scenarioKey = Object.entries(CLIMATE_SCENARIOS).find(
@@ -433,20 +441,28 @@ export const DataProvider = ({ children }) => {
             // Trigger events to notify components of the change
             window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
             window.dispatchEvent(new CustomEvent("stateChanged"));
-          } else {
-            console.error(`❌ State not found for ${scenarioKey}`);
-          }
-        } catch (error) {
-          console.error("Error changing mobility state:", error);
+        } else {
+          console.error(`❌ State not found for ${scenarioKey}`);
         }
+      } catch (error) {
+        console.error("Error changing mobility state:", error);
       }
-    },
-    [currentIndicator]
-  );
+    }
+  },
+  [currentIndicator, isPresentationMode]
+);
 
   // Function to switch indicators
+  // When called from dashboard controls (not presentation mode), stops presentation
   const changeIndicator = useCallback(
-    (newIndicator) => {
+    (newIndicator, fromPresentationMode = false) => {
+      // Manual override: stop presentation mode if user changes indicator from dashboard
+      if (!fromPresentationMode && isPresentationMode) {
+        console.log("📌 Manual override: stopping presentation mode due to indicator change");
+        setIsPlaying(false);
+        setIsPresentationMode(false);
+      }
+
       if (
         newIndicator !== currentIndicator &&
         Object.keys(INDICATOR_CONFIG).includes(newIndicator)
@@ -487,17 +503,17 @@ export const DataProvider = ({ children }) => {
               console.error("Error updating remote controller:", err);
               setLoading(false);
             });
-        } else {
-          // Even if we can't update the remote, we should fetch data for the new indicator
-          fetchDashboardData(newIndicator);
-          setTimeout(() => {
-            setLoading(false);
-          }, 500);
-        }
+      } else {
+        // Even if we can't update the remote, we should fetch data for the new indicator
+        fetchDashboardData(newIndicator);
+        setTimeout(() => {
+          setLoading(false);
+        }, 500);
       }
-    },
-    [currentIndicator, fetchDashboardData]
-  );
+    }
+  },
+  [currentIndicator, fetchDashboardData, isPresentationMode]
+);
 
     // presentation timer logic
     useEffect(() => {
@@ -511,12 +527,14 @@ export const DataProvider = ({ children }) => {
           
           console.log(`[Presentation] Playing Step ${sequenceIndex + 1}/${presentationSequence.length}:`, currentStep);
   
+          // Pass true to indicate this is from presentation mode (not manual override)
           if (currentStep.indicator !== indicatorRef.current) { 
-              changeIndicator(currentStep.indicator);
+              changeIndicator(currentStep.indicator, true);
           }
           
           setTimeout(() => {
-              changeState(currentStep.state);
+              // Pass true to indicate this is from presentation mode (not manual override)
+              changeState(currentStep.state, true);
           }, 500);
   
           const durationMs = globalDuration * 1000;
