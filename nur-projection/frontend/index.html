@@ -319,8 +319,8 @@
       // Event listeners for calibration panel
       $toggleConfigBtn.addEventListener("click", toggleConfigMode);
 
-      // Start periodic updates every 5 seconds (5000 ms) to reduce unnecessary reloads
-      setInterval(updateImage, 5000);
+      // Poll for updates every 1 second for responsive state changes
+      setInterval(updateImage, 1000);
 
       // Auto-reset calibration to fix sideways display
       autoResetCalibration();
