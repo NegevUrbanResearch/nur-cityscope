@@ -7,8 +7,10 @@ import {
 } from "@mui/material";
 import api from "../../api";
 import globals from "../../globals";
+import { useAppData } from "../../DataContext";
 
 const ClimateMapTypeSelector = () => {
+  const { pausePresentationMode } = useAppData();
   const [scenarioType, setScenarioType] = useState(
     globals.INDICATOR_STATE?.type || "utci"
   );
@@ -104,14 +106,15 @@ const ClimateMapTypeSelector = () => {
       }
     };
 
-    // Poll every 2 seconds
-    const intervalId = setInterval(pollBackend, 2000);
+    // Poll every 500ms for responsive state sync
+    const intervalId = setInterval(pollBackend, 500);
 
     return () => clearInterval(intervalId);
   }, [scenarioType]);
 
   const handleTypeChange = async (event, newType) => {
     if (newType !== null) {
+      pausePresentationMode(); // Pause auto-advance when user clicks
       setScenarioType(newType);
 
       const currentScenario = globals.INDICATOR_STATE?.scenario || "existing";

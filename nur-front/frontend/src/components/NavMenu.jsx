@@ -24,6 +24,7 @@ const NavMenu = () => {
     currentIndicator,
     changeIndicator,
     changeState,
+    pausePresentationMode,
     indicatorConfig,
     StateConfig,
   } = useAppData();
@@ -47,6 +48,7 @@ const NavMenu = () => {
   };
 
   const handleIndicatorChange = (indicator) => {
+    pausePresentationMode(); // Pause auto-advance when user clicks
     changeIndicator(indicator);
     navigate(`/${indicator}`);
     handleCloseIndicator();
@@ -192,6 +194,7 @@ const NavMenu = () => {
         {StateConfig[currentIndicator]?.map((element) => (
           <MenuItem
             onClick={() => {
+              pausePresentationMode(); // Pause auto-advance when user clicks
               changeState(element);
               handleCloseState();
             }}

@@ -365,17 +365,35 @@ export const DataProvider = ({ children }) => {
     };
   }, [currentIndicator, fetchDashboardData, checkRemoteChanges]);
 
-  // Function to change state (climate scenario or mobility state)
-  // When called from dashboard controls (not presentation mode), stops presentation
-  const changeState = useCallback(
-    async (stateName, fromPresentationMode = false) => {
-      // Manual override: stop presentation mode if user changes state from dashboard
-      if (!fromPresentationMode && isPresentationMode) {
-        console.log("📌 Manual override: stopping presentation mode due to state change");
-        setIsPlaying(false);
-        setIsPresentationMode(false);
-      }
+  // Pause presentation mode - call this explicitly from UI click handlers
+  // Only pauses auto-advance, doesn't exit presentation mode entirely
+  const pausePresentationMode = useCallback(() => {
+    if (isPresentationMode && isPlaying) {
+      console.log("📌 Manual override: pausing presentation mode");
+      setIsPlaying(false);
+    }
+  }, [isPresentationMode, isPlaying]);
 
+  // Resume presentation mode auto-advance
+  const resumePresentationMode = useCallback(() => {
+    if (isPresentationMode && !isPlaying) {
+      console.log("▶️ Resuming presentation mode");
+      setIsPlaying(true);
+    }
+  }, [isPresentationMode, isPlaying]);
+
+  // Toggle play/pause
+  const togglePlayPause = useCallback(() => {
+    if (isPlaying) {
+      setIsPlaying(false);
+    } else {
+      setIsPlaying(true);
+    }
+  }, [isPlaying]);
+
+  // Function to change state (climate scenario or mobility state)
+  const changeState = useCallback(
+    async (stateName) => {
       if (currentIndicator === "climate") {
         // Find the scenario key from the display name
         const scenarioKey = Object.entries(CLIMATE_SCENARIOS).find(
@@ -449,20 +467,12 @@ export const DataProvider = ({ children }) => {
       }
     }
   },
-  [currentIndicator, isPresentationMode]
+  [currentIndicator]
 );
 
   // Function to switch indicators
-  // When called from dashboard controls (not presentation mode), stops presentation
   const changeIndicator = useCallback(
-    (newIndicator, fromPresentationMode = false) => {
-      // Manual override: stop presentation mode if user changes indicator from dashboard
-      if (!fromPresentationMode && isPresentationMode) {
-        console.log("📌 Manual override: stopping presentation mode due to indicator change");
-        setIsPlaying(false);
-        setIsPresentationMode(false);
-      }
-
+    (newIndicator) => {
       if (
         newIndicator !== currentIndicator &&
         Object.keys(INDICATOR_CONFIG).includes(newIndicator)
@@ -512,7 +522,7 @@ export const DataProvider = ({ children }) => {
       }
     }
   },
-  [currentIndicator, fetchDashboardData, isPresentationMode]
+  [currentIndicator, fetchDashboardData]
 );
 
     // presentation timer logic
@@ -527,14 +537,12 @@ export const DataProvider = ({ children }) => {
           
           console.log(`[Presentation] Playing Step ${sequenceIndex + 1}/${presentationSequence.length}:`, currentStep);
   
-          // Pass true to indicate this is from presentation mode (not manual override)
           if (currentStep.indicator !== indicatorRef.current) { 
-              changeIndicator(currentStep.indicator, true);
+              changeIndicator(currentStep.indicator);
           }
           
           setTimeout(() => {
-              // Pass true to indicate this is from presentation mode (not manual override)
-              changeState(currentStep.state, true);
+              changeState(currentStep.state);
           }, 500);
   
           const durationMs = globalDuration * 1000;
@@ -621,6 +629,9 @@ export const DataProvider = ({ children }) => {
     currentIndicator,
     changeIndicator,
     changeState,
+    pausePresentationMode,
+    resumePresentationMode,
+    togglePlayPause,
     loading,
     error,
     StateConfig: STATE_CONFIG,

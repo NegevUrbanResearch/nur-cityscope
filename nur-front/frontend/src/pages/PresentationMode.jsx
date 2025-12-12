@@ -22,6 +22,8 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import PauseIcon from "@mui/icons-material/Pause";
 
 import { useAppData } from "../DataContext";
 import config from "../config";
@@ -216,6 +218,8 @@ const PresentationMode = () => {
         skipToPrevStep,
         isPresentationMode,
         togglePresentationMode,
+        isPlaying,
+        togglePlayPause,
         currentIndicator
     } = useAppData();
     
@@ -473,6 +477,22 @@ const PresentationMode = () => {
                             <Typography variant="h4" sx={{ color: 'white', fontWeight: 600, minWidth: 90, textAlign: 'center' }}>
                                 {sequenceIndex + 1} / {presentationSequence.length}
                             </Typography>
+                            <Box sx={{ width: 2, height: 40, bgcolor: 'rgba(255,255,255,0.15)', borderRadius: 1 }} />
+                            <IconButton 
+                                onClick={togglePlayPause}
+                                sx={{ 
+                                    color: isPlaying ? '#4CAF50' : '#FF9800', 
+                                    bgcolor: isPlaying ? 'rgba(76, 175, 80, 0.15)' : 'rgba(255, 152, 0, 0.15)',
+                                    width: 56,
+                                    height: 56,
+                                    border: isPlaying ? '2px solid #4CAF50' : '2px solid #FF9800',
+                                    '&:hover': { 
+                                        bgcolor: isPlaying ? 'rgba(76, 175, 80, 0.25)' : 'rgba(255, 152, 0, 0.25)' 
+                                    } 
+                                }}
+                            >
+                                {isPlaying ? <PauseIcon sx={{ fontSize: 32 }} /> : <PlayArrowIcon sx={{ fontSize: 32 }} />}
+                            </IconButton>
                             <Box sx={{ width: 2, height: 40, bgcolor: 'rgba(255,255,255,0.15)', borderRadius: 1 }} />
                             <Stack direction="row" alignItems="center" spacing={1.5}>
                                 <IconButton 
