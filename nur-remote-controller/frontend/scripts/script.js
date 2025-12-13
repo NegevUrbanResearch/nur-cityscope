@@ -12,13 +12,8 @@ const INDICATOR_CONFIG = {
 };
 
 const STATE_CONFIG = {
-    mobility: ['Present', 'Survey'],
+    mobility: ['Present'],
     climate: ['Dense Highrise', 'Existing', 'High Rises', 'Low Rise Dense', 'Mass Tree Planting', 'Open Public Space', 'Placemaking']
-};
-
-// Slides that should be excluded (HTML content)
-const EXCLUDED_SLIDES = {
-    mobility: ['Survey']
 };
 
 class PresentationRemote {
@@ -392,10 +387,10 @@ class PresentationRemote {
         }
     }
     
-    // Check if a slide is valid (not excluded)
+    // Check if a slide is valid
     isValidSlide(indicator, state) {
-        const excluded = EXCLUDED_SLIDES[indicator] || [];
-        return !excluded.includes(state);
+        const validStates = STATE_CONFIG[indicator] || [];
+        return validStates.includes(state);
     }
     
     // Check if a slide combo is already in use

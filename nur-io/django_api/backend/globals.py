@@ -19,7 +19,7 @@ list_temp = []
 VISUALIZATION_MODE = "image"
 
 # Presentation mode state (shared across tabs via backend)
-PRESENTATION_PLAYING = True
+PRESENTATION_PLAYING = False
 PRESENTATION_SEQUENCE = [
     {"indicator": "mobility", "state": "Present"},
     {"indicator": "mobility", "state": "Survey"},

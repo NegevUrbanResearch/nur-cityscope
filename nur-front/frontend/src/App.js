@@ -4,7 +4,6 @@ import {
   Route,
   Navigate,
   useLocation,
-  useParams,
   useNavigate
 } from "react-router-dom";
 import {
@@ -23,17 +22,10 @@ import PresentationMode from "./pages/PresentationMode";
 import { useAppData } from "./DataContext";
 import "./style/index.css";
 
-// Wrapper component to handle indicator from URL params
+// Wrapper component to render Dashboard with URL params
+// Note: URL → Context syncing is handled by App's useEffect, not here,
+// to avoid race conditions when navigating between indicators
 const DashboardWrapper = ({ openCharts }) => {
-  const { indicator } = useParams();
-  const { changeIndicator, currentIndicator } = useAppData();
-  
-  useEffect(() => {
-    if (indicator && indicator !== currentIndicator) {
-      changeIndicator(indicator);
-    }
-  }, [indicator, changeIndicator, currentIndicator]);
-  
   return <Dashboard openCharts={openCharts} />;
 };
 
@@ -49,7 +41,6 @@ const App = () => {
     isPresentationMode
   } = useAppData();
 
-  const remoteControlActive = useRef(false);
   const [openCharts, setOpenCharts] = useState(true);
   const prevOpenChartsRef = useRef(openCharts);
 
@@ -79,34 +70,42 @@ const App = () => {
     return null;
   }, []);
 
-  // Effect: Monitor remote control
-  useEffect(() => {
-    const pathIndicator = getIndicatorFromPath(location.pathname);
-    
-    if (pathIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation') {
-      console.log("Remote controller is active");
-      remoteControlActive.current = true;
-    }
-  }, [currentIndicator, location.pathname, getIndicatorFromPath]);
+  // Track navigation target to prevent race conditions
+  const navigationTargetRef = useRef(null);
 
   // Effect: Sync Context -> URL (only when not in presentation mode)
+  // This effect handles when context changes and we need to update the URL
   useEffect(() => {
     if (isPresentationMode) return; 
 
     const pathIndicator = getIndicatorFromPath(location.pathname);
     if (currentIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation') {
       console.log(`Context changed to '${currentIndicator}'. Navigating to sync URL.`);
-      navigate(`/${currentIndicator}`, { replace: true }); 
+      // Set navigation target BEFORE navigating to guard against URL->Context sync
+      navigationTargetRef.current = currentIndicator;
+      navigate(`/${currentIndicator}`, { replace: true });
     }
   }, [currentIndicator, location.pathname, navigate, getIndicatorFromPath, isPresentationMode]);
 
   // Effect: Sync URL -> Context (for non-presentation routes)
+  // This effect handles when URL changes (e.g., user clicks browser back/forward or navbar)
   useEffect(() => {
-    if (remoteControlActive.current) return;
-
     const pathIndicator = getIndicatorFromPath(location.pathname);
     
+    // Clear navigation target when URL matches what we were navigating to
+    if (navigationTargetRef.current && pathIndicator === navigationTargetRef.current) {
+      navigationTargetRef.current = null;
+      return; // Navigation completed, no need to sync
+    }
+    
+    // Guard: Don't sync if we're in the middle of a navigation
+    if (navigationTargetRef.current) {
+      console.log(`⏳ Skipping URL->Context sync: navigation to '${navigationTargetRef.current}' in progress`);
+      return;
+    }
+    
     if (pathIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation') {
+      console.log(`URL changed to '${pathIndicator}'. Syncing context.`);
       changeIndicator(pathIndicator);
     }
   }, [location.pathname, changeIndicator, currentIndicator, getIndicatorFromPath]);

@@ -261,9 +261,18 @@ class CustomActionsViewSet(viewsets.ViewSet):
         # Update sequence index if provided
         if "sequence_index" in request.data:
             index = request.data.get("sequence_index")
-            if isinstance(index, int) and 0 <= index < len(globals.PRESENTATION_SEQUENCE):
-                globals.PRESENTATION_SEQUENCE_INDEX = index
-                print(f"✓ Presentation index: {index}")
+            if isinstance(index, int):
+                # Clamp index to valid range instead of silently ignoring out-of-bounds values
+                sequence_length = len(globals.PRESENTATION_SEQUENCE)
+                if sequence_length > 0:
+                    clamped_index = max(0, min(index, sequence_length - 1))
+                    if clamped_index != index:
+                        print(f"⚠️ Presentation index {index} out of bounds, clamped to {clamped_index}")
+                    globals.PRESENTATION_SEQUENCE_INDEX = clamped_index
+                    print(f"✓ Presentation index: {clamped_index}")
+                else:
+                    globals.PRESENTATION_SEQUENCE_INDEX = 0
+                    print(f"⚠️ Empty sequence, index reset to 0")
         
         # Update duration if provided
         if "duration" in request.data:

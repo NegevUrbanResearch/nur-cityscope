@@ -146,10 +146,13 @@ export const DataProvider = ({ children }) => {
   const indicatorRef = useRef(currentIndicator);
   const lastCheckedRef = useRef(Date.now());
   const debounceTimerRef = useRef(null);
+  const indicatorChangeInProgressRef = useRef(null); // Track ongoing indicator changes to ignore stale WebSocket updates
   const [visualizationMode, setVisualizationMode] = useState("deck");
   const visualizationModeRef = useRef(visualizationMode);
   const isPresentationModeRef = useRef(isPresentationMode);
   const isPlayingRef = useRef(isPlaying);
+  const presentationSequenceRef = useRef(presentationSequence);
+  const globalDurationRef = useRef(globalDuration);
 
   const [prevIndicator, setPrevIndicator] = useState(null);
   const [prevVisualizationMode, setPrevVisualizationMode] = useState(null);
@@ -175,6 +178,14 @@ export const DataProvider = ({ children }) => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
 
+  useEffect(() => {
+    presentationSequenceRef.current = presentationSequence;
+  }, [presentationSequence]);
+
+  useEffect(() => {
+    globalDurationRef.current = globalDuration;
+  }, [globalDuration]);
+
   // WebSocket connection for real-time sync
   useEffect(() => {
     const connectWebSocket = () => {
@@ -197,6 +208,14 @@ export const DataProvider = ({ children }) => {
             
             if (message.type === 'presentation_update' && message.data) {
               const data = message.data;
+              
+              // Guard: Only process presentation updates when in presentation mode
+              // This prevents stale backend state from activating presentation mode
+              if (!isPresentationModeRef.current) {
+                console.log('⏳ Ignoring WebSocket presentation update - not in presentation mode');
+                return;
+              }
+              
               console.log('📡 WebSocket presentation update:', data);
               
               // Update presentation state from WebSocket (use internal setters)
@@ -221,6 +240,16 @@ export const DataProvider = ({ children }) => {
               // Update indicator state
               if (data.indicator_id !== undefined) {
                 const newIndicator = ID_TO_INDICATOR[data.indicator_id];
+                
+                // Guard: Ignore stale WebSocket updates when we're in the middle of changing indicators
+                // This prevents race conditions where old broadcasts arrive after we've started a change
+                if (indicatorChangeInProgressRef.current) {
+                  if (newIndicator !== indicatorChangeInProgressRef.current) {
+                    console.log(`⏳ Ignoring stale WebSocket indicator update (${newIndicator}) - change to ${indicatorChangeInProgressRef.current} in progress`);
+                    return; // Skip this stale update
+                  }
+                }
+                
                 if (newIndicator && newIndicator !== indicatorRef.current) {
                   setCurrentIndicator(newIndicator);
                 }
@@ -393,6 +422,14 @@ export const DataProvider = ({ children }) => {
           // Convert indicator_id to number if it's a string
           const indicatorId = parseInt(response.data.indicator_id, 10);
           const newIndicator = ID_TO_INDICATOR[indicatorId];
+
+          // Guard: Ignore stale polling updates when we're in the middle of changing indicators
+          if (indicatorChangeInProgressRef.current) {
+            if (newIndicator !== indicatorChangeInProgressRef.current) {
+              console.log(`⏳ Ignoring stale polling indicator update (${newIndicator}) - change to ${indicatorChangeInProgressRef.current} in progress`);
+              return;
+            }
+          }
 
           if (newIndicator && newIndicator !== indicatorRef.current) {
             console.log(
@@ -688,6 +725,9 @@ export const DataProvider = ({ children }) => {
 
         // Set the indicator locally
         setCurrentIndicator(newIndicator);
+        
+        // Mark that we're changing to this indicator - this guards against stale WebSocket updates
+        indicatorChangeInProgressRef.current = newIndicator;
 
         // Update the remote controller by sending the change to the API
         const indicatorId = INDICATOR_CONFIG[newIndicator]?.id;
@@ -708,17 +748,21 @@ export const DataProvider = ({ children }) => {
               // Give the system time to complete the transition before clearing loading state
               setTimeout(() => {
                 setLoading(false);
+                // Clear the guard after transition settles
+                indicatorChangeInProgressRef.current = null;
               }, 500);
             })
             .catch((err) => {
               console.error("Error updating remote controller:", err);
               setLoading(false);
+              indicatorChangeInProgressRef.current = null;
             });
       } else {
         // Even if we can't update the remote, we should fetch data for the new indicator
         fetchDashboardData(newIndicator);
         setTimeout(() => {
           setLoading(false);
+          indicatorChangeInProgressRef.current = null;
         }, 500);
       }
     }
@@ -769,7 +813,9 @@ export const DataProvider = ({ children }) => {
       presentationTimerRef.current = setTimeout(() => {
           // Guard: verify still playing before advancing
           if (isPlayingRef.current && isPresentationModeRef.current) {
-              setSequenceIndex((prevIndex) => (prevIndex + 1) % presentationSequence.length);
+              // Use ref to get latest sequence length, avoiding stale closure
+              const currentSequenceLength = presentationSequenceRef.current?.length || 1;
+              setSequenceIndex((prevIndex) => (prevIndex + 1) % currentSequenceLength);
           }
       }, durationMs);
   
@@ -807,12 +853,13 @@ export const DataProvider = ({ children }) => {
             // Auto-start playing when entering presentation mode
             setIsPlaying(true);
             // Sync full presentation state with backend for remote controller
+            // Use refs to get the latest values, avoiding stale closure issues
             try {
                 await api.post("/api/actions/set_presentation_state/", { 
                     is_playing: true,
-                    sequence: presentationSequence,
+                    sequence: presentationSequenceRef.current,
                     sequence_index: 0,
-                    duration: globalDuration
+                    duration: globalDurationRef.current
                 });
             } catch (err) {
                 console.error("Error syncing presentation state:", err);
@@ -834,7 +881,7 @@ export const DataProvider = ({ children }) => {
                 if (prevVisualizationMode) handleVisualizationModeChange(null, prevVisualizationMode);
             }, 100);
         }
-    }, [prevIndicator, prevVisualizationMode, changeIndicator, handleVisualizationModeChange, presentationSequence, globalDuration]);
+    }, [prevIndicator, prevVisualizationMode, changeIndicator, handleVisualizationModeChange]);
   
     const skipToNextStep = useCallback(() => {
       // Guard: only allow skipping when playing
