@@ -136,6 +136,54 @@
       const origin = window.location.origin;
       // Use relative paths for API requests
       const apiEndpoint = "/api/actions/get_image_data/";
+      
+      // WebSocket connection for real-time updates
+      let ws = null;
+      let wsReconnectTimeout = null;
+      
+      function connectWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/presentation/`;
+        
+        console.log('🔌 Projection connecting to WebSocket:', wsUrl);
+        
+        try {
+          ws = new WebSocket(wsUrl);
+          
+          ws.onopen = () => {
+            console.log('✓ Projection WebSocket connected');
+          };
+          
+          ws.onmessage = (event) => {
+            try {
+              const message = JSON.parse(event.data);
+              
+              // When indicator or presentation state changes, fetch new image
+              if (message.type === 'indicator_update' || message.type === 'presentation_update') {
+                console.log('📡 Projection received update, fetching new content');
+                updateImage();
+              }
+            } catch (err) {
+              console.error('WebSocket message error:', err);
+            }
+          };
+          
+          ws.onclose = () => {
+            console.log('✗ Projection WebSocket disconnected, reconnecting...');
+            wsReconnectTimeout = setTimeout(connectWebSocket, 3000);
+          };
+          
+          ws.onerror = (error) => {
+            console.error('Projection WebSocket error:', error);
+          };
+        } catch (err) {
+          console.error('Projection WebSocket connection failed:', err);
+          wsReconnectTimeout = setTimeout(connectWebSocket, 3000);
+        }
+      }
+      
+      // Connect to WebSocket on load
+      connectWebSocket();
 
       function renderImagen(url) {
         if (isVideoFile(url)) {
@@ -319,8 +367,8 @@
       // Event listeners for calibration panel
       $toggleConfigBtn.addEventListener("click", toggleConfigMode);
 
-      // Poll for updates every 1 second for responsive state changes
-      setInterval(updateImage, 1000);
+      // Fallback polling - WebSocket handles real-time updates
+      setInterval(updateImage, 10000);
 
       // Auto-reset calibration to fix sideways display
       autoResetCalibration();
