@@ -1,749 +1,668 @@
-// CityScope Remote Controller script
-
 /**
- * Server address configuration
+ * Nur Presentation Remote Controller
+ * Mobile-friendly remote for controlling the presentation mode
  */
-// Use relative URLs for API requests instead of hardcoded hostname and port
-// This allows the controller to work correctly behind Nginx
-const server_address = ``; // Empty string for relative URLs
 
-/**
- * Global state tracking
- */
-let currentIndicatorId = null;
-let currentIndicatorCategory = null;
-let currentClimateType = "utci"; // Track current climate type (utci or plan)
-let currentClimateScenario = "existing"; // Track current climate scenario
-let indicatorsCache = null; // Cache indicators to reduce API calls
+const API_BASE = window.location.origin;
 
-/**
- * Climate scenario mapping
- */
-const CLIMATE_SCENARIOS = {
-  dense_highrise: "Dense Highrise",
-  existing: "Existing",
-  high_rises: "High Rises",
-  lowrise: "Low Rise Dense",
-  mass_tree_planting: "Mass Tree Planting",
-  open_public_space: "Open Public Space",
-  placemaking: "Placemaking",
+// Configuration matching the frontend
+const INDICATOR_CONFIG = {
+    mobility: { id: 1, name: 'Mobility' },
+    climate: { id: 2, name: 'Climate' }
 };
 
-/**
- * API Client class for managing interactions with the backend
- */
-class APIClient {
-  constructor(baseUrl) {
-    // Use window.location.origin if baseUrl is empty
-    this.baseUrl = baseUrl || window.location.origin;
-  }
+const STATE_CONFIG = {
+    mobility: ['Present', 'Survey'],
+    climate: ['Dense Highrise', 'Existing', 'High Rises', 'Low Rise Dense', 'Mass Tree Planting', 'Open Public Space', 'Placemaking']
+};
 
-  getCSRFToken() {
-    const cookies = document.cookie.split(";");
-    for (let cookie of cookies) {
-      const [name, value] = cookie.trim().split("=");
-      if (name === "csrftoken") {
-        return value;
-      }
+// Slides that should be excluded (HTML content)
+const EXCLUDED_SLIDES = {
+    mobility: ['Survey']
+};
+
+class PresentationRemote {
+    constructor() {
+        // State
+        this.isPlaying = false;
+        this.currentIndex = 0;
+        this.duration = 10;
+        this.slides = [];
+        this.connected = false;
+        this.thumbnailUrl = null;
+        
+        // WebSocket
+        this.ws = null;
+        this.wsReconnectTimeout = null;
+        
+        // Dropdown state
+        this.activeDropdown = null; // { slideIndex, type: 'indicator' | 'state' }
+        
+        // DOM elements
+        this.elements = {
+            playPauseBtn: document.getElementById('playPauseBtn'),
+            prevBtn: document.getElementById('prevBtn'),
+            nextBtn: document.getElementById('nextBtn'),
+            durationMinus: document.getElementById('durationMinus'),
+            durationPlus: document.getElementById('durationPlus'),
+            durationValue: document.getElementById('durationValue'),
+            slidesList: document.getElementById('slidesList'),
+            addSlideBtn: document.getElementById('addSlideBtn'),
+            currentIndex: document.querySelector('.current-index'),
+            totalSlides: document.querySelector('.total-slides'),
+            indicatorName: document.querySelector('.indicator-name'),
+            stateName: document.querySelector('.state-name'),
+            previewContainer: document.getElementById('previewContainer'),
+            dropdownMenu: document.getElementById('dropdownMenu'),
+            dropdownContent: document.getElementById('dropdownContent')
+        };
+        
+        this.init();
     }
-    return null;
-  }
-
-  post(endpoint, data) {
-    return fetch(`${this.baseUrl}${endpoint}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRFToken": this.getCSRFToken(), // Add CSRF token
-      },
-      credentials: "include", // Include cookies if needed
-      body: JSON.stringify(data),
-    }).then((response) => {
-      if (!response.ok) {
-        return response.text().then((text) => {
-          throw new Error(`Request error: ${response.status} - ${text}`);
-        });
-      }
-      return response.json();
-    });
-  }
-
-  get(endpoint, params = {}) {
-    const queryString = new URLSearchParams(params).toString();
-    const urlWithParams = queryString
-      ? `${this.baseUrl}${endpoint}?${queryString}`
-      : `${this.baseUrl}${endpoint}`;
-    return fetch(urlWithParams, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRFToken": this.getCSRFToken(), // Add CSRF token
-      },
-      credentials: "include", // Include cookies if needed
-    }).then((response) => {
-      if (!response.ok) {
-        return response.text().then((text) => {
-          throw new Error(`Request error: ${response.status} - ${text}`);
-        });
-      }
-      return response.json();
-    });
-  }
-}
-
-// Initialize the APIClient with the base URL
-const apiClient = new APIClient(`${server_address}/api`);
-
-/**
- * Change the active indicator layer by sending a POST request to the API
- * @param {number} indicatorId - The ID of the indicator to set
- * @param {string} category - The category of the indicator (mobility or climate)
- */
-function changeIndicator(indicatorId, category) {
-  const payload = { indicator_id: indicatorId };
-
-  apiClient
-    .post("/actions/set_current_indicator/", payload)
-    .then((data) => {
-      console.log("Indicator changed successfully:", data);
-      currentIndicatorId = indicatorId;
-      currentIndicatorCategory = category;
-
-      // If switching TO climate, reset to default climate state
-      if (category === "climate") {
-        currentClimateScenario = "existing";
-        currentClimateType = "utci";
-        console.log(
-          `🔄 Initialized climate state: ${currentClimateScenario} (${currentClimateType})`
-        );
-      }
-
-      // Regenerate state buttons and quick actions for the new indicator
-      generateStateButtons();
-      generateQuickActions();
-    })
-    .catch((error) => {
-      console.error("Error changing indicator:", error);
-    });
-}
-
-/**
- * Change the current climate scenario
- * @param {string} scenario - The scenario name (e.g., 'existing', 'dense_highrise')
- * @param {string} type - The type ('utci' or 'plan')
- */
-function changeClimateScenario(scenario, type) {
-  console.log(`🔄 Changing climate scenario: ${scenario} (${type})`);
-  const payload = { scenario: scenario, type: type };
-
-  apiClient
-    .post("/actions/set_climate_scenario/", payload)
-    .then((data) => {
-      console.log("✓ Climate scenario changed successfully:", data);
-      // Update local state
-      currentClimateScenario = scenario;
-      currentClimateType = type;
-
-      // Trigger event for dashboard to update immediately
-      window.dispatchEvent(new CustomEvent("climateStateChanged"));
-    })
-    .catch((error) => {
-      console.error("❌ Error changing climate scenario:", error);
-    });
-}
-
-/**
- * Change the current state by sending a POST request to the API
- * @param {number} stateId - The ID of the state to set
- */
-function changeState(stateId) {
-  console.log(`🔄 Changing state to ID: ${stateId}`);
-  const payload = { state_id: stateId };
-
-  apiClient
-    .post("/actions/set_current_state/", payload)
-    .then((data) => {
-      console.log("✓ State changed successfully:", data);
-
-      // Trigger event for dashboard to update
-      window.dispatchEvent(new CustomEvent("stateChanged"));
-    })
-    .catch((error) => {
-      console.error("❌ Error changing state:", error);
-    });
-}
-
-/**
- * Change the visualization mode by sending a POST request to the API
- * @param {string} mode - The visualization mode to set (image or map)
- */
-function changeVisualizationMode(mode) {
-  console.log(`🔄 Changing visualization mode to: ${mode}`);
-  const payload = { mode: mode };
-
-  apiClient
-    .post("/actions/set_visualization_mode/", payload)
-    .then((data) => {
-      console.log("✓ Visualization mode changed successfully:", data);
-
-      // Trigger a refresh by dispatching a custom event
-      window.dispatchEvent(
-        new CustomEvent("visualizationModeChanged", { detail: { mode } })
-      );
-    })
-    .catch((error) => {
-      console.error("❌ Error changing visualization mode:", error);
-    });
-}
-
-// Fetch indicators from the server and create buttons
-apiClient
-  .get("/indicators", {})
-  .then((data) => {
-    indicatorsCache = data; // Cache the indicators
-    const buttonsContainer = document.querySelector(".buttons-container");
-    buttonsContainer.innerHTML = "";
-
-    // Only use the first 3 indicators as requested
-    const limitedData = data.slice(0, 3);
-
-    limitedData.forEach((indicator) => {
-      const button = document.createElement("button");
-      button.classList.add("layer-button");
-      button.classList.add("glowing-button");
-      button.dataset.indicatorId = indicator.indicator_id;
-      button.dataset.category = indicator.category || "mobility";
-      button.textContent = indicator.name.replace(" ", "");
-
-      button.addEventListener("click", () => {
-        const indicatorId = parseInt(button.dataset.indicatorId, 10);
-        const category = button.dataset.category;
-        if (!isNaN(indicatorId)) {
-          changeIndicator(indicatorId, category);
-
-          // Update active button styling
-          document.querySelectorAll(".layer-button").forEach((btn) => {
-            btn.classList.remove("active");
-          });
-          button.classList.add("active");
-        } else {
-          console.error("Invalid indicator ID");
-        }
-      });
-
-      buttonsContainer.appendChild(button);
-    });
-  })
-  .catch((error) => {
-    console.error("Error fetching indicators:", error);
-  });
-
-/**
- * Update the current indicator display in the DOM
- * @param {boolean} shouldRegenerateButtons - Whether to regenerate state/action buttons
- * @returns {Promise} Promise that resolves when update is complete
- */
-function updateCurrentIndicator(shouldRegenerateButtons = false) {
-  return apiClient
-    .get("/actions/get_global_variables/")
-    .then((data) => {
-      const indicatorId = data.indicator_id;
-      const indicatorState = data.indicator_state || {};
-      const visualizationMode = data.visualization_mode || "image";
-      const indicatorElement = document.querySelector(".indicator");
-
-      // Use cached indicators if available
-      if (indicatorsCache) {
-        const currentIndicator = indicatorsCache.find(
-          (indicator) => indicator.indicator_id === indicatorId
-        );
-        if (currentIndicator) {
-          indicatorElement.textContent = currentIndicator.name;
-
-          // Track if category changed
-          const categoryChanged =
-            currentIndicatorCategory !== currentIndicator.category;
-
-          // Update global state tracking
-          currentIndicatorId = indicatorId;
-          currentIndicatorCategory = currentIndicator.category || "mobility";
-
-          // Sync state from backend based on category
-          if (currentIndicator.category === "climate") {
-            // For climate: sync scenario and type from backend
-            if (
-              indicatorState.scenario &&
-              indicatorState.scenario in CLIMATE_SCENARIOS
-            ) {
-              currentClimateScenario = indicatorState.scenario;
-              console.log(
-                `📡 Synced climate scenario: ${currentClimateScenario}`
-              );
-            } else {
-              // Reset to default if switching to climate or if scenario is invalid
-              currentClimateScenario = "existing";
-              console.log(
-                `📡 Reset climate scenario to default: ${currentClimateScenario}`
-              );
-            }
-            if (
-              indicatorState.type &&
-              (indicatorState.type === "utci" || indicatorState.type === "plan")
-            ) {
-              currentClimateType = indicatorState.type;
-              console.log(`📡 Synced climate type: ${currentClimateType}`);
-            } else {
-              currentClimateType = "utci";
-              console.log(
-                `📡 Reset climate type to default: ${currentClimateType}`
-              );
-            }
-          }
-
-          // Update active button styling only
-          document.querySelectorAll(".layer-button").forEach((btn) => {
-            if (parseInt(btn.dataset.indicatorId, 10) === indicatorId) {
-              btn.classList.add("active");
-            } else {
-              btn.classList.remove("active");
-            }
-          });
-
-          // Regenerate buttons if requested or if category changed
-          if (shouldRegenerateButtons || categoryChanged) {
-            generateStateButtons();
-            generateQuickActions();
-          } else {
-            // Even if not regenerating, update the active states
-            updateButtonStates(indicatorState, visualizationMode);
-          }
-        } else {
-          indicatorElement.textContent = "Unknown";
-        }
-      }
-    })
-    .catch((error) => {
-      console.error("Error fetching global variables:", error);
-    });
-}
-
-/**
- * Update button active states based on current backend state
- * @param {Object} indicatorState - Current indicator state from backend
- * @param {string} visualizationMode - Current visualization mode (image or map)
- */
-function updateButtonStates(indicatorState, visualizationMode) {
-  // Update state buttons based on current state
-  if (currentIndicatorCategory === "climate") {
-    // Highlight the active climate scenario button
-    const activeScenario = indicatorState.scenario || "existing";
-    document.querySelectorAll(".state-button").forEach((btn) => {
-      if (btn.dataset.scenario === activeScenario) {
-        btn.classList.remove("glowing-button");
-        btn.classList.add("neon-button");
-        btn.classList.add("active");
-      } else {
-        btn.classList.remove("neon-button");
-        btn.classList.remove("active");
-        btn.classList.add("glowing-button");
-      }
-    });
-
-    // Highlight the active climate type button (utci or plan)
-    const activeType = indicatorState.type || "utci";
-    document.querySelectorAll(".config-button").forEach((btn) => {
-      if (btn.dataset.configValue === activeType) {
-        btn.classList.remove("glowing-button");
-        btn.classList.add("neon-button");
-        btn.classList.add("active");
-      } else {
-        btn.classList.remove("neon-button");
-        btn.classList.remove("active");
-        btn.classList.add("glowing-button");
-      }
-    });
-  } else if (currentIndicatorCategory === "mobility") {
-    // Highlight the active mobility state button (present or survey)
-    const activeScenario = indicatorState.scenario || "present";
-    document.querySelectorAll(".state-button").forEach((btn) => {
-      if (btn.dataset.scenario === activeScenario) {
-        btn.classList.remove("glowing-button");
-        btn.classList.add("neon-button");
-        btn.classList.add("active");
-      } else {
-        btn.classList.remove("neon-button");
-        btn.classList.remove("active");
-        btn.classList.add("glowing-button");
-      }
-    });
-
-    // Highlight the active visualization mode button (image or map)
-    document.querySelectorAll(".config-button").forEach((btn) => {
-      if (btn.dataset.configValue === visualizationMode) {
-        btn.classList.remove("glowing-button");
-        btn.classList.add("neon-button");
-        btn.classList.add("active");
-      } else {
-        btn.classList.remove("neon-button");
-        btn.classList.remove("active");
-        btn.classList.add("glowing-button");
-      }
-    });
-  }
-}
-
-// Initialize on page load
-document.addEventListener("DOMContentLoaded", () => {
-  // Function to do initial setup once indicators are loaded
-  const initializeRemoteController = () => {
-    if (indicatorsCache) {
-      console.log("✓ Indicators loaded, initializing remote controller");
-      updateCurrentIndicator(true);
-    } else {
-      console.log("⏳ Waiting for indicators to load...");
-      setTimeout(initializeRemoteController, 200);
+    
+    async init() {
+        this.showLoading();
+        this.bindEvents();
+        await this.fetchInitialState();
+        this.connectWebSocket();
+        this.startPolling(); // Fallback polling at reduced frequency
     }
-  };
-
-  // Start initialization after a short delay
-  setTimeout(initializeRemoteController, 300);
-
-  // Update indicator display every second (but don't regenerate buttons unless category changed)
-  setInterval(() => updateCurrentIndicator(false), 1000);
-
-  // Listen for climate state changes from the dashboard
-  window.addEventListener("climateStateChanged", () => {
-    console.log(
-      "🌡️ Remote controller received climate state change event from dashboard"
-    );
-    // Fetch updated state and update buttons
-    updateCurrentIndicator(false);
-  });
-
-  // Listen for general indicator state changes from the dashboard
-  window.addEventListener("indicatorStateChanged", () => {
-    console.log(
-      "📊 Remote controller received indicator state change event from dashboard"
-    );
-    // Fetch updated state and update buttons
-    updateCurrentIndicator(false);
-  });
-
-  // Listen for visualization mode changes from the dashboard
-  window.addEventListener("visualizationModeChanged", (event) => {
-    console.log(
-      "🗺️ Remote controller received visualization mode change event from dashboard"
-    );
-    // Fetch updated state and update buttons
-    updateCurrentIndicator(false);
+    
+    connectWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/presentation/`;
+        
+        console.log('🔌 Connecting to WebSocket:', wsUrl);
+        
+        try {
+            this.ws = new WebSocket(wsUrl);
+            
+            this.ws.onopen = () => {
+                console.log('✓ WebSocket connected');
+                this.updateConnectionStatus(true);
+            };
+            
+            this.ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    
+                    if (message.type === 'presentation_update' && message.data) {
+                        const data = message.data;
+                        console.log('📡 WebSocket update:', data);
+                        
+                        const wasIndex = this.currentIndex;
+                        
+                        if (data.is_playing !== undefined) this.isPlaying = data.is_playing;
+                        if (data.sequence_index !== undefined) this.currentIndex = data.sequence_index;
+                        if (data.duration !== undefined) this.duration = data.duration;
+                        if (data.sequence && Array.isArray(data.sequence)) this.slides = data.sequence;
+                        
+                        this.updateUI();
+                        
+                        // Fetch new thumbnail if slide changed
+                        if (wasIndex !== this.currentIndex) {
+                            this.fetchThumbnail();
+                        }
+                    }
+                    
+                    if (message.type === 'indicator_update' && message.data) {
+                        // Update current display when indicator changes
+                        this.updateCurrentDisplay(message.data);
+                        this.fetchThumbnail();
+                    }
+                } catch (err) {
+                    console.error('WebSocket message error:', err);
+                }
+            };
+            
+            this.ws.onclose = () => {
+                console.log('✗ WebSocket disconnected, reconnecting...');
+                this.updateConnectionStatus(false);
+                this.wsReconnectTimeout = setTimeout(() => this.connectWebSocket(), 3000);
+            };
+            
+            this.ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        } catch (err) {
+            console.error('WebSocket connection failed:', err);
+            this.wsReconnectTimeout = setTimeout(() => this.connectWebSocket(), 3000);
+        }
+    }
+    
+    bindEvents() {
+        this.elements.playPauseBtn.addEventListener('click', () => this.togglePlayPause());
+        this.elements.prevBtn.addEventListener('click', () => this.skipToPrev());
+        this.elements.nextBtn.addEventListener('click', () => this.skipToNext());
+        this.elements.durationMinus.addEventListener('click', () => this.adjustDuration(-1));
+        this.elements.durationPlus.addEventListener('click', () => this.adjustDuration(1));
+        this.elements.addSlideBtn.addEventListener('click', () => this.addSlide());
+        
+        // Close dropdown when clicking backdrop
+        this.elements.dropdownMenu.addEventListener('click', (e) => {
+            if (e.target === this.elements.dropdownMenu) {
+                this.closeDropdown();
+            }
+        });
+    }
+    
+    showLoading() {
+        this.elements.slidesList.innerHTML = `
+            <div class="loading-message">
+                <div class="loading-spinner"></div>
+                <p>Connecting to presentation...</p>
+            </div>
+        `;
+    }
+    
+    async fetchInitialState() {
+        try {
+            const response = await this.apiGet('/api/actions/get_global_variables/');
+            
+            if (response) {
+                this.connected = true;
+                this.updateConnectionStatus(true);
+                
+                const presState = await this.apiGet('/api/actions/get_presentation_state/');
+                if (presState) {
+                    this.isPlaying = presState.is_playing || false;
+                    this.currentIndex = presState.sequence_index || 0;
+                    this.duration = presState.duration || 10;
+                    this.slides = presState.sequence || this.getDefaultSlides();
+                }
+                
+                this.updateUI();
+                await this.fetchThumbnail();
+            }
+        } catch (error) {
+            console.error('Error fetching initial state:', error);
+            this.updateConnectionStatus(false);
+        }
+    }
+    
+    getDefaultSlides() {
+        return [
+            { indicator: 'mobility', state: 'Present' }
+        ];
+    }
+    
+    startPolling() {
+        // Reduced polling frequency - WebSocket handles real-time updates
+        setInterval(() => this.pollState(), 5000);
+    }
+    
+    async pollState() {
+        try {
+            const presState = await this.apiGet('/api/actions/get_presentation_state/');
+            
+            if (presState) {
+                this.connected = true;
+                this.updateConnectionStatus(true);
+                
+                const wasIndex = this.currentIndex;
+                const wasPlaying = this.isPlaying;
+                
+                this.isPlaying = presState.is_playing || false;
+                this.currentIndex = presState.sequence_index || 0;
+                this.duration = presState.duration || 10;
+                
+                if (presState.sequence && presState.sequence.length > 0) {
+                    this.slides = presState.sequence;
+                }
+                
+                // Update UI if something changed
+                if (wasPlaying !== this.isPlaying || wasIndex !== this.currentIndex) {
+                    this.updateUI();
+                    if (wasIndex !== this.currentIndex) {
+                        await this.fetchThumbnail();
+                    }
+                }
+            }
+            
+            const globalState = await this.apiGet('/api/actions/get_global_variables/');
+            if (globalState) {
+                this.updateCurrentDisplay(globalState);
+            }
+        } catch (error) {
+            console.error('Polling error:', error);
+            this.updateConnectionStatus(false);
+        }
+    }
+    
+    async fetchThumbnail() {
+        try {
+            const currentSlide = this.slides[this.currentIndex];
+            if (!currentSlide) return;
+            
+            const timestamp = Date.now();
+            const response = await this.apiGet(`/api/actions/get_image_data/?_=${timestamp}&indicator=${currentSlide.indicator}`);
+            
+            if (response && response.image_data) {
+                let url = response.image_data;
+                if (url.startsWith('/')) {
+                    url = `${API_BASE}${url}`;
+            } else {
+                    url = `${API_BASE}/media/${url}`;
+                }
+                this.thumbnailUrl = url;
+                this.renderPreview();
+            }
+        } catch (error) {
+            console.error('Error fetching thumbnail:', error);
+            this.elements.previewContainer.innerHTML = `
+                <div class="preview-placeholder">
+                    <span>No preview available</span>
+                </div>
+            `;
+        }
+    }
+    
+    renderPreview() {
+        if (!this.thumbnailUrl) {
+            this.elements.previewContainer.innerHTML = `
+                <div class="preview-placeholder">
+                    <span>No preview</span>
+                </div>
+            `;
+            return;
+        }
+        
+        const isVideo = this.thumbnailUrl.includes('.mp4');
+        
+        if (isVideo) {
+            this.elements.previewContainer.innerHTML = `
+                <video src="${this.thumbnailUrl}" autoplay loop muted playsinline></video>
+            `;
+        } else {
+            this.elements.previewContainer.innerHTML = `
+                <img src="${this.thumbnailUrl}" alt="Preview" />
+            `;
+        }
+    }
+    
+    updateUI() {
+        // Play/pause button
+        this.elements.playPauseBtn.classList.toggle('playing', this.isPlaying);
+        
+        // Navigation buttons
+        this.elements.prevBtn.disabled = !this.isPlaying;
+        this.elements.nextBtn.disabled = !this.isPlaying;
+        
+        // Counter
+        this.elements.currentIndex.textContent = this.currentIndex + 1;
+        this.elements.totalSlides.textContent = this.slides.length;
+        
+        // Duration
+        this.elements.durationValue.textContent = `${this.duration}s`;
+        
+        // Add button state
+        this.elements.addSlideBtn.disabled = this.allSlidesUsed();
+        
+        // Render slides list
+        this.renderSlidesList();
+    }
+    
+    updateCurrentDisplay(globalState) {
+        const indicatorId = globalState.indicator_id;
+        let indicatorKey = 'mobility';
+        if (indicatorId === 2) indicatorKey = 'climate';
+        
+        this.elements.indicatorName.textContent = INDICATOR_CONFIG[indicatorKey]?.name || indicatorKey;
+        
+        const indicatorState = globalState.indicator_state || {};
+        let stateName = '-';
+        
+        if (indicatorKey === 'climate') {
+            const scenarioNames = {
+                dense_highrise: 'Dense Highrise',
+                existing: 'Existing',
+                high_rises: 'High Rises',
+                lowrise: 'Low Rise Dense',
+                mass_tree_planting: 'Mass Tree Planting',
+                open_public_space: 'Open Public Space',
+                placemaking: 'Placemaking'
+            };
+            stateName = scenarioNames[indicatorState.scenario] || indicatorState.scenario || 'Existing';
+      } else {
+            stateName = indicatorState.label || indicatorState.scenario || 'Present';
+            stateName = stateName.charAt(0).toUpperCase() + stateName.slice(1);
+        }
+        
+        this.elements.stateName.textContent = stateName;
+    }
+    
+    renderSlidesList() {
+        if (!this.slides || this.slides.length === 0) {
+            this.elements.slidesList.innerHTML = `
+                <div class="loading-message">
+                    <p>No slides configured</p>
+                </div>
+            `;
+            return;
+        }
+        
+        const html = this.slides.map((slide, index) => {
+            const isActive = index === this.currentIndex;
+            const indicatorName = INDICATOR_CONFIG[slide.indicator]?.name || slide.indicator;
+            const canDelete = this.slides.length > 1;
+            
+            return `
+                <div class="slide-item ${isActive ? 'active' : ''}" data-index="${index}">
+                    <div class="slide-number">${index + 1}</div>
+                    <div class="slide-selectors">
+                        <button class="slide-selector" data-action="indicator" data-index="${index}">
+                            <span class="slide-selector-text">${indicatorName}</span>
+                            <svg class="slide-selector-arrow" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+                        </button>
+                        <button class="slide-selector" data-action="state" data-index="${index}">
+                            <span class="slide-selector-text">${slide.state}</span>
+                            <svg class="slide-selector-arrow" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+                        </button>
+                    </div>
+                    <button class="slide-delete-btn" data-action="delete" data-index="${index}" ${!canDelete ? 'disabled' : ''}>
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                    </button>
+                </div>
+            `;
+        }).join('');
+        
+        this.elements.slidesList.innerHTML = html;
+        
+        // Bind click handlers
+        this.elements.slidesList.querySelectorAll('[data-action]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = btn.dataset.action;
+                const index = parseInt(btn.dataset.index, 10);
+                
+                if (action === 'indicator') {
+                    this.openDropdown(index, 'indicator');
+                } else if (action === 'state') {
+                    this.openDropdown(index, 'state');
+                } else if (action === 'delete') {
+                    this.removeSlide(index);
+                }
   });
 });
 
-/**
- * Fetch and display state buttons dynamically based on current indicator
- */
-function generateStateButtons() {
-  const stateButtonsContainer = document.querySelector(
-    ".state-buttons-container"
-  );
-  stateButtonsContainer.innerHTML = "";
-
-  if (!currentIndicatorCategory) {
-    console.log(
-      "⚠️ No indicator selected yet, skipping state buttons generation"
-    );
-    return;
-  }
-
-  console.log(`🔄 Generating state buttons for: ${currentIndicatorCategory}`);
-
-  if (currentIndicatorCategory === "climate") {
-    // For climate: show the 7 climate scenarios (not the 14 states)
-    Object.keys(CLIMATE_SCENARIOS).forEach((scenarioKey) => {
-      const button = document.createElement("button");
-      button.classList.add("state-button");
-      button.classList.add("glowing-button");
-      button.dataset.scenario = scenarioKey;
-      button.textContent = CLIMATE_SCENARIOS[scenarioKey];
-
-      // Highlight if this matches current scenario
-      if (scenarioKey === currentClimateScenario) {
-        button.classList.remove("glowing-button");
-        button.classList.add("neon-button");
-        button.classList.add("active");
-      }
-
-      button.addEventListener("click", () => {
-        console.log(
-          `🌡️ Climate scenario clicked: ${scenarioKey} (type: ${currentClimateType})`
+        // Scroll active slide into view
+        const activeSlide = this.elements.slidesList.querySelector('.slide-item.active');
+        if (activeSlide) {
+            activeSlide.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+    
+    // Check if a slide is valid (not excluded)
+    isValidSlide(indicator, state) {
+        const excluded = EXCLUDED_SLIDES[indicator] || [];
+        return !excluded.includes(state);
+    }
+    
+    // Check if a slide combo is already in use
+    isSlideUsed(indicator, state, excludeIndex = -1) {
+        return this.slides.some((slide, idx) => 
+            idx !== excludeIndex && slide.indicator === indicator && slide.state === state
         );
-
-        // Update active button styling
-        document.querySelectorAll(".state-button").forEach((btn) => {
-          btn.classList.remove("active");
-          btn.classList.remove("neon-button");
-          btn.classList.add("glowing-button");
-        });
-
-        button.classList.remove("glowing-button");
-        button.classList.add("neon-button");
-        button.classList.add("active");
-
-        // Use the tracked current type
-        changeClimateScenario(scenarioKey, currentClimateType);
-      });
-
-      stateButtonsContainer.appendChild(button);
-    });
-
-    // Fetch current state and update button highlighting (with slight delay to ensure DOM is ready)
-    setTimeout(() => {
-      apiClient
-        .get("/actions/get_global_variables/")
-        .then((data) => {
-          const indicatorState = data.indicator_state || {};
-          const visualizationMode = data.visualization_mode || "image";
-          updateButtonStates(indicatorState, visualizationMode);
-        })
-        .catch((err) => {
-          console.error("Error fetching state for button highlighting:", err);
-        });
-    }, 100);
-  } else if (currentIndicatorCategory === "mobility") {
-    // For mobility: show Present and Survey
-    const mobilityStates = [
-      { key: "present", label: "Present" },
-      { key: "survey", label: "Survey" },
-    ];
-
-    // Fetch current state first to know what to highlight
-    apiClient
-      .get("/actions/get_global_variables/")
-      .then((data) => {
-        const indicatorState = data.indicator_state || {};
-        const currentScenario = indicatorState.scenario || "present";
-
-        mobilityStates.forEach((state) => {
-          const button = document.createElement("button");
-          button.classList.add("state-button");
-          button.classList.add("glowing-button");
-          button.dataset.scenario = state.key;
-          button.textContent = state.label;
-
-          // Highlight if this matches current state
-          if (state.key === currentScenario) {
-            button.classList.remove("glowing-button");
-            button.classList.add("neon-button");
-            button.classList.add("active");
-          }
-
-          button.addEventListener("click", () => {
-            console.log(`🚗 Mobility state clicked: ${state.key}`);
-
-            // Update active button styling
-            document.querySelectorAll(".state-button").forEach((btn) => {
-              btn.classList.remove("active");
-              btn.classList.remove("neon-button");
-              btn.classList.add("glowing-button");
-            });
-
-            button.classList.remove("glowing-button");
-            button.classList.add("neon-button");
-            button.classList.add("active");
-
-            // Find the state ID for this scenario
-            apiClient
-              .get("/states", {})
-              .then((states) => {
-                console.log(`📋 States from API:`, states);
-                const targetState = states.find(
-                  (s) => s.state_values && s.state_values.scenario === state.key
-                );
-                if (targetState) {
-                  console.log(`✓ Found state for ${state.key}:`, targetState);
-                  changeState(targetState.id);
-                } else {
-                  console.error(
-                    `❌ State not found for ${state.key}. Available states:`,
-                    states.map((s) => ({
-                      id: s.id,
-                      scenario: s.state_values?.scenario,
-                      label: s.state_values?.label,
-                    }))
-                  );
+    }
+    
+    // Get all valid slides
+    getAllValidSlides() {
+        const slides = [];
+        Object.keys(INDICATOR_CONFIG).forEach(indicator => {
+            const states = STATE_CONFIG[indicator] || [];
+            states.forEach(state => {
+                if (this.isValidSlide(indicator, state)) {
+                    slides.push({ indicator, state });
                 }
-              })
-              .catch((error) => {
-                console.error("❌ Error fetching states:", error);
-              });
-          });
-
-          stateButtonsContainer.appendChild(button);
-        });
-
-        // Fetch current state and update button highlighting (with slight delay to ensure DOM is ready)
-        setTimeout(() => {
-          apiClient
-            .get("/actions/get_global_variables/")
-            .then((data) => {
-              const indicatorState = data.indicator_state || {};
-              const visualizationMode = data.visualization_mode || "image";
-              updateButtonStates(indicatorState, visualizationMode);
-            })
-            .catch((err) => {
-              console.error(
-                "Error fetching state for button highlighting:",
-                err
-              );
             });
-        }, 100);
-      })
-      .catch((err) => {
-        console.error("Error fetching state for mobility buttons:", err);
-      });
-  }
-}
-
-/**
- * Generate quick action buttons dynamically based on current indicator
- */
-function generateQuickActions() {
-  const configContainer = document.querySelector(".reset-buttons-container");
-  configContainer.innerHTML = "";
-
-  if (!currentIndicatorCategory) {
-    console.log(
-      "⚠️ No indicator selected yet, skipping quick actions generation"
-    );
-    return;
-  }
-
-  console.log(`🔄 Generating quick actions for: ${currentIndicatorCategory}`);
-
-  if (currentIndicatorCategory === "climate") {
-    // For climate: toggle between UTCI and Plan
-    const climateTypes = [
-      { name: "UTCI", value: "utci" },
-      { name: "Plan", value: "plan" },
-    ];
-
-    climateTypes.forEach((type) => {
-      const button = document.createElement("button");
-      button.classList.add("config-button");
-      button.classList.add("glowing-button");
-      button.dataset.configValue = type.value;
-      button.textContent = type.name;
-
-      // Highlight if this matches current type
-      if (type.value === currentClimateType) {
-        button.classList.remove("glowing-button");
-        button.classList.add("neon-button");
-        button.classList.add("active");
-      }
-
-      button.addEventListener("click", () => {
-        console.log(
-          `🌡️ Climate type toggle clicked: ${type.value} (scenario: ${currentClimateScenario})`
+        });
+        return slides;
+    }
+    
+    // Check if all slides are used
+    allSlidesUsed() {
+        return this.getAllValidSlides().every(slide => 
+            this.isSlideUsed(slide.indicator, slide.state)
         );
-
-        // Update active button styling
-        document.querySelectorAll(".config-button").forEach((btn) => {
-          btn.classList.remove("active");
-          btn.classList.remove("neon-button");
-          btn.classList.add("glowing-button");
+    }
+    
+    openDropdown(slideIndex, type) {
+        this.activeDropdown = { slideIndex, type };
+        const currentSlide = this.slides[slideIndex];
+        
+        let options = '';
+        
+        if (type === 'indicator') {
+            Object.entries(INDICATOR_CONFIG).forEach(([key, config]) => {
+                const hasValidStates = (STATE_CONFIG[key] || []).some(s => this.isValidSlide(key, s));
+                if (!hasValidStates) return;
+                
+                const isSelected = currentSlide.indicator === key;
+                options += `
+                    <div class="dropdown-option ${isSelected ? 'selected' : ''}" data-value="${key}">
+                        ${config.name}
+                    </div>
+                `;
+            });
+        } else {
+            const states = STATE_CONFIG[currentSlide.indicator] || [];
+            states.forEach(state => {
+                if (!this.isValidSlide(currentSlide.indicator, state)) return;
+                
+                const isSelected = currentSlide.state === state;
+                const isUsed = this.isSlideUsed(currentSlide.indicator, state, slideIndex);
+                
+                options += `
+                    <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}" data-value="${state}">
+                        ${state}
+                        ${isUsed && !isSelected ? '<span class="dropdown-option-note">(in use)</span>' : ''}
+                    </div>
+                `;
+            });
+        }
+        
+        options += `<div class="dropdown-cancel">Cancel</div>`;
+        
+        this.elements.dropdownContent.innerHTML = options;
+        this.elements.dropdownMenu.classList.add('open');
+        
+        // Bind option clicks
+        this.elements.dropdownContent.querySelectorAll('.dropdown-option').forEach(opt => {
+            opt.addEventListener('click', () => {
+                if (opt.classList.contains('disabled')) return;
+                const value = opt.dataset.value;
+                this.handleDropdownSelection(value);
+            });
         });
-
-        button.classList.remove("glowing-button");
-        button.classList.add("neon-button");
-        button.classList.add("active");
-
-        // Use the tracked current scenario
-        changeClimateScenario(currentClimateScenario, type.value);
-      });
-
-      configContainer.appendChild(button);
-    });
-
-    // Fetch current state and update button highlighting
-    apiClient
-      .get("/actions/get_global_variables/")
-      .then((data) => {
-        const indicatorState = data.indicator_state || {};
-        const visualizationMode = data.visualization_mode || "image";
-        updateButtonStates(indicatorState, visualizationMode);
-      })
-      .catch((err) => {
-        console.error("Error fetching state for button highlighting:", err);
-      });
-  } else if (currentIndicatorCategory === "mobility") {
-    // For mobility: toggle between Image and Map (static vs interactive)
-    const mobilityModes = [
-      { name: "Static Image", value: "image" },
-      { name: "Interactive Map", value: "map" },
-    ];
-
-    // Fetch current visualization mode first
-    apiClient
-      .get("/actions/get_global_variables/")
-      .then((data) => {
-        const visualizationMode = data.visualization_mode || "image";
-
-        mobilityModes.forEach((mode) => {
-          const button = document.createElement("button");
-          button.classList.add("config-button");
-          button.classList.add("glowing-button");
-          button.dataset.configValue = mode.value;
-          button.textContent = mode.name;
-
-          // Highlight if this matches current mode
-          if (mode.value === visualizationMode) {
-            button.classList.remove("glowing-button");
-            button.classList.add("neon-button");
-            button.classList.add("active");
-          }
-
-          button.addEventListener("click", () => {
-            console.log(
-              `🗺️ Mobility visualization mode clicked: ${mode.value}`
+        
+        this.elements.dropdownContent.querySelector('.dropdown-cancel').addEventListener('click', () => {
+            this.closeDropdown();
+        });
+    }
+    
+    closeDropdown() {
+        this.elements.dropdownMenu.classList.remove('open');
+        this.activeDropdown = null;
+    }
+    
+    async handleDropdownSelection(value) {
+        if (!this.activeDropdown) return;
+        
+        const { slideIndex, type } = this.activeDropdown;
+        const newSlides = [...this.slides];
+        
+        if (type === 'indicator') {
+            // When changing indicator, find first available state
+            const availableStates = (STATE_CONFIG[value] || []).filter(s => 
+                this.isValidSlide(value, s) && !this.isSlideUsed(value, s, slideIndex)
             );
-
-            // Update active button styling
-            document.querySelectorAll(".config-button").forEach((btn) => {
-              btn.classList.remove("active");
-              btn.classList.remove("neon-button");
-              btn.classList.add("glowing-button");
+            const firstState = availableStates[0] || STATE_CONFIG[value]?.[0];
+            newSlides[slideIndex] = { indicator: value, state: firstState };
+        } else {
+            newSlides[slideIndex] = { ...newSlides[slideIndex], state: value };
+        }
+        
+        this.slides = newSlides;
+        this.closeDropdown();
+        
+        // Sync with backend
+        await this.syncSequence();
+        this.updateUI();
+    }
+    
+    async addSlide() {
+        // Find first unused valid slide
+        const unusedSlide = this.getAllValidSlides().find(slide => 
+            !this.isSlideUsed(slide.indicator, slide.state)
+        );
+        
+        if (unusedSlide) {
+            this.slides = [...this.slides, unusedSlide];
+            await this.syncSequence();
+            this.updateUI();
+        }
+    }
+    
+    async removeSlide(index) {
+        if (this.slides.length <= 1) return;
+        
+        this.slides = this.slides.filter((_, i) => i !== index);
+        
+        // Adjust current index if needed
+        if (this.currentIndex >= this.slides.length) {
+            this.currentIndex = this.slides.length - 1;
+        }
+        
+        await this.syncSequence();
+        this.updateUI();
+    }
+    
+    async syncSequence() {
+        try {
+            await this.apiPost('/api/actions/set_presentation_state/', {
+                sequence: this.slides
             });
-
-            button.classList.remove("glowing-button");
-            button.classList.add("neon-button");
-            button.classList.add("active");
-
-            // Call the API to change the visualization mode
-            changeVisualizationMode(mode.value);
-          });
-
-          configContainer.appendChild(button);
+        } catch (error) {
+            console.error('Error syncing sequence:', error);
+        }
+    }
+    
+    async togglePlayPause() {
+        const newState = !this.isPlaying;
+        
+        try {
+            await this.apiPost('/api/actions/set_presentation_state/', {
+                is_playing: newState
+            });
+            
+            this.isPlaying = newState;
+            this.updateUI();
+        } catch (error) {
+            console.error('Error toggling play/pause:', error);
+        }
+    }
+    
+    async skipToNext() {
+        if (!this.isPlaying) return;
+        
+        const nextIndex = (this.currentIndex + 1) % this.slides.length;
+        await this.jumpToSlide(nextIndex);
+    }
+    
+    async skipToPrev() {
+        if (!this.isPlaying) return;
+        
+        const prevIndex = (this.currentIndex - 1 + this.slides.length) % this.slides.length;
+        await this.jumpToSlide(prevIndex);
+    }
+    
+    async jumpToSlide(index) {
+        try {
+            await this.apiPost('/api/actions/set_presentation_state/', {
+                sequence_index: index
+            });
+            
+            this.currentIndex = index;
+            this.updateUI();
+            await this.fetchThumbnail();
+        } catch (error) {
+            console.error('Error jumping to slide:', error);
+        }
+    }
+    
+    async adjustDuration(delta) {
+        const newDuration = Math.max(1, this.duration + delta);
+        
+        try {
+            await this.apiPost('/api/actions/set_presentation_state/', {
+                duration: newDuration
+            });
+            
+            this.duration = newDuration;
+            this.elements.durationValue.textContent = `${this.duration}s`;
+        } catch (error) {
+            console.error('Error adjusting duration:', error);
+        }
+    }
+    
+    updateConnectionStatus(connected) {
+        let indicator = document.querySelector('.connection-status');
+        
+        if (!indicator) {
+            indicator = document.createElement('div');
+            indicator.className = 'connection-status';
+            document.body.appendChild(indicator);
+        }
+        
+        indicator.classList.toggle('disconnected', !connected);
+    }
+    
+    async apiGet(endpoint) {
+        const response = await fetch(`${API_BASE}${endpoint}`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include'
         });
-
-        // Fetch current state and update button highlighting (with slight delay to ensure DOM is ready)
-        setTimeout(() => {
-          apiClient
-            .get("/actions/get_global_variables/")
-            .then((data) => {
-              const indicatorState = data.indicator_state || {};
-              const visualizationMode = data.visualization_mode || "image";
-              updateButtonStates(indicatorState, visualizationMode);
-            })
-            .catch((err) => {
-              console.error(
-                "Error fetching state for button highlighting:",
-                err
-              );
-            });
-        }, 100);
-      })
-      .catch((err) => {
-        console.error("Error fetching state for mobility mode buttons:", err);
-      });
-  }
+        
+        if (!response.ok) {
+            throw new Error(`API error: ${response.status}`);
+        }
+        
+        return response.json();
+    }
+    
+    async apiPost(endpoint, data) {
+        const csrfToken = this.getCSRFToken();
+        
+        const response = await fetch(`${API_BASE}${endpoint}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            credentials: 'include',
+            body: JSON.stringify(data)
+        });
+        
+        if (!response.ok) {
+            throw new Error(`API error: ${response.status}`);
+        }
+        
+        return response.json();
+    }
+    
+    getCSRFToken() {
+        const cookies = document.cookie.split(';');
+        for (const cookie of cookies) {
+            const [name, value] = cookie.trim().split('=');
+            if (name === 'csrftoken') {
+                return value;
+            }
+        }
+        return null;
+    }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    window.presentationRemote = new PresentationRemote();
+});

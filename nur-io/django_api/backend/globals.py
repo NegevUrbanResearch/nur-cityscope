@@ -18,8 +18,15 @@ list_temp = []
 # Visualization mode (image or map)
 VISUALIZATION_MODE = "image"
 
-# Presentation mode playing state (shared across tabs via backend)
+# Presentation mode state (shared across tabs via backend)
 PRESENTATION_PLAYING = True
+PRESENTATION_SEQUENCE = [
+    {"indicator": "mobility", "state": "Present"},
+    {"indicator": "mobility", "state": "Survey"},
+    {"indicator": "climate", "state": "Existing"},
+]
+PRESENTATION_SEQUENCE_INDEX = 0
+PRESENTATION_DURATION = 10
 
 # Default states for fallback
 DEFAULT_STATES = {"year": 2023, "scenario": "present", "label": "Present"}

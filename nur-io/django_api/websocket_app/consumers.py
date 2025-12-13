@@ -1,74 +1,64 @@
 # consumers.py
 from channels.generic.websocket import AsyncWebsocketConsumer
-from .utils.data_updater import DataUpdater
 import json
 
 class GeneralConsumer(AsyncWebsocketConsumer):
-    def __init__(self, *args, **kwargs):        
-        self.dataUpdater = DataUpdater()
-        self.active_channels = {}
-        super().__init__(*args, **kwargs)
-
+    """WebSocket consumer for real-time presentation state sync"""
+    
     async def connect(self):
-        # Obtenemos un parámetro del query string (puede ser 'map' o 'dashboard', por ejemplo)
-        self.channel_type = self.scope['url_route']['kwargs']['channel_type']  # 'map' o 'dashboard'
-        
-        # Determinamos el nombre del grupo dependiendo del tipo de canal
+        # Get channel type from URL (e.g., 'presentation', 'map', 'dashboard')
+        self.channel_type = self.scope['url_route']['kwargs']['channel_type']
         self.room_group_name = f'{self.channel_type}_channel'
         
-        if self.room_group_name not in self.active_channels:
-            self.active_channels[self.room_group_name] = set()
-        
+        # Join the channel group
         await self.channel_layer.group_add(
             self.room_group_name,
             self.channel_name
         )
-        self.active_channels[self.room_group_name].add(self.channel_name)
-        print(self.active_channels)
+        
         await self.accept()
+        print(f"✓ WebSocket connected: {self.channel_type} ({self.channel_name[:8]}...)")
 
     async def disconnect(self, close_code):
-        if self.room_group_name in self.active_channels:
-            self.active_channels[self.room_group_name].discard(self.channel_name)
-            if not self.active_channels[self.room_group_name]:  # Si no quedan más canales en el grupo, eliminar la entrada
-                del self.active_channels[self.room_group_name]
-
-        # Salir del grupo correspondiente
+        # Leave the channel group
         await self.channel_layer.group_discard(
             self.room_group_name,
             self.channel_name
         )
+        print(f"✗ WebSocket disconnected: {self.channel_type}")
 
-    async def send_message(self, event):
-        # Envía un mensaje a los clientes conectados
-        # message = event['message']
-        # print(message)
-        # await self.send(text_data=json.dumps({
-        #     'message': message
-        # }))
-        pass
+    async def receive(self, text_data):
+        """Handle incoming messages from clients"""
+        try:
+            data = json.loads(text_data)
+            message_type = data.get('type', 'unknown')
+            
+            # Broadcast to all clients in the group
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'broadcast_message',
+                    'message': data
+                }
+            )
+        except json.JSONDecodeError:
+            print(f"Invalid JSON received: {text_data}")
 
-    async def update_data(self, event):
-        print(event)
-        # channel_type = event['channel_type']
-        # indicator_id = event['message']['indicator_id']
-        # data = await self.dataUpdater.input_event(event)
-        # print(data)
-        # event = {
-        #     'message': data
-        # }
-        # print(event)
-        # await self.send_message(text_data = json.dumps(
-        #        event
-        #     )
-        # )
+    async def broadcast_message(self, event):
+        """Send message to WebSocket client"""
+        message = event['message']
+        await self.send(text_data=json.dumps(message))
 
-        # print(self.results)
-        # if results:
-        #     for channel in 
-        #     await self.dataUpdater.send_data_to_channel()
-        # Envía un mensaje a los clientes conectados
-        # data = event['data']
-        # await self.send(text_data=json.dumps({
-        #     'data': data
-        # }))
+    async def presentation_update(self, event):
+        """Handle presentation state updates from backend"""
+        await self.send(text_data=json.dumps({
+            'type': 'presentation_update',
+            'data': event['data']
+        }))
+
+    async def indicator_update(self, event):
+        """Handle indicator/state updates from backend"""
+        await self.send(text_data=json.dumps({
+            'type': 'indicator_update', 
+            'data': event['data']
+        }))

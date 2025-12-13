@@ -2,27 +2,92 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CityScope Control Panel</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>Nur Presentation Remote</title>
     <link rel="stylesheet" href="./styles/styles.css"/>
-    <script src="./scripts/script.js" defer></script>
 </head>
 <body>
-    <h1>CityScope Control Panel</h1>
-    <div class="indicator-announcement">
-        <p>Current Indicator: <span class="indicator">-</span></p>
-    </div>
-    
-    <h2>Indicator Selection</h2>
-    <div class="buttons-container"></div>
-    <hr>
-    
-    <h2>State Controls</h2>
-    <div class="state-buttons-container"></div>
-    <hr>
-    
-    <h2>Quick Actions</h2>
-    <div class="reset-buttons-container"></div>
+    <div class="remote-container">
+        <!-- Header with logo -->
+        <header class="header">
+            <img src="/media/Nur-Logo_3x-_1_.svg" alt="Nur" class="logo" />
+            <span class="header-title">Presentation Remote</span>
+        </header>
 
+        <!-- Preview thumbnail -->
+        <div class="preview-section">
+            <div class="preview-container" id="previewContainer">
+                <div class="preview-placeholder">
+                    <span>Loading preview...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current slide display -->
+        <div class="current-slide-display">
+            <span class="slide-label">Now Showing</span>
+            <div class="slide-info">
+                <span class="indicator-name">-</span>
+                <span class="separator">—</span>
+                <span class="state-name">-</span>
+            </div>
+        </div>
+
+        <!-- Main controls -->
+        <div class="controls-section">
+            <div class="navigation-controls">
+                <button class="nav-btn prev-btn" id="prevBtn" disabled>
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                </button>
+                
+                <div class="slide-counter">
+                    <span class="current-index">1</span>
+                    <span class="counter-sep">/</span>
+                    <span class="total-slides">1</span>
+                </div>
+                
+                <button class="nav-btn next-btn" id="nextBtn" disabled>
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg>
+                </button>
+            </div>
+
+            <button class="play-pause-btn" id="playPauseBtn">
+                <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                <svg class="pause-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+            </button>
+
+            <div class="duration-controls">
+                <div class="duration-adjuster">
+                    <button class="duration-btn minus" id="durationMinus">−</button>
+                    <span class="duration-value" id="durationValue">10s</span>
+                    <button class="duration-btn plus" id="durationPlus">+</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide sequence list -->
+        <div class="slides-section">
+            <div class="slides-header">
+                <h2 class="section-title">Sequence</h2>
+                <button class="add-slide-btn" id="addSlideBtn">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                </button>
+            </div>
+            <div class="slides-list" id="slidesList">
+                <!-- Slides will be dynamically populated -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Dropdown menu (shared, positioned dynamically) -->
+    <div class="dropdown-menu" id="dropdownMenu">
+        <div class="dropdown-content" id="dropdownContent">
+            <!-- Options populated dynamically -->
+        </div>
+    </div>
+
+    <script src="./scripts/script.js"></script>
 </body>
 </html>

@@ -571,7 +571,7 @@ const PresentationMode = () => {
                     flexShrink: 0
                 }}>
                     <Typography variant="h6" sx={{ color: 'white', fontWeight: 600, p: 2, bgcolor: 'rgba(0,0,0,0.2)', flexShrink: 0 }}>
-                        Slide Sequence
+                        Sequence
                     </Typography>
                     
                     <Box 
