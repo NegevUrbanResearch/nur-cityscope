@@ -70,7 +70,11 @@ const DeckGLMap = ({ indicatorType, state }) => {
           // Add cache-busting query param and include year if available
           const timestamp = Date.now();
           const year = state?.year || 2023;
-          const scenario = state?.scenario || "current";
+          // Validate scenario - reject legacy "current" value
+          let scenario = state?.scenario;
+          if (!scenario || scenario === "current") {
+            scenario = "present";
+          }
           const yearParam = `&year=${year}`;
 
           console.log(

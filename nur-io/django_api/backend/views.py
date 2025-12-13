@@ -306,6 +306,18 @@ class CustomActionsViewSet(viewsets.ViewSet):
         try:
             globals.INDICATOR_ID = indicator_id
             print(f"✓ Indicator set to ID: {indicator_id}")
+            
+            # Update INDICATOR_STATE to match the new indicator's default state
+            indicator = Indicator.objects.filter(indicator_id=indicator_id).first()
+            if indicator and indicator.category == "climate":
+                # Set default climate state
+                globals.INDICATOR_STATE = globals.DEFAULT_CLIMATE_STATE.copy()
+                print(f"✓ Set default climate state: {globals.INDICATOR_STATE}")
+            else:
+                # Set default mobility/other state
+                globals.INDICATOR_STATE = globals.DEFAULT_STATES.copy()
+                print(f"✓ Set default mobility state: {globals.INDICATOR_STATE}")
+            
             self.check_and_send_data()
             broadcast_indicator_update()
             return True

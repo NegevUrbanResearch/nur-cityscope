@@ -9,8 +9,8 @@ const globals = {
   // Current indicator ID
   INDICATOR_ID: 1,
   
-  // Visualization mode (image or map)
-  VISUALIZATION_MODE: 'map'
+  // Visualization mode (image or map) - matches backend default
+  VISUALIZATION_MODE: 'image'
 };
 
 export default globals; 

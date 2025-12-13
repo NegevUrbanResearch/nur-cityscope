@@ -170,6 +170,7 @@
           
           ws.onclose = () => {
             console.log('✗ Projection WebSocket disconnected, reconnecting...');
+            clearTimeout(wsReconnectTimeout);
             wsReconnectTimeout = setTimeout(connectWebSocket, 3000);
           };
           
@@ -178,6 +179,7 @@
           };
         } catch (err) {
           console.error('Projection WebSocket connection failed:', err);
+          clearTimeout(wsReconnectTimeout);
           wsReconnectTimeout = setTimeout(connectWebSocket, 3000);
         }
       }

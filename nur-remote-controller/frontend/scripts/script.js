@@ -77,7 +77,7 @@ class PresentationRemote {
                 this.updateConnectionStatus(true);
             };
             
-            this.ws.onmessage = (event) => {
+            this.            ws.onmessage = (event) => {
                 try {
                     const message = JSON.parse(event.data);
                     
@@ -87,21 +87,36 @@ class PresentationRemote {
                         
                         const wasIndex = this.currentIndex;
                         
-                        if (data.is_playing !== undefined) this.isPlaying = data.is_playing;
-                        if (data.sequence_index !== undefined) this.currentIndex = data.sequence_index;
-                        if (data.duration !== undefined) this.duration = data.duration;
-                        if (data.sequence && Array.isArray(data.sequence)) this.slides = data.sequence;
-                        
-                        this.updateUI();
-                        
-                        // Fetch new thumbnail if slide changed
-                        if (wasIndex !== this.currentIndex) {
-                            this.fetchThumbnail();
+                        // Only sync from WebSocket when we're playing (active control)
+                        // When paused, we don't want external state changes to override local state
+                        if (this.isPlaying) {
+                            if (data.is_playing !== undefined) this.isPlaying = data.is_playing;
+                            if (data.sequence_index !== undefined) this.currentIndex = data.sequence_index;
+                            if (data.duration !== undefined) this.duration = data.duration;
+                            if (data.sequence && Array.isArray(data.sequence)) this.slides = data.sequence;
+                            
+                            this.updateUI();
+                            
+                            // Fetch new thumbnail if slide changed
+                            if (wasIndex !== this.currentIndex) {
+                                this.fetchThumbnail();
+                            }
+                        } else {
+                            // When paused, only listen for play state changes (in case another device starts)
+                            if (data.is_playing === true) {
+                                console.log('📡 Another device started playback');
+                                this.isPlaying = true;
+                                if (data.sequence_index !== undefined) this.currentIndex = data.sequence_index;
+                                if (data.duration !== undefined) this.duration = data.duration;
+                                if (data.sequence && Array.isArray(data.sequence)) this.slides = data.sequence;
+                                this.updateUI();
+                                this.fetchThumbnail();
+                            }
                         }
                     }
                     
                     if (message.type === 'indicator_update' && message.data) {
-                        // Update current display when indicator changes
+                        // Update current display when indicator changes (always listen for these)
                         this.updateCurrentDisplay(message.data);
                         this.fetchThumbnail();
                     }
@@ -160,7 +175,17 @@ class PresentationRemote {
                 
                 const presState = await this.apiGet('/api/actions/get_presentation_state/');
                 if (presState) {
-                    this.isPlaying = presState.is_playing || false;
+                    // If backend is actively playing, sync with it
+                    // Otherwise, default to paused to avoid interfering with dashboard users
+                    if (presState.is_playing) {
+                        // Backend is playing - sync with it
+                        this.isPlaying = true;
+                        console.log('📡 Syncing with active presentation');
+                    } else {
+                        // Backend is paused - stay paused locally
+                        this.isPlaying = false;
+                    }
+                    
                     this.currentIndex = presState.sequence_index || 0;
                     this.duration = presState.duration || 10;
                     this.slides = presState.sequence || this.getDefaultSlides();
@@ -197,23 +222,41 @@ class PresentationRemote {
                 const wasIndex = this.currentIndex;
                 const wasPlaying = this.isPlaying;
                 
-                this.isPlaying = presState.is_playing || false;
-                this.currentIndex = presState.sequence_index || 0;
-                this.duration = presState.duration || 10;
-                
-                if (presState.sequence && presState.sequence.length > 0) {
-                    this.slides = presState.sequence;
-                }
-                
-                // Update UI if something changed
-                if (wasPlaying !== this.isPlaying || wasIndex !== this.currentIndex) {
-                    this.updateUI();
-                    if (wasIndex !== this.currentIndex) {
+                // Only sync state from backend when we're playing (active control)
+                // When paused, we maintain local state to avoid interfering with dashboard users
+                if (this.isPlaying) {
+                    if (presState.is_playing !== undefined) this.isPlaying = presState.is_playing;
+                    this.currentIndex = presState.sequence_index || 0;
+                    this.duration = presState.duration || 10;
+                    
+                    if (presState.sequence && presState.sequence.length > 0) {
+                        this.slides = presState.sequence;
+                    }
+                    
+                    // Update UI if something changed
+                    if (wasPlaying !== this.isPlaying || wasIndex !== this.currentIndex) {
+                        this.updateUI();
+                        if (wasIndex !== this.currentIndex) {
+                            await this.fetchThumbnail();
+                        }
+                    }
+                } else {
+                    // When paused, only react if another device started playback
+                    if (presState.is_playing === true) {
+                        console.log('📡 Poll detected playback started elsewhere');
+                        this.isPlaying = true;
+                        this.currentIndex = presState.sequence_index || 0;
+                        this.duration = presState.duration || 10;
+                        if (presState.sequence && presState.sequence.length > 0) {
+                            this.slides = presState.sequence;
+                        }
+                        this.updateUI();
                         await this.fetchThumbnail();
                     }
                 }
             }
             
+            // Always update the current display info for visibility
             const globalState = await this.apiGet('/api/actions/get_global_variables/');
             if (globalState) {
                 this.updateCurrentDisplay(globalState);
@@ -533,6 +576,11 @@ class PresentationRemote {
     }
     
     async syncSequence() {
+        // Only sync when playing to avoid interfering with dashboard users
+        if (!this.isPlaying) {
+            console.log('Skipping sequence sync - remote is paused');
+            return;
+        }
         try {
             await this.apiPost('/api/actions/set_presentation_state/', {
                 sequence: this.slides
@@ -546,9 +594,20 @@ class PresentationRemote {
         const newState = !this.isPlaying;
         
         try {
-            await this.apiPost('/api/actions/set_presentation_state/', {
-                is_playing: newState
-            });
+            if (newState) {
+                // When starting to play, sync all local state to backend
+                await this.apiPost('/api/actions/set_presentation_state/', {
+                    is_playing: true,
+                    sequence: this.slides,
+                    sequence_index: this.currentIndex,
+                    duration: this.duration
+                });
+            } else {
+                // When pausing, just update play state
+                await this.apiPost('/api/actions/set_presentation_state/', {
+                    is_playing: false
+                });
+            }
             
             this.isPlaying = newState;
             this.updateUI();
@@ -587,14 +646,19 @@ class PresentationRemote {
     
     async adjustDuration(delta) {
         const newDuration = Math.max(1, this.duration + delta);
+        this.duration = newDuration;
+        this.elements.durationValue.textContent = `${this.duration}s`;
+        
+        // Only sync when playing to avoid interfering with dashboard users
+        if (!this.isPlaying) {
+            console.log('Duration changed locally - will sync when playing');
+            return;
+        }
         
         try {
             await this.apiPost('/api/actions/set_presentation_state/', {
                 duration: newDuration
             });
-            
-            this.duration = newDuration;
-            this.elements.durationValue.textContent = `${this.duration}s`;
         } catch (error) {
             console.error('Error adjusting duration:', error);
         }

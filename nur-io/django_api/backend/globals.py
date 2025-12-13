@@ -9,8 +9,8 @@ INDICATOR_ID = 1
 
 # Current state of the indicator (year, parameters, etc.)
 # For climate indicator: {'scenario': 'existing', 'type': 'utci', 'label': 'Existing - UTCI'}
-# For other indicators: {'year': 2023, 'scenario': 'current', 'label': 'Current State'}
-INDICATOR_STATE = {"year": 2023, "scenario": "current", "label": "Current State"}
+# For other indicators: {'year': 2023, 'scenario': 'present', 'label': 'Present'}
+INDICATOR_STATE = {"year": 2023, "scenario": "present", "label": "Present"}
 
 # Temporary list for tracking state changes
 list_temp = []
@@ -22,7 +22,6 @@ VISUALIZATION_MODE = "image"
 PRESENTATION_PLAYING = False
 PRESENTATION_SEQUENCE = [
     {"indicator": "mobility", "state": "Present"},
-    {"indicator": "mobility", "state": "Survey"},
     {"indicator": "climate", "state": "Existing"},
 ]
 PRESENTATION_SEQUENCE_INDEX = 0

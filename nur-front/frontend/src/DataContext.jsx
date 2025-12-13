@@ -147,7 +147,7 @@ export const DataProvider = ({ children }) => {
   const lastCheckedRef = useRef(Date.now());
   const debounceTimerRef = useRef(null);
   const indicatorChangeInProgressRef = useRef(null); // Track ongoing indicator changes to ignore stale WebSocket updates
-  const [visualizationMode, setVisualizationMode] = useState("deck");
+  const [visualizationMode, setVisualizationMode] = useState("image");
   const visualizationModeRef = useRef(visualizationMode);
   const isPresentationModeRef = useRef(isPresentationMode);
   const isPlayingRef = useRef(isPlaying);
@@ -256,7 +256,12 @@ export const DataProvider = ({ children }) => {
               }
               
               if (data.indicator_state) {
-                globals.INDICATOR_STATE = data.indicator_state;
+                // Validate and fix legacy "current" scenario value
+                const state = { ...data.indicator_state };
+                if (state.scenario === "current") {
+                  state.scenario = "present";
+                }
+                globals.INDICATOR_STATE = state;
                 // Trigger state change events
                 window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
                 if (indicatorRef.current === 'climate') {
@@ -384,7 +389,12 @@ export const DataProvider = ({ children }) => {
       if (response.data) {
         // Update our local globals to match server
         if (response.data.indicator_state) {
-          globals.INDICATOR_STATE = response.data.indicator_state;
+          // Validate and fix legacy "current" scenario value
+          const state = { ...response.data.indicator_state };
+          if (state.scenario === "current") {
+            state.scenario = "present";
+          }
+          globals.INDICATOR_STATE = state;
         }
 
         // Handle visualization mode changes from remote controller
@@ -725,6 +735,14 @@ export const DataProvider = ({ children }) => {
 
         // Set the indicator locally
         setCurrentIndicator(newIndicator);
+        
+        // Update globals.INDICATOR_STATE to the new indicator's default
+        if (newIndicator === "climate") {
+          globals.INDICATOR_STATE = { scenario: "existing", type: "utci", label: "Existing - UTCI" };
+        } else {
+          globals.INDICATOR_STATE = { year: 2023, scenario: "present", label: "Present" };
+        }
+        console.log(`✓ Set default state for ${newIndicator}:`, globals.INDICATOR_STATE);
         
         // Mark that we're changing to this indicator - this guards against stale WebSocket updates
         indicatorChangeInProgressRef.current = newIndicator;

@@ -40,23 +40,26 @@ const MobilityGraphs = () => {
   const { distanceHistogramData, modeSplitData, temporalData } =
     useMobilityData();
   const [selectedDestination, setSelectedDestination] = useState("All");
+  // Initialize with validated scenario (reject legacy "current" value)
+  const initialScenario = globals.INDICATOR_STATE?.scenario;
   const [currentState, setCurrentState] = useState(
-    globals.INDICATOR_STATE?.scenario || "current"
+    (!initialScenario || initialScenario === "current") ? "present" : initialScenario
   );
 
   // Listen for state changes (event-driven, no polling)
   useEffect(() => {
     const handleStateChange = () => {
-      const newState = globals.INDICATOR_STATE?.scenario || "current";
-      setCurrentState(newState);
+      // Validate scenario - reject legacy "current" value
+      let scenario = globals.INDICATOR_STATE?.scenario;
+      if (!scenario || scenario === "current") {
+        scenario = "present";
+      }
+      setCurrentState(scenario);
     };
 
     // Listen for state change events (fired by DataContext via WebSocket)
     window.addEventListener("indicatorStateChanged", handleStateChange);
     window.addEventListener("stateChanged", handleStateChange);
-
-    // Initial sync
-    handleStateChange();
     
     return () => {
       window.removeEventListener("indicatorStateChanged", handleStateChange);

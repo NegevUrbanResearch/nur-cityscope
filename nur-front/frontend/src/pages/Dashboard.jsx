@@ -44,10 +44,25 @@ const Dashboard = ({ openCharts}) => {
   const loadingTimerRef = useRef(null);
   // Track the expected URL to prevent showing stale images
   const expectedUrlRef = useRef(null);
+  // Track last fetched state to prevent redundant refreshes
+  const lastFetchedStateRef = useRef(null);
+
+  // Track current image URL in a ref to avoid dependency issues
+  const currentImageUrlRef = useRef(currentImageUrl);
+  useEffect(() => {
+    currentImageUrlRef.current = currentImageUrl;
+  }, [currentImageUrl]);
 
   // Preload image and track its loading state - memoize to avoid dependency issues
   const preloadImage = useCallback(
     (url) => {
+      // Extract base URL without cache-busting param for comparison
+      const baseUrl = url.split("?")[0];
+      const currentBaseUrl = currentImageUrlRef.current?.split("?")[0];
+      
+      // If we're loading the same image (just different cache param), keep showing current
+      const isSameImage = baseUrl === currentBaseUrl;
+      
       // First clear any previous loading state for this URL
       imageStates.current.delete(url);
 
@@ -55,9 +70,11 @@ const Dashboard = ({ openCharts}) => {
       imageStates.current.set(url, "loading");
       expectedUrlRef.current = url;
 
-      // Clear current image while new one loads to prevent flashing old content
-      setCurrentImageUrl(null);
-      setShowLoadingMessage(true);
+      // Only clear current image if it's a different image
+      if (!isSameImage) {
+        setCurrentImageUrl(null);
+        setShowLoadingMessage(true);
+      }
 
       const img = new Image();
       img.onload = () => {
@@ -116,6 +133,8 @@ const Dashboard = ({ openCharts}) => {
       setShowLoadingMessage(true);
       // Clear the current image URL to prevent showing stale content
       setCurrentImageUrl(null);
+      // Clear last fetched state so new indicator gets fresh data
+      lastFetchedStateRef.current = null;
     }
 
     lastIndicatorRef.current = currentIndicator;
@@ -152,6 +171,13 @@ const Dashboard = ({ openCharts}) => {
             loading: false,
             error: false,
           });
+
+          // Track what we just fetched to prevent redundant refreshes
+          if (currentIndicator === "climate") {
+            lastFetchedStateRef.current = `${globals.INDICATOR_STATE?.scenario}-${globals.INDICATOR_STATE?.type}`;
+          } else {
+            lastFetchedStateRef.current = `${currentIndicator}-${globals.INDICATOR_STATE?.scenario}`;
+          }
 
           // Only preload images (not HTML animations or videos)
           if (!isHtml && !isVideo) {
@@ -205,13 +231,17 @@ const Dashboard = ({ openCharts}) => {
   useEffect(() => {
     const handleClimateStateChange = async () => {
       if (currentIndicator === "climate") {
+        // Check if state actually changed to prevent redundant refreshes
+        const currentStateKey = `${globals.INDICATOR_STATE?.scenario}-${globals.INDICATOR_STATE?.type}`;
+        if (lastFetchedStateRef.current === currentStateKey) {
+          console.log("🌡️ Climate state unchanged, skipping refresh");
+          return;
+        }
+        
         console.log(
           "🌡️ Climate state changed event received, refreshing image..."
         );
-
-        // Immediately clear current image to prevent flashing old content
-        setCurrentImageUrl(null);
-        setShowLoadingMessage(true);
+        lastFetchedStateRef.current = currentStateKey;
 
         // Add a small delay to ensure backend has updated globals.INDICATOR_STATE
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -271,13 +301,17 @@ const Dashboard = ({ openCharts}) => {
   useEffect(() => {
     const handleIndicatorStateChange = async () => {
       if (currentIndicator !== "climate") {
+        // Check if state actually changed to prevent redundant refreshes
+        const currentStateKey = `${currentIndicator}-${globals.INDICATOR_STATE?.scenario}`;
+        if (lastFetchedStateRef.current === currentStateKey) {
+          console.log(`📊 ${currentIndicator} state unchanged, skipping refresh`);
+          return;
+        }
+        
         console.log(
           `📊 Indicator state changed event received for ${currentIndicator}, refreshing image...`
         );
-
-        // Immediately clear current image to prevent flashing old content
-        setCurrentImageUrl(null);
-        setShowLoadingMessage(true);
+        lastFetchedStateRef.current = currentStateKey;
 
         // Add a small delay to ensure backend has updated globals.INDICATOR_STATE
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -339,16 +373,21 @@ const Dashboard = ({ openCharts}) => {
   // State for tracking current indicator state
   const [currentState, setCurrentState] = useState({
     year: 2023,
-    scenario: "current",
+    scenario: "present",
   });
 
   // Listen for state changes and update currentState (event-driven, no polling)
   useEffect(() => {
     const handleStateChange = () => {
-      // Get the current state from globals
+      // Get the current state from globals based on indicator type
+      // Validate scenario - reject legacy "current" value
+      let scenario = globals.INDICATOR_STATE?.scenario;
+      if (!scenario || scenario === "current") {
+        scenario = currentIndicator === "climate" ? "existing" : "present";
+      }
       const newState = {
         year: globals.INDICATOR_STATE?.year || 2023,
-        scenario: globals.INDICATOR_STATE?.scenario || "current",
+        scenario: scenario,
       };
       setCurrentState(newState);
     };
@@ -358,15 +397,12 @@ const Dashboard = ({ openCharts}) => {
     window.addEventListener("stateChanged", handleStateChange);
     window.addEventListener("climateStateChanged", handleStateChange);
 
-    // Initial state sync
-    handleStateChange();
-
     return () => {
       window.removeEventListener("indicatorStateChanged", handleStateChange);
       window.removeEventListener("stateChanged", handleStateChange);
       window.removeEventListener("climateStateChanged", handleStateChange);
     };
-  }, []);
+  }, [currentIndicator]);
 
   // Memoize state object to prevent unnecessary re-renders and iframe reloads
   // Must be called before any early returns (Rules of Hooks)
