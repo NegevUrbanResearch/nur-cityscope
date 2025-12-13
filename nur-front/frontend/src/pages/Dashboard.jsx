@@ -342,67 +342,31 @@ const Dashboard = ({ openCharts}) => {
     scenario: "current",
   });
 
-  // Listen for state changes and update currentState
+  // Listen for state changes and update currentState (event-driven, no polling)
   useEffect(() => {
     const handleStateChange = () => {
-      console.log("Dashboard - State change event received, updating state");
-      console.log("Dashboard - Current data?.metrics:", data?.metrics);
-      console.log(
-        "Dashboard - Current globals.INDICATOR_STATE:",
-        globals.INDICATOR_STATE
-      );
-
-      // Get the current state from globals or data
+      // Get the current state from globals
       const newState = {
-        year: globals.INDICATOR_STATE?.year || data?.metrics?.year || 2023,
-        scenario:
-          globals.INDICATOR_STATE?.scenario ||
-          data?.metrics?.scenario ||
-          "current",
+        year: globals.INDICATOR_STATE?.year || 2023,
+        scenario: globals.INDICATOR_STATE?.scenario || "current",
       };
-      console.log("Dashboard - Setting state to:", newState);
       setCurrentState(newState);
     };
 
+    // Listen for state change events (fired by DataContext via WebSocket)
     window.addEventListener("indicatorStateChanged", handleStateChange);
     window.addEventListener("stateChanged", handleStateChange);
+    window.addEventListener("climateStateChanged", handleStateChange);
 
-    // Also poll for state changes every 1 second to ensure sync
-    const pollInterval = setInterval(async () => {
-      try {
-        const response = await api.get("/api/actions/get_global_variables/");
-        if (response.data?.indicator_state) {
-          const backendState = response.data.indicator_state;
-          const newState = {
-            year: backendState.year || 2023,
-            scenario: backendState.scenario || "current",
-          };
-
-          // Only update if different from current state
-          if (
-            newState.scenario !== currentState.scenario ||
-            newState.year !== currentState.year
-          ) {
-            console.log(
-              "Dashboard - Polling detected state change:",
-              currentState,
-              "->",
-              newState
-            );
-            setCurrentState(newState);
-          }
-        }
-      } catch (error) {
-        console.error("Dashboard - Error polling backend state:", error);
-      }
-    }, 1000);
+    // Initial state sync
+    handleStateChange();
 
     return () => {
       window.removeEventListener("indicatorStateChanged", handleStateChange);
       window.removeEventListener("stateChanged", handleStateChange);
-      clearInterval(pollInterval);
+      window.removeEventListener("climateStateChanged", handleStateChange);
     };
-  }, [data?.metrics, currentState]);
+  }, []);
 
   // Memoize state object to prevent unnecessary re-renders and iframe reloads
   // Must be called before any early returns (Rules of Hooks)

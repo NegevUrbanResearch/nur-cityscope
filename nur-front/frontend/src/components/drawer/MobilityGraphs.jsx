@@ -44,47 +44,25 @@ const MobilityGraphs = () => {
     globals.INDICATOR_STATE?.scenario || "current"
   );
 
-  // Listen for state changes
+  // Listen for state changes (event-driven, no polling)
   useEffect(() => {
     const handleStateChange = () => {
-      console.log(
-        "MobilityGraphs - State change event received, globals.INDICATOR_STATE:",
-        globals.INDICATOR_STATE
-      );
       const newState = globals.INDICATOR_STATE?.scenario || "current";
-      console.log("MobilityGraphs - Setting currentState to:", newState);
       setCurrentState(newState);
     };
 
-    // Also listen for the general state change event
-    const handleGeneralStateChange = () => {
-      console.log(
-        "MobilityGraphs - General state change event received, globals.INDICATOR_STATE:",
-        globals.INDICATOR_STATE
-      );
-      const newState = globals.INDICATOR_STATE?.scenario || "current";
-      console.log("MobilityGraphs - Setting currentState to:", newState);
-      setCurrentState(newState);
-    };
-
+    // Listen for state change events (fired by DataContext via WebSocket)
     window.addEventListener("indicatorStateChanged", handleStateChange);
-    window.addEventListener("stateChanged", handleGeneralStateChange);
-    
-    // Also poll for state changes every 500ms to ensure sync
-    const pollInterval = setInterval(() => {
-      const newState = globals.INDICATOR_STATE?.scenario || "current";
-      if (newState !== currentState) {
-        console.log("MobilityGraphs - Polling detected state change:", currentState, "->", newState);
-        setCurrentState(newState);
-      }
-    }, 500);
+    window.addEventListener("stateChanged", handleStateChange);
+
+    // Initial sync
+    handleStateChange();
     
     return () => {
       window.removeEventListener("indicatorStateChanged", handleStateChange);
-      window.removeEventListener("stateChanged", handleGeneralStateChange);
-      clearInterval(pollInterval);
+      window.removeEventListener("stateChanged", handleStateChange);
     };
-  }, [currentState]);
+  }, []);
 
   // Get pie chart data for selected destination
   const getPieChartData = () => {
