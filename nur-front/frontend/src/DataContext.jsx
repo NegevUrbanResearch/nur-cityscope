@@ -642,7 +642,14 @@ export const DataProvider = ({ children }) => {
   // Function to change state (climate scenario or mobility state)
   const changeState = useCallback(
     async (stateName) => {
-      if (currentIndicator === "climate") {
+      // Use ref to get the actual current indicator to avoid stale closures
+      const actualIndicator = indicatorRef.current;
+      
+      // Check if this is a climate scenario by looking it up in CLIMATE_SCENARIOS
+      const isClimateScenario = Object.values(CLIMATE_SCENARIOS).includes(stateName);
+      
+      // Handle climate scenarios - use actualIndicator or check if stateName is a climate scenario
+      if (actualIndicator === "climate" || (isClimateScenario && actualIndicator !== "mobility")) {
         // Find the scenario key from the display name
         const scenarioKey = Object.entries(CLIMATE_SCENARIOS).find(
           ([key, displayName]) => displayName === stateName
@@ -673,8 +680,10 @@ export const DataProvider = ({ children }) => {
           } catch (error) {
             console.error("Error changing climate state:", error);
           }
+        } else {
+          console.error(`❌ Climate scenario not found for: ${stateName}`);
         }
-      } else if (currentIndicator === "mobility") {
+      } else if (actualIndicator === "mobility") {
         // Handle mobility states (Present/Survey)
         const scenarioKey = stateName.toLowerCase(); // "Present" -> "present", "Survey" -> "survey"
 
@@ -720,7 +729,7 @@ export const DataProvider = ({ children }) => {
 
   // Function to switch indicators
   const changeIndicator = useCallback(
-    (newIndicator) => {
+    (newIndicator, targetState = null) => {
       if (
         newIndicator !== currentIndicator &&
         Object.keys(INDICATOR_CONFIG).includes(newIndicator)
@@ -736,13 +745,19 @@ export const DataProvider = ({ children }) => {
         // Set the indicator locally
         setCurrentIndicator(newIndicator);
         
-        // Update globals.INDICATOR_STATE to the new indicator's default
-        if (newIndicator === "climate") {
-          globals.INDICATOR_STATE = { scenario: "existing", type: "utci", label: "Existing - UTCI" };
+        // In presentation mode with a target state, skip setting default state to avoid flash
+        if (isPresentationModeRef.current && targetState) {
+          // Don't set default state - the target state will be set immediately
+          // This prevents the brief flash of "existing" before the correct state
         } else {
-          globals.INDICATOR_STATE = { year: 2023, scenario: "present", label: "Present" };
+          // Update globals.INDICATOR_STATE to the new indicator's default
+          if (newIndicator === "climate") {
+            globals.INDICATOR_STATE = { scenario: "existing", type: "utci", label: "Existing - UTCI" };
+          } else {
+            globals.INDICATOR_STATE = { year: 2023, scenario: "present", label: "Present" };
+          }
+          console.log(`✓ Set default state for ${newIndicator}:`, globals.INDICATOR_STATE);
         }
-        console.log(`✓ Set default state for ${newIndicator}:`, globals.INDICATOR_STATE);
         
         // Mark that we're changing to this indicator - this guards against stale WebSocket updates
         indicatorChangeInProgressRef.current = newIndicator;
@@ -762,6 +777,14 @@ export const DataProvider = ({ children }) => {
 
               // Trigger a data fetch for the new indicator
               fetchDashboardData(newIndicator);
+
+              // In presentation mode with target state, set it immediately after indicator change
+              if (isPresentationModeRef.current && targetState) {
+                // Small delay to ensure indicator change is processed
+                setTimeout(() => {
+                  changeState(targetState);
+                }, 100);
+              }
 
               // Give the system time to complete the transition before clearing loading state
               setTimeout(() => {
@@ -785,7 +808,7 @@ export const DataProvider = ({ children }) => {
       }
     }
   },
-  [currentIndicator, fetchDashboardData]
+  [currentIndicator, fetchDashboardData, changeState]
 );
 
     // presentation timer logic
@@ -813,18 +836,13 @@ export const DataProvider = ({ children }) => {
       
       console.log(`[Presentation] Playing Step ${safeIndex + 1}/${presentationSequence.length}:`, currentStep);
 
-      // Change indicator if needed
+      // Change indicator if needed, passing target state to avoid showing default state
       if (currentStep.indicator !== indicatorRef.current) { 
-          changeIndicator(currentStep.indicator);
+          changeIndicator(currentStep.indicator, currentStep.state);
+      } else {
+          // Indicator is already correct, just change the state
+          changeState(currentStep.state);
       }
-      
-      // Change state after a short delay to allow indicator change to settle
-      setTimeout(() => {
-          // Double-check we're still playing before changing state
-          if (isPlayingRef.current) {
-              changeState(currentStep.state);
-          }
-      }, 500);
 
       // Set up timer for next slide
       const durationMs = Math.max(1000, globalDuration * 1000); // Minimum 1 second
