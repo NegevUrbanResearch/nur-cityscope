@@ -2,8 +2,10 @@ import React from "react";
 import { AppBar, Toolbar, Box, IconButton, Grid } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
 import ChartsDrawer from "./drawer/ChartsDrawer";
+//import { useAppData } from "../DataContext"; 
 
-const Navbar = ({ handleChartsClick, openCharts }) => {
+const Navbar = ({ handleChartsClick, openCharts}) => {
+    // const { isPresentationMode } = useAppData();
 
 
   return (

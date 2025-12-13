@@ -7,111 +7,40 @@ import {
 } from "@mui/material";
 import api from "../../api";
 import globals from "../../globals";
+import { useAppData } from "../../DataContext";
 
 const ClimateMapTypeSelector = () => {
+  const { pausePresentationMode } = useAppData();
   const [scenarioType, setScenarioType] = useState(
     globals.INDICATOR_STATE?.type || "utci"
   );
 
-  // Fetch the current climate state from the backend on mount
+  // Sync state from globals (event-driven, no polling)
   useEffect(() => {
-    const fetchCurrentState = async () => {
-      try {
-        const response = await api.get(
-          "/api/actions/get_current_dashboard_data/"
-        );
-        if (response.data && response.data.state) {
-          const backendType = response.data.state.type || "utci";
-          console.log(`✓ Synced climate type from backend: ${backendType}`);
-          setScenarioType(backendType);
-
-          globals.INDICATOR_STATE = {
-            ...globals.INDICATOR_STATE,
-            ...response.data.state,
-          };
-        }
-      } catch (error) {
-        console.error("Error fetching current climate state:", error);
+    const handleClimateStateChange = () => {
+      // Read current type from globals (updated by DataContext via WebSocket)
+      const currentType = globals.INDICATOR_STATE?.type || "utci";
+      if (currentType !== scenarioType) {
+        setScenarioType(currentType);
       }
     };
 
-    fetchCurrentState();
-  }, []);
-
-  // Listen for climate state changes from remote controller or other sources
-  useEffect(() => {
-    const handleClimateStateChange = async () => {
-      console.log(
-        "🔄 Climate state changed event detected, syncing button state..."
-      );
-      try {
-        const response = await api.get(
-          "/api/actions/get_current_dashboard_data/"
-        );
-        if (response.data && response.data.state) {
-          const backendType = response.data.state.type || "utci";
-          console.log(`✓ Updated button state to: ${backendType}`);
-          setScenarioType(backendType);
-
-          globals.INDICATOR_STATE = {
-            ...globals.INDICATOR_STATE,
-            ...response.data.state,
-          };
-        }
-      } catch (error) {
-        console.error("Error syncing climate state:", error);
-      }
-    };
-
+    // Listen for climate state changes from DataContext (via WebSocket)
     window.addEventListener("climateStateChanged", handleClimateStateChange);
+    window.addEventListener("indicatorStateChanged", handleClimateStateChange);
+
+    // Initial sync
+    handleClimateStateChange();
 
     return () => {
-      window.removeEventListener(
-        "climateStateChanged",
-        handleClimateStateChange
-      );
+      window.removeEventListener("climateStateChanged", handleClimateStateChange);
+      window.removeEventListener("indicatorStateChanged", handleClimateStateChange);
     };
-  }, []);
-
-  // Poll backend for changes from remote controller every 2 seconds
-  useEffect(() => {
-    const pollBackend = async () => {
-      try {
-        const response = await api.get(
-          "/api/actions/get_current_dashboard_data/"
-        );
-        if (response.data && response.data.state) {
-          const backendType = response.data.state.type || "utci";
-
-          // Only update if the backend state differs from current state
-          if (backendType !== scenarioType) {
-            console.log(
-              `🔄 Backend state changed to: ${backendType}, updating button...`
-            );
-            setScenarioType(backendType);
-
-            globals.INDICATOR_STATE = {
-              ...globals.INDICATOR_STATE,
-              ...response.data.state,
-            };
-
-            // Trigger event to update Dashboard image
-            window.dispatchEvent(new CustomEvent("climateStateChanged"));
-          }
-        }
-      } catch (error) {
-        console.error("Error polling backend state:", error);
-      }
-    };
-
-    // Poll every 2 seconds
-    const intervalId = setInterval(pollBackend, 2000);
-
-    return () => clearInterval(intervalId);
   }, [scenarioType]);
 
   const handleTypeChange = async (event, newType) => {
     if (newType !== null) {
+      pausePresentationMode(); // Pause auto-advance when user clicks
       setScenarioType(newType);
 
       const currentScenario = globals.INDICATOR_STATE?.scenario || "existing";

@@ -53,14 +53,6 @@
         width: 100%;
         height: 100%;
       }
-      #mapContainer {
-        width: 100%;
-        height: 100%;
-        display: none;
-        position: absolute;
-        top: 0;
-        left: 0;
-      }
       #displayedImage {
         width: 100%;
         height: 100%;
@@ -84,7 +76,6 @@
         playsinline
         style="display: none"
       ></video>
-      <iframe id="mapContainer" frameborder="0"></iframe>
       <div id="errorMessage" class="error-message" style="display: none"></div>
       <div id="calibrationGrid" class="calibration-grid"></div>
     </div>
@@ -131,49 +122,84 @@
     <script>
       const $imagen = document.getElementById("displayedImage");
       const $video = document.getElementById("displayedVideo");
-      const $mapContainer = document.getElementById("mapContainer");
       const $errorMessage = document.getElementById("errorMessage");
       const $calibrationPanel = document.getElementById("calibrationPanel");
       const $calibrationStatus = document.getElementById("calibrationStatus");
       const $toggleConfigBtn = document.getElementById("toggleConfigBtn");
 
       // Initialize Maptastic for projection mapping
+      // Only the keystoneContainer is registered - all content inside transforms with it
       const maptastic = Maptastic("keystoneContainer");
       let configActive = false;
-
-      // Add the main display elements as layers to maptastic
-      maptastic.addLayer("displayedImage");
-      maptastic.addLayer("displayedVideo");
-      maptastic.addLayer("mapContainer");
 
       // Get the current origin (protocol + hostname) to handle both development and production
       const origin = window.location.origin;
       // Use relative paths for API requests
       const apiEndpoint = "/api/actions/get_image_data/";
+      
+      // WebSocket connection for real-time updates
+      let ws = null;
+      let wsReconnectTimeout = null;
+      
+      function connectWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/presentation/`;
+        
+        console.log('🔌 Projection connecting to WebSocket:', wsUrl);
+        
+        try {
+          ws = new WebSocket(wsUrl);
+          
+          ws.onopen = () => {
+            console.log('✓ Projection WebSocket connected');
+          };
+          
+          ws.onmessage = (event) => {
+            try {
+              const message = JSON.parse(event.data);
+              
+              // When indicator or presentation state changes, fetch new image
+              if (message.type === 'indicator_update' || message.type === 'presentation_update') {
+                console.log('📡 Projection received update, fetching new content');
+                updateImage();
+              }
+            } catch (err) {
+              console.error('WebSocket message error:', err);
+            }
+          };
+          
+          ws.onclose = () => {
+            console.log('✗ Projection WebSocket disconnected, reconnecting...');
+            wsReconnectTimeout = setTimeout(connectWebSocket, 3000);
+          };
+          
+          ws.onerror = (error) => {
+            console.error('Projection WebSocket error:', error);
+          };
+        } catch (err) {
+          console.error('Projection WebSocket connection failed:', err);
+          wsReconnectTimeout = setTimeout(connectWebSocket, 3000);
+        }
+      }
+      
+      // Connect to WebSocket on load
+      connectWebSocket();
 
-      function renderImagen(url, isMap) {
-        if (isMap) {
-          // Display the map in an iframe
-          $imagen.style.display = "none";
-          $video.style.display = "none";
-          $mapContainer.style.display = "block";
-          $mapContainer.src = url;
-        } else if (isVideoFile(url)) {
+      function renderImagen(url) {
+        if (isVideoFile(url)) {
           // Display as a video with looping
           $imagen.style.display = "none";
-          $mapContainer.style.display = "none";
           $video.style.display = "block";
 
           // Only reload video if the URL has actually changed
           if ($video.src !== url) {
             $video.src = url;
-            $video.load(); // Reload the video to ensure it starts playing
+            $video.load();
           }
         } else {
           // Display as an image
           $imagen.style.display = "block";
           $video.style.display = "none";
-          $mapContainer.style.display = "none";
           $imagen.setAttribute("src", url);
         }
 
@@ -225,12 +251,8 @@
               currentContent = data.image_data;
               currentType = data.type;
 
-              // Use the type field directly from the API response
-              const isMap = false; // Maps not used in projection interface
-              const isVideo = data.type === "video";
-
-              // Always use the correct URL
-              renderImagen(mediaUrl, isMap);
+              // Render the content (image or video)
+              renderImagen(mediaUrl);
             } else if (data.error) {
               console.error("Error from API:", data.error);
               showError("Server error: " + data.error);
@@ -345,8 +367,8 @@
       // Event listeners for calibration panel
       $toggleConfigBtn.addEventListener("click", toggleConfigMode);
 
-      // Start periodic updates every 5 seconds (5000 ms) to reduce unnecessary reloads
-      setInterval(updateImage, 5000);
+      // Fallback polling - WebSocket handles real-time updates
+      setInterval(updateImage, 10000);
 
       // Auto-reset calibration to fix sideways display
       autoResetCalibration();

@@ -87,6 +87,45 @@ from . import globals
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
+def broadcast_presentation_update():
+    """Broadcast presentation state to all connected WebSocket clients"""
+    channel_layer = get_channel_layer()
+    if channel_layer:
+        try:
+            async_to_sync(channel_layer.group_send)(
+                'presentation_channel',
+                {
+                    'type': 'presentation_update',
+                    'data': {
+                        'is_playing': globals.PRESENTATION_PLAYING,
+                        'sequence': globals.PRESENTATION_SEQUENCE,
+                        'sequence_index': globals.PRESENTATION_SEQUENCE_INDEX,
+                        'duration': globals.PRESENTATION_DURATION,
+                    }
+                }
+            )
+        except Exception as e:
+            print(f"WebSocket broadcast error: {e}")
+
+def broadcast_indicator_update():
+    """Broadcast indicator state to all connected WebSocket clients"""
+    channel_layer = get_channel_layer()
+    if channel_layer:
+        try:
+            async_to_sync(channel_layer.group_send)(
+                'presentation_channel',
+                {
+                    'type': 'indicator_update',
+                    'data': {
+                        'indicator_id': globals.INDICATOR_ID,
+                        'indicator_state': globals.INDICATOR_STATE,
+                        'visualization_mode': globals.VISUALIZATION_MODE,
+                    }
+                }
+            )
+        except Exception as e:
+            print(f"WebSocket broadcast error: {e}")
+
 
 class CustomActionsViewSet(viewsets.ViewSet):
     """
@@ -159,12 +198,13 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def get_global_variables(self, request):
-        """Get current global variables (indicator, state, visualization mode)"""
+        """Get current global variables (indicator, state, visualization mode, presentation state)"""
         response = JsonResponse(
             {
                 "indicator_id": globals.INDICATOR_ID,
                 "indicator_state": globals.INDICATOR_STATE,
                 "visualization_mode": globals.VISUALIZATION_MODE,
+                "presentation_playing": globals.PRESENTATION_PLAYING,
             }
         )
         self._add_no_cache_headers(response)
@@ -186,9 +226,71 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
         globals.VISUALIZATION_MODE = mode
         self.check_and_send_data()
+        broadcast_indicator_update()
         print(f"✓ Visualization mode set to: {mode}")
 
         return JsonResponse({"status": "ok", "visualization_mode": mode})
+
+    @action(detail=False, methods=["get"])
+    def get_presentation_state(self, request):
+        """Get current presentation state (playing, sequence, index, duration)"""
+        response = JsonResponse({
+            "is_playing": globals.PRESENTATION_PLAYING,
+            "sequence": globals.PRESENTATION_SEQUENCE,
+            "sequence_index": globals.PRESENTATION_SEQUENCE_INDEX,
+            "duration": globals.PRESENTATION_DURATION,
+        })
+        self._add_no_cache_headers(response)
+        return response
+
+    @action(detail=False, methods=["post"])
+    def set_presentation_state(self, request):
+        """Set presentation state (play/pause, sequence, index, duration)"""
+        # Update playing state if provided
+        if "is_playing" in request.data:
+            globals.PRESENTATION_PLAYING = bool(request.data.get("is_playing"))
+            print(f"✓ Presentation playing: {globals.PRESENTATION_PLAYING}")
+        
+        # Update sequence if provided
+        if "sequence" in request.data:
+            sequence = request.data.get("sequence")
+            if isinstance(sequence, list):
+                globals.PRESENTATION_SEQUENCE = sequence
+                print(f"✓ Presentation sequence updated: {len(sequence)} slides")
+        
+        # Update sequence index if provided
+        if "sequence_index" in request.data:
+            index = request.data.get("sequence_index")
+            if isinstance(index, int):
+                # Clamp index to valid range instead of silently ignoring out-of-bounds values
+                sequence_length = len(globals.PRESENTATION_SEQUENCE)
+                if sequence_length > 0:
+                    clamped_index = max(0, min(index, sequence_length - 1))
+                    if clamped_index != index:
+                        print(f"⚠️ Presentation index {index} out of bounds, clamped to {clamped_index}")
+                    globals.PRESENTATION_SEQUENCE_INDEX = clamped_index
+                    print(f"✓ Presentation index: {clamped_index}")
+                else:
+                    globals.PRESENTATION_SEQUENCE_INDEX = 0
+                    print(f"⚠️ Empty sequence, index reset to 0")
+        
+        # Update duration if provided
+        if "duration" in request.data:
+            duration = request.data.get("duration")
+            if isinstance(duration, (int, float)) and duration >= 1:
+                globals.PRESENTATION_DURATION = int(duration)
+                print(f"✓ Presentation duration: {duration}s")
+        
+        # Broadcast to all connected clients via WebSocket
+        broadcast_presentation_update()
+        
+        return JsonResponse({
+            "status": "ok",
+            "is_playing": globals.PRESENTATION_PLAYING,
+            "sequence": globals.PRESENTATION_SEQUENCE,
+            "sequence_index": globals.PRESENTATION_SEQUENCE_INDEX,
+            "duration": globals.PRESENTATION_DURATION,
+        })
 
     @action(detail=False, methods=["post"])
     def set_current_indicator(self, request):
@@ -205,6 +307,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             globals.INDICATOR_ID = indicator_id
             print(f"✓ Indicator set to ID: {indicator_id}")
             self.check_and_send_data()
+            broadcast_indicator_update()
             return True
         except Exception as e:
             print(f"❌ Error setting indicator: {e}")
@@ -297,6 +400,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             globals.INDICATOR_STATE = state
             print(f"✓ State updated to: {state}")
             self.check_and_send_data()
+            broadcast_indicator_update()
             return True
         except Exception as e:
             print(f"❌ Error setting state: {e}")

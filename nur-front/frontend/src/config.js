@@ -70,7 +70,7 @@ const config = {
 
   // Polling Configuration
   polling: {
-    interval: 5000, // 5 seconds
+    interval: 1000, // 1 second for responsive updates
   },
 
   // Chart Configuration

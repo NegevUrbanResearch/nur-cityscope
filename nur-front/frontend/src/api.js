@@ -31,17 +31,36 @@ api.interceptors.request.use(
   }
 );
 
+// Endpoints that may have transient 404s during state transitions (will be retried)
+const TRANSIENT_404_ENDPOINTS = [
+  '/api/actions/get_deckgl_data/',
+  '/api/actions/get_image_data/',
+];
+
 // Add response interceptor to help with debugging
 api.interceptors.response.use(
   response => {
     return response;
   },
   error => {
-    console.error('API request error:', error.message);
-    if (error.response) {
-      console.error('Error status:', error.response.status);
-      console.error('Error data:', error.response.data);
+    // Check if this is a transient 404 that will be retried
+    const is404 = error.response?.status === 404;
+    const url = error.config?.url || '';
+    const isTransient = TRANSIENT_404_ENDPOINTS.some(endpoint => url.includes(endpoint));
+    
+    // Only log non-transient errors or non-404 errors
+    if (!is404 || !isTransient) {
+      console.error('API request error:', error.message);
+      if (error.response) {
+        console.error('Error status:', error.response.status);
+        console.error('Error data:', error.response.data);
+      }
     }
+    // For transient 404s, just log a brief message
+    else {
+      console.log(`Transient 404 on ${url.split('?')[0]} - will retry`);
+    }
+    
     return Promise.reject(error);
   }
 );

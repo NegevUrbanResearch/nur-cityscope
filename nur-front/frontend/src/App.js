@@ -1,10 +1,10 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useCallback, useRef, useState } from "react";
 import {
   Routes,
   Route,
   Navigate,
   useLocation,
-  useParams,
+  useNavigate
 } from "react-router-dom";
 import {
   Box,
@@ -18,66 +18,103 @@ import {
 import darkTheme from "./theme";
 import Navbar from "./components/Navbar";
 import Dashboard from "./pages/Dashboard";
+import PresentationMode from "./pages/PresentationMode";
 import { useAppData } from "./DataContext";
 import "./style/index.css";
 
-// Wrapper component to handle indicator from URL params
+// Wrapper component to render Dashboard with URL params
+// Note: URL → Context syncing is handled by App's useEffect, not here,
+// to avoid race conditions when navigating between indicators
 const DashboardWrapper = ({ openCharts }) => {
-  const { indicator } = useParams();
-  const { changeIndicator, currentIndicator } = useAppData();
-  // Set the indicator based on URL when component mounts
-  useEffect(() => {
-    if (indicator && indicator !== currentIndicator) {
-      changeIndicator(indicator);
-    }
-  }, [indicator, changeIndicator, currentIndicator]);
   return <Dashboard openCharts={openCharts} />;
 };
 
 const App = () => {
-  const { loading, error, changeIndicator, currentIndicator } = useAppData();
+  const navigate = useNavigate(); 
   const location = useLocation();
-  const remoteControlActive = React.useRef(false);
+  
+  const { 
+    loading, 
+    error, 
+    changeIndicator, 
+    currentIndicator, 
+    isPresentationMode
+  } = useAppData();
 
-  const [openCharts, setOpenCharts] = React.useState(true);
+  const [openCharts, setOpenCharts] = useState(true);
+  const prevOpenChartsRef = useRef(openCharts);
 
   const handleChartsClick = () => {
     setOpenCharts(!openCharts);
   };
 
-  // Keep track of the last indicator the remote set
-  const lastRemoteIndicator = React.useRef(null);
-
-  // Monitor if remote controller has activated
-  React.useEffect(() => {
-    // If currentIndicator doesn't match URL path, remote controller must be active
-    const pathIndicator = getIndicatorFromPath(location.pathname);
-    if (pathIndicator && pathIndicator !== currentIndicator) {
-      console.log("Remote controller is active");
-      remoteControlActive.current = true;
-      lastRemoteIndicator.current = currentIndicator;
+  // Save drawer state when entering presentation mode
+  useEffect(() => {
+    if (isPresentationMode) {
+      prevOpenChartsRef.current = openCharts;
     }
-  }, [currentIndicator, location.pathname]);
+  }, [isPresentationMode, openCharts]);
 
-  // Helper to extract indicator from path
-  const getIndicatorFromPath = (path) => {
+  // Restore drawer state when exiting presentation mode
+  useEffect(() => {
+    if (!isPresentationMode && !location.pathname.includes('/presentation')) {
+      // Restore the drawer state
+      setOpenCharts(prevOpenChartsRef.current);
+    }
+  }, [isPresentationMode, location.pathname]);
+
+  const getIndicatorFromPath = useCallback((path) => {
     if (path.includes("/mobility")) return "mobility";
     if (path.includes("/climate")) return "climate";
+    if (path.includes("/presentation")) return "presentation";
     return null;
-  };
+  }, []);
 
-  // Update the current indicator based on the route, but only if remote controller isn't active
-  React.useEffect(() => {
-    // Skip this if remote controller is active
-    if (remoteControlActive.current) {
-      return;
-    }
+  // Track navigation target to prevent race conditions
+  const navigationTargetRef = useRef(null);
+
+  // Effect: Sync Context -> URL (only when not in presentation mode)
+  // This effect handles when context changes and we need to update the URL
+  useEffect(() => {
+    if (isPresentationMode) return; 
 
     const pathIndicator = getIndicatorFromPath(location.pathname);
-    if (pathIndicator && pathIndicator !== currentIndicator) {
+    if (currentIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation') {
+      console.log(`Context changed to '${currentIndicator}'. Navigating to sync URL.`);
+      // Set navigation target BEFORE navigating to guard against URL->Context sync
+      navigationTargetRef.current = currentIndicator;
+      navigate(`/${currentIndicator}`, { replace: true });
+    }
+  }, [currentIndicator, location.pathname, navigate, getIndicatorFromPath, isPresentationMode]);
+
+  // Effect: Sync URL -> Context (for non-presentation routes)
+  // This effect handles when URL changes (e.g., user clicks browser back/forward or navbar)
+  useEffect(() => {
+    const pathIndicator = getIndicatorFromPath(location.pathname);
+    
+    // Clear navigation target when URL matches what we were navigating to
+    if (navigationTargetRef.current && pathIndicator === navigationTargetRef.current) {
+      navigationTargetRef.current = null;
+      return; // Navigation completed, no need to sync
+    }
+    
+    // Guard: Don't sync if we're in the middle of a navigation
+    if (navigationTargetRef.current) {
+      console.log(`⏳ Skipping URL->Context sync: navigation to '${navigationTargetRef.current}' in progress`);
+      return;
+    }
+    
+    if (pathIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation') {
+      console.log(`URL changed to '${pathIndicator}'. Syncing context.`);
       changeIndicator(pathIndicator);
     }
-  }, [location.pathname, changeIndicator, currentIndicator]);
+  }, [location.pathname, changeIndicator, currentIndicator, getIndicatorFromPath]);
+
+  // Check if we're in presentation mode (either by state or URL)
+  const isInPresentationMode = isPresentationMode || location.pathname.includes('/presentation');
+  
+  // Don't show navbar in presentation mode
+  const showNavbar = !isInPresentationMode;
 
   return (
     <ThemeProvider theme={darkTheme}>
@@ -93,10 +130,15 @@ const App = () => {
       >
         <CssBaseline />
 
-        <Navbar openCharts={openCharts} handleChartsClick={handleChartsClick} />
+        {showNavbar && (
+          <Navbar 
+            openCharts={openCharts} 
+            handleChartsClick={handleChartsClick} 
+          />
+        )}
 
-        <main>
-          {loading ? (
+        <main style={{ flex: 1 }}>
+          {loading && !isInPresentationMode ? (
             <Box
               sx={{
                 display: "flex",
@@ -134,26 +176,11 @@ const App = () => {
             </Box>
           ) : (
             <Routes>
-              {/* Add specific routes for each indicator */}
-              <Route
-                path="mobility"
-                element={<DashboardWrapper openCharts={openCharts} />}
-              />
-              <Route
-                path="climate"
-                element={<DashboardWrapper openCharts={openCharts} />}
-              />
-
-              {/* Generic indicator route */}
-              <Route
-                path=":indicator"
-                element={<DashboardWrapper openCharts={openCharts} />}
-              />
-
-              {/* Default route redirects to mobility */}
+              <Route path="presentation" element={<PresentationMode />} />
+              <Route path="mobility" element={<DashboardWrapper openCharts={openCharts} />} />
+              <Route path="climate" element={<DashboardWrapper openCharts={openCharts} />} />
+              <Route path=":indicator" element={<DashboardWrapper openCharts={openCharts} />} />
               <Route path="/" element={<Navigate to="mobility" replace />} />
-
-              {/* Catch-all route */}
               <Route path="*" element={<Navigate to="mobility" replace />} />
             </Routes>
           )}

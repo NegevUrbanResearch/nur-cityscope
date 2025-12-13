@@ -92,12 +92,74 @@ export const DataProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
 
+  // presentation mode state
+  const [isPresentationMode, setIsPresentationMode] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+
   // Use refs to prevent unnecessary re-renders during frequent polling
+  const defaultInd = Object.keys(INDICATOR_CONFIG)[0];
+  const defaultSt = STATE_CONFIG[defaultInd]?.[0];
+  const [presentationSequence, setPresentationSequenceInternal] = useState([
+    { indicator: defaultInd, state: defaultSt }
+  ]);
+  
+  // Wrapper to sync sequence with backend when changed
+  const setPresentationSequence = useCallback((newSequence) => {
+    setPresentationSequenceInternal(newSequence);
+    // Sync with backend if in presentation mode
+    if (isPresentationModeRef.current) {
+      api.post("/api/actions/set_presentation_state/", { 
+        sequence: newSequence 
+      }).catch(err => console.error("Error syncing sequence:", err));
+    }
+  }, []);
+
+  const [sequenceIndex, setSequenceIndexInternal] = useState(0);
+  const [globalDuration, setGlobalDurationInternal] = useState(10);
+  
+  // Wrapper to sync sequence index with backend
+  const setSequenceIndex = useCallback((newIndexOrFn) => {
+    setSequenceIndexInternal((prev) => {
+      const newIndex = typeof newIndexOrFn === 'function' ? newIndexOrFn(prev) : newIndexOrFn;
+      // Sync with backend if in presentation mode
+      if (isPresentationModeRef.current) {
+        api.post("/api/actions/set_presentation_state/", { 
+          sequence_index: newIndex 
+        }).catch(err => console.error("Error syncing index:", err));
+      }
+      return newIndex;
+    });
+  }, []);
+  
+  // Wrapper to sync duration with backend
+  const setGlobalDuration = useCallback((newDuration) => {
+    setGlobalDurationInternal(newDuration);
+    // Sync with backend if in presentation mode
+    if (isPresentationModeRef.current) {
+      api.post("/api/actions/set_presentation_state/", { 
+        duration: newDuration 
+      }).catch(err => console.error("Error syncing duration:", err));
+    }
+  }, []);
+
+  const presentationTimerRef = useRef(null);
   const indicatorRef = useRef(currentIndicator);
   const lastCheckedRef = useRef(Date.now());
   const debounceTimerRef = useRef(null);
+  const indicatorChangeInProgressRef = useRef(null); // Track ongoing indicator changes to ignore stale WebSocket updates
   const [visualizationMode, setVisualizationMode] = useState("deck");
   const visualizationModeRef = useRef(visualizationMode);
+  const isPresentationModeRef = useRef(isPresentationMode);
+  const isPlayingRef = useRef(isPlaying);
+  const presentationSequenceRef = useRef(presentationSequence);
+  const globalDurationRef = useRef(globalDuration);
+
+  const [prevIndicator, setPrevIndicator] = useState(null);
+  const [prevVisualizationMode, setPrevVisualizationMode] = useState(null);
+  
+  // WebSocket connection ref
+  const wsRef = useRef(null);
+  const wsReconnectTimeoutRef = useRef(null);
 
   // Update refs when state changes
   useEffect(() => {
@@ -107,6 +169,140 @@ export const DataProvider = ({ children }) => {
   useEffect(() => {
     visualizationModeRef.current = visualizationMode;
   }, [visualizationMode]);
+
+  useEffect(() => {
+    isPresentationModeRef.current = isPresentationMode;
+  }, [isPresentationMode]);
+
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
+  useEffect(() => {
+    presentationSequenceRef.current = presentationSequence;
+  }, [presentationSequence]);
+
+  useEffect(() => {
+    globalDurationRef.current = globalDuration;
+  }, [globalDuration]);
+
+  // WebSocket connection for real-time sync
+  useEffect(() => {
+    const connectWebSocket = () => {
+      // Determine WebSocket URL based on current location
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/presentation/`;
+      
+      console.log('🔌 Connecting to WebSocket:', wsUrl);
+      
+      try {
+        wsRef.current = new WebSocket(wsUrl);
+        
+        wsRef.current.onopen = () => {
+          console.log('✓ WebSocket connected');
+        };
+        
+        wsRef.current.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            
+            if (message.type === 'presentation_update' && message.data) {
+              const data = message.data;
+              
+              // Guard: Only process presentation updates when in presentation mode
+              // This prevents stale backend state from activating presentation mode
+              if (!isPresentationModeRef.current) {
+                console.log('⏳ Ignoring WebSocket presentation update - not in presentation mode');
+                return;
+              }
+              
+              console.log('📡 WebSocket presentation update:', data);
+              
+              // Update presentation state from WebSocket (use internal setters)
+              if (data.is_playing !== undefined) {
+                setIsPlaying(data.is_playing);
+              }
+              if (data.sequence_index !== undefined) {
+                setSequenceIndexInternal(data.sequence_index);
+              }
+              if (data.duration !== undefined) {
+                setGlobalDurationInternal(data.duration);
+              }
+              if (data.sequence && Array.isArray(data.sequence)) {
+                setPresentationSequenceInternal(data.sequence);
+              }
+            }
+            
+            if (message.type === 'indicator_update' && message.data) {
+              const data = message.data;
+              console.log('📡 WebSocket indicator update:', data);
+              
+              // Update indicator state
+              if (data.indicator_id !== undefined) {
+                const newIndicator = ID_TO_INDICATOR[data.indicator_id];
+                
+                // Guard: Ignore stale WebSocket updates when we're in the middle of changing indicators
+                // This prevents race conditions where old broadcasts arrive after we've started a change
+                if (indicatorChangeInProgressRef.current) {
+                  if (newIndicator !== indicatorChangeInProgressRef.current) {
+                    console.log(`⏳ Ignoring stale WebSocket indicator update (${newIndicator}) - change to ${indicatorChangeInProgressRef.current} in progress`);
+                    return; // Skip this stale update
+                  }
+                }
+                
+                if (newIndicator && newIndicator !== indicatorRef.current) {
+                  setCurrentIndicator(newIndicator);
+                }
+              }
+              
+              if (data.indicator_state) {
+                globals.INDICATOR_STATE = data.indicator_state;
+                // Trigger state change events
+                window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
+                if (indicatorRef.current === 'climate') {
+                  window.dispatchEvent(new CustomEvent("climateStateChanged"));
+                }
+              }
+              
+              if (data.visualization_mode) {
+                const newMode = data.visualization_mode === "map" ? "deck" : "image";
+                if (newMode !== visualizationModeRef.current) {
+                  setVisualizationMode(newMode);
+                }
+              }
+            }
+          } catch (err) {
+            console.error('WebSocket message parse error:', err);
+          }
+        };
+        
+        wsRef.current.onclose = (event) => {
+          console.log('✗ WebSocket disconnected, reconnecting in 3s...');
+          // Attempt to reconnect after 3 seconds
+          wsReconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);
+        };
+        
+        wsRef.current.onerror = (error) => {
+          console.error('WebSocket error:', error);
+        };
+      } catch (err) {
+        console.error('WebSocket connection failed:', err);
+        // Retry connection
+        wsReconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);
+      }
+    };
+    
+    connectWebSocket();
+    
+    return () => {
+      if (wsReconnectTimeoutRef.current) {
+        clearTimeout(wsReconnectTimeoutRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
 
   // Function to initialize dashboard data
   // Note: Chart data is loaded directly from CSV files in the components (MobilityGraphs, ClimateGraphs)
@@ -206,6 +402,19 @@ export const DataProvider = ({ children }) => {
           }
         }
 
+        // Handle presentation playing state changes (for cross-tab sync)
+        if (response.data.presentation_playing !== undefined) {
+          const backendPlaying = response.data.presentation_playing;
+          // Only update if we're in presentation mode and state differs
+          if (isPresentationModeRef.current && backendPlaying !== isPlayingRef.current) {
+            console.log(`🎬 Presentation state synced from backend: ${backendPlaying ? 'playing' : 'paused'}`);
+            setIsPlaying(backendPlaying);
+          }
+        }
+        
+        // Note: Presentation state sync is now handled by WebSocket for real-time updates
+        // This polling loop serves as a fallback for indicator/visualization changes only
+
         // Handle indicator changes
         if (response.data.indicator_id !== undefined) {
           globals.INDICATOR_ID = response.data.indicator_id;
@@ -213,6 +422,14 @@ export const DataProvider = ({ children }) => {
           // Convert indicator_id to number if it's a string
           const indicatorId = parseInt(response.data.indicator_id, 10);
           const newIndicator = ID_TO_INDICATOR[indicatorId];
+
+          // Guard: Ignore stale polling updates when we're in the middle of changing indicators
+          if (indicatorChangeInProgressRef.current) {
+            if (newIndicator !== indicatorChangeInProgressRef.current) {
+              console.log(`⏳ Ignoring stale polling indicator update (${newIndicator}) - change to ${indicatorChangeInProgressRef.current} in progress`);
+              return;
+            }
+          }
 
           if (newIndicator && newIndicator !== indicatorRef.current) {
             console.log(
@@ -325,13 +542,13 @@ export const DataProvider = ({ children }) => {
           console.error("Error in initial data setup:", err);
         }
 
-        // Set up polling for remote controller changes only
-        // (Chart data is loaded from CSV files in components, no polling needed)
+        // Set up polling as fallback (WebSocket handles real-time updates)
+        // Reduced frequency since WebSocket provides instant updates
         checkIntervalId = setInterval(() => {
           if (isMounted) {
             checkRemoteChanges();
           }
-        }, 200); // Poll every 200ms for remote controller responsiveness
+        }, 2000); // Poll every 2s as fallback (WebSocket is primary)
       }
     };
 
@@ -346,6 +563,71 @@ export const DataProvider = ({ children }) => {
       }
     };
   }, [currentIndicator, fetchDashboardData, checkRemoteChanges]);
+
+  // Pause presentation mode via backend API (works across browser tabs)
+  const pausePresentationMode = useCallback(async () => {
+    // Always try to pause via backend, even if local state thinks we're not playing
+    // This ensures cross-tab sync works
+    console.log("📌 Manual override: pausing presentation mode via backend");
+    try {
+      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: false });
+      if (response.data?.status === "ok") {
+        setIsPlaying(false);
+      }
+    } catch (err) {
+      console.error("Error pausing presentation:", err);
+      // Still set local state to false to be safe
+      setIsPlaying(false);
+    }
+  }, []);
+
+  // Resume presentation mode via backend API
+  const resumePresentationMode = useCallback(async () => {
+    // Guard: only resume if in presentation mode
+    if (!isPresentationModeRef.current) {
+      console.log("⚠️ Resume blocked: not in presentation mode");
+      return;
+    }
+    
+    console.log("▶️ Resuming presentation mode via backend");
+    try {
+      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: true });
+      if (response.data?.status === "ok") {
+        setIsPlaying(true);
+      }
+    } catch (err) {
+      console.error("Error resuming presentation:", err);
+    }
+  }, []);
+
+  // Toggle play/pause via backend API
+  const togglePlayPause = useCallback(async () => {
+    // Guard: only allow toggle in presentation mode
+    if (!isPresentationModeRef.current) {
+      console.log("⚠️ Toggle blocked: not in presentation mode");
+      return;
+    }
+    
+    const newState = !isPlayingRef.current;
+    try {
+      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: newState });
+      if (response.data?.status === "ok") {
+        setIsPlaying(newState);
+        console.log(`✓ Presentation ${newState ? 'resumed' : 'paused'}`);
+      }
+    } catch (err) {
+      console.error("Error toggling presentation:", err);
+      // Attempt to sync state from backend on error
+      try {
+        const syncResponse = await api.get("/api/actions/get_presentation_state/");
+        if (syncResponse.data?.is_playing !== undefined) {
+          setIsPlaying(syncResponse.data.is_playing);
+        }
+      } catch (syncErr) {
+        console.error("Error syncing presentation state:", syncErr);
+      }
+    }
+  }, []);
 
   // Function to change state (climate scenario or mobility state)
   const changeState = useCallback(
@@ -415,16 +697,16 @@ export const DataProvider = ({ children }) => {
             // Trigger events to notify components of the change
             window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
             window.dispatchEvent(new CustomEvent("stateChanged"));
-          } else {
-            console.error(`❌ State not found for ${scenarioKey}`);
-          }
-        } catch (error) {
-          console.error("Error changing mobility state:", error);
+        } else {
+          console.error(`❌ State not found for ${scenarioKey}`);
         }
+      } catch (error) {
+        console.error("Error changing mobility state:", error);
       }
-    },
-    [currentIndicator]
-  );
+    }
+  },
+  [currentIndicator]
+);
 
   // Function to switch indicators
   const changeIndicator = useCallback(
@@ -443,6 +725,9 @@ export const DataProvider = ({ children }) => {
 
         // Set the indicator locally
         setCurrentIndicator(newIndicator);
+        
+        // Mark that we're changing to this indicator - this guards against stale WebSocket updates
+        indicatorChangeInProgressRef.current = newIndicator;
 
         // Update the remote controller by sending the change to the API
         const indicatorId = INDICATOR_CONFIG[newIndicator]?.id;
@@ -463,23 +748,179 @@ export const DataProvider = ({ children }) => {
               // Give the system time to complete the transition before clearing loading state
               setTimeout(() => {
                 setLoading(false);
+                // Clear the guard after transition settles
+                indicatorChangeInProgressRef.current = null;
               }, 500);
             })
             .catch((err) => {
               console.error("Error updating remote controller:", err);
               setLoading(false);
+              indicatorChangeInProgressRef.current = null;
             });
-        } else {
-          // Even if we can't update the remote, we should fetch data for the new indicator
-          fetchDashboardData(newIndicator);
-          setTimeout(() => {
-            setLoading(false);
-          }, 500);
-        }
+      } else {
+        // Even if we can't update the remote, we should fetch data for the new indicator
+        fetchDashboardData(newIndicator);
+        setTimeout(() => {
+          setLoading(false);
+          indicatorChangeInProgressRef.current = null;
+        }, 500);
       }
-    },
-    [currentIndicator, fetchDashboardData]
-  );
+    }
+  },
+  [currentIndicator, fetchDashboardData]
+);
+
+    // presentation timer logic
+    useEffect(() => {
+      // Always clear any existing timer first
+      if (presentationTimerRef.current) {
+          clearTimeout(presentationTimerRef.current);
+          presentationTimerRef.current = null;
+      }
+  
+      // Guard: only run when presentation mode is active, playing, and has slides
+      if (!isPresentationMode || !isPlaying || !presentationSequence || presentationSequence.length === 0) {
+          return;
+      }
+
+      // Validate sequence index is in bounds
+      const safeIndex = Math.max(0, Math.min(sequenceIndex, presentationSequence.length - 1));
+      const currentStep = presentationSequence[safeIndex];
+      
+      // Guard: validate currentStep exists and has required properties
+      if (!currentStep || !currentStep.indicator || !currentStep.state) {
+          console.error("⚠️ Invalid presentation step:", currentStep);
+          return;
+      }
+      
+      console.log(`[Presentation] Playing Step ${safeIndex + 1}/${presentationSequence.length}:`, currentStep);
+
+      // Change indicator if needed
+      if (currentStep.indicator !== indicatorRef.current) { 
+          changeIndicator(currentStep.indicator);
+      }
+      
+      // Change state after a short delay to allow indicator change to settle
+      setTimeout(() => {
+          // Double-check we're still playing before changing state
+          if (isPlayingRef.current) {
+              changeState(currentStep.state);
+          }
+      }, 500);
+
+      // Set up timer for next slide
+      const durationMs = Math.max(1000, globalDuration * 1000); // Minimum 1 second
+      presentationTimerRef.current = setTimeout(() => {
+          // Guard: verify still playing before advancing
+          if (isPlayingRef.current && isPresentationModeRef.current) {
+              // Use ref to get latest sequence length, avoiding stale closure
+              const currentSequenceLength = presentationSequenceRef.current?.length || 1;
+              setSequenceIndex((prevIndex) => (prevIndex + 1) % currentSequenceLength);
+          }
+      }, durationMs);
+  
+      return () => {
+          if (presentationTimerRef.current) {
+              clearTimeout(presentationTimerRef.current);
+              presentationTimerRef.current = null;
+          }
+      };
+    }, [
+        isPresentationMode, 
+        isPlaying, 
+        sequenceIndex, 
+        presentationSequence, 
+        globalDuration, 
+        changeIndicator, 
+        changeState 
+    ]);
+  
+    const togglePresentationMode = useCallback(async (isEntering) => {
+        if (isEntering) {
+            console.log("✓ Starting Presentation Mode");
+            // Save current state
+            setPrevIndicator(indicatorRef.current);
+            setPrevVisualizationMode(visualizationModeRef.current);
+            
+            setSequenceIndex(0);
+            
+            // Force 'image' mode for presentation
+            if (visualizationModeRef.current !== 'image') {
+                 handleVisualizationModeChange(null, 'image');
+            }
+  
+            setIsPresentationMode(true);
+            // Auto-start playing when entering presentation mode
+            setIsPlaying(true);
+            // Sync full presentation state with backend for remote controller
+            // Use refs to get the latest values, avoiding stale closure issues
+            try {
+                await api.post("/api/actions/set_presentation_state/", { 
+                    is_playing: true,
+                    sequence: presentationSequenceRef.current,
+                    sequence_index: 0,
+                    duration: globalDurationRef.current
+                });
+            } catch (err) {
+                console.error("Error syncing presentation state:", err);
+            }
+        } else {
+            console.log("✓ Stopping Presentation Mode");
+            setIsPlaying(false);
+            setIsPresentationMode(false);
+            // Sync with backend
+            try {
+                await api.post("/api/actions/set_presentation_state/", { is_playing: false });
+            } catch (err) {
+                console.error("Error syncing presentation state:", err);
+            }
+            
+            // Restore state
+            setTimeout(() => {
+                if (prevIndicator) changeIndicator(prevIndicator);
+                if (prevVisualizationMode) handleVisualizationModeChange(null, prevVisualizationMode);
+            }, 100);
+        }
+    }, [prevIndicator, prevVisualizationMode, changeIndicator, handleVisualizationModeChange]);
+  
+    const skipToNextStep = useCallback(() => {
+      // Guard: only allow skipping when playing
+      if (!isPlayingRef.current) {
+          console.log("⚠️ Skip blocked: presentation is paused");
+          return;
+      }
+      
+      if (presentationTimerRef.current) {
+          clearTimeout(presentationTimerRef.current);
+          presentationTimerRef.current = null;
+      }
+      
+      // Update the sequence index to the next step (including looping)
+      setSequenceIndex((prevIndex) => {
+          if (!presentationSequence || presentationSequence.length === 0) return 0;
+          return (prevIndex + 1) % presentationSequence.length;
+      });
+  }, [presentationSequence]);
+
+    const skipToPrevStep = useCallback(() => {
+      // Guard: only allow skipping when playing
+      if (!isPlayingRef.current) {
+          console.log("⚠️ Skip blocked: presentation is paused");
+          return;
+      }
+      
+      if (presentationTimerRef.current) {
+          clearTimeout(presentationTimerRef.current);
+          presentationTimerRef.current = null;
+      }
+      
+      // Update the sequence index to the previous step (including looping)
+      setSequenceIndex((prevIndex) => {
+          if (!presentationSequence || presentationSequence.length === 0) return 0;
+          return (prevIndex - 1 + presentationSequence.length) % presentationSequence.length;
+      });
+  }, [presentationSequence]);
+  
 
   // Value object with additional helpers for the new indicator system
   const contextValue = {
@@ -487,6 +928,9 @@ export const DataProvider = ({ children }) => {
     currentIndicator,
     changeIndicator,
     changeState,
+    pausePresentationMode,
+    resumePresentationMode,
+    togglePlayPause,
     loading,
     error,
     StateConfig: STATE_CONFIG,
@@ -505,6 +949,18 @@ export const DataProvider = ({ children }) => {
       ],
     visualizationMode,
     handleVisualizationModeChange,
+    isPresentationMode, 
+    togglePresentationMode, 
+    presentationSequence, 
+    setPresentationSequence,
+    isPlaying, 
+    setIsPlaying, 
+    sequenceIndex, 
+    setSequenceIndex,
+    globalDuration, 
+    setGlobalDuration,
+    skipToNextStep,
+    skipToPrevStep
   };
 
   return (

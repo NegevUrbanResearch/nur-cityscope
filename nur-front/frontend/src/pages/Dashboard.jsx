@@ -14,7 +14,7 @@ import DeckGLMap from "../components/maps/DeckGLMap";
 import { chartsDrawerWidth } from "../style/drawersStyles";
 import globals from "../globals";
 
-const Dashboard = ({ openCharts }) => {
+const Dashboard = ({ openCharts}) => {
   const {
     dashboardData: data,
     currentIndicator,
@@ -42,6 +42,8 @@ const Dashboard = ({ openCharts }) => {
   const [showLoadingMessage, setShowLoadingMessage] = useState(true);
   const lastIndicatorRef = useRef(currentIndicator);
   const loadingTimerRef = useRef(null);
+  // Track the expected URL to prevent showing stale images
+  const expectedUrlRef = useRef(null);
 
   // Preload image and track its loading state - memoize to avoid dependency issues
   const preloadImage = useCallback(
@@ -49,13 +51,18 @@ const Dashboard = ({ openCharts }) => {
       // First clear any previous loading state for this URL
       imageStates.current.delete(url);
 
-      // Mark this URL as loading
+      // Mark this URL as loading and track expected URL
       imageStates.current.set(url, "loading");
+      expectedUrlRef.current = url;
+
+      // Clear current image while new one loads to prevent flashing old content
+      setCurrentImageUrl(null);
+      setShowLoadingMessage(true);
 
       const img = new Image();
       img.onload = () => {
-        // Only proceed if this is still the current indicator's image
-        if (url.includes(currentIndicator)) {
+        // Only proceed if this is still the expected URL (prevents stale images)
+        if (url === expectedUrlRef.current) {
           // Mark as loaded and update state to show this image
           imageStates.current.set(url, "loaded");
           setCurrentImageUrl(url);
@@ -72,11 +79,11 @@ const Dashboard = ({ openCharts }) => {
       img.onerror = () => {
         console.error(`Failed to load image: ${url}`);
 
-        // Mark as error but still try to show it
+        // Mark as error but still try to show it if it's the expected URL
         imageStates.current.set(url, "error");
 
-        // Only update UI if this is still the current indicator's image
-        if (url.includes(currentIndicator)) {
+        // Only update UI if this is still the expected URL
+        if (url === expectedUrlRef.current) {
           setCurrentImageUrl(url);
           setShowLoadingMessage(false);
         }
@@ -90,7 +97,7 @@ const Dashboard = ({ openCharts }) => {
 
       img.src = url;
     },
-    [currentIndicator]
+    []
   );
 
   // Fetch map data from API when indicator changes
@@ -113,7 +120,10 @@ const Dashboard = ({ openCharts }) => {
 
     lastIndicatorRef.current = currentIndicator;
 
-    const fetchMapData = async () => {
+    const fetchMapData = async (retryCount = 0) => {
+      const maxRetries = 3;
+      const baseDelay = 300;
+
       try {
         // Add cache-busting timestamp parameter
         const timestamp = Date.now();
@@ -149,6 +159,16 @@ const Dashboard = ({ openCharts }) => {
           }
         }
       } catch (err) {
+        // Check if it's a 404 and we have retries left
+        const is404 = err.response?.status === 404;
+        
+        if (is404 && retryCount < maxRetries) {
+          const delay = baseDelay * Math.pow(2, retryCount);
+          console.log(`Dashboard - 404 error, retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})`);
+          setTimeout(() => fetchMapData(retryCount + 1), delay);
+          return;
+        }
+
         console.error("Error fetching map data:", err);
 
         // Fallback to default map based on indicator if API fails
@@ -188,6 +208,10 @@ const Dashboard = ({ openCharts }) => {
         console.log(
           "🌡️ Climate state changed event received, refreshing image..."
         );
+
+        // Immediately clear current image to prevent flashing old content
+        setCurrentImageUrl(null);
+        setShowLoadingMessage(true);
 
         // Add a small delay to ensure backend has updated globals.INDICATOR_STATE
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -250,6 +274,10 @@ const Dashboard = ({ openCharts }) => {
         console.log(
           `📊 Indicator state changed event received for ${currentIndicator}, refreshing image...`
         );
+
+        // Immediately clear current image to prevent flashing old content
+        setCurrentImageUrl(null);
+        setShowLoadingMessage(true);
 
         // Add a small delay to ensure backend has updated globals.INDICATOR_STATE
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -314,67 +342,31 @@ const Dashboard = ({ openCharts }) => {
     scenario: "current",
   });
 
-  // Listen for state changes and update currentState
+  // Listen for state changes and update currentState (event-driven, no polling)
   useEffect(() => {
     const handleStateChange = () => {
-      console.log("Dashboard - State change event received, updating state");
-      console.log("Dashboard - Current data?.metrics:", data?.metrics);
-      console.log(
-        "Dashboard - Current globals.INDICATOR_STATE:",
-        globals.INDICATOR_STATE
-      );
-
-      // Get the current state from globals or data
+      // Get the current state from globals
       const newState = {
-        year: globals.INDICATOR_STATE?.year || data?.metrics?.year || 2023,
-        scenario:
-          globals.INDICATOR_STATE?.scenario ||
-          data?.metrics?.scenario ||
-          "current",
+        year: globals.INDICATOR_STATE?.year || 2023,
+        scenario: globals.INDICATOR_STATE?.scenario || "current",
       };
-      console.log("Dashboard - Setting state to:", newState);
       setCurrentState(newState);
     };
 
+    // Listen for state change events (fired by DataContext via WebSocket)
     window.addEventListener("indicatorStateChanged", handleStateChange);
     window.addEventListener("stateChanged", handleStateChange);
+    window.addEventListener("climateStateChanged", handleStateChange);
 
-    // Also poll for state changes every 1 second to ensure sync
-    const pollInterval = setInterval(async () => {
-      try {
-        const response = await api.get("/api/actions/get_global_variables/");
-        if (response.data?.indicator_state) {
-          const backendState = response.data.indicator_state;
-          const newState = {
-            year: backendState.year || 2023,
-            scenario: backendState.scenario || "current",
-          };
-
-          // Only update if different from current state
-          if (
-            newState.scenario !== currentState.scenario ||
-            newState.year !== currentState.year
-          ) {
-            console.log(
-              "Dashboard - Polling detected state change:",
-              currentState,
-              "->",
-              newState
-            );
-            setCurrentState(newState);
-          }
-        }
-      } catch (error) {
-        console.error("Dashboard - Error polling backend state:", error);
-      }
-    }, 1000);
+    // Initial state sync
+    handleStateChange();
 
     return () => {
       window.removeEventListener("indicatorStateChanged", handleStateChange);
       window.removeEventListener("stateChanged", handleStateChange);
-      clearInterval(pollInterval);
+      window.removeEventListener("climateStateChanged", handleStateChange);
     };
-  }, [data?.metrics, currentState]);
+  }, []);
 
   // Memoize state object to prevent unnecessary re-renders and iframe reloads
   // Must be called before any early returns (Rules of Hooks)
@@ -478,6 +470,9 @@ const Dashboard = ({ openCharts }) => {
           }),
       }}
     >
+
+      {/* Conditional rendering based on presentation mode */}
+      
       {visualizationMode === "deck" ? (
         // Show interactive Deck.GL map when in deck mode
         <DeckGLMap indicatorType={currentIndicator} state={state} />

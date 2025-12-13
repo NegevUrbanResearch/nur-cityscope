@@ -1,17 +1,19 @@
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import {
   IconButton,
   Drawer,
   ToggleButton,
   ToggleButtonGroup,
-  Typography,
   Tooltip,
   Box,
   useTheme,
   useMediaQuery,
+  Button
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import InfoOutlineIcon from "@mui/icons-material/InfoOutline";
+import SlideshowIcon from "@mui/icons-material/Slideshow";
 
 import { useAppData } from "../../DataContext";
 import { chartsDrawerWidth } from "../../style/drawersStyles";
@@ -23,7 +25,9 @@ import ClimateGraphs from "./ClimateGraphs";
 import config from "../../config";
 import ClimateMapTypeSelector from "./ClimateMapTypeSelector";
 
+
 const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
+  const navigate = useNavigate();
   const { visualizationMode, handleVisualizationModeChange, currentIndicator } =
     useAppData();
 
@@ -37,13 +41,22 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
     setOpenInfo(!openInfo);
   };
 
+  const handleOpenPresentation = () => {
+    navigate('/presentation');
+  };
+
   let disableInteractiveMode = false;
 
+  React.useEffect(() => {
+    if (currentIndicator === "climate" && visualizationMode !== 'image') {
+      handleVisualizationModeChange(null, "image");
+    }
+  }, [currentIndicator, visualizationMode, handleVisualizationModeChange]);
+
   if (currentIndicator === "climate") {
-    handleVisualizationModeChange(null, "image");
     disableInteractiveMode = true;
   }
-
+  
   return (
     <Drawer
       sx={{
@@ -52,10 +65,12 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         "& .MuiDrawer-paper": {
           width: chartsDrawerWidth,
           overflowX: "hidden",
-          overflowY: "auto",
+          overflowY: "hidden",
           backgroundImage:
             "linear-gradient(to bottom, rgba(30, 30, 30, 0.98), rgba(18, 18, 18, 0.95))",
           borderLeft: "1px solid rgba(255, 255, 255, 0.1)",
+          display: "flex",
+          flexDirection: "column",
         },
       }}
       variant="persistent"
@@ -73,6 +88,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           p: { xs: 1, sm: 1.5 },
           borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
           backgroundColor: "rgba(0, 0, 0, 0.2)",
+          flexShrink: 0,
         }}
       >
         {/* Left: Close/Info Buttons */}
@@ -140,6 +156,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
             pt: { xs: 1.5, sm: 2 },
             pb: { xs: 1, sm: 1.5 },
             borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+            flexShrink: 0,
           }}
         >
           <ToggleButtonGroup
@@ -230,7 +247,9 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           px: { xs: 1, sm: 1.5, md: 2 },
           pb: 2,
           overflowX: "hidden",
-          overflowY: "visible",
+          overflowY: "auto",
+          flexGrow: 1,
+          minHeight: 0
         }}
       >
         {currentIndicator === "climate" ? (
@@ -238,6 +257,42 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         ) : (
           <IndicatorGraphs />
         )}
+      </Box>
+
+      {/* Presentation Mode Link */}
+      <Box
+        sx={{
+          p: 2,
+          display: 'flex',
+          justifyContent: 'center',
+          flexShrink: 0,
+          borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+          backgroundColor: 'rgba(18, 18, 18, 0.95)',
+        }}
+      >
+        <Button
+          variant="outlined"
+          onClick={handleOpenPresentation}
+          startIcon={<SlideshowIcon />}
+          sx={{
+            width: '80%',
+            maxWidth: '300px',
+            fontWeight: 600,
+            fontSize: '0.9rem',
+            color: 'rgba(255,255,255,0.8)',
+            borderColor: 'rgba(255,255,255,0.2)',
+            padding: '10px 20px',
+            borderRadius: '6px',
+            '&:hover': {
+              borderColor: '#64B5F6',
+              color: '#64B5F6',
+              backgroundColor: 'rgba(100, 181, 246, 0.08)',
+            },
+            transition: 'all 0.2s ease',
+          }}
+        >
+          Presentation Mode
+        </Button>
       </Box>
     </Drawer>
   );
