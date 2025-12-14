@@ -119,33 +119,64 @@ class PresentationRemote {
                     if (message.type === 'presentation_update' && message.data) {
                         const data = message.data;
                         const wasIndex = this.currentIndex;
+                        let needsUIUpdate = false;
+                        let needsThumbnailUpdate = false;
+
+                        // ALWAYS sync sequence changes (even when paused) - desktop might add/remove slides
+                        if (data.sequence && Array.isArray(data.sequence)) {
+                            // Check if sequence actually changed
+                            const sequenceChanged = this.slides.length !== data.sequence.length ||
+                                data.sequence.some((s, i) => {
+                                    const curr = this.slides[i];
+                                    return !curr || s.indicator !== curr.indicator ||
+                                           s.state !== curr.state || s.type !== curr.type;
+                                });
+                            if (sequenceChanged) {
+                                console.log('📡 Sequence updated from desktop');
+                                this.slides = data.sequence;
+                                needsUIUpdate = true;
+                                // Preload new slides
+                                this.preloadSlides();
+                            }
+                        }
+
+                        // ALWAYS sync duration changes
+                        if (data.duration !== undefined && data.duration !== this.duration) {
+                            this.duration = data.duration;
+                            needsUIUpdate = true;
+                        }
 
                         if (this.isPlaying) {
+                            // When playing, sync play state and index
                             if (data.is_playing !== undefined) this.isPlaying = data.is_playing;
                             if (data.sequence_index !== undefined) this.currentIndex = data.sequence_index;
-                            if (data.duration !== undefined) this.duration = data.duration;
-                            if (data.sequence && Array.isArray(data.sequence)) this.slides = data.sequence;
 
-                            this.throttledUpdateUI();
-
+                            needsUIUpdate = true;
                             if (wasIndex !== this.currentIndex) {
-                                this.throttledFetchThumbnail();
+                                needsThumbnailUpdate = true;
                             }
                         } else {
+                            // When paused, only start playing if backend says so
                             if (data.is_playing === true) {
                                 this.isPlaying = true;
                                 if (data.sequence_index !== undefined) this.currentIndex = data.sequence_index;
-                                if (data.duration !== undefined) this.duration = data.duration;
-                                if (data.sequence && Array.isArray(data.sequence)) this.slides = data.sequence;
-                                this.throttledUpdateUI();
-                                this.throttledFetchThumbnail();
+                                needsUIUpdate = true;
+                                needsThumbnailUpdate = true;
                             }
+                        }
+
+                        if (needsUIUpdate) {
+                            this.throttledUpdateUI();
+                        }
+                        if (needsThumbnailUpdate) {
+                            this.throttledFetchThumbnail();
                         }
                     }
 
                     if (message.type === 'indicator_update' && message.data) {
                         this.updateCurrentDisplay(message.data);
-                        this.throttledFetchThumbnail();
+                        // Fetch the specific image for the new state using prefetch API
+                        this.handleIndicatorUpdate(message.data);
                     }
                 } catch (err) {
                     console.error('❌ WS error:', err);
@@ -457,6 +488,73 @@ class PresentationRemote {
                     <span>No preview</span>
                 </div>
             `;
+        }
+    }
+
+    // Handle indicator updates from dashboard (via WebSocket)
+    // Fetches the new image directly using the state from the update
+    async handleIndicatorUpdate(data) {
+        if (!data) return;
+
+        // Determine indicator and state from the update
+        const indicatorId = data.indicator_id;
+        let indicator = 'mobility';
+        if (indicatorId === 2) indicator = 'climate';
+
+        const indicatorState = data.indicator_state || {};
+
+        // Build state name from the update
+        let stateName = null;
+        let type = null;
+
+        if (indicator === 'climate') {
+            // Convert scenario key to display name
+            const scenarioNames = {
+                dense_highrise: 'Dense Highrise',
+                existing: 'Existing',
+                high_rises: 'High Rises',
+                lowrise: 'Low Rise Dense',
+                mass_tree_planting: 'Mass Tree Planting',
+                open_public_space: 'Open Public Space',
+                placemaking: 'Placemaking'
+            };
+            stateName = scenarioNames[indicatorState.scenario] || indicatorState.scenario;
+            type = indicatorState.type || 'utci';
+        } else {
+            stateName = indicatorState.label || indicatorState.scenario || 'Present';
+            stateName = stateName.charAt(0).toUpperCase() + stateName.slice(1);
+        }
+
+        if (!stateName) return;
+
+        // Invalidate cache for this state (image may have changed)
+        const cacheKey = this.getCacheKey(indicator, stateName, type);
+        this.imageCache.delete(cacheKey);
+
+        // Fetch the new image with high priority
+        console.log(`📡 Fetching updated image for ${indicator}:${stateName}${type ? ':' + type : ''}`);
+        const url = await this.fetchSlideImage(indicator, stateName, type, 'high');
+
+        // When PAUSED: always show the live dashboard state in preview
+        // When PLAYING: only update if it matches the current slide in sequence
+        if (!this.isPlaying) {
+            // Paused - show live dashboard view
+            if (url) {
+                this.thumbnailUrl = url;
+                this.renderPreview();
+            }
+        } else {
+            // Playing - only update if this matches the current slide
+            const currentSlide = this.slides[this.currentIndex];
+            if (currentSlide &&
+                currentSlide.indicator === indicator &&
+                currentSlide.state === stateName &&
+                (!type || currentSlide.type === type)) {
+                if (url) {
+                    this.thumbnailUrl = url;
+                    this.renderPreview();
+                }
+            }
         }
     }
 
