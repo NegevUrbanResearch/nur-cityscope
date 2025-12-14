@@ -25,14 +25,43 @@ class PresentationRemote {
         this.slides = [];
         this.connected = false;
         this.thumbnailUrl = null;
-        
+
         // WebSocket
         this.ws = null;
         this.wsReconnectTimeout = null;
-        
+
         // Dropdown state
-        this.activeDropdown = null; // { slideIndex, type: 'indicator' | 'state' }
-        
+        this.activeDropdown = null;
+
+        // Performance optimization
+        this.updateThrottleTimer = null;
+        this.lastUpdateTime = 0;
+        this.pendingUpdate = false;
+
+        // Thumbnail throttling
+        this.thumbnailThrottleTimer = null;
+        this.lastThumbnailFetch = 0;
+        this.pendingThumbnailFetch = false;
+
+        // WebSocket health tracking
+        this.wsConnected = false;
+        this.lastWsUpdate = 0;
+
+        // Image cache for fast thumbnail switching
+        this.imageCache = new Map();
+        this.inFlightRequests = new Set();
+
+        // Climate scenario key mapping
+        this.CLIMATE_SCENARIO_KEYS = {
+            'Dense Highrise': 'dense_highrise',
+            'Existing': 'existing',
+            'High Rises': 'high_rises',
+            'Low Rise Dense': 'lowrise',
+            'Mass Tree Planting': 'mass_tree_planting',
+            'Open Public Space': 'open_public_space',
+            'Placemaking': 'placemaking'
+        };
+
         // DOM elements
         this.elements = {
             playPauseBtn: document.getElementById('playPauseBtn'),
@@ -51,7 +80,7 @@ class PresentationRemote {
             dropdownMenu: document.getElementById('dropdownMenu'),
             dropdownContent: document.getElementById('dropdownContent')
         };
-        
+
         this.init();
     }
     
@@ -74,59 +103,55 @@ class PresentationRemote {
             
             this.ws.onopen = () => {
                 console.log('✓ WebSocket connected');
+                this.wsConnected = true;
                 this.updateConnectionStatus(true);
             };
             
-            this.            ws.onmessage = (event) => {
+            this.ws.onmessage = (event) => {
                 try {
                     const message = JSON.parse(event.data);
-                    
+                    // Track last WebSocket update time
+                    this.lastWsUpdate = Date.now();
+
                     if (message.type === 'presentation_update' && message.data) {
                         const data = message.data;
-                        console.log('📡 WebSocket update:', data);
-                        
                         const wasIndex = this.currentIndex;
-                        
-                        // Only sync from WebSocket when we're playing (active control)
-                        // When paused, we don't want external state changes to override local state
+
                         if (this.isPlaying) {
                             if (data.is_playing !== undefined) this.isPlaying = data.is_playing;
                             if (data.sequence_index !== undefined) this.currentIndex = data.sequence_index;
                             if (data.duration !== undefined) this.duration = data.duration;
                             if (data.sequence && Array.isArray(data.sequence)) this.slides = data.sequence;
-                            
-                            this.updateUI();
-                            
-                            // Fetch new thumbnail if slide changed
+
+                            this.throttledUpdateUI();
+
                             if (wasIndex !== this.currentIndex) {
-                                this.fetchThumbnail();
+                                this.throttledFetchThumbnail();
                             }
                         } else {
-                            // When paused, only listen for play state changes (in case another device starts)
                             if (data.is_playing === true) {
-                                console.log('📡 Another device started playback');
                                 this.isPlaying = true;
                                 if (data.sequence_index !== undefined) this.currentIndex = data.sequence_index;
                                 if (data.duration !== undefined) this.duration = data.duration;
                                 if (data.sequence && Array.isArray(data.sequence)) this.slides = data.sequence;
-                                this.updateUI();
-                                this.fetchThumbnail();
+                                this.throttledUpdateUI();
+                                this.throttledFetchThumbnail();
                             }
                         }
                     }
-                    
+
                     if (message.type === 'indicator_update' && message.data) {
-                        // Update current display when indicator changes (always listen for these)
                         this.updateCurrentDisplay(message.data);
-                        this.fetchThumbnail();
+                        this.throttledFetchThumbnail();
                     }
                 } catch (err) {
-                    console.error('WebSocket message error:', err);
+                    console.error('❌ WS error:', err);
                 }
             };
             
             this.ws.onclose = () => {
                 console.log('✗ WebSocket disconnected, reconnecting...');
+                this.wsConnected = false;
                 this.updateConnectionStatus(false);
                 this.wsReconnectTimeout = setTimeout(() => this.connectWebSocket(), 3000);
             };
@@ -192,7 +217,8 @@ class PresentationRemote {
                 }
                 
                 this.updateUI();
-                await this.fetchThumbnail();
+                // Start preloading all slides for fast transitions
+                await this.preloadSlides();
             }
         } catch (error) {
             console.error('Error fetching initial state:', error);
@@ -207,11 +233,17 @@ class PresentationRemote {
     }
     
     startPolling() {
-        // Reduced polling frequency - WebSocket handles real-time updates
-        setInterval(() => this.pollState(), 5000);
+        // Emergency fallback only - WebSocket handles real-time updates
+        setInterval(() => this.pollState(), 15000); // Poll every 15s (was 5s)
     }
     
     async pollState() {
+        // Skip polling if WebSocket is connected and recently updated (within 20s)
+        const now = Date.now();
+        if (this.wsConnected && (now - this.lastWsUpdate < 20000)) {
+            return; // WebSocket is handling updates
+        }
+
         try {
             const presState = await this.apiGet('/api/actions/get_presentation_state/');
             
@@ -267,35 +299,173 @@ class PresentationRemote {
         }
     }
     
+    // Throttled thumbnail fetch to prevent rapid API calls
+    throttledFetchThumbnail() {
+        const now = Date.now();
+
+        // Throttle: max 1 fetch per 200ms
+        if (now - this.lastThumbnailFetch < 200) {
+            if (!this.pendingThumbnailFetch) {
+                this.pendingThumbnailFetch = true;
+                this.thumbnailThrottleTimer = setTimeout(() => {
+                    this.pendingThumbnailFetch = false;
+                    this.fetchThumbnail();
+                }, 200);
+            }
+            return;
+        }
+
+        this.lastThumbnailFetch = now;
+        this.fetchThumbnail();
+    }
+
+    // Generate cache key for a slide
+    getCacheKey(indicator, state, type) {
+        if (indicator === 'climate' && type) {
+            return `${indicator}:${state}:${type}`;
+        }
+        return `${indicator}:${state}`;
+    }
+
+    // Fetch and cache a specific slide's image using PREFETCH API
+    async fetchSlideImage(indicator, state, type = null, priority = 'normal') {
+        const cacheKey = this.getCacheKey(indicator, state, type);
+
+        // Return cached URL immediately if available
+        if (this.imageCache.has(cacheKey)) {
+            return this.imageCache.get(cacheKey);
+        }
+
+        // Prevent duplicate requests
+        if (this.inFlightRequests.has(cacheKey)) {
+            return null;
+        }
+
+        this.inFlightRequests.add(cacheKey);
+
+        try {
+            const timestamp = Date.now();
+
+            // Build URL with PREFETCH mode params
+            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}`;
+
+            if (indicator === 'climate') {
+                const scenarioKey = this.CLIMATE_SCENARIO_KEYS[state] || state.toLowerCase().replace(/ /g, '_');
+                url += `&scenario=${scenarioKey}&type=${type || 'utci'}`;
+            } else {
+                const scenarioKey = state.toLowerCase();
+                url += `&scenario=${scenarioKey}`;
+            }
+
+            const response = await this.apiGet(url);
+
+            if (response && response.image_data) {
+                let imageUrl = response.image_data;
+                if (imageUrl.startsWith('/')) {
+                    imageUrl = `${API_BASE}${imageUrl}`;
+                } else {
+                    imageUrl = `${API_BASE}/media/${imageUrl}`;
+                }
+
+                // Preload image in browser cache
+                if (!imageUrl.includes('.mp4')) {
+                    const img = new Image();
+                    img.src = imageUrl;
+                    if (priority === 'high') {
+                        await new Promise((resolve) => {
+                            img.onload = resolve;
+                            img.onerror = resolve;
+                            setTimeout(resolve, 1500); // 1.5s timeout
+                        });
+                    }
+                }
+
+                this.imageCache.set(cacheKey, imageUrl);
+                return imageUrl;
+            }
+        } catch (error) {
+            console.error(`❌ Prefetch error ${indicator}:${state}`);
+            return null;
+        } finally {
+            this.inFlightRequests.delete(cacheKey);
+        }
+    }
+
+    // Preload upcoming slides for faster transitions
+    async preloadSlides() {
+        if (!this.slides || this.slides.length === 0) return;
+
+        // Preload current + next 2 slides with high priority
+        const priorityCount = Math.min(3, this.slides.length);
+        for (let i = 0; i < priorityCount; i++) {
+            const idx = (this.currentIndex + i) % this.slides.length;
+            const slide = this.slides[idx];
+            if (slide) {
+                await this.fetchSlideImage(slide.indicator, slide.state, slide.type, 'high');
+            }
+        }
+
+        // Preload remaining slides in background (fire and forget)
+        for (let i = 0; i < this.slides.length; i++) {
+            if (i < priorityCount) continue;
+            const slide = this.slides[i];
+            if (slide) {
+                this.fetchSlideImage(slide.indicator, slide.state, slide.type, 'normal');
+            }
+        }
+    }
+
     async fetchThumbnail() {
         try {
             const currentSlide = this.slides[this.currentIndex];
             if (!currentSlide) return;
-            
-            const timestamp = Date.now();
-            const response = await this.apiGet(`/api/actions/get_image_data/?_=${timestamp}&indicator=${currentSlide.indicator}`);
-            
-            if (response && response.image_data) {
-                let url = response.image_data;
-                if (url.startsWith('/')) {
-                    url = `${API_BASE}${url}`;
-            } else {
-                    url = `${API_BASE}/media/${url}`;
+
+            // Try cache first for instant display
+            const cacheKey = this.getCacheKey(currentSlide.indicator, currentSlide.state, currentSlide.type);
+            if (this.imageCache.has(cacheKey)) {
+                this.thumbnailUrl = this.imageCache.get(cacheKey);
+                this.renderPreview();
+
+                // Preload next slide in background
+                const nextIdx = (this.currentIndex + 1) % this.slides.length;
+                const nextSlide = this.slides[nextIdx];
+                if (nextSlide) {
+                    this.fetchSlideImage(nextSlide.indicator, nextSlide.state, nextSlide.type, 'high');
                 }
+                return;
+            }
+
+            // Not cached - fetch with high priority
+            const url = await this.fetchSlideImage(
+                currentSlide.indicator,
+                currentSlide.state,
+                currentSlide.type,
+                'high'
+            );
+
+            if (url) {
                 this.thumbnailUrl = url;
                 this.renderPreview();
             }
         } catch (error) {
-            console.error('Error fetching thumbnail:', error);
+            console.error('❌ Thumbnail error:', error);
             this.elements.previewContainer.innerHTML = `
                 <div class="preview-placeholder">
-                    <span>No preview available</span>
+                    <span>No preview</span>
                 </div>
             `;
         }
     }
-    
+
     renderPreview() {
+        // Clean up existing media elements to prevent memory leaks
+        const existingVideo = this.elements.previewContainer.querySelector('video');
+        if (existingVideo) {
+            existingVideo.pause();
+            existingVideo.src = '';
+            existingVideo.load();
+        }
+
         if (!this.thumbnailUrl) {
             this.elements.previewContainer.innerHTML = `
                 <div class="preview-placeholder">
@@ -304,38 +474,59 @@ class PresentationRemote {
             `;
             return;
         }
-        
+
         const isVideo = this.thumbnailUrl.includes('.mp4');
-        
+
         if (isVideo) {
             this.elements.previewContainer.innerHTML = `
                 <video src="${this.thumbnailUrl}" autoplay loop muted playsinline></video>
             `;
         } else {
             this.elements.previewContainer.innerHTML = `
-                <img src="${this.thumbnailUrl}" alt="Preview" />
+                <img src="${this.thumbnailUrl}" alt="Preview" loading="lazy" />
             `;
         }
     }
     
+    // Throttled UI update to prevent excessive DOM manipulation on mobile
+    throttledUpdateUI() {
+        const now = Date.now();
+
+        // Throttle to max 10 updates per second (100ms minimum between updates)
+        if (now - this.lastUpdateTime < 100) {
+            // Schedule a delayed update if one isn't already pending
+            if (!this.pendingUpdate) {
+                this.pendingUpdate = true;
+                setTimeout(() => {
+                    this.pendingUpdate = false;
+                    this.updateUI();
+                }, 100);
+            }
+            return;
+        }
+
+        this.lastUpdateTime = now;
+        this.updateUI();
+    }
+
     updateUI() {
         // Play/pause button
         this.elements.playPauseBtn.classList.toggle('playing', this.isPlaying);
-        
+
         // Navigation buttons
         this.elements.prevBtn.disabled = !this.isPlaying;
         this.elements.nextBtn.disabled = !this.isPlaying;
-        
+
         // Counter
         this.elements.currentIndex.textContent = this.currentIndex + 1;
         this.elements.totalSlides.textContent = this.slides.length;
-        
+
         // Duration
         this.elements.durationValue.textContent = `${this.duration}s`;
-        
+
         // Add button state
         this.elements.addSlideBtn.disabled = this.allSlidesUsed();
-        
+
         // Render slides list
         this.renderSlidesList();
     }

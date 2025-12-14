@@ -223,25 +223,37 @@ const PresentationMode = () => {
         currentIndicator
     } = useAppData();
     
-    // Get all valid slides
+    // Get all valid slides (including both UTCI and Plan for climate)
     const allValidSlides = useMemo(() => {
         const slides = [];
         Object.keys(indicatorConfig).forEach(indicator => {
             const states = StateConfig[indicator] || [];
             states.forEach(state => {
                 if (isValidSlide(indicator, state)) {
-                    slides.push({ indicator, state });
+                    if (indicator === 'climate') {
+                        // For climate, create both UTCI and Plan versions
+                        slides.push({ indicator, state, type: 'utci' });
+                        slides.push({ indicator, state, type: 'plan' });
+                    } else {
+                        slides.push({ indicator, state });
+                    }
                 }
             });
         });
         return slides;
     }, [indicatorConfig, StateConfig]);
 
-    // Check if a slide combination is already used
-    const isSlideUsed = (indicator, state, excludeIndex = -1) => {
-        return presentationSequence.some((step, idx) => 
-            idx !== excludeIndex && step.indicator === indicator && step.state === state
-        );
+    // Check if a slide combination is already used (including type for climate)
+    const isSlideUsed = (indicator, state, type, excludeIndex = -1) => {
+        return presentationSequence.some((step, idx) => {
+            if (idx === excludeIndex) return false;
+            if (step.indicator !== indicator || step.state !== state) return false;
+            // For climate, also check type
+            if (indicator === 'climate') {
+                return step.type === type;
+            }
+            return true;
+        });
     };
 
     const defaultIndicator = Object.keys(indicatorConfig)[0];
@@ -254,25 +266,213 @@ const PresentationMode = () => {
     const [openInfo, setOpenInfo] = useState(false);
     const [thumbnailUrl, setThumbnailUrl] = useState(null);
 
+    // Image cache to store preloaded images
+    const imageCacheRef = React.useRef(new Map());
+    const [isPreloading, setIsPreloading] = useState(false);
+
+    // Track in-flight requests to prevent duplicate fetches
+    const inFlightRequestsRef = React.useRef(new Set());
+
     const currentStep = presentationSequence[sequenceIndex];
 
-    // Enter presentation mode when page loads
+    // Enter presentation mode when page loads (but don't auto-start playing)
     useEffect(() => {
         if (!isPresentationMode) {
-            togglePresentationMode(true);
+            togglePresentationMode(true, false); // Enter presentation mode, but paused
         }
     }, [isPresentationMode, togglePresentationMode]);
 
-    // Fetch thumbnail after state changes complete (uses existing event system)
+    // Helper function to generate cache key for a slide (include type for climate)
+    const getCacheKey = (indicator, state, type) => {
+        if (indicator === 'climate' && type) {
+            return `${indicator}:${state}:${type}`;
+        }
+        return `${indicator}:${state}`;
+    };
+
+    // Climate scenario display name to key mapping
+    const CLIMATE_SCENARIO_KEYS = {
+        'Dense Highrise': 'dense_highrise',
+        'Existing': 'existing',
+        'High Rises': 'high_rises',
+        'Low Rise Dense': 'lowrise',
+        'Mass Tree Planting': 'mass_tree_planting',
+        'Open Public Space': 'open_public_space',
+        'Placemaking': 'placemaking'
+    };
+
+    // Helper function to fetch and cache an image for a specific slide
+    // Uses PREFETCH mode API params to fetch specific states without modifying backend globals
+    const fetchAndCacheImage = React.useCallback(async (indicator, state, type, priority = 'normal') => {
+        const cacheKey = getCacheKey(indicator, state, type);
+
+        // Check if already cached
+        if (imageCacheRef.current.has(cacheKey)) {
+            return imageCacheRef.current.get(cacheKey);
+        }
+
+        // Prevent duplicate requests
+        if (inFlightRequestsRef.current.has(cacheKey)) {
+            return null;
+        }
+
+        inFlightRequestsRef.current.add(cacheKey);
+
+        try {
+            const timestamp = Date.now();
+
+            // Build URL with PREFETCH mode params - this fetches specific images without modifying backend state
+            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}`;
+
+            if (indicator === 'climate') {
+                // For climate, convert display name to scenario key and add type
+                const scenarioKey = CLIMATE_SCENARIO_KEYS[state] || state.toLowerCase().replace(/ /g, '_');
+                url += `&scenario=${scenarioKey}&type=${type || 'utci'}`;
+            } else {
+                // For mobility/other, convert display name to scenario key
+                const scenarioKey = state.toLowerCase(); // "Present" -> "present"
+                url += `&scenario=${scenarioKey}`;
+            }
+
+            const response = await api.get(url);
+
+            if (response.data?.image_data) {
+                let imageUrl = response.data.image_data.startsWith("/")
+                    ? `${config.media.baseUrl}${response.data.image_data}`
+                    : `${config.media.baseUrl}/media/${response.data.image_data}`;
+
+                // Preload the image in browser cache
+                if (!imageUrl.includes('.mp4')) {
+                    const img = new Image();
+                    img.src = imageUrl;
+                    if (priority === 'high') {
+                        await new Promise((resolve, reject) => {
+                            img.onload = resolve;
+                            img.onerror = reject;
+                            setTimeout(resolve, 2000); // 2s timeout
+                        });
+                    }
+                }
+
+                imageCacheRef.current.set(cacheKey, imageUrl);
+                return imageUrl;
+            }
+        } catch (err) {
+            console.error(`❌ Prefetch error ${indicator}:${state}${type ? ':' + type : ''}`);
+            return null;
+        } finally {
+            inFlightRequestsRef.current.delete(cacheKey);
+        }
+    }, []);
+
+    // Aggressive preloading: preload all slides immediately, prioritizing upcoming ones
+    useEffect(() => {
+        if (!presentationSequence || presentationSequence.length === 0) return;
+
+        const preloadAllSlides = async () => {
+            setIsPreloading(true);
+            console.log(`🚀 Prefetching ${presentationSequence.length} slides`);
+
+            // Priority 1: Current slide (must be instant)
+            const currentSlide = presentationSequence[sequenceIndex];
+            if (currentSlide) {
+                await fetchAndCacheImage(currentSlide.indicator, currentSlide.state, currentSlide.type, 'high');
+            }
+
+            // Priority 2: Next 3 slides (high priority, await to ensure they're ready)
+            const highPriorityCount = Math.min(3, presentationSequence.length);
+            for (let i = 1; i <= highPriorityCount; i++) {
+                const idx = (sequenceIndex + i) % presentationSequence.length;
+                const slide = presentationSequence[idx];
+                if (slide && idx !== sequenceIndex) {
+                    await fetchAndCacheImage(slide.indicator, slide.state, slide.type, 'high');
+                }
+            }
+
+            // Priority 3: Remaining slides (background, fire and forget)
+            for (let i = 0; i < presentationSequence.length; i++) {
+                if (i === sequenceIndex) continue;
+                const isHighPriority = i <= (sequenceIndex + highPriorityCount) % presentationSequence.length && i > sequenceIndex;
+                if (!isHighPriority) {
+                    const slide = presentationSequence[i];
+                    fetchAndCacheImage(slide.indicator, slide.state, slide.type, 'normal'); // No await - background
+                }
+            }
+
+            setIsPreloading(false);
+            console.log(`✓ Prefetch complete`);
+        };
+
+        preloadAllSlides();
+    }, [presentationSequence, fetchAndCacheImage]);
+
+    // Update thumbnail when current slide changes
+    useEffect(() => {
+        if (!currentStep) return;
+
+        const updateThumbnail = async () => {
+            const cacheKey = getCacheKey(currentStep.indicator, currentStep.state, currentStep.type);
+
+            // Check cache first
+            if (imageCacheRef.current.has(cacheKey)) {
+                const cachedUrl = imageCacheRef.current.get(cacheKey);
+                setThumbnailUrl(cachedUrl);
+
+                // Preload next slide in background
+                const nextIndex = (sequenceIndex + 1) % presentationSequence.length;
+                const nextSlide = presentationSequence[nextIndex];
+                if (nextSlide) {
+                    fetchAndCacheImage(nextSlide.indicator, nextSlide.state, nextSlide.type, 'high');
+                }
+            } else {
+                // Not cached yet, fetch it
+                const url = await fetchAndCacheImage(currentStep.indicator, currentStep.state, currentStep.type, 'high');
+                if (url) {
+                    setThumbnailUrl(url);
+                }
+            }
+        };
+
+        updateThumbnail();
+    }, [currentStep, sequenceIndex, presentationSequence, fetchAndCacheImage]);
+
+    // Use ref to access currentIndicator without causing listener re-registration
+    const currentIndicatorRef = React.useRef(currentIndicator);
+    React.useEffect(() => {
+        currentIndicatorRef.current = currentIndicator;
+    }, [currentIndicator]);
+
+    // Throttle ref for thumbnail fetches
+    const thumbnailFetchThrottleRef = React.useRef(null);
+    const lastThumbnailFetchRef = React.useRef(0);
+
+    // Listen for state change events (for manual state changes outside of presentation sequence)
+    // Empty dependency - listeners registered ONCE, use ref for current indicator
     useEffect(() => {
         const fetchThumbnail = async () => {
+            const now = Date.now();
+
+            // Throttle: max 1 fetch per 200ms
+            if (now - lastThumbnailFetchRef.current < 200) {
+                // Schedule a delayed fetch if one isn't pending
+                if (!thumbnailFetchThrottleRef.current) {
+                    thumbnailFetchThrottleRef.current = setTimeout(() => {
+                        thumbnailFetchThrottleRef.current = null;
+                        fetchThumbnail();
+                    }, 200);
+                }
+                return;
+            }
+            lastThumbnailFetchRef.current = now;
+
             // Small delay to ensure backend state is fully updated
             await new Promise(resolve => setTimeout(resolve, 100));
-            
+
             try {
                 const timestamp = Date.now();
+                const indicator = currentIndicatorRef.current;
                 const response = await api.get(
-                    `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}`
+                    `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}`
                 );
                 if (response.data?.image_data) {
                     let url = response.data.image_data.startsWith("/")
@@ -286,7 +486,6 @@ const PresentationMode = () => {
         };
 
         // Listen for state change events (fired AFTER backend state is updated)
-        // This ensures we fetch only after the backend has the correct state
         window.addEventListener("climateStateChanged", fetchThumbnail);
         window.addEventListener("stateChanged", fetchThumbnail);
         window.addEventListener("indicatorStateChanged", fetchThumbnail);
@@ -295,8 +494,11 @@ const PresentationMode = () => {
             window.removeEventListener("climateStateChanged", fetchThumbnail);
             window.removeEventListener("stateChanged", fetchThumbnail);
             window.removeEventListener("indicatorStateChanged", fetchThumbnail);
+            if (thumbnailFetchThrottleRef.current) {
+                clearTimeout(thumbnailFetchThrottleRef.current);
+            }
         };
-    }, [currentIndicator]);
+    }, []); // Empty deps - register once, use ref for current indicator
 
     const handleExit = () => {
         togglePresentationMode(false);

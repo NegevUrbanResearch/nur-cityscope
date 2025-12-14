@@ -16,13 +16,13 @@ const ClimateMapTypeSelector = () => {
   );
 
   // Sync state from globals (event-driven, no polling)
+  // Empty dependency array - listeners registered ONCE, handler reads from globals directly
   useEffect(() => {
     const handleClimateStateChange = () => {
       // Read current type from globals (updated by DataContext via WebSocket)
       const currentType = globals.INDICATOR_STATE?.type || "utci";
-      if (currentType !== scenarioType) {
-        setScenarioType(currentType);
-      }
+      // Use functional update to compare against current state without dependency
+      setScenarioType(prev => currentType !== prev ? currentType : prev);
     };
 
     // Listen for climate state changes from DataContext (via WebSocket)
@@ -36,31 +36,30 @@ const ClimateMapTypeSelector = () => {
       window.removeEventListener("climateStateChanged", handleClimateStateChange);
       window.removeEventListener("indicatorStateChanged", handleClimateStateChange);
     };
-  }, [scenarioType]);
+  }, []); // Empty deps - register once, read globals directly
 
   const handleTypeChange = async (event, newType) => {
     if (newType !== null) {
-      pausePresentationMode(); // Pause auto-advance when user clicks
+      pausePresentationMode();
+
+      // Optimistically update UI
       setScenarioType(newType);
 
       const currentScenario = globals.INDICATOR_STATE?.scenario || "existing";
 
       try {
+        // Call API - backend will broadcast via WebSocket
         await api.post("/api/actions/set_climate_scenario/", {
           scenario: currentScenario,
           type: newType,
         });
-        console.log(`✓ Updated to ${newType} view for ${currentScenario}`);
+        console.log(`✓ Climate type: ${newType}`);
 
-        globals.INDICATOR_STATE = {
-          ...globals.INDICATOR_STATE,
-          type: newType,
-          scenario: currentScenario,
-        };
-
-        window.dispatchEvent(new CustomEvent("climateStateChanged"));
+        // WebSocket will update globals and dispatch events - no manual intervention needed
       } catch (error) {
-        console.error("Error updating climate scenario type:", error);
+        console.error("❌ Climate type change error:", error);
+        // Revert optimistic update on error
+        setScenarioType(globals.INDICATOR_STATE?.type || "utci");
       }
     }
   };

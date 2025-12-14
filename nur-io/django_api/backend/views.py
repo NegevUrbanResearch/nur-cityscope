@@ -477,32 +477,38 @@ class CustomActionsViewSet(viewsets.ViewSet):
         # Ensure we have a default state
         self._initialize_default_state()
 
-        # Check if an indicator parameter was provided
+        # Check if query parameters were provided for PREFETCH mode
+        # This allows fetching specific images without modifying globals
         indicator_param = request.query_params.get("indicator")
+        scenario_param = request.query_params.get("scenario")  # For prefetching specific states
+        type_param = request.query_params.get("type")  # For climate type (utci/plan)
+        prefetch_mode = scenario_param is not None  # If scenario is specified, don't use globals
+
+        # Determine which indicator to use
         if indicator_param:
-            # Map the indicator name to ID
             indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
             indicator_id = indicator_mapping.get(indicator_param)
-            if indicator_id:
+            if indicator_id and not prefetch_mode:
+                # Only modify globals if NOT in prefetch mode
                 globals.INDICATOR_ID = indicator_id
-                print(
-                    f"Using indicator from query parameter: {indicator_param} (ID: {indicator_id})"
-                )
+        else:
+            indicator_id = globals.INDICATOR_ID
 
-        # Debug information
-        print(f"Current indicator_id: {globals.INDICATOR_ID}")
-        print(f"Current state: {globals.INDICATOR_STATE}")
-        print(f"Visualization mode: {globals.VISUALIZATION_MODE}")
+        # Use the indicator_id we determined (either from param or globals)
+        effective_indicator_id = indicator_mapping.get(indicator_param) if indicator_param else globals.INDICATOR_ID
 
-        indicator = Indicator.objects.filter(indicator_id=globals.INDICATOR_ID)
+        # Debug (reduced logging in prefetch mode)
+        if not prefetch_mode:
+            print(f"Current indicator_id: {globals.INDICATOR_ID}")
+            print(f"Current state: {globals.INDICATOR_STATE}")
+            print(f"Visualization mode: {globals.VISUALIZATION_MODE}")
+
+        indicator = Indicator.objects.filter(indicator_id=effective_indicator_id)
         if not indicator.exists() or not indicator.first():
-            # Default to the first available indicator
             indicator = Indicator.objects.first()
             if indicator:
-                globals.INDICATOR_ID = indicator.indicator_id
-                print(
-                    f"Using first available indicator: {indicator.name} (ID: {indicator.indicator_id})"
-                )
+                if not prefetch_mode:
+                    globals.INDICATOR_ID = indicator.indicator_id
             else:
                 response = JsonResponse({"error": "No indicators found"}, status=404)
                 self._add_no_cache_headers(response)
@@ -512,69 +518,71 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
         # Special handling for climate scenarios
         if indicator_obj.category == "climate":
-            scenario_name = globals.INDICATOR_STATE.get("scenario")
-            scenario_type = globals.INDICATOR_STATE.get("type", "utci")
-
-            print(
-                f"🌡️ get_image_data for climate - scenario: {scenario_name}, type: {scenario_type}"
-            )
-            print(f"🌡️ Full INDICATOR_STATE: {globals.INDICATOR_STATE}")
+            # Use query params if in prefetch mode, otherwise use globals
+            if prefetch_mode and scenario_param:
+                scenario_name = scenario_param
+                scenario_type = type_param or "utci"
+                print(f"🌡️ PREFETCH mode - climate scenario: {scenario_name}, type: {scenario_type}")
+            else:
+                scenario_name = globals.INDICATOR_STATE.get("scenario")
+                scenario_type = globals.INDICATOR_STATE.get("type", "utci")
+                print(f"🌡️ get_image_data for climate - scenario: {scenario_name}, type: {scenario_type}")
 
             if scenario_name:
-                # Find state by scenario
                 state = State.objects.filter(
                     scenario_name=scenario_name, scenario_type=scenario_type
                 ).first()
 
                 if state:
-                    print(
-                        f"✓ Found climate scenario state: {state.scenario_name} ({state.scenario_type})"
-                    )
+                    print(f"✓ Found climate scenario state: {state.scenario_name} ({state.scenario_type})")
                 else:
-                    # Fallback to default climate scenario
                     from backend.climate_scenarios import (
                         DEFAULT_CLIMATE_SCENARIO,
                         DEFAULT_CLIMATE_TYPE,
                     )
-
                     state = State.objects.filter(
                         scenario_name=DEFAULT_CLIMATE_SCENARIO,
                         scenario_type=DEFAULT_CLIMATE_TYPE,
                     ).first()
                     print(f"Using default climate scenario")
             else:
-                # No scenario specified, use default
                 from backend.climate_scenarios import (
                     DEFAULT_CLIMATE_SCENARIO,
                     DEFAULT_CLIMATE_TYPE,
                 )
-
                 state = State.objects.filter(
                     scenario_name=DEFAULT_CLIMATE_SCENARIO,
                     scenario_type=DEFAULT_CLIMATE_TYPE,
                 ).first()
         else:
-            # Try to find a state matching the current indicator state (non-climate)
-            if indicator_obj.has_states == False:
+            # Non-climate indicators (mobility, etc.)
+            # Use query params if in prefetch mode, otherwise use globals
+            if prefetch_mode and scenario_param:
+                # Prefetch mode - look up state by scenario name
+                print(f"📊 PREFETCH mode - {indicator_param} scenario: {scenario_param}")
+                state = None
+                states = State.objects.all()
+                for s in states:
+                    if s.state_values.get("scenario") == scenario_param:
+                        state = s
+                        print(f"✓ Found state by scenario: {s.state_values}")
+                        break
+                if not state:
+                    # Fallback to first state
+                    state = State.objects.first()
+            elif indicator_obj.has_states == False:
                 state = State.objects.filter(state_values={})
             else:
-                # Try exact match first
                 state = State.objects.filter(state_values=globals.INDICATOR_STATE)
-
-                # If no exact match, try matching just the year field
                 if not state.exists():
-                    print(
-                        f"No exact state match for {globals.INDICATOR_STATE}, trying year match..."
-                    )
+                    print(f"No exact state match for {globals.INDICATOR_STATE}, trying year match...")
                     year = globals.INDICATOR_STATE.get("year")
                     if year:
                         states = State.objects.all()
                         for s in states:
                             if s.state_values.get("year") == year:
                                 state = State.objects.filter(id=s.id)
-                                print(
-                                    f"Found state with matching year: {s.state_values}"
-                                )
+                                print(f"Found state with matching year: {s.state_values}")
                                 break
 
         if not state or (hasattr(state, "exists") and not state.exists()) or not state:

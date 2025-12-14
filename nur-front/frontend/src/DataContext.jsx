@@ -160,6 +160,8 @@ export const DataProvider = ({ children }) => {
   // WebSocket connection ref
   const wsRef = useRef(null);
   const wsReconnectTimeoutRef = useRef(null);
+  const wsConnectedRef = useRef(false); // Track WebSocket connection state
+  const lastWsUpdateRef = useRef(0); // Track last WebSocket update timestamp
 
   // Update refs when state changes
   useEffect(() => {
@@ -189,36 +191,35 @@ export const DataProvider = ({ children }) => {
   // WebSocket connection for real-time sync
   useEffect(() => {
     const connectWebSocket = () => {
-      // Determine WebSocket URL based on current location
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/ws/presentation/`;
-      
-      console.log('🔌 Connecting to WebSocket:', wsUrl);
-      
+
+      console.log('🔌 WebSocket connecting...');
+
       try {
         wsRef.current = new WebSocket(wsUrl);
-        
+
         wsRef.current.onopen = () => {
           console.log('✓ WebSocket connected');
+          wsConnectedRef.current = true;
         };
-        
+
         wsRef.current.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data);
-            
+            // Track last WebSocket update time to prevent polling conflicts
+            lastWsUpdateRef.current = Date.now();
+
             if (message.type === 'presentation_update' && message.data) {
               const data = message.data;
-              
-              // Guard: Only process presentation updates when in presentation mode
-              // This prevents stale backend state from activating presentation mode
+
               if (!isPresentationModeRef.current) {
-                console.log('⏳ Ignoring WebSocket presentation update - not in presentation mode');
                 return;
               }
-              
-              console.log('📡 WebSocket presentation update:', data);
-              
-              // Update presentation state from WebSocket (use internal setters)
+
+              console.log('📡 WS: presentation update');
+
+              // Update presentation state from WebSocket (use internal setters to avoid loops)
               if (data.is_playing !== undefined) {
                 setIsPlaying(data.is_playing);
               }
@@ -232,43 +233,38 @@ export const DataProvider = ({ children }) => {
                 setPresentationSequenceInternal(data.sequence);
               }
             }
-            
+
             if (message.type === 'indicator_update' && message.data) {
               const data = message.data;
-              console.log('📡 WebSocket indicator update:', data);
-              
-              // Update indicator state
+              console.log('📡 WS: indicator update');
+
               if (data.indicator_id !== undefined) {
                 const newIndicator = ID_TO_INDICATOR[data.indicator_id];
-                
-                // Guard: Ignore stale WebSocket updates when we're in the middle of changing indicators
-                // This prevents race conditions where old broadcasts arrive after we've started a change
+
+                // Guard against stale updates during indicator change
                 if (indicatorChangeInProgressRef.current) {
                   if (newIndicator !== indicatorChangeInProgressRef.current) {
-                    console.log(`⏳ Ignoring stale WebSocket indicator update (${newIndicator}) - change to ${indicatorChangeInProgressRef.current} in progress`);
-                    return; // Skip this stale update
+                    return;
                   }
                 }
-                
+
                 if (newIndicator && newIndicator !== indicatorRef.current) {
                   setCurrentIndicator(newIndicator);
                 }
               }
-              
+
               if (data.indicator_state) {
-                // Validate and fix legacy "current" scenario value
                 const state = { ...data.indicator_state };
                 if (state.scenario === "current") {
                   state.scenario = "present";
                 }
                 globals.INDICATOR_STATE = state;
-                // Trigger state change events
                 window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
                 if (indicatorRef.current === 'climate') {
                   window.dispatchEvent(new CustomEvent("climateStateChanged"));
                 }
               }
-              
+
               if (data.visualization_mode) {
                 const newMode = data.visualization_mode === "map" ? "deck" : "image";
                 if (newMode !== visualizationModeRef.current) {
@@ -277,28 +273,27 @@ export const DataProvider = ({ children }) => {
               }
             }
           } catch (err) {
-            console.error('WebSocket message parse error:', err);
+            console.error('❌ WebSocket parse error:', err);
           }
         };
-        
-        wsRef.current.onclose = (event) => {
-          console.log('✗ WebSocket disconnected, reconnecting in 3s...');
-          // Attempt to reconnect after 3 seconds
+
+        wsRef.current.onclose = () => {
+          console.log('✗ WebSocket disconnected, reconnecting...');
+          wsConnectedRef.current = false;
           wsReconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);
         };
-        
+
         wsRef.current.onerror = (error) => {
-          console.error('WebSocket error:', error);
+          console.error('❌ WebSocket error:', error);
         };
       } catch (err) {
-        console.error('WebSocket connection failed:', err);
-        // Retry connection
+        console.error('❌ WebSocket connection failed:', err);
         wsReconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);
       }
     };
-    
+
     connectWebSocket();
-    
+
     return () => {
       if (wsReconnectTimeoutRef.current) {
         clearTimeout(wsReconnectTimeoutRef.current);
@@ -377,162 +372,101 @@ export const DataProvider = ({ children }) => {
   // Track previous indicator state for all indicators to detect changes
   const prevIndicatorStateRef = useRef(null);
 
-  // Check for remote controller changes with debouncing to reduce flickering
+  // Polling fallback - only used if WebSocket fails (runs every 10s)
   const checkRemoteChanges = useCallback(async () => {
-    // Limit API calls to prevent overloading
     const now = Date.now();
-    if (now - lastCheckedRef.current < 150) return; // Minimum interval between checks
+    if (now - lastCheckedRef.current < 500) return;
     lastCheckedRef.current = now;
+
+    // Skip polling if WebSocket is connected AND received update recently (within 15s)
+    // This prevents race conditions between WS updates and polling
+    if (wsConnectedRef.current && (now - lastWsUpdateRef.current < 15000)) {
+      return; // WebSocket is handling updates
+    }
 
     try {
       const response = await api.get("/api/actions/get_global_variables/");
-      if (response.data) {
-        // Update our local globals to match server
-        if (response.data.indicator_state) {
-          // Validate and fix legacy "current" scenario value
-          const state = { ...response.data.indicator_state };
-          if (state.scenario === "current") {
-            state.scenario = "present";
-          }
-          globals.INDICATOR_STATE = state;
+      if (!response.data) return;
+
+      // Update globals state
+      if (response.data.indicator_state) {
+        const state = { ...response.data.indicator_state };
+        if (state.scenario === "current") {
+          state.scenario = "present";
+        }
+        globals.INDICATOR_STATE = state;
+      }
+
+      // Visualization mode sync
+      if (response.data.visualization_mode) {
+        globals.VISUALIZATION_MODE = response.data.visualization_mode;
+        const newMode = response.data.visualization_mode === "map" ? "deck" : "image";
+        if (newMode !== visualizationModeRef.current) {
+          setVisualizationMode(newMode);
+        }
+      }
+
+      // Presentation playing state (cross-tab sync)
+      if (response.data.presentation_playing !== undefined && isPresentationModeRef.current) {
+        const backendPlaying = response.data.presentation_playing;
+        if (backendPlaying !== isPlayingRef.current) {
+          setIsPlaying(backendPlaying);
+        }
+      }
+
+      // Indicator changes
+      if (response.data.indicator_id !== undefined) {
+        globals.INDICATOR_ID = response.data.indicator_id;
+        const indicatorId = parseInt(response.data.indicator_id, 10);
+        const newIndicator = ID_TO_INDICATOR[indicatorId];
+
+        if (indicatorChangeInProgressRef.current && newIndicator !== indicatorChangeInProgressRef.current) {
+          return;
         }
 
-        // Handle visualization mode changes from remote controller
-        if (response.data.visualization_mode) {
-          globals.VISUALIZATION_MODE = response.data.visualization_mode;
-
-          // Update local state if different from current
-          const newMode =
-            response.data.visualization_mode === "map" ? "deck" : "image";
-          if (newMode !== visualizationModeRef.current) {
-            console.log(
-              `Remote controller changed visualization mode to: ${newMode}`
-            );
-            setVisualizationMode(newMode);
+        if (newIndicator && newIndicator !== indicatorRef.current) {
+          if (debounceTimerRef.current) {
+            clearTimeout(debounceTimerRef.current);
           }
+
+          debounceTimerRef.current = setTimeout(() => {
+            setLoading(true);
+            setCurrentIndicator(newIndicator);
+            setTimeout(() => setLoading(false), 500);
+          }, 100);
         }
+      }
 
-        // Handle presentation playing state changes (for cross-tab sync)
-        if (response.data.presentation_playing !== undefined) {
-          const backendPlaying = response.data.presentation_playing;
-          // Only update if we're in presentation mode and state differs
-          if (isPresentationModeRef.current && backendPlaying !== isPlayingRef.current) {
-            console.log(`🎬 Presentation state synced from backend: ${backendPlaying ? 'playing' : 'paused'}`);
-            setIsPlaying(backendPlaying);
-          }
+      // Climate state changes
+      if (indicatorRef.current === "climate" && response.data.indicator_state) {
+        const currentScenario = response.data.indicator_state.scenario;
+        const currentType = response.data.indicator_state.type;
+        const prevScenario = prevClimateStateRef.current.scenario;
+        const prevType = prevClimateStateRef.current.type;
+
+        if ((currentScenario && currentScenario !== prevScenario) || (currentType && currentType !== prevType)) {
+          prevClimateStateRef.current = { scenario: currentScenario, type: currentType };
+          window.dispatchEvent(new CustomEvent("climateStateChanged"));
+        } else if (!prevScenario && currentScenario) {
+          prevClimateStateRef.current = { scenario: currentScenario, type: currentType };
         }
-        
-        // Note: Presentation state sync is now handled by WebSocket for real-time updates
-        // This polling loop serves as a fallback for indicator/visualization changes only
+      }
 
-        // Handle indicator changes
-        if (response.data.indicator_id !== undefined) {
-          globals.INDICATOR_ID = response.data.indicator_id;
+      // Other indicator state changes
+      if (indicatorRef.current !== "climate" && response.data.indicator_state) {
+        const currentStateStr = JSON.stringify(response.data.indicator_state);
+        const prevStateStr = prevIndicatorStateRef.current;
 
-          // Convert indicator_id to number if it's a string
-          const indicatorId = parseInt(response.data.indicator_id, 10);
-          const newIndicator = ID_TO_INDICATOR[indicatorId];
-
-          // Guard: Ignore stale polling updates when we're in the middle of changing indicators
-          if (indicatorChangeInProgressRef.current) {
-            if (newIndicator !== indicatorChangeInProgressRef.current) {
-              console.log(`⏳ Ignoring stale polling indicator update (${newIndicator}) - change to ${indicatorChangeInProgressRef.current} in progress`);
-              return;
-            }
-          }
-
-          if (newIndicator && newIndicator !== indicatorRef.current) {
-            console.log(
-              `Remote controller changed indicator to: ${newIndicator}`
-            );
-
-            // Clear any pending timer to prevent race conditions
-            if (debounceTimerRef.current) {
-              clearTimeout(debounceTimerRef.current);
-            }
-
-            // Update state after a small delay to allow the previous operations to complete
-            debounceTimerRef.current = setTimeout(() => {
-              // Set loading state before changing the indicator to prevent flickering
-              setLoading(true);
-
-              // Update the indicator
-              setCurrentIndicator(newIndicator);
-
-              // Give a small delay before allowing new data fetches to complete the transition
-              setTimeout(() => {
-                setLoading(false);
-              }, 500);
-            }, 100);
-          }
-        }
-
-        // Check for climate state changes (scenario or type) - this should happen regardless of indicator change
-        // Only check if we're currently on the climate indicator
-        if (
-          indicatorRef.current === "climate" &&
-          response.data.indicator_state
-        ) {
-          const currentScenario = response.data.indicator_state.scenario;
-          const currentType = response.data.indicator_state.type;
-          const prevScenario = prevClimateStateRef.current.scenario;
-          const prevType = prevClimateStateRef.current.type;
-
-          // Detect if scenario or type changed
-          if (
-            (currentScenario && currentScenario !== prevScenario) ||
-            (currentType && currentType !== prevType)
-          ) {
-            console.log(
-              `🌡️ Climate state changed: ${prevScenario}(${prevType}) → ${currentScenario}(${currentType})`
-            );
-
-            // Update tracked state
-            prevClimateStateRef.current = {
-              scenario: currentScenario,
-              type: currentType,
-            };
-
-            // Trigger the climateStateChanged event
-            window.dispatchEvent(new CustomEvent("climateStateChanged"));
-          } else if (!prevScenario && currentScenario) {
-            // Initial state setup
-            prevClimateStateRef.current = {
-              scenario: currentScenario,
-              type: currentType,
-            };
-          }
-        }
-
-        // Check for general indicator state changes (for mobility and other indicators)
-        // This handles state changes like mobility Present/Survey
-        if (
-          indicatorRef.current !== "climate" &&
-          response.data.indicator_state
-        ) {
-          const currentStateStr = JSON.stringify(response.data.indicator_state);
-          const prevStateStr = prevIndicatorStateRef.current;
-
-          if (prevStateStr && currentStateStr !== prevStateStr) {
-            console.log(
-              `📊 Indicator state changed for ${indicatorRef.current}: ${prevStateStr} → ${currentStateStr}`
-            );
-
-            // Update tracked state
-            prevIndicatorStateRef.current = currentStateStr;
-
-            // Trigger a general state change event
-            window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
-            // Also trigger the stateChanged event for compatibility with remote controller
-            window.dispatchEvent(new CustomEvent("stateChanged"));
-          } else if (!prevStateStr) {
-            // Initial state setup
-            prevIndicatorStateRef.current = currentStateStr;
-          }
+        if (prevStateStr && currentStateStr !== prevStateStr) {
+          prevIndicatorStateRef.current = currentStateStr;
+          window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
+          window.dispatchEvent(new CustomEvent("stateChanged"));
+        } else if (!prevStateStr) {
+          prevIndicatorStateRef.current = currentStateStr;
         }
       }
     } catch (err) {
-      console.error("Error checking remote changes:", err);
+      console.error("❌ Polling error:", err);
     }
   }, []);
 
@@ -552,13 +486,13 @@ export const DataProvider = ({ children }) => {
           console.error("Error in initial data setup:", err);
         }
 
-        // Set up polling as fallback (WebSocket handles real-time updates)
-        // Reduced frequency since WebSocket provides instant updates
+        // Set up polling as fallback only (WebSocket handles real-time updates)
+        // Very low frequency - only for recovery if WebSocket fails
         checkIntervalId = setInterval(() => {
           if (isMounted) {
             checkRemoteChanges();
           }
-        }, 2000); // Poll every 2s as fallback (WebSocket is primary)
+        }, 10000); // Poll every 10s as emergency fallback only
       }
     };
 
@@ -728,13 +662,15 @@ export const DataProvider = ({ children }) => {
 );
 
   // Function to switch indicators
+  // When targetState is provided (presentation mode), this performs an ATOMIC transition
+  // by setting the state BEFORE broadcasting to prevent flashing
   const changeIndicator = useCallback(
-    (newIndicator, targetState = null) => {
+    async (newIndicator, targetState = null) => {
       if (
         newIndicator !== currentIndicator &&
         Object.keys(INDICATOR_CONFIG).includes(newIndicator)
       ) {
-        console.log(`Changing indicator to: ${newIndicator}`);
+        console.log(`Changing indicator to: ${newIndicator}${targetState ? ` with state: ${targetState}` : ''}`);
 
         // Set loading state first to prevent flickering
         setLoading(true);
@@ -742,15 +678,36 @@ export const DataProvider = ({ children }) => {
         // Clear existing dashboard data to prevent showing stale data
         setDashboardData(null);
 
-        // Set the indicator locally
-        setCurrentIndicator(newIndicator);
-        
-        // In presentation mode with a target state, skip setting default state to avoid flash
-        if (isPresentationModeRef.current && targetState) {
-          // Don't set default state - the target state will be set immediately
-          // This prevents the brief flash of "existing" before the correct state
+        // Mark that we're changing to this indicator - guards against stale WebSocket updates
+        indicatorChangeInProgressRef.current = newIndicator;
+
+        // ATOMIC TRANSITION: When targetState is provided, set globals FIRST before any API calls
+        // This ensures Dashboard won't render with wrong state during transition
+        if (targetState) {
+          // Pre-set the target state in globals BEFORE changing indicator
+          if (newIndicator === "climate") {
+            // Find the scenario key from the display name
+            const scenarioKey = Object.entries(CLIMATE_SCENARIOS).find(
+              ([key, displayName]) => displayName === targetState
+            )?.[0] || "existing";
+            const currentType = globals.INDICATOR_STATE?.type || "utci";
+            globals.INDICATOR_STATE = {
+              scenario: scenarioKey,
+              type: currentType,
+              label: `${targetState} - ${currentType.toUpperCase()}`
+            };
+          } else {
+            // Mobility state
+            const scenarioKey = targetState.toLowerCase();
+            globals.INDICATOR_STATE = {
+              year: 2023,
+              scenario: scenarioKey,
+              label: targetState
+            };
+          }
+          console.log(`✓ Pre-set target state for ${newIndicator}:`, globals.INDICATOR_STATE);
         } else {
-          // Update globals.INDICATOR_STATE to the new indicator's default
+          // No target state - set default
           if (newIndicator === "climate") {
             globals.INDICATOR_STATE = { scenario: "existing", type: "utci", label: "Existing - UTCI" };
           } else {
@@ -758,58 +715,74 @@ export const DataProvider = ({ children }) => {
           }
           console.log(`✓ Set default state for ${newIndicator}:`, globals.INDICATOR_STATE);
         }
-        
-        // Mark that we're changing to this indicator - this guards against stale WebSocket updates
-        indicatorChangeInProgressRef.current = newIndicator;
 
-        // Update the remote controller by sending the change to the API
+        // Set the indicator locally AFTER globals are set
+        setCurrentIndicator(newIndicator);
+
         const indicatorId = INDICATOR_CONFIG[newIndicator]?.id;
         if (indicatorId) {
-          // Send the change to the API
-          api
-            .post("/api/actions/set_current_indicator/", {
+          try {
+            // ATOMIC: Set both indicator AND state in rapid succession before WebSocket broadcasts
+            // First set the indicator
+            await api.post("/api/actions/set_current_indicator/", {
               indicator_id: indicatorId,
-            })
-            .then(() => {
-              console.log(
-                `Updated remote controller to ${newIndicator} (ID: ${indicatorId})`
-              );
+            });
+            console.log(`Updated indicator to ${newIndicator} (ID: ${indicatorId})`);
 
-              // Trigger a data fetch for the new indicator
-              fetchDashboardData(newIndicator);
-
-              // In presentation mode with target state, set it immediately after indicator change
-              if (isPresentationModeRef.current && targetState) {
-                // Small delay to ensure indicator change is processed
-                setTimeout(() => {
-                  changeState(targetState);
-                }, 100);
+            // Immediately set the state (no delay) if we have a target
+            if (targetState) {
+              // Call changeState but don't wait for events - the globals are already set
+              if (newIndicator === "climate") {
+                const scenarioKey = Object.entries(CLIMATE_SCENARIOS).find(
+                  ([key, displayName]) => displayName === targetState
+                )?.[0];
+                if (scenarioKey) {
+                  await api.post("/api/actions/set_climate_scenario/", {
+                    scenario: scenarioKey,
+                    type: globals.INDICATOR_STATE?.type || "utci",
+                  });
+                }
+              } else {
+                // Mobility state - find and set
+                const scenarioKey = targetState.toLowerCase();
+                const statesResponse = await api.get("/api/states/");
+                const targetStateObj = statesResponse.data.find(
+                  (s) => s.state_values && s.state_values.scenario === scenarioKey
+                );
+                if (targetStateObj) {
+                  await api.post("/api/actions/set_current_state/", {
+                    state_id: targetStateObj.id,
+                  });
+                }
               }
+              console.log(`✓ Atomically set state to: ${targetState}`);
+            }
 
-              // Give the system time to complete the transition before clearing loading state
-              setTimeout(() => {
-                setLoading(false);
-                // Clear the guard after transition settles
-                indicatorChangeInProgressRef.current = null;
-              }, 500);
-            })
-            .catch((err) => {
-              console.error("Error updating remote controller:", err);
+            // Now trigger data fetch - state is already correct
+            fetchDashboardData(newIndicator);
+
+            // Give the system time to complete the transition
+            setTimeout(() => {
               setLoading(false);
               indicatorChangeInProgressRef.current = null;
-            });
-      } else {
-        // Even if we can't update the remote, we should fetch data for the new indicator
-        fetchDashboardData(newIndicator);
-        setTimeout(() => {
-          setLoading(false);
-          indicatorChangeInProgressRef.current = null;
-        }, 500);
+            }, 300);
+          } catch (err) {
+            console.error("Error during indicator change:", err);
+            setLoading(false);
+            indicatorChangeInProgressRef.current = null;
+          }
+        } else {
+          // No indicator ID found
+          fetchDashboardData(newIndicator);
+          setTimeout(() => {
+            setLoading(false);
+            indicatorChangeInProgressRef.current = null;
+          }, 300);
+        }
       }
-    }
-  },
-  [currentIndicator, fetchDashboardData, changeState]
-);
+    },
+    [currentIndicator, fetchDashboardData]
+  );
 
     // presentation timer logic
     useEffect(() => {
@@ -871,28 +844,28 @@ export const DataProvider = ({ children }) => {
         changeState 
     ]);
   
-    const togglePresentationMode = useCallback(async (isEntering) => {
+    const togglePresentationMode = useCallback(async (isEntering, autoPlay = false) => {
         if (isEntering) {
             console.log("✓ Starting Presentation Mode");
             // Save current state
             setPrevIndicator(indicatorRef.current);
             setPrevVisualizationMode(visualizationModeRef.current);
-            
+
             setSequenceIndex(0);
-            
+
             // Force 'image' mode for presentation
             if (visualizationModeRef.current !== 'image') {
                  handleVisualizationModeChange(null, 'image');
             }
-  
+
             setIsPresentationMode(true);
-            // Auto-start playing when entering presentation mode
-            setIsPlaying(true);
+            // Only auto-start playing if explicitly requested
+            setIsPlaying(autoPlay);
             // Sync full presentation state with backend for remote controller
             // Use refs to get the latest values, avoiding stale closure issues
             try {
-                await api.post("/api/actions/set_presentation_state/", { 
-                    is_playing: true,
+                await api.post("/api/actions/set_presentation_state/", {
+                    is_playing: autoPlay,
                     sequence: presentationSequenceRef.current,
                     sequence_index: 0,
                     duration: globalDurationRef.current

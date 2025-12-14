@@ -36,8 +36,10 @@ const Dashboard = ({ openCharts}) => {
     error: false,
   });
 
-  // Refs to track image loading state
-  const imageStates = useRef(new Map());
+  // Image cache with LRU eviction (max 30 images for better presentation performance)
+  const imageCacheRef = useRef(new Map());
+  const MAX_CACHE_SIZE = 30;
+
   const [currentImageUrl, setCurrentImageUrl] = useState(null);
   const [showLoadingMessage, setShowLoadingMessage] = useState(true);
   const lastIndicatorRef = useRef(currentIndicator);
@@ -53,21 +55,42 @@ const Dashboard = ({ openCharts}) => {
     currentImageUrlRef.current = currentImageUrl;
   }, [currentImageUrl]);
 
-  // Preload image and track its loading state - memoize to avoid dependency issues
+  // Helper to add image to cache with LRU eviction
+  const addToCache = useCallback((url, imageObject) => {
+    // Remove if already exists (will re-add at end for LRU)
+    if (imageCacheRef.current.has(url)) {
+      imageCacheRef.current.delete(url);
+    }
+
+    // Evict oldest if at capacity
+    if (imageCacheRef.current.size >= MAX_CACHE_SIZE) {
+      const firstKey = imageCacheRef.current.keys().next().value;
+      imageCacheRef.current.delete(firstKey);
+    }
+
+    // Add to end (most recently used)
+    imageCacheRef.current.set(url, imageObject);
+  }, []);
+
+  // Preload image with caching - memoize to avoid dependency issues
   const preloadImage = useCallback(
     (url) => {
       // Extract base URL without cache-busting param for comparison
       const baseUrl = url.split("?")[0];
       const currentBaseUrl = currentImageUrlRef.current?.split("?")[0];
-      
+
       // If we're loading the same image (just different cache param), keep showing current
       const isSameImage = baseUrl === currentBaseUrl;
-      
-      // First clear any previous loading state for this URL
-      imageStates.current.delete(url);
 
-      // Mark this URL as loading and track expected URL
-      imageStates.current.set(url, "loading");
+      // Check if image is already cached
+      if (imageCacheRef.current.has(url)) {
+        setCurrentImageUrl(url);
+        setShowLoadingMessage(false);
+        expectedUrlRef.current = url;
+        return;
+      }
+
+      // Track expected URL
       expectedUrlRef.current = url;
 
       // Only clear current image if it's a different image
@@ -80,8 +103,10 @@ const Dashboard = ({ openCharts}) => {
       img.onload = () => {
         // Only proceed if this is still the expected URL (prevents stale images)
         if (url === expectedUrlRef.current) {
-          // Mark as loaded and update state to show this image
-          imageStates.current.set(url, "loaded");
+          // Add to cache
+          addToCache(url, img);
+
+          // Update state to show this image
           setCurrentImageUrl(url);
           setShowLoadingMessage(false);
         }
@@ -95,9 +120,6 @@ const Dashboard = ({ openCharts}) => {
 
       img.onerror = () => {
         console.error(`Failed to load image: ${url}`);
-
-        // Mark as error but still try to show it if it's the expected URL
-        imageStates.current.set(url, "error");
 
         // Only update UI if this is still the expected URL
         if (url === expectedUrlRef.current) {
@@ -114,7 +136,7 @@ const Dashboard = ({ openCharts}) => {
 
       img.src = url;
     },
-    []
+    [addToCache]
   );
 
   // Fetch map data from API when indicator changes
@@ -227,182 +249,127 @@ const Dashboard = ({ openCharts}) => {
     };
   }, [currentIndicator, visualizationMode, preloadImage]);
 
-  // Listen for climate state changes (scenario or type changes)
-  useEffect(() => {
-    const handleClimateStateChange = async () => {
-      if (currentIndicator === "climate") {
-        // Check if state actually changed to prevent redundant refreshes
-        const currentStateKey = `${globals.INDICATOR_STATE?.scenario}-${globals.INDICATOR_STATE?.type}`;
-        if (lastFetchedStateRef.current === currentStateKey) {
-          console.log("🌡️ Climate state unchanged, skipping refresh");
-          return;
-        }
-        
-        console.log(
-          "🌡️ Climate state changed event received, refreshing image..."
-        );
-        lastFetchedStateRef.current = currentStateKey;
-
-        // Add a small delay to ensure backend has updated globals.INDICATOR_STATE
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        // Fetch new image data
-        try {
-          const timestamp = Date.now();
-          console.log(
-            `📡 Fetching new climate image with timestamp: ${timestamp}`
-          );
-          const response = await api.get(
-            `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}`
-          );
-
-          if (response.data && response.data.image_data) {
-            console.log(`✓ Received image data: ${response.data.image_data}`);
-            let url = response.data.image_data.startsWith("/")
-              ? `${config.media.baseUrl}${response.data.image_data}`
-              : `${config.media.baseUrl}/media/${response.data.image_data}`;
-
-            const isHtml = isHtmlAnimation(url);
-            const isVideo = response.data.type === "video";
-
-            if (!isHtml && !isVideo) {
-              url += `?_=${timestamp}`;
-            }
-
-            console.log(`🖼️ Setting new image URL: ${url}`);
-            setMapData({
-              url,
-              type: response.data.type || "map",
-              loading: false,
-              error: false,
-            });
-
-            if (!isHtml && !isVideo) {
-              preloadImage(url);
-            }
-          }
-        } catch (err) {
-          console.error("❌ Error refreshing climate image:", err);
-        }
-      }
-    };
-
-    window.addEventListener("climateStateChanged", handleClimateStateChange);
-
-    return () => {
-      window.removeEventListener(
-        "climateStateChanged",
-        handleClimateStateChange
-      );
-    };
-  }, [currentIndicator, preloadImage]);
-
-  // Listen for general indicator state changes (for mobility and other indicators)
-  useEffect(() => {
-    const handleIndicatorStateChange = async () => {
-      if (currentIndicator !== "climate") {
-        // Check if state actually changed to prevent redundant refreshes
-        const currentStateKey = `${currentIndicator}-${globals.INDICATOR_STATE?.scenario}`;
-        if (lastFetchedStateRef.current === currentStateKey) {
-          console.log(`📊 ${currentIndicator} state unchanged, skipping refresh`);
-          return;
-        }
-        
-        console.log(
-          `📊 Indicator state changed event received for ${currentIndicator}, refreshing image...`
-        );
-        lastFetchedStateRef.current = currentStateKey;
-
-        // Add a small delay to ensure backend has updated globals.INDICATOR_STATE
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        // Fetch new image data
-        try {
-          const timestamp = Date.now();
-          console.log(
-            `📡 Fetching new ${currentIndicator} image with timestamp: ${timestamp}`
-          );
-          const response = await api.get(
-            `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}`
-          );
-
-          if (response.data && response.data.image_data) {
-            console.log(`✓ Received image data: ${response.data.image_data}`);
-            let url = response.data.image_data.startsWith("/")
-              ? `${config.media.baseUrl}${response.data.image_data}`
-              : `${config.media.baseUrl}/media/${response.data.image_data}`;
-
-            const isHtml = isHtmlAnimation(url);
-            const isVideo = response.data.type === "video";
-
-            if (!isHtml && !isVideo) {
-              url += `?_=${timestamp}`;
-            }
-
-            console.log(`🖼️ Setting new image URL: ${url}`);
-            setMapData({
-              url,
-              type: response.data.type || "map",
-              loading: false,
-              error: false,
-            });
-
-            if (!isHtml && !isVideo) {
-              preloadImage(url);
-            }
-          }
-        } catch (err) {
-          console.error(`❌ Error refreshing ${currentIndicator} image:`, err);
-        }
-      }
-    };
-
-    window.addEventListener(
-      "indicatorStateChanged",
-      handleIndicatorStateChange
-    );
-
-    return () => {
-      window.removeEventListener(
-        "indicatorStateChanged",
-        handleIndicatorStateChange
-      );
-    };
-  }, [currentIndicator, preloadImage]);
-
   // State for tracking current indicator state
   const [currentState, setCurrentState] = useState({
     year: 2023,
     scenario: "present",
   });
 
-  // Listen for state changes and update currentState (event-driven, no polling)
+  // Use refs to access latest values without causing effect re-runs
+  const currentIndicatorRef = useRef(currentIndicator);
+  const preloadImageRef = useRef(preloadImage);
+
   useEffect(() => {
-    const handleStateChange = () => {
-      // Get the current state from globals based on indicator type
-      // Validate scenario - reject legacy "current" value
+    currentIndicatorRef.current = currentIndicator;
+  }, [currentIndicator]);
+
+  useEffect(() => {
+    preloadImageRef.current = preloadImage;
+  }, [preloadImage]);
+
+  // Debounce ref to prevent multiple rapid refreshes
+  const refreshDebounceRef = useRef(null);
+
+  // CONSOLIDATED: Single effect for ALL state change events
+  // This prevents duplicate listeners and ensures consistent handling
+  useEffect(() => {
+    const handleStateChangeEvent = async (eventType) => {
+      const indicator = currentIndicatorRef.current;
+
+      // Update currentState for display (always do this)
       let scenario = globals.INDICATOR_STATE?.scenario;
       if (!scenario || scenario === "current") {
-        scenario = currentIndicator === "climate" ? "existing" : "present";
+        scenario = indicator === "climate" ? "existing" : "present";
       }
-      const newState = {
+      setCurrentState({
         year: globals.INDICATOR_STATE?.year || 2023,
         scenario: scenario,
-      };
-      setCurrentState(newState);
+      });
+
+      // Debounce image refresh to prevent multiple rapid fetches
+      if (refreshDebounceRef.current) {
+        clearTimeout(refreshDebounceRef.current);
+      }
+
+      refreshDebounceRef.current = setTimeout(async () => {
+        // Check if we should refresh image based on indicator type
+        const isClimateEvent = eventType === "climateStateChanged";
+        const shouldRefresh = (indicator === "climate" && isClimateEvent) ||
+                              (indicator !== "climate" && !isClimateEvent);
+
+        if (!shouldRefresh && eventType !== "stateChanged") {
+          return;
+        }
+
+        // Build state key for deduplication
+        const currentStateKey = indicator === "climate"
+          ? `${globals.INDICATOR_STATE?.scenario}-${globals.INDICATOR_STATE?.type}`
+          : `${indicator}-${globals.INDICATOR_STATE?.scenario}`;
+
+        if (lastFetchedStateRef.current === currentStateKey) {
+          return; // Already fetched this state
+        }
+
+        console.log(`📊 State changed for ${indicator}, refreshing image...`);
+        lastFetchedStateRef.current = currentStateKey;
+
+        // Small delay to ensure backend state is committed
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        try {
+          const timestamp = Date.now();
+          const response = await api.get(
+            `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}`
+          );
+
+          if (response.data && response.data.image_data) {
+            let url = response.data.image_data.startsWith("/")
+              ? `${config.media.baseUrl}${response.data.image_data}`
+              : `${config.media.baseUrl}/media/${response.data.image_data}`;
+
+            const isHtml = isHtmlAnimation(url);
+            const isVideo = response.data.type === "video";
+
+            if (!isHtml && !isVideo) {
+              url += `?_=${timestamp}`;
+            }
+
+            setMapData({
+              url,
+              type: response.data.type || "map",
+              loading: false,
+              error: false,
+            });
+
+            if (!isHtml && !isVideo) {
+              preloadImageRef.current(url);
+            }
+          }
+        } catch (err) {
+          console.error(`❌ Error refreshing ${indicator} image:`, err);
+        }
+      }, 100); // 100ms debounce
     };
 
-    // Listen for state change events (fired by DataContext via WebSocket)
-    window.addEventListener("indicatorStateChanged", handleStateChange);
-    window.addEventListener("stateChanged", handleStateChange);
-    window.addEventListener("climateStateChanged", handleStateChange);
+    // Create stable handler functions
+    const onClimateChange = () => handleStateChangeEvent("climateStateChanged");
+    const onIndicatorChange = () => handleStateChangeEvent("indicatorStateChanged");
+    const onStateChange = () => handleStateChangeEvent("stateChanged");
+
+    // Register all listeners ONCE
+    window.addEventListener("climateStateChanged", onClimateChange);
+    window.addEventListener("indicatorStateChanged", onIndicatorChange);
+    window.addEventListener("stateChanged", onStateChange);
 
     return () => {
-      window.removeEventListener("indicatorStateChanged", handleStateChange);
-      window.removeEventListener("stateChanged", handleStateChange);
-      window.removeEventListener("climateStateChanged", handleStateChange);
+      window.removeEventListener("climateStateChanged", onClimateChange);
+      window.removeEventListener("indicatorStateChanged", onIndicatorChange);
+      window.removeEventListener("stateChanged", onStateChange);
+      if (refreshDebounceRef.current) {
+        clearTimeout(refreshDebounceRef.current);
+      }
     };
-  }, [currentIndicator]);
+  }, []); // Empty deps - listeners registered ONCE, use refs for current values
 
   // Memoize state object to prevent unnecessary re-renders and iframe reloads
   // Must be called before any early returns (Rules of Hooks)
