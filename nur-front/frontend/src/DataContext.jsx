@@ -230,7 +230,17 @@ export const DataProvider = ({ children }) => {
                 setGlobalDurationInternal(data.duration);
               }
               if (data.sequence && Array.isArray(data.sequence)) {
-                setPresentationSequenceInternal(data.sequence);
+                // Only update sequence if it's actually different (prevents double updates)
+                const currentSeq = presentationSequenceRef.current;
+                const newSeq = data.sequence;
+                const isDifferent = currentSeq.length !== newSeq.length ||
+                  newSeq.some((s, i) => {
+                    const curr = currentSeq[i];
+                    return !curr || s.indicator !== curr.indicator || s.state !== curr.state || s.type !== curr.type;
+                  });
+                if (isDifferent) {
+                  setPresentationSequenceInternal(data.sequence);
+                }
               }
             }
 
@@ -574,14 +584,15 @@ export const DataProvider = ({ children }) => {
   }, []);
 
   // Function to change state (climate scenario or mobility state)
+  // For climate, type can be 'utci' or 'plan'
   const changeState = useCallback(
-    async (stateName) => {
+    async (stateName, climateType = null) => {
       // Use ref to get the actual current indicator to avoid stale closures
       const actualIndicator = indicatorRef.current;
-      
+
       // Check if this is a climate scenario by looking it up in CLIMATE_SCENARIOS
       const isClimateScenario = Object.values(CLIMATE_SCENARIOS).includes(stateName);
-      
+
       // Handle climate scenarios - use actualIndicator or check if stateName is a climate scenario
       if (actualIndicator === "climate" || (isClimateScenario && actualIndicator !== "mobility")) {
         // Find the scenario key from the display name
@@ -591,22 +602,22 @@ export const DataProvider = ({ children }) => {
 
         if (scenarioKey) {
           try {
-            // Get current visualization type (default to 'utci')
-            const currentType = globals.INDICATOR_STATE?.type || "utci";
+            // Use provided type, fall back to current type, then default to 'utci'
+            const targetType = climateType || globals.INDICATOR_STATE?.type || "utci";
 
             await api.post("/api/actions/set_climate_scenario/", {
               scenario: scenarioKey,
-              type: currentType,
+              type: targetType,
             });
             console.log(
-              `✓ Changed climate state to ${stateName} (${scenarioKey})`
+              `✓ Changed climate state to ${stateName} (${scenarioKey}) type: ${targetType}`
             );
 
             // Update local globals
             globals.INDICATOR_STATE = {
               scenario: scenarioKey,
-              type: currentType,
-              label: `${stateName} - ${currentType.toUpperCase()}`,
+              type: targetType,
+              label: `${stateName} - ${targetType.toUpperCase()}`,
             };
 
             // Trigger a custom event to notify Dashboard of the change
@@ -664,13 +675,14 @@ export const DataProvider = ({ children }) => {
   // Function to switch indicators
   // When targetState is provided (presentation mode), this performs an ATOMIC transition
   // by setting the state BEFORE broadcasting to prevent flashing
+  // For climate, climateType specifies 'utci' or 'plan'
   const changeIndicator = useCallback(
-    async (newIndicator, targetState = null) => {
+    async (newIndicator, targetState = null, climateType = null) => {
       if (
         newIndicator !== currentIndicator &&
         Object.keys(INDICATOR_CONFIG).includes(newIndicator)
       ) {
-        console.log(`Changing indicator to: ${newIndicator}${targetState ? ` with state: ${targetState}` : ''}`);
+        console.log(`Changing indicator to: ${newIndicator}${targetState ? ` with state: ${targetState}` : ''}${climateType ? ` type: ${climateType}` : ''}`);
 
         // Set loading state first to prevent flickering
         setLoading(true);
@@ -690,11 +702,12 @@ export const DataProvider = ({ children }) => {
             const scenarioKey = Object.entries(CLIMATE_SCENARIOS).find(
               ([key, displayName]) => displayName === targetState
             )?.[0] || "existing";
-            const currentType = globals.INDICATOR_STATE?.type || "utci";
+            // Use provided climateType, or default to 'utci'
+            const targetType = climateType || "utci";
             globals.INDICATOR_STATE = {
               scenario: scenarioKey,
-              type: currentType,
-              label: `${targetState} - ${currentType.toUpperCase()}`
+              type: targetType,
+              label: `${targetState} - ${targetType.toUpperCase()}`
             };
           } else {
             // Mobility state
@@ -737,9 +750,10 @@ export const DataProvider = ({ children }) => {
                   ([key, displayName]) => displayName === targetState
                 )?.[0];
                 if (scenarioKey) {
+                  const targetType = climateType || "utci";
                   await api.post("/api/actions/set_climate_scenario/", {
                     scenario: scenarioKey,
-                    type: globals.INDICATOR_STATE?.type || "utci",
+                    type: targetType,
                   });
                 }
               } else {
@@ -755,7 +769,7 @@ export const DataProvider = ({ children }) => {
                   });
                 }
               }
-              console.log(`✓ Atomically set state to: ${targetState}`);
+              console.log(`✓ Atomically set state to: ${targetState}${climateType ? ` (${climateType})` : ''}`);
             }
 
             // Now trigger data fetch - state is already correct
@@ -809,12 +823,12 @@ export const DataProvider = ({ children }) => {
       
       console.log(`[Presentation] Playing Step ${safeIndex + 1}/${presentationSequence.length}:`, currentStep);
 
-      // Change indicator if needed, passing target state to avoid showing default state
-      if (currentStep.indicator !== indicatorRef.current) { 
-          changeIndicator(currentStep.indicator, currentStep.state);
+      // Change indicator if needed, passing target state and type to avoid showing default state
+      if (currentStep.indicator !== indicatorRef.current) {
+          changeIndicator(currentStep.indicator, currentStep.state, currentStep.type);
       } else {
-          // Indicator is already correct, just change the state
-          changeState(currentStep.state);
+          // Indicator is already correct, just change the state (and type for climate)
+          changeState(currentStep.state, currentStep.type);
       }
 
       // Set up timer for next slide
@@ -851,18 +865,36 @@ export const DataProvider = ({ children }) => {
             setPrevIndicator(indicatorRef.current);
             setPrevVisualizationMode(visualizationModeRef.current);
 
-            setSequenceIndex(0);
-
             // Force 'image' mode for presentation
             if (visualizationModeRef.current !== 'image') {
                  handleVisualizationModeChange(null, 'image');
             }
 
+            // First, try to fetch existing presentation state from backend
+            // This ensures we sync with any existing remote controller session
+            try {
+                const existingState = await api.get("/api/actions/get_presentation_state/");
+                if (existingState.data && existingState.data.sequence && existingState.data.sequence.length > 0) {
+                    // Backend has existing state - sync with it
+                    console.log("📡 Syncing with existing presentation state from backend");
+                    setPresentationSequence(existingState.data.sequence);
+                    setSequenceIndex(existingState.data.sequence_index || 0);
+                    setGlobalDuration(existingState.data.duration || 10);
+                    setIsPresentationMode(true);
+                    // Don't auto-play if backend isn't playing (respect remote controller state)
+                    setIsPlaying(existingState.data.is_playing || autoPlay);
+                    return;
+                }
+            } catch (err) {
+                console.log("No existing presentation state, starting fresh");
+            }
+
+            // No existing state - start fresh
+            setSequenceIndex(0);
             setIsPresentationMode(true);
-            // Only auto-start playing if explicitly requested
             setIsPlaying(autoPlay);
-            // Sync full presentation state with backend for remote controller
-            // Use refs to get the latest values, avoiding stale closure issues
+
+            // Sync our state to backend for remote controller
             try {
                 await api.post("/api/actions/set_presentation_state/", {
                     is_playing: autoPlay,

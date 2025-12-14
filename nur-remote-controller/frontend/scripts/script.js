@@ -16,6 +16,9 @@ const STATE_CONFIG = {
     climate: ['Dense Highrise', 'Existing', 'High Rises', 'Low Rise Dense', 'Mass Tree Planting', 'Open Public Space', 'Placemaking']
 };
 
+// Climate types (UTCI and Plan)
+const CLIMATE_TYPES = ['utci', 'plan'];
+
 class PresentationRemote {
     constructor() {
         // State
@@ -535,12 +538,12 @@ class PresentationRemote {
         const indicatorId = globalState.indicator_id;
         let indicatorKey = 'mobility';
         if (indicatorId === 2) indicatorKey = 'climate';
-        
+
         this.elements.indicatorName.textContent = INDICATOR_CONFIG[indicatorKey]?.name || indicatorKey;
-        
+
         const indicatorState = globalState.indicator_state || {};
         let stateName = '-';
-        
+
         if (indicatorKey === 'climate') {
             const scenarioNames = {
                 dense_highrise: 'Dense Highrise',
@@ -552,11 +555,15 @@ class PresentationRemote {
                 placemaking: 'Placemaking'
             };
             stateName = scenarioNames[indicatorState.scenario] || indicatorState.scenario || 'Existing';
-      } else {
+            // Show type if available
+            if (indicatorState.type) {
+                stateName += ` (${indicatorState.type.toUpperCase()})`;
+            }
+        } else {
             stateName = indicatorState.label || indicatorState.scenario || 'Present';
             stateName = stateName.charAt(0).toUpperCase() + stateName.slice(1);
         }
-        
+
         this.elements.stateName.textContent = stateName;
     }
     
@@ -569,12 +576,18 @@ class PresentationRemote {
             `;
             return;
         }
-        
+
         const html = this.slides.map((slide, index) => {
             const isActive = index === this.currentIndex;
             const indicatorName = INDICATOR_CONFIG[slide.indicator]?.name || slide.indicator;
             const canDelete = this.slides.length > 1;
-            
+
+            // For climate, show state + type; for others, just state
+            let stateDisplay = slide.state;
+            if (slide.indicator === 'climate' && slide.type) {
+                stateDisplay = `${slide.state} (${slide.type.toUpperCase()})`;
+            }
+
             return `
                 <div class="slide-item ${isActive ? 'active' : ''}" data-index="${index}">
                     <div class="slide-number">${index + 1}</div>
@@ -584,7 +597,7 @@ class PresentationRemote {
                             <svg class="slide-selector-arrow" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
                         </button>
                         <button class="slide-selector" data-action="state" data-index="${index}">
-                            <span class="slide-selector-text">${slide.state}</span>
+                            <span class="slide-selector-text">${stateDisplay}</span>
                             <svg class="slide-selector-arrow" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
                         </button>
                     </div>
@@ -627,21 +640,34 @@ class PresentationRemote {
         return validStates.includes(state);
     }
     
-    // Check if a slide combo is already in use
-    isSlideUsed(indicator, state, excludeIndex = -1) {
-        return this.slides.some((slide, idx) => 
-            idx !== excludeIndex && slide.indicator === indicator && slide.state === state
-        );
+    // Check if a slide combo is already in use (includes type for climate)
+    isSlideUsed(indicator, state, type = null, excludeIndex = -1) {
+        return this.slides.some((slide, idx) => {
+            if (idx === excludeIndex) return false;
+            if (slide.indicator !== indicator || slide.state !== state) return false;
+            // For climate slides, also check type
+            if (indicator === 'climate') {
+                return slide.type === type;
+            }
+            return true;
+        });
     }
     
-    // Get all valid slides
+    // Get all valid slides (includes type variants for climate)
     getAllValidSlides() {
         const slides = [];
         Object.keys(INDICATOR_CONFIG).forEach(indicator => {
             const states = STATE_CONFIG[indicator] || [];
             states.forEach(state => {
                 if (this.isValidSlide(indicator, state)) {
-                    slides.push({ indicator, state });
+                    if (indicator === 'climate') {
+                        // Climate has two types: utci and plan
+                        CLIMATE_TYPES.forEach(type => {
+                            slides.push({ indicator, state, type });
+                        });
+                    } else {
+                        slides.push({ indicator, state });
+                    }
                 }
             });
         });
@@ -650,22 +676,22 @@ class PresentationRemote {
     
     // Check if all slides are used
     allSlidesUsed() {
-        return this.getAllValidSlides().every(slide => 
-            this.isSlideUsed(slide.indicator, slide.state)
+        return this.getAllValidSlides().every(slide =>
+            this.isSlideUsed(slide.indicator, slide.state, slide.type)
         );
     }
     
-    openDropdown(slideIndex, type) {
-        this.activeDropdown = { slideIndex, type };
+    openDropdown(slideIndex, dropdownType) {
+        this.activeDropdown = { slideIndex, dropdownType };
         const currentSlide = this.slides[slideIndex];
-        
+
         let options = '';
-        
-        if (type === 'indicator') {
+
+        if (dropdownType === 'indicator') {
             Object.entries(INDICATOR_CONFIG).forEach(([key, config]) => {
                 const hasValidStates = (STATE_CONFIG[key] || []).some(s => this.isValidSlide(key, s));
                 if (!hasValidStates) return;
-                
+
                 const isSelected = currentSlide.indicator === key;
                 options += `
                     <div class="dropdown-option ${isSelected ? 'selected' : ''}" data-value="${key}">
@@ -675,35 +701,59 @@ class PresentationRemote {
             });
         } else {
             const states = STATE_CONFIG[currentSlide.indicator] || [];
-            states.forEach(state => {
-                if (!this.isValidSlide(currentSlide.indicator, state)) return;
-                
-                const isSelected = currentSlide.state === state;
-                const isUsed = this.isSlideUsed(currentSlide.indicator, state, slideIndex);
-                
-                options += `
-                    <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}" data-value="${state}">
-                        ${state}
-                        ${isUsed && !isSelected ? '<span class="dropdown-option-note">(in use)</span>' : ''}
-                    </div>
-                `;
-            });
+
+            if (currentSlide.indicator === 'climate') {
+                // For climate, show state + type combinations
+                states.forEach(state => {
+                    if (!this.isValidSlide(currentSlide.indicator, state)) return;
+
+                    CLIMATE_TYPES.forEach(type => {
+                        const isSelected = currentSlide.state === state && currentSlide.type === type;
+                        const isUsed = this.isSlideUsed('climate', state, type, slideIndex);
+                        const typeLabel = type.toUpperCase();
+
+                        options += `
+                            <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}"
+                                 data-value="${state}" data-type="${type}">
+                                ${state} (${typeLabel})
+                                ${isUsed && !isSelected ? '<span class="dropdown-option-note">(in use)</span>' : ''}
+                            </div>
+                        `;
+                    });
+                });
+            } else {
+                // For mobility, show just states
+                states.forEach(state => {
+                    if (!this.isValidSlide(currentSlide.indicator, state)) return;
+
+                    const isSelected = currentSlide.state === state;
+                    const isUsed = this.isSlideUsed(currentSlide.indicator, state, null, slideIndex);
+
+                    options += `
+                        <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}" data-value="${state}">
+                            ${state}
+                            ${isUsed && !isSelected ? '<span class="dropdown-option-note">(in use)</span>' : ''}
+                        </div>
+                    `;
+                });
+            }
         }
-        
+
         options += `<div class="dropdown-cancel">Cancel</div>`;
-        
+
         this.elements.dropdownContent.innerHTML = options;
         this.elements.dropdownMenu.classList.add('open');
-        
+
         // Bind option clicks
         this.elements.dropdownContent.querySelectorAll('.dropdown-option').forEach(opt => {
             opt.addEventListener('click', () => {
                 if (opt.classList.contains('disabled')) return;
                 const value = opt.dataset.value;
-                this.handleDropdownSelection(value);
+                const climateType = opt.dataset.type || null;
+                this.handleDropdownSelection(value, climateType);
             });
         });
-        
+
         this.elements.dropdownContent.querySelector('.dropdown-cancel').addEventListener('click', () => {
             this.closeDropdown();
         });
@@ -714,42 +764,66 @@ class PresentationRemote {
         this.activeDropdown = null;
     }
     
-    async handleDropdownSelection(value) {
+    async handleDropdownSelection(value, climateType = null) {
         if (!this.activeDropdown) return;
-        
-        const { slideIndex, type } = this.activeDropdown;
+
+        const { slideIndex, dropdownType } = this.activeDropdown;
         const newSlides = [...this.slides];
-        
-        if (type === 'indicator') {
-            // When changing indicator, find first available state
-            const availableStates = (STATE_CONFIG[value] || []).filter(s => 
-                this.isValidSlide(value, s) && !this.isSlideUsed(value, s, slideIndex)
-            );
-            const firstState = availableStates[0] || STATE_CONFIG[value]?.[0];
-            newSlides[slideIndex] = { indicator: value, state: firstState };
+
+        if (dropdownType === 'indicator') {
+            // When changing indicator, find first available state+type combo
+            if (value === 'climate') {
+                // Find first unused climate state+type combo
+                const states = STATE_CONFIG[value] || [];
+                let foundSlide = null;
+                for (const state of states) {
+                    if (!this.isValidSlide(value, state)) continue;
+                    for (const type of CLIMATE_TYPES) {
+                        if (!this.isSlideUsed(value, state, type, slideIndex)) {
+                            foundSlide = { indicator: value, state, type };
+                            break;
+                        }
+                    }
+                    if (foundSlide) break;
+                }
+                newSlides[slideIndex] = foundSlide || { indicator: value, state: states[0], type: 'utci' };
+            } else {
+                // For mobility, find first available state
+                const availableStates = (STATE_CONFIG[value] || []).filter(s =>
+                    this.isValidSlide(value, s) && !this.isSlideUsed(value, s, null, slideIndex)
+                );
+                const firstState = availableStates[0] || STATE_CONFIG[value]?.[0];
+                newSlides[slideIndex] = { indicator: value, state: firstState };
+            }
         } else {
-            newSlides[slideIndex] = { ...newSlides[slideIndex], state: value };
+            // State selection - for climate, climateType is provided
+            if (newSlides[slideIndex].indicator === 'climate' && climateType) {
+                newSlides[slideIndex] = { indicator: 'climate', state: value, type: climateType };
+            } else {
+                newSlides[slideIndex] = { ...newSlides[slideIndex], state: value };
+            }
         }
-        
+
         this.slides = newSlides;
         this.closeDropdown();
-        
+
         // Sync with backend
         await this.syncSequence();
         this.updateUI();
     }
     
     async addSlide() {
-        // Find first unused valid slide
-        const unusedSlide = this.getAllValidSlides().find(slide => 
-            !this.isSlideUsed(slide.indicator, slide.state)
+        // Find first unused valid slide (including type for climate)
+        const unusedSlide = this.getAllValidSlides().find(slide =>
+            !this.isSlideUsed(slide.indicator, slide.state, slide.type)
         );
-        
+
         if (unusedSlide) {
             this.slides = [...this.slides, unusedSlide];
             await this.syncSequence();
             this.updateUI();
         }
+        // Don't add duplicates if all slides are used
     }
     
     async removeSlide(index) {

@@ -195,7 +195,7 @@ const SlideItem = ({
                         endIcon={<ArrowDropDownIcon fontSize="small" sx={{ color: '#64B5F6' }} />}
                     >
                         <Typography variant="body2" sx={{ textTransform: 'none', fontWeight: 500 }}>
-                            {step.state}
+                            {step.indicator === 'climate' && step.type ? `${step.state} (${step.type.toUpperCase()})` : step.state}
                         </Typography>
                     </Button>
                 </Stack>
@@ -255,9 +255,6 @@ const PresentationMode = () => {
             return true;
         });
     };
-
-    const defaultIndicator = Object.keys(indicatorConfig)[0];
-    const defaultState = StateConfig[defaultIndicator]?.find(s => isValidSlide(defaultIndicator, s));
 
     const [activeMenu, setActiveMenu] = useState(null);
     const [draggedIndex, setDraggedIndex] = useState(null);
@@ -514,40 +511,66 @@ const PresentationMode = () => {
         setActiveMenu(null);
     };
 
-    const handleSelection = (indicator, state) => {
+    const handleSelection = (indicator, state, slideType = null) => {
         if (!activeMenu) return;
-        
-        const { index, type } = activeMenu;
+
+        const { index, type: menuType } = activeMenu;
         const newSequence = [...presentationSequence];
-        
-        if (type === 'indicator') {
+        const currentSlide = newSequence[index];
+
+        if (menuType === 'indicator') {
             // When changing indicator, find first unused valid state
-            const availableStates = StateConfig[indicator]?.filter(s => 
-                isValidSlide(indicator, s) && !isSlideUsed(indicator, s, index)
-            ) || [];
-            const firstState = availableStates[0] || StateConfig[indicator]?.[0];
-            newSequence[index] = { indicator, state: firstState };
-        } else {
-            newSequence[index] = { ...newSequence[index], state };
+            // For climate, also need to find unused type
+            if (indicator === 'climate') {
+                // Find first unused climate state+type combo
+                const availableSlide = StateConfig[indicator]?.flatMap(s => {
+                    if (!isValidSlide(indicator, s)) return [];
+                    const slides = [];
+                    if (!isSlideUsed(indicator, s, 'utci', index)) slides.push({ state: s, type: 'utci' });
+                    if (!isSlideUsed(indicator, s, 'plan', index)) slides.push({ state: s, type: 'plan' });
+                    return slides;
+                })?.[0];
+                if (availableSlide) {
+                    newSequence[index] = { indicator, state: availableSlide.state, type: availableSlide.type };
+                } else {
+                    // Fallback to first state
+                    const firstState = StateConfig[indicator]?.[0];
+                    newSequence[index] = { indicator, state: firstState, type: 'utci' };
+                }
+            } else {
+                // Non-climate indicator
+                const availableStates = StateConfig[indicator]?.filter(s =>
+                    isValidSlide(indicator, s) && !isSlideUsed(indicator, s, null, index)
+                ) || [];
+                const firstState = availableStates[0] || StateConfig[indicator]?.[0];
+                newSequence[index] = { indicator, state: firstState };
+            }
+        } else if (menuType === 'state') {
+            // Changing state - for climate, slideType contains the new type
+            if (currentSlide.indicator === 'climate' && slideType) {
+                newSequence[index] = { ...currentSlide, state, type: slideType };
+            } else {
+                newSequence[index] = { ...currentSlide, state };
+            }
+        } else if (menuType === 'type') {
+            // Changing type (climate only)
+            newSequence[index] = { ...currentSlide, type: slideType };
         }
-        
+
         setPresentationSequence(newSequence);
         handleMenuClose();
     };
 
     const addStep = () => {
-        // Find first unused valid slide
-        const unusedSlide = allValidSlides.find(slide => 
-            !isSlideUsed(slide.indicator, slide.state)
+        // Find first unused valid slide (must pass type for proper climate detection)
+        const unusedSlide = allValidSlides.find(slide =>
+            !isSlideUsed(slide.indicator, slide.state, slide.type)
         );
-        
+
         if (unusedSlide) {
             setPresentationSequence([...presentationSequence, unusedSlide]);
-        } else {
-            // Fallback if all used
-            const newStep = { indicator: defaultIndicator, state: defaultState };
-            setPresentationSequence([...presentationSequence, newStep]);
         }
+        // No fallback - don't add duplicates when all slides are used
     };
 
     const removeStep = (index) => {
@@ -596,8 +619,8 @@ const PresentationMode = () => {
         setDropTargetIndex(null);
     };
 
-    const allSlidesUsed = allValidSlides.every(slide => 
-        isSlideUsed(slide.indicator, slide.state)
+    const allSlidesUsed = allValidSlides.every(slide =>
+        isSlideUsed(slide.indicator, slide.state, slide.type)
     );
 
     const isVideo = thumbnailUrl?.includes('.mp4');
@@ -664,7 +687,7 @@ const PresentationMode = () => {
                         Now Showing
                     </Typography>
                     <Typography variant="h5" sx={{ color: 'white', mb: 3, fontWeight: 500 }}>
-                        {indicatorConfig[currentStep?.indicator]?.name.replace(' Dashboard', '')} - {currentStep?.state}
+                        {indicatorConfig[currentStep?.indicator]?.name.replace(' Dashboard', '')} - {currentStep?.indicator === 'climate' && currentStep?.type ? `${currentStep?.state} (${currentStep.type.toUpperCase()})` : currentStep?.state}
                     </Typography>
 
                     {/* Navigation & Timer Controls */}
@@ -871,36 +894,69 @@ const PresentationMode = () => {
                     );
                 })}
 
-                {activeMenu?.type === 'state' && StateConfig[presentationSequence[activeMenu.index]?.indicator]?.map((st) => {
-                    // Check if valid and if already used
+                {activeMenu?.type === 'state' && (() => {
                     const indicator = presentationSequence[activeMenu.index]?.indicator;
-                    if (!isValidSlide(indicator, st)) return null;
-                    
-                    const isUsed = isSlideUsed(indicator, st, activeMenu.index);
-                    const isCurrentSelection = presentationSequence[activeMenu.index]?.state === st;
-                    
-                    return (
-                        <MenuItem 
-                            key={st} 
-                            onClick={() => !isUsed && handleSelection(indicator, st)}
-                            selected={isCurrentSelection}
-                            disabled={isUsed && !isCurrentSelection}
-                            sx={{
-                                opacity: isUsed && !isCurrentSelection ? 0.4 : 1,
-                                '&.Mui-disabled': {
-                                    opacity: 0.4,
-                                }
-                            }}
-                        >
-                            {st}
-                            {isUsed && !isCurrentSelection && (
-                                <Typography variant="caption" sx={{ ml: 1, color: 'text.secondary' }}>
-                                    (in use)
-                                </Typography>
-                            )}
-                        </MenuItem>
-                    );
-                })}
+                    const currentSlide = presentationSequence[activeMenu.index];
+                    const states = StateConfig[indicator] || [];
+
+                    if (indicator === 'climate') {
+                        // For climate, show state+type combinations
+                        const items = [];
+                        states.forEach(st => {
+                            if (!isValidSlide(indicator, st)) return;
+                            ['utci', 'plan'].forEach(type => {
+                                const isUsed = isSlideUsed(indicator, st, type, activeMenu.index);
+                                const isCurrentSelection = currentSlide?.state === st && currentSlide?.type === type;
+                                items.push(
+                                    <MenuItem
+                                        key={`${st}-${type}`}
+                                        onClick={() => !isUsed && handleSelection(indicator, st, type)}
+                                        selected={isCurrentSelection}
+                                        disabled={isUsed && !isCurrentSelection}
+                                        sx={{
+                                            opacity: isUsed && !isCurrentSelection ? 0.4 : 1,
+                                            '&.Mui-disabled': { opacity: 0.4 }
+                                        }}
+                                    >
+                                        {st} ({type.toUpperCase()})
+                                        {isUsed && !isCurrentSelection && (
+                                            <Typography variant="caption" sx={{ ml: 1, color: 'text.secondary' }}>
+                                                (in use)
+                                            </Typography>
+                                        )}
+                                    </MenuItem>
+                                );
+                            });
+                        });
+                        return items;
+                    } else {
+                        // For non-climate indicators, show just states
+                        return states.map(st => {
+                            if (!isValidSlide(indicator, st)) return null;
+                            const isUsed = isSlideUsed(indicator, st, null, activeMenu.index);
+                            const isCurrentSelection = currentSlide?.state === st;
+                            return (
+                                <MenuItem
+                                    key={st}
+                                    onClick={() => !isUsed && handleSelection(indicator, st)}
+                                    selected={isCurrentSelection}
+                                    disabled={isUsed && !isCurrentSelection}
+                                    sx={{
+                                        opacity: isUsed && !isCurrentSelection ? 0.4 : 1,
+                                        '&.Mui-disabled': { opacity: 0.4 }
+                                    }}
+                                >
+                                    {st}
+                                    {isUsed && !isCurrentSelection && (
+                                        <Typography variant="caption" sx={{ ml: 1, color: 'text.secondary' }}>
+                                            (in use)
+                                        </Typography>
+                                    )}
+                                </MenuItem>
+                            );
+                        });
+                    }
+                })()}
             </Menu>
 
             {/* Info Dialog */}
