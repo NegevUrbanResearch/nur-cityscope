@@ -16,7 +16,6 @@ from .models import (
     State,
     DashboardFeedState,
     LayerConfig,
-    MapType,
 )
 
 from .serializers import (
@@ -25,9 +24,7 @@ from .serializers import (
     IndicatorImageSerializer,
     StateSerializer,
     DashboardFeedStateSerializer,
-    StateSerializer,
     LayerConfigSerializer,
-    MapTypeSerializer,
 )
 
 
@@ -74,11 +71,6 @@ class DashboardFeedStateViewSet(viewsets.ModelViewSet):
 class LayerConfigViewSet(viewsets.ModelViewSet):
     queryset = LayerConfig.objects.all()
     serializer_class = LayerConfigSerializer
-
-
-class MapTypeViewSet(viewsets.ModelViewSet):
-    queryset = MapType.objects.all()
-    serializer_class = MapTypeSerializer
 
 
 # Now lets program the views for the API as an interactive platform
@@ -186,16 +178,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 # Use minimal default state
                 globals.INDICATOR_STATE = {"year": 2023}
 
-    def check_and_send_data(self):
-        # Si la condición es válida, enviamos los datos a los consumidores
-        channel_layer = get_channel_layer()
-        message = {
-            "indicator_id": globals.INDICATOR_ID,
-            "indicator_state": globals.INDICATOR_STATE,
-            "visualization_mode": globals.VISUALIZATION_MODE,
-        }
-        print(message)
-
     @action(detail=False, methods=["get"])
     def get_global_variables(self, request):
         """Get current global variables (indicator, state, visualization mode, presentation state)"""
@@ -225,7 +207,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
             )
 
         globals.VISUALIZATION_MODE = mode
-        self.check_and_send_data()
         broadcast_indicator_update()
         print(f"✓ Visualization mode set to: {mode}")
 
@@ -318,7 +299,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 globals.INDICATOR_STATE = globals.DEFAULT_STATES.copy()
                 print(f"✓ Set default mobility state: {globals.INDICATOR_STATE}")
             
-            self.check_and_send_data()
             broadcast_indicator_update()
             return True
         except Exception as e:
@@ -411,66 +391,11 @@ class CustomActionsViewSet(viewsets.ViewSet):
         try:
             globals.INDICATOR_STATE = state
             print(f"✓ State updated to: {state}")
-            self.check_and_send_data()
             broadcast_indicator_update()
             return True
         except Exception as e:
             print(f"❌ Error setting state: {e}")
             return False
-
-    @action(detail=False, methods=["get"], url_path="set_map_state")
-    def receive_data_from_rfid(self, request):
-        slots_param = request.GET.get("slots", "")
-        # print('slots_param ', slots_param)
-        keys = globals.INDICATOR_STATE.keys()
-        # print('INDICATOR_STATE', globals.INDICATOR_STATE)
-        print("list_temp", globals.list_temp)
-        states = {f"{key}": 0 for key in keys}
-        # print('states ', states)
-        if slots_param:
-            # print('globals.SLOTS_IDS', globals.SLOTS_IDS)
-            rfid_tags = sorted(slots_param.split(","))
-            # print('rfid_tags ', rfid_tags)
-
-            # print('len(globals.list_temp)', len(globals.list_temp))
-            # print('len(globals.INDICATOR_STATE)', len(globals.INDICATOR_STATE))
-            if len(globals.list_temp) != len(globals.INDICATOR_STATE):
-                # print(f'Number of tags reported: {len(rfid_tags)}')
-                globals.list_temp += rfid_tags
-                globals.list_temp = list(set(globals.list_temp))
-                return JsonResponse(
-                    {"status": "ok", "message": "RFID tag has been saved"}
-                )
-            else:
-                print("All tags reported")
-                for pos, rfid_tag in enumerate(globals.list_temp):
-                    # print('rfid_tag ', rfid_tag)
-                    if rfid_tag not in globals.SLOTS_IDS:
-                        continue
-                    else:
-                        # print(globals.SLOTS_IDS[rfid_tag])
-                        (SLOT, STATE) = globals.SLOTS_IDS[rfid_tag]
-                        # print('SLOT ', SLOT)
-                        # print('STATE ', STATE)
-                        states[f"{SLOT}"] = STATE
-                # print('states ', states)
-                setted = self._set_current_state(states)
-                globals.list_temp = []
-                # print('setted ', setted)
-                print("New state setted: ", globals.INDICATOR_STATE)
-                if setted:
-                    return JsonResponse({"status": "ok", "states": states})
-                else:
-                    return JsonResponse(
-                        {"status": "error", "message": "Failed to set current state"}
-                    )
-
-    @action(detail=False, methods=["get"])
-    def receive_data_from_buttons_page(self, request):
-        print(request.body)
-        if request.method == "GET":
-            type_param = request.GET.get("map_type", 1)
-            self._set_current_indicator(type_param)
 
     @action(detail=False, methods=["get"])
     def get_image_data(self, request):
@@ -786,7 +711,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 else:
                     print(f"Warning: HTML map file not found at {file_path}")
 
-        # No real map data available - return error instead of synthetic data
+        # No map data available - return error
         response = JsonResponse(
             {
                 "error": "No visualization data available",
@@ -798,25 +723,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
         )
         self._add_no_cache_headers(response)
         return response
-
-    def _process_data_for_deckgl(self, indicator_data, indicator_type, year):
-        """
-        DEPRECATED: This method previously generated synthetic data.
-        Real data should be stored in LayerConfig and served via get_deckgl_data.
-        This is kept for backward compatibility but should not be used.
-        """
-        from datetime import datetime
-
-        # Return minimal metadata with deprecation warning
-        return {
-            "error": "Synthetic data generation has been removed",
-            "message": "Please use real visualization data stored in LayerConfig",
-            "metadata": {
-                "timestamp": datetime.now().isoformat(),
-                "year": year,
-                "indicator_type": indicator_type,
-            },
-        }
 
     @action(detail=False, methods=["get"])
     def get_current_dashboard_data(self, request):

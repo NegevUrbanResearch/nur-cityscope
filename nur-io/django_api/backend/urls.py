@@ -5,14 +5,13 @@ from rest_framework import routers
 from . import views
 from .views import (
     DashboardFeedStateViewSet,
-    MapTypeViewSet,
     CustomActionsViewSet,
     IndicatorViewSet,
     StateViewSet,
     IndicatorDataViewSet,
     IndicatorImageViewSet,
     LayerConfigViewSet,
-    ImageUploadView,  # Import the new view
+    ImageUploadView,
     serve_map_file,
 )
 
@@ -35,7 +34,6 @@ router = DefaultRouter()
 router.register(
     r"dashboard_feed_state", DashboardFeedStateViewSet, basename="dashboard-feed-state"
 )
-router.register(r"map_type", MapTypeViewSet, basename="map-type")
 router.register(r"indicators", IndicatorViewSet, basename="indicator")
 router.register(r"states", StateViewSet, basename="state")
 router.register(r"indicator_data", IndicatorDataViewSet, basename="indicator-data")

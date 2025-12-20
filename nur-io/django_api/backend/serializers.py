@@ -7,7 +7,6 @@ from .models import (
     State,
     DashboardFeedState,
     LayerConfig,
-    MapType,
 )
 
 
@@ -44,10 +43,4 @@ class DashboardFeedStateSerializer(serializers.ModelSerializer):
 class LayerConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = LayerConfig
-        fields = "__all__"
-
-
-class MapTypeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = MapType
         fields = "__all__"

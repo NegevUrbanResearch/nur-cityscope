@@ -19,21 +19,12 @@ mkdir -p "$SCRIPT_DIR/nur-io/backend/migrations"
 touch "$SCRIPT_DIR/nur-io/core/migrations/__init__.py"
 touch "$SCRIPT_DIR/nur-io/backend/migrations/__init__.py"
 
-# Ensure logo files are present in all required locations
+# Copy logo to required locations
 echo "Ensuring logo files are in place..."
 mkdir -p "$SCRIPT_DIR/nur-io/django_api/media"
 mkdir -p "$SCRIPT_DIR/nur-front/frontend/public/media"
-
-# Copy logo if it exists in any location
-if [ -f "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" ]; then
-  cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" "$SCRIPT_DIR/nur-io/django_api/media/"
-  cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" "$SCRIPT_DIR/nur-front/frontend/public/media/"
-elif [ -f "$SCRIPT_DIR/nur-front/frontend/public/media/Nur-Logo_3x-_1_.svg" ]; then
-  cp "$SCRIPT_DIR/nur-front/frontend/public/media/Nur-Logo_3x-_1_.svg" "$SCRIPT_DIR/nur-io/django_api/media/"
-elif [ -f "$SCRIPT_DIR/nur-io/django_api/media/Nur-Logo_3x-_1_.svg" ]; then
-  cp "$SCRIPT_DIR/nur-io/django_api/media/Nur-Logo_3x-_1_.svg" "$SCRIPT_DIR/nur-front/frontend/public/media/"
-  cp "$SCRIPT_DIR/nur-io/django_api/media/Nur-Logo_3x-_1_.svg" "$SCRIPT_DIR/nur-front/frontend/public/"
-fi
+cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" "$SCRIPT_DIR/nur-io/django_api/media/"
+cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" "$SCRIPT_DIR/nur-front/frontend/public/media/"
 
 # Create the Docker network if it doesn't exist
 echo "Creating Docker network if it doesn't exist..."
@@ -47,15 +38,9 @@ docker-compose up -d
 echo "Waiting for services to be ready..."
 sleep 10
 
-# Copy logo file directly into nginx container if it exists, checks multiple locations
+# Copy logo file into nginx container
 echo "Ensuring logo is accessible in nginx container..."
-if [ -f "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" ]; then
-  docker cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
-elif [ -f "$SCRIPT_DIR/nur-front/frontend/public/media/Nur-Logo_3x-_1_.svg" ]; then
-  docker cp "$SCRIPT_DIR/nur-front/frontend/public/media/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
-elif [ -f "$SCRIPT_DIR/nur-io/django_api/media/Nur-Logo_3x-_1_.svg" ]; then
-  docker cp "$SCRIPT_DIR/nur-io/django_api/media/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
-fi
+docker cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
 
 # Run migrations
 echo "Running database migrations..."
