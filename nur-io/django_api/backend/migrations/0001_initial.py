@@ -24,7 +24,7 @@ def populate_general_states(apps, schema_editor):
             defaults={"state_values": state_data},
         )
 
-    print(f"✓ Created {len(general_states)} general states")
+    print(f"[OK] Created {len(general_states)} general states")
 
 
 def populate_climate_scenarios(apps, schema_editor):
@@ -70,7 +70,7 @@ def populate_climate_scenarios(apps, schema_editor):
             },
         )
 
-    print(f"✓ Created {len(scenarios) * 2} climate scenario states")
+    print(f"[OK] Created {len(scenarios) * 2} climate scenario states")
 
 
 def reverse_general_states(apps, schema_editor):

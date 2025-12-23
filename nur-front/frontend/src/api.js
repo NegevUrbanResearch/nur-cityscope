@@ -1,5 +1,6 @@
 import axios from 'axios';
 import config from './config';
+import { logErrorToBackend } from './utils/errorLogger';
 
 // Create a pre-configured axios instance
 const api = axios.create({
@@ -55,6 +56,19 @@ api.interceptors.response.use(
         console.error('Error status:', error.response.status);
         console.error('Error data:', error.response.data);
       }
+      
+      // Log to backend for debugging
+      logErrorToBackend(error, {
+        type: 'APIError',
+        component: 'api.js',
+        additionalData: {
+          url: url,
+          method: error.config?.method || 'GET',
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          responseData: error.response?.data,
+        },
+      });
     }
     // For transient 404s, just log a brief message
     else {

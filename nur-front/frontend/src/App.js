@@ -20,6 +20,7 @@ import Navbar from "./components/Navbar";
 import Dashboard from "./pages/Dashboard";
 import PresentationMode from "./pages/PresentationMode";
 import { useAppData } from "./DataContext";
+import { setupGlobalErrorHandlers } from "./utils/errorLogger";
 import "./style/index.css";
 
 // Wrapper component to render Dashboard with URL params
@@ -32,6 +33,11 @@ const DashboardWrapper = ({ openCharts }) => {
 const App = () => {
   const navigate = useNavigate(); 
   const location = useLocation();
+  
+  // Set up global error handlers on mount
+  useEffect(() => {
+    setupGlobalErrorHandlers();
+  }, []);
   
   const { 
     loading, 

@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import api from "./api"; // Import the pre-configured api instance
 import isEqual from "lodash/isEqual";
+import { logErrorToBackend } from "./utils/errorLogger";
 
 import config from "./config";
 import globals from "./globals";
@@ -106,6 +107,17 @@ export const DataProvider = ({ children }) => {
   // Wrapper to sync sequence with backend when changed
   const setPresentationSequence = useCallback((newSequence) => {
     setPresentationSequenceInternal(newSequence);
+    presentationSequenceRef.current = newSequence;
+    // Sync sequence to backend if in presentation mode
+    if (isPresentationModeRef.current) {
+      setTimeout(() => {
+        api.post("/api/actions/set_presentation_state/", {
+          sequence: newSequence
+        }).then(() => {
+          console.log(`✓ Synced sequence to backend: ${newSequence.length} slides`);
+        }).catch(err => console.error("Error syncing sequence:", err));
+      }, 0);
+    }
     // Sync with backend if in presentation mode
     if (isPresentationModeRef.current) {
       api.post("/api/actions/set_presentation_state/", { 
@@ -121,11 +133,16 @@ export const DataProvider = ({ children }) => {
   const setSequenceIndex = useCallback((newIndexOrFn) => {
     setSequenceIndexInternal((prev) => {
       const newIndex = typeof newIndexOrFn === 'function' ? newIndexOrFn(prev) : newIndexOrFn;
-      // Sync with backend if in presentation mode
+      // Sync with backend if in presentation mode - use async to ensure it happens
       if (isPresentationModeRef.current) {
-        api.post("/api/actions/set_presentation_state/", { 
-          sequence_index: newIndex 
-        }).catch(err => console.error("Error syncing index:", err));
+        // Use setTimeout to ensure state update happens first, then sync
+        setTimeout(() => {
+          api.post("/api/actions/set_presentation_state/", { 
+            sequence_index: newIndex 
+          }).then(() => {
+            console.log(`✓ Synced sequence index to backend: ${newIndex}`);
+          }).catch(err => console.error("Error syncing index:", err));
+        }, 0);
       }
       return newIndex;
     });
@@ -134,11 +151,16 @@ export const DataProvider = ({ children }) => {
   // Wrapper to sync duration with backend
   const setGlobalDuration = useCallback((newDuration) => {
     setGlobalDurationInternal(newDuration);
+    globalDurationRef.current = newDuration;
     // Sync with backend if in presentation mode
     if (isPresentationModeRef.current) {
-      api.post("/api/actions/set_presentation_state/", { 
-        duration: newDuration 
-      }).catch(err => console.error("Error syncing duration:", err));
+      setTimeout(() => {
+        api.post("/api/actions/set_presentation_state/", { 
+          duration: newDuration 
+        }).then(() => {
+          console.log(`✓ Synced duration to backend: ${newDuration}s`);
+        }).catch(err => console.error("Error syncing duration:", err));
+      }, 0);
     }
   }, []);
 
@@ -166,6 +188,10 @@ export const DataProvider = ({ children }) => {
   // Update refs when state changes
   useEffect(() => {
     indicatorRef.current = currentIndicator;
+    isPresentationModeRef.current = isPresentationMode;
+    isPlayingRef.current = isPlaying;
+    presentationSequenceRef.current = presentationSequence;
+    globalDurationRef.current = globalDuration;
   }, [currentIndicator]);
 
   useEffect(() => {
@@ -295,6 +321,14 @@ export const DataProvider = ({ children }) => {
 
         wsRef.current.onerror = (error) => {
           console.error('❌ WebSocket error:', error);
+          // Log to backend
+          logErrorToBackend(error, {
+            type: 'WebSocketError',
+            component: 'DataContext',
+            additionalData: {
+              wsUrl: wsUrl,
+            },
+          });
         };
       } catch (err) {
         console.error('❌ WebSocket connection failed:', err);
@@ -838,7 +872,9 @@ export const DataProvider = ({ children }) => {
           if (isPlayingRef.current && isPresentationModeRef.current) {
               // Use ref to get latest sequence length, avoiding stale closure
               const currentSequenceLength = presentationSequenceRef.current?.length || 1;
-              setSequenceIndex((prevIndex) => (prevIndex + 1) % currentSequenceLength);
+              const nextIndex = (safeIndex + 1) % currentSequenceLength;
+              console.log(`[Presentation] Auto-advancing to slide ${nextIndex + 1}/${currentSequenceLength}`);
+              setSequenceIndex(nextIndex);
           }
       }, durationMs);
   
@@ -890,18 +926,22 @@ export const DataProvider = ({ children }) => {
             }
 
             // No existing state - start fresh
-            setSequenceIndex(0);
             setIsPresentationMode(true);
+            // Update ref immediately so togglePlayPause works
+            isPresentationModeRef.current = true;
+            setSequenceIndex(0);
             setIsPlaying(autoPlay);
+            isPlayingRef.current = autoPlay;
 
             // Sync our state to backend for remote controller
             try {
                 await api.post("/api/actions/set_presentation_state/", {
                     is_playing: autoPlay,
-                    sequence: presentationSequenceRef.current,
+                    sequence: presentationSequenceRef.current || [],
                     sequence_index: 0,
                     duration: globalDurationRef.current
                 });
+                console.log("✓ Presentation state synced to backend");
             } catch (err) {
                 console.error("Error syncing presentation state:", err);
             }

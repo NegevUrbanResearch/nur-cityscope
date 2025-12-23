@@ -31,12 +31,12 @@ class Command(BaseCommand):
 
         if not mobility or not climate:
             self.stdout.write(
-                self.style.ERROR("❌ Indicators not found! Run migrations first.")
+                self.style.ERROR("[ERROR] Indicators not found! Run migrations first.")
             )
             return
 
         # Process Mobility data (Present/Survey states)
-        self.stdout.write(self.style.SUCCESS("\n📊 Processing Mobility data..."))
+        self.stdout.write(self.style.SUCCESS("\n[INFO] Processing Mobility data..."))
         for state in general_states:
             scenario = state.state_values.get("scenario", "present")
             label = state.state_values.get("label", scenario)
@@ -46,7 +46,7 @@ class Command(BaseCommand):
                 indicator=mobility, state=state
             )
             if created:
-                self.stdout.write(f"  ✓ Created IndicatorData: Mobility - {label}")
+                self.stdout.write(f"  [OK] Created IndicatorData: Mobility - {label}")
 
             # Load image
             image_path = self._find_mobility_image(scenario)
@@ -57,10 +57,10 @@ class Command(BaseCommand):
                 if img_created or img.image != image_path:
                     img.image = image_path
                     img.save()
-                self.stdout.write(f"    🖼️  Image: {image_path}")
+                self.stdout.write(f"    [IMG] Image: {image_path}")
             else:
                 self.stdout.write(
-                    self.style.WARNING(f"    ⚠️  No image found for {scenario}")
+                    self.style.WARNING(f"    [WARN] No image found for {scenario}")
                 )
 
             # Load HTML map if exists
@@ -75,10 +75,10 @@ class Command(BaseCommand):
                         }
                     },
                 )
-                self.stdout.write(f"    🗺️  Map: {map_path}")
+                self.stdout.write(f"    [MAP] Map: {map_path}")
 
         # Process Climate data (scenario states)
-        self.stdout.write(self.style.SUCCESS("\n🌡️  Processing Climate data..."))
+        self.stdout.write(self.style.SUCCESS("\n[INFO] Processing Climate data..."))
         for state in climate_states:
             scenario_name = state.scenario_name
             scenario_type = state.scenario_type
@@ -89,7 +89,7 @@ class Command(BaseCommand):
             )
             if created:
                 self.stdout.write(
-                    f"  ✓ Created IndicatorData: {scenario_name} ({scenario_type})"
+                    f"  [OK] Created IndicatorData: {scenario_name} ({scenario_type})"
                 )
 
             # Load climate image
@@ -101,26 +101,26 @@ class Command(BaseCommand):
                 if img_created or img.image != image_path:
                     img.image = image_path
                     img.save()
-                self.stdout.write(f"    🖼️  Image: {image_path}")
+                self.stdout.write(f"    [IMG] Image: {image_path}")
             else:
                 self.stdout.write(
                     self.style.WARNING(
-                        f"    ⚠️  No image found for {scenario_name} ({scenario_type})"
+                        f"    [WARN] No image found for {scenario_name} ({scenario_type})"
                     )
                 )
 
         self.stdout.write(
             self.style.SUCCESS(
-                "\n✅ Data structure created and real data loaded successfully!"
+                "\n[SUCCESS] Data structure created and real data loaded successfully!"
             )
         )
         self.stdout.write(
             self.style.SUCCESS(
-                f"   📊 {IndicatorData.objects.count()} IndicatorData entries"
+                f"   [INFO] {IndicatorData.objects.count()} IndicatorData entries"
             )
         )
         self.stdout.write(
-            self.style.SUCCESS(f"   🖼️  {IndicatorImage.objects.count()} images linked")
+            self.style.SUCCESS(f"   [INFO] {IndicatorImage.objects.count()} images linked")
         )
 
     def _find_mobility_image(self, scenario):
