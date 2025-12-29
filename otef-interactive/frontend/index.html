@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>OTEF Interactive Map</title>
+    
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Proj4 for coordinate transformations -->
+    <script src="https://unpkg.com/proj4@2.9.0/dist/proj4.js"></script>
+    
+    <!-- PMTiles for vector tiles (uncomment after generating tiles) -->
+    <!--
+    <script src="https://unpkg.com/pmtiles@2.11.0/dist/index.js"></script>
+    <script src="https://unpkg.com/protomaps-leaflet@2.0.0/dist/protomaps-leaflet.js"></script>
+    -->
+    
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div id="map"></div>
+    
+    <!-- Floating controls -->
+    <div id="controls">
+        <button id="layerToggle">Layers</button>
+        <div id="connectionStatus" class="status-disconnected">●</div>
+    </div>
+    
+    <!-- Layer panel (collapsible) -->
+    <div id="layerPanel" class="panel hidden">
+        <h3>Layers</h3>
+        <label><input type="checkbox" id="toggleParcels" disabled> Parcels (loading...)</label>
+        <label><input type="checkbox" id="toggleRoads" checked disabled> Roads (loading...)</label>
+        <label><input type="checkbox" id="toggleModel"> Model Base</label>
+        
+        <!-- Parcels Legend -->
+        <div id="parcelsLegend" class="legend-section" style="display: none;">
+            <h4>Parcels - Land Use</h4>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #FFD700; border: 1px solid #B8860B;"></span>
+                <span>Residential</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #FF6B6B; border: 1px solid #CC5555;"></span>
+                <span>Commercial</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #9370DB; border: 1px solid #7B5CB5;"></span>
+                <span>Industry</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #90EE90; border: 1px solid #5FAD5F;"></span>
+                <span>Public Open Space</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #228B22; border: 1px solid #1A6B1A;"></span>
+                <span>Forest</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #C0C0C0; border: 1px solid #808080;"></span>
+                <span>Roads</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #87CEEB; border: 1px solid #6BA5C7;"></span>
+                <span>Public Institution</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #E0E0E0; border: 1px solid #B0B0B0;"></span>
+                <span>Other</span>
+            </div>
+        </div>
+        
+        <!-- Roads Legend -->
+        <div id="roadsLegend" class="legend-section">
+            <h4>Roads</h4>
+            <div class="legend-item">
+                <span class="legend-color" style="background: #505050; border: 1px solid #303030;"></span>
+                <span>Road Network</span>
+            </div>
+        </div>
+        
+        <!-- Model Base Legend -->
+        <div id="modelLegend" class="legend-section" style="display: none;">
+            <h4>Model Base</h4>
+            <div class="legend-item">
+                <span style="font-size: 0.85em; color: #666;">Physical 3D model overlay</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Feature info popup (shown on tap) -->
+    <div id="featureInfo" class="panel hidden"></div>
+    
+    <script src="js/coordinate-utils.js"></script>
+    <script src="js/vector-styling.js"></script>
+    <script src="js/websocket-client.js"></script>
+    <script src="js/leaflet-control-with-basemap.js"></script>
+</body>
+</html>
+
+

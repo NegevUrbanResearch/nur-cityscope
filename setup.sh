@@ -42,6 +42,12 @@ sleep 10
 echo "Ensuring logo is accessible in nginx container..."
 docker cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
 
+# Setup OTEF Interactive module (simplified layers are auto-generated if missing)
+if [ ! -f "$SCRIPT_DIR/otef-interactive/data-source/layers-simplified/migrashim_simplified.json" ]; then
+    echo "Generating simplified GeoJSON layers for OTEF..."
+    python3 "$SCRIPT_DIR/otef-interactive/scripts/simplify_geometries.py"
+fi
+
 # Run migrations
 echo "Running database migrations..."
 docker exec nur-api python manage.py migrate
@@ -55,5 +61,7 @@ echo "You can now access:"
 echo "- Dashboard: http://localhost/dashboard/"
 echo "- Projection: http://localhost/projection/"
 echo "- Remote Controller: http://localhost/remote/"
+echo "- OTEF Interactive: http://localhost/otef-interactive/"
+echo "- OTEF Projection: http://localhost/otef-interactive/projection.html"
 echo "- Admin Interface: http://localhost:9900/admin"
 

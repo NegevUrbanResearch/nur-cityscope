@@ -1,0 +1,12 @@
+# Generated files (only PMTiles, not used yet)
+frontend/data/*.pmtiles
+
+# Python cache
+scripts/__pycache__/
+scripts/*.pyc
+
+# Temporary files
+*.tmp
+*.bak
+
+
