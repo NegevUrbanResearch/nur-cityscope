@@ -14,6 +14,9 @@ function connectWebSocket() {
         ws.onopen = () => {
             console.log('WebSocket connected');
             updateConnectionStatus(true);
+            if (window.DebugOverlay) {
+                window.DebugOverlay.setWebSocketStatus('connected');
+            }
         };
         
         ws.onmessage = (event) => {
@@ -24,12 +27,18 @@ function connectWebSocket() {
         ws.onclose = () => {
             console.log('WebSocket disconnected, reconnecting...');
             updateConnectionStatus(false);
+            if (window.DebugOverlay) {
+                window.DebugOverlay.setWebSocketStatus('disconnected');
+            }
             reconnectTimeout = setTimeout(connectWebSocket, 3000);
         };
         
         ws.onerror = (error) => {
             console.error('WebSocket error:', error);
             updateConnectionStatus(false);
+            if (window.DebugOverlay) {
+                window.DebugOverlay.setWebSocketStatus('error');
+            }
         };
     } catch (err) {
         console.error('Failed to connect WebSocket:', err);

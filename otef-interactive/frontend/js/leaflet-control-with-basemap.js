@@ -208,24 +208,72 @@ function loadGeoJSONLayers() {
 }
 
 // Send viewport updates on move (transform to EPSG:2039 for projection display)
+// FIXED v2: Send all 4 corners to handle non-rectangular projection distortion
 map.on('moveend', () => {
-    const bounds = map.getBounds();
-    const sw = bounds.getSouthWest();
-    const ne = bounds.getNorthEast();
+    // Get viewport size in pixels
+    const size = map.getSize();
     
-    // Transform WGS84 bounds to EPSG:2039
-    const [swX, swY] = proj4('EPSG:4326', 'EPSG:2039', [sw.lng, sw.lat]);
-    const [neX, neY] = proj4('EPSG:4326', 'EPSG:2039', [ne.lng, ne.lat]);
+    // Get all 4 corners of the viewport in pixel coordinates
+    const corners_pixel = {
+        sw: L.point(0, size.y),          // bottom-left
+        se: L.point(size.x, size.y),     // bottom-right  
+        nw: L.point(0, 0),               // top-left
+        ne: L.point(size.x, 0)           // top-right
+    };
     
-    // Send via WebSocket
+    // Convert each corner to WGS84
+    const corners_wgs84 = {};
+    for (const [name, pixel] of Object.entries(corners_pixel)) {
+        corners_wgs84[name] = map.containerPointToLatLng(pixel);
+    }
+    
+    // Transform each corner to EPSG:2039
+    const corners_itm = {};
+    for (const [name, latlng] of Object.entries(corners_wgs84)) {
+        const [x, y] = proj4('EPSG:4326', 'EPSG:2039', [latlng.lng, latlng.lat]);
+        corners_itm[name] = { x, y };
+    }
+    
+    // Calculate bounding box from all 4 corners (handles trapezoid distortion)
+    const all_x = Object.values(corners_itm).map(c => c.x);
+    const all_y = Object.values(corners_itm).map(c => c.y);
+    
+    const bbox = [
+        Math.min(...all_x),  // west
+        Math.min(...all_y),  // south
+        Math.max(...all_x),  // east
+        Math.max(...all_y)   // north
+    ];
+    
+    // Debug info
+    const bboxWidth = bbox[2] - bbox[0];
+    const bboxHeight = bbox[3] - bbox[1];
+    
+    console.log('[DEBUG] Viewport pixels:', size.x, 'x', size.y);
+    console.log('[DEBUG] ITM corners:');
+    console.log('  SW:', corners_itm.sw.x.toFixed(1), corners_itm.sw.y.toFixed(1));
+    console.log('  SE:', corners_itm.se.x.toFixed(1), corners_itm.se.y.toFixed(1));
+    console.log('  NW:', corners_itm.nw.x.toFixed(1), corners_itm.nw.y.toFixed(1));
+    console.log('  NE:', corners_itm.ne.x.toFixed(1), corners_itm.ne.y.toFixed(1));
+    console.log('[DEBUG] Bbox size:', bboxWidth.toFixed(1), 'x', bboxHeight.toFixed(1), 'm');
+    
+    // Update debug overlay
+    if (window.DebugOverlay) {
+        window.DebugOverlay.updateMapDimensions(size.x, size.y);
+        window.DebugOverlay.setZoom(map.getZoom());
+        window.DebugOverlay.updateSentBbox(bbox);
+    }
+    
+    // Send via WebSocket - include corners for accurate quadrilateral rendering
     if (window.ws && window.ws.readyState === WebSocket.OPEN) {
         window.ws.send(JSON.stringify({
             type: 'otef_viewport_update',
-            bbox: [swX, swY, neX, neY],
+            bbox: bbox,
+            corners: corners_itm,  // Send actual corners for precise rendering
             zoom: map.getZoom(),
             timestamp: Date.now()
         }));
-        console.log('Sent viewport update (EPSG:2039):', [swX, swY, neX, neY]);
+        console.log('[FIXED v2] Sent 4-corner viewport (EPSG:2039)');
     }
 });
 

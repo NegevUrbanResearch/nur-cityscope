@@ -14,14 +14,17 @@
             overflow: hidden;
             background: #000;
         }
-        #keystoneContainer {
+        #displayContainer {
             width: 100%;
             height: 100vh;
             position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         #displayedImage {
-            width: 100%;
-            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
             object-fit: contain;
         }
         #highlightOverlay {
@@ -42,107 +45,52 @@
             transition: all 300ms ease-out;
             pointer-events: none;
         }
-        #calibrationPanel {
+        
+        /* Simple instruction overlay - press H to toggle */
+        #instructions {
             position: fixed;
             top: 10px;
-            right: 10px;
-            background-color: rgba(0, 0, 0, 0.7);
-            color: white;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #fff;
             padding: 15px;
             border-radius: 5px;
             font-family: Arial, sans-serif;
-            z-index: 10000;
-            display: none;
-        }
-        #calibrationPanel h3 {
-            margin-top: 0;
-            margin-bottom: 10px;
-        }
-        #calibrationPanel p {
-            margin: 5px 0;
             font-size: 14px;
+            z-index: 100;
+            max-width: 300px;
         }
-        .control-row {
-            display: flex;
-            justify-content: space-between;
+        #instructions h3 {
+            margin: 0 0 10px 0;
+            color: #0ff;
+        }
+        #instructions p {
             margin: 5px 0;
         }
-        .control-button {
-            background-color: #444;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            margin: 2px;
-            border-radius: 3px;
-            cursor: pointer;
-        }
-        .control-button:hover {
-            background-color: #666;
-        }
-        .calibration-grid {
-            display: none !important;
-        }
-        /* Hide Maptastic's grid canvas by default */
-        #keystoneContainer canvas,
-        canvas[style*="position: fixed"] {
-            display: none !important;
-            opacity: 0 !important;
-            pointer-events: none !important;
-        }
-        /* Show canvas only in config mode */
-        body.config-mode #keystoneContainer canvas,
-        body.config-mode canvas[style*="position: fixed"] {
-            display: block !important;
-            opacity: 1 !important;
-            pointer-events: auto !important;
+        #instructions.hidden {
+            display: none;
         }
     </style>
 </head>
 <body>
-    <div id="keystoneContainer" class="keystoneContainer">
+    <div id="displayContainer">
         <img id="displayedImage" src="data/model.png" alt="OTEF Model" />
         <div id="highlightOverlay"></div>
-        <div id="calibrationGrid" class="calibration-grid"></div>
     </div>
     
-    <div id="calibrationPanel">
-        <h3>Calibration Panel</h3>
-        <p>
-            <strong>Status:</strong>
-            <span id="calibrationStatus">Configuration Mode OFF</span>
-        </p>
-        <div class="control-row">
-            <button class="control-button" id="toggleConfigBtn">
-                Toggle Config Mode (Shift+Z)
-            </button>
-        </div>
-        <p>In config mode:</p>
-        <ul>
-            <li>Drag corners to warp projection</li>
-            <li>Alt+drag to rotate/scale</li>
-            <li>Arrow keys to move selected quad</li>
-        </ul>
+    <div id="instructions" class="hidden">
+        <h3>OTEF Projection Display</h3>
         <p><strong>Keyboard Shortcuts:</strong></p>
-        <ul>
-            <li><strong>R</strong> - Rotate 90°</li>
-            <li><strong>H</strong> - Flip horizontal</li>
-            <li><strong>V</strong> - Flip vertical</li>
-            <li><strong>S</strong> - Solo/unsolo layer</li>
-            <li><strong>C</strong> - Toggle crosshairs</li>
-            <li><strong>B</strong> - Toggle bounds</li>
-            <li><strong>X</strong> - Reset calibration</li>
-            <li><strong>F</strong> - Fullscreen</li>
-        </ul>
-        <p>
-            <em>Note: Calibration is automatically saved as you make adjustments.
-            Press <strong>X</strong> to reset.</em>
+        <p><strong>D</strong> - Toggle debug overlay</p>
+        <p><strong>H</strong> - Toggle this help</p>
+        <p><strong>F</strong> - Toggle fullscreen</p>
+        <p style="margin-top: 10px; font-size: 12px; color: #888;">
+            Warping/calibration should be done in TouchDesigner
         </p>
     </div>
     
-    <script src="lib/maptastic.js"></script>
     <script src="js/coordinate-utils.js"></script>
+    <script src="js/debug-overlay.js"></script>
     <script src="js/projection-display.js"></script>
 </body>
 </html>
-
-

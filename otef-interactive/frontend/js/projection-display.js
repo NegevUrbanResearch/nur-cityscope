@@ -1,22 +1,5 @@
-// Initialize Maptastic for projection mapping
-const maptastic = Maptastic({
-    container: "keystoneContainer",
-    screenbounds: false,  // Disable grid overlay
-    crosshairs: false,    // Disable crosshairs
-    labels: false         // Disable layer labels
-});
-let configActive = false;
-
-// Force hide calibration grid on load
-setTimeout(() => {
-    maptastic.setConfigEnabled(false);
-    console.log('Calibration grid hidden');
-}, 100);
-
-// Get UI elements
-const $calibrationPanel = document.getElementById("calibrationPanel");
-const $calibrationStatus = document.getElementById("calibrationStatus");
-const $toggleConfigBtn = document.getElementById("toggleConfigBtn");
+// OTEF Projection Display - Simplified for TouchDesigner integration
+// Warping/calibration is handled by TouchDesigner, not by this page
 
 // Load model bounds
 let modelBounds;
@@ -25,6 +8,11 @@ fetch('data/model-bounds.json')
     .then(bounds => {
         modelBounds = bounds;
         console.log('Model bounds loaded:', bounds);
+        
+        // Update debug overlay with model dimensions
+        if (window.DebugOverlay) {
+            window.DebugOverlay.updateModelDimensions(bounds.image_width, bounds.image_height);
+        }
     })
     .catch(error => {
         console.error('Error loading model bounds:', error);
@@ -45,24 +33,39 @@ function connectWebSocket() {
         
         ws.onopen = () => {
             console.log('Projection WebSocket connected');
+            if (window.DebugOverlay) {
+                window.DebugOverlay.setWebSocketStatus('connected');
+            }
         };
         
         ws.onmessage = (event) => {
             const message = JSON.parse(event.data);
             
             if (message.type === 'otef_viewport_update') {
-                console.log('Received viewport update:', message.bbox);
-                updateHighlight(message.bbox);
+                console.log('Received viewport update:', message);
+                
+                // Use corners if available (more accurate), otherwise fall back to bbox
+                if (message.corners) {
+                    updateHighlightQuad(message.corners);
+                } else {
+                    updateHighlightRect(message.bbox);
+                }
             }
         };
         
         ws.onclose = () => {
             console.log('Projection WebSocket disconnected, reconnecting...');
+            if (window.DebugOverlay) {
+                window.DebugOverlay.setWebSocketStatus('disconnected');
+            }
             reconnectTimeout = setTimeout(connectWebSocket, 3000);
         };
         
         ws.onerror = (error) => {
             console.error('Projection WebSocket error:', error);
+            if (window.DebugOverlay) {
+                window.DebugOverlay.setWebSocketStatus('error');
+            }
         };
     } catch (err) {
         console.error('Projection WebSocket connection failed:', err);
@@ -70,149 +73,241 @@ function connectWebSocket() {
     }
 }
 
-// Update highlight overlay based on viewport bbox
-function updateHighlight(itmBbox) {
+// Calculate the actual displayed image bounds within the container
+// This accounts for object-fit: contain which may leave empty space
+function getDisplayedImageBounds() {
+    const img = document.getElementById('displayedImage');
+    const container = document.getElementById('displayContainer');
+    
+    if (!img || !container) return null;
+    
+    // Wait for image to load
+    if (!img.naturalWidth || !img.naturalHeight) {
+        console.warn('Image natural dimensions not available yet');
+        return null;
+    }
+    
+    // Get the ACTUAL rendered size of the image element
+    // This is more reliable than calculating from container + aspect ratio
+    const imgRect = img.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    
+    // Calculate offset from container to image
+    const offsetX = imgRect.left - containerRect.left;
+    const offsetY = imgRect.top - containerRect.top;
+    
+    console.log('[BOUNDS] Container:', containerRect.width.toFixed(0), 'x', containerRect.height.toFixed(0));
+    console.log('[BOUNDS] Image rendered:', imgRect.width.toFixed(0), 'x', imgRect.height.toFixed(0));
+    console.log('[BOUNDS] Offset:', offsetX.toFixed(1), ',', offsetY.toFixed(1));
+    
+    return {
+        offsetX,
+        offsetY,
+        width: imgRect.width,
+        height: imgRect.height,
+        containerWidth: containerRect.width,
+        containerHeight: containerRect.height
+    };
+}
+
+// Convert ITM coordinates to pixel position within displayed image
+function itmToDisplayPixels(x, y) {
+    const bounds = getDisplayedImageBounds();
+    if (!bounds || !modelBounds) return null;
+    
+    // First convert to percentage of model image (0-1)
+    const pctX = (x - modelBounds.west) / (modelBounds.east - modelBounds.west);
+    // Y is inverted (north is at top of image, but higher Y values in ITM)
+    const pctY = (modelBounds.north - y) / (modelBounds.north - modelBounds.south);
+    
+    // Then convert to actual pixel position on screen
+    const pixelX = bounds.offsetX + (pctX * bounds.width);
+    const pixelY = bounds.offsetY + (pctY * bounds.height);
+    
+    return { x: pixelX, y: pixelY };
+}
+
+// Update highlight using 4 corners (quadrilateral - more accurate)
+function updateHighlightQuad(corners) {
     if (!modelBounds) {
         console.warn('Model bounds not loaded yet');
         return;
     }
     
     // Store for resize events
-    lastBbox = itmBbox;
+    lastMessage = { corners };
     
-    console.log('Received ITM bbox:', itmBbox);
-    console.log('Model bounds:', modelBounds);
+    // Convert each corner from ITM to display pixel coordinates
+    const sw_px = itmToDisplayPixels(corners.sw.x, corners.sw.y);
+    const se_px = itmToDisplayPixels(corners.se.x, corners.se.y);
+    const nw_px = itmToDisplayPixels(corners.nw.x, corners.nw.y);
+    const ne_px = itmToDisplayPixels(corners.ne.x, corners.ne.y);
     
-    // Convert ITM bbox to pixel coordinates
-    const [pxMin, pyMin, pxMax, pyMax] = CoordUtils.bboxItmToPixel(itmBbox, modelBounds);
+    if (!sw_px || !se_px || !nw_px || !ne_px) {
+        console.warn('Could not calculate display positions');
+        return;
+    }
     
-    console.log('Pixel coordinates:', { pxMin, pyMin, pxMax, pyMax });
+    console.log('Display pixel corners:');
+    console.log('  SW:', sw_px.x.toFixed(1), sw_px.y.toFixed(1));
+    console.log('  SE:', se_px.x.toFixed(1), se_px.y.toFixed(1));
+    console.log('  NW:', nw_px.x.toFixed(1), nw_px.y.toFixed(1));
+    console.log('  NE:', ne_px.x.toFixed(1), ne_px.y.toFixed(1));
     
-    // Calculate position and size as PERCENTAGES of the source image
-    // Maptastic will transform both the image and the overlay together
-    const left = (pxMin / modelBounds.image_width) * 100;
-    const top = (pyMin / modelBounds.image_height) * 100;
-    const width = ((pxMax - pxMin) / modelBounds.image_width) * 100;
-    const height = ((pyMax - pyMin) / modelBounds.image_height) * 100;
+    // Update debug overlay
+    if (window.DebugOverlay) {
+        const bbox = [
+            Math.min(corners.sw.x, corners.nw.x),
+            Math.min(corners.sw.y, corners.se.y),
+            Math.max(corners.se.x, corners.ne.x),
+            Math.max(corners.nw.y, corners.ne.y)
+        ];
+        window.DebugOverlay.updateReceivedBbox(bbox);
+        
+        const [pxMin, pyMin, pxMax, pyMax] = CoordUtils.bboxItmToPixel(bbox, modelBounds);
+        window.DebugOverlay.updatePixelCoords(pxMin, pyMin, pxMax, pyMax);
+        
+        const bounds = getDisplayedImageBounds();
+        if (bounds) {
+            const left = ((Math.min(sw_px.x, nw_px.x) - bounds.offsetX) / bounds.width) * 100;
+            const top = ((Math.min(nw_px.y, ne_px.y) - bounds.offsetY) / bounds.height) * 100;
+            const right = ((Math.max(se_px.x, ne_px.x) - bounds.offsetX) / bounds.width) * 100;
+            const bottom = ((Math.max(sw_px.y, se_px.y) - bounds.offsetY) / bounds.height) * 100;
+            window.DebugOverlay.updateHighlightPercentages(left, top, right - left, bottom - top);
+        }
+    }
     
-    console.log('Highlight percentages:', { left, top, width, height });
-    
-    // Update or create highlight box
+    // Get or create the highlight element (using div with clip-path for smooth transitions)
     const overlay = document.getElementById('highlightOverlay');
     let highlightBox = overlay.querySelector('.highlight-box');
     
     if (!highlightBox) {
         highlightBox = document.createElement('div');
         highlightBox.className = 'highlight-box';
+        highlightBox.style.cssText = `
+            position: absolute;
+            border: 3px solid rgba(0, 255, 255, 0.9);
+            background: rgba(0, 255, 255, 0.15);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.8), inset 0 0 30px rgba(0, 255, 255, 0.4);
+            pointer-events: none;
+            transition: left 0.15s ease-out, top 0.15s ease-out, width 0.15s ease-out, height 0.15s ease-out;
+        `;
+        
+        // Remove old SVG if exists
+        const oldSvg = overlay.querySelector('svg');
+        if (oldSvg) oldSvg.remove();
+        
         overlay.appendChild(highlightBox);
     }
     
-    // Use percentages so Maptastic transforms the overlay with the image
-    highlightBox.style.left = `${left}%`;
-    highlightBox.style.top = `${top}%`;
-    highlightBox.style.width = `${width}%`;
-    highlightBox.style.height = `${height}%`;
+    // Calculate bounding box from corners (for simpler rectangle rendering with transitions)
+    const minX = Math.min(sw_px.x, nw_px.x, se_px.x, ne_px.x);
+    const maxX = Math.max(sw_px.x, nw_px.x, se_px.x, ne_px.x);
+    const minY = Math.min(sw_px.y, nw_px.y, se_px.y, ne_px.y);
+    const maxY = Math.max(sw_px.y, nw_px.y, se_px.y, ne_px.y);
+    
+    // Position using absolute pixels
+    highlightBox.style.left = minX + 'px';
+    highlightBox.style.top = minY + 'px';
+    highlightBox.style.width = (maxX - minX) + 'px';
+    highlightBox.style.height = (maxY - minY) + 'px';
 }
 
-// Toggle calibration config mode
-function toggleConfigMode() {
-    configActive = !configActive;
-    maptastic.setConfigEnabled(configActive);
-    $calibrationStatus.textContent = configActive
-        ? "Configuration Mode ON"
-        : "Configuration Mode OFF";
-    $calibrationPanel.style.display = configActive ? "block" : "none";
-
-    // Show calibration grid and canvas when in config mode
-    document.getElementById("calibrationGrid").style.display = configActive ? "block" : "none";
-    document.body.classList.toggle('config-mode', configActive);
-}
-
-// Reset calibration to defaults
-function resetCalibration() {
-    console.log("resetCalibration function called");
-    if (confirm("Are you sure you want to reset the calibration?")) {
-        console.log("User confirmed reset");
-        localStorage.removeItem("maptastic.layers");
-        console.log("Cleared localStorage");
-
-        // Reset the maptastic layout to default without page reload
-        if (maptastic && maptastic.getLayout) {
-            const currentLayout = maptastic.getLayout();
-            console.log("Current layout before reset:", currentLayout);
-
-            // Reset each layer to default positions
-            for (let i = 0; i < currentLayout.length; i++) {
-                const layer = currentLayout[i];
-                if (layer.targetPoints && layer.sourcePoints) {
-                    // Reset target points to match source points (no transformation)
-                    layer.targetPoints = layer.sourcePoints.map((point) => [
-                        ...point,
-                    ]);
-                }
-            }
-
-            console.log("Layout after reset:", currentLayout);
-            maptastic.setLayout(currentLayout);
-            console.log("Applied reset layout");
-        }
-
-        alert("Calibration reset to defaults!");
-    } else {
-        console.log("User cancelled reset");
+// Fallback: Update highlight using bounding box (rectangle)
+function updateHighlightRect(itmBbox) {
+    if (!modelBounds) {
+        console.warn('Model bounds not loaded yet');
+        return;
     }
-}
-
-// Auto-reset calibration on page load to fix sideways display
-function autoResetCalibration() {
-    // Only reset if there's problematic saved data
-    const savedData = localStorage.getItem("maptastic.layers");
-    if (savedData) {
-        try {
-            const layout = JSON.parse(savedData);
-            // Check if any layer has been rotated 90 degrees (sideways)
-            let hasProblematicRotation = false;
-
-            for (let i = 0; i < layout.length; i++) {
-                const layer = layout[i];
-                if (layer.targetPoints && layer.sourcePoints) {
-                    // Check if the layer has been rotated 90 degrees
-                    // This is a simple heuristic - if the aspect ratio is significantly different
-                    const sourceWidth =
-                        layer.sourcePoints[1][0] - layer.sourcePoints[0][0];
-                    const sourceHeight =
-                        layer.sourcePoints[2][1] - layer.sourcePoints[0][1];
-                    const targetWidth =
-                        layer.targetPoints[1][0] - layer.targetPoints[0][0];
-                    const targetHeight =
-                        layer.targetPoints[2][1] - layer.targetPoints[0][1];
-
-                    const sourceRatio = sourceWidth / sourceHeight;
-                    const targetRatio = targetWidth / targetHeight;
-
-                    // If ratios are very different, it might be rotated
-                    if (Math.abs(sourceRatio - 1 / targetRatio) < 0.1) {
-                        hasProblematicRotation = true;
-                        break;
-                    }
-                }
-            }
-
-            // Only reset if we detect problematic rotation
-            if (hasProblematicRotation) {
-                console.log("Detected sideways rotation, resetting to default");
-                localStorage.removeItem("maptastic.layers");
-            }
-        } catch (error) {
-            console.log("Error parsing saved data, clearing it");
-            localStorage.removeItem("maptastic.layers");
+    
+    // Store for resize events
+    lastMessage = { bbox: itmBbox };
+    
+    console.log('Received ITM bbox:', itmBbox);
+    
+    // Update debug overlay with received bbox
+    if (window.DebugOverlay) {
+        window.DebugOverlay.updateReceivedBbox(itmBbox);
+    }
+    
+    // Convert bbox corners to display pixels
+    const sw_px = itmToDisplayPixels(itmBbox[0], itmBbox[1]);
+    const ne_px = itmToDisplayPixels(itmBbox[2], itmBbox[3]);
+    
+    if (!sw_px || !ne_px) {
+        console.warn('Could not calculate display positions');
+        return;
+    }
+    
+    // Update debug overlay with pixel coordinates
+    if (window.DebugOverlay) {
+        const [pxMin, pyMin, pxMax, pyMax] = CoordUtils.bboxItmToPixel(itmBbox, modelBounds);
+        window.DebugOverlay.updatePixelCoords(pxMin, pyMin, pxMax, pyMax);
+        
+        const bounds = getDisplayedImageBounds();
+        if (bounds) {
+            const left = ((sw_px.x - bounds.offsetX) / bounds.width) * 100;
+            const top = ((ne_px.y - bounds.offsetY) / bounds.height) * 100;
+            const width = ((ne_px.x - sw_px.x) / bounds.width) * 100;
+            const height = ((sw_px.y - ne_px.y) / bounds.height) * 100;
+            window.DebugOverlay.updateHighlightPercentages(left, top, width, height);
         }
     }
+    
+    // Get or create highlight box
+    const overlay = document.getElementById('highlightOverlay');
+    let highlightBox = overlay.querySelector('.highlight-box');
+    
+    if (!highlightBox) {
+        highlightBox = document.createElement('div');
+        highlightBox.className = 'highlight-box';
+        highlightBox.style.cssText = `
+            position: absolute;
+            border: 3px solid rgba(0, 255, 255, 0.9);
+            background: rgba(0, 255, 255, 0.15);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.8), inset 0 0 30px rgba(0, 255, 255, 0.4);
+            pointer-events: none;
+            transition: left 0.15s ease-out, top 0.15s ease-out, width 0.15s ease-out, height 0.15s ease-out;
+        `;
+        overlay.appendChild(highlightBox);
+    }
+    
+    // Position using absolute pixels
+    highlightBox.style.left = sw_px.x + 'px';
+    highlightBox.style.top = ne_px.y + 'px';
+    highlightBox.style.width = (ne_px.x - sw_px.x) + 'px';
+    highlightBox.style.height = (sw_px.y - ne_px.y) + 'px';
 }
 
-// Event listeners for calibration panel
-$toggleConfigBtn.addEventListener("click", toggleConfigMode);
+// Store last message for redrawing on resize
+let lastMessage = null;
 
+// Update highlight on window resize
+window.addEventListener('resize', () => {
+    if (lastMessage) {
+        if (lastMessage.corners) {
+            updateHighlightQuad(lastMessage.corners);
+        } else if (lastMessage.bbox) {
+            updateHighlightRect(lastMessage.bbox);
+        }
+    }
+});
+
+// Keyboard shortcuts
+window.addEventListener('keydown', (event) => {
+    // H key for help/instructions toggle
+    if (event.key === 'h' || event.key === 'H') {
+        const instructions = document.getElementById('instructions');
+        instructions.classList.toggle('hidden');
+    }
+    
+    // F key for fullscreen
+    if (event.key === 'f' || event.key === 'F') {
+        toggleFullScreen();
+    }
+});
+
+// Toggle fullscreen
 function toggleFullScreen() {
     const doc = window.document;
     const docElement = doc.documentElement;
@@ -233,39 +328,14 @@ function toggleFullScreen() {
     }
 }
 
-// Keyboard event listener for calibration toggle and other shortcuts
-window.addEventListener("keydown", function (event) {
-    // Shift+Z to toggle configuration mode
-    if (event.key === "Z" && event.shiftKey) {
-        toggleConfigMode();
-    }
-
-    // X key for reset calibration
-    if (event.key === "X" || event.keyCode === 88) {
-        console.log("X key pressed - resetting calibration");
-        resetCalibration();
-    }
-
-    // F key for fullscreen
-    if (event.keyCode === 70) {
-        toggleFullScreen();
-    }
-});
-
-// Auto-reset calibration to fix sideways display
-autoResetCalibration();
-
-// Store last bbox for redrawing on resize
-let lastBbox = null;
-
-// Update highlight on window resize (since object-fit: contain changes the displayed size)
-window.addEventListener('resize', () => {
-    if (lastBbox) {
-        updateHighlight(lastBbox);
-    }
-});
-
 // Connect on load
 connectWebSocket();
 
-
+// Show help for 3 seconds on load
+setTimeout(() => {
+    const instructions = document.getElementById('instructions');
+    instructions.classList.remove('hidden');
+    setTimeout(() => {
+        instructions.classList.add('hidden');
+    }, 3000);
+}, 500);
