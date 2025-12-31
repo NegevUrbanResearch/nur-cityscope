@@ -24,11 +24,12 @@ import IndicatorGraphs from "./IndicatorGraphs";
 import ClimateGraphs from "./ClimateGraphs";
 import config from "../../config";
 import ClimateMapTypeSelector from "./ClimateMapTypeSelector";
+import FilesManagement from "./FilesManagement";
 
 
 const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
   const navigate = useNavigate();
-  const { visualizationMode, handleVisualizationModeChange, currentIndicator } =
+  const { visualizationMode, handleVisualizationModeChange, currentIndicator, isUserUploadsMode } =
     useAppData();
 
   const theme = useTheme();
@@ -146,11 +147,15 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         <InfoDialog openInfo={openInfo} handleCloseInfo={handleClickInfo} />
       </Box>
 
+      {isUserUploadsMode? (
+        <FilesManagement/>
+      ): (
+      <> 
       {/* Climate Map Type Selector or Visualization Mode Toggle */}
       {currentIndicator === "climate" ? (
         <ClimateMapTypeSelector />
       ) : (
-        <Box
+      <Box
           sx={{
             px: { xs: 1.5, sm: 2 },
             pt: { xs: 1.5, sm: 2 },
@@ -259,6 +264,11 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         )}
       </Box>
 
+      
+      
+      </>)}
+
+  
       {/* Presentation Mode Link */}
       <Box
         sx={{
