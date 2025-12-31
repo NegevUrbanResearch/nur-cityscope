@@ -100,6 +100,14 @@ fetch('data/model-bounds.json')
         
         // Restrict map to model bounds only
         map.setMaxBounds(wgs84Bounds);
+        
+        // Calculate minimum zoom level that fits the geotif bounds exactly
+        // This prevents zooming out beyond the maximum extent of the geotif
+        const minZoomForBounds = map.getBoundsZoom(wgs84Bounds, false);
+        map.setMinZoom(minZoomForBounds);
+        
+        console.log(`Minimum zoom set to ${minZoomForBounds} to fit geotif bounds`);
+        
         map.fitBounds(wgs84Bounds);
         
         console.log('Map bounds restricted to model area');
