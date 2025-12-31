@@ -115,16 +115,15 @@ function itmToDisplayPixels(x, y) {
     const bounds = getDisplayedImageBounds();
     if (!bounds || !modelBounds) return null;
     
-    // First convert to percentage of model image (0-1)
     const pctX = (x - modelBounds.west) / (modelBounds.east - modelBounds.west);
-    // Y is inverted (north is at top of image, but higher Y values in ITM)
     const pctY = (modelBounds.north - y) / (modelBounds.north - modelBounds.south);
+    const clampedX = Math.max(0, Math.min(1, pctX));
+    const clampedY = Math.max(0, Math.min(1, pctY));
     
-    // Then convert to actual pixel position on screen
-    const pixelX = bounds.offsetX + (pctX * bounds.width);
-    const pixelY = bounds.offsetY + (pctY * bounds.height);
-    
-    return { x: pixelX, y: pixelY };
+    return {
+        x: bounds.offsetX + (clampedX * bounds.width),
+        y: bounds.offsetY + (clampedY * bounds.height)
+    };
 }
 
 // Update highlight using 4 corners (quadrilateral - more accurate)
@@ -137,15 +136,29 @@ function updateHighlightQuad(corners) {
     // Store for resize events
     lastMessage = { corners };
     
-    // Convert each corner from ITM to display pixel coordinates
-    const sw_px = itmToDisplayPixels(corners.sw.x, corners.sw.y);
-    const se_px = itmToDisplayPixels(corners.se.x, corners.se.y);
-    const nw_px = itmToDisplayPixels(corners.nw.x, corners.nw.y);
-    const ne_px = itmToDisplayPixels(corners.ne.x, corners.ne.y);
+    const bounds = getDisplayedImageBounds();
+    if (!bounds) return;
     
-    if (!sw_px || !se_px || !nw_px || !ne_px) {
-        console.warn('Could not calculate display positions');
-        return;
+    const all_x = [corners.sw.x, corners.se.x, corners.nw.x, corners.ne.x];
+    const all_y = [corners.sw.y, corners.se.y, corners.nw.y, corners.ne.y];
+    const isFull = modelBounds && Math.abs(Math.min(...all_x) - modelBounds.west) < 10 &&
+                   Math.abs(Math.min(...all_y) - modelBounds.south) < 10 &&
+                   Math.abs(Math.max(...all_x) - modelBounds.east) < 10 &&
+                   Math.abs(Math.max(...all_y) - modelBounds.north) < 10;
+    
+    let sw_px, se_px, nw_px, ne_px;
+    if (isFull) {
+        const { offsetX, offsetY, width, height } = bounds;
+        sw_px = { x: offsetX, y: offsetY + height };
+        se_px = { x: offsetX + width, y: offsetY + height };
+        nw_px = { x: offsetX, y: offsetY };
+        ne_px = { x: offsetX + width, y: offsetY };
+    } else {
+        sw_px = itmToDisplayPixels(corners.sw.x, corners.sw.y);
+        se_px = itmToDisplayPixels(corners.se.x, corners.se.y);
+        nw_px = itmToDisplayPixels(corners.nw.x, corners.nw.y);
+        ne_px = itmToDisplayPixels(corners.ne.x, corners.ne.y);
+        if (!sw_px || !se_px || !nw_px || !ne_px) return;
     }
     
     console.log('Display pixel corners:');
@@ -167,7 +180,6 @@ function updateHighlightQuad(corners) {
         const [pxMin, pyMin, pxMax, pyMax] = CoordUtils.bboxItmToPixel(bbox, modelBounds);
         window.DebugOverlay.updatePixelCoords(pxMin, pyMin, pxMax, pyMax);
         
-        const bounds = getDisplayedImageBounds();
         if (bounds) {
             const left = ((Math.min(sw_px.x, nw_px.x) - bounds.offsetX) / bounds.width) * 100;
             const top = ((Math.min(nw_px.y, ne_px.y) - bounds.offsetY) / bounds.height) * 100;
@@ -230,13 +242,23 @@ function updateHighlightRect(itmBbox) {
         window.DebugOverlay.updateReceivedBbox(itmBbox);
     }
     
-    // Convert bbox corners to display pixels
-    const sw_px = itmToDisplayPixels(itmBbox[0], itmBbox[1]);
-    const ne_px = itmToDisplayPixels(itmBbox[2], itmBbox[3]);
+    const bounds = getDisplayedImageBounds();
+    if (!bounds) return;
     
-    if (!sw_px || !ne_px) {
-        console.warn('Could not calculate display positions');
-        return;
+    const isFull = modelBounds && Math.abs(itmBbox[0] - modelBounds.west) < 10 &&
+                   Math.abs(itmBbox[1] - modelBounds.south) < 10 &&
+                   Math.abs(itmBbox[2] - modelBounds.east) < 10 &&
+                   Math.abs(itmBbox[3] - modelBounds.north) < 10;
+    
+    let sw_px, ne_px;
+    if (isFull) {
+        const { offsetX, offsetY, width, height } = bounds;
+        sw_px = { x: offsetX, y: offsetY + height };
+        ne_px = { x: offsetX + width, y: offsetY };
+    } else {
+        sw_px = itmToDisplayPixels(itmBbox[0], itmBbox[1]);
+        ne_px = itmToDisplayPixels(itmBbox[2], itmBbox[3]);
+        if (!sw_px || !ne_px) return;
     }
     
     // Update debug overlay with pixel coordinates
