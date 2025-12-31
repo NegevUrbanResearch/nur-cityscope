@@ -52,36 +52,20 @@ const LAND_USE_COLORS = {
     'default': { fill: '#E0E0E0', stroke: '#B0B0B0', label: 'Other' }
 };
 
-/**
- * Get style for a parcel based on its land use
- */
 function getParcelStyle(feature) {
-    const properties = feature.properties || {};
-    const landUse = properties.TARGUMYEUD || properties.KVUZ_TRG || '';
-    
-    // Find matching color scheme
-    let colorScheme = LAND_USE_COLORS['default'];
-    
-    for (const [key, value] of Object.entries(LAND_USE_COLORS)) {
-        if (landUse.includes(key)) {
-            colorScheme = value;
-            break;
-        }
-    }
+    const landUse = (feature.properties?.TARGUMYEUD || feature.properties?.KVUZ_TRG || '').toString();
+    const scheme = Object.entries(LAND_USE_COLORS).find(([key]) => landUse.includes(key))?.[1] || LAND_USE_COLORS.default;
     
     return {
-        fillColor: colorScheme.fill,
+        fillColor: scheme.fill,
         fillOpacity: 0.6,
-        color: colorScheme.stroke,
+        color: scheme.stroke,
         weight: 1,
         opacity: 0.8
     };
 }
 
-/**
- * Get style for roads
- */
-function getRoadStyle(feature) {
+function getRoadStyle() {
     return {
         fillColor: '#505050',
         fillOpacity: 0.7,
@@ -91,13 +75,7 @@ function getRoadStyle(feature) {
     };
 }
 
-/**
- * Create popup content for features
- */
 function createPopupContent(properties) {
-    let html = '<div class="feature-popup">';
-    
-    // Key properties to display
     const keyProps = {
         'MIGRASH': 'Parcel ID',
         'TOCHNIT': 'Plan Number',
@@ -108,32 +86,18 @@ function createPopupContent(properties) {
         'yDiur': 'Housing Units'
     };
     
-    for (const [key, label] of Object.entries(keyProps)) {
-        if (properties[key] !== null && properties[key] !== undefined && properties[key] !== 0) {
+    const items = Object.entries(keyProps)
+        .filter(([key]) => properties[key] != null && properties[key] !== 0)
+        .map(([key, label]) => {
             let value = properties[key];
-            
-            // Format area
-            if (key === 'Shape_Area') {
-                value = Math.round(value).toLocaleString() + ' m²';
-            }
-            
-            html += `<p><strong>${label}:</strong> ${value}</p>`;
-        }
-    }
+            if (key === 'Shape_Area') value = Math.round(value).toLocaleString() + ' m²';
+            return `<p><strong>${label}:</strong> ${value}</p>`;
+        });
     
-    html += '</div>';
-    return html;
+    return `<div class="feature-popup">${items.join('')}</div>`;
 }
 
-/**
- * Create legend for land use colors
- */
 function createLandUseLegend() {
-    const legendDiv = document.createElement('div');
-    legendDiv.className = 'land-use-legend';
-    legendDiv.innerHTML = '<h4>Land Use</h4>';
-    
-    // Get unique land uses (simplified list)
     const mainCategories = {
         'Residential': '#FFD700',
         'Commercial': '#FF6B6B',
@@ -144,26 +108,20 @@ function createLandUseLegend() {
         'Public': '#87CEEB'
     };
     
-    for (const [label, color] of Object.entries(mainCategories)) {
-        const item = document.createElement('div');
-        item.className = 'legend-item';
-        item.innerHTML = `
-            <span class="legend-color" style="background: ${color}"></span>
-            <span>${label}</span>
-        `;
-        legendDiv.appendChild(item);
-    }
+    const div = document.createElement('div');
+    div.className = 'land-use-legend';
+    div.innerHTML = '<h4>Land Use</h4>' + 
+        Object.entries(mainCategories).map(([label, color]) =>
+            `<div class="legend-item">
+                <span class="legend-color" style="background: ${color}"></span>
+                <span>${label}</span>
+            </div>`
+        ).join('');
     
-    return legendDiv;
+    return div;
 }
 
-// Export functions
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-        getParcelStyle,
-        getRoadStyle,
-        createPopupContent,
-        createLandUseLegend
-    };
+    module.exports = { getParcelStyle, getRoadStyle, createPopupContent, createLandUseLegend };
 }
 

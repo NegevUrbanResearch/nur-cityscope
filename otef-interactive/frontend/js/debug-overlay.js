@@ -56,106 +56,102 @@
         debugState.pageType = 'controller';
     }
     
-    // Update debug display
     function updateDebugPanel() {
         const now = Date.now();
         const timeSinceUpdate = debugState.lastUpdateTime 
             ? `${((now - debugState.lastUpdateTime) / 1000).toFixed(1)}s ago`
             : 'never';
         
+        const section = (title, content) => `<div style="border-top: 1px solid #0f0; padding-top: 5px; margin-top: 5px;">${content}</div>`;
+        const wsColor = debugState.wsStatus === 'connected' ? '#0f0' : '#f00';
+        
         let html = `<div style="font-weight: bold; margin-bottom: 10px; color: #ff0;">
             DEBUG MODE [${debugState.pageType.toUpperCase()}] - Press D to toggle
         </div>`;
         
-        // WebSocket status
-        html += `<div style="border-top: 1px solid #0f0; padding-top: 5px; margin-top: 5px;">`;
-        html += `<div style="color: ${debugState.wsStatus === 'connected' ? '#0f0' : '#f00'};">
-            WebSocket: ${debugState.wsStatus.toUpperCase()}
-        </div>`;
-        html += `<div>Updates: ${debugState.updateCount} (${timeSinceUpdate})</div>`;
-        html += `</div>`;
+        html += section('', `
+            <div style="color: ${wsColor};">WebSocket: ${debugState.wsStatus.toUpperCase()}</div>
+            <div>Updates: ${debugState.updateCount} (${timeSinceUpdate})</div>
+        `);
         
-        // Controller-specific info
         if (debugState.pageType === 'controller') {
             if (debugState.mapDimensions) {
-                html += '<div style="border-top: 1px solid #0f0; padding-top: 5px; margin-top: 5px;">';
-                html += '<div style="color: #ff0;">MAP VIEWPORT (pixels):</div>';
-                html += `<div>Width: ${debugState.mapDimensions.width}px</div>`;
-                html += `<div>Height: ${debugState.mapDimensions.height}px</div>`;
-                html += `<div>Aspect: ${debugState.mapDimensions.aspect.toFixed(3)}</div>`;
-                if (debugState.zoom !== null) {
-                    html += `<div>Zoom: ${debugState.zoom}</div>`;
-                }
-                html += '</div>';
+                const d = debugState.mapDimensions;
+                html += section('MAP VIEWPORT (pixels)', `
+                    <div style="color: #ff0;">MAP VIEWPORT (pixels):</div>
+                    <div>Width: ${d.width}px</div>
+                    <div>Height: ${d.height}px</div>
+                    <div>Aspect: ${d.aspect.toFixed(3)}</div>
+                    ${debugState.zoom !== null ? `<div>Zoom: ${debugState.zoom}</div>` : ''}
+                `);
             }
             
             if (debugState.lastSentBbox) {
-                const bbox = debugState.lastSentBbox;
-                html += '<div style="border-top: 1px solid #0f0; padding-top: 5px; margin-top: 5px;">';
-                html += '<div style="color: #ff0;">SENT BBOX (EPSG:2039 meters):</div>';
-                html += `<div>SW: ${bbox[0].toFixed(2)}, ${bbox[1].toFixed(2)}</div>`;
-                html += `<div>NE: ${bbox[2].toFixed(2)}, ${bbox[3].toFixed(2)}</div>`;
-                html += `<div>Width: ${(bbox[2] - bbox[0]).toFixed(2)}m</div>`;
-                html += `<div>Height: ${(bbox[3] - bbox[1]).toFixed(2)}m</div>`;
-                html += `<div>Aspect: ${((bbox[2] - bbox[0]) / (bbox[3] - bbox[1])).toFixed(3)}</div>`;
-                html += '</div>';
+                const b = debugState.lastSentBbox;
+                const w = b[2] - b[0], h = b[3] - b[1];
+                html += section('SENT BBOX (EPSG:2039 meters)', `
+                    <div style="color: #ff0;">SENT BBOX (EPSG:2039 meters):</div>
+                    <div>SW: ${b[0].toFixed(2)}, ${b[1].toFixed(2)}</div>
+                    <div>NE: ${b[2].toFixed(2)}, ${b[3].toFixed(2)}</div>
+                    <div>Width: ${w.toFixed(2)}m</div>
+                    <div>Height: ${h.toFixed(2)}m</div>
+                    <div>Aspect: ${(w / h).toFixed(3)}</div>
+                `);
             }
         }
         
-        // Projection-specific info
         if (debugState.pageType === 'projection') {
             if (debugState.modelDimensions) {
-                html += '<div style="border-top: 1px solid #0f0; padding-top: 5px; margin-top: 5px;">';
-                html += '<div style="color: #ff0;">MODEL IMAGE:</div>';
-                html += `<div>Width: ${debugState.modelDimensions.width}px</div>`;
-                html += `<div>Height: ${debugState.modelDimensions.height}px</div>`;
-                html += `<div>Aspect: ${debugState.modelDimensions.aspect.toFixed(3)}</div>`;
-                html += '</div>';
+                const d = debugState.modelDimensions;
+                html += section('MODEL IMAGE', `
+                    <div style="color: #ff0;">MODEL IMAGE:</div>
+                    <div>Width: ${d.width}px</div>
+                    <div>Height: ${d.height}px</div>
+                    <div>Aspect: ${d.aspect.toFixed(3)}</div>
+                `);
             }
             
             if (debugState.lastReceivedBbox) {
-                const bbox = debugState.lastReceivedBbox;
-                html += '<div style="border-top: 1px solid #0f0; padding-top: 5px; margin-top: 5px;">';
-                html += '<div style="color: #ff0;">RECEIVED BBOX (EPSG:2039):</div>';
-                html += `<div>SW: ${bbox[0].toFixed(2)}, ${bbox[1].toFixed(2)}</div>`;
-                html += `<div>NE: ${bbox[2].toFixed(2)}, ${bbox[3].toFixed(2)}</div>`;
-                html += `<div>Width: ${(bbox[2] - bbox[0]).toFixed(2)}m</div>`;
-                html += `<div>Height: ${(bbox[3] - bbox[1]).toFixed(2)}m</div>`;
-                html += '</div>';
+                const b = debugState.lastReceivedBbox;
+                html += section('RECEIVED BBOX (EPSG:2039)', `
+                    <div style="color: #ff0;">RECEIVED BBOX (EPSG:2039):</div>
+                    <div>SW: ${b[0].toFixed(2)}, ${b[1].toFixed(2)}</div>
+                    <div>NE: ${b[2].toFixed(2)}, ${b[3].toFixed(2)}</div>
+                    <div>Width: ${(b[2] - b[0]).toFixed(2)}m</div>
+                    <div>Height: ${(b[3] - b[1]).toFixed(2)}m</div>
+                `);
             }
             
             if (debugState.lastPixelCoords) {
-                const px = debugState.lastPixelCoords;
-                html += '<div style="border-top: 1px solid #0f0; padding-top: 5px; margin-top: 5px;">';
-                html += '<div style="color: #ff0;">PIXEL COORDINATES:</div>';
-                html += `<div>Min: (${px.pxMin.toFixed(1)}, ${px.pyMin.toFixed(1)})</div>`;
-                html += `<div>Max: (${px.pxMax.toFixed(1)}, ${px.pyMax.toFixed(1)})</div>`;
-                html += `<div>Size: ${(px.pxMax - px.pxMin).toFixed(1)} x ${(px.pyMax - px.pyMin).toFixed(1)} px</div>`;
-                html += '</div>';
+                const p = debugState.lastPixelCoords;
+                html += section('PIXEL COORDINATES', `
+                    <div style="color: #ff0;">PIXEL COORDINATES:</div>
+                    <div>Min: (${p.pxMin.toFixed(1)}, ${p.pyMin.toFixed(1)})</div>
+                    <div>Max: (${p.pxMax.toFixed(1)}, ${p.pyMax.toFixed(1)})</div>
+                    <div>Size: ${(p.pxMax - p.pxMin).toFixed(1)} x ${(p.pyMax - p.pyMin).toFixed(1)} px</div>
+                `);
             }
             
             if (debugState.lastCalculatedPercentages) {
-                const pct = debugState.lastCalculatedPercentages;
-                html += '<div style="border-top: 1px solid #0f0; padding-top: 5px; margin-top: 5px;">';
-                html += '<div style="color: #ff0;">HIGHLIGHT (% of model):</div>';
-                html += `<div>Left: ${pct.left.toFixed(2)}%</div>`;
-                html += `<div>Top: ${pct.top.toFixed(2)}%</div>`;
-                html += `<div>Width: ${pct.width.toFixed(2)}%</div>`;
-                html += `<div>Height: ${pct.height.toFixed(2)}%</div>`;
-                html += '</div>';
+                const p = debugState.lastCalculatedPercentages;
+                html += section('HIGHLIGHT (% of model)', `
+                    <div style="color: #ff0;">HIGHLIGHT (% of model):</div>
+                    <div>Left: ${p.left.toFixed(2)}%</div>
+                    <div>Top: ${p.top.toFixed(2)}%</div>
+                    <div>Width: ${p.width.toFixed(2)}%</div>
+                    <div>Height: ${p.height.toFixed(2)}%</div>
+                `);
             }
         }
         
         debugPanel.innerHTML = html;
     }
     
-    // Toggle debug panel with 'D' key
-    let debugVisible = false;  // Hidden by default
+    let debugVisible = false;
     window.addEventListener('keydown', (e) => {
-        if (e.key === 'D' || e.key === 'd') {
+        if (e.key.toLowerCase() === 'd') {
             debugVisible = !debugVisible;
             debugPanel.style.display = debugVisible ? 'block' : 'none';
-            console.log(`[DEBUG] Panel ${debugVisible ? 'shown' : 'hidden'}`);
         }
     });
     

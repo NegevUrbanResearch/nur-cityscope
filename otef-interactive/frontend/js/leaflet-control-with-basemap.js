@@ -215,88 +215,59 @@ function loadGeoJSONLayers() {
         });
 }
 
-// Send viewport updates on move (transform to EPSG:2039 for projection display)
-// FIXED v2: Send all 4 corners to handle non-rectangular projection distortion
 map.on('moveend', () => {
-    // Get viewport size in pixels
     const size = map.getSize();
-    
-    // Get all 4 corners of the viewport in pixel coordinates
     const corners_pixel = {
-        sw: L.point(0, size.y),          // bottom-left
-        se: L.point(size.x, size.y),     // bottom-right  
-        nw: L.point(0, 0),               // top-left
-        ne: L.point(size.x, 0)           // top-right
+        sw: L.point(0, size.y),
+        se: L.point(size.x, size.y),
+        nw: L.point(0, 0),
+        ne: L.point(size.x, 0)
     };
     
-    // Convert each corner to WGS84
-    const corners_wgs84 = {};
-    for (const [name, pixel] of Object.entries(corners_pixel)) {
-        corners_wgs84[name] = map.containerPointToLatLng(pixel);
-    }
+    const corners_wgs84 = Object.fromEntries(
+        Object.entries(corners_pixel).map(([name, pixel]) => 
+            [name, map.containerPointToLatLng(pixel)]
+        )
+    );
     
-    // Transform each corner to EPSG:2039
-    const corners_itm = {};
-    for (const [name, latlng] of Object.entries(corners_wgs84)) {
-        const [x, y] = proj4('EPSG:4326', 'EPSG:2039', [latlng.lng, latlng.lat]);
-        corners_itm[name] = { x, y };
-    }
+    const corners_itm = Object.fromEntries(
+        Object.entries(corners_wgs84).map(([name, latlng]) => {
+            const [x, y] = proj4('EPSG:4326', 'EPSG:2039', [latlng.lng, latlng.lat]);
+            return [name, { x, y }];
+        })
+    );
     
-    // Calculate bounding box from all 4 corners (handles trapezoid distortion)
     const all_x = Object.values(corners_itm).map(c => c.x);
     const all_y = Object.values(corners_itm).map(c => c.y);
+    const bbox = [Math.min(...all_x), Math.min(...all_y), Math.max(...all_x), Math.max(...all_y)];
     
-    const bbox = [
-        Math.min(...all_x),  // west
-        Math.min(...all_y),  // south
-        Math.max(...all_x),  // east
-        Math.max(...all_y)   // north
-    ];
-    
-    // Debug info
-    const bboxWidth = bbox[2] - bbox[0];
-    const bboxHeight = bbox[3] - bbox[1];
-    
-    console.log('[DEBUG] Viewport pixels:', size.x, 'x', size.y);
-    console.log('[DEBUG] ITM corners:');
-    console.log('  SW:', corners_itm.sw.x.toFixed(1), corners_itm.sw.y.toFixed(1));
-    console.log('  SE:', corners_itm.se.x.toFixed(1), corners_itm.se.y.toFixed(1));
-    console.log('  NW:', corners_itm.nw.x.toFixed(1), corners_itm.nw.y.toFixed(1));
-    console.log('  NE:', corners_itm.ne.x.toFixed(1), corners_itm.ne.y.toFixed(1));
-    console.log('[DEBUG] Bbox size:', bboxWidth.toFixed(1), 'x', bboxHeight.toFixed(1), 'm');
-    
-    // Update debug overlay
     if (window.DebugOverlay) {
         window.DebugOverlay.updateMapDimensions(size.x, size.y);
         window.DebugOverlay.setZoom(map.getZoom());
         window.DebugOverlay.updateSentBbox(bbox);
     }
     
-    // Send via WebSocket - include corners for accurate quadrilateral rendering
-    if (window.ws && window.ws.readyState === WebSocket.OPEN) {
+    if (window.ws?.readyState === WebSocket.OPEN) {
         window.ws.send(JSON.stringify({
             type: 'otef_viewport_update',
-            bbox: bbox,
-            corners: corners_itm,  // Send actual corners for precise rendering
+            bbox,
+            corners: corners_itm,
             zoom: map.getZoom(),
             timestamp: Date.now()
         }));
-        console.log('[FIXED v2] Sent 4-corner viewport (EPSG:2039)');
     }
 });
 
-// Feature click handler
 map.on('click', (e) => {
-    const latlng = e.latlng;
-    // Transform to EPSG:2039 for display
-    const [x, y] = proj4('EPSG:4326', 'EPSG:2039', [latlng.lng, latlng.lat]);
+    const { lat, lng } = e.latlng;
+    const [x, y] = proj4('EPSG:4326', 'EPSG:2039', [lng, lat]);
     
     showFeatureInfo({
         type: 'Point',
-        coordinates: [latlng.lng, latlng.lat],
+        coordinates: [lng, lat],
         properties: {
-            'Latitude': latlng.lat.toFixed(6),
-            'Longitude': latlng.lng.toFixed(6),
+            'Latitude': lat.toFixed(6),
+            'Longitude': lng.toFixed(6),
             'ITM X': Math.round(x),
             'ITM Y': Math.round(y),
             'Zoom': map.getZoom()
@@ -304,59 +275,35 @@ map.on('click', (e) => {
     });
 });
 
-// UI Controls
 document.getElementById('layerToggle').addEventListener('click', () => {
     document.getElementById('layerPanel').classList.toggle('hidden');
 });
 
-document.getElementById('toggleParcels').addEventListener('change', (e) => {
-    if (window.parcelsLayer) {
-        if (e.target.checked) {
-            map.addLayer(window.parcelsLayer);
-            document.getElementById('parcelsLegend').style.display = 'block';
-        } else {
-            map.removeLayer(window.parcelsLayer);
-            document.getElementById('parcelsLegend').style.display = 'none';
-        }
+const toggleLayer = (layerName, legendId) => (e) => {
+    if (!window[layerName]) return;
+    if (e.target.checked) {
+        map.addLayer(window[layerName]);
+        document.getElementById(legendId).style.display = 'block';
+    } else {
+        map.removeLayer(window[layerName]);
+        document.getElementById(legendId).style.display = 'none';
     }
-});
+};
 
-document.getElementById('toggleRoads').addEventListener('change', (e) => {
-    if (window.roadsLayer) {
-        if (e.target.checked) {
-            map.addLayer(window.roadsLayer);
-            document.getElementById('roadsLegend').style.display = 'block';
-        } else {
-            map.removeLayer(window.roadsLayer);
-            document.getElementById('roadsLegend').style.display = 'none';
-        }
-    }
-});
-
-document.getElementById('toggleModel').addEventListener('change', (e) => {
-    if (window.modelLayer) {
-        if (e.target.checked) {
-            map.addLayer(window.modelLayer);
-            document.getElementById('modelLegend').style.display = 'block';
-        } else {
-            map.removeLayer(window.modelLayer);
-            document.getElementById('modelLegend').style.display = 'none';
-        }
-    }
-});
+document.getElementById('toggleParcels').addEventListener('change', toggleLayer('parcelsLayer', 'parcelsLegend'));
+document.getElementById('toggleRoads').addEventListener('change', toggleLayer('roadsLayer', 'roadsLegend'));
+document.getElementById('toggleModel').addEventListener('change', toggleLayer('modelLayer', 'modelLegend'));
 
 // Add basemap control
 L.control.layers(basemaps, null, { position: 'topleft' }).addTo(map);
 
 function showFeatureInfo(feature) {
     const panel = document.getElementById('featureInfo');
-    panel.innerHTML = '<h4>Feature Info</h4>';
-    Object.entries(feature.properties).forEach(([key, value]) => {
-        panel.innerHTML += `<p><strong>${key}:</strong> ${value}</p>`;
-    });
+    const props = Object.entries(feature.properties)
+        .map(([key, value]) => `<p><strong>${key}:</strong> ${value}</p>`)
+        .join('');
+    panel.innerHTML = '<h4>Feature Info</h4>' + props;
     panel.classList.remove('hidden');
-    
-    // Auto-hide after 7 seconds
     setTimeout(() => panel.classList.add('hidden'), 7000);
 }
 
