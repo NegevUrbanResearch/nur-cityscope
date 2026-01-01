@@ -4,6 +4,7 @@ from django.http import JsonResponse
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser, FormParser
 import json
 import os
 from django.conf import settings
@@ -16,6 +17,7 @@ from .models import (
     State,
     DashboardFeedState,
     LayerConfig,
+    UserUpload,
 )
 
 from .serializers import (
@@ -25,6 +27,7 @@ from .serializers import (
     StateSerializer,
     DashboardFeedStateSerializer,
     LayerConfigSerializer,
+    UserUploadSerializer,
 )
 
 
@@ -71,6 +74,60 @@ class DashboardFeedStateViewSet(viewsets.ModelViewSet):
 class LayerConfigViewSet(viewsets.ModelViewSet):
     queryset = LayerConfig.objects.all()
     serializer_class = LayerConfigSerializer
+
+
+class UserUploadViewSet(viewsets.ModelViewSet):
+    queryset = UserUpload.objects.all()
+    serializer_class = UserUploadSerializer
+    parser_classes = (MultiPartParser, FormParser)
+
+    def create(self, request, *args, **kwargs):
+        image_file = request.FILES.get("image")
+        display_name = request.data.get("display_name", "")
+
+        if not image_file:
+            return Response(
+                {"error": "No image file provided"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate file type
+        image_extension = Path(image_file.name).suffix.lower()
+        allowed_extensions = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
+
+        if image_extension not in allowed_extensions:
+            return Response(
+                {
+                    "error": "Invalid file type",
+                    "allowed_types": allowed_extensions,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate file size (max 10MB)
+        if image_file.size > 10 * 1024 * 1024:
+            return Response(
+                {"error": "File size exceeds 10MB limit"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            # Create user upload entry
+            user_upload = UserUpload.objects.create(
+                image=image_file,
+                display_name=display_name or image_file.name,
+                original_filename=image_file.name,
+                file_size=image_file.size,
+            )
+
+            serializer = self.get_serializer(user_upload)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to upload image: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 # Now lets program the views for the API as an interactive platform
@@ -806,7 +863,6 @@ from django.http import FileResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 import os
 from django.conf import settings
-from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.views import APIView
 from pathlib import Path
 

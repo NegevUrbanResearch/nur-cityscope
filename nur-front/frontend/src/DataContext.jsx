@@ -43,17 +43,6 @@ const INDICATOR_CONFIG = {
     tabLabels: ["Emissions", "Green Space", "Radar Analysis", "Sustainability"],
     pieChartLabels: ["Green Space", "Other"],
   },
-  userUploads:{
-    id: 3,
-    name: "user Uploads",
-    metrics: [
-      "files_management",
-      "userUploads",
-      "userUploads",
-    ],
-    tabLabels: ["Files Management", "userUploads Tab 2", "userUploads Tab 3"],
-    //pieChartLabels: ["userUploads Metric 1", "userUploads Metric 2"],
-  }
   // Add new indicators here following the same pattern
 };
 
@@ -97,7 +86,6 @@ export const DataProvider = ({ children }) => {
 
   // Store the dashboard data for the current indicator
   const [dashboardData, setDashboardData] = useState(null);
-  const isUserUploadsMode = currentIndicator === 'userUploads';
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -986,7 +974,6 @@ export const DataProvider = ({ children }) => {
     togglePlayPause,
     loading,
     error,
-    isUserUploadsMode,
     StateConfig: STATE_CONFIG,
     ClimateScenarios: CLIMATE_SCENARIOS,
     lastUpdate,

@@ -170,7 +170,10 @@ const SlideItem = ({
                         endIcon={<ArrowDropDownIcon fontSize="small" sx={{ color: '#64B5F6' }} />}
                     >
                         <Typography variant="body2" sx={{ textTransform: 'none', fontWeight: 500 }}>
-                            {indicatorConfig[step.indicator]?.name.replace(' Dashboard', '') || step.indicator}
+                            {step.indicator === 'user_upload' 
+                                ? 'User Upload' 
+                                : indicatorConfig[step.indicator]?.name.replace(' Dashboard', '') || step.indicator
+                            }
                         </Typography>
                     </Button>
 
@@ -223,9 +226,14 @@ const PresentationMode = () => {
         currentIndicator
     } = useAppData();
     
-    // Get all valid slides (including both UTCI and Plan for climate)
+    const [userUploads, setUserUploads] = useState([]);
+    
+    // Get all valid slides (including both UTCI and Plan for climate, and user uploads)
     const allValidSlides = useMemo(() => {
         const slides = [];
+        if (!indicatorConfig || !StateConfig) {
+            return slides;
+        }
         Object.keys(indicatorConfig).forEach(indicator => {
             const states = StateConfig[indicator] || [];
             states.forEach(state => {
@@ -240,17 +248,34 @@ const PresentationMode = () => {
                 }
             });
         });
+        // Add user uploads as slides - use local variable to avoid closure issues
+        const uploads = Array.isArray(userUploads) ? userUploads : [];
+        for (let i = 0; i < uploads.length; i++) {
+            const upload = uploads[i];
+            if (upload && upload.id) {
+                slides.push({ 
+                    indicator: 'user_upload', 
+                    state: upload.displayName || upload.original_filename || 'User Upload',
+                    uploadId: upload.id,
+                    imageUrl: upload.imageUrl
+                });
+            }
+        }
         return slides;
-    }, [indicatorConfig, StateConfig]);
+    }, [indicatorConfig, StateConfig, userUploads]);
 
-    // Check if a slide combination is already used (including type for climate)
-    const isSlideUsed = (indicator, state, type, excludeIndex = -1) => {
+    // Check if a slide combination is already used (including type for climate, and uploadId for user uploads)
+    const isSlideUsed = (indicator, state, type, uploadId, excludeIndex = -1) => {
         return presentationSequence.some((step, idx) => {
             if (idx === excludeIndex) return false;
             if (step.indicator !== indicator || step.state !== state) return false;
             // For climate, also check type
             if (indicator === 'climate') {
                 return step.type === type;
+            }
+            // For user uploads, check uploadId
+            if (indicator === 'user_upload') {
+                return step.uploadId === uploadId;
             }
             return true;
         });
@@ -272,6 +297,24 @@ const PresentationMode = () => {
 
     const currentStep = presentationSequence[sequenceIndex];
 
+    // Fetch user uploads on component mount
+    useEffect(() => {
+        const fetchUserUploads = async () => {
+            try {
+                const response = await api.get("/api/user_uploads/");
+                const uploads = response.data.map((upload) => ({
+                    id: upload.id,
+                    displayName: upload.display_name || upload.original_filename,
+                    imageUrl: upload.image_url,
+                }));
+                setUserUploads(uploads);
+            } catch (err) {
+                console.error("Error fetching user uploads:", err);
+            }
+        };
+        fetchUserUploads();
+    }, []);
+
     // Enter presentation mode when page loads (but don't auto-start playing)
     useEffect(() => {
         if (!isPresentationMode) {
@@ -279,8 +322,11 @@ const PresentationMode = () => {
         }
     }, [isPresentationMode, togglePresentationMode]);
 
-    // Helper function to generate cache key for a slide (include type for climate)
-    const getCacheKey = (indicator, state, type) => {
+    // Helper function to generate cache key for a slide (include type for climate, uploadId for user uploads)
+    const getCacheKey = (indicator, state, type, uploadId) => {
+        if (indicator === 'user_upload' && uploadId) {
+            return `user_upload:${uploadId}`;
+        }
         if (indicator === 'climate' && type) {
             return `${indicator}:${state}:${type}`;
         }
@@ -300,12 +346,31 @@ const PresentationMode = () => {
 
     // Helper function to fetch and cache an image for a specific slide
     // Uses PREFETCH mode API params to fetch specific states without modifying backend globals
-    const fetchAndCacheImage = React.useCallback(async (indicator, state, type, priority = 'normal') => {
-        const cacheKey = getCacheKey(indicator, state, type);
+    const fetchAndCacheImage = React.useCallback(async (indicator, state, type, uploadId, imageUrl, priority = 'normal') => {
+        const cacheKey = getCacheKey(indicator, state, type, uploadId);
 
         // Check if already cached
         if (imageCacheRef.current.has(cacheKey)) {
             return imageCacheRef.current.get(cacheKey);
+        }
+
+        // For user uploads, use the provided imageUrl directly
+        if (indicator === 'user_upload' && imageUrl) {
+            const fullUrl = imageUrl.startsWith("http") ? imageUrl : `${config.api.baseUrl}${imageUrl}`;
+            
+            // Preload the image in browser cache
+            const img = new Image();
+            img.src = fullUrl;
+            if (priority === 'high') {
+                await new Promise((resolve, reject) => {
+                    img.onload = resolve;
+                    img.onerror = reject;
+                    setTimeout(resolve, 2000); // 2s timeout
+                });
+            }
+
+            imageCacheRef.current.set(cacheKey, fullUrl);
+            return fullUrl;
         }
 
         // Prevent duplicate requests
@@ -373,7 +438,14 @@ const PresentationMode = () => {
             // Priority 1: Current slide (must be instant)
             const currentSlide = presentationSequence[sequenceIndex];
             if (currentSlide) {
-                await fetchAndCacheImage(currentSlide.indicator, currentSlide.state, currentSlide.type, 'high');
+                await fetchAndCacheImage(
+                    currentSlide.indicator, 
+                    currentSlide.state, 
+                    currentSlide.type || null, 
+                    currentSlide.uploadId || null,
+                    currentSlide.imageUrl || null,
+                    'high'
+                );
             }
 
             // Priority 2: Next 3 slides (high priority, await to ensure they're ready)
@@ -382,7 +454,14 @@ const PresentationMode = () => {
                 const idx = (sequenceIndex + i) % presentationSequence.length;
                 const slide = presentationSequence[idx];
                 if (slide && idx !== sequenceIndex) {
-                    await fetchAndCacheImage(slide.indicator, slide.state, slide.type, 'high');
+                    await fetchAndCacheImage(
+                        slide.indicator, 
+                        slide.state, 
+                        slide.type || null, 
+                        slide.uploadId || null,
+                        slide.imageUrl || null,
+                        'high'
+                    );
                 }
             }
 
@@ -392,7 +471,14 @@ const PresentationMode = () => {
                 const isHighPriority = i <= (sequenceIndex + highPriorityCount) % presentationSequence.length && i > sequenceIndex;
                 if (!isHighPriority) {
                     const slide = presentationSequence[i];
-                    fetchAndCacheImage(slide.indicator, slide.state, slide.type, 'normal'); // No await - background
+                    fetchAndCacheImage(
+                        slide.indicator, 
+                        slide.state, 
+                        slide.type || null, 
+                        slide.uploadId || null,
+                        slide.imageUrl || null,
+                        'normal'
+                    ); // No await - background
                 }
             }
 
@@ -408,7 +494,12 @@ const PresentationMode = () => {
         if (!currentStep) return;
 
         const updateThumbnail = async () => {
-            const cacheKey = getCacheKey(currentStep.indicator, currentStep.state, currentStep.type);
+            const cacheKey = getCacheKey(
+                currentStep.indicator, 
+                currentStep.state, 
+                currentStep.type || null, 
+                currentStep.uploadId || null
+            );
 
             // Check cache first
             if (imageCacheRef.current.has(cacheKey)) {
@@ -419,11 +510,25 @@ const PresentationMode = () => {
                 const nextIndex = (sequenceIndex + 1) % presentationSequence.length;
                 const nextSlide = presentationSequence[nextIndex];
                 if (nextSlide) {
-                    fetchAndCacheImage(nextSlide.indicator, nextSlide.state, nextSlide.type, 'high');
+                    fetchAndCacheImage(
+                        nextSlide.indicator, 
+                        nextSlide.state, 
+                        nextSlide.type || null, 
+                        nextSlide.uploadId || null,
+                        nextSlide.imageUrl || null,
+                        'high'
+                    );
                 }
             } else {
                 // Not cached yet, fetch it
-                const url = await fetchAndCacheImage(currentStep.indicator, currentStep.state, currentStep.type, 'high');
+                const url = await fetchAndCacheImage(
+                    currentStep.indicator, 
+                    currentStep.state, 
+                    currentStep.type || null, 
+                    currentStep.uploadId || null,
+                    currentStep.imageUrl || null,
+                    'high'
+                );
                 if (url) {
                     setThumbnailUrl(url);
                 }
@@ -511,7 +616,7 @@ const PresentationMode = () => {
         setActiveMenu(null);
     };
 
-    const handleSelection = (indicator, state, slideType = null) => {
+    const handleSelection = (indicator, state, slideType = null, uploadId = null, imageUrl = null) => {
         if (!activeMenu) return;
 
         const { index, type: menuType } = activeMenu;
@@ -521,13 +626,35 @@ const PresentationMode = () => {
         if (menuType === 'indicator') {
             // When changing indicator, find first unused valid state
             // For climate, also need to find unused type
-            if (indicator === 'climate') {
+            // For user_upload, find first unused upload
+            if (indicator === 'user_upload') {
+                const availableUpload = userUploads.find(upload => 
+                    !isSlideUsed('user_upload', upload.displayName, null, upload.id, index)
+                );
+                if (availableUpload) {
+                    newSequence[index] = { 
+                        indicator: 'user_upload', 
+                        state: availableUpload.displayName,
+                        uploadId: availableUpload.id,
+                        imageUrl: availableUpload.imageUrl
+                    };
+                } else if (userUploads.length > 0) {
+                    // Fallback to first upload
+                    const firstUpload = userUploads[0];
+                    newSequence[index] = { 
+                        indicator: 'user_upload', 
+                        state: firstUpload.displayName,
+                        uploadId: firstUpload.id,
+                        imageUrl: firstUpload.imageUrl
+                    };
+                }
+            } else if (indicator === 'climate') {
                 // Find first unused climate state+type combo
                 const availableSlide = StateConfig[indicator]?.flatMap(s => {
                     if (!isValidSlide(indicator, s)) return [];
                     const slides = [];
-                    if (!isSlideUsed(indicator, s, 'utci', index)) slides.push({ state: s, type: 'utci' });
-                    if (!isSlideUsed(indicator, s, 'plan', index)) slides.push({ state: s, type: 'plan' });
+                    if (!isSlideUsed(indicator, s, 'utci', null, index)) slides.push({ state: s, type: 'utci' });
+                    if (!isSlideUsed(indicator, s, 'plan', null, index)) slides.push({ state: s, type: 'plan' });
                     return slides;
                 })?.[0];
                 if (availableSlide) {
@@ -540,14 +667,22 @@ const PresentationMode = () => {
             } else {
                 // Non-climate indicator
                 const availableStates = StateConfig[indicator]?.filter(s =>
-                    isValidSlide(indicator, s) && !isSlideUsed(indicator, s, null, index)
+                    isValidSlide(indicator, s) && !isSlideUsed(indicator, s, null, null, index)
                 ) || [];
                 const firstState = availableStates[0] || StateConfig[indicator]?.[0];
                 newSequence[index] = { indicator, state: firstState };
             }
         } else if (menuType === 'state') {
             // Changing state - for climate, slideType contains the new type
-            if (currentSlide.indicator === 'climate' && slideType) {
+            // For user_upload, uploadId and imageUrl are provided
+            if (indicator === 'user_upload' && uploadId && imageUrl) {
+                newSequence[index] = { 
+                    indicator: 'user_upload', 
+                    state, 
+                    uploadId, 
+                    imageUrl 
+                };
+            } else if (currentSlide.indicator === 'climate' && slideType) {
                 newSequence[index] = { ...currentSlide, state, type: slideType };
             } else {
                 newSequence[index] = { ...currentSlide, state };
@@ -562,9 +697,9 @@ const PresentationMode = () => {
     };
 
     const addStep = () => {
-        // Find first unused valid slide (must pass type for proper climate detection)
+        // Find first unused valid slide (must pass type for proper climate detection, uploadId for user uploads)
         const unusedSlide = allValidSlides.find(slide =>
-            !isSlideUsed(slide.indicator, slide.state, slide.type)
+            !isSlideUsed(slide.indicator, slide.state, slide.type, slide.uploadId)
         );
 
         if (unusedSlide) {
@@ -620,7 +755,7 @@ const PresentationMode = () => {
     };
 
     const allSlidesUsed = allValidSlides.every(slide =>
-        isSlideUsed(slide.indicator, slide.state, slide.type)
+        isSlideUsed(slide.indicator, slide.state, slide.type, slide.uploadId)
     );
 
     const isVideo = thumbnailUrl?.includes('.mp4');
@@ -687,7 +822,10 @@ const PresentationMode = () => {
                         Now Showing
                     </Typography>
                     <Typography variant="h5" sx={{ color: 'white', mb: 3, fontWeight: 500 }}>
-                        {indicatorConfig[currentStep?.indicator]?.name.replace(' Dashboard', '')} - {currentStep?.indicator === 'climate' && currentStep?.type ? `${currentStep?.state} (${currentStep.type.toUpperCase()})` : currentStep?.state}
+                        {currentStep?.indicator === 'user_upload' 
+                            ? `User Upload - ${currentStep?.state}`
+                            : `${indicatorConfig[currentStep?.indicator]?.name.replace(' Dashboard', '')} - ${currentStep?.indicator === 'climate' && currentStep?.type ? `${currentStep?.state} (${currentStep.type.toUpperCase()})` : currentStep?.state}`
+                        }
                     </Typography>
 
                     {/* Navigation & Timer Controls */}
@@ -899,13 +1037,38 @@ const PresentationMode = () => {
                     const currentSlide = presentationSequence[activeMenu.index];
                     const states = StateConfig[indicator] || [];
 
-                    if (indicator === 'climate') {
+                    if (indicator === 'user_upload') {
+                        // For user uploads, show list of uploads
+                        return userUploads.map(upload => {
+                            const isUsed = isSlideUsed('user_upload', upload.displayName, null, upload.id, activeMenu.index);
+                            const isCurrentSelection = currentSlide?.uploadId === upload.id;
+                            return (
+                                <MenuItem
+                                    key={upload.id}
+                                    onClick={() => !isUsed && handleSelection('user_upload', upload.displayName, null, upload.id, upload.imageUrl)}
+                                    selected={isCurrentSelection}
+                                    disabled={isUsed && !isCurrentSelection}
+                                    sx={{
+                                        opacity: isUsed && !isCurrentSelection ? 0.4 : 1,
+                                        '&.Mui-disabled': { opacity: 0.4 }
+                                    }}
+                                >
+                                    {upload.displayName}
+                                    {isUsed && !isCurrentSelection && (
+                                        <Typography variant="caption" sx={{ ml: 1, color: 'text.secondary' }}>
+                                            (in use)
+                                        </Typography>
+                                    )}
+                                </MenuItem>
+                            );
+                        });
+                    } else if (indicator === 'climate') {
                         // For climate, show state+type combinations
                         const items = [];
                         states.forEach(st => {
                             if (!isValidSlide(indicator, st)) return;
                             ['utci', 'plan'].forEach(type => {
-                                const isUsed = isSlideUsed(indicator, st, type, activeMenu.index);
+                                const isUsed = isSlideUsed(indicator, st, type, null, activeMenu.index);
                                 const isCurrentSelection = currentSlide?.state === st && currentSlide?.type === type;
                                 items.push(
                                     <MenuItem
@@ -933,7 +1096,7 @@ const PresentationMode = () => {
                         // For non-climate indicators, show just states
                         return states.map(st => {
                             if (!isValidSlide(indicator, st)) return null;
-                            const isUsed = isSlideUsed(indicator, st, null, activeMenu.index);
+                            const isUsed = isSlideUsed(indicator, st, null, null, activeMenu.index);
                             const isCurrentSelection = currentSlide?.state === st;
                             return (
                                 <MenuItem

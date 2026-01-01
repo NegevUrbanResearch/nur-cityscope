@@ -129,3 +129,31 @@ class LayerConfig(models.Model):
 
     def __str__(self):
         return f"LayerConfig {self.id}"
+
+
+def user_upload_path(instance, filename):
+    """
+    Organize user uploaded images in user_uploads folder
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    timestamp = timezone.now().strftime("%Y%m%d_%H%M%S")
+    # Use filename hash if instance doesn't have an ID yet
+    import hashlib
+    filename_hash = hashlib.md5(filename.encode()).hexdigest()[:8]
+    unique_id = instance.id if hasattr(instance, 'id') and instance.id else filename_hash
+    return f"user_uploads/{timestamp}_{unique_id}{ext}"
+
+
+class UserUpload(models.Model):
+    id = models.AutoField(primary_key=True)
+    image = models.ImageField(upload_to=user_upload_path)
+    display_name = models.CharField(max_length=255, default="")
+    original_filename = models.CharField(max_length=255)
+    uploaded_at = models.DateTimeField(default=timezone.now)
+    file_size = models.IntegerField(help_text="File size in bytes")
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+
+    def __str__(self):
+        return f"User Upload: {self.display_name or self.original_filename}"

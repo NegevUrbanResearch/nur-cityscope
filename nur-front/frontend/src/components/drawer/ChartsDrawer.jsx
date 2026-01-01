@@ -14,6 +14,7 @@ import {
 import CloseIcon from "@mui/icons-material/Close";
 import InfoOutlineIcon from "@mui/icons-material/InfoOutline";
 import SlideshowIcon from "@mui/icons-material/Slideshow";
+import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 
 import { useAppData } from "../../DataContext";
 import { chartsDrawerWidth } from "../../style/drawersStyles";
@@ -24,12 +25,11 @@ import IndicatorGraphs from "./IndicatorGraphs";
 import ClimateGraphs from "./ClimateGraphs";
 import config from "../../config";
 import ClimateMapTypeSelector from "./ClimateMapTypeSelector";
-import FilesManagement from "./FilesManagement";
 
 
 const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
   const navigate = useNavigate();
-  const { visualizationMode, handleVisualizationModeChange, currentIndicator, isUserUploadsMode } =
+  const { visualizationMode, handleVisualizationModeChange, currentIndicator } =
     useAppData();
 
   const theme = useTheme();
@@ -44,6 +44,11 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
 
   const handleOpenPresentation = () => {
     navigate('/presentation');
+  };
+
+  const handleOpenUserUploads = () => {
+    console.log('Navigating to user uploads');
+    navigate('/user-uploads');
   };
 
   let disableInteractiveMode = false;
@@ -147,10 +152,6 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         <InfoDialog openInfo={openInfo} handleCloseInfo={handleClickInfo} />
       </Box>
 
-      {isUserUploadsMode? (
-        <FilesManagement/>
-      ): (
-      <> 
       {/* Climate Map Type Selector or Visualization Mode Toggle */}
       {currentIndicator === "climate" ? (
         <ClimateMapTypeSelector />
@@ -264,16 +265,14 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
         )}
       </Box>
 
-      
-      
-      </>)}
-
   
-      {/* Presentation Mode Link */}
+      {/* Presentation Mode and User Uploads Links */}
       <Box
         sx={{
           p: 2,
           display: 'flex',
+          flexDirection: 'row',
+          gap: 1.5,
           justifyContent: 'center',
           flexShrink: 0,
           borderTop: '1px solid rgba(255, 255, 255, 0.08)',
@@ -285,8 +284,8 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           onClick={handleOpenPresentation}
           startIcon={<SlideshowIcon />}
           sx={{
-            width: '80%',
-            maxWidth: '300px',
+            flex: 1,
+            maxWidth: '200px',
             fontWeight: 600,
             fontSize: '0.9rem',
             color: 'rgba(255,255,255,0.8)',
@@ -302,6 +301,29 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           }}
         >
           Presentation Mode
+        </Button>
+        <Button
+          variant="outlined"
+          onClick={handleOpenUserUploads}
+          startIcon={<CloudUploadIcon />}
+          sx={{
+            flex: 1,
+            maxWidth: '200px',
+            fontWeight: 600,
+            fontSize: '0.9rem',
+            color: 'rgba(255,255,255,0.8)',
+            borderColor: 'rgba(255,255,255,0.2)',
+            padding: '10px 20px',
+            borderRadius: '6px',
+            '&:hover': {
+              borderColor: '#4CAF50',
+              color: '#4CAF50',
+              backgroundColor: 'rgba(76, 175, 80, 0.08)',
+            },
+            transition: 'all 0.2s ease',
+          }}
+        >
+          User Uploads
         </Button>
       </Box>
     </Drawer>

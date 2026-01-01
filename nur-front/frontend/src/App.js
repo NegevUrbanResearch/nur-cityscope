@@ -19,6 +19,7 @@ import darkTheme from "./theme";
 import Navbar from "./components/Navbar";
 import Dashboard from "./pages/Dashboard";
 import PresentationMode from "./pages/PresentationMode";
+import UserUploads from "./pages/UserUploads";
 import { useAppData } from "./DataContext";
 import "./style/index.css";
 
@@ -67,19 +68,25 @@ const App = () => {
     if (path.includes("/mobility")) return "mobility";
     if (path.includes("/climate")) return "climate";
     if (path.includes("/presentation")) return "presentation";
+    if (path.includes("/user-uploads")) return "user-uploads";
     return null;
   }, []);
 
   // Track navigation target to prevent race conditions
   const navigationTargetRef = useRef(null);
 
-  // Effect: Sync Context -> URL (only when not in presentation mode)
+  // Effect: Sync Context -> URL (only when not in presentation mode or special routes)
   // This effect handles when context changes and we need to update the URL
   useEffect(() => {
     if (isPresentationMode) return; 
 
     const pathIndicator = getIndicatorFromPath(location.pathname);
-    if (currentIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation') {
+    // Skip syncing for special routes (presentation, user-uploads)
+    if (pathIndicator === 'presentation' || pathIndicator === 'user-uploads') {
+      return;
+    }
+    
+    if (currentIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation' && pathIndicator !== 'user-uploads') {
       console.log(`Context changed to '${currentIndicator}'. Navigating to sync URL.`);
       // Set navigation target BEFORE navigating to guard against URL->Context sync
       navigationTargetRef.current = currentIndicator;
@@ -87,10 +94,15 @@ const App = () => {
     }
   }, [currentIndicator, location.pathname, navigate, getIndicatorFromPath, isPresentationMode]);
 
-  // Effect: Sync URL -> Context (for non-presentation routes)
+  // Effect: Sync URL -> Context (for non-presentation and non-special routes)
   // This effect handles when URL changes (e.g., user clicks browser back/forward or navbar)
   useEffect(() => {
     const pathIndicator = getIndicatorFromPath(location.pathname);
+    
+    // Skip syncing for special routes (presentation, user-uploads)
+    if (pathIndicator === 'presentation' || pathIndicator === 'user-uploads') {
+      return;
+    }
     
     // Clear navigation target when URL matches what we were navigating to
     if (navigationTargetRef.current && pathIndicator === navigationTargetRef.current) {
@@ -104,7 +116,7 @@ const App = () => {
       return;
     }
     
-    if (pathIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation') {
+    if (pathIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation' && pathIndicator !== 'user-uploads') {
       console.log(`URL changed to '${pathIndicator}'. Syncing context.`);
       changeIndicator(pathIndicator);
     }
@@ -113,8 +125,8 @@ const App = () => {
   // Check if we're in presentation mode (either by state or URL)
   const isInPresentationMode = isPresentationMode || location.pathname.includes('/presentation');
   
-  // Don't show navbar in presentation mode
-  const showNavbar = !isInPresentationMode;
+  // Don't show navbar in presentation mode or user uploads page
+  const showNavbar = !isInPresentationMode && !location.pathname.includes('/user-uploads');
 
   return (
     <ThemeProvider theme={darkTheme}>
@@ -177,6 +189,7 @@ const App = () => {
           ) : (
             <Routes>
               <Route path="presentation" element={<PresentationMode />} />
+              <Route path="user-uploads" element={<UserUploads />} />
               <Route path="mobility" element={<DashboardWrapper openCharts={openCharts} />} />
               <Route path="climate" element={<DashboardWrapper openCharts={openCharts} />} />
               <Route path=":indicator" element={<DashboardWrapper openCharts={openCharts} />} />

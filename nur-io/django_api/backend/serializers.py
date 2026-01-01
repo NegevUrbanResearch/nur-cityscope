@@ -7,6 +7,7 @@ from .models import (
     State,
     DashboardFeedState,
     LayerConfig,
+    UserUpload,
 )
 
 
@@ -44,3 +45,16 @@ class LayerConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = LayerConfig
         fields = "__all__"
+
+
+class UserUploadSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserUpload
+        fields = ["id", "display_name", "original_filename", "uploaded_at", "file_size", "image_url"]
+
+    def get_image_url(self, obj):
+        if obj.image:
+            return obj.image.url
+        return None
