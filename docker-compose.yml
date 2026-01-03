@@ -49,6 +49,8 @@ services:
     volumes:
       - ./nur-projection/frontend:/usr/share/nginx/html/nur-projection/frontend
       - ./nur-remote-controller/frontend:/usr/share/nginx/html/nur-remote-controller/frontend
+      - ./otef-interactive/frontend:/usr/share/nginx/html/otef-interactive/frontend
+      - ./otef-interactive/data-source:/usr/share/nginx/html/otef-interactive/data-source
       - dashboard_build:/usr/share/nginx/html/nur-front/frontend
       - media_files:/usr/share/nginx/html/media # Mount the shared media volume
     ports:

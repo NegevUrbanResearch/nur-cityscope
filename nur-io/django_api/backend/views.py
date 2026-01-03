@@ -251,6 +251,50 @@ class CustomActionsViewSet(viewsets.ViewSet):
         # Initialize the state if it's empty
         self._initialize_default_state()
 
+    @action(detail=False, methods=["post"])
+    def log_frontend_error(self, request):
+        """
+        Bridge endpoint to log frontend errors to backend console.
+        This helps debug frontend issues by seeing them in Django logs.
+        """
+        try:
+            error_data = request.data
+            error_type = error_data.get("type", "Error")
+            error_message = error_data.get("message", "No message provided")
+            error_stack = error_data.get("stack", "")
+            error_url = error_data.get("url", "")
+            error_timestamp = error_data.get("timestamp", "")
+            error_component = error_data.get("component", "Unknown")
+            error_user_agent = request.META.get("HTTP_USER_AGENT", "Unknown")
+            error_ip = request.META.get("REMOTE_ADDR", "Unknown")
+
+            # Format error for console output
+            print("\n" + "=" * 80)
+            print(f"🔴 FRONTEND ERROR LOGGED")
+            print("=" * 80)
+            print(f"Type: {error_type}")
+            print(f"Component: {error_component}")
+            print(f"Message: {error_message}")
+            if error_url:
+                print(f"URL: {error_url}")
+            if error_timestamp:
+                print(f"Timestamp: {error_timestamp}")
+            print(f"User Agent: {error_user_agent}")
+            print(f"IP: {error_ip}")
+            if error_stack:
+                print(f"\nStack Trace:")
+                print(error_stack)
+            if error_data.get("additional_data"):
+                print(f"\nAdditional Data:")
+                import json
+                print(json.dumps(error_data.get("additional_data"), indent=2))
+            print("=" * 80 + "\n")
+
+            return JsonResponse({"status": "logged"}, status=200)
+        except Exception as e:
+            print(f"❌ Error logging frontend error: {e}")
+            return JsonResponse({"status": "error", "message": str(e)}, status=500)
+
     def _initialize_default_state(self):
         """Set up default state values if none are present"""
         if not globals.INDICATOR_STATE:
@@ -638,24 +682,99 @@ class CustomActionsViewSet(viewsets.ViewSet):
         type_param = request.query_params.get("type")  # For climate type (utci/plan)
         prefetch_mode = scenario_param is not None  # If scenario is specified, don't use globals
 
-        # Determine which indicator to use
-        if indicator_param:
-            indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
-            indicator_id = indicator_mapping.get(indicator_param)
-            if indicator_id and not prefetch_mode:
-                # Only modify globals if NOT in prefetch mode
-                globals.INDICATOR_ID = indicator_id
-        else:
-            indicator_id = globals.INDICATOR_ID
+        # Indicator name to ID mapping
+        indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
+        
+        # Initialize effective_indicator_id (will be set based on mode)
+        effective_indicator_id = None
 
-        # Use the indicator_id we determined (either from param or globals)
-        effective_indicator_id = indicator_mapping.get(indicator_param) if indicator_param else globals.INDICATOR_ID
+        # Check if presentation mode is active and should override normal behavior
+        # Only use presentation mode if NOT in prefetch mode (prefetch has explicit params)
+        use_presentation_mode = (
+            not prefetch_mode
+            and globals.PRESENTATION_PLAYING
+            and globals.PRESENTATION_SEQUENCE
+            and len(globals.PRESENTATION_SEQUENCE) > 0
+        )
 
-        # Debug (reduced logging in prefetch mode)
-        if not prefetch_mode:
-            print(f"Current indicator_id: {globals.INDICATOR_ID}")
-            print(f"Current state: {globals.INDICATOR_STATE}")
-            print(f"Visualization mode: {globals.VISUALIZATION_MODE}")
+        if use_presentation_mode:
+            # Get current slide from presentation sequence
+            current_index = max(
+                0, min(globals.PRESENTATION_SEQUENCE_INDEX, len(globals.PRESENTATION_SEQUENCE) - 1)
+            )
+            current_slide = globals.PRESENTATION_SEQUENCE[current_index]
+
+            if current_slide and current_slide.get("indicator") and current_slide.get("state"):
+                # Extract indicator and state from current slide
+                slide_indicator = current_slide.get("indicator")
+                slide_state = current_slide.get("state")
+                slide_type = current_slide.get("type")  # For climate slides
+
+                # Map indicator name to ID
+                effective_indicator_id = indicator_mapping.get(slide_indicator)
+                
+                if effective_indicator_id:
+                    print(f"🎬 Presentation mode active - using slide {current_index + 1}/{len(globals.PRESENTATION_SEQUENCE)}")
+                    print(f"   Indicator: {slide_indicator}, State: {slide_state}" + (f", Type: {slide_type}" if slide_type else ""))
+                    
+                    # Override indicator_param and scenario_param to use presentation slide data
+                    # This ensures the rest of the function uses the presentation slide values
+                    indicator_param = slide_indicator
+                    if slide_indicator == "climate" and slide_type:
+                        # For climate, we need to map state name to scenario key
+                        # The state name in the slide is the display name (e.g., "Existing")
+                        # We need to find the corresponding scenario key (e.g., "existing")
+                        from backend.climate_scenarios import CLIMATE_SCENARIO_MAPPING
+                        scenario_key = None
+                        for key, config in CLIMATE_SCENARIO_MAPPING.items():
+                            if config["display_name"] == slide_state:
+                                scenario_key = key
+                                break
+                        
+                        if scenario_key:
+                            scenario_param = scenario_key
+                            type_param = slide_type or "utci"
+                        else:
+                            # Fallback: try lowercase state name
+                            scenario_param = slide_state.lower().replace(" ", "_")
+                            type_param = slide_type or "utci"
+                    else:
+                        # For mobility and other indicators, use state name as scenario
+                        scenario_param = slide_state.lower()
+                    
+                    # Set prefetch_mode to True so we use the params instead of globals
+                    prefetch_mode = True
+                else:
+                    print(f"⚠️ Invalid indicator in presentation slide: {slide_indicator}")
+                    use_presentation_mode = False
+                    effective_indicator_id = None  # Reset since presentation mode failed
+            else:
+                print(f"⚠️ Invalid presentation slide at index {current_index}")
+                use_presentation_mode = False
+                effective_indicator_id = None  # Reset since presentation mode failed
+
+        # Determine which indicator to use (if not already set by presentation mode)
+        if not use_presentation_mode or effective_indicator_id is None:
+            if indicator_param:
+                indicator_id = indicator_mapping.get(indicator_param)
+                if indicator_id and not prefetch_mode:
+                    # Only modify globals if NOT in prefetch mode
+                    globals.INDICATOR_ID = indicator_id
+            else:
+                indicator_id = globals.INDICATOR_ID
+
+            # Use the indicator_id we determined (either from param or globals)
+            effective_indicator_id = indicator_mapping.get(indicator_param) if indicator_param else globals.INDICATOR_ID
+        # else: effective_indicator_id was already set above from presentation slide
+
+        # Debug (reduced logging in prefetch mode, but show presentation mode info)
+        if not prefetch_mode or use_presentation_mode:
+            if use_presentation_mode:
+                print(f"Current indicator_id (from presentation): {effective_indicator_id}")
+            else:
+                print(f"Current indicator_id: {globals.INDICATOR_ID}")
+                print(f"Current state: {globals.INDICATOR_STATE}")
+                print(f"Visualization mode: {globals.VISUALIZATION_MODE}")
 
         indicator = Indicator.objects.filter(indicator_id=effective_indicator_id)
         if not indicator.exists() or not indicator.first():

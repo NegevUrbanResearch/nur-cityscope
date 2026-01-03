@@ -17,6 +17,8 @@ dist/
 downloads/
 eggs/
 .eggs/
+# EXCEPTION: Allow OTEF vendored libraries (MUST come before lib/ ignore)
+!otef-interactive/frontend/lib/
 lib/
 lib64/
 parts/
@@ -95,14 +97,21 @@ setup-config.csv
 
 # Project specific folders and files
 external_files/
+
 # Data directories - Ignore all data directories and their contents
 data/
 */data/
+!otef-interactive/frontend/data/
+!otef-interactive/data-source/
 */*/data/
+!otef-interactive/*/data/
+!otef-interactive/*/*/data/
 */*/*/data/
+!otef-interactive/*/*/*/data/
 nur-io/django_api/data/
 nur-io/core/data/
 nur-io/core/external_files/
+
 screenshots/
 instrucciones.txt
 map_generator/data/output/*
