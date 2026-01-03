@@ -170,6 +170,9 @@ export const DataProvider = ({ children }) => {
   const wsReconnectTimeoutRef = useRef(null);
   const wsConnectedRef = useRef(false); // Track WebSocket connection state
   const lastWsUpdateRef = useRef(0); // Track last WebSocket update timestamp
+  
+  // Track active user upload ID in ref to avoid circular dependency in effects
+  const activeUserUploadRef = useRef(null);
 
   // Update refs when state changes
   useEffect(() => {
@@ -195,6 +198,11 @@ export const DataProvider = ({ children }) => {
   useEffect(() => {
     globalDurationRef.current = globalDuration;
   }, [globalDuration]);
+
+  // Keep active user upload ref in sync
+  useEffect(() => {
+    activeUserUploadRef.current = activeUserUpload?.id || null;
+  }, [activeUserUpload]);
 
   // WebSocket connection for real-time sync
   useEffect(() => {
@@ -257,17 +265,22 @@ export const DataProvider = ({ children }) => {
               console.log('📡 WS: indicator update');
 
               // Handle active user upload updates from other tabs/remote controller
+              // Use ref to check current value and avoid circular updates
               if (data.active_user_upload !== undefined) {
-                if (data.active_user_upload === null) {
-                  // Clear if currently active
-                  setActiveUserUpload(null);
-                } else if (data.active_user_upload.id) {
-                  // Set if different from current
-                  setActiveUserUpload({
-                    id: data.active_user_upload.id,
-                    imageUrl: data.active_user_upload.image_url,
-                    displayName: data.active_user_upload.display_name,
-                  });
+                const currentUploadId = activeUserUploadRef.current;
+                const newUploadId = data.active_user_upload?.id || null;
+                
+                // Only update if actually different
+                if (newUploadId !== currentUploadId) {
+                  if (data.active_user_upload === null) {
+                    setActiveUserUpload(null);
+                  } else if (data.active_user_upload.id) {
+                    setActiveUserUpload({
+                      id: data.active_user_upload.id,
+                      imageUrl: data.active_user_upload.image_url,
+                      displayName: data.active_user_upload.display_name,
+                    });
+                  }
                 }
               }
 
@@ -939,24 +952,28 @@ export const DataProvider = ({ children }) => {
       const isUserUpload = currentStep.indicator.startsWith('user_upload');
       
       if (isUserUpload) {
-          // User upload - set it as active and sync with backend (projection will display it)
-          console.log("📸 User upload detected:", currentStep.state);
-          const upload = {
-              id: currentStep.uploadId,
-              imageUrl: currentStep.imageUrl,
-              displayName: currentStep.state,
-              categoryName: currentStep.categoryName
-          };
+          // User upload - only update if different from current (use ref to avoid circular dependency)
+          const currentUploadId = activeUserUploadRef.current;
           
-          // Set locally
-          setActiveUserUpload(upload);
-          
-          // Sync with backend for projection
-          api.post("/api/actions/set_active_user_upload/", { upload_id: upload.id })
-              .catch(err => console.error("Error syncing user upload:", err));
+          if (currentUploadId !== currentStep.uploadId) {
+              console.log("📸 User upload detected:", currentStep.state);
+              const upload = {
+                  id: currentStep.uploadId,
+                  imageUrl: currentStep.imageUrl,
+                  displayName: currentStep.state,
+                  categoryName: currentStep.categoryName
+              };
+              
+              // Set locally
+              setActiveUserUpload(upload);
+              
+              // Sync with backend for projection
+              api.post("/api/actions/set_active_user_upload/", { upload_id: upload.id })
+                  .catch(err => console.error("Error syncing user upload:", err));
+          }
       } else {
-          // Regular indicator - clear user upload if active
-          if (activeUserUpload) {
+          // Regular indicator - clear user upload if active (use ref to check)
+          if (activeUserUploadRef.current) {
               console.log("🔄 Switching from user upload to indicator");
               setActiveUserUpload(null);
               
@@ -998,8 +1015,7 @@ export const DataProvider = ({ children }) => {
         presentationSequence, 
         globalDuration, 
         changeIndicator, 
-        changeState,
-        activeUserUpload
+        changeState
     ]);
   
     const togglePresentationMode = useCallback(async (isEntering, autoPlay = false) => {
