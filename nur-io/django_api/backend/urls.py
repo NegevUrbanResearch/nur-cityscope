@@ -12,6 +12,7 @@ from .views import (
     IndicatorImageViewSet,
     LayerConfigViewSet,
     UserUploadViewSet,
+    UserUploadCategoryViewSet,
     ImageUploadView,
     serve_map_file,
 )
@@ -41,6 +42,7 @@ router.register(r"indicator_data", IndicatorDataViewSet, basename="indicator-dat
 router.register(r"indicator_images", IndicatorImageViewSet, basename="indicator-image")
 router.register(r"layer_config", LayerConfigViewSet, basename="layer-config")
 router.register(r"user_uploads", UserUploadViewSet, basename="user-upload")
+router.register(r"user_upload_categories", UserUploadCategoryViewSet, basename="user-upload-category")
 router.register(r"actions", CustomActionsViewSet, basename="actions")
 
 urlpatterns = [

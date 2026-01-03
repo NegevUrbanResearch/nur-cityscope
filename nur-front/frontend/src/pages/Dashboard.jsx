@@ -9,7 +9,6 @@ import { Box, Alert, Typography } from "@mui/material";
 import api from "../api";
 import { useAppData } from "../DataContext";
 import config from "../config";
-//import MetricDisplay from "../components/MetricDisplay";
 import DeckGLMap from "../components/maps/DeckGLMap";
 import { chartsDrawerWidth } from "../style/drawersStyles";
 import globals from "../globals";
@@ -19,6 +18,7 @@ const Dashboard = ({ openCharts}) => {
     dashboardData: data,
     currentIndicator,
     visualizationMode,
+    activeUserUpload,
   } = useAppData();
   // Simple function to check if URL is HTML animation
   const isHtmlAnimation = (url) => url && url.includes(".html");
@@ -141,6 +141,22 @@ const Dashboard = ({ openCharts}) => {
 
   // Fetch map data from API when indicator changes
   useEffect(() => {
+    // If user upload is active, skip normal fetching and show pause mode
+    if (activeUserUpload) {
+      setShowLoadingMessage(false);
+      const imageUrl = activeUserUpload.imageUrl.startsWith("http") 
+        ? activeUserUpload.imageUrl 
+        : `${config.api.baseUrl}${activeUserUpload.imageUrl}`;
+      setCurrentImageUrl(imageUrl);
+      setMapData({
+        url: imageUrl,
+        type: "image",
+        loading: false,
+        error: false,
+      });
+      return;
+    }
+
     // Clear any existing loading timer
     if (loadingTimerRef.current) {
       clearTimeout(loadingTimerRef.current);
@@ -247,7 +263,7 @@ const Dashboard = ({ openCharts}) => {
         clearTimeout(currentLoadingTimer);
       }
     };
-  }, [currentIndicator, visualizationMode, preloadImage]);
+  }, [currentIndicator, visualizationMode, preloadImage, activeUserUpload]);
 
   // State for tracking current indicator state
   const [currentState, setCurrentState] = useState({
@@ -274,6 +290,11 @@ const Dashboard = ({ openCharts}) => {
   // This prevents duplicate listeners and ensures consistent handling
   useEffect(() => {
     const handleStateChangeEvent = async (eventType) => {
+      // Skip state changes when user upload is active (pause mode)
+      if (activeUserUpload) {
+        return;
+      }
+      
       const indicator = currentIndicatorRef.current;
 
       // Update currentState for display (always do this)
@@ -369,7 +390,7 @@ const Dashboard = ({ openCharts}) => {
         clearTimeout(refreshDebounceRef.current);
       }
     };
-  }, []); // Empty deps - listeners registered ONCE, use refs for current values
+  }, [activeUserUpload]); // Include activeUserUpload to skip when in pause mode
 
   // Memoize state object to prevent unnecessary re-renders and iframe reloads
   // Must be called before any early returns (Rules of Hooks)
@@ -471,6 +492,7 @@ const Dashboard = ({ openCharts}) => {
             duration: theme.transitions.duration.standard,
             easing: theme.transitions.easing.easeInOut,
           }),
+        position: "relative",
       }}
     >
 

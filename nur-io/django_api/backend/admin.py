@@ -8,6 +8,7 @@ from .models import (
     DashboardFeedState,
     LayerConfig,
     UserUpload,
+    UserUploadCategory,
 )
 
 admin.site.register(Indicator)
@@ -17,3 +18,4 @@ admin.site.register(IndicatorImage)
 admin.site.register(DashboardFeedState)
 admin.site.register(LayerConfig)
 admin.site.register(UserUpload)
+admin.site.register(UserUploadCategory)

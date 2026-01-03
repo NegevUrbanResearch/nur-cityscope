@@ -159,8 +159,22 @@
               const message = JSON.parse(event.data);
               
               // When indicator or presentation state changes, fetch new image
-              if (message.type === 'indicator_update' || message.type === 'presentation_update') {
-                console.log('📡 Projection received update, fetching new content');
+              if (message.type === 'indicator_update') {
+                const data = message.data || {};
+                
+                // Check if there's an active user upload
+                if (data.active_user_upload && data.active_user_upload.image_url) {
+                  console.log('📸 Projection: displaying user upload:', data.active_user_upload.display_name);
+                  const mediaUrl = `${origin}${data.active_user_upload.image_url}`;
+                  currentContent = data.active_user_upload.image_url;
+                  currentType = 'image';
+                  renderImagen(mediaUrl);
+                } else {
+                  console.log('📡 Projection: indicator update, fetching new content');
+                  updateImage();
+                }
+              } else if (message.type === 'presentation_update') {
+                console.log('📡 Projection: presentation update, fetching new content');
                 updateImage();
               }
             } catch (err) {

@@ -144,6 +144,21 @@ def user_upload_path(instance, filename):
     return f"user_uploads/{timestamp}_{unique_id}{ext}"
 
 
+class UserUploadCategory(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=255, unique=True)
+    display_name = models.CharField(max_length=255)
+    created_at = models.DateTimeField(default=timezone.now)
+    is_default = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-is_default", "display_name"]
+        verbose_name_plural = "User Upload Categories"
+
+    def __str__(self):
+        return self.display_name
+
+
 class UserUpload(models.Model):
     id = models.AutoField(primary_key=True)
     image = models.ImageField(upload_to=user_upload_path)
@@ -151,6 +166,13 @@ class UserUpload(models.Model):
     original_filename = models.CharField(max_length=255)
     uploaded_at = models.DateTimeField(default=timezone.now)
     file_size = models.IntegerField(help_text="File size in bytes")
+    category = models.ForeignKey(
+        UserUploadCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="uploads"
+    )
 
     class Meta:
         ordering = ["-uploaded_at"]

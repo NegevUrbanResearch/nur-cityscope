@@ -95,6 +95,10 @@ export const DataProvider = ({ children }) => {
   // presentation mode state
   const [isPresentationMode, setIsPresentationMode] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  
+  // user upload pause mode state
+  const [activeUserUpload, setActiveUserUpload] = useState(null); // { id, imageUrl, displayName, categoryName, isPermanent }
+  const [pausedIndicatorState, setPausedIndicatorState] = useState(null); // Store state before pause to restore later
 
   // Use refs to prevent unnecessary re-renders during frequent polling
   const defaultInd = Object.keys(INDICATOR_CONFIG)[0];
@@ -156,6 +160,10 @@ export const DataProvider = ({ children }) => {
 
   const [prevIndicator, setPrevIndicator] = useState(null);
   const [prevVisualizationMode, setPrevVisualizationMode] = useState(null);
+  
+  // Refs for functions to avoid circular dependencies
+  const changeIndicatorRef = useRef(null);
+  const handleVisualizationModeChangeRef = useRef(null);
   
   // WebSocket connection ref
   const wsRef = useRef(null);
@@ -247,6 +255,21 @@ export const DataProvider = ({ children }) => {
             if (message.type === 'indicator_update' && message.data) {
               const data = message.data;
               console.log('📡 WS: indicator update');
+
+              // Handle active user upload updates from other tabs/remote controller
+              if (data.active_user_upload !== undefined) {
+                if (data.active_user_upload === null) {
+                  // Clear if currently active
+                  setActiveUserUpload(null);
+                } else if (data.active_user_upload.id) {
+                  // Set if different from current
+                  setActiveUserUpload({
+                    id: data.active_user_upload.id,
+                    imageUrl: data.active_user_upload.image_url,
+                    displayName: data.active_user_upload.display_name,
+                  });
+                }
+              }
 
               if (data.indicator_id !== undefined) {
                 const newIndicator = ID_TO_INDICATOR[data.indicator_id];
@@ -554,6 +577,86 @@ export const DataProvider = ({ children }) => {
     }
   }, []);
 
+  // Enter pause mode when user upload is selected
+  const enterPauseMode = useCallback(async (upload) => {
+    console.log("⏸️ Entering pause mode for user upload:", upload.displayName);
+    
+    // Save current state before pausing
+    setPausedIndicatorState({
+      indicator: currentIndicator,
+      indicatorState: { ...globals.INDICATOR_STATE },
+      visualizationMode: visualizationModeRef.current
+    });
+    
+    // Set active user upload locally
+    setActiveUserUpload(upload);
+    
+    // Sync with backend so projection module displays the user upload
+    try {
+      await api.post("/api/actions/set_active_user_upload/", {
+        upload_id: upload.id
+      });
+      console.log("✓ Synced active user upload with backend");
+    } catch (err) {
+      console.error("Error syncing active user upload:", err);
+    }
+  }, [currentIndicator]);
+
+  // Exit pause mode and resume dashboard control
+  const exitPauseMode = useCallback(async () => {
+    console.log("▶️ Exiting pause mode, resuming dashboard control");
+    
+    // Clear active user upload locally
+    setActiveUserUpload(null);
+    
+    // Clear active user upload on backend
+    try {
+      await api.post("/api/actions/set_active_user_upload/", {
+        upload_id: null
+      });
+      console.log("✓ Cleared active user upload on backend");
+    } catch (err) {
+      console.error("Error clearing active user upload:", err);
+    }
+    
+    // Restore previous state if available
+    if (pausedIndicatorState) {
+      const { indicator, indicatorState, visualizationMode } = pausedIndicatorState;
+      
+      // Restore indicator if it changed
+      if (indicator !== indicatorRef.current) {
+        changeIndicatorRef.current?.(indicator);
+      }
+      
+      // Restore visualization mode if it changed
+      if (visualizationMode && visualizationMode !== visualizationModeRef.current) {
+        handleVisualizationModeChangeRef.current?.(null, visualizationMode);
+      }
+      
+      // Restore indicator state
+      if (indicatorState) {
+        globals.INDICATOR_STATE = indicatorState;
+        window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
+        if (indicator === 'climate') {
+          window.dispatchEvent(new CustomEvent("climateStateChanged"));
+        }
+      }
+      
+      setPausedIndicatorState(null);
+    }
+    
+    // Resume presentation mode if it was active
+    if (isPresentationModeRef.current) {
+      api.post("/api/actions/set_presentation_state/", { is_playing: true })
+        .then(response => {
+          if (response.data?.status === "ok") {
+            setIsPlaying(true);
+          }
+        })
+        .catch(err => console.error("Error resuming presentation:", err));
+    }
+  }, [pausedIndicatorState]);
+
   // Toggle play/pause via backend API
   const togglePlayPause = useCallback(async () => {
     // Guard: only allow toggle in presentation mode
@@ -798,6 +901,15 @@ export const DataProvider = ({ children }) => {
     [currentIndicator, fetchDashboardData]
   );
 
+  // Update refs to avoid circular dependencies
+  useEffect(() => {
+    changeIndicatorRef.current = changeIndicator;
+  }, [changeIndicator]);
+
+  useEffect(() => {
+    handleVisualizationModeChangeRef.current = handleVisualizationModeChange;
+  }, [handleVisualizationModeChange]);
+
     // presentation timer logic
     useEffect(() => {
       // Always clear any existing timer first
@@ -823,12 +935,43 @@ export const DataProvider = ({ children }) => {
       
       console.log(`[Presentation] Playing Step ${safeIndex + 1}/${presentationSequence.length}:`, currentStep);
 
-      // Change indicator if needed, passing target state and type to avoid showing default state
-      if (currentStep.indicator !== indicatorRef.current) {
-          changeIndicator(currentStep.indicator, currentStep.state, currentStep.type);
+      // Check if this is a user upload
+      const isUserUpload = currentStep.indicator.startsWith('user_upload');
+      
+      if (isUserUpload) {
+          // User upload - set it as active and sync with backend (projection will display it)
+          console.log("📸 User upload detected:", currentStep.state);
+          const upload = {
+              id: currentStep.uploadId,
+              imageUrl: currentStep.imageUrl,
+              displayName: currentStep.state,
+              categoryName: currentStep.categoryName
+          };
+          
+          // Set locally
+          setActiveUserUpload(upload);
+          
+          // Sync with backend for projection
+          api.post("/api/actions/set_active_user_upload/", { upload_id: upload.id })
+              .catch(err => console.error("Error syncing user upload:", err));
       } else {
-          // Indicator is already correct, just change the state (and type for climate)
-          changeState(currentStep.state, currentStep.type);
+          // Regular indicator - clear user upload if active
+          if (activeUserUpload) {
+              console.log("🔄 Switching from user upload to indicator");
+              setActiveUserUpload(null);
+              
+              // Clear on backend
+              api.post("/api/actions/set_active_user_upload/", { upload_id: null })
+                  .catch(err => console.error("Error clearing user upload:", err));
+          }
+          
+          // Change indicator if needed, passing target state and type to avoid showing default state
+          if (currentStep.indicator !== indicatorRef.current) {
+              changeIndicator(currentStep.indicator, currentStep.state, currentStep.type);
+          } else {
+              // Indicator is already correct, just change the state (and type for climate)
+              changeState(currentStep.state, currentStep.type);
+          }
       }
 
       // Set up timer for next slide
@@ -855,7 +998,8 @@ export const DataProvider = ({ children }) => {
         presentationSequence, 
         globalDuration, 
         changeIndicator, 
-        changeState 
+        changeState,
+        activeUserUpload
     ]);
   
     const togglePresentationMode = useCallback(async (isEntering, autoPlay = false) => {
@@ -963,6 +1107,38 @@ export const DataProvider = ({ children }) => {
   }, [presentationSequence]);
   
 
+  // Exit presentation mode completely and return to mobility present
+  const exitPresentationAndResume = useCallback(async () => {
+    console.log("🔄 Exiting presentation mode and returning to default dashboard");
+    
+    // Clear active user upload locally and on backend
+    setActiveUserUpload(null);
+    try {
+      await api.post("/api/actions/set_active_user_upload/", { upload_id: null });
+    } catch (err) {
+      console.error("Error clearing active user upload:", err);
+    }
+    
+    // Stop presentation mode
+    setIsPlaying(false);
+    setIsPresentationMode(false);
+    
+    // Sync with backend
+    try {
+      await api.post("/api/actions/set_presentation_state/", { is_playing: false });
+    } catch (err) {
+      console.error("Error stopping presentation:", err);
+    }
+    
+    // Clear saved state
+    setPausedIndicatorState(null);
+    
+    // Return to mobility present
+    setTimeout(() => {
+      changeIndicatorRef.current?.("mobility", "Present");
+    }, 100);
+  }, []);
+
   // Value object with additional helpers for the new indicator system
   const contextValue = {
     dashboardData,
@@ -1001,7 +1177,12 @@ export const DataProvider = ({ children }) => {
     globalDuration, 
     setGlobalDuration,
     skipToNextStep,
-    skipToPrevStep
+    skipToPrevStep,
+    activeUserUpload,
+    setActiveUserUpload,
+    enterPauseMode,
+    exitPauseMode,
+    exitPresentationAndResume
   };
 
   return (

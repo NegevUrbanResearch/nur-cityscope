@@ -49,7 +49,8 @@ const Transition = React.forwardRef(function Transition(props, ref) {
 const SlideItem = ({ 
     step, 
     index, 
-    indicatorConfig, 
+    indicatorConfig,
+    userUploadCategories,
     onMenuOpen, 
     onRemove, 
     showDelete,
@@ -170,8 +171,10 @@ const SlideItem = ({
                         endIcon={<ArrowDropDownIcon fontSize="small" sx={{ color: '#64B5F6' }} />}
                     >
                         <Typography variant="body2" sx={{ textTransform: 'none', fontWeight: 500 }}>
-                            {step.indicator === 'user_upload' 
-                                ? 'User Upload' 
+                            {step.indicator.startsWith('user_upload') 
+                                ? (step.categoryName 
+                                    ? userUploadCategories.find(c => c.name === step.categoryName)?.display_name || 'User Upload'
+                                    : 'User Upload')
                                 : indicatorConfig[step.indicator]?.name.replace(' Dashboard', '') || step.indicator
                             }
                         </Typography>
@@ -223,10 +226,16 @@ const PresentationMode = () => {
         togglePresentationMode,
         isPlaying,
         togglePlayPause,
-        currentIndicator
+        currentIndicator,
+        changeIndicator,
+        changeState,
+        enterPauseMode,
+        exitPauseMode,
+        activeUserUpload,
     } = useAppData();
     
     const [userUploads, setUserUploads] = useState([]);
+    const [userUploadCategories, setUserUploadCategories] = useState([]);
     
     // Get all valid slides (including both UTCI and Plan for climate, and user uploads)
     const allValidSlides = useMemo(() => {
@@ -248,16 +257,17 @@ const PresentationMode = () => {
                 }
             });
         });
-        // Add user uploads as slides - use local variable to avoid closure issues
+        // Add user uploads as slides - grouped by category
         const uploads = Array.isArray(userUploads) ? userUploads : [];
         for (let i = 0; i < uploads.length; i++) {
             const upload = uploads[i];
             if (upload && upload.id) {
                 slides.push({ 
-                    indicator: 'user_upload', 
+                    indicator: upload.categoryName ? `user_upload_${upload.categoryName}` : 'user_upload', 
                     state: upload.displayName || upload.original_filename || 'User Upload',
                     uploadId: upload.id,
-                    imageUrl: upload.imageUrl
+                    imageUrl: upload.imageUrl,
+                    categoryName: upload.categoryName
                 });
             }
         }
@@ -274,7 +284,7 @@ const PresentationMode = () => {
                 return step.type === type;
             }
             // For user uploads, check uploadId
-            if (indicator === 'user_upload') {
+            if (indicator.startsWith('user_upload')) {
                 return step.uploadId === uploadId;
             }
             return true;
@@ -297,16 +307,28 @@ const PresentationMode = () => {
 
     const currentStep = presentationSequence[sequenceIndex];
 
-    // Fetch user uploads on component mount
+    // Fetch user uploads and categories on component mount
     useEffect(() => {
         const fetchUserUploads = async () => {
             try {
-                const response = await api.get("/api/user_uploads/");
-                const uploads = response.data.map((upload) => ({
-                    id: upload.id,
-                    displayName: upload.display_name || upload.original_filename,
-                    imageUrl: upload.image_url,
-                }));
+                const [uploadsResponse, categoriesResponse] = await Promise.all([
+                    api.get("/api/user_uploads/"),
+                    api.get("/api/user_upload_categories/")
+                ]);
+                
+                const categories = categoriesResponse.data;
+                setUserUploadCategories(categories);
+                
+                const uploads = uploadsResponse.data.map((upload) => {
+                    const category = categories.find(c => c.id === upload.category);
+                    return {
+                        id: upload.id,
+                        displayName: upload.display_name || upload.original_filename,
+                        imageUrl: upload.image_url,
+                        categoryName: category ? category.name : null,
+                        categoryDisplayName: category ? category.display_name : null,
+                    };
+                });
                 setUserUploads(uploads);
             } catch (err) {
                 console.error("Error fetching user uploads:", err);
@@ -324,7 +346,7 @@ const PresentationMode = () => {
 
     // Helper function to generate cache key for a slide (include type for climate, uploadId for user uploads)
     const getCacheKey = (indicator, state, type, uploadId) => {
-        if (indicator === 'user_upload' && uploadId) {
+        if (indicator.startsWith('user_upload') && uploadId) {
             return `user_upload:${uploadId}`;
         }
         if (indicator === 'climate' && type) {
@@ -355,7 +377,7 @@ const PresentationMode = () => {
         }
 
         // For user uploads, use the provided imageUrl directly
-        if (indicator === 'user_upload' && imageUrl) {
+        if (indicator.startsWith('user_upload') && imageUrl) {
             const fullUrl = imageUrl.startsWith("http") ? imageUrl : `${config.api.baseUrl}${imageUrl}`;
             
             // Preload the image in browser cache
@@ -626,26 +648,32 @@ const PresentationMode = () => {
         if (menuType === 'indicator') {
             // When changing indicator, find first unused valid state
             // For climate, also need to find unused type
-            // For user_upload, find first unused upload
-            if (indicator === 'user_upload') {
-                const availableUpload = userUploads.find(upload => 
-                    !isSlideUsed('user_upload', upload.displayName, null, upload.id, index)
+            // For user_upload categories, find first unused upload from that category
+            if (indicator.startsWith('user_upload')) {
+                const categoryName = indicator.replace('user_upload_', '');
+                const categoryUploads = userUploads.filter(u => 
+                    categoryName ? u.categoryName === categoryName : !u.categoryName
+                );
+                const availableUpload = categoryUploads.find(upload => 
+                    !isSlideUsed(indicator, upload.displayName, null, upload.id, index)
                 );
                 if (availableUpload) {
                     newSequence[index] = { 
-                        indicator: 'user_upload', 
+                        indicator: indicator, 
                         state: availableUpload.displayName,
                         uploadId: availableUpload.id,
-                        imageUrl: availableUpload.imageUrl
+                        imageUrl: availableUpload.imageUrl,
+                        categoryName: availableUpload.categoryName
                     };
-                } else if (userUploads.length > 0) {
-                    // Fallback to first upload
-                    const firstUpload = userUploads[0];
+                } else if (categoryUploads.length > 0) {
+                    // Fallback to first upload from category
+                    const firstUpload = categoryUploads[0];
                     newSequence[index] = { 
-                        indicator: 'user_upload', 
+                        indicator: indicator, 
                         state: firstUpload.displayName,
                         uploadId: firstUpload.id,
-                        imageUrl: firstUpload.imageUrl
+                        imageUrl: firstUpload.imageUrl,
+                        categoryName: firstUpload.categoryName
                     };
                 }
             } else if (indicator === 'climate') {
@@ -675,12 +703,14 @@ const PresentationMode = () => {
         } else if (menuType === 'state') {
             // Changing state - for climate, slideType contains the new type
             // For user_upload, uploadId and imageUrl are provided
-            if (indicator === 'user_upload' && uploadId && imageUrl) {
+            if (indicator.startsWith('user_upload') && uploadId && imageUrl) {
+                const categoryName = indicator.replace('user_upload_', '');
                 newSequence[index] = { 
-                    indicator: 'user_upload', 
+                    indicator: indicator, 
                     state, 
                     uploadId, 
-                    imageUrl 
+                    imageUrl,
+                    categoryName: categoryName || null
                 };
             } else if (currentSlide.indicator === 'climate' && slideType) {
                 newSequence[index] = { ...currentSlide, state, type: slideType };
@@ -822,8 +852,8 @@ const PresentationMode = () => {
                         Now Showing
                     </Typography>
                     <Typography variant="h5" sx={{ color: 'white', mb: 3, fontWeight: 500 }}>
-                        {currentStep?.indicator === 'user_upload' 
-                            ? `User Upload - ${currentStep?.state}`
+                        {currentStep?.indicator.startsWith('user_upload') 
+                            ? `${currentStep?.categoryName ? userUploadCategories.find(c => c.name === currentStep.categoryName)?.display_name || 'User Upload' : 'User Upload'} - ${currentStep?.state}`
                             : `${indicatorConfig[currentStep?.indicator]?.name.replace(' Dashboard', '')} - ${currentStep?.indicator === 'climate' && currentStep?.type ? `${currentStep?.state} (${currentStep.type.toUpperCase()})` : currentStep?.state}`
                         }
                     </Typography>
@@ -976,6 +1006,7 @@ const PresentationMode = () => {
                                         index={index}
                                         step={step}
                                         indicatorConfig={indicatorConfig}
+                                        userUploadCategories={userUploadCategories}
                                         onMenuOpen={handleMenuOpen}
                                         onRemove={removeStep}
                                         showDelete={presentationSequence.length > 1}
@@ -1016,36 +1047,66 @@ const PresentationMode = () => {
                 open={Boolean(activeMenu)}
                 onClose={handleMenuClose}
             >
-                {activeMenu?.type === 'indicator' && Object.keys(indicatorConfig).map((key) => {
-                    // Check if this indicator has any valid unused states
-                    const hasValidStates = StateConfig[key]?.some(s => isValidSlide(key, s));
-                    if (!hasValidStates) return null;
-                    
-                    return (
-                        <MenuItem 
-                            key={key} 
-                            onClick={() => handleSelection(key, null)}
-                            selected={presentationSequence[activeMenu.index]?.indicator === key}
-                        >
-                            {indicatorConfig[key].name.replace(' Dashboard', '')}
-                        </MenuItem>
-                    );
-                })}
+                {activeMenu?.type === 'indicator' && (
+                    <>
+                        {Object.keys(indicatorConfig).map((key) => {
+                            // Check if this indicator has any valid unused states
+                            const hasValidStates = StateConfig[key]?.some(s => isValidSlide(key, s));
+                            if (!hasValidStates) return null;
+                            
+                            return (
+                                <MenuItem 
+                                    key={key} 
+                                    onClick={() => handleSelection(key, null)}
+                                    selected={presentationSequence[activeMenu.index]?.indicator === key}
+                                >
+                                    {indicatorConfig[key].name.replace(' Dashboard', '')}
+                                </MenuItem>
+                            );
+                        })}
+                        {userUploadCategories.map((category) => {
+                            const categoryUploads = userUploads.filter(u => u.categoryName === category.name);
+                            if (categoryUploads.length === 0) return null;
+                            const indicatorKey = `user_upload_${category.name}`;
+                            return (
+                                <MenuItem 
+                                    key={indicatorKey}
+                                    onClick={() => handleSelection(indicatorKey, null)}
+                                    selected={presentationSequence[activeMenu.index]?.indicator === indicatorKey}
+                                >
+                                    {category.display_name}
+                                </MenuItem>
+                            );
+                        })}
+                        {userUploads.filter(u => !u.categoryName).length > 0 && (
+                            <MenuItem 
+                                onClick={() => handleSelection('user_upload', null)}
+                                selected={presentationSequence[activeMenu.index]?.indicator === 'user_upload'}
+                            >
+                                User Uploads
+                            </MenuItem>
+                        )}
+                    </>
+                )}
 
                 {activeMenu?.type === 'state' && (() => {
                     const indicator = presentationSequence[activeMenu.index]?.indicator;
                     const currentSlide = presentationSequence[activeMenu.index];
                     const states = StateConfig[indicator] || [];
 
-                    if (indicator === 'user_upload') {
-                        // For user uploads, show list of uploads
-                        return userUploads.map(upload => {
-                            const isUsed = isSlideUsed('user_upload', upload.displayName, null, upload.id, activeMenu.index);
+                    if (indicator.startsWith('user_upload')) {
+                        // For user uploads, show list of uploads from the selected category
+                        const categoryName = indicator.replace('user_upload_', '');
+                        const categoryUploads = userUploads.filter(u => 
+                            categoryName ? u.categoryName === categoryName : !u.categoryName
+                        );
+                        return categoryUploads.map(upload => {
+                            const isUsed = isSlideUsed(indicator, upload.displayName, null, upload.id, activeMenu.index);
                             const isCurrentSelection = currentSlide?.uploadId === upload.id;
                             return (
                                 <MenuItem
                                     key={upload.id}
-                                    onClick={() => !isUsed && handleSelection('user_upload', upload.displayName, null, upload.id, upload.imageUrl)}
+                                    onClick={() => !isUsed && handleSelection(indicator, upload.displayName, null, upload.id, upload.imageUrl)}
                                     selected={isCurrentSelection}
                                     disabled={isUsed && !isCurrentSelection}
                                     sx={{
