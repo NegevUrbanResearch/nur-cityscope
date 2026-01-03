@@ -1,70 +1,65 @@
-# Getting Started with Create React App
+# nur-CityScope Frontend
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+React dashboard for urban planning visualization with interactive maps and charts.
 
-## Available Scripts
+## Stack
 
-In the project directory, you can run:
+- React 18 + React Router
+- Material UI 7
+- Deck.gl + Mapbox GL
+- Chart.js + Recharts
+- WebSocket for real-time updates
 
-### `npm start`
+## Features
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- **Dashboard**: Main visualization with indicator switching (mobility/climate)
+- **Presentation Mode**: Full-screen slideshow with automated sequencing
+- **User Uploads**: Image management with categories
+- **Charts Drawer**: Collapsible panel with indicator-specific visualizations
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## Pages
 
-### `npm test`
+| Route | Component | Description |
+|-------|-----------|-------------|
+| `/mobility` | Dashboard | Mobility visualizations (default) |
+| `/climate` | Dashboard | Climate scenario comparisons |
+| `/presentation` | PresentationMode | Full-screen slideshow |
+| `/user-uploads` | UserUploads | Image management |
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Development
 
-### `npm run build`
+```bash
+npm install
+npm start          # Development server on :3000
+npm run build      # Production build
+```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## Environment
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+```env
+REACT_APP_MAPBOX_ACCESS_TOKEN=pk.xxx  # Required for maps
+```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Project Structure
 
-### `npm run eject`
+```
+src/
+├── components/
+│   ├── charts/          # BarChart, PieChart, RadarChart, etc.
+│   ├── drawer/          # ChartsDrawer, indicator-specific graph panels
+│   ├── maps/            # DeckGLMap component
+│   ├── Navbar.jsx       # Navigation with indicator switching
+│   └── MapLegend.js     # Map legend overlay
+├── pages/
+│   ├── Dashboard.jsx    # Main visualization view
+│   ├── PresentationMode.jsx  # Slideshow with sequence control
+│   └── UserUploads.jsx  # Image upload/management
+├── DataContext.jsx      # Global state (indicators, uploads, WebSocket)
+├── api.js               # Axios configuration
+├── config.js            # API/media base URLs
+└── globals.js           # Shared state variables
+```
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+## Build
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+Production builds are created by the `dashboard-builder` Docker service and served via nginx at `/dashboard/`.

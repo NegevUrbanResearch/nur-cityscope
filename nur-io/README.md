@@ -1,143 +1,136 @@
 # nur-CityScope Backend
 
-This is the backend service for the nur-CityScope system, handling data processing, real-time updates, and API endpoints.
+Django REST API with WebSocket support for real-time urban planning visualization.
 
-## Project Structure
+## Stack
+
+- Django 4.2 + Django REST Framework
+- Django Channels + Redis (WebSocket)
+- PostgreSQL
+- Pillow, Pandas, Matplotlib
+
+## Structure
 
 ```
-nur-io/
-└── django_api/                 # Django project root
-    ├── core/                   # Django project settings
-    │   ├── settings.py         # Project configuration
-    │   ├── urls.py             # Main URL routing
-    │   ├── asgi.py             # ASGI configuration (WebSockets)
-    │   └── wsgi.py             # WSGI configuration
-    ├── backend/                # Main Django application
-    │   ├── management/         # Django management commands
-    │   │   └── commands/
-    │   ├── migrations/         # Database migrations
-    │   ├── models.py           # Database models
-    │   ├── views.py            # API endpoints
-    │   ├── serializers.py      # DRF serializers
-    │   ├── urls.py             # App URL routing
-    │   ├── admin.py            # Django admin
-    │   ├── globals.py          # Global variables
-    │   └── tests.py            # Unit tests
-    ├── websocket_app/          # Real-time WebSocket functionality
-    │   ├── consumers.py        # WebSocket consumers
-    │   ├── routing.py          # WebSocket URL routing
-    │   └── utils/              # WebSocket utilities
-    │       ├── data_manager.py    # Data management
-    │       └── data_updater.py    # Real-time updates
-    ├── manage.py               # Django management script
-    ├── requirements.txt        # Python dependencies
-    ├── init.sh                 # Initialization script
-    └── Dockerfile              # Docker configuration
+nur-io/django_api/
+├── core/                 # Django project config
+│   ├── settings.py
+│   ├── urls.py
+│   └── asgi.py           # ASGI for WebSockets
+├── backend/              # Main app
+│   ├── models.py         # Indicator, State, UserUpload, etc.
+│   ├── views.py          # API endpoints
+│   ├── serializers.py
+│   ├── globals.py        # Runtime state
+│   ├── climate_scenarios.py
+│   └── management/commands/
+│       └── create_data.py  # Data initialization
+├── websocket_app/        # Real-time features
+│   ├── consumers.py      # WebSocket handlers
+│   └── routing.py
+├── public/processed/     # Visualization assets
+└── requirements.txt
 ```
 
-**Note**: A `django_api/media/` directory is created automatically at runtime when Django generates images, maps, and other media files, but is not in the source code.
+## Models
+
+- **Indicator**: Mobility, Climate indicator definitions
+- **State**: Scenario configurations (year, scenario type)
+- **IndicatorData**: Links indicators to states
+- **IndicatorImage**: Visualization images/videos per state
+- **DashboardFeedState**: Chart data per state
+- **LayerConfig**: Deck.gl layer configurations
+- **UserUpload**: User-uploaded images with categories
 
 ## API Endpoints
 
-### Main Endpoints
+### REST API
 
-- `/api/indicators/` - Indicator management
-- `/api/dashboard_feed_state/` - Dashboard data
-- `/api/actions/` - Interactive actions (state changes, data retrieval)
+```
+GET  /api/indicators/
+GET  /api/states/
+GET  /api/dashboard_feed_state/?dashboard_type=mobility
+GET  /api/user_uploads/
+POST /api/user_uploads/
+GET  /api/user_upload_categories/
+POST /api/user_upload_categories/
 
-### WebSocket Endpoints
-
-- `/ws/dashboard/` - Dashboard real-time updates
-- `/ws/map/` - Map real-time updates
-
-## Data Management
-
-#### Export Database
-
-```bash
-docker exec -it nur-db pg_dump -U postgres -W -h localhost db > db.sql
+GET  /api/actions/get_global_variables/
+POST /api/actions/set_current_indicator/
+POST /api/actions/set_climate_scenario/
+POST /api/actions/set_visualization_mode/
+GET  /api/actions/get_image_data/
+GET  /api/actions/get_deckgl_data/
+GET  /api/actions/get_presentation_state/
+POST /api/actions/set_presentation_state/
+POST /api/actions/set_active_user_upload/
 ```
 
-#### Import Database
+### WebSocket
 
-```bash
-# Reset database
-docker exec -i nur-db psql db -U postgres -c "DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;"
-
-# Import data
-docker exec -i nur-db psql db -U postgres < db.sql
+```
+/ws/presentation/  # Real-time state updates
 ```
 
-## Development
+Messages:
+- `indicator_update`: Indicator/state changes
+- `presentation_update`: Presentation playback state
 
-### Project Architecture
-
-The backend follows a clean Django architecture:
-
-1. **Core Project** (`core/`): Django project settings and configuration
-2. **Backend App** (`backend/`): Main application with models, views, and APIs
-3. **WebSocket App** (`websocket_app/`): Real-time communication handling
-4. **Management Commands**: Data generation and management utilities
-
-### Adding New Features
-
-1. **Models**: Add to `backend/models.py`
-2. **API Endpoints**: Add to `backend/views.py` and `backend/urls.py`
-3. **Real-time Features**: Update `websocket_app/consumers.py`
-4. **Data Processing**: Add management commands in `backend/management/commands/`
-
-### Testing
+## Commands
 
 ```bash
-# Run all tests
-docker exec -it nur-api python manage.py test
+# Initialize data from public/processed/
+python manage.py create_data
 
-# Run specific app tests
-docker exec -it nur-api python manage.py test backend
-docker exec -it nur-api python manage.py test websocket_app
+# Database
+python manage.py makemigrations
+python manage.py migrate
 
-# Check Django configuration
-docker exec -it nur-api python manage.py check
+# Create admin user
+python manage.py createsuperuser
 ```
 
-### Database Migrations
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `SECRET_KEY` | Django secret key |
+| `DEBUG` | Debug mode (True/False) |
+| `ALLOWED_HOSTS` | Allowed hostnames |
+| `CORS_ALLOW_ALL_ORIGINS` | CORS configuration |
+
+## Data Loading
+
+The `create_data` management command:
+1. Scans `public/processed/` for visualization assets
+2. Creates Indicator and State records
+3. Links images/videos to indicator-state combinations
+4. Loads dashboard chart data from CSV files
+
+```
+public/processed/
+├── climate/
+│   ├── utci/*.jpg      # UTCI thermal maps
+│   └── plan/*.jpg      # Planning diagrams
+└── mobility/
+    ├── present/
+    │   ├── image/      # MP4 animations
+    │   └── map/        # HTML interactive maps
+    └── survey/
+        ├── image/
+        └── map/
+```
+
+## Docker
 
 ```bash
-# Create migrations for model changes
-docker exec -it nur-api python manage.py makemigrations
+# Run with compose
+docker-compose up -d nur-api
 
-# Apply migrations
-docker exec -it nur-api python manage.py migrate
+# Shell access
+docker-compose exec nur-api bash
 
-# View migration status
-docker exec -it nur-api python manage.py showmigrations
+# Logs
+docker-compose logs -f nur-api
 ```
-
-## Configuration
-
-### Environment Variables
-
-Key environment variables (set in `.env`):
-
-- `API_PORT`: Backend API port (default: 9900)
-- `FRONT_PORT`: Frontend port (default: 8500)
-- `POSTGRES_DB`: Database name
-- `POSTGRES_USER`: Database user
-- `POSTGRES_PASSWORD`: Database password
-- `DATABASE_URL`: Full database connection string
-
-### Django Settings
-
-Main settings are in `core/settings.py`:
-
-- Database configuration using `dj_database_url`
-- CORS settings for frontend communication
-- Django Channels configuration for WebSockets
-- Media file handling
-
-## API Documentation
-
-### Interactive API Documentation
-
-- Swagger UI: `http://localhost:8500/api/swagger/`
-- ReDoc: `http://localhost:8500/api/redoc/`
