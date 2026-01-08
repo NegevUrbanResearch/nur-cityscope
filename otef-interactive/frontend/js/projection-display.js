@@ -3,6 +3,9 @@
 
 // Load model bounds
 let modelBounds;
+let svgOverlay = null;
+let loadedLayers = {}; // Store layer data for resize handling
+
 fetch('data/model-bounds.json')
     .then(res => res.json())
     .then(bounds => {
@@ -13,6 +16,9 @@ fetch('data/model-bounds.json')
         if (window.DebugOverlay) {
             window.DebugOverlay.updateModelDimensions(bounds.image_width, bounds.image_height);
         }
+        
+        // Initialize layers after model bounds are loaded
+        initializeLayers();
     })
     .catch(error => {
         console.error('Error loading model bounds:', error);
@@ -190,9 +196,24 @@ function updateHighlightRect(itmBbox) {
 
 let lastMessage = null;
 
-window.addEventListener('resize', () => {
+// Debounce resize handler
+let resizeTimeout;
+function handleResize() {
     if (lastMessage?.corners) updateHighlightQuad(lastMessage.corners);
     else if (lastMessage?.bbox) updateHighlightRect(lastMessage.bbox);
+    
+    // Update SVG overlay position and re-render layers
+    if (svgOverlay && modelBounds) {
+        const displayBounds = getDisplayedImageBounds();
+        if (displayBounds) {
+            updateSVGPosition(svgOverlay, displayBounds, modelBounds, loadedLayers);
+        }
+    }
+}
+
+window.addEventListener('resize', () => {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(handleResize, 200); // Debounce 200ms
 });
 
 // Keyboard shortcuts
@@ -227,6 +248,206 @@ function toggleFullScreen() {
         requestFullScreen.call(docElement);
     } else {
         cancelFullScreen.call(doc);
+    }
+}
+
+/**
+ * Initialize layers - create SVG overlay and load default layers
+ */
+function initializeLayers() {
+    if (!modelBounds) {
+        console.error('Cannot initialize layers: model bounds not loaded');
+        return;
+    }
+    
+    // Create SVG overlay
+    try {
+        svgOverlay = createSVGOverlay('displayContainer');
+        console.log('SVG overlay created');
+    } catch (error) {
+        console.error('Failed to create SVG overlay:', error);
+        return;
+    }
+    
+    // Load roads layer (enabled by default)
+    loadRoadsLayer();
+    
+    // Set up layer control handlers
+    setupLayerControls();
+}
+
+/**
+ * Load and render roads layer
+ */
+function loadRoadsLayer() {
+    const roadToggle = document.getElementById('toggleRoads');
+    if (!roadToggle) return;
+    
+    roadToggle.disabled = true;
+    roadToggle.nextSibling.textContent = ' Roads (loading...)';
+    
+    loadLayerData('/otef-interactive/data-source/layers-simplified/small_roads_simplified.json')
+        .then(geojson => {
+            const displayBounds = getDisplayedImageBounds();
+            if (!displayBounds) {
+                throw new Error('Display bounds not available');
+            }
+            
+            // Transform GeoJSON to display pixels
+            const transformed = CoordUtils.transformGeojsonToDisplayPixels(
+                geojson,
+                modelBounds,
+                displayBounds
+            );
+            
+            // Set up SVG position and viewBox before rendering
+            svgOverlay.style.left = displayBounds.offsetX + 'px';
+            svgOverlay.style.top = displayBounds.offsetY + 'px';
+            svgOverlay.style.width = displayBounds.width + 'px';
+            svgOverlay.style.height = displayBounds.height + 'px';
+            svgOverlay.setAttribute('viewBox', `0 0 ${displayBounds.width} ${displayBounds.height}`);
+            
+            // Render as SVG
+            renderLayerAsSVG(svgOverlay, 'roads', transformed, getRoadStyle);
+            
+            // Store for resize handling
+            loadedLayers.roads = {
+                originalGeojson: geojson,
+                styleFunction: getRoadStyle
+            };
+            
+            // Update UI
+            roadToggle.disabled = false;
+            roadToggle.checked = true;
+            roadToggle.nextSibling.textContent = ' Roads';
+            document.getElementById('roadsLegend').style.display = 'block';
+            
+            console.log('Roads layer loaded and rendered');
+        })
+        .catch(error => {
+            console.error('Error loading roads layer:', error);
+            roadToggle.nextSibling.textContent = ' Roads (ERROR - check console)';
+            roadToggle.disabled = false;
+        });
+}
+
+/**
+ * Load and render parcels layer (lazy load when toggled on)
+ */
+function loadParcelsLayer() {
+    const parcelToggle = document.getElementById('toggleParcels');
+    if (!parcelToggle) return;
+    
+    // Check if already loaded
+    if (loadedLayers.parcels) {
+        updateLayerVisibility('parcels', parcelToggle.checked);
+        document.getElementById('parcelsLegend').style.display = parcelToggle.checked ? 'block' : 'none';
+        return;
+    }
+    
+    parcelToggle.disabled = true;
+    parcelToggle.nextSibling.textContent = ' Parcels (loading...)';
+    
+    loadLayerData('/otef-interactive/data-source/layers-simplified/migrashim_simplified.json')
+        .then(geojson => {
+            const displayBounds = getDisplayedImageBounds();
+            if (!displayBounds) {
+                throw new Error('Display bounds not available');
+            }
+            
+            // Transform GeoJSON to display pixels
+            const transformed = CoordUtils.transformGeojsonToDisplayPixels(
+                geojson,
+                modelBounds,
+                displayBounds
+            );
+            
+            // Set up SVG position and viewBox before rendering (if not already set)
+            if (!svgOverlay.hasAttribute('viewBox')) {
+                svgOverlay.style.left = displayBounds.offsetX + 'px';
+                svgOverlay.style.top = displayBounds.offsetY + 'px';
+                svgOverlay.style.width = displayBounds.width + 'px';
+                svgOverlay.style.height = displayBounds.height + 'px';
+                svgOverlay.setAttribute('viewBox', `0 0 ${displayBounds.width} ${displayBounds.height}`);
+            }
+            
+            // Render as SVG
+            renderLayerAsSVG(svgOverlay, 'parcels', transformed, getParcelStyle);
+            
+            // Store for resize handling
+            loadedLayers.parcels = {
+                originalGeojson: geojson,
+                styleFunction: getParcelStyle
+            };
+            
+            // Update UI
+            parcelToggle.disabled = false;
+            parcelToggle.checked = true;
+            parcelToggle.nextSibling.textContent = ' Parcels';
+            document.getElementById('parcelsLegend').style.display = 'block';
+            
+            console.log('Parcels layer loaded and rendered');
+        })
+        .catch(error => {
+            console.error('Error loading parcels layer:', error);
+            parcelToggle.nextSibling.textContent = ' Parcels (ERROR - check console)';
+            parcelToggle.disabled = false;
+        });
+}
+
+/**
+ * Set up layer control event handlers
+ */
+function setupLayerControls() {
+    // Layer toggle button
+    const layerToggle = document.getElementById('layerToggle');
+    if (layerToggle) {
+        layerToggle.addEventListener('click', () => {
+            const panel = document.getElementById('layerPanel');
+            if (panel) {
+                panel.classList.toggle('hidden');
+            }
+        });
+    }
+    
+    // Roads toggle
+    const roadsToggle = document.getElementById('toggleRoads');
+    if (roadsToggle) {
+        roadsToggle.addEventListener('change', (e) => {
+            updateLayerVisibility('roads', e.target.checked);
+            const legend = document.getElementById('roadsLegend');
+            if (legend) {
+                legend.style.display = e.target.checked ? 'block' : 'none';
+            }
+        });
+    }
+    
+    // Parcels toggle (lazy load)
+    const parcelsToggle = document.getElementById('toggleParcels');
+    if (parcelsToggle) {
+        parcelsToggle.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                loadParcelsLayer();
+            } else {
+                updateLayerVisibility('parcels', false);
+                document.getElementById('parcelsLegend').style.display = 'none';
+            }
+        });
+    }
+    
+    // Model toggle (just controls image visibility)
+    const modelToggle = document.getElementById('toggleModel');
+    if (modelToggle) {
+        modelToggle.addEventListener('change', (e) => {
+            const img = document.getElementById('displayedImage');
+            if (img) {
+                img.style.opacity = e.target.checked ? '1' : '0';
+            }
+            const legend = document.getElementById('modelLegend');
+            if (legend) {
+                legend.style.display = e.target.checked ? 'block' : 'none';
+            }
+        });
     }
 }
 

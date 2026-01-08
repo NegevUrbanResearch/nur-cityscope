@@ -1,6 +1,6 @@
 # nur-CityScope - Comprehensive .gitignore
 # ----------------------------------------
-
+.cursor
 # Python
 __pycache__/
 *.py[cod]
