@@ -32,7 +32,7 @@ docker network create nur_core 2>/dev/null || true
 
 # Start the services
 echo "Starting services..."
-docker-compose up -d
+COMPOSE_BAKE=true docker-compose up -d
 
 # Wait for services to be ready
 echo "Waiting for services to be ready..."

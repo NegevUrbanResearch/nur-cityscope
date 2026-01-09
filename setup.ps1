@@ -42,6 +42,7 @@ if ($LASTEXITCODE -eq 0) {
 
 # Start the services (build if needed)
 Write-Host "Starting services (this may take a while on first run)..." -ForegroundColor Cyan
+$env:COMPOSE_BAKE = "true"
 docker-compose up -d --build
 
 # Wait for containers to be running

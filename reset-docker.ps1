@@ -44,6 +44,7 @@ Write-Host ""
 
 # Rebuild and start containers
 Write-Host "5. Rebuilding and starting containers..." -ForegroundColor Cyan
+$env:COMPOSE_BAKE = "true"
 docker-compose up --build -d
 
 Write-Host ""

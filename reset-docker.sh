@@ -23,7 +23,7 @@ echo ""
 echo "✅ Reset complete!"
 echo ""
 echo "5️⃣  Rebuilding and starting containers..."
-docker-compose up --build -d
+COMPOSE_BAKE=true docker-compose up --build -d
 
 echo ""
 echo "✅ All done! Containers are running in the background."
