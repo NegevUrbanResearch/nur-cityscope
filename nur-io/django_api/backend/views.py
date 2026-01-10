@@ -411,16 +411,24 @@ class CustomActionsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"])
     def set_presentation_state(self, request):
         """Set presentation state (play/pause, sequence, index, duration)"""
+        index_changed = False
+        sequence_changed = False
+        
         # Update playing state if provided
         if "is_playing" in request.data:
+            was_playing = globals.PRESENTATION_PLAYING
             globals.PRESENTATION_PLAYING = bool(request.data.get("is_playing"))
             print(f"✓ Presentation playing: {globals.PRESENTATION_PLAYING}")
+            # If presentation just started playing, sync indicator from current slide
+            if globals.PRESENTATION_PLAYING and not was_playing:
+                index_changed = True
         
         # Update sequence if provided
         if "sequence" in request.data:
             sequence = request.data.get("sequence")
             if isinstance(sequence, list):
                 globals.PRESENTATION_SEQUENCE = sequence
+                sequence_changed = True
                 print(f"✓ Presentation sequence updated: {len(sequence)} slides")
         
         # Update sequence index if provided
@@ -433,7 +441,9 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     clamped_index = max(0, min(index, sequence_length - 1))
                     if clamped_index != index:
                         print(f"⚠️ Presentation index {index} out of bounds, clamped to {clamped_index}")
+                    old_index = globals.PRESENTATION_SEQUENCE_INDEX
                     globals.PRESENTATION_SEQUENCE_INDEX = clamped_index
+                    index_changed = (clamped_index != old_index)
                     print(f"✓ Presentation index: {clamped_index}")
                 else:
                     globals.PRESENTATION_SEQUENCE_INDEX = 0
@@ -446,6 +456,10 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 globals.PRESENTATION_DURATION = int(duration)
                 print(f"✓ Presentation duration: {duration}s")
         
+        # If presentation is playing and (index/sequence changed or just started), update indicator/state from current slide
+        if globals.PRESENTATION_PLAYING and (index_changed or sequence_changed) and globals.PRESENTATION_SEQUENCE:
+            self._sync_indicator_from_presentation_slide()
+        
         # Broadcast to all connected clients via WebSocket
         broadcast_presentation_update()
         
@@ -456,6 +470,96 @@ class CustomActionsViewSet(viewsets.ViewSet):
             "sequence_index": globals.PRESENTATION_SEQUENCE_INDEX,
             "duration": globals.PRESENTATION_DURATION,
         })
+    
+    def _sync_indicator_from_presentation_slide(self):
+        """Update global indicator and state from current presentation slide"""
+        try:
+            if not globals.PRESENTATION_SEQUENCE or len(globals.PRESENTATION_SEQUENCE) == 0:
+                return
+            
+            current_index = max(
+                0, min(globals.PRESENTATION_SEQUENCE_INDEX, len(globals.PRESENTATION_SEQUENCE) - 1)
+            )
+            current_slide = globals.PRESENTATION_SEQUENCE[current_index]
+            
+            if not current_slide or not current_slide.get("indicator"):
+                return
+            
+            indicator_name = current_slide.get("indicator")
+            state_name = current_slide.get("state")
+            slide_type = current_slide.get("type")
+            
+            # Map indicator name to ID
+            indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
+            indicator_id = indicator_mapping.get(indicator_name)
+            
+            if not indicator_id:
+                print(f"⚠️ Invalid indicator in presentation slide: {indicator_name}")
+                return
+            
+            # Update global indicator ID
+            globals.INDICATOR_ID = indicator_id
+            print(f"🎬 Synced indicator from presentation: {indicator_name} (ID: {indicator_id})")
+            
+            # Update global state based on indicator type
+            if indicator_name == "climate" and state_name and slide_type:
+                # For climate, map display name to scenario key
+                from backend.climate_scenarios import CLIMATE_SCENARIO_MAPPING
+                scenario_key = None
+                for key, config in CLIMATE_SCENARIO_MAPPING.items():
+                    if config["display_name"] == state_name:
+                        scenario_key = key
+                        break
+                
+                if scenario_key:
+                    # Find the state object to get full state values
+                    state = State.objects.filter(
+                        scenario_name=scenario_key, scenario_type=slide_type
+                    ).first()
+                    if state:
+                        globals.INDICATOR_STATE = state.state_values.copy()
+                        print(f"✓ Synced climate state: {scenario_key} ({slide_type})")
+                    else:
+                        # Fallback: create minimal state
+                        globals.INDICATOR_STATE = {
+                            "scenario": scenario_key,
+                            "type": slide_type,
+                            "label": state_name
+                        }
+                else:
+                    # Fallback: use state name as scenario
+                    globals.INDICATOR_STATE = {
+                        "scenario": state_name.lower().replace(" ", "_"),
+                        "type": slide_type or "utci",
+                        "label": state_name
+                    }
+            else:
+                # For mobility and other indicators, find state by scenario name
+                if state_name:
+                    scenario_key = state_name.lower()
+                    states = State.objects.filter(scenario_type="general")
+                    state = None
+                    for s in states:
+                        if s.state_values.get("scenario") == scenario_key:
+                            state = s
+                            break
+                    
+                    if state:
+                        globals.INDICATOR_STATE = state.state_values.copy()
+                        print(f"✓ Synced {indicator_name} state: {scenario_key}")
+                    else:
+                        # Fallback: create minimal state
+                        globals.INDICATOR_STATE = {
+                            "scenario": scenario_key,
+                            "label": state_name
+                        }
+            
+            # Broadcast indicator update so dashboard syncs
+            broadcast_indicator_update()
+            print(f"✓ Broadcasted indicator update for presentation slide")
+            
+        except Exception as e:
+            print(f"❌ Error syncing indicator from presentation slide: {e}")
 
     @action(detail=False, methods=["post"])
     def set_active_user_upload(self, request):
