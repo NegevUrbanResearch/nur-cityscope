@@ -15,6 +15,9 @@ import globals from "./globals";
 
 const DataContext = createContext();
 
+// Default table name for indicators
+const DEFAULT_TABLE = "idistrict";
+
 // Define indicator configurations for easy addition of new indicators
 const INDICATOR_CONFIG = {
   mobility: {
@@ -889,6 +892,7 @@ export const DataProvider = ({ children }) => {
             // First set the indicator
             await api.post("/api/actions/set_current_indicator/", {
               indicator_id: indicatorId,
+              table: DEFAULT_TABLE,
             });
             console.log(`Updated indicator to ${newIndicator} (ID: ${indicatorId})`);
 

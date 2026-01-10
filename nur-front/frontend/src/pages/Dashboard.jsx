@@ -186,7 +186,7 @@ const Dashboard = ({ openCharts}) => {
         const timestamp = Date.now();
         // Use our pre-configured api instance with relative URL
         const response = await api.get(
-          `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}`
+          `/api/actions/get_image_data/?_=${timestamp}&indicator=${currentIndicator}&table=idistrict`
         );
 
         if (response.data && response.data.image_data) {
@@ -340,7 +340,7 @@ const Dashboard = ({ openCharts}) => {
         try {
           const timestamp = Date.now();
           const response = await api.get(
-            `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}`
+            `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=idistrict`
           );
 
           if (response.data && response.data.image_data) {

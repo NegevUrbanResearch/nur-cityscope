@@ -83,7 +83,7 @@ const DeckGLMap = ({ indicatorType, state }) => {
 
           // Fetch data from our new endpoint that does the processing in the backend
           const response = await api.get(
-            `/api/actions/get_deckgl_data/?_=${timestamp}&indicator=${indicatorType}${yearParam}`
+            `/api/actions/get_deckgl_data/?_=${timestamp}&indicator=${indicatorType}${yearParam}&table=idistrict`
           );
 
           if (!isMounted) return;

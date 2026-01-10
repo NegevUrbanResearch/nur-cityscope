@@ -502,25 +502,39 @@ class CustomActionsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"])
     def set_current_indicator(self, request):
         indicator_id = request.data.get("indicator_id", "")
-        if self._set_current_indicator(indicator_id):
+        table_name = request.data.get("table")
+        
+        if not table_name:
+            return JsonResponse(
+                {"status": "error", "message": "Table parameter is required"},
+                status=400
+            )
+        
+        if self._set_current_indicator(indicator_id, table_name):
             return JsonResponse({"status": "ok", "indicator_id": indicator_id})
         else:
             return JsonResponse(
-                {"status": "error", "message": "Failed to set current indicator"}
+                {"status": "error", "message": "Failed to set current indicator"},
+                status=404
             )
 
-    def _set_current_indicator(self, indicator_id):
+    def _set_current_indicator(self, indicator_id, table_name):
         try:
+            table = Table.objects.filter(name=table_name).first()
+            if not table:
+                print(f"❌ Table '{table_name}' not found")
+                return False
+            
+            indicator = Indicator.objects.filter(table=table, indicator_id=indicator_id).first()
+            if not indicator:
+                print(f"❌ Indicator with ID {indicator_id} not found in table '{table_name}'")
+                return False
+            
             globals.INDICATOR_ID = indicator_id
-            print(f"✓ Indicator set to ID: {indicator_id}")
+            print(f"✓ Indicator set to ID: {indicator_id} (table: {table_name})")
             
             # Update INDICATOR_STATE to match the new indicator's default state
-            idistrict_table = Table.objects.filter(name="idistrict").first()
-            if idistrict_table:
-                indicator = Indicator.objects.filter(table=idistrict_table, indicator_id=indicator_id).first()
-            else:
-                indicator = Indicator.objects.filter(indicator_id=indicator_id).first()
-            if indicator and indicator.category == "climate":
+            if indicator.category == "climate":
                 # Set default climate state
                 globals.INDICATOR_STATE = globals.DEFAULT_CLIMATE_STATE.copy()
                 print(f"✓ Set default climate state: {globals.INDICATOR_STATE}")
@@ -798,25 +812,34 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 print(f"Current state: {globals.INDICATOR_STATE}")
                 print(f"Visualization mode: {globals.VISUALIZATION_MODE}")
 
-        # Query indicator - default to idistrict table for backward compatibility
-        idistrict_table = Table.objects.filter(name="idistrict").first()
-        if idistrict_table:
-            indicator = Indicator.objects.filter(table=idistrict_table, indicator_id=effective_indicator_id)
-        else:
-            indicator = Indicator.objects.filter(indicator_id=effective_indicator_id)
+        # Query indicator - table parameter is required
+        table_name = request.query_params.get("table")
+        if not table_name:
+            response = JsonResponse(
+                {"error": "Table parameter is required"},
+                status=400
+            )
+            self._add_no_cache_headers(response)
+            return response
+        
+        table = Table.objects.filter(name=table_name).first()
+        if not table:
+            response = JsonResponse(
+                {"error": f"Table '{table_name}' not found"},
+                status=404
+            )
+            self._add_no_cache_headers(response)
+            return response
+        
+        indicator = Indicator.objects.filter(table=table, indicator_id=effective_indicator_id)
         
         if not indicator.exists() or not indicator.first():
-            # Fallback: try any indicator with this ID
-            indicator = Indicator.objects.filter(indicator_id=effective_indicator_id)
-            if not indicator.exists():
-                indicator = Indicator.objects.first()
-                if indicator:
-                    if not prefetch_mode:
-                        globals.INDICATOR_ID = indicator.indicator_id
-                else:
-                    response = JsonResponse({"error": "No indicators found"}, status=404)
-                    self._add_no_cache_headers(response)
-                    return response
+            response = JsonResponse(
+                {"error": f"Indicator with ID {effective_indicator_id} not found in table '{table_name}'"},
+                status=404
+            )
+            self._add_no_cache_headers(response)
+            return response
 
         indicator_obj = indicator.first()
 
@@ -997,15 +1020,27 @@ class CustomActionsViewSet(viewsets.ViewSet):
         if year_param and year_param.isdigit():
             year = int(year_param)
 
-        # Get the indicator and state - default to idistrict table
-        idistrict_table = Table.objects.filter(name="idistrict").first()
-        if idistrict_table:
-            indicator = Indicator.objects.filter(table=idistrict_table, indicator_id=globals.INDICATOR_ID).first()
-        else:
-            indicator = Indicator.objects.filter(indicator_id=globals.INDICATOR_ID).first()
+        # Get the indicator and state - table parameter is required
+        table_name = request.query_params.get("table")
+        if not table_name:
+            response = JsonResponse(
+                {"error": "Table parameter is required"},
+                status=400,
+            )
+            return response
+        
+        table = Table.objects.filter(name=table_name).first()
+        if not table:
+            response = JsonResponse(
+                {"error": f"Table '{table_name}' not found"},
+                status=404,
+            )
+            return response
+        
+        indicator = Indicator.objects.filter(table=table, indicator_id=globals.INDICATOR_ID).first()
         if not indicator:
             response = JsonResponse(
-                {"error": "Indicator not found", "indicator_id": globals.INDICATOR_ID},
+                {"error": f"Indicator with ID {globals.INDICATOR_ID} not found in table '{table_name}'"},
                 status=404,
             )
             return response
@@ -1220,13 +1255,23 @@ class ImageUploadView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Find or create the indicator data entry - default to idistrict table
+            # Find or create the indicator data entry - table parameter is required
+            table_name = request.data.get("table")
+            if not table_name:
+                return Response(
+                    {"error": "Table parameter is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            
             try:
-                idistrict_table = Table.objects.filter(name="idistrict").first()
-                if idistrict_table:
-                    indicator = Indicator.objects.get(table=idistrict_table, indicator_id=indicator_id)
-                else:
-                    indicator = Indicator.objects.get(indicator_id=indicator_id)
+                table = Table.objects.filter(name=table_name).first()
+                if not table:
+                    return Response(
+                        {"error": f"Table '{table_name}' not found"},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+                
+                indicator = Indicator.objects.get(table=table, indicator_id=indicator_id)
                 state = State.objects.get(id=state_id)
 
                 indicator_data, created = IndicatorData.objects.get_or_create(

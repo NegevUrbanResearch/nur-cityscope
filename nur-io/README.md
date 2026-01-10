@@ -43,9 +43,9 @@ nur-io/django_api/
 - **LayerConfig**: Deck.gl layer configurations
 - **UserUpload**: User-uploaded images with categories
 
-### Backward Compatibility
+### Table Parameter
 
-**Important**: The `idistrict` table is the default for backward compatibility. All API endpoints that query indicators by `indicator_id` without explicitly specifying a table will default to the `idistrict` table. This ensures that code developed before the Table model introduction continues to work without modification. All existing data and indicators are associated with the `idistrict` table.
+**Important**: All API endpoints that query indicators by `indicator_id` require a `table` parameter to be specified. The table parameter identifies which data source/table the indicator belongs to (e.g., 'idistrict', 'otef'). All existing data and indicators are associated with the `idistrict` table.
 
 ## API Endpoints
 

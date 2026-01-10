@@ -406,7 +406,7 @@ const PresentationMode = () => {
             const timestamp = Date.now();
 
             // Build URL with PREFETCH mode params - this fetches specific images without modifying backend state
-            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}`;
+            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=idistrict`;
 
             if (indicator === 'climate') {
                 // For climate, convert display name to scenario key and add type
@@ -596,7 +596,7 @@ const PresentationMode = () => {
                 const timestamp = Date.now();
                 const indicator = currentIndicatorRef.current;
                 const response = await api.get(
-                    `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}`
+                    `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=idistrict`
                 );
                 if (response.data?.image_data) {
                     let url = response.data.image_data.startsWith("/")

@@ -239,7 +239,7 @@
 
       // Function to get and update the image
       function updateImage() {
-        fetch(apiEndpoint)
+        fetch(`${apiEndpoint}?table=idistrict`)
           .then((response) => {
             if (!response.ok) {
               throw new Error(`HTTP error! status: ${response.status}`);

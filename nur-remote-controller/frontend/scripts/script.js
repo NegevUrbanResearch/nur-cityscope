@@ -381,7 +381,7 @@ class PresentationRemote {
             const timestamp = Date.now();
 
             // Build URL with PREFETCH mode params
-            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}`;
+            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=idistrict`;
 
             if (indicator === 'climate') {
                 const scenarioKey = this.CLIMATE_SCENARIO_KEYS[state] || state.toLowerCase().replace(/ /g, '_');
