@@ -515,7 +515,11 @@ class CustomActionsViewSet(viewsets.ViewSet):
             print(f"✓ Indicator set to ID: {indicator_id}")
             
             # Update INDICATOR_STATE to match the new indicator's default state
-            indicator = Indicator.objects.filter(indicator_id=indicator_id).first()
+            idistrict_table = Table.objects.filter(name="idistrict").first()
+            if idistrict_table:
+                indicator = Indicator.objects.filter(table=idistrict_table, indicator_id=indicator_id).first()
+            else:
+                indicator = Indicator.objects.filter(indicator_id=indicator_id).first()
             if indicator and indicator.category == "climate":
                 # Set default climate state
                 globals.INDICATOR_STATE = globals.DEFAULT_CLIMATE_STATE.copy()
@@ -794,16 +798,25 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 print(f"Current state: {globals.INDICATOR_STATE}")
                 print(f"Visualization mode: {globals.VISUALIZATION_MODE}")
 
-        indicator = Indicator.objects.filter(indicator_id=effective_indicator_id)
+        # Query indicator - default to idistrict table for backward compatibility
+        idistrict_table = Table.objects.filter(name="idistrict").first()
+        if idistrict_table:
+            indicator = Indicator.objects.filter(table=idistrict_table, indicator_id=effective_indicator_id)
+        else:
+            indicator = Indicator.objects.filter(indicator_id=effective_indicator_id)
+        
         if not indicator.exists() or not indicator.first():
-            indicator = Indicator.objects.first()
-            if indicator:
-                if not prefetch_mode:
-                    globals.INDICATOR_ID = indicator.indicator_id
-            else:
-                response = JsonResponse({"error": "No indicators found"}, status=404)
-                self._add_no_cache_headers(response)
-                return response
+            # Fallback: try any indicator with this ID
+            indicator = Indicator.objects.filter(indicator_id=effective_indicator_id)
+            if not indicator.exists():
+                indicator = Indicator.objects.first()
+                if indicator:
+                    if not prefetch_mode:
+                        globals.INDICATOR_ID = indicator.indicator_id
+                else:
+                    response = JsonResponse({"error": "No indicators found"}, status=404)
+                    self._add_no_cache_headers(response)
+                    return response
 
         indicator_obj = indicator.first()
 
@@ -862,21 +875,21 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     # Fallback to first state
                     state = State.objects.first()
             elif indicator_obj.has_states == False:
-                state = State.objects.filter(state_values={})
+                state = State.objects.filter(state_values={}).first()
             else:
-                state = State.objects.filter(state_values=globals.INDICATOR_STATE)
-                if not state.exists():
+                state = State.objects.filter(state_values=globals.INDICATOR_STATE).first()
+                if not state:
                     print(f"No exact state match for {globals.INDICATOR_STATE}, trying year match...")
                     year = globals.INDICATOR_STATE.get("year")
                     if year:
                         states = State.objects.all()
                         for s in states:
                             if s.state_values.get("year") == year:
-                                state = State.objects.filter(id=s.id)
+                                state = s
                                 print(f"Found state with matching year: {s.state_values}")
                                 break
 
-        if not state or (hasattr(state, "exists") and not state.exists()) or not state:
+        if not state:
             # Default to the first available state
             # WARNING: Do NOT modify globals.INDICATOR_STATE here - GET endpoints should not have side effects
             state = State.objects.first()
@@ -890,7 +903,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 self._add_no_cache_headers(response)
                 return response
 
-        state_obj = state if not hasattr(state, "first") else state.first()
+        state_obj = state
         indicator_data = IndicatorData.objects.filter(
             indicator=indicator_obj, state=state_obj
         )
@@ -984,8 +997,12 @@ class CustomActionsViewSet(viewsets.ViewSet):
         if year_param and year_param.isdigit():
             year = int(year_param)
 
-        # Get the indicator and state
-        indicator = Indicator.objects.filter(indicator_id=globals.INDICATOR_ID).first()
+        # Get the indicator and state - default to idistrict table
+        idistrict_table = Table.objects.filter(name="idistrict").first()
+        if idistrict_table:
+            indicator = Indicator.objects.filter(table=idistrict_table, indicator_id=globals.INDICATOR_ID).first()
+        else:
+            indicator = Indicator.objects.filter(indicator_id=globals.INDICATOR_ID).first()
         if not indicator:
             response = JsonResponse(
                 {"error": "Indicator not found", "indicator_id": globals.INDICATOR_ID},
@@ -1203,9 +1220,13 @@ class ImageUploadView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Find or create the indicator data entry
+            # Find or create the indicator data entry - default to idistrict table
             try:
-                indicator = Indicator.objects.get(indicator_id=indicator_id)
+                idistrict_table = Table.objects.filter(name="idistrict").first()
+                if idistrict_table:
+                    indicator = Indicator.objects.get(table=idistrict_table, indicator_id=indicator_id)
+                else:
+                    indicator = Indicator.objects.get(indicator_id=indicator_id)
                 state = State.objects.get(id=state_id)
 
                 indicator_data, created = IndicatorData.objects.get_or_create(

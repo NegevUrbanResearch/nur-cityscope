@@ -8,7 +8,6 @@ services:
       - .env # Declares the .env file here
     volumes:
       - ./nur-io/django_api/.:/app
-      - ./init.sh:/app/init.sh
       - nur-api_data:/app/data
       - media_files:/app/media # Share media files with nginx
     depends_on:
@@ -18,7 +17,7 @@ services:
       [
         "sh",
         "-c",
-        "cp /app/init.sh /tmp/init.sh && chmod +x /tmp/init.sh && /tmp/init.sh",
+        "chmod +x /app/init.sh && /app/init.sh",
       ]
     networks:
       - nur_core

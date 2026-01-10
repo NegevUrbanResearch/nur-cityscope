@@ -34,13 +34,18 @@ nur-io/django_api/
 
 ## Models
 
-- **Indicator**: Mobility, Climate indicator definitions
+- **Table**: Higher-level container for organizing indicators by data source (e.g., 'otef', 'idistrict')
+- **Indicator**: Mobility, Climate indicator definitions (belongs to a Table)
 - **State**: Scenario configurations (year, scenario type)
 - **IndicatorData**: Links indicators to states
 - **IndicatorImage**: Visualization images/videos per state
 - **DashboardFeedState**: Chart data per state
 - **LayerConfig**: Deck.gl layer configurations
 - **UserUpload**: User-uploaded images with categories
+
+### Backward Compatibility
+
+**Important**: The `idistrict` table is the default for backward compatibility. All API endpoints that query indicators by `indicator_id` without explicitly specifying a table will default to the `idistrict` table. This ensures that code developed before the Table model introduction continues to work without modification. All existing data and indicators are associated with the `idistrict` table.
 
 ## API Endpoints
 
@@ -89,6 +94,17 @@ python manage.py migrate
 # Create admin user
 python manage.py createsuperuser
 ```
+
+## Initialization
+
+**Important**: The initialization script `init.sh` is located at `nur-io/django_api/init.sh`. This script:
+- Runs database migrations
+- Creates `Table` objects (`otef` and `idistrict`)
+- Sets up indicators and associates them with the `idistrict` table
+- Loads data from `public/processed/` on first run
+- Creates the default admin user
+
+The script executes automatically when the Docker container starts. To modify initialization behavior, edit `nur-io/django_api/init.sh` and restart the container.
 
 ## Environment Variables
 

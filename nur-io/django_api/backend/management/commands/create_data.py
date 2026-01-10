@@ -1,5 +1,6 @@
 from django.core.management.base import BaseCommand
 from backend.models import (
+    Table,
     Indicator,
     State,
     IndicatorData,
@@ -20,9 +21,17 @@ class Command(BaseCommand):
             self.style.SUCCESS("Setting up data structure from public/processed...")
         )
 
-        # Get indicators and states
-        mobility = Indicator.objects.filter(category="mobility").first()
-        climate = Indicator.objects.filter(category="climate").first()
+        # Get idistrict table (all existing data belongs to idistrict)
+        idistrict_table = Table.objects.filter(name="idistrict").first()
+        if not idistrict_table:
+            self.stdout.write(
+                self.style.ERROR("[ERROR] idistrict table not found! Run migrations first.")
+            )
+            return
+
+        # Get indicators from idistrict table
+        mobility = Indicator.objects.filter(table=idistrict_table, category="mobility").first()
+        climate = Indicator.objects.filter(table=idistrict_table, category="climate").first()
 
         general_states = State.objects.filter(scenario_type="general").order_by("id")
         climate_states = State.objects.filter(

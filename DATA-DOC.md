@@ -8,6 +8,10 @@
 - **IndicatorData**: Links indicators with states
 - **IndicatorImage**: Images for visualizations
 
+### Backward Compatibility
+
+**Important**: The `idistrict` table is the default for all existing API endpoints and code paths. This ensures backward compatibility with code developed before the Table model was introduced. When querying indicators by `indicator_id` without specifying a table, the system defaults to the `idistrict` table. All existing data and indicators are associated with the `idistrict` table.
+
 ## API Endpoints
 
 - `/api/tables/` - Table CRUD (filter by `?is_active=true/false`)

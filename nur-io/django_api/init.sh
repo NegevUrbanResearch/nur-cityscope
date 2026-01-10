@@ -8,109 +8,76 @@ while ! nc -z db 5432; do
 done
 echo "Database is ready!"
 
-# Add code to ensure media directories exist and have proper permissions
-mkdir -p /app/media/indicators
-mkdir -p /app/media/maps
+# Run migrations
+echo "Running database migrations..."
+python manage.py migrate --no-input
 
-# Ensure proper permissions for media directories
-chmod -R 775 /app/media
-chown -R root:root /app/media
+# Setup tables and indicators
+echo "Setting up tables and indicators..."
+python manage.py shell -c "
+from backend.models import Table, Indicator
 
-# Set up subdirectories for indicators by category
-mkdir -p /app/media/indicators/mobility
-mkdir -p /app/media/indicators/climate
+# Create tables
+otef_table, _ = Table.objects.get_or_create(
+    name='otef',
+    defaults={'display_name': 'OTEF', 'description': 'OTEF Interactive Projection Module data', 'is_active': True}
+)
 
-# Set permissions for all media subdirectories
-chmod -R 775 /app/media/indicators
+idistrict_table, _ = Table.objects.get_or_create(
+    name='idistrict',
+    defaults={'display_name': 'iDistrict', 'description': 'iDistrict data and indicators', 'is_active': True}
+)
 
-# Check if this is first-time initialization
+# Fix any orphaned indicators
+Indicator.objects.filter(table__isnull=True).update(table=idistrict_table)
+
+# Create/update indicators for idistrict
+for indicator_id, name, category in [(1, 'Mobility', 'mobility'), (2, 'Climate', 'climate')]:
+    indicator, _ = Indicator.objects.get_or_create(
+        table=idistrict_table,
+        indicator_id=indicator_id,
+        defaults={
+            'name': name,
+            'category': category,
+            'has_states': True,
+            'description': f'{name} indicators'
+        }
+    )
+    # Update if exists
+    if indicator.name != name or indicator.category != category:
+        indicator.name = name
+        indicator.category = category
+        indicator.has_states = True
+        indicator.description = f'{name} indicators'
+        indicator.save()
+"
+
+# Create data on first init only
 INIT_FLAG="/app/data/db_initialized"
 if [ ! -f "$INIT_FLAG" ]; then
     echo "First time initialization..."
+    python manage.py create_data
     
-    # Force reset the database schema by dropping all tables
-    echo "Resetting database schema..."
-    cat <<EOF | python -c "
-import os
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
-import django
-django.setup()
-from django.db import connection
-cursor = connection.cursor()
-cursor.execute(\"\"\"
-  DO \$\$
-  DECLARE
-    r RECORD;
-  BEGIN
-    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = current_schema() AND tablename != 'django_migrations') LOOP
-      EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE';
-    END LOOP;
-  END \$\$;
-\"\"\")
-print('All tables dropped!')
+    # Create default admin user
+    python manage.py shell -c "
+from django.contrib.auth.models import User
+if not User.objects.filter(username='admin').exists():
+    User.objects.create_superuser('admin', 'admin@example.com', 'admin123')
 "
-EOF
-
-    # Run the migrations fresh
-    echo "Running database migrations..."
-    python manage.py migrate --no-input
-
-    # Create data (loads real data from public/ if available)
-    echo "Generating data..."
-    python manage.py create_data || echo "No create_data command available, skipping..."
     
-    # Create default admin user if it doesn't exist
-    echo "Creating default admin user..."
-    python manage.py shell -c "from django.contrib.auth.models import User; User.objects.create_superuser('admin', 'admin@example.com', 'admin123') if not User.objects.filter(username='admin').exists() else None"
-    
-    # Create initialization flag
     mkdir -p "$(dirname "$INIT_FLAG")"
     touch "$INIT_FLAG"
-else
-    echo "Database already initialized, skipping schema reset."
-    
-    # Run migrations to apply any new changes without resetting
-    echo "Running database migrations for updates..."
-    python manage.py migrate --no-input
 fi
 
-# Check if we need to process data
-if [ ! -f /app/data/processed/indicators/* ] && [ "${USE_SAMPLE_DATA:-true}" = "true" ]; then
-    echo "No processed data found. Processing data..."
-    python -c "from websocket_app.utils.data_manager import data_manager; import asyncio; asyncio.run(data_manager.process_all())"
-else
-    echo "Using existing data..."
+# Setup media directories and copy files from public/processed
+mkdir -p /app/media/indicators
+if [ -d "/app/public/processed" ]; then
+    echo "Copying processed files to media directory..."
+    cp -rf /app/public/processed /app/media/indicators/
+    chmod -R 755 /app/media/indicators
+    echo "✓ Copied files from public/processed to media/indicators/processed"
 fi
-
-# Near the end of the file, before starting the server
-# Ensure media directories exist and have proper permissions
-echo "Setting up media directories..."
-mkdir -p /app/media/indicators/mobility
-mkdir -p /app/media/indicators/climate
-mkdir -p /app/media/maps
-
-# Set permissions to ensure nginx can read these files
-echo "Setting permissions for media files..."
-find /app/media -type d -exec chmod 755 {} \;
-find /app/media -type f -exec chmod 644 {} \;
-
-# Verify directories exist and have correct permissions
-echo "Verifying media directory setup..."
-for dir in "/app/media" "/app/media/indicators" "/app/media/indicators/mobility" "/app/media/indicators/climate" "/app/media/maps"; do
-    if [ ! -d "$dir" ]; then
-        echo "ERROR: Directory $dir does not exist!"
-        exit 1
-    fi
-    
-    # Check permissions (should be at least 755 for directories)
-    perm=$(stat -c "%a" "$dir")
-    if [ "$perm" -lt "755" ]; then
-        echo "WARNING: Directory $dir has insufficient permissions: $perm, fixing..."
-        chmod 755 "$dir"
-    fi
-done
-
-echo "Media directories properly configured."
+chmod -R 755 /app/media
 
 # Start the server
 echo "Starting the server..."

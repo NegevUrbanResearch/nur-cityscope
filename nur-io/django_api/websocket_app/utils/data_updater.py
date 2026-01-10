@@ -10,6 +10,10 @@ class DataUpdater:
     # Método para realizar la consulta sincrónica de manera asíncrona
     @sync_to_async
     def get_indicator(self, indicator_id):
+        # Default to idistrict table for backward compatibility
+        idistrict_table = models.Table.objects.filter(name="idistrict").first()
+        if idistrict_table:
+            return list(models.Indicator.objects.filter(table=idistrict_table, indicator_id=indicator_id))
         return list(models.Indicator.objects.filter(indicator_id=indicator_id))
 
     # Método para realizar la consulta de los datos del indicador

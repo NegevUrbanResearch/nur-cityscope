@@ -52,6 +52,8 @@ class Indicator(models.Model):
         Table,
         on_delete=models.CASCADE,
         related_name="indicators",
+        null=True,
+        blank=True,
         help_text="The table/data source this indicator belongs to"
     )
     indicator_id = models.IntegerField()
