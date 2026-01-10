@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework import routers
 from . import views
 from .views import (
+    TableViewSet,
     DashboardFeedStateViewSet,
     CustomActionsViewSet,
     IndicatorViewSet,
@@ -33,6 +34,7 @@ schema_view = get_schema_view(
 
 router = DefaultRouter()
 
+router.register(r"tables", TableViewSet, basename="table")
 router.register(
     r"dashboard_feed_state", DashboardFeedStateViewSet, basename="dashboard-feed-state"
 )

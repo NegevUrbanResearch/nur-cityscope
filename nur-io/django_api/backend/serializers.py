@@ -1,6 +1,7 @@
 from django.db import models
 from rest_framework import serializers
 from .models import (
+    Table,
     Indicator,
     IndicatorData,
     IndicatorImage,
@@ -12,7 +13,21 @@ from .models import (
 )
 
 
+class TableSerializer(serializers.ModelSerializer):
+    indicator_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Table
+        fields = ["id", "name", "display_name", "description", "is_active", "created_at", "updated_at", "indicator_count"]
+
+    def get_indicator_count(self, obj):
+        return obj.indicators.count()
+
+
 class IndicatorSerializer(serializers.ModelSerializer):
+    table_name = serializers.CharField(source="table.name", read_only=True)
+    table_display_name = serializers.CharField(source="table.display_name", read_only=True)
+
     class Meta:
         model = Indicator
         fields = "__all__"

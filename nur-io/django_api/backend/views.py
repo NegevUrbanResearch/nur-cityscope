@@ -11,6 +11,7 @@ from django.conf import settings
 from datetime import datetime
 
 from .models import (
+    Table,
     Indicator,
     IndicatorData,
     IndicatorImage,
@@ -22,6 +23,7 @@ from .models import (
 )
 
 from .serializers import (
+    TableSerializer,
     IndicatorSerializer,
     IndicatorDataSerializer,
     IndicatorImageSerializer,
@@ -33,11 +35,27 @@ from .serializers import (
 )
 
 
+class TableViewSet(viewsets.ModelViewSet):
+    serializer_class = TableSerializer
+    queryset = Table.objects.all()
+
+    def get_queryset(self):
+        queryset = Table.objects.all()
+        is_active = self.request.query_params.get("is_active", None)
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() == "true")
+        return queryset
+
+
 class IndicatorViewSet(viewsets.ModelViewSet):
     serializer_class = IndicatorSerializer
 
     def get_queryset(self):
-        return Indicator.objects.all()
+        queryset = Indicator.objects.all()
+        table_name = self.request.query_params.get("table", None)
+        if table_name:
+            queryset = queryset.filter(table__name=table_name)
+        return queryset
 
 
 class StateViewSet(viewsets.ModelViewSet):

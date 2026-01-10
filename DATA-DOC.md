@@ -2,14 +2,16 @@
 
 ## Core Models
 
-- **Indicator**: Measurable urban metrics (Mobility, Climate)
+- **Table**: Higher-level container for organizing indicators by data source (e.g., 'otef', 'idistrict')
+- **Indicator**: Measurable urban metrics (Mobility, Climate) - belongs to a Table
 - **State**: Different scenarios/time periods for indicators
 - **IndicatorData**: Links indicators with states
 - **IndicatorImage**: Images for visualizations
 
 ## API Endpoints
 
-- `/api/indicators/` - Indicator CRUD
+- `/api/tables/` - Table CRUD (filter by `?is_active=true/false`)
+- `/api/indicators/` - Indicator CRUD (filter by `?table=<table_name>`)
 - `/api/states/` - State CRUD
 - `/api/indicator_data/` - Indicator data CRUD
 - `/api/indicator_images/` - Image upload/management

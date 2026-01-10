@@ -24,8 +24,36 @@ def indicator_image_path(instance, filename):
     return f"indicators/{category}/{indicator_name}_{state_year}{ext}"
 
 
+class Table(models.Model):
+    """
+    Higher-level container for organizing indicators by data source/table.
+    Examples: 'otef', 'idistrict'
+    """
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=100, unique=True, help_text="Internal name (e.g., 'otef', 'idistrict')")
+    display_name = models.CharField(max_length=255, help_text="Human-readable display name")
+    description = models.TextField(blank=True, null=True, help_text="Description of the table/data source")
+    is_active = models.BooleanField(default=True, help_text="Whether this table is currently active")
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name = "Table"
+        verbose_name_plural = "Tables"
+
+    def __str__(self):
+        return self.display_name or self.name
+
+
 class Indicator(models.Model):
     id = models.AutoField(primary_key=True)
+    table = models.ForeignKey(
+        Table,
+        on_delete=models.CASCADE,
+        related_name="indicators",
+        help_text="The table/data source this indicator belongs to"
+    )
     indicator_id = models.IntegerField()
     name = models.CharField(max_length=100)
     has_states = models.BooleanField(default=False)
@@ -39,8 +67,14 @@ class Indicator(models.Model):
         default="mobility",
     )
 
+    class Meta:
+        unique_together = [["table", "indicator_id"]]
+        indexes = [
+            models.Index(fields=["table", "indicator_id"]),
+        ]
+
     def __str__(self):
-        return self.name
+        return f"{self.table.name}/{self.name}"
 
 
 class State(models.Model):
