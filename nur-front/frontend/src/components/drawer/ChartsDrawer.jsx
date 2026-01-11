@@ -8,6 +8,8 @@ import {
   Tooltip,
   Box,
   useTheme,
+  Menu,
+  MenuItem,
   useMediaQuery,
   Button,
   Typography,
@@ -19,6 +21,9 @@ import SlideshowIcon from "@mui/icons-material/Slideshow";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import PauseIcon from "@mui/icons-material/Pause";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
+import buttonStyles from "../../style/buttonStyles";
+
 
 import { useAppData } from "../../DataContext";
 import { chartsDrawerWidth } from "../../style/drawersStyles";
@@ -137,6 +142,9 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
           >
             <InfoOutlineIcon fontSize="small" />
           </IconButton>
+
+          <SitesMenu />
+
         </Box>
 
         {/* Center: Navigation Menu */}
@@ -442,3 +450,116 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
 };
 
 export default ChartsDrawer;
+
+
+
+
+const SitesMenu = () => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const isTablet = useMediaQuery(theme.breakpoints.between("sm", "md"));
+
+  const [anchorEl, setAnchorEl] = React.useState(null);
+  const open = Boolean(anchorEl);
+
+  const { APP_ROUTES_CONFIG } = useAppData();
+
+  const handleClick = (event) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleClose = () => {
+    setAnchorEl(null);
+  };
+
+  const handleSiteSelect = (url) => {
+    handleClose();
+    if (url && window.location.href !== url) {
+        window.location.assign(url);
+    }
+  };
+
+  const currButtonStyles = {
+    minWidth: { xs: "90px", sm: "100px" },
+    height: { xs: "32px", sm: "36px" },
+    ...buttonStyles 
+  };
+
+  return (
+    <Box>
+      <Button
+        sx={currButtonStyles}
+        onClick={handleClick}
+        color="inherit"
+        endIcon={<ArrowDropDownIcon fontSize="small" />}
+      >
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 600,
+            fontSize: { xs: "0.95rem", sm: "1rem" },
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis", 
+            letterSpacing: "0.3px",
+            textTransform: "none",
+          }}
+        >
+          Models
+        </Typography>
+      </Button>
+
+      <Menu
+        anchorEl={anchorEl}
+        open={open}
+        onClose={handleClose}
+        PaperProps={{
+          sx: {
+            mt: 0.5,
+            minWidth: isMobile ? "80vw" : isTablet ? "180px" : "200px",
+            backgroundColor: "rgba(25, 25, 25, 0.98)",
+            backdropFilter: "blur(16px)",
+            border: "1px solid rgba(255, 255, 255, 0.12)",
+            borderRadius: "8px",
+            boxShadow:
+              "0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3)",
+          },
+        }}
+      >
+        {APP_ROUTES_CONFIG && Object.entries(APP_ROUTES_CONFIG).map(([key, siteConfig]) => {
+            const isCurrentSite = window.location.href.includes(siteConfig.url);
+
+            return (
+              <MenuItem
+                key={key}
+                onClick={() => handleSiteSelect(siteConfig.url)}
+                sx={{
+                  py: 1,
+                  px: 2,
+                  backgroundColor: isCurrentSite ? "rgba(100, 181, 246, 0.12)" : "transparent",
+                  borderLeft: isCurrentSite ? "3px solid #64B5F6" : "3px solid transparent",
+                  transition: "all 0.15s ease",
+                  "&:hover": {
+                    backgroundColor: "rgba(100, 181, 246, 0.18)",
+                    borderLeft: "3px solid #64B5F6",
+                  },
+                }}
+              >
+                <Typography
+                  variant="body1"
+                  sx={{
+                    fontSize: { xs: "0.9rem", sm: "0.95rem" },
+                    fontWeight: isCurrentSite ? 600 : 500,
+                    color: isCurrentSite ? "#64B5F6" : "rgba(255, 255, 255, 0.85)",
+                    letterSpacing: "0.2px",
+                  }}
+                >
+                  {siteConfig.displayName}
+                </Typography>
+              </MenuItem>
+            );
+        })}
+      </Menu>
+    </Box>
+  );
+};

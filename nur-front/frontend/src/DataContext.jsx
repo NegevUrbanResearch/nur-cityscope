@@ -66,6 +66,11 @@ const STATE_CONFIG = {
   climate: Object.values(CLIMATE_SCENARIOS),
 };
 
+const APP_ROUTES_CONFIG = {
+  default:{displayName:"Default", url:"http://localhost/dashboard/mobility"},
+ // app_a: {displayName:"App A", url:"http://localhost/dashboard/mobility"},
+}
+
 // Reverse mapping from ID to indicator type
 const ID_TO_INDICATOR = Object.fromEntries(
   Object.entries(INDICATOR_CONFIG).map(([key, config]) => [config.id, key])
@@ -1242,7 +1247,8 @@ export const DataProvider = ({ children }) => {
     setActiveUserUpload,
     enterPauseMode,
     exitPauseMode,
-    exitPresentationAndResume
+    exitPresentationAndResume,
+    APP_ROUTES_CONFIG
   };
 
   return (
