@@ -1,6 +1,8 @@
 # nur-CityScope - Comprehensive .gitignore
 # ----------------------------------------
 .cursor
+*claude*
+
 # Python
 __pycache__/
 *.py[cod]
@@ -126,3 +128,4 @@ calculations/export/*
 # Specific file types to ignore (unless explicitly included)
 *.msi
 *-to-load*
+
