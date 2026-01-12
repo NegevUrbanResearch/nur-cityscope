@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <title>OTEF Remote Controller</title>
+    <link rel="stylesheet" href="css/remote-styles.css" />
+  </head>
+  <body>
+    <!-- Header with connection status -->
+    <header class="remote-header">
+      <div class="header-content">
+        <h1 class="remote-title">Remote</h1>
+        <div class="connection-status" id="connectionStatus">
+          <span class="status-indicator" id="statusIndicator"></span>
+          <span class="status-text" id="statusText">Connecting...</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main content area -->
+    <main class="remote-main">
+      <!-- Navigation Controls Section -->
+      <section class="control-section" id="navigationSection">
+        <h2 class="section-title">Navigation</h2>
+
+        <!-- Directional pad -->
+        <div class="dpad-container">
+          <div class="dpad">
+            <button
+              class="dpad-button dpad-up"
+              id="panNorth"
+              aria-label="Pan North"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <polyline points="18 15 12 9 6 15"></polyline>
+              </svg>
+            </button>
+            <button
+              class="dpad-button dpad-left"
+              id="panWest"
+              aria-label="Pan West"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <polyline points="15 18 9 12 15 6"></polyline>
+              </svg>
+            </button>
+            <button
+              class="dpad-button dpad-right"
+              id="panEast"
+              aria-label="Pan East"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </button>
+            <button
+              class="dpad-button dpad-down"
+              id="panSouth"
+              aria-label="Pan South"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Zoom controls -->
+        <div class="zoom-controls">
+          <div class="zoom-display">
+            <span class="zoom-label">Zoom:</span>
+            <span class="zoom-value" id="zoomValue">--</span>
+          </div>
+          <div class="zoom-slider-container">
+            <input
+              type="range"
+              id="zoomSlider"
+              class="zoom-slider"
+              min="10"
+              max="19"
+              value="15"
+              step="1"
+              aria-label="Zoom level"
+            />
+            <div class="zoom-buttons">
+              <button
+                class="zoom-button zoom-out"
+                id="zoomOut"
+                aria-label="Zoom Out"
+              >
+                −
+              </button>
+              <button
+                class="zoom-button zoom-in"
+                id="zoomIn"
+                aria-label="Zoom In"
+              >
+                +
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Layer Controls Section -->
+      <section class="control-section" id="layersSection">
+        <h2 class="section-title">Layers</h2>
+
+        <div class="layer-controls">
+          <label class="layer-toggle" id="layerRoadsLabel">
+            <input type="checkbox" id="toggleRoads" checked />
+            <span class="toggle-indicator"></span>
+            <span class="toggle-label">Roads</span>
+          </label>
+
+          <label class="layer-toggle" id="layerParcelsLabel">
+            <input type="checkbox" id="toggleParcels" />
+            <span class="toggle-indicator"></span>
+            <span class="toggle-label">Parcels</span>
+          </label>
+
+          <label class="layer-toggle" id="layerModelLabel">
+            <input type="checkbox" id="toggleModel" />
+            <span class="toggle-indicator"></span>
+            <span class="toggle-label">Model Base</span>
+          </label>
+        </div>
+      </section>
+    </main>
+
+    <!-- Warning overlay (shown when GIS map not connected) -->
+    <div class="warning-overlay hidden" id="warningOverlay">
+      <div class="warning-content">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          class="warning-icon"
+        >
+          <path
+            d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+          ></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+        <p class="warning-text">GIS map not connected. Controls disabled.</p>
+      </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/shared/message-protocol.js"></script>
+    <script src="js/shared/websocket-shared.js"></script>
+    <script src="js/remote-controller.js"></script>
+  </body>
+</html>
