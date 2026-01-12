@@ -53,14 +53,97 @@ class IndicatorViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Indicator.objects.all()
         table_name = self.request.query_params.get("table", None)
+        include_ugc = self.request.query_params.get("include_ugc", "true")
+
         if table_name:
             queryset = queryset.filter(table__name=table_name)
+
+        # Filter out UGC indicators if requested
+        if include_ugc.lower() == "false":
+            queryset = queryset.filter(is_user_generated=False)
+
         return queryset
+
+    def create(self, request, *args, **kwargs):
+        """Create a new UGC indicator - automatically marks as user-generated"""
+        table_name = request.data.get('table')
+        if not table_name and not request.data.get('table_id'):
+            return Response(
+                {"error": "Table name or table_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            if table_name:
+                table = Table.objects.get(name=table_name)
+            else:
+                table = Table.objects.get(id=request.data.get('table_id'))
+        except Table.DoesNotExist:
+            return Response(
+                {"error": f"Table not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Copy data and force is_user_generated=True
+        data = request.data.copy()
+        data['is_user_generated'] = True
+        data['table'] = table.id
+
+        # Auto-generate indicator_id if not provided
+        if 'indicator_id' not in data:
+            max_id = Indicator.objects.filter(table=table).aggregate(
+                max_id=models.Max('indicator_id')
+            )['max_id'] or 0
+            data['indicator_id'] = max_id + 1
+
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        """Only allow deletion of UGC indicators"""
+        instance = self.get_object()
+        if not instance.is_user_generated:
+            return Response(
+                {"error": "Cannot delete preloaded indicators. Only user-generated indicators can be deleted."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class StateViewSet(viewsets.ModelViewSet):
-    queryset = State.objects.all()
     serializer_class = StateSerializer
+
+    def get_queryset(self):
+        queryset = State.objects.all()
+        include_ugc = self.request.query_params.get("include_ugc", "true")
+
+        # Filter out UGC states if requested
+        if include_ugc.lower() == "false":
+            queryset = queryset.filter(is_user_generated=False)
+
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        """Create a new UGC state - automatically marks as user-generated"""
+        data = request.data.copy()
+        data['is_user_generated'] = True
+
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        """Only allow deletion of UGC states"""
+        instance = self.get_object()
+        if not instance.is_user_generated:
+            return Response(
+                {"error": "Cannot delete preloaded states. Only user-generated states can be deleted."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class IndicatorDataViewSet(viewsets.ModelViewSet):
@@ -373,6 +456,103 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 "active_user_upload": globals.ACTIVE_USER_UPLOAD,
             }
         )
+        self._add_no_cache_headers(response)
+        return response
+
+    @action(detail=False, methods=["get"])
+    def get_file_hierarchy(self, request):
+        """
+        Get complete table > indicator > state > media hierarchy for file management.
+        Returns a tree structure of all data organized by table.
+        """
+        table_name = request.query_params.get("table")
+
+        tables_query = Table.objects.filter(is_active=True)
+        if table_name:
+            tables_query = tables_query.filter(name=table_name)
+
+        hierarchy = []
+        for table in tables_query.prefetch_related('indicators'):
+            table_data = {
+                'id': table.id,
+                'name': table.name,
+                'display_name': table.display_name,
+                'description': table.description,
+                'indicators': []
+            }
+
+            for indicator in table.indicators.all():
+                indicator_data = {
+                    'id': indicator.id,
+                    'indicator_id': indicator.indicator_id,
+                    'name': indicator.name,
+                    'category': indicator.category,
+                    'description': indicator.description,
+                    'is_user_generated': indicator.is_user_generated,
+                    'has_states': indicator.has_states,
+                    'states': []
+                }
+
+                # Get states through IndicatorData
+                indicator_data_qs = indicator.data.all().select_related('state').prefetch_related('images')
+                seen_states = {}
+
+                for ind_data in indicator_data_qs:
+                    state = ind_data.state
+                    state_id = state.id
+
+                    if state_id not in seen_states:
+                        seen_states[state_id] = {
+                            'id': state_id,
+                            'state_values': state.state_values,
+                            'scenario_type': state.scenario_type,
+                            'scenario_name': state.scenario_name,
+                            'is_user_generated': state.is_user_generated,
+                            'indicator_data_id': ind_data.id,
+                            'media': []
+                        }
+
+                    # Add media for this indicator data
+                    for img in ind_data.images.all():
+                        # Determine media type from extension if not set
+                        media_type = getattr(img, 'media_type', 'image')
+                        image_path = None
+                        if img.image:
+                            image_path = img.image.name
+
+                            # Determine correct URL path based on stored path:
+                            # - indicators/, ugc_indicators/, user_uploads/ - use as-is
+                            # - processed/... (legacy system data) - add indicators/ prefix
+                            # - plain filename (no /) - use as-is (stored in media root)
+                            valid_prefixes = ('indicators/', 'ugc_indicators/', 'user_uploads/')
+                            has_valid_prefix = any(image_path.startswith(p) for p in valid_prefixes)
+                            is_plain_filename = '/' not in image_path
+
+                            if not has_valid_prefix and not is_plain_filename:
+                                # Legacy system data with path like processed/... - add indicators/ prefix
+                                image_path = f"indicators/{image_path}"
+
+                            ext = image_path.split('.')[-1].lower() if '.' in image_path else ''
+                            if ext in ['mp4', 'webm', 'ogg', 'avi', 'mov']:
+                                media_type = 'video'
+                            elif ext in ['html', 'htm']:
+                                media_type = 'html_map'
+                            elif ext == 'json':
+                                media_type = 'deckgl_layer'
+
+                        seen_states[state_id]['media'].append({
+                            'id': img.id,
+                            'url': image_path,  # Return path without /media/ prefix
+                            'media_type': media_type,
+                            'uploaded_at': img.uploaded_at.isoformat() if img.uploaded_at else None
+                        })
+
+                indicator_data['states'] = list(seen_states.values())
+                table_data['indicators'].append(indicator_data)
+
+            hierarchy.append(table_data)
+
+        response = JsonResponse(hierarchy, safe=False)
         self._add_no_cache_headers(response)
         return response
 
@@ -918,6 +1098,8 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
         # Query indicator - table parameter is required
         table_name = request.query_params.get("table")
+        exclude_ugc = request.query_params.get("exclude_ugc", "false").lower() == "true"
+
         if not table_name:
             response = JsonResponse(
                 {"error": "Table parameter is required"},
@@ -925,7 +1107,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             )
             self._add_no_cache_headers(response)
             return response
-        
+
         table = Table.objects.filter(name=table_name).first()
         if not table:
             response = JsonResponse(
@@ -946,6 +1128,15 @@ class CustomActionsViewSet(viewsets.ViewSet):
             return response
 
         indicator_obj = indicator.first()
+
+        # Check if UGC should be excluded (for dashboard use)
+        if exclude_ugc and indicator_obj.is_user_generated:
+            response = JsonResponse(
+                {"error": "UGC indicators not available on dashboard", "is_ugc": True},
+                status=404
+            )
+            self._add_no_cache_headers(response)
+            return response
 
         # Special handling for climate scenarios
         if indicator_obj.category == "climate":

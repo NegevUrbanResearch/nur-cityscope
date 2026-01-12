@@ -207,7 +207,7 @@ class Migration(migrations.Migration):
                 ("id", models.AutoField(primary_key=True, serialize=False)),
                 (
                     "image",
-                    models.ImageField(upload_to=backend.models.indicator_image_path),
+                    models.FileField(upload_to=backend.models.indicator_media_path),
                 ),
                 (
                     "uploaded_at",

@@ -3,25 +3,31 @@ import os
 from django.utils import timezone
 
 
-def indicator_image_path(instance, filename):
+def indicator_media_path(instance, filename):
     """
-    Organize uploaded images by category/indicator name/state year
+    Organize uploaded media (images, videos, HTML, etc.) by category/indicator name/state
+    Supports UGC separation via is_user_generated flag
     """
     # Get indicator name and category
     indicator_name = instance.indicatorData.indicator.name.replace(" ", "_").lower()
     category = instance.indicatorData.indicator.category
+    is_ugc = instance.indicatorData.indicator.is_user_generated
 
-    # Try to get year from state, default to 2023
+    # Try to get state identifier from state_values
     try:
-        state_year = instance.indicatorData.state.state_values.get("year", 2023)
+        state_values = instance.indicatorData.state.state_values or {}
+        state_year = state_values.get("year", "")
+        scenario = state_values.get("scenario", "")
+        state_id = f"{state_year}_{scenario}".strip("_") if (state_year or scenario) else "default"
     except (AttributeError, KeyError, TypeError):
-        state_year = 2023
+        state_id = "default"
 
     # Get file extension
     ext = os.path.splitext(filename)[1].lower()
 
-    # Generate path: indicators/category/indicator_name_year.ext
-    return f"indicators/{category}/{indicator_name}_{state_year}{ext}"
+    # Separate folder for UGC content
+    prefix = "ugc_indicators" if is_ugc else "indicators"
+    return f"{prefix}/{category}/{indicator_name}_{state_id}{ext}"
 
 
 class Table(models.Model):
@@ -68,6 +74,10 @@ class Indicator(models.Model):
         ],
         default="mobility",
     )
+    is_user_generated = models.BooleanField(
+        default=False,
+        help_text="Whether this indicator was created by a user (vs preloaded system data)"
+    )
 
     class Meta:
         unique_together = [["table", "indicator_id"]]
@@ -96,6 +106,10 @@ class State(models.Model):
         null=True,
         help_text="Human-readable name for the scenario",
     )
+    is_user_generated = models.BooleanField(
+        default=False,
+        help_text="Whether this state was created by a user (vs preloaded system data)"
+    )
 
     class Meta:
         indexes = [
@@ -122,16 +136,34 @@ class IndicatorData(models.Model):
 
 
 class IndicatorImage(models.Model):
+    """
+    Stores media files (images, videos, HTML maps, etc.) for indicator data.
+    Note: Model name kept as IndicatorImage for backward compatibility,
+    but now supports all media types via FileField and media_type field.
+    """
+    MEDIA_TYPE_CHOICES = [
+        ('image', 'Image'),
+        ('video', 'Video'),
+        ('html_map', 'HTML Map'),
+        ('deckgl_layer', 'Deck.GL Layer'),
+    ]
+
     id = models.AutoField(primary_key=True)
     indicatorData = models.ForeignKey(
         IndicatorData, on_delete=models.CASCADE, related_name="images"
     )
-    image = models.ImageField(upload_to=indicator_image_path)
+    image = models.FileField(upload_to=indicator_media_path)  # Changed from ImageField to FileField
+    media_type = models.CharField(
+        max_length=20,
+        choices=MEDIA_TYPE_CHOICES,
+        default='image',
+        help_text="Type of media file (image, video, html_map, deckgl_layer)"
+    )
     uploaded_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
         indicator_name = self.indicatorData.indicator.name
-        return f"Image for {indicator_name}"
+        return f"{self.media_type.title()} for {indicator_name}"
 
     class Meta:
         ordering = ["-uploaded_at"]

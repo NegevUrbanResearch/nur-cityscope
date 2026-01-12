@@ -6,105 +6,149 @@ import {
   IconButton,
   TextField,
   Stack,
-  Paper,
-  Tooltip,
   CircularProgress,
   Alert,
   Button,
-  Chip,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
-  Divider,
   useTheme,
   useMediaQuery,
+  Collapse,
+  List,
+  ListItemButton,
+  ListItemText,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from "@mui/material";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import AddIcon from "@mui/icons-material/Add";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
-import SaveIcon from "@mui/icons-material/Save";
-import FolderIcon from "@mui/icons-material/Folder";
-import ImageIcon from "@mui/icons-material/Image";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import RefreshIcon from "@mui/icons-material/Refresh";
 import api from "../api";
 import config from "../config";
 
 const UserUploads = () => {
   const navigate = useNavigate();
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const isMobile = useMediaQuery(theme.breakpoints.down("md"));
 
-  const [categories, setCategories] = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState(null);
-  const [userUploadsFiles, setUserUploadsFiles] = useState([]);
+  // File hierarchy state
+  const [hierarchy, setHierarchy] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
-  const [pendingNameChanges, setPendingNameChanges] = useState({});
-  const [newCategoryDialog, setNewCategoryDialog] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState("");
+  const [expandedNodes, setExpandedNodes] = useState(new Set());
+  const [selectedItem, setSelectedItem] = useState(null);
 
+  // Dialog states
+  const [addIndicatorDialog, setAddIndicatorDialog] = useState(false);
+  const [uploadDialog, setUploadDialog] = useState(false);
+  const [deleteConfirmDialog, setDeleteConfirmDialog] = useState(null);
+
+  // Form states
+  const [newIndicator, setNewIndicator] = useState({
+    table_id: "",
+    name: "",
+  });
+  const [uploadState, setUploadState] = useState({
+    indicatorId: null,
+    stateName: "",
+    file: null,
+  });
+  const [uploading, setUploading] = useState(false);
+
+  // Fetch hierarchy on mount
   useEffect(() => {
-    fetchCategories();
+    fetchHierarchy();
   }, []);
 
-  useEffect(() => {
-    if (selectedCategory) {
-      fetchUserUploads();
-    }
-  }, [selectedCategory]);
-
-  const fetchCategories = async () => {
-    try {
-      const response = await api.get("/api/user_upload_categories/");
-      const cats = response.data;
-      setCategories(cats);
-      const defaultCat = cats.find((c) => c.is_default) || cats[0];
-      if (defaultCat) {
-        setSelectedCategory(defaultCat);
-      } else {
-        // No categories exist yet, stop showing loading
-        setLoading(false);
-      }
-    } catch (err) {
-      console.error("Error fetching categories:", err);
-      setError("Failed to load categories");
-      setLoading(false);
-    }
-  };
-
-  const fetchUserUploads = async () => {
-    if (!selectedCategory) return;
+  const fetchHierarchy = async () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await api.get(`/api/user_uploads/?category=${selectedCategory.id}`);
-      const uploads = response.data.map((upload) => ({
-        id: upload.id,
-        fileName: upload.original_filename,
-        displayName: upload.display_name || upload.original_filename,
-        imageUrl: upload.image_url,
-        uploadedAt: upload.uploaded_at,
-        categoryId: upload.category,
-      }));
-      setUserUploadsFiles(uploads);
-      setPendingNameChanges({});
+      const response = await api.get("/api/actions/get_file_hierarchy/");
+      setHierarchy(response.data);
     } catch (err) {
-      console.error("Error fetching user uploads:", err);
-      setError("Failed to load user uploads");
+      console.error("Error fetching hierarchy:", err);
+      setError("Failed to load file hierarchy. Make sure the backend server is running.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleFileUpload = async (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length === 0) return;
+  const toggleNode = (nodeId) => {
+    setExpandedNodes((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(nodeId)) {
+        newSet.delete(nodeId);
+      } else {
+        newSet.add(nodeId);
+      }
+      return newSet;
+    });
+  };
 
-    if (!selectedCategory) {
-      setError("Please select a category first");
+  const handleSelectItem = (type, item, parent = null, grandParent = null) => {
+    setSelectedItem({ type, item, parent, grandParent });
+  };
+
+  // Create indicator
+  const handleCreateIndicator = async () => {
+    if (!newIndicator.table_id || !newIndicator.name) {
+      setError("Table and name are required");
+      return;
+    }
+
+    try {
+      await api.post("/api/indicators/", {
+        table_id: newIndicator.table_id,
+        name: newIndicator.name,
+        category: "mobility", // Default category for UGC
+        has_states: true,
+      });
+      setAddIndicatorDialog(false);
+      setNewIndicator({ table_id: "", name: "" });
+      fetchHierarchy();
+    } catch (err) {
+      console.error("Error creating indicator:", err);
+      setError(err.response?.data?.error || "Failed to create indicator");
+    }
+  };
+
+  // Delete handler
+  const handleDelete = async () => {
+    if (!deleteConfirmDialog) return;
+
+    const { type, id } = deleteConfirmDialog;
+
+    try {
+      if (type === "indicator") {
+        await api.delete(`/api/indicators/${id}/`);
+      } else if (type === "state") {
+        await api.delete(`/api/states/${id}/`);
+      } else if (type === "media") {
+        await api.delete(`/api/indicator_images/${id}/`);
+      }
+      setDeleteConfirmDialog(null);
+      setSelectedItem(null);
+      fetchHierarchy();
+    } catch (err) {
+      console.error("Error deleting:", err);
+      setError(err.response?.data?.error || "Failed to delete item");
+      setDeleteConfirmDialog(null);
+    }
+  };
+
+  // Upload media (creates state + media in one flow)
+  const handleUploadMedia = async () => {
+    if (!uploadState.indicatorId || !uploadState.file || !uploadState.stateName) {
+      setError("Please fill in all fields and select a file");
       return;
     }
 
@@ -112,576 +156,540 @@ const UserUploads = () => {
     setError(null);
 
     try {
-      for (const file of files) {
-        const validTypes = ["image/jpeg", "image/jpg", "image/png", "image/gif", "image/bmp", "image/webp"];
-        if (!validTypes.includes(file.type)) {
-          setError(`Invalid file type: ${file.name}. Only images are allowed.`);
-          continue;
-        }
+      // Step 1: Create a new state
+      const stateResponse = await api.post("/api/states/", {
+        scenario_name: uploadState.stateName,
+        scenario_type: "general",
+        state_values: {},
+      });
 
-        if (file.size > 10 * 1024 * 1024) {
-          setError(`File too large: ${file.name}. Maximum size is 10MB.`);
-          continue;
-        }
+      // Step 2: Create indicator data link
+      const indicatorDataResponse = await api.post("/api/indicator_data/", {
+        indicator: uploadState.indicatorId,
+        state: stateResponse.data.id,
+      });
 
-        const formData = new FormData();
-        formData.append("image", file);
-        formData.append("display_name", file.name);
-        formData.append("category_id", selectedCategory.id);
+      // Step 3: Upload the media file
+      const formData = new FormData();
+      formData.append("image", uploadState.file);
+      formData.append("indicatorData", indicatorDataResponse.data.id);
 
-        const response = await api.post("/api/user_uploads/", formData, {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        });
-
-        const newUpload = {
-          id: response.data.id,
-          fileName: response.data.original_filename,
-          displayName: response.data.display_name || response.data.original_filename,
-          imageUrl: response.data.image_url,
-          uploadedAt: response.data.uploaded_at,
-          categoryId: response.data.category,
-        };
-        setUserUploadsFiles((prev) => [...prev, newUpload]);
+      // Determine media type from extension
+      const ext = uploadState.file.name.split(".").pop().toLowerCase();
+      let mediaType = "image";
+      if (["mp4", "webm", "ogg", "avi", "mov"].includes(ext)) {
+        mediaType = "video";
+      } else if (["html", "htm"].includes(ext)) {
+        mediaType = "html_map";
+      } else if (ext === "json") {
+        mediaType = "deckgl_layer";
       }
-      await fetchUserUploads();
+      formData.append("media_type", mediaType);
+
+      await api.post("/api/indicator_images/", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      setUploadDialog(false);
+      setUploadState({ indicatorId: null, stateName: "", file: null });
+      fetchHierarchy();
     } catch (err) {
-      console.error("Error uploading file:", err);
-      setError(err.response?.data?.error || "Failed to upload file");
+      console.error("Error uploading:", err);
+      setError(err.response?.data?.error || "Failed to upload media");
     } finally {
       setUploading(false);
-      e.target.value = "";
     }
   };
 
-  const handleNameChange = (id, newName) => {
-    setPendingNameChanges((prev) => ({ ...prev, [id]: newName }));
+  const getMediaUrl = (url) => {
+    if (!url) return null;
+    if (url.startsWith("http")) return url;
+    // Match Dashboard.jsx URL construction logic
+    return url.startsWith("/")
+      ? `${config.media.baseUrl}${url}`
+      : `${config.media.baseUrl}/media/${url}`;
   };
 
-  const handleSave = async () => {
-    if (Object.keys(pendingNameChanges).length === 0) return;
+  // Render tree node for table
+  const renderTableNode = (table) => {
+    const nodeId = `table-${table.id}`;
+    const isExpanded = expandedNodes.has(nodeId);
+    const isSelected = selectedItem?.type === "table" && selectedItem?.item?.id === table.id;
 
-    setSaving(true);
-    setError(null);
+    return (
+      <Box key={table.id}>
+        <ListItemButton
+          onClick={() => {
+            toggleNode(nodeId);
+            handleSelectItem("table", table);
+          }}
+          selected={isSelected}
+          sx={{ py: 0.75 }}
+        >
+          <ListItemText
+            primary={table.display_name || table.name}
+            primaryTypographyProps={{ fontWeight: 600, fontSize: "0.9rem" }}
+          />
+          <Typography variant="caption" sx={{ color: "text.secondary", mr: 1 }}>
+            {table.indicators?.length || 0}
+          </Typography>
+          {isExpanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+        </ListItemButton>
+        <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+          <List component="div" disablePadding>
+            {table.indicators?.map((indicator) => renderIndicatorNode(indicator, table))}
+          </List>
+        </Collapse>
+      </Box>
+    );
+  };
 
-    try {
-      const savePromises = Object.entries(pendingNameChanges).map(([id, name]) =>
-        api.patch(`/api/user_uploads/${id}/`, { display_name: name })
+  // Render tree node for indicator
+  const renderIndicatorNode = (indicator, table) => {
+    const nodeId = `indicator-${indicator.id}`;
+    const isExpanded = expandedNodes.has(nodeId);
+    const isSelected = selectedItem?.type === "indicator" && selectedItem?.item?.id === indicator.id;
+
+    return (
+      <Box key={indicator.id}>
+        <ListItemButton
+          onClick={() => {
+            toggleNode(nodeId);
+            handleSelectItem("indicator", indicator, table);
+          }}
+          selected={isSelected}
+          sx={{ pl: 3, py: 0.5 }}
+        >
+          <ListItemText
+            primary={indicator.name}
+            primaryTypographyProps={{ fontSize: "0.85rem" }}
+          />
+          <Typography variant="caption" sx={{ color: "text.secondary", mr: 1 }}>
+            {indicator.states?.length || 0}
+          </Typography>
+          {isExpanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+        </ListItemButton>
+        <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+          <List component="div" disablePadding>
+            {indicator.states?.map((state) => renderStateNode(state, indicator, table))}
+          </List>
+        </Collapse>
+      </Box>
+    );
+  };
+
+  // Render tree node for state
+  const renderStateNode = (state, indicator, table) => {
+    const nodeId = `state-${state.id}`;
+    const isExpanded = expandedNodes.has(nodeId);
+    const isSelected = selectedItem?.type === "state" && selectedItem?.item?.id === state.id;
+    const stateName = state.scenario_name || JSON.stringify(state.state_values);
+
+    return (
+      <Box key={state.id}>
+        <ListItemButton
+          onClick={() => {
+            toggleNode(nodeId);
+            handleSelectItem("state", state, indicator, table);
+          }}
+          selected={isSelected}
+          sx={{ pl: 5, py: 0.5 }}
+        >
+          <ListItemText
+            primary={stateName}
+            primaryTypographyProps={{ fontSize: "0.8rem" }}
+          />
+          <Typography variant="caption" sx={{ color: "text.secondary", mr: 1, fontSize: "0.7rem" }}>
+            {state.media?.length || 0}
+          </Typography>
+          {isExpanded ? <ExpandLessIcon sx={{ fontSize: 16 }} /> : <ExpandMoreIcon sx={{ fontSize: 16 }} />}
+        </ListItemButton>
+        <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+          <List component="div" disablePadding>
+            {state.media?.map((media) => renderMediaNode(media, state, indicator))}
+          </List>
+        </Collapse>
+      </Box>
+    );
+  };
+
+  // Render tree node for media
+  const renderMediaNode = (media, state, indicator) => {
+    const isSelected = selectedItem?.type === "media" && selectedItem?.item?.id === media.id;
+    const fileName = media.url?.split("/").pop() || "Unknown";
+
+    return (
+      <ListItemButton
+        key={media.id}
+        onClick={() => handleSelectItem("media", media, state, indicator)}
+        selected={isSelected}
+        sx={{ pl: 7, py: 0.25 }}
+      >
+        <ListItemText
+          primary={fileName}
+          primaryTypographyProps={{ fontSize: "0.75rem", color: "text.secondary" }}
+        />
+      </ListItemButton>
+    );
+  };
+
+  // Render preview panel
+  const renderPreviewPanel = () => {
+    if (!selectedItem) {
+      return (
+        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", color: "text.secondary", p: 3 }}>
+          <Typography variant="h6" sx={{ mb: 1 }}>Select an item</Typography>
+          <Typography variant="body2">Click on an item in the tree to view details</Typography>
+        </Box>
       );
-
-      await Promise.all(savePromises);
-      setPendingNameChanges({});
-      await fetchUserUploads();
-    } catch (err) {
-      console.error("Error saving changes:", err);
-      setError(err.response?.data?.error || "Failed to save changes");
-    } finally {
-      setSaving(false);
     }
+
+    const { type, item, parent } = selectedItem;
+
+    return (
+      <Box sx={{ p: 3, height: "100%", display: "flex", flexDirection: "column" }}>
+        {type === "table" && (
+          <>
+            <Typography variant="h6" sx={{ mb: 2 }}>{item.display_name || item.name}</Typography>
+            <Typography variant="body2" color="text.secondary">Database Table</Typography>
+            <Typography variant="body2" sx={{ mt: 1 }}>Indicators: {item.indicators?.length || 0}</Typography>
+          </>
+        )}
+
+        {type === "indicator" && (
+          <>
+            <Typography variant="h6" sx={{ mb: 2 }}>{item.name}</Typography>
+            <Typography variant="body2" color="text.secondary">Indicator</Typography>
+            <Typography variant="body2" sx={{ mt: 1 }}>Table: {parent?.display_name || parent?.name}</Typography>
+            <Typography variant="body2">States: {item.states?.length || 0}</Typography>
+            {item.is_user_generated && (
+              <Box sx={{ mt: 3 }}>
+                <Stack direction="row" spacing={1}>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    startIcon={<CloudUploadIcon />}
+                    onClick={() => {
+                      setUploadState({ ...uploadState, indicatorId: item.id, stateName: "", file: null });
+                      setUploadDialog(true);
+                    }}
+                  >
+                    Upload Media
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    color="error"
+                    startIcon={<DeleteOutlineIcon />}
+                    onClick={() => setDeleteConfirmDialog({ type: "indicator", id: item.id, name: item.name })}
+                  >
+                    Delete
+                  </Button>
+                </Stack>
+              </Box>
+            )}
+          </>
+        )}
+
+        {type === "state" && (
+          <>
+            <Typography variant="h6" sx={{ mb: 2 }}>{item.scenario_name || "State"}</Typography>
+            <Typography variant="body2" color="text.secondary">State / Scenario</Typography>
+            <Typography variant="body2" sx={{ mt: 1 }}>Indicator: {parent?.name}</Typography>
+            <Typography variant="body2">Media Files: {item.media?.length || 0}</Typography>
+            {item.is_user_generated && (
+              <Box sx={{ mt: 3 }}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  color="error"
+                  startIcon={<DeleteOutlineIcon />}
+                  onClick={() => setDeleteConfirmDialog({ type: "state", id: item.id, name: item.scenario_name || "State" })}
+                >
+                  Delete State
+                </Button>
+              </Box>
+            )}
+          </>
+        )}
+
+        {type === "media" && (
+          <>
+            <Typography variant="h6" sx={{ mb: 2, wordBreak: "break-all" }}>
+              {item.url?.split("/").pop() || "Media File"}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              {item.media_type?.toUpperCase() || "FILE"}
+            </Typography>
+
+            {/* Media Preview */}
+            <Box sx={{ flex: 1, minHeight: 200, mb: 2, bgcolor: "action.hover", borderRadius: 1, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+              {item.media_type === "image" && item.url && (
+                <Box
+                  component="img"
+                  src={getMediaUrl(item.url)}
+                  alt="Preview"
+                  onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "block"; }}
+                  sx={{ maxWidth: "100%", maxHeight: 300, objectFit: "contain" }}
+                />
+              )}
+              {item.media_type === "video" && item.url && (
+                <Box
+                  component="video"
+                  src={getMediaUrl(item.url)}
+                  controls
+                  onError={(e) => { e.target.style.display = "none"; }}
+                  sx={{ maxWidth: "100%", maxHeight: 300 }}
+                />
+              )}
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ display: item.media_type === "image" || item.media_type === "video" ? "none" : "block" }}
+              >
+                {item.url ? "Preview not available" : "File not found"}
+              </Typography>
+            </Box>
+
+            <Stack direction="row" spacing={1}>
+              {item.url && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => window.open(getMediaUrl(item.url), "_blank")}
+                >
+                  Open in New Tab
+                </Button>
+              )}
+              <Button
+                variant="outlined"
+                size="small"
+                color="error"
+                startIcon={<DeleteOutlineIcon />}
+                onClick={() => setDeleteConfirmDialog({ type: "media", id: item.id, name: item.url?.split("/").pop() || "Media" })}
+              >
+                Delete
+              </Button>
+            </Stack>
+          </>
+        )}
+      </Box>
+    );
   };
 
-  const removeFile = async (id) => {
-    try {
-      await api.delete(`/api/user_uploads/${id}/`);
-      setUserUploadsFiles(userUploadsFiles.filter((f) => f.id !== id));
-      const newPending = { ...pendingNameChanges };
-      delete newPending[id];
-      setPendingNameChanges(newPending);
-    } catch (err) {
-      console.error("Error deleting file:", err);
-      setError("Failed to delete file");
-    }
-  };
-
-  const handleCreateCategory = async () => {
-    if (!newCategoryName.trim()) return;
-
-    try {
-      const response = await api.post("/api/user_upload_categories/", {
-        name: newCategoryName.trim().toLowerCase().replace(/\s+/g, "_"),
-        display_name: newCategoryName.trim(),
+  // Get all indicators for upload dialog dropdown
+  const getAllIndicators = () => {
+    const indicators = [];
+    hierarchy.forEach((table) => {
+      table.indicators?.forEach((ind) => {
+        if (ind.is_user_generated) {
+          indicators.push({ ...ind, tableName: table.display_name || table.name });
+        }
       });
-      setCategories([...categories, response.data]);
-      setSelectedCategory(response.data);
-      setNewCategoryDialog(false);
-      setNewCategoryName("");
-    } catch (err) {
-      console.error("Error creating category:", err);
-      setError(err.response?.data?.error || "Failed to create category");
-    }
+    });
+    return indicators;
   };
-
-  const handleDeleteCategory = async (categoryId) => {
-    if (categories.length <= 1) {
-      setError("Cannot delete the last category");
-      return;
-    }
-
-    try {
-      await api.delete(`/api/user_upload_categories/${categoryId}/`);
-      const newCategories = categories.filter((c) => c.id !== categoryId);
-      setCategories(newCategories);
-      if (selectedCategory?.id === categoryId) {
-        const defaultCat = newCategories.find((c) => c.is_default) || newCategories[0];
-        setSelectedCategory(defaultCat);
-      }
-    } catch (err) {
-      console.error("Error deleting category:", err);
-      setError("Failed to delete category");
-    }
-  };
-
-  const handleBack = () => {
-    navigate(-1);
-  };
-
-  const getImageUrl = (imageUrl) => {
-    if (!imageUrl) return null;
-    return imageUrl.startsWith("http") ? imageUrl : `${config.api.baseUrl}${imageUrl}`;
-  };
-
-  const hasUnsavedChanges = Object.keys(pendingNameChanges).length > 0;
 
   return (
-    <Box
-      sx={{
-        height: "100vh",
-        bgcolor: "#0a0a0f",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-      }}
-    >
+    <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       {/* Header */}
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          px: { xs: 2, sm: 3 },
-          py: 2,
-          borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
-          flexShrink: 0,
-        }}
-      >
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", px: 2, py: 1.5, borderBottom: 1, borderColor: "divider" }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <IconButton
-            onClick={handleBack}
-            sx={{
-              color: "rgba(255,255,255,0.7)",
-              "&:hover": { color: "white", bgcolor: "rgba(255,255,255,0.1)" },
-            }}
-          >
+          <IconButton onClick={() => navigate(-1)} size="small">
             <ArrowBackIcon />
           </IconButton>
-          <Typography
-            variant="h5"
-            sx={{
-              color: "white",
-              fontWeight: 600,
-              fontSize: { xs: "1.25rem", sm: "1.5rem" },
-              letterSpacing: 0.5,
-            }}
-          >
+          <Typography variant="h6" sx={{ fontWeight: 600 }}>
             User Uploads
           </Typography>
         </Box>
-      </Box>
-
-      {/* Category Section */}
-      <Box
-        sx={{
-          px: { xs: 2, sm: 3 },
-          py: 2,
-          borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
-          flexShrink: 0,
-          bgcolor: "rgba(0, 0, 0, 0.2)",
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
-          <FolderIcon sx={{ color: "rgba(255,255,255,0.7)", fontSize: 20 }} />
-          <Typography variant="subtitle2" sx={{ color: "rgba(255,255,255,0.7)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>
-            Categories
-          </Typography>
-        </Box>
-        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
-          {categories.map((cat) => (
-            <Chip
-              key={cat.id}
-              label={cat.display_name}
-              onClick={() => setSelectedCategory(cat)}
-              onDelete={categories.length > 1 ? () => handleDeleteCategory(cat.id) : undefined}
-              deleteIcon={<DeleteOutlineIcon fontSize="small" />}
-              sx={{
-                bgcolor: selectedCategory?.id === cat.id ? "#64B5F6" : "rgba(255,255,255,0.08)",
-                color: selectedCategory?.id === cat.id ? "white" : "rgba(255,255,255,0.7)",
-                border: selectedCategory?.id === cat.id ? "2px solid #64B5F6" : "1px solid rgba(255,255,255,0.1)",
-                fontWeight: selectedCategory?.id === cat.id ? 600 : 400,
-                fontSize: { xs: "0.875rem", sm: "0.9375rem" },
-                height: { xs: 32, sm: 36 },
-                px: 1,
-                "&:hover": {
-                  bgcolor: selectedCategory?.id === cat.id ? "#42A5F5" : "rgba(255,255,255,0.12)",
-                },
-                "& .MuiChip-deleteIcon": {
-                  color: selectedCategory?.id === cat.id ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.4)",
-                  "&:hover": { color: "#ff5252" },
-                },
-              }}
-            />
-          ))}
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<AddIcon />}
-            onClick={() => setNewCategoryDialog(true)}
-            sx={{
-              color: "#4CAF50",
-              borderColor: "rgba(76, 175, 80, 0.5)",
-              "&:hover": {
-                borderColor: "#4CAF50",
-                bgcolor: "rgba(76, 175, 80, 0.1)",
-              },
-              height: { xs: 32, sm: 36 },
-              fontSize: { xs: "0.875rem", sm: "0.9375rem" },
-              textTransform: "none",
-              fontWeight: 500,
-            }}
-          >
-            Add New Category
-          </Button>
-        </Box>
-      </Box>
-
-      {/* Action Bar */}
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 2,
-          px: { xs: 2, sm: 3 },
-          py: 1.5,
-          borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
-          flexShrink: 0,
-          flexWrap: "wrap",
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-          <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.5)", fontSize: { xs: "0.75rem", sm: "0.875rem" } }}>
-            {selectedCategory ? `Category: ${selectedCategory.display_name}` : "Select a category"}
-          </Typography>
-          {userUploadsFiles.length > 0 && (
-            <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.3)", fontSize: { xs: "0.75rem", sm: "0.875rem" } }}>
-              • {userUploadsFiles.length} {userUploadsFiles.length === 1 ? "file" : "files"}
-            </Typography>
-          )}
-        </Box>
-
-        <Box sx={{ display: "flex", gap: 1.5, alignItems: "center", flexWrap: "wrap" }}>
+        <Box sx={{ display: "flex", gap: 1 }}>
+          <IconButton onClick={fetchHierarchy} size="small" title="Refresh">
+            <RefreshIcon />
+          </IconButton>
           <Button
             variant="contained"
-            component="label"
-            disabled={uploading || !selectedCategory}
-            startIcon={uploading ? <CircularProgress size={16} sx={{ color: "white" }} /> : <ImageIcon />}
-            sx={{
-              bgcolor: "#4CAF50",
-              color: "white",
-              "&:hover": { bgcolor: "#45a049" },
-              "&.Mui-disabled": { opacity: 0.5, bgcolor: "rgba(76, 175, 80, 0.3)" },
-              textTransform: "none",
-              fontWeight: 600,
-              fontSize: { xs: "0.875rem", sm: "0.9375rem" },
-              px: { xs: 2, sm: 2.5 },
-            }}
+            size="small"
+            startIcon={<AddIcon />}
+            onClick={() => setAddIndicatorDialog(true)}
           >
-            {uploading ? "Uploading..." : "Add Images"}
-            <input
-              type="file"
-              hidden
-              multiple
-              accept="image/*"
-              onChange={handleFileUpload}
-              disabled={uploading || !selectedCategory}
-            />
+            New Indicator
           </Button>
-
-          {hasUnsavedChanges && (
-            <Button
-              variant="contained"
-              startIcon={saving ? <CircularProgress size={16} sx={{ color: "white" }} /> : <SaveIcon />}
-              onClick={handleSave}
-              disabled={saving}
-              sx={{
-                bgcolor: "#64B5F6",
-                color: "white",
-                "&:hover": { bgcolor: "#42A5F5" },
-                textTransform: "none",
-                fontWeight: 600,
-                fontSize: { xs: "0.875rem", sm: "0.9375rem" },
-                px: { xs: 2, sm: 2.5 },
-              }}
-            >
-              {saving ? "Saving..." : "Save Changes"}
-            </Button>
-          )}
         </Box>
       </Box>
 
-      {/* Content */}
-      <Box
-        sx={{
-          flex: 1,
-          overflowY: "auto",
-          px: { xs: 2, sm: 3 },
-          py: 2,
-        }}
-      >
-        {error && (
-          <Alert
-            severity="error"
-            sx={{ mb: 2, bgcolor: "rgba(211, 47, 47, 0.1)", color: "#ff5252", border: "1px solid rgba(255, 82, 82, 0.3)" }}
-            onClose={() => setError(null)}
-          >
-            {error}
-          </Alert>
-        )}
+      {/* Error Alert */}
+      {error && (
+        <Alert severity="error" sx={{ mx: 2, mt: 1 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
 
-        {loading ? (
-          <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: "50vh" }}>
-            <CircularProgress />
-          </Box>
-        ) : categories.length === 0 ? (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              height: "50vh",
-              color: "rgba(255,255,255,0.3)",
-            }}
-          >
-            <CloudUploadIcon sx={{ fontSize: 64, mb: 2, opacity: 0.5 }} />
-            <Typography variant="h6" sx={{ mb: 1 }}>
-              No User Uploads Yet
-            </Typography>
-            <Typography variant="body2" sx={{ textAlign: "center", maxWidth: 300, mb: 2 }}>
-              Create a category above to start organizing your uploads for use in presentations.
-            </Typography>
-          </Box>
-        ) : !selectedCategory ? (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              height: "50vh",
-              color: "rgba(255,255,255,0.3)",
-            }}
-          >
-            <FolderIcon sx={{ fontSize: 64, mb: 2, opacity: 0.5 }} />
-            <Typography variant="h6" sx={{ mb: 1 }}>
-              No category selected
-            </Typography>
-            <Typography variant="body2">Select a category above or create a new one</Typography>
-          </Box>
-        ) : userUploadsFiles.length === 0 ? (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              height: "50vh",
-              color: "rgba(255,255,255,0.3)",
-            }}
-          >
-            <ImageIcon sx={{ fontSize: 64, mb: 2, opacity: 0.5 }} />
-            <Typography variant="h6" sx={{ mb: 1 }}>
-              No images in this category
-            </Typography>
-            <Typography variant="body2">Click "Add Images" to upload files</Typography>
-          </Box>
-        ) : (
-          <Stack spacing={1.5}>
-            {userUploadsFiles.map((file) => (
-              <Paper
-                key={file.id}
-                sx={{
-                  p: { xs: 1.5, sm: 2 },
-                  bgcolor: "rgba(255,255,255,0.02)",
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  borderRadius: 2,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 2,
-                  transition: "all 0.15s",
-                  "&:hover": {
-                    bgcolor: "rgba(255,255,255,0.05)",
-                    borderColor: "rgba(100, 181, 246, 0.4)",
-                  },
-                }}
-              >
-                {file.imageUrl && (
-                  <Box
-                    sx={{
-                      width: { xs: 80, sm: 100 },
-                      height: { xs: 80, sm: 100 },
-                      borderRadius: 1,
-                      overflow: "hidden",
-                      flexShrink: 0,
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      bgcolor: "rgba(255,255,255,0.05)",
-                    }}
-                  >
-                    <img
-                      src={getImageUrl(file.imageUrl)}
-                      alt={file.displayName}
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                      }}
-                    />
-                  </Box>
-                )}
+      {/* Main Content - Split View */}
+      <Box sx={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        {/* Left Panel - Tree Browser */}
+        <Box sx={{ width: isMobile ? "100%" : 300, minWidth: 250, borderRight: 1, borderColor: "divider", overflow: "auto" }}>
+          {loading ? (
+            <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: "50vh" }}>
+              <CircularProgress size={32} />
+            </Box>
+          ) : hierarchy.length === 0 ? (
+            <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "50vh", color: "text.secondary", p: 3 }}>
+              <Typography variant="body1" sx={{ mb: 1 }}>No tables found</Typography>
+              <Typography variant="body2">Tables will appear once the database is populated</Typography>
+            </Box>
+          ) : (
+            <List component="nav" sx={{ p: 0.5 }}>
+              {hierarchy.map((table) => renderTableNode(table))}
+            </List>
+          )}
+        </Box>
 
-                <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "rgba(255,255,255,0.4)",
-                      display: "block",
-                      mb: 0.5,
-                      fontSize: { xs: "0.7rem", sm: "0.75rem" },
-                      textTransform: "uppercase",
-                      letterSpacing: 0.5,
-                    }}
-                  >
-                    Display Name
-                  </Typography>
-                  <TextField
-                    variant="standard"
-                    fullWidth
-                    value={pendingNameChanges[file.id] !== undefined ? pendingNameChanges[file.id] : file.displayName}
-                    onChange={(e) => handleNameChange(file.id, e.target.value)}
-                    InputProps={{
-                      disableUnderline: true,
-                      sx: {
-                        color: "white",
-                        fontSize: { xs: "0.9375rem", sm: "1rem" },
-                        fontWeight: 500,
-                        p: 0,
-                      },
-                    }}
-                    sx={{
-                      "& .MuiInputBase-root": {
-                        bgcolor: "rgba(255,255,255,0.05)",
-                        borderRadius: "4px",
-                        px: 1.5,
-                        py: 0.75,
-                        border: "1px solid rgba(255,255,255,0.1)",
-                        "&:hover": { borderColor: "rgba(255,255,255,0.2)" },
-                        "&:focus-within": { borderColor: "#64B5F6", borderWidth: "2px" },
-                      },
-                    }}
-                  />
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "rgba(255,255,255,0.3)",
-                      display: "block",
-                      mt: 0.5,
-                      fontSize: { xs: "0.7rem", sm: "0.75rem" },
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    Original: {file.fileName}
-                  </Typography>
-                </Box>
-
-                <IconButton
-                  size="small"
-                  onClick={() => removeFile(file.id)}
-                  sx={{
-                    color: "rgba(255,255,255,0.3)",
-                    "&:hover": {
-                      color: "#ff5252",
-                      bgcolor: "rgba(255, 82, 82, 0.1)",
-                    },
-                  }}
-                >
-                  <DeleteOutlineIcon fontSize="small" />
-                </IconButton>
-              </Paper>
-            ))}
-          </Stack>
+        {/* Right Panel - Preview */}
+        {!isMobile && (
+          <Box sx={{ flex: 1, overflow: "auto" }}>
+            {renderPreviewPanel()}
+          </Box>
         )}
       </Box>
 
-      {/* New Category Dialog */}
+      {/* Add Indicator Dialog */}
+      <Dialog open={addIndicatorDialog} onClose={() => setAddIndicatorDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>New Indicator</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <FormControl fullWidth>
+              <InputLabel>Table</InputLabel>
+              <Select
+                value={newIndicator.table_id}
+                label="Table"
+                onChange={(e) => setNewIndicator({ ...newIndicator, table_id: e.target.value })}
+              >
+                {hierarchy.map((table) => (
+                  <MenuItem key={table.id} value={table.id}>
+                    {table.display_name || table.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <TextField
+              fullWidth
+              label="Indicator Name"
+              value={newIndicator.name}
+              onChange={(e) => setNewIndicator({ ...newIndicator, name: e.target.value })}
+              placeholder="e.g., My Custom Visualization"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAddIndicatorDialog(false)}>Cancel</Button>
+          <Button onClick={handleCreateIndicator} variant="contained" disabled={!newIndicator.table_id || !newIndicator.name}>
+            Create
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Upload Media Dialog */}
       <Dialog
-        open={newCategoryDialog}
+        open={uploadDialog}
         onClose={() => {
-          setNewCategoryDialog(false);
-          setNewCategoryName("");
+          setUploadDialog(false);
+          setUploadState({ indicatorId: null, stateName: "", file: null });
         }}
         maxWidth="sm"
         fullWidth
-        PaperProps={{
-          sx: {
-            bgcolor: "#1a1a1f",
-            color: "white",
-          },
-        }}
       >
-        <DialogTitle sx={{ pb: 1 }}>Create New Category</DialogTitle>
+        <DialogTitle>Upload Media</DialogTitle>
         <DialogContent>
-          <TextField
-            autoFocus
-            fullWidth
-            label="Category Name"
-            value={newCategoryName}
-            onChange={(e) => setNewCategoryName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && newCategoryName.trim()) {
-                handleCreateCategory();
-              }
-            }}
-            sx={{
-              mt: 1,
-              "& .MuiInputLabel-root": { color: "rgba(255,255,255,0.7)" },
-              "& .MuiOutlinedInput-root": {
-                color: "white",
-                "& fieldset": { borderColor: "rgba(255,255,255,0.2)" },
-                "&:hover fieldset": { borderColor: "rgba(255,255,255,0.3)" },
-                "&.Mui-focused fieldset": { borderColor: "#64B5F6" },
-              },
-            }}
-          />
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <FormControl fullWidth>
+              <InputLabel>Indicator</InputLabel>
+              <Select
+                value={uploadState.indicatorId || ""}
+                label="Indicator"
+                onChange={(e) => setUploadState({ ...uploadState, indicatorId: e.target.value })}
+              >
+                {getAllIndicators().map((ind) => (
+                  <MenuItem key={ind.id} value={ind.id}>
+                    {ind.tableName} / {ind.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <TextField
+              fullWidth
+              label="State Name"
+              value={uploadState.stateName}
+              onChange={(e) => setUploadState({ ...uploadState, stateName: e.target.value })}
+              placeholder="e.g., Present, 2030, Scenario A"
+              helperText="This will create a new state for the selected indicator"
+            />
+            <Box>
+              <Button variant="outlined" component="label" fullWidth>
+                {uploadState.file ? uploadState.file.name : "Select File"}
+                <input
+                  type="file"
+                  hidden
+                  accept="image/*,video/*,.html,.htm,.json"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setUploadState({ ...uploadState, file });
+                      // Auto-fill state name from filename if empty
+                      if (!uploadState.stateName) {
+                        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
+                        setUploadState((prev) => ({ ...prev, file, stateName: nameWithoutExt }));
+                      }
+                    }
+                  }}
+                />
+              </Button>
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: "block" }}>
+                Supports images, videos, HTML files, and JSON
+              </Typography>
+            </Box>
+          </Stack>
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
+        <DialogActions>
           <Button
             onClick={() => {
-              setNewCategoryDialog(false);
-              setNewCategoryName("");
+              setUploadDialog(false);
+              setUploadState({ indicatorId: null, stateName: "", file: null });
             }}
-            sx={{ color: "rgba(255,255,255,0.7)" }}
           >
             Cancel
           </Button>
           <Button
-            onClick={handleCreateCategory}
-            disabled={!newCategoryName.trim()}
+            onClick={handleUploadMedia}
             variant="contained"
-            sx={{ bgcolor: "#64B5F6", "&:hover": { bgcolor: "#42A5F5" } }}
+            disabled={!uploadState.indicatorId || !uploadState.stateName || !uploadState.file || uploading}
           >
-            Create
+            {uploading ? <CircularProgress size={24} /> : "Upload"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteConfirmDialog} onClose={() => setDeleteConfirmDialog(null)}>
+        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete "{deleteConfirmDialog?.name}"?
+          </Typography>
+          {deleteConfirmDialog?.type === "indicator" && (
+            <Typography color="text.secondary" sx={{ mt: 1, fontSize: "0.875rem" }}>
+              This will also delete all associated states and media files.
+            </Typography>
+          )}
+          {deleteConfirmDialog?.type === "state" && (
+            <Typography color="text.secondary" sx={{ mt: 1, fontSize: "0.875rem" }}>
+              This will also delete all associated media files.
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteConfirmDialog(null)}>Cancel</Button>
+          <Button onClick={handleDelete} color="error" variant="contained">
+            Delete
           </Button>
         </DialogActions>
       </Dialog>

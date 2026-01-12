@@ -104,12 +104,12 @@ const App = () => {
   // This effect handles when URL changes (e.g., user clicks browser back/forward or navbar)
   useEffect(() => {
     const pathIndicator = getIndicatorFromPath(location.pathname);
-    
+
     // Skip syncing for special routes (presentation, user-uploads)
     if (pathIndicator === 'presentation' || pathIndicator === 'user-uploads') {
       return;
     }
-    
+
     // Clear navigation target when URL matches what we were navigating to
     if (navigationTargetRef.current && pathIndicator === navigationTargetRef.current) {
       navigationTargetRef.current = null;
@@ -131,7 +131,7 @@ const App = () => {
   // Check if we're in presentation mode (either by state or URL)
   const isInPresentationMode = isPresentationMode || location.pathname.includes('/presentation');
   
-  // Don't show navbar in presentation mode or user uploads page
+  // Don't show navbar in presentation mode or user uploads pages
   const showNavbar = !isInPresentationMode && !location.pathname.includes('/user-uploads');
 
   return (

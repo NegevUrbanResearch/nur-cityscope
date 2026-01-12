@@ -236,6 +236,7 @@ const PresentationMode = () => {
     
     const [userUploads, setUserUploads] = useState([]);
     const [userUploadCategories, setUserUploadCategories] = useState([]);
+    const [fileHierarchy, setFileHierarchy] = useState([]);
     
     // Get all valid slides (including both UTCI and Plan for climate, and user uploads)
     const allValidSlides = useMemo(() => {
@@ -257,13 +258,40 @@ const PresentationMode = () => {
                 }
             });
         });
+        // Add UGC indicators from file hierarchy
+        if (Array.isArray(fileHierarchy)) {
+            fileHierarchy.forEach(table => {
+                if (table.indicators) {
+                    table.indicators
+                        .filter(ind => ind.is_user_generated)
+                        .forEach(indicator => {
+                            if (indicator.states) {
+                                indicator.states.forEach(state => {
+                                    slides.push({
+                                        indicator: `ugc_${indicator.id}`,
+                                        state: state.scenario_name || JSON.stringify(state.state_values),
+                                        indicatorId: indicator.id,
+                                        stateId: state.id,
+                                        indicatorDataId: state.indicator_data_id,
+                                        indicatorName: indicator.name,
+                                        tableName: table.display_name || table.name,
+                                        isUGC: true,
+                                        media: state.media || []
+                                    });
+                                });
+                            }
+                        });
+                }
+            });
+        }
+
         // Add user uploads as slides - grouped by category
         const uploads = Array.isArray(userUploads) ? userUploads : [];
         for (let i = 0; i < uploads.length; i++) {
             const upload = uploads[i];
             if (upload && upload.id) {
-                slides.push({ 
-                    indicator: upload.categoryName ? `user_upload_${upload.categoryName}` : 'user_upload', 
+                slides.push({
+                    indicator: upload.categoryName ? `user_upload_${upload.categoryName}` : 'user_upload',
                     state: upload.displayName || upload.original_filename || 'User Upload',
                     uploadId: upload.id,
                     imageUrl: upload.imageUrl,
@@ -272,10 +300,10 @@ const PresentationMode = () => {
             }
         }
         return slides;
-    }, [indicatorConfig, StateConfig, userUploads]);
+    }, [indicatorConfig, StateConfig, userUploads, fileHierarchy]);
 
-    // Check if a slide combination is already used (including type for climate, and uploadId for user uploads)
-    const isSlideUsed = (indicator, state, type, uploadId, excludeIndex = -1) => {
+    // Check if a slide combination is already used (including type for climate, uploadId for user uploads, and stateId for UGC)
+    const isSlideUsed = (indicator, state, type, uploadId, stateId, excludeIndex = -1) => {
         return presentationSequence.some((step, idx) => {
             if (idx === excludeIndex) return false;
             if (step.indicator !== indicator || step.state !== state) return false;
@@ -286,6 +314,10 @@ const PresentationMode = () => {
             // For user uploads, check uploadId
             if (indicator.startsWith('user_upload')) {
                 return step.uploadId === uploadId;
+            }
+            // For UGC indicators, check stateId
+            if (indicator.startsWith('ugc_')) {
+                return step.stateId === stateId;
             }
             return true;
         });
@@ -307,18 +339,19 @@ const PresentationMode = () => {
 
     const currentStep = presentationSequence[sequenceIndex];
 
-    // Fetch user uploads and categories on component mount
+    // Fetch user uploads, categories, and file hierarchy on component mount
     useEffect(() => {
-        const fetchUserUploads = async () => {
+        const fetchData = async () => {
             try {
-                const [uploadsResponse, categoriesResponse] = await Promise.all([
+                const [uploadsResponse, categoriesResponse, hierarchyResponse] = await Promise.all([
                     api.get("/api/user_uploads/"),
-                    api.get("/api/user_upload_categories/")
+                    api.get("/api/user_upload_categories/"),
+                    api.get("/api/actions/get_file_hierarchy/")
                 ]);
-                
+
                 const categories = categoriesResponse.data;
                 setUserUploadCategories(categories);
-                
+
                 const uploads = uploadsResponse.data.map((upload) => {
                     const category = categories.find(c => c.id === upload.category);
                     return {
@@ -330,11 +363,14 @@ const PresentationMode = () => {
                     };
                 });
                 setUserUploads(uploads);
+
+                // Set file hierarchy for UGC indicators
+                setFileHierarchy(hierarchyResponse.data || []);
             } catch (err) {
-                console.error("Error fetching user uploads:", err);
+                console.error("Error fetching data:", err);
             }
         };
-        fetchUserUploads();
+        fetchData();
     }, []);
 
     // Enter presentation mode when page loads (but don't auto-start playing)
@@ -344,10 +380,13 @@ const PresentationMode = () => {
         }
     }, [isPresentationMode, togglePresentationMode]);
 
-    // Helper function to generate cache key for a slide (include type for climate, uploadId for user uploads)
-    const getCacheKey = (indicator, state, type, uploadId) => {
+    // Helper function to generate cache key for a slide (include type for climate, uploadId for user uploads, stateId for UGC)
+    const getCacheKey = (indicator, state, type, uploadId, stateId) => {
         if (indicator.startsWith('user_upload') && uploadId) {
             return `user_upload:${uploadId}`;
+        }
+        if (indicator.startsWith('ugc_') && stateId) {
+            return `ugc:${stateId}`;
         }
         if (indicator === 'climate' && type) {
             return `${indicator}:${state}:${type}`;
