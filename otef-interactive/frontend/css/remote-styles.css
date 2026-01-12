@@ -213,6 +213,52 @@ body {
   grid-row: 3;
 }
 
+/* Joystick controls */
+.joystick-container {
+  grid-column: 2;
+  grid-row: 2;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  user-select: none;
+}
+
+.joystick-base {
+  width: 50px;
+  height: 50px;
+  border: 2px solid var(--border-color);
+  border-radius: 50%;
+  background: transparent;
+  transition: all var(--transition-speed) ease;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.joystick-container.active .joystick-base {
+  border-color: var(--accent-primary);
+  opacity: 1;
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.4);
+}
+
+/* Nipple.js override styles to match dark theme */
+#joystickZone .back {
+  background: var(--bg-tertiary) !important;
+  border: 2px solid var(--border-color) !important;
+}
+
+#joystickZone .front {
+  background: var(--accent-primary) !important;
+  border: none !important;
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.6) !important;
+}
+
+#joystickZone.active .back {
+  border-color: var(--accent-primary) !important;
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.4) !important;
+}
+
 /* Zoom controls */
 .zoom-controls {
   margin-top: var(--spacing-unit);

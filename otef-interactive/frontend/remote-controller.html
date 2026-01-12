@@ -91,6 +91,14 @@
                 <polyline points="6 9 12 15 18 9"></polyline>
               </svg>
             </button>
+            <!-- Joystick in center -->
+            <div
+              class="joystick-container"
+              id="joystickZone"
+              aria-label="Virtual joystick for map panning"
+            >
+              <div class="joystick-base"></div>
+            </div>
           </div>
         </div>
 
@@ -178,6 +186,7 @@
     </div>
 
     <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
     <script src="js/remote-controller.js"></script>

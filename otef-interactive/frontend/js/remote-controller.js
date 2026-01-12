@@ -12,6 +12,11 @@ let currentState = {
   gisMapConnected: false,
 };
 
+// Control state management (prevent simultaneous use)
+let activeControl = null; // null, 'dpad', or 'joystick'
+let joystickManager = null; // Nipple.js instance
+let joystickInterval = null; // For continuous pan updates
+
 // WebSocket client instance
 let wsClient = null;
 
@@ -41,6 +46,7 @@ function initialize() {
   initializePanControls();
   initializeZoomControls();
   initializeLayerControls();
+  initializeJoystick();
 
   // Update UI with default state
   updateUI();
@@ -270,6 +276,12 @@ let panInterval = null;
 function handlePanStart(direction, button) {
   if (!currentState.gisMapConnected) return;
 
+  // Check if joystick is active
+  if (activeControl === "joystick") return;
+
+  // Set active control
+  activeControl = "dpad";
+
   panActive = true;
   panDirection = direction;
   button.classList.add("active");
@@ -286,6 +298,9 @@ function handlePanStart(direction, button) {
 }
 
 function handlePanEnd(button) {
+  // Reset active control
+  activeControl = null;
+
   panActive = false;
   panDirection = null;
   button.classList.remove("active");
@@ -407,6 +422,171 @@ function initializeLayerControls() {
   });
 }
 
+/**
+ * Initialize joystick control
+ */
+function initializeJoystick() {
+  const zone = document.getElementById("joystickZone");
+  if (!zone) return;
+
+  // Create joystick instance with configuration
+  joystickManager = nipplejs.create({
+    zone: zone,
+    mode: "static",
+    position: { left: "50%", top: "50%" },
+    color: "#00d4ff", // cyan accent
+    size: 100,
+    threshold: 0.15, // 15% dead zone
+    fadeTime: 200,
+    restOpacity: 0.6,
+  });
+
+  // Event handlers
+  joystickManager.on("start", handleJoystickStart);
+  joystickManager.on("move", handleJoystickMove);
+  joystickManager.on("end", handleJoystickEnd);
+
+  console.log("[Remote] Joystick initialized");
+}
+
+/**
+ * Handle joystick start event
+ */
+function handleJoystickStart(evt, data) {
+  if (!currentState.gisMapConnected) return;
+
+  activeControl = "joystick";
+  disableDPad();
+
+  // Visual feedback
+  const zone = document.getElementById("joystickZone");
+  if (zone) zone.classList.add("active");
+
+  // Haptic feedback
+  if (navigator.vibrate) {
+    navigator.vibrate(20);
+  }
+
+  console.log("[Remote] Joystick activated");
+}
+
+/**
+ * Handle joystick move event
+ */
+function handleJoystickMove(evt, data) {
+  if (!currentState.gisMapConnected || activeControl !== "joystick") return;
+
+  // data.angle.radian: angle in radians
+  // data.distance: distance from center (0-50 for size:100)
+  // data.force: normalized force (0-1)
+
+  // Convert to direction and magnitude
+  const magnitude = Math.min(data.force, 1.0); // Clamp to 1.0
+
+  // 15% dead zone already handled by Nipple.js threshold
+  if (magnitude < 0.15) return;
+
+  // Calculate pan direction (8-way for simplicity)
+  const angle = data.angle.degree;
+  const direction = getDirectionFromAngle(angle);
+
+  // Adjust pan speed by magnitude (scaled distance)
+  let panSpeed = 0.15 + (magnitude - 0.15) * 0.35; // 0.15 to 0.50 range
+
+  // Reduce sensitivity at higher zoom levels for finer control
+  // Base zoom is 10, so at zoom 10 speed is unchanged, at zoom 19 it's ~53% slower
+  const zoomMultiplier = 10 / currentState.zoom;
+  panSpeed = panSpeed * zoomMultiplier;
+
+  // Throttle continuous updates
+  if (!joystickInterval) {
+    sendJoystickPanCommand(direction, panSpeed);
+    joystickInterval = setTimeout(() => {
+      joystickInterval = null;
+    }, PAN_THROTTLE_MS);
+  }
+}
+
+/**
+ * Handle joystick end event
+ */
+function handleJoystickEnd(evt, data) {
+  activeControl = null;
+  enableDPad();
+
+  // Visual feedback
+  const zone = document.getElementById("joystickZone");
+  if (zone) zone.classList.remove("active");
+
+  // Haptic feedback
+  if (navigator.vibrate) {
+    navigator.vibrate(15);
+  }
+
+  // Clear any pending updates
+  if (joystickInterval) {
+    clearTimeout(joystickInterval);
+    joystickInterval = null;
+  }
+
+  console.log("[Remote] Joystick released");
+}
+
+/**
+ * Convert angle in degrees to 8-way direction
+ */
+function getDirectionFromAngle(degrees) {
+  // Convert 360° to 8 cardinal directions
+  // 0° = right, 90° = up, 180° = left, 270° = down
+  const normalized = ((degrees + 22.5) % 360) / 45;
+  const directions = [
+    "east",
+    "northeast",
+    "north",
+    "northwest",
+    "west",
+    "southwest",
+    "south",
+    "southeast",
+  ];
+  return directions[Math.floor(normalized)];
+}
+
+/**
+ * Send joystick pan command
+ */
+function sendJoystickPanCommand(direction, magnitude) {
+  if (!wsClient || !wsClient.getConnected()) return;
+
+  const msg = createPanControlMessage(direction, magnitude);
+  wsClient.send(msg);
+  console.log(
+    `[Remote] Joystick pan: ${direction} @ ${magnitude.toFixed(2)}`
+  );
+}
+
+/**
+ * Disable D-pad buttons when joystick is active
+ */
+function disableDPad() {
+  const buttons = document.querySelectorAll(".dpad-button");
+  buttons.forEach((btn) => {
+    btn.style.opacity = "0.3";
+    btn.style.pointerEvents = "none";
+  });
+}
+
+/**
+ * Enable D-pad buttons when joystick is released
+ */
+function enableDPad() {
+  const buttons = document.querySelectorAll(".dpad-button");
+  buttons.forEach((btn) => {
+    btn.style.opacity = "";
+    btn.style.pointerEvents = "";
+  });
+}
+
 function sendLayerUpdate(layers) {
   if (!wsClient || !wsClient.getConnected()) {
     console.warn("[Remote] Cannot send layer update: not connected");
@@ -484,5 +664,9 @@ document.addEventListener("visibilitychange", () => {
 window.addEventListener("beforeunload", () => {
   if (wsClient) {
     wsClient.disconnect();
+  }
+  // Cleanup joystick
+  if (joystickManager) {
+    joystickManager.destroy();
   }
 });
