@@ -137,6 +137,32 @@
       // Use relative paths for API requests
       const apiEndpoint = "/api/actions/get_image_data/";
       
+      // Table management
+      let currentTable = 'idistrict';
+      let availableTables = [];
+      
+      // Fetch available tables
+      async function fetchTables() {
+        try {
+          const response = await fetch('/api/tables/?is_active=true');
+          if (response.ok) {
+            const tables = await response.json();
+            if (Array.isArray(tables)) {
+              availableTables = tables;
+              // Set current table to idistrict if available, otherwise first table
+              const idistrictTable = tables.find(t => t.name === 'idistrict');
+              currentTable = idistrictTable ? 'idistrict' : (tables[0]?.name || 'idistrict');
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching tables:', error);
+          currentTable = 'idistrict'; // Fallback
+        }
+      }
+      
+      // Fetch tables on load
+      fetchTables();
+      
       // WebSocket connection for real-time updates
       let ws = null;
       let wsReconnectTimeout = null;
@@ -239,7 +265,7 @@
 
       // Function to get and update the image
       function updateImage() {
-        fetch(`${apiEndpoint}?table=idistrict`)
+        fetch(`${apiEndpoint}?table=${currentTable}`)
           .then((response) => {
             if (!response.ok) {
               throw new Error(`HTTP error! status: ${response.status}`);
@@ -271,10 +297,15 @@
               renderImagen(mediaUrl);
             } else if (data.error) {
               console.error("Error from API:", data.error);
-              showError("Server error: " + data.error);
+              // Check if it's a 404 (no data available)
+              if (data.error.includes("not found") || data.error.includes("No")) {
+                showError("No visualization data available for the selected table. Please try selecting a different table.");
+              } else {
+                showError("Server error: " + data.error);
+              }
             } else {
               console.error('No "image_data" found in API response');
-              showError("No visualization data available");
+              showError("No visualization data available for the selected table.");
             }
           })
           .catch((error) => {

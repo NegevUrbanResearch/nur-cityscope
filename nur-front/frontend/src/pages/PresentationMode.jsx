@@ -28,6 +28,7 @@ import PauseIcon from "@mui/icons-material/Pause";
 import { useAppData } from "../DataContext";
 import config from "../config";
 import api from "../api";
+import { useTheme, useMediaQuery } from "@mui/material";
 
 // Slides that should NOT be shown (HTML content that doesn't work in projection)
 const EXCLUDED_SLIDES = {
@@ -171,11 +172,13 @@ const SlideItem = ({
                         endIcon={<ArrowDropDownIcon fontSize="small" sx={{ color: '#64B5F6' }} />}
                     >
                         <Typography variant="body2" sx={{ textTransform: 'none', fontWeight: 500 }}>
-                            {step.indicator.startsWith('user_upload') 
-                                ? (step.categoryName 
-                                    ? userUploadCategories.find(c => c.name === step.categoryName)?.display_name || 'User Upload'
-                                    : 'User Upload')
-                                : indicatorConfig[step.indicator]?.name.replace(' Dashboard', '') || step.indicator
+                            {!step.indicator 
+                                ? 'No indicator'
+                                : step.indicator.startsWith('user_upload') 
+                                    ? (step.categoryName 
+                                        ? userUploadCategories.find(c => c.name === step.categoryName)?.display_name || 'User Upload'
+                                        : 'User Upload')
+                                    : indicatorConfig[step.indicator]?.name.replace(' Dashboard', '') || step.indicator || 'No indicator'
                             }
                         </Typography>
                     </Button>
@@ -201,7 +204,12 @@ const SlideItem = ({
                         endIcon={<ArrowDropDownIcon fontSize="small" sx={{ color: '#64B5F6' }} />}
                     >
                         <Typography variant="body2" sx={{ textTransform: 'none', fontWeight: 500 }}>
-                            {step.indicator === 'climate' && step.type ? `${step.state} (${step.type.toUpperCase()})` : step.state}
+                            {!step.state 
+                                ? 'No state'
+                                : step.indicator === 'climate' && step.type 
+                                    ? `${step.state} (${step.type.toUpperCase()})` 
+                                    : step.state
+                            }
                         </Typography>
                     </Button>
                 </Stack>
@@ -220,6 +228,7 @@ const PresentationMode = () => {
         globalDuration,
         setGlobalDuration,
         sequenceIndex,
+        setSequenceIndex,
         skipToNextStep,
         skipToPrevStep,
         isPresentationMode,
@@ -232,57 +241,187 @@ const PresentationMode = () => {
         enterPauseMode,
         exitPauseMode,
         activeUserUpload,
+        currentTable,
+        availableTables,
+        changeTable,
     } = useAppData();
+    
+    const theme = useTheme();
+    const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+    const isTablet = useMediaQuery(theme.breakpoints.between("sm", "md"));
+    const [tableMenuAnchor, setTableMenuAnchor] = useState(null);
     
     const [userUploads, setUserUploads] = useState([]);
     const [userUploadCategories, setUserUploadCategories] = useState([]);
     const [fileHierarchy, setFileHierarchy] = useState([]);
+    const [tableIndicators, setTableIndicators] = useState([]);
+    const [tableStates, setTableStates] = useState([]);
     
-    // Get all valid slides (including both UTCI and Plan for climate, and user uploads)
+    // Fetch indicators and states for current table
+    useEffect(() => {
+        const fetchTableData = async () => {
+            try {
+                // Fetch indicators for current table
+                const indicatorsResponse = await api.get(`/api/indicators/?table=${currentTable}&include_ugc=false`);
+                const indicators = indicatorsResponse.data || [];
+                setTableIndicators(indicators);
+                
+                // Fetch file hierarchy for current table to get states
+                const hierarchyResponse = await api.get(`/api/actions/get_file_hierarchy/?table=${currentTable}`);
+                const hierarchy = hierarchyResponse.data || [];
+                setFileHierarchy(hierarchy);
+                
+                // Extract states from hierarchy
+                const states = new Set();
+                hierarchy.forEach(table => {
+                    if (table.indicators) {
+                        table.indicators.forEach(indicator => {
+                            if (indicator.states) {
+                                indicator.states.forEach(state => {
+                                    // For climate, we need scenario_name and scenario_type
+                                    if (indicator.category === 'climate') {
+                                        if (state.scenario_name) {
+                                            states.add(JSON.stringify({
+                                                scenario_name: state.scenario_name,
+                                                scenario_type: state.scenario_type || 'utci'
+                                            }));
+                                        }
+                                    } else {
+                                        // For mobility, use scenario from state_values
+                                        if (state.state_values?.scenario) {
+                                            states.add(state.state_values.scenario);
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+                setTableStates(Array.from(states));
+                
+                // Clear presentation sequence when table changes (slides from old table are invalid)
+                setPresentationSequence([]);
+                setSequenceIndex(0);
+            } catch (err) {
+                console.error("Error fetching table data:", err);
+                setTableIndicators([]);
+                setTableStates([]);
+                setPresentationSequence([]);
+            }
+        };
+        
+        fetchTableData();
+    }, [currentTable, setPresentationSequence]);
+    
+    // Get all valid slides filtered by current table
     const allValidSlides = useMemo(() => {
         const slides = [];
-        if (!indicatorConfig || !StateConfig) {
-            return slides;
-        }
-        Object.keys(indicatorConfig).forEach(indicator => {
-            const states = StateConfig[indicator] || [];
-            states.forEach(state => {
-                if (isValidSlide(indicator, state)) {
-                    if (indicator === 'climate') {
-                        // For climate, create both UTCI and Plan versions
-                        slides.push({ indicator, state, type: 'utci' });
-                        slides.push({ indicator, state, type: 'plan' });
-                    } else {
-                        slides.push({ indicator, state });
+        
+        // Only include indicators that exist in the current table
+        const availableIndicatorNames = new Set(tableIndicators.map(ind => {
+            // Map indicator_id to indicator name (mobility=1, climate=2)
+            if (ind.indicator_id === 1) return 'mobility';
+            if (ind.indicator_id === 2) return 'climate';
+            return null;
+        }).filter(Boolean));
+        
+        // Build slides from available indicators in current table
+        availableIndicatorNames.forEach(indicatorName => {
+            if (!indicatorConfig[indicatorName]) return;
+            
+            // Get states for this indicator from the table data
+            const indicator = tableIndicators.find(ind => {
+                if (indicatorName === 'mobility') return ind.indicator_id === 1;
+                if (indicatorName === 'climate') return ind.indicator_id === 2;
+                return false;
+            });
+            
+            if (!indicator) return;
+            
+            // Find states for this indicator from file hierarchy
+            const indicatorStates = [];
+            fileHierarchy.forEach(table => {
+                if (table.name === currentTable && table.indicators) {
+                    const tableIndicator = table.indicators.find(ind => 
+                        ind.indicator_id === indicator.indicator_id
+                    );
+                    if (tableIndicator && tableIndicator.states) {
+                        tableIndicator.states.forEach(state => {
+                            if (indicatorName === 'climate') {
+                                // Climate states need scenario_name and type
+                                if (state.scenario_name) {
+                                    const scenarioType = state.scenario_type || 'utci';
+                                    // Map scenario_name to display name
+                                    const scenarioDisplayNames = {
+                                        'dense_highrise': 'Dense Highrise',
+                                        'existing': 'Existing',
+                                        'high_rises': 'High Rises',
+                                        'lowrise': 'Low Rise Dense',
+                                        'mass_tree_planting': 'Mass Tree Planting',
+                                        'open_public_space': 'Open Public Space',
+                                        'placemaking': 'Placemaking'
+                                    };
+                                    const displayName = scenarioDisplayNames[state.scenario_name] || state.scenario_name;
+                                    indicatorStates.push({ name: displayName, type: scenarioType });
+                                }
+                            } else {
+                                // Mobility states
+                                if (state.state_values?.scenario) {
+                                    const scenario = state.state_values.scenario;
+                                    const displayName = scenario.charAt(0).toUpperCase() + scenario.slice(1);
+                                    indicatorStates.push({ name: displayName });
+                                }
+                            }
+                        });
+                    }
+                }
+            });
+            
+            // Create slides from states
+            indicatorStates.forEach(stateData => {
+                if (indicatorName === 'climate') {
+                    if (isValidSlide(indicatorName, stateData.name)) {
+                        slides.push({ 
+                            indicator: indicatorName, 
+                            state: stateData.name, 
+                            type: stateData.type || 'utci' 
+                        });
+                    }
+                } else {
+                    if (isValidSlide(indicatorName, stateData.name)) {
+                        slides.push({ indicator: indicatorName, state: stateData.name });
                     }
                 }
             });
         });
-        // Add UGC indicators from file hierarchy
+        
+        // Add UGC indicators from file hierarchy (filtered by current table)
         if (Array.isArray(fileHierarchy)) {
-            fileHierarchy.forEach(table => {
-                if (table.indicators) {
-                    table.indicators
-                        .filter(ind => ind.is_user_generated)
-                        .forEach(indicator => {
-                            if (indicator.states) {
-                                indicator.states.forEach(state => {
-                                    slides.push({
-                                        indicator: `ugc_${indicator.id}`,
-                                        state: state.scenario_name || JSON.stringify(state.state_values),
-                                        indicatorId: indicator.id,
-                                        stateId: state.id,
-                                        indicatorDataId: state.indicator_data_id,
-                                        indicatorName: indicator.name,
-                                        tableName: table.display_name || table.name,
-                                        isUGC: true,
-                                        media: state.media || []
+            fileHierarchy
+                .filter(table => table.name === currentTable)
+                .forEach(table => {
+                    if (table.indicators) {
+                        table.indicators
+                            .filter(ind => ind.is_user_generated)
+                            .forEach(indicator => {
+                                if (indicator.states) {
+                                    indicator.states.forEach(state => {
+                                        slides.push({
+                                            indicator: `ugc_${indicator.id}`,
+                                            state: state.scenario_name || JSON.stringify(state.state_values),
+                                            indicatorId: indicator.id,
+                                            stateId: state.id,
+                                            indicatorDataId: state.indicator_data_id,
+                                            indicatorName: indicator.name,
+                                            tableName: table.display_name || table.name,
+                                            isUGC: true,
+                                            media: state.media || []
+                                        });
                                     });
-                                });
-                            }
-                        });
-                }
-            });
+                                }
+                            });
+                    }
+                });
         }
 
         // Add user uploads as slides - grouped by category
@@ -300,7 +439,7 @@ const PresentationMode = () => {
             }
         }
         return slides;
-    }, [indicatorConfig, StateConfig, userUploads, fileHierarchy]);
+    }, [indicatorConfig, StateConfig, userUploads, fileHierarchy, currentTable, tableIndicators]);
 
     // Check if a slide combination is already used (including type for climate, uploadId for user uploads, and stateId for UGC)
     const isSlideUsed = (indicator, state, type, uploadId, stateId, excludeIndex = -1) => {
@@ -339,14 +478,13 @@ const PresentationMode = () => {
 
     const currentStep = presentationSequence[sequenceIndex];
 
-    // Fetch user uploads, categories, and file hierarchy on component mount
+    // Fetch user uploads and categories on component mount
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [uploadsResponse, categoriesResponse, hierarchyResponse] = await Promise.all([
+                const [uploadsResponse, categoriesResponse] = await Promise.all([
                     api.get("/api/user_uploads/"),
-                    api.get("/api/user_upload_categories/"),
-                    api.get("/api/actions/get_file_hierarchy/")
+                    api.get("/api/user_upload_categories/")
                 ]);
 
                 const categories = categoriesResponse.data;
@@ -363,9 +501,6 @@ const PresentationMode = () => {
                     };
                 });
                 setUserUploads(uploads);
-
-                // Set file hierarchy for UGC indicators
-                setFileHierarchy(hierarchyResponse.data || []);
             } catch (err) {
                 console.error("Error fetching data:", err);
             }
@@ -445,7 +580,7 @@ const PresentationMode = () => {
             const timestamp = Date.now();
 
             // Build URL with PREFETCH mode params - this fetches specific images without modifying backend state
-            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=idistrict`;
+            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=${currentTable}`;
 
             if (indicator === 'climate') {
                 // For climate, convert display name to scenario key and add type
@@ -486,7 +621,7 @@ const PresentationMode = () => {
         } finally {
             inFlightRequestsRef.current.delete(cacheKey);
         }
-    }, []);
+    }, [currentTable]);
 
     // Aggressive preloading: preload all slides immediately, prioritizing upcoming ones
     useEffect(() => {
@@ -548,7 +683,7 @@ const PresentationMode = () => {
         };
 
         preloadAllSlides();
-    }, [presentationSequence, fetchAndCacheImage]);
+    }, [presentationSequence, fetchAndCacheImage, sequenceIndex, currentTable]);
 
     // Update thumbnail when current slide changes
     useEffect(() => {
@@ -635,7 +770,7 @@ const PresentationMode = () => {
                 const timestamp = Date.now();
                 const indicator = currentIndicatorRef.current;
                 const response = await api.get(
-                    `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=idistrict`
+                    `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=${currentTable}`
                 );
                 if (response.data?.image_data) {
                     let url = response.data.image_data.startsWith("/")
@@ -661,7 +796,7 @@ const PresentationMode = () => {
                 clearTimeout(thumbnailFetchThrottleRef.current);
             }
         };
-    }, []); // Empty deps - register once, use ref for current indicator
+    }, [currentTable]); // Include currentTable to refetch when table changes
 
     const handleExit = () => {
         togglePresentationMode(false);
@@ -838,7 +973,28 @@ const PresentationMode = () => {
                     alt="nur"
                     style={{ width: '80px', filter: 'brightness(0) invert(1)' }}
                 />
-                <Box sx={{ display: 'flex', gap: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    {/* Table Selector */}
+                    <Button
+                        onClick={(e) => setTableMenuAnchor(e.currentTarget)}
+                        endIcon={<ArrowDropDownIcon />}
+                        sx={{
+                            color: 'rgba(255,255,255,0.8)',
+                            border: '1px solid rgba(255,255,255,0.2)',
+                            borderRadius: '4px',
+                            px: 2,
+                            py: 0.5,
+                            textTransform: 'none',
+                            fontSize: '0.9rem',
+                            '&:hover': {
+                                backgroundColor: 'rgba(255,255,255,0.1)',
+                                borderColor: '#64B5F6',
+                            }
+                        }}
+                    >
+                        {availableTables.find(t => t.name === currentTable)?.display_name || currentTable}
+                    </Button>
+                    
                     <IconButton 
                         onClick={() => setOpenInfo(true)}
                         sx={{ color: 'rgba(255,255,255,0.6)', '&:hover': { color: 'white' } }}
@@ -853,6 +1009,65 @@ const PresentationMode = () => {
                     </IconButton>
                 </Box>
             </Box>
+            
+            {/* Table Menu */}
+            <Menu
+                anchorEl={tableMenuAnchor}
+                open={Boolean(tableMenuAnchor)}
+                onClose={() => setTableMenuAnchor(null)}
+                PaperProps={{
+                    sx: {
+                        backgroundColor: "rgba(25, 25, 25, 0.98)",
+                        backdropFilter: "blur(16px)",
+                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                        borderRadius: "8px",
+                        minWidth: 200,
+                    },
+                }}
+            >
+                {availableTables && availableTables.length > 0 ? (
+                    availableTables.map((table) => {
+                        const isCurrentTable = table.name === currentTable;
+                        return (
+                            <MenuItem
+                                key={table.id || table.name}
+                                onClick={() => {
+                                    changeTable(table.name);
+                                    setTableMenuAnchor(null);
+                                }}
+                                sx={{
+                                    py: 1,
+                                    px: 2,
+                                    backgroundColor: isCurrentTable ? "rgba(100, 181, 246, 0.12)" : "transparent",
+                                    borderLeft: isCurrentTable ? "3px solid #64B5F6" : "3px solid transparent",
+                                    transition: "all 0.15s ease",
+                                    "&:hover": {
+                                        backgroundColor: "rgba(100, 181, 246, 0.18)",
+                                        borderLeft: "3px solid #64B5F6",
+                                    },
+                                }}
+                            >
+                                <Typography
+                                    variant="body1"
+                                    sx={{
+                                        fontSize: "0.95rem",
+                                        fontWeight: isCurrentTable ? 600 : 500,
+                                        color: isCurrentTable ? "#64B5F6" : "rgba(255, 255, 255, 0.85)",
+                                    }}
+                                >
+                                    {table.display_name || table.name}
+                                </Typography>
+                            </MenuItem>
+                        );
+                    })
+                ) : (
+                    <MenuItem disabled>
+                        <Typography variant="body2" sx={{ color: "rgba(255, 255, 255, 0.5)" }}>
+                            No tables available
+                        </Typography>
+                    </MenuItem>
+                )}
+            </Menu>
 
             {/* Main Content */}
             <Box sx={{ flex: 1, display: 'flex', p: 3, gap: 3, overflow: 'hidden', minHeight: 0 }}>
@@ -891,9 +1106,11 @@ const PresentationMode = () => {
                         Now Showing
                     </Typography>
                     <Typography variant="h5" sx={{ color: 'white', mb: 3, fontWeight: 500 }}>
-                        {currentStep?.indicator.startsWith('user_upload') 
-                            ? `${currentStep?.categoryName ? userUploadCategories.find(c => c.name === currentStep.categoryName)?.display_name || 'User Upload' : 'User Upload'} - ${currentStep?.state}`
-                            : `${indicatorConfig[currentStep?.indicator]?.name.replace(' Dashboard', '')} - ${currentStep?.indicator === 'climate' && currentStep?.type ? `${currentStep?.state} (${currentStep.type.toUpperCase()})` : currentStep?.state}`
+                        {!currentStep 
+                            ? 'No slide selected'
+                            : currentStep?.indicator?.startsWith('user_upload') 
+                                ? `${currentStep?.categoryName ? userUploadCategories.find(c => c.name === currentStep.categoryName)?.display_name || 'User Upload' : 'User Upload'} - ${currentStep?.state || 'No state'}`
+                                : `${indicatorConfig[currentStep?.indicator]?.name.replace(' Dashboard', '') || currentStep?.indicator || 'No indicator'} - ${currentStep?.indicator === 'climate' && currentStep?.type ? `${currentStep?.state || 'No state'} (${currentStep.type.toUpperCase()})` : (currentStep?.state || 'No state')}`
                         }
                     </Typography>
 
@@ -924,7 +1141,7 @@ const PresentationMode = () => {
                             py: 2
                         }}>
                             <Typography variant="h4" sx={{ color: 'white', fontWeight: 600, minWidth: 90, textAlign: 'center' }}>
-                                {sequenceIndex + 1} / {presentationSequence.length}
+                                {presentationSequence.length > 0 ? `${sequenceIndex + 1} / ${presentationSequence.length}` : '0 / 0'}
                             </Typography>
                             <Box sx={{ width: 2, height: 40, bgcolor: 'rgba(255,255,255,0.15)', borderRadius: 1 }} />
                             <IconButton 
@@ -1030,7 +1247,17 @@ const PresentationMode = () => {
                         onDragLeave={() => setDropTargetIndex(null)}
                     >
                         <Stack spacing={1}>
-                            {presentationSequence.map((step, index) => (
+                            {presentationSequence.length === 0 ? (
+                                <Box sx={{ p: 3, textAlign: 'center' }}>
+                                    <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.5)', mb: 1 }}>
+                                        No slides in sequence
+                                    </Typography>
+                                    <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.3)' }}>
+                                        Click + to add a slide
+                                    </Typography>
+                                </Box>
+                            ) : (
+                                presentationSequence.map((step, index) => (
                                 <Box
                                     key={index}
                                     sx={{
@@ -1058,23 +1285,30 @@ const PresentationMode = () => {
                                         isActive={sequenceIndex === index}
                                     />
                                 </Box>
-                            ))}
+                            ))
+                            )}
                         </Stack>
                         
                         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
-                            <IconButton 
-                                onClick={addStep}
-                                disabled={allSlidesUsed}
-                                size="small"
-                                sx={{ 
-                                    color: allSlidesUsed ? 'rgba(255,255,255,0.2)' : '#4CAF50', 
-                                    bgcolor: allSlidesUsed ? 'transparent' : 'rgba(76, 175, 80, 0.1)',
-                                    '&:hover': { bgcolor: 'rgba(76, 175, 80, 0.2)' },
-                                    '&.Mui-disabled': { color: 'rgba(255,255,255,0.2)' }
-                                }}
-                            >
-                                <AddIcon />
-                            </IconButton>
+                            {allValidSlides.length === 0 ? (
+                                <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.4)', textAlign: 'center', p: 2 }}>
+                                    No indicators available for this table
+                                </Typography>
+                            ) : (
+                                <IconButton 
+                                    onClick={addStep}
+                                    disabled={allSlidesUsed}
+                                    size="small"
+                                    sx={{ 
+                                        color: allSlidesUsed ? 'rgba(255,255,255,0.2)' : '#4CAF50', 
+                                        bgcolor: allSlidesUsed ? 'transparent' : 'rgba(76, 175, 80, 0.1)',
+                                        '&:hover': { bgcolor: 'rgba(76, 175, 80, 0.2)' },
+                                        '&.Mui-disabled': { color: 'rgba(255,255,255,0.2)' }
+                                    }}
+                                >
+                                    <AddIcon />
+                                </IconButton>
+                            )}
                         </Box>
                     </Box>
                 </Box>
@@ -1088,21 +1322,46 @@ const PresentationMode = () => {
             >
                 {activeMenu?.type === 'indicator' && (
                     <>
-                        {Object.keys(indicatorConfig).map((key) => {
-                            // Check if this indicator has any valid unused states
-                            const hasValidStates = StateConfig[key]?.some(s => isValidSlide(key, s));
-                            if (!hasValidStates) return null;
-                            
-                            return (
-                                <MenuItem 
-                                    key={key} 
-                                    onClick={() => handleSelection(key, null)}
-                                    selected={presentationSequence[activeMenu.index]?.indicator === key}
-                                >
-                                    {indicatorConfig[key].name.replace(' Dashboard', '')}
-                                </MenuItem>
-                            );
-                        })}
+                        {tableIndicators.length === 0 ? (
+                            <MenuItem disabled>
+                                <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.5)' }}>
+                                    No indicators available for this table
+                                </Typography>
+                            </MenuItem>
+                        ) : (
+                            tableIndicators
+                                .map(ind => {
+                                    // Map indicator_id to indicator name
+                                    if (ind.indicator_id === 1) return { key: 'mobility', indicator: ind };
+                                    if (ind.indicator_id === 2) return { key: 'climate', indicator: ind };
+                                    return null;
+                                })
+                                .filter(Boolean)
+                                .map(({ key, indicator }) => {
+                                    // Check if this indicator has states in the current table
+                                    const hasStates = fileHierarchy
+                                        .filter(table => table.name === currentTable)
+                                        .some(table => 
+                                            table.indicators?.some(ind => 
+                                                ind.indicator_id === indicator.indicator_id && 
+                                                ind.states && 
+                                                ind.states.length > 0
+                                            )
+                                        );
+                                    
+                                    if (!hasStates) return null;
+                                    
+                                    return (
+                                        <MenuItem 
+                                            key={key} 
+                                            onClick={() => handleSelection(key, null)}
+                                            selected={presentationSequence[activeMenu.index]?.indicator === key}
+                                        >
+                                            {indicatorConfig[key]?.name.replace(' Dashboard', '') || indicator.name}
+                                        </MenuItem>
+                                    );
+                                })
+                        )}
                         {userUploadCategories.map((category) => {
                             const categoryUploads = userUploads.filter(u => u.categoryName === category.name);
                             if (categoryUploads.length === 0) return null;
@@ -1131,7 +1390,55 @@ const PresentationMode = () => {
                 {activeMenu?.type === 'state' && (() => {
                     const indicator = presentationSequence[activeMenu.index]?.indicator;
                     const currentSlide = presentationSequence[activeMenu.index];
-                    const states = StateConfig[indicator] || [];
+                    
+                    // Get states from file hierarchy for current table
+                    const getTableStates = () => {
+                        const states = [];
+                        fileHierarchy
+                            .filter(table => table.name === currentTable)
+                            .forEach(table => {
+                                if (table.indicators) {
+                                    const tableIndicator = table.indicators.find(ind => {
+                                        if (indicator === 'mobility') return ind.indicator_id === 1;
+                                        if (indicator === 'climate') return ind.indicator_id === 2;
+                                        return false;
+                                    });
+                                    
+                                    if (tableIndicator && tableIndicator.states) {
+                                        tableIndicator.states.forEach(state => {
+                                            if (indicator === 'climate') {
+                                                if (state.scenario_name) {
+                                                    const scenarioDisplayNames = {
+                                                        'dense_highrise': 'Dense Highrise',
+                                                        'existing': 'Existing',
+                                                        'high_rises': 'High Rises',
+                                                        'lowrise': 'Low Rise Dense',
+                                                        'mass_tree_planting': 'Mass Tree Planting',
+                                                        'open_public_space': 'Open Public Space',
+                                                        'placemaking': 'Placemaking'
+                                                    };
+                                                    const displayName = scenarioDisplayNames[state.scenario_name] || state.scenario_name;
+                                                    states.push({ 
+                                                        name: displayName, 
+                                                        type: state.scenario_type || 'utci',
+                                                        scenario_name: state.scenario_name
+                                                    });
+                                                }
+                                            } else {
+                                                if (state.state_values?.scenario) {
+                                                    const scenario = state.state_values.scenario;
+                                                    const displayName = scenario.charAt(0).toUpperCase() + scenario.slice(1);
+                                                    states.push({ name: displayName, scenario });
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                            });
+                        return states;
+                    };
+                    
+                    const tableStates = getTableStates();
 
                     if (indicator.startsWith('user_upload')) {
                         // For user uploads, show list of uploads from the selected category
@@ -1163,45 +1470,34 @@ const PresentationMode = () => {
                             );
                         });
                     } else if (indicator === 'climate') {
-                        // For climate, show state+type combinations
-                        const items = [];
-                        states.forEach(st => {
-                            if (!isValidSlide(indicator, st)) return;
-                            ['utci', 'plan'].forEach(type => {
-                                const isUsed = isSlideUsed(indicator, st, type, null, activeMenu.index);
-                                const isCurrentSelection = currentSlide?.state === st && currentSlide?.type === type;
-                                items.push(
-                                    <MenuItem
-                                        key={`${st}-${type}`}
-                                        onClick={() => !isUsed && handleSelection(indicator, st, type)}
-                                        selected={isCurrentSelection}
-                                        disabled={isUsed && !isCurrentSelection}
-                                        sx={{
-                                            opacity: isUsed && !isCurrentSelection ? 0.4 : 1,
-                                            '&.Mui-disabled': { opacity: 0.4 }
-                                        }}
-                                    >
-                                        {st} ({type.toUpperCase()})
-                                        {isUsed && !isCurrentSelection && (
-                                            <Typography variant="caption" sx={{ ml: 1, color: 'text.secondary' }}>
-                                                (in use)
-                                            </Typography>
-                                        )}
-                                    </MenuItem>
-                                );
-                            });
-                        });
-                        return items;
-                    } else {
-                        // For non-climate indicators, show just states
-                        return states.map(st => {
-                            if (!isValidSlide(indicator, st)) return null;
-                            const isUsed = isSlideUsed(indicator, st, null, null, activeMenu.index);
-                            const isCurrentSelection = currentSlide?.state === st;
+                        // For climate, show state+type combinations from table
+                        if (tableStates.length === 0) {
                             return (
+                                <MenuItem disabled>
+                                    <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.5)' }}>
+                                        No states available for this indicator
+                                    </Typography>
+                                </MenuItem>
+                            );
+                        }
+                        
+                        const items = [];
+                        const uniqueStates = new Map();
+                        tableStates.forEach(state => {
+                            const key = `${state.name}-${state.type}`;
+                            if (!uniqueStates.has(key)) {
+                                uniqueStates.set(key, state);
+                            }
+                        });
+                        
+                        Array.from(uniqueStates.values()).forEach(state => {
+                            if (!isValidSlide(indicator, state.name)) return;
+                            const isUsed = isSlideUsed(indicator, state.name, state.type, null, activeMenu.index);
+                            const isCurrentSelection = currentSlide?.state === state.name && currentSlide?.type === state.type;
+                            items.push(
                                 <MenuItem
-                                    key={st}
-                                    onClick={() => !isUsed && handleSelection(indicator, st)}
+                                    key={`${state.name}-${state.type}`}
+                                    onClick={() => !isUsed && handleSelection(indicator, state.name, state.type)}
                                     selected={isCurrentSelection}
                                     disabled={isUsed && !isCurrentSelection}
                                     sx={{
@@ -1209,7 +1505,44 @@ const PresentationMode = () => {
                                         '&.Mui-disabled': { opacity: 0.4 }
                                     }}
                                 >
-                                    {st}
+                                    {state.name} ({state.type.toUpperCase()})
+                                    {isUsed && !isCurrentSelection && (
+                                        <Typography variant="caption" sx={{ ml: 1, color: 'text.secondary' }}>
+                                            (in use)
+                                        </Typography>
+                                    )}
+                                </MenuItem>
+                            );
+                        });
+                        return items;
+                    } else {
+                        // For non-climate indicators, show just states from table
+                        if (tableStates.length === 0) {
+                            return (
+                                <MenuItem disabled>
+                                    <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.5)' }}>
+                                        No states available for this indicator
+                                    </Typography>
+                                </MenuItem>
+                            );
+                        }
+                        
+                        return tableStates.map(state => {
+                            if (!isValidSlide(indicator, state.name)) return null;
+                            const isUsed = isSlideUsed(indicator, state.name, null, null, activeMenu.index);
+                            const isCurrentSelection = currentSlide?.state === state.name;
+                            return (
+                                <MenuItem
+                                    key={state.name}
+                                    onClick={() => !isUsed && handleSelection(indicator, state.name)}
+                                    selected={isCurrentSelection}
+                                    disabled={isUsed && !isCurrentSelection}
+                                    sx={{
+                                        opacity: isUsed && !isCurrentSelection ? 0.4 : 1,
+                                        '&.Mui-disabled': { opacity: 0.4 }
+                                    }}
+                                >
+                                    {state.name}
                                     {isUsed && !isCurrentSelection && (
                                         <Typography variant="caption" sx={{ ml: 1, color: 'text.secondary' }}>
                                             (in use)

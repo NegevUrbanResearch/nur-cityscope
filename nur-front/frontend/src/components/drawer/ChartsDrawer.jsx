@@ -45,6 +45,9 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
     isPresentationMode,
     activeUserUpload,
     exitPresentationAndResume,
+    currentTable,
+    availableTables,
+    changeTable,
   } = useAppData();
 
   const theme = useTheme();
@@ -143,7 +146,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
             <InfoOutlineIcon fontSize="small" />
           </IconButton>
 
-          <SitesMenu />
+          <TableMenu />
 
         </Box>
 
@@ -454,7 +457,7 @@ export default ChartsDrawer;
 
 
 
-const SitesMenu = () => {
+const TableMenu = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const isTablet = useMediaQuery(theme.breakpoints.between("sm", "md"));
@@ -462,7 +465,7 @@ const SitesMenu = () => {
   const [anchorEl, setAnchorEl] = React.useState(null);
   const open = Boolean(anchorEl);
 
-  const { APP_ROUTES_CONFIG } = useAppData();
+  const { currentTable, availableTables, changeTable } = useAppData();
 
   const handleClick = (event) => {
     setAnchorEl(event.currentTarget);
@@ -472,10 +475,10 @@ const SitesMenu = () => {
     setAnchorEl(null);
   };
 
-  const handleSiteSelect = (url) => {
+  const handleTableSelect = (tableName) => {
     handleClose();
-    if (url && window.location.href !== url) {
-        window.location.assign(url);
+    if (tableName !== currentTable) {
+      changeTable(tableName);
     }
   };
 
@@ -484,6 +487,8 @@ const SitesMenu = () => {
     height: { xs: "32px", sm: "36px" },
     ...buttonStyles 
   };
+
+  const currentTableDisplayName = availableTables.find(t => t.name === currentTable)?.display_name || currentTable;
 
   return (
     <Box>
@@ -505,7 +510,7 @@ const SitesMenu = () => {
             textTransform: "none",
           }}
         >
-          Models
+          {currentTableDisplayName}
         </Typography>
       </Button>
 
@@ -526,18 +531,19 @@ const SitesMenu = () => {
           },
         }}
       >
-        {APP_ROUTES_CONFIG && Object.entries(APP_ROUTES_CONFIG).map(([key, siteConfig]) => {
-            const isCurrentSite = window.location.href.includes(siteConfig.url);
+        {availableTables && availableTables.length > 0 ? (
+          availableTables.map((table) => {
+            const isCurrentTable = table.name === currentTable;
 
             return (
               <MenuItem
-                key={key}
-                onClick={() => handleSiteSelect(siteConfig.url)}
+                key={table.id || table.name}
+                onClick={() => handleTableSelect(table.name)}
                 sx={{
                   py: 1,
                   px: 2,
-                  backgroundColor: isCurrentSite ? "rgba(100, 181, 246, 0.12)" : "transparent",
-                  borderLeft: isCurrentSite ? "3px solid #64B5F6" : "3px solid transparent",
+                  backgroundColor: isCurrentTable ? "rgba(100, 181, 246, 0.12)" : "transparent",
+                  borderLeft: isCurrentTable ? "3px solid #64B5F6" : "3px solid transparent",
                   transition: "all 0.15s ease",
                   "&:hover": {
                     backgroundColor: "rgba(100, 181, 246, 0.18)",
@@ -549,16 +555,23 @@ const SitesMenu = () => {
                   variant="body1"
                   sx={{
                     fontSize: { xs: "0.9rem", sm: "0.95rem" },
-                    fontWeight: isCurrentSite ? 600 : 500,
-                    color: isCurrentSite ? "#64B5F6" : "rgba(255, 255, 255, 0.85)",
+                    fontWeight: isCurrentTable ? 600 : 500,
+                    color: isCurrentTable ? "#64B5F6" : "rgba(255, 255, 255, 0.85)",
                     letterSpacing: "0.2px",
                   }}
                 >
-                  {siteConfig.displayName}
+                  {table.display_name || table.name}
                 </Typography>
               </MenuItem>
             );
-        })}
+          })
+        ) : (
+          <MenuItem disabled>
+            <Typography variant="body2" sx={{ color: "rgba(255, 255, 255, 0.5)" }}>
+              No tables available
+            </Typography>
+          </MenuItem>
+        )}
       </Menu>
     </Box>
   );

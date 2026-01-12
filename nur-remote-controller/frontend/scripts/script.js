@@ -28,6 +28,11 @@ class PresentationRemote {
         this.slides = [];
         this.connected = false;
         this.thumbnailUrl = null;
+        this.currentTable = 'idistrict';
+        this.availableTables = [];
+        this.tableIndicators = [];
+        this.tableStates = [];
+        this.tableHierarchy = [];
 
         // WebSocket
         this.ws = null;
@@ -81,7 +86,8 @@ class PresentationRemote {
             stateName: document.querySelector('.state-name'),
             previewContainer: document.getElementById('previewContainer'),
             dropdownMenu: document.getElementById('dropdownMenu'),
-            dropdownContent: document.getElementById('dropdownContent')
+            dropdownContent: document.getElementById('dropdownContent'),
+            tableSelector: document.getElementById('tableSelector')
         };
 
         this.init();
@@ -90,9 +96,28 @@ class PresentationRemote {
     async init() {
         this.showLoading();
         this.bindEvents();
+        await this.fetchTables();
         await this.fetchInitialState();
         this.connectWebSocket();
         this.startPolling(); // Fallback polling at reduced frequency
+    }
+    
+    async fetchTables() {
+        try {
+            const response = await this.apiGet('/api/tables/?is_active=true');
+            if (response && Array.isArray(response)) {
+                this.availableTables = response;
+                // Set current table to idistrict if available, otherwise first table
+                const idistrictTable = response.find(t => t.name === 'idistrict');
+                this.currentTable = idistrictTable ? 'idistrict' : (response[0]?.name || 'idistrict');
+                this.updateTableSelector();
+                // Fetch indicators and states for initial table
+                await this.fetchTableData();
+            }
+        } catch (error) {
+            console.error('Error fetching tables:', error);
+            this.currentTable = 'idistrict'; // Fallback
+        }
     }
     
     connectWebSocket() {
@@ -206,12 +231,101 @@ class PresentationRemote {
         this.elements.durationMinus.addEventListener('click', () => this.adjustDuration(-1));
         this.elements.durationPlus.addEventListener('click', () => this.adjustDuration(1));
         this.elements.addSlideBtn.addEventListener('click', () => this.addSlide());
+        this.elements.tableSelector.addEventListener('change', (e) => this.changeTable(e.target.value));
         
         // Close dropdown when clicking backdrop
         this.elements.dropdownMenu.addEventListener('click', (e) => {
             if (e.target === this.elements.dropdownMenu) {
                 this.closeDropdown();
             }
+        });
+    }
+    
+    async changeTable(tableName) {
+        if (tableName !== this.currentTable) {
+            this.currentTable = tableName;
+            // Clear cache to force refresh with new table
+            this.imageCache.clear();
+            // Clear slides when table changes
+            this.slides = [];
+            this.currentIndex = 0;
+            // Fetch indicators and states for new table
+            await this.fetchTableData();
+            // Sync empty sequence to backend
+            try {
+                await this.apiPost('/api/actions/set_presentation_state/', {
+                    sequence: [],
+                    sequence_index: 0
+                });
+            } catch (error) {
+                console.error('Error syncing empty sequence:', error);
+            }
+            // Update UI
+            this.updateUI();
+            // Refresh thumbnail
+            await this.fetchThumbnail();
+        }
+    }
+    
+    async fetchTableData() {
+        try {
+            // Fetch indicators for current table
+            const indicatorsResponse = await this.apiGet(`/api/indicators/?table=${this.currentTable}&include_ugc=false`);
+            this.tableIndicators = indicatorsResponse || [];
+            
+            // Fetch file hierarchy for current table to get states
+            const hierarchyResponse = await this.apiGet(`/api/actions/get_file_hierarchy/?table=${this.currentTable}`);
+            const hierarchy = Array.isArray(hierarchyResponse) ? hierarchyResponse : [];
+            
+            // Store hierarchy for state lookup
+            this.tableHierarchy = hierarchy;
+            
+            // Extract states from hierarchy
+            const states = new Set();
+            hierarchy.forEach(table => {
+                if (table.indicators) {
+                    table.indicators.forEach(indicator => {
+                        if (indicator.states) {
+                            indicator.states.forEach(state => {
+                                if (indicator.category === 'climate') {
+                                    if (state.scenario_name) {
+                                        states.add(JSON.stringify({
+                                            scenario_name: state.scenario_name,
+                                            scenario_type: state.scenario_type || 'utci'
+                                        }));
+                                    }
+                                } else {
+                                    if (state.state_values?.scenario) {
+                                        states.add(state.state_values.scenario);
+                                    }
+                                }
+                            });
+                        }
+                    });
+                }
+            });
+            this.tableStates = Array.from(states);
+        } catch (err) {
+            console.error('Error fetching table data:', err);
+            this.tableIndicators = [];
+            this.tableStates = [];
+            this.tableHierarchy = [];
+        }
+    }
+    
+    updateTableSelector() {
+        if (!this.elements.tableSelector) return;
+        
+        // Clear existing options
+        this.elements.tableSelector.innerHTML = '';
+        
+        // Add options from available tables
+        this.availableTables.forEach(table => {
+            const option = document.createElement('option');
+            option.value = table.name;
+            option.textContent = table.display_name || table.name;
+            option.selected = table.name === this.currentTable;
+            this.elements.tableSelector.appendChild(option);
         });
     }
     
@@ -247,7 +361,7 @@ class PresentationRemote {
                     
                     this.currentIndex = presState.sequence_index || 0;
                     this.duration = presState.duration || 10;
-                    this.slides = presState.sequence || this.getDefaultSlides();
+                    this.slides = presState.sequence || [];
                 }
                 
                 this.updateUI();
@@ -260,11 +374,6 @@ class PresentationRemote {
         }
     }
     
-    getDefaultSlides() {
-        return [
-            { indicator: 'mobility', state: 'Present' }
-        ];
-    }
     
     startPolling() {
         // Emergency fallback only - WebSocket handles real-time updates
@@ -381,7 +490,7 @@ class PresentationRemote {
             const timestamp = Date.now();
 
             // Build URL with PREFETCH mode params
-            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=idistrict`;
+            let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=${this.currentTable}`;
 
             if (indicator === 'climate') {
                 const scenarioKey = this.CLIMATE_SCENARIO_KEYS[state] || state.toLowerCase().replace(/ /g, '_');
@@ -751,24 +860,49 @@ class PresentationRemote {
         });
     }
     
-    // Get all valid slides (includes type variants for climate)
+    // Get all valid slides filtered by current table
     getAllValidSlides() {
         const slides = [];
-        Object.keys(INDICATOR_CONFIG).forEach(indicator => {
-            const states = STATE_CONFIG[indicator] || [];
+        
+        // Only include indicators that exist in the current table
+        const availableIndicatorNames = new Set(this.tableIndicators.map(ind => {
+            if (ind.indicator_id === 1) return 'mobility';
+            if (ind.indicator_id === 2) return 'climate';
+            return null;
+        }).filter(Boolean));
+        
+        // Build slides from available indicators in current table
+        availableIndicatorNames.forEach(indicatorName => {
+            if (!INDICATOR_CONFIG[indicatorName]) return;
+            
+            // Get states for this indicator from table data
+            // We need to fetch from hierarchy or use a simpler approach
+            // For now, use the tableStates we extracted
+            const indicator = this.tableIndicators.find(ind => {
+                if (indicatorName === 'mobility') return ind.indicator_id === 1;
+                if (indicatorName === 'climate') return ind.indicator_id === 2;
+                return false;
+            });
+            
+            if (!indicator) return;
+            
+            // For now, use STATE_CONFIG but filter by what exists in table
+            // This is a simplified approach - ideally we'd use the hierarchy
+            const states = STATE_CONFIG[indicatorName] || [];
             states.forEach(state => {
-                if (this.isValidSlide(indicator, state)) {
-                    if (indicator === 'climate') {
+                if (this.isValidSlide(indicatorName, state)) {
+                    if (indicatorName === 'climate') {
                         // Climate has two types: utci and plan
                         CLIMATE_TYPES.forEach(type => {
-                            slides.push({ indicator, state, type });
+                            slides.push({ indicator: indicatorName, state, type });
                         });
                     } else {
-                        slides.push({ indicator, state });
+                        slides.push({ indicator: indicatorName, state });
                     }
                 }
             });
         });
+        
         return slides;
     }
     
@@ -786,50 +920,134 @@ class PresentationRemote {
         let options = '';
 
         if (dropdownType === 'indicator') {
-            Object.entries(INDICATOR_CONFIG).forEach(([key, config]) => {
-                const hasValidStates = (STATE_CONFIG[key] || []).some(s => this.isValidSlide(key, s));
-                if (!hasValidStates) return;
-
-                const isSelected = currentSlide.indicator === key;
+            if (this.tableIndicators.length === 0) {
                 options += `
-                    <div class="dropdown-option ${isSelected ? 'selected' : ''}" data-value="${key}">
-                        ${config.name}
+                    <div class="dropdown-option disabled">
+                        No indicators available for this table
                     </div>
                 `;
-            });
-        } else {
-            const states = STATE_CONFIG[currentSlide.indicator] || [];
-
-            if (currentSlide.indicator === 'climate') {
-                // For climate, show state + type combinations
-                states.forEach(state => {
-                    if (!this.isValidSlide(currentSlide.indicator, state)) return;
-
-                    CLIMATE_TYPES.forEach(type => {
-                        const isSelected = currentSlide.state === state && currentSlide.type === type;
-                        const isUsed = this.isSlideUsed('climate', state, type, slideIndex);
-                        const typeLabel = type.toUpperCase();
-
+            } else {
+                this.tableIndicators
+                    .map(ind => {
+                        if (ind.indicator_id === 1) return { key: 'mobility', indicator: ind };
+                        if (ind.indicator_id === 2) return { key: 'climate', indicator: ind };
+                        return null;
+                    })
+                    .filter(Boolean)
+                    .forEach(({ key, indicator }) => {
+                        const config = INDICATOR_CONFIG[key];
+                        if (!config) return;
+                        
+                        const isSelected = currentSlide.indicator === key;
                         options += `
-                            <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}"
-                                 data-value="${state}" data-type="${type}">
-                                ${state} (${typeLabel})
-                                ${isUsed && !isSelected ? '<span class="dropdown-option-note">(in use)</span>' : ''}
+                            <div class="dropdown-option ${isSelected ? 'selected' : ''}" data-value="${key}">
+                                ${config.name}
                             </div>
                         `;
                     });
+            }
+        } else {
+            // Get states from table hierarchy
+            const getTableStates = () => {
+                const states = [];
+                
+                // If no table indicators, return empty
+                if (this.tableIndicators.length === 0 || !this.tableHierarchy || this.tableHierarchy.length === 0) {
+                    return [];
+                }
+                
+                // Find the current table in hierarchy
+                const currentTableData = this.tableHierarchy.find(table => table.name === this.currentTable);
+                if (!currentTableData || !currentTableData.indicators) {
+                    return [];
+                }
+                
+                // Find the indicator in the table
+                const tableIndicator = currentTableData.indicators.find(ind => {
+                    if (currentSlide.indicator === 'mobility') return ind.indicator_id === 1;
+                    if (currentSlide.indicator === 'climate') return ind.indicator_id === 2;
+                    return false;
                 });
-            } else {
-                // For mobility, show just states
-                states.forEach(state => {
-                    if (!this.isValidSlide(currentSlide.indicator, state)) return;
+                
+                if (!tableIndicator || !tableIndicator.states) {
+                    return [];
+                }
+                
+                // Extract states from table indicator
+                tableIndicator.states.forEach(state => {
+                    if (currentSlide.indicator === 'climate') {
+                        if (state.scenario_name) {
+                            const scenarioDisplayNames = {
+                                'dense_highrise': 'Dense Highrise',
+                                'existing': 'Existing',
+                                'high_rises': 'High Rises',
+                                'lowrise': 'Low Rise Dense',
+                                'mass_tree_planting': 'Mass Tree Planting',
+                                'open_public_space': 'Open Public Space',
+                                'placemaking': 'Placemaking'
+                            };
+                            const displayName = scenarioDisplayNames[state.scenario_name] || state.scenario_name;
+                            states.push({ 
+                                name: displayName, 
+                                type: state.scenario_type || 'utci',
+                                scenario_name: state.scenario_name
+                            });
+                        }
+                    } else {
+                        if (state.state_values?.scenario) {
+                            const scenario = state.state_values.scenario;
+                            const displayName = scenario.charAt(0).toUpperCase() + scenario.slice(1);
+                            states.push({ name: displayName, scenario });
+                        }
+                    }
+                });
+                
+                return states;
+            };
+            
+            const tableStates = getTableStates();
 
-                    const isSelected = currentSlide.state === state;
-                    const isUsed = this.isSlideUsed(currentSlide.indicator, state, null, slideIndex);
+            if (tableStates.length === 0) {
+                options += `
+                    <div class="dropdown-option disabled">
+                        No states available for this indicator
+                    </div>
+                `;
+            } else if (currentSlide.indicator === 'climate') {
+                // For climate, show state + type combinations from table
+                const uniqueStates = new Map();
+                tableStates.forEach(state => {
+                    const key = `${state.name}-${state.type}`;
+                    if (!uniqueStates.has(key)) {
+                        uniqueStates.set(key, state);
+                    }
+                });
+                
+                Array.from(uniqueStates.values()).forEach(state => {
+                    if (!this.isValidSlide(currentSlide.indicator, state.name)) return;
+                    const isSelected = currentSlide.state === state.name && currentSlide.type === state.type;
+                    const isUsed = this.isSlideUsed('climate', state.name, state.type, slideIndex);
+                    const typeLabel = state.type.toUpperCase();
 
                     options += `
-                        <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}" data-value="${state}">
-                            ${state}
+                        <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}"
+                             data-value="${state.name}" data-type="${state.type}">
+                            ${state.name} (${typeLabel})
+                            ${isUsed && !isSelected ? '<span class="dropdown-option-note">(in use)</span>' : ''}
+                        </div>
+                    `;
+                });
+            } else {
+                // For mobility, show just states from table
+                tableStates.forEach(state => {
+                    if (!this.isValidSlide(currentSlide.indicator, state.name)) return;
+
+                    const isSelected = currentSlide.state === state.name;
+                    const isUsed = this.isSlideUsed(currentSlide.indicator, state.name, null, slideIndex);
+
+                    options += `
+                        <div class="dropdown-option ${isSelected ? 'selected' : ''} ${isUsed && !isSelected ? 'disabled' : ''}" data-value="${state.name}">
+                            ${state.name}
                             ${isUsed && !isSelected ? '<span class="dropdown-option-note">(in use)</span>' : ''}
                         </div>
                     `;

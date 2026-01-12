@@ -88,6 +88,10 @@ const getInitialIndicator = () => {
 };
 
 export const DataProvider = ({ children }) => {
+  // Store the current table name (idistrict, otef, etc.)
+  const [currentTable, setCurrentTable] = useState(DEFAULT_TABLE);
+  const [availableTables, setAvailableTables] = useState([]);
+
   // Store the current indicator type (mobility, climate, land_use)
   const [currentIndicator, setCurrentIndicator] = useState(
     getInitialIndicator()
@@ -110,11 +114,8 @@ export const DataProvider = ({ children }) => {
   const [pausedIndicatorState, setPausedIndicatorState] = useState(null); // Store state before pause to restore later
 
   // Use refs to prevent unnecessary re-renders during frequent polling
-  const defaultInd = Object.keys(INDICATOR_CONFIG)[0];
-  const defaultSt = STATE_CONFIG[defaultInd]?.[0];
-  const [presentationSequence, setPresentationSequenceInternal] = useState([
-    { indicator: defaultInd, state: defaultSt }
-  ]);
+  // Start with empty sequence - user must add slides manually
+  const [presentationSequence, setPresentationSequenceInternal] = useState([]);
   
   // Wrapper to sync sequence with backend when changed
   const setPresentationSequence = useCallback((newSequence) => {
@@ -558,6 +559,49 @@ export const DataProvider = ({ children }) => {
     }
   }, []);
 
+  // Fetch available tables on mount
+  useEffect(() => {
+    const fetchTables = async () => {
+      try {
+        const response = await api.get("/api/tables/?is_active=true");
+        if (response.data && Array.isArray(response.data)) {
+          setAvailableTables(response.data);
+          // If current table is not in available tables, switch to default
+          const tableExists = response.data.some(t => t.name === currentTable);
+          if (!tableExists && response.data.length > 0) {
+            setCurrentTable(DEFAULT_TABLE);
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching tables:", err);
+      }
+    };
+    fetchTables();
+  }, []);
+
+  // Function to change table
+  const changeTable = useCallback(async (tableName) => {
+    if (tableName !== currentTable) {
+      setCurrentTable(tableName);
+      // Clear dashboard data to force refresh with new table
+      setDashboardData(null);
+      // Refresh current indicator with new table
+      if (currentIndicator) {
+        const indicatorId = INDICATOR_CONFIG[currentIndicator]?.id;
+        if (indicatorId) {
+          try {
+            await api.post("/api/actions/set_current_indicator/", {
+              indicator_id: indicatorId,
+              table: tableName,
+            });
+          } catch (err) {
+            console.error("Error updating indicator with new table:", err);
+          }
+        }
+      }
+    }
+  }, [currentTable, currentIndicator]);
+
   // Initialize data and polling
   useEffect(() => {
     let isMounted = true;
@@ -897,7 +941,7 @@ export const DataProvider = ({ children }) => {
             // First set the indicator
             await api.post("/api/actions/set_current_indicator/", {
               indicator_id: indicatorId,
-              table: DEFAULT_TABLE,
+              table: currentTable,
             });
             console.log(`Updated indicator to ${newIndicator} (ID: ${indicatorId})`);
 
@@ -1208,6 +1252,9 @@ export const DataProvider = ({ children }) => {
   const contextValue = {
     dashboardData,
     currentIndicator,
+    currentTable,
+    availableTables,
+    changeTable,
     changeIndicator,
     changeState,
     pausePresentationMode,

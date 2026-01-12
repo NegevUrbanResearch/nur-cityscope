@@ -66,6 +66,31 @@ body {
     font-weight: 500;
     color: var(--text-secondary);
     letter-spacing: 0.5px;
+    flex: 1;
+}
+
+.table-selector {
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 4px;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s ease;
+    min-width: 80px;
+}
+
+.table-selector:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-light);
+}
+
+.table-selector:focus {
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 2px rgba(100, 181, 246, 0.2);
 }
 
 /* Preview section - compact */

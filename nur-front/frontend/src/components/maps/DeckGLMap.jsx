@@ -8,6 +8,7 @@ import { Map } from "react-map-gl";
 import { Box, Typography, CircularProgress } from "@mui/material";
 import api from "../../api";
 import config from "../../config";
+import { useAppData } from "../../DataContext";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 // Use the default style from config
@@ -30,6 +31,7 @@ const INITIAL_VIEW_STATE = {
  * @param {Object} props.state - Current state (year, scenario, etc.)
  */
 const DeckGLMap = ({ indicatorType, state }) => {
+  const { currentTable } = useAppData();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -83,7 +85,7 @@ const DeckGLMap = ({ indicatorType, state }) => {
 
           // Fetch data from our new endpoint that does the processing in the backend
           const response = await api.get(
-            `/api/actions/get_deckgl_data/?_=${timestamp}&indicator=${indicatorType}${yearParam}&table=idistrict`
+            `/api/actions/get_deckgl_data/?_=${timestamp}&indicator=${indicatorType}${yearParam}&table=${currentTable}`
           );
 
           if (!isMounted) return;
@@ -187,7 +189,7 @@ const DeckGLMap = ({ indicatorType, state }) => {
     return () => {
       isMounted = false;
     };
-  }, [indicatorType, state?.year, state?.scenario]); // Depend on year and scenario
+  }, [indicatorType, state?.year, state?.scenario, currentTable]); // Depend on year, scenario, and current table
 
   // Get appropriate layers based on indicator type
   const layers = useMemo(() => {
@@ -307,6 +309,7 @@ const DeckGLMap = ({ indicatorType, state }) => {
   }
 
   if (error) {
+    const is404 = error.includes('404') || error.includes('not found');
     return (
       <Box
         sx={{
@@ -320,13 +323,20 @@ const DeckGLMap = ({ indicatorType, state }) => {
           padding: 2,
         }}
       >
-        <Typography variant="h6" color="error" gutterBottom>
-          Error loading visualization
+        <Typography variant="h6" color={is404 ? "info.main" : "error"} gutterBottom>
+          {is404 ? "No Data Available" : "Error loading visualization"}
         </Typography>
         <Typography variant="body2">{error}</Typography>
-        <Typography variant="body2" sx={{ mt: 2 }}>
-          Please try switching to image mode or refreshing the page.
-        </Typography>
+        {is404 && (
+          <Typography variant="body2" sx={{ mt: 2 }}>
+            No visualization data is available for {indicatorType} in the selected table. Please try selecting a different table or indicator.
+          </Typography>
+        )}
+        {!is404 && (
+          <Typography variant="body2" sx={{ mt: 2 }}>
+            Please try switching to image mode or refreshing the page.
+          </Typography>
+        )}
       </Box>
     );
   }
