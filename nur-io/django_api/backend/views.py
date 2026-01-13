@@ -779,6 +779,9 @@ class CustomActionsViewSet(viewsets.ViewSet):
         
         # Initialize effective_indicator_id (will be set based on mode)
         effective_indicator_id = None
+        is_ugc = False
+        indicator_db_id = None
+        slide_state_id = None
 
         # Check if presentation mode is active and should override normal behavior
         # Only use presentation mode if NOT in prefetch mode (prefetch has explicit params)
@@ -802,44 +805,61 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 slide_state = current_slide.get("state")
                 slide_type = current_slide.get("type")  # For climate slides
 
-                # Map indicator name to ID
-                effective_indicator_id = indicator_mapping.get(slide_indicator)
-                
-                if effective_indicator_id:
-                    print(f"🎬 Presentation mode active - using slide {current_index + 1}/{len(globals.PRESENTATION_SEQUENCE)}")
-                    print(f"   Indicator: {slide_indicator}, State: {slide_state}" + (f", Type: {slide_type}" if slide_type else ""))
-                    
-                    # Override indicator_param and scenario_param to use presentation slide data
-                    # This ensures the rest of the function uses the presentation slide values
-                    indicator_param = slide_indicator
-                    if slide_indicator == "climate" and slide_type:
-                        # For climate, we need to map state name to scenario key
-                        # The state name in the slide is the display name (e.g., "Existing")
-                        # We need to find the corresponding scenario key (e.g., "existing")
-                        from backend.climate_scenarios import CLIMATE_SCENARIO_MAPPING
-                        scenario_key = None
-                        for key, config in CLIMATE_SCENARIO_MAPPING.items():
-                            if config["display_name"] == slide_state:
-                                scenario_key = key
-                                break
-                        
-                        if scenario_key:
-                            scenario_param = scenario_key
-                            type_param = slide_type or "utci"
-                        else:
-                            # Fallback: try lowercase state name
-                            scenario_param = slide_state.lower().replace(" ", "_")
-                            type_param = slide_type or "utci"
-                    else:
-                        # For mobility and other indicators, use state name as scenario
-                        scenario_param = slide_state.lower()
-                    
-                    # Set prefetch_mode to True so we use the params instead of globals
-                    prefetch_mode = True
+                # Check if this is a UGC indicator
+                is_ugc = slide_indicator.startswith('ugc_')
+                if is_ugc:
+                    # Extract database ID from "ugc_123" format
+                    try:
+                        indicator_db_id = int(slide_indicator.replace('ugc_', ''))
+                        slide_state_id = current_slide.get('stateId')
+                        print(f"🎬 Presentation mode active (UGC) - using slide {current_index + 1}/{len(globals.PRESENTATION_SEQUENCE)}")
+                        print(f"   UGC Indicator ID: {indicator_db_id}, State ID: {slide_state_id}, State: {slide_state}")
+                        # Set prefetch_mode to True so we use the params instead of globals
+                        prefetch_mode = True
+                        indicator_param = slide_indicator
+                    except (ValueError, AttributeError) as e:
+                        print(f"⚠️ Error parsing UGC indicator ID from '{slide_indicator}': {e}")
+                        use_presentation_mode = False
+                        is_ugc = False
                 else:
-                    print(f"⚠️ Invalid indicator in presentation slide: {slide_indicator}")
-                    use_presentation_mode = False
-                    effective_indicator_id = None  # Reset since presentation mode failed
+                    # Map indicator name to ID for standard indicators
+                    effective_indicator_id = indicator_mapping.get(slide_indicator)
+                    
+                    if effective_indicator_id:
+                        print(f"🎬 Presentation mode active - using slide {current_index + 1}/{len(globals.PRESENTATION_SEQUENCE)}")
+                        print(f"   Indicator: {slide_indicator}, State: {slide_state}" + (f", Type: {slide_type}" if slide_type else ""))
+                        
+                        # Override indicator_param and scenario_param to use presentation slide data
+                        # This ensures the rest of the function uses the presentation slide values
+                        indicator_param = slide_indicator
+                        if slide_indicator == "climate" and slide_type:
+                            # For climate, we need to map state name to scenario key
+                            # The state name in the slide is the display name (e.g., "Existing")
+                            # We need to find the corresponding scenario key (e.g., "existing")
+                            from backend.climate_scenarios import CLIMATE_SCENARIO_MAPPING
+                            scenario_key = None
+                            for key, config in CLIMATE_SCENARIO_MAPPING.items():
+                                if config["display_name"] == slide_state:
+                                    scenario_key = key
+                                    break
+                            
+                            if scenario_key:
+                                scenario_param = scenario_key
+                                type_param = slide_type or "utci"
+                            else:
+                                # Fallback: try lowercase state name
+                                scenario_param = slide_state.lower().replace(" ", "_")
+                                type_param = slide_type or "utci"
+                        else:
+                            # For mobility and other indicators, use state name as scenario
+                            scenario_param = slide_state.lower()
+                        
+                        # Set prefetch_mode to True so we use the params instead of globals
+                        prefetch_mode = True
+                    else:
+                        print(f"⚠️ Invalid indicator in presentation slide: {slide_indicator}")
+                        use_presentation_mode = False
+                        effective_indicator_id = None  # Reset since presentation mode failed
             else:
                 print(f"⚠️ Invalid presentation slide at index {current_index}")
                 use_presentation_mode = False
@@ -889,17 +909,30 @@ class CustomActionsViewSet(viewsets.ViewSet):
             self._add_no_cache_headers(response)
             return response
         
-        indicator = Indicator.objects.filter(table=table, indicator_id=effective_indicator_id)
-        
-        if not indicator.exists() or not indicator.first():
-            response = JsonResponse(
-                {"error": f"Indicator with ID {effective_indicator_id} not found in table '{table_name}'"},
-                status=404
-            )
-            self._add_no_cache_headers(response)
-            return response
+        # Handle UGC indicators differently - look up by database ID instead of indicator_id
+        if is_ugc and indicator_db_id:
+            indicator = Indicator.objects.filter(id=indicator_db_id, table=table).first()
+            if not indicator:
+                response = JsonResponse(
+                    {"error": f"UGC Indicator with database ID {indicator_db_id} not found in table '{table_name}'"},
+                    status=404
+                )
+                self._add_no_cache_headers(response)
+                return response
+            indicator_obj = indicator
+        else:
+            # Standard indicator lookup by indicator_id
+            indicator = Indicator.objects.filter(table=table, indicator_id=effective_indicator_id)
+            
+            if not indicator.exists() or not indicator.first():
+                response = JsonResponse(
+                    {"error": f"Indicator with ID {effective_indicator_id} not found in table '{table_name}'"},
+                    status=404
+                )
+                self._add_no_cache_headers(response)
+                return response
 
-        indicator_obj = indicator.first()
+            indicator_obj = indicator.first()
 
         # Check if UGC should be excluded (for dashboard use)
         if exclude_ugc and indicator_obj.is_user_generated:
@@ -910,8 +943,20 @@ class CustomActionsViewSet(viewsets.ViewSet):
             self._add_no_cache_headers(response)
             return response
 
+        # Handle UGC indicators - use stateId directly from presentation slide
+        if is_ugc and slide_state_id:
+            state = State.objects.filter(id=slide_state_id).first()
+            if not state:
+                print(f"⚠️ UGC state with ID {slide_state_id} not found")
+                response = JsonResponse(
+                    {"error": f"State with ID {slide_state_id} not found"},
+                    status=404
+                )
+                self._add_no_cache_headers(response)
+                return response
+            print(f"✓ Found UGC state by ID: {slide_state_id}")
         # Special handling for climate scenarios
-        if indicator_obj.category == "climate":
+        elif indicator_obj.category == "climate":
             # Use query params if in prefetch mode, otherwise use globals
             if prefetch_mode and scenario_param:
                 scenario_name = scenario_param
@@ -1021,9 +1066,19 @@ class CustomActionsViewSet(viewsets.ViewSet):
         if image_data.exists() and image_data.first():
             try:
                 image_path = image_data.first().image.name
-                # Ensure the path has the indicators/ prefix if not already present
-                if not image_path.startswith("indicators/"):
-                    image_path = f"indicators/{image_path}"
+                # UGC indicators already have ugc_indicators/ prefix from upload_to function
+                # Standard indicators may need indicators/ prefix added
+                # Don't modify paths that already have a valid prefix
+                valid_prefixes = ('indicators/', 'ugc_indicators/')
+                has_valid_prefix = any(image_path.startswith(p) for p in valid_prefixes)
+                
+                if not has_valid_prefix:
+                    # Only add indicators/ prefix for non-UGC indicators
+                    if is_ugc:
+                        # UGC indicators should already have ugc_indicators/ prefix, but handle edge case
+                        image_path = f"ugc_indicators/{image_path}"
+                    else:
+                        image_path = f"indicators/{image_path}"
 
                 # Determine if this is a video file
                 file_extension = os.path.splitext(image_path)[1].lower()
