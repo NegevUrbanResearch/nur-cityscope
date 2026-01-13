@@ -20,6 +20,13 @@ let joystickInterval = null; // For continuous pan updates
 // WebSocket client instance
 let wsClient = null;
 
+// Connection monitoring
+let connectionMonitor = null;
+let gisMapLastSeen = null;
+const CONNECTION_CHECK_INTERVAL = 1000; // Check every second
+const GIS_MAP_TIMEOUT = 5000; // Consider offline if no messages for 5 seconds
+const STATE_REQUEST_INTERVAL = 10000; // Request state every 10s if not connected
+
 // Throttle/debounce timers
 let panThrottleTimer = null;
 let zoomThrottleTimer = null;
@@ -61,25 +68,20 @@ function initializeWebSocket() {
   wsClient = new OTEFWebSocketClient("/ws/otef/", {
     onConnect: () => {
       updateConnectionStatus("connecting");
-      // Request current state from GIS map
-      // Retry if no response within 2 seconds
       requestState();
-      setTimeout(() => {
-        if (!currentState.gisMapConnected) {
-          console.warn("[Remote] No response from GIS map, retrying...");
-          requestState();
-        }
-      }, 2000);
+      startConnectionMonitor();
     },
     onDisconnect: () => {
       updateConnectionStatus("disconnected");
       currentState.gisMapConnected = false;
+      stopConnectionMonitor();
       updateUI();
     },
     onError: (error) => {
       console.error("[Remote] WebSocket error:", error);
       updateConnectionStatus("error");
       currentState.gisMapConnected = false;
+      stopConnectionMonitor();
       updateUI();
     },
   });
@@ -88,10 +90,14 @@ function initializeWebSocket() {
   wsClient.on(OTEF_MESSAGE_TYPES.STATE_RESPONSE, handleStateResponse);
 
   // Listen for layer updates (from GIS map or remote)
+  // Note: handleLayerUpdate will mark GIS map as seen if it's from GIS map
   wsClient.on(OTEF_MESSAGE_TYPES.LAYER_UPDATE, handleLayerUpdate);
 
   // Listen for viewport updates (to sync zoom when GIS map changes)
-  wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE, handleViewportUpdate);
+  wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE, (msg) => {
+    handleViewportUpdate(msg);
+    markGISMapSeen();
+  });
 
   // Connect
   wsClient.connect();
@@ -107,36 +113,82 @@ function updateConnectionStatus(status) {
 
   if (!indicator || !text) return;
 
-  // Remove all status classes
-  indicator.classList.remove("connected", "disconnected", "connecting");
+  const statusConfig = {
+    connected: { class: "connected", text: "Connected", connected: true, showWarning: false },
+    disconnected: { class: "disconnected", text: "Disconnected", connected: false, showWarning: true },
+    connecting: { class: "connecting", text: "Connecting...", connected: false, showWarning: false },
+    error: { class: "disconnected", text: "Error", connected: false, showWarning: true },
+  };
 
-  switch (status) {
-    case "connected":
-      indicator.classList.add("connected");
-      text.textContent = "Connected";
-      currentState.gisMapConnected = true;
-      if (warning) warning.classList.add("hidden");
-      break;
-    case "disconnected":
-      indicator.classList.add("disconnected");
-      text.textContent = "Disconnected";
-      currentState.gisMapConnected = false;
-      if (warning) warning.classList.remove("hidden");
-      break;
-    case "connecting":
-      indicator.classList.add("connecting");
-      text.textContent = "Connecting...";
-      currentState.gisMapConnected = false;
-      break;
-    case "error":
-      indicator.classList.add("disconnected");
-      text.textContent = "Error";
-      currentState.gisMapConnected = false;
-      if (warning) warning.classList.remove("hidden");
-      break;
+  const config = statusConfig[status] || statusConfig.disconnected;
+
+  indicator.classList.remove("connected", "disconnected", "connecting");
+  indicator.classList.add(config.class);
+  text.textContent = config.text;
+  currentState.gisMapConnected = config.connected;
+
+  if (warning) {
+    warning.classList.toggle("hidden", !config.showWarning);
   }
 
   updateUI();
+}
+
+/**
+ * Mark GIS map as seen (received a message from it)
+ */
+function markGISMapSeen() {
+  gisMapLastSeen = Date.now();
+  if (!currentState.gisMapConnected) {
+    // GIS map just came online, request full state
+    requestState();
+  }
+}
+
+/**
+ * Start connection monitoring (heartbeat + state requests)
+ */
+function startConnectionMonitor() {
+  stopConnectionMonitor();
+  
+  let lastStateRequest = 0;
+  
+  connectionMonitor = setInterval(() => {
+    if (!wsClient || !wsClient.getConnected()) {
+      return;
+    }
+    
+    const now = Date.now();
+    
+    if (currentState.gisMapConnected) {
+      // Monitor heartbeat - check if GIS map is still alive
+      const timeSinceLastSeen = gisMapLastSeen ? now - gisMapLastSeen : Infinity;
+      
+      if (timeSinceLastSeen > GIS_MAP_TIMEOUT) {
+        console.warn("[Remote] GIS map appears offline (no messages for", Math.round(timeSinceLastSeen / 1000), "seconds)");
+        currentState.gisMapConnected = false;
+        updateConnectionStatus("disconnected");
+        updateUI();
+        lastStateRequest = 0; // Reset to allow immediate retry
+      }
+    } else {
+      // Not connected - periodically request state
+      if (now - lastStateRequest >= STATE_REQUEST_INTERVAL) {
+        requestState();
+        lastStateRequest = now;
+      }
+    }
+  }, CONNECTION_CHECK_INTERVAL);
+}
+
+/**
+ * Stop connection monitoring
+ */
+function stopConnectionMonitor() {
+  if (connectionMonitor) {
+    clearInterval(connectionMonitor);
+    connectionMonitor = null;
+  }
 }
 
 /**
@@ -169,11 +221,16 @@ function handleStateResponse(msg) {
   currentState.layers = { ...msg.layers };
   currentState.gisMapConnected = true;
 
+  // Mark GIS map as seen
+  markGISMapSeen();
+
   // Update UI
   updateUI();
 
   // Update connection status - GIS map is now confirmed connected
   updateConnectionStatus("connected");
+  
+  // Connection monitor is already running, it will handle heartbeat from now on
 }
 
 /**
@@ -189,6 +246,9 @@ function handleLayerUpdate(msg) {
 
   // Set flag to prevent echo
   isReceivingLayerUpdate = true;
+
+  // Mark GIS map as seen (this update came from GIS map, not from ourselves)
+  markGISMapSeen();
 
   // Update local state
   currentState.layers = { ...msg.layers };
@@ -662,6 +722,7 @@ document.addEventListener("visibilitychange", () => {
 
 // Cleanup on page unload
 window.addEventListener("beforeunload", () => {
+  stopConnectionMonitor();
   if (wsClient) {
     wsClient.disconnect();
   }

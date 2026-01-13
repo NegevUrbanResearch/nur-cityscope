@@ -48,7 +48,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "corsheaders",
-    "rest_framework",  # Añade esta línea
+    "rest_framework",
     "drf_yasg",  # API documentation templates
     "backend",
 ]

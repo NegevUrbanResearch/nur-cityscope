@@ -418,10 +418,19 @@ function initializeWebSocket() {
     onConnect: () => {
       console.log("[GIS Map] WebSocket connected for remote control");
       updateConnectionStatus(true);
+      
+      // Notify remote controller that GIS map is online by broadcasting current state
+      // Wait a moment for map to be fully initialized
+      setTimeout(() => {
+        if (map && wsClient && wsClient.getConnected()) {
+          broadcastCurrentState();
+        }
+      }, 500);
     },
     onDisconnect: () => {
       console.log("[GIS Map] WebSocket disconnected");
       updateConnectionStatus(false);
+      // Note: Can't send a message after disconnect, but remote controller will detect via timeout
     },
     onError: (error) => {
       console.error("[GIS Map] WebSocket error:", error);
@@ -621,15 +630,12 @@ function handleLayerUpdate(msg) {
 }
 
 /**
- * Handle state request from remote
+ * Broadcast current state to all connected clients (used when GIS map comes online)
  */
-function handleStateRequest(msg) {
-  if (!msg || msg.type !== OTEF_MESSAGE_TYPES.STATE_REQUEST) {
-    console.warn("[GIS Map] Invalid state request:", msg);
+function broadcastCurrentState() {
+  if (!map || !wsClient || !wsClient.getConnected()) {
     return;
   }
-
-  console.log("[GIS Map] Received state request, sending response...");
 
   // Get current viewport state
   const size = map.getSize();
@@ -673,9 +679,21 @@ function handleStateRequest(msg) {
     layerState
   );
 
-  if (wsClient && wsClient.getConnected()) {
-    wsClient.send(response);
+  wsClient.send(response);
+  console.log("[GIS Map] Broadcasted current state to remote controllers");
+}
+
+/**
+ * Handle state request from remote
+ */
+function handleStateRequest(msg) {
+  if (!msg || msg.type !== OTEF_MESSAGE_TYPES.STATE_REQUEST) {
+    console.warn("[GIS Map] Invalid state request:", msg);
+    return;
   }
+
+  console.log("[GIS Map] Received state request, sending response...");
+  broadcastCurrentState();
 }
 
 /**
