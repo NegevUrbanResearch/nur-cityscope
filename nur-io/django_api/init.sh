@@ -79,6 +79,6 @@ if [ -d "/app/public/processed" ]; then
 fi
 chmod -R 755 /app/media
 
-# Start the server
-echo "Starting the server..."
-python manage.py runserver 0.0.0.0:9900
+# Start the server with Daphne (ASGI) for WebSocket support
+echo "Starting the server with Daphne (ASGI)..."
+daphne -b 0.0.0.0 -p 9900 core.asgi:application
