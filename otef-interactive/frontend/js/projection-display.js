@@ -46,6 +46,9 @@ function connectWebSocket() {
     onConnect: () => {
       console.log("[Projection] WebSocket connected");
       setDebugStatus("connected");
+      
+      // Request current state from remote controller
+      requestCurrentState();
     },
     onDisconnect: () => {
       console.log("[Projection] WebSocket disconnected");
@@ -56,6 +59,9 @@ function connectWebSocket() {
       setDebugStatus("error");
     },
   });
+
+  // Handle STATE_RESPONSE - sync initial state
+  wsClient.on(OTEF_MESSAGE_TYPES.STATE_RESPONSE, handleStateResponse);
 
   // Listen for viewport updates
   wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE, (msg) => {
@@ -71,11 +77,70 @@ function connectWebSocket() {
     }
   });
 
-  // Listen for layer updates (from remote or GIS map)
+  // Listen for layer updates (from remote controller)
   wsClient.on(OTEF_MESSAGE_TYPES.LAYER_UPDATE, handleLayerUpdate);
 
   // Connect
   wsClient.connect();
+}
+
+/**
+ * Request current state from remote controller
+ */
+function requestCurrentState() {
+  if (!wsClient || !wsClient.getConnected()) return;
+  
+  const request = createStateRequestMessage();
+  wsClient.send(request);
+  console.log("[Projection] State request sent");
+}
+
+/**
+ * Handle STATE_RESPONSE - sync initial state
+ */
+function handleStateResponse(msg) {
+  if (!validateStateResponse(msg)) {
+    console.warn("[Projection] Invalid state response:", msg);
+    return;
+  }
+
+  console.log("[Projection] Received state response, syncing...");
+
+  // Sync viewport highlight
+  if (msg.viewport) {
+    if (msg.viewport.corners) {
+      updateHighlightQuad(msg.viewport.corners);
+    } else if (msg.viewport.bbox) {
+      updateHighlightRect(msg.viewport.bbox);
+    }
+  }
+
+  // Sync layers
+  if (msg.layers) {
+    // Update layer visibility to match state
+    if (msg.layers.roads !== undefined && msg.layers.roads !== layerState.roads) {
+      layerState.roads = msg.layers.roads;
+      updateLayerVisibility("roads", msg.layers.roads);
+    }
+
+    if (msg.layers.parcels !== undefined && msg.layers.parcels !== layerState.parcels) {
+      layerState.parcels = msg.layers.parcels;
+      if (msg.layers.parcels && !loadedLayers.parcels) {
+        // Load parcels layer if not already loaded
+        loadParcelsLayer();
+      } else {
+        updateLayerVisibility("parcels", msg.layers.parcels);
+      }
+    }
+
+    if (msg.layers.model !== undefined && msg.layers.model !== layerState.model) {
+      layerState.model = msg.layers.model;
+      const img = document.getElementById("displayedImage");
+      if (img) {
+        img.style.opacity = msg.layers.model ? "1" : "0";
+      }
+    }
+  }
 }
 
 function getDisplayedImageBounds() {

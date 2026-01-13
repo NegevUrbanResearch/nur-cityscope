@@ -13,7 +13,7 @@ let modelBounds;
 const map = L.map("map", {
   minZoom: 10,
   maxZoom: 19,
-  zoomControl: true,
+  zoomControl: false, // Zoom controlled by remote controller only
   maxBoundsViscosity: 1.0, // Prevent dragging outside bounds
 });
 
@@ -352,19 +352,27 @@ function showFeatureInfo(feature) {
 function initializeWebSocket() {
   wsClient = new OTEFWebSocketClient("/ws/otef/", {
     onConnect: () => {
-      console.log("[GIS Map] WebSocket connected (receive-only mode)");
+      console.log("[GIS Map] WebSocket connected");
       updateConnectionStatus(true);
+      
+      // Send initial viewport update so remote controller has state
+      sendViewportUpdate();
+      
+      // Request current state from remote controller
+      requestCurrentState();
     },
     onDisconnect: () => {
       console.log("[GIS Map] WebSocket disconnected");
       updateConnectionStatus(false);
-      // Note: Can't send a message after disconnect, but remote controller will detect via timeout
     },
     onError: (error) => {
       console.error("[GIS Map] WebSocket error:", error);
       updateConnectionStatus(false);
     },
   });
+
+  // Handle STATE_RESPONSE - sync initial state
+  wsClient.on(OTEF_MESSAGE_TYPES.STATE_RESPONSE, handleStateResponse);
 
   // Handle VIEWPORT_CONTROL messages (from remote)
   wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CONTROL, handleViewportControl);
@@ -374,6 +382,77 @@ function initializeWebSocket() {
 
   // Connect
   wsClient.connect();
+}
+
+/**
+ * Request current state from remote controller
+ */
+function requestCurrentState() {
+  if (!wsClient || !wsClient.getConnected()) return;
+  
+  const request = createStateRequestMessage();
+  wsClient.send(request);
+  console.log("[GIS Map] State request sent");
+}
+
+/**
+ * Handle STATE_RESPONSE - sync initial state
+ */
+function handleStateResponse(msg) {
+  if (!validateStateResponse(msg)) {
+    console.warn("[GIS Map] Invalid state response:", msg);
+    return;
+  }
+
+  console.log("[GIS Map] Received state response, syncing...");
+
+  // Sync viewport
+  if (msg.viewport && msg.viewport.zoom) {
+    const targetZoom = Math.max(
+      map.getMinZoom(),
+      Math.min(map.getMaxZoom(), Math.round(msg.viewport.zoom))
+    );
+    if (targetZoom !== map.getZoom()) {
+      map.setZoom(targetZoom, { animate: false });
+      console.log(`[GIS Map] Zoom synced to ${targetZoom}`);
+    }
+  }
+
+  // Sync layers
+  if (msg.layers) {
+    // Update layer visibility to match state
+    if (msg.layers.roads !== undefined && msg.layers.roads !== layerState.roads) {
+      if (msg.layers.roads) {
+        map.addLayer(roadsLayer);
+      } else {
+        map.removeLayer(roadsLayer);
+      }
+      layerState.roads = msg.layers.roads;
+    }
+
+    if (msg.layers.parcels !== undefined && msg.layers.parcels !== layerState.parcels) {
+      if (msg.layers.parcels) {
+        map.addLayer(parcelsLayer);
+      } else {
+        map.removeLayer(parcelsLayer);
+      }
+      layerState.parcels = msg.layers.parcels;
+    }
+
+    if (msg.layers.model !== undefined && msg.layers.model !== layerState.model) {
+      if (msg.layers.model) {
+        map.addLayer(modelOverlay);
+      } else {
+        map.removeLayer(modelOverlay);
+      }
+      layerState.model = msg.layers.model;
+    }
+
+    updateMapLegend();
+  }
+
+  // Send viewport update to confirm sync
+  sendViewportUpdate();
 }
 
 /**

@@ -1,7 +1,21 @@
 // OTEF Remote Controller
 // Mobile-friendly remote control for OTEF interactive GIS map
 
-// State management
+// Authoritative state - remote controller is the single source of truth
+let authoritativeState = {
+  viewport: {
+    bbox: null,
+    corners: null,
+    zoom: 15,
+  },
+  layers: {
+    roads: true,
+    parcels: false,
+    model: false,
+  },
+};
+
+// UI state (for display purposes)
 let currentState = {
   zoom: 15,
   layers: {
@@ -20,19 +34,11 @@ let joystickInterval = null; // For continuous pan updates
 // WebSocket client instance
 let wsClient = null;
 
-// Connection status - simple: connected if we've received viewport updates (GIS map is responding)
-
 // Throttle/debounce timers
 let panThrottleTimer = null;
 let zoomThrottleTimer = null;
 const PAN_THROTTLE_MS = 150;
 const ZOOM_THROTTLE_MS = 100;
-
-// Flag to prevent echo when receiving layer updates
-let isReceivingLayerUpdate = false;
-
-// Track the zoom we just sent to prevent echo
-let lastSentZoom = null;
 
 // Initialize on DOM ready
 if (document.readyState === "loading") {
@@ -65,11 +71,11 @@ function initialize() {
 function initializeWebSocket() {
   wsClient = new OTEFWebSocketClient("/ws/otef/", {
     onConnect: () => {
-      // WebSocket is connected - enable controls
-      // Status will show "connecting" until GIS map responds, but controls work
+      // WebSocket is connected - show connected status immediately
       currentState.gisMapConnected = true;
-      updateConnectionStatus("connecting");
+      updateConnectionStatus("connected");
       updateUI();
+      console.log("[Remote] WebSocket connected - ready to send commands");
     },
     onDisconnect: () => {
       updateConnectionStatus("disconnected");
@@ -84,16 +90,12 @@ function initializeWebSocket() {
     },
   });
 
-  // Listen for layer updates (from remote controller echo or other clients)
-  wsClient.on(OTEF_MESSAGE_TYPES.LAYER_UPDATE, handleLayerUpdate);
+  // Listen for STATE_REQUEST - respond with current authoritative state
+  wsClient.on(OTEF_MESSAGE_TYPES.STATE_REQUEST, handleStateRequest);
 
-  // Listen for viewport updates (indicates GIS map is responding to commands)
+  // Listen for viewport updates from GIS map (updates state)
   wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE, (msg) => {
     handleViewportUpdate(msg);
-    
-    // Viewport update means GIS map is responding - update status to connected
-    // Controls are already enabled when WebSocket connects
-    updateConnectionStatus("connected");
   });
 
   // Connect
@@ -123,15 +125,14 @@ function updateConnectionStatus(status) {
   indicator.classList.add(config.class);
   text.textContent = config.text;
 
-  // Only update gisMapConnected for connected/disconnected/error, not for connecting
-  // "connecting" means WebSocket is connected but waiting for GIS map response
-  // Controls should still work when WebSocket is connected
+  // Update gisMapConnected based on WebSocket connection status
+  // "connected" means WebSocket is connected and ready to send commands
+  // Controls work as long as WebSocket is connected, even if GIS map tab isn't open
   if (status === "connected") {
     currentState.gisMapConnected = true;
   } else if (status === "disconnected" || status === "error") {
     currentState.gisMapConnected = false;
   }
-  // "connecting" status doesn't change gisMapConnected - it's set when WebSocket connects
 
   if (warning) {
     warning.classList.toggle("hidden", !config.showWarning);
@@ -140,40 +141,40 @@ function updateConnectionStatus(status) {
   updateUI();
 }
 
-// Connection status is simple: "connecting" until GIS map responds with viewport updates
-// No heartbeat monitoring needed - if GIS map stops responding, user will notice controls don't work
+// Connection status is based on WebSocket connection - shows "connected" when WebSocket is connected
+// This means the remote controller is ready to send commands, regardless of whether other tabs are open
 
 /**
- * Handle layer update from GIS map
+ * Handle STATE_REQUEST - respond with current authoritative state
  */
-function handleLayerUpdate(msg) {
-  if (!validateLayerUpdate(msg)) {
-    console.warn("[Remote] Invalid layer update:", msg);
+function handleStateRequest(msg) {
+  if (!validateStateRequest(msg)) {
+    console.warn("[Remote] Invalid state request:", msg);
     return;
   }
 
-  console.log("[Remote] Received layer update:", msg);
-
-  // Set flag to prevent echo
-  isReceivingLayerUpdate = true;
-
-  // Mark GIS map as seen (this update came from GIS map, not from ourselves)
-  markGISMapSeen();
-
-  // Update local state
-  currentState.layers = { ...msg.layers };
-
-  // Update UI checkboxes (without triggering events)
-  updateLayerCheckboxes();
-
-  // Reset flag after a short delay
-  setTimeout(() => {
-    isReceivingLayerUpdate = false;
-  }, 100);
+  console.log("[Remote] Received state request, responding with current state");
+  
+  if (!wsClient || !wsClient.getConnected()) return;
+  
+  // Only respond if we have valid viewport data (bbox and zoom required)
+  if (!authoritativeState.viewport.bbox || !authoritativeState.viewport.zoom) {
+    console.log("[Remote] Cannot respond to state request: viewport not initialized yet");
+    return;
+  }
+  
+  // Respond with current authoritative state
+  const stateResponse = createStateResponseMessage(
+    authoritativeState.viewport,
+    authoritativeState.layers
+  );
+  
+  wsClient.send(stateResponse);
+  console.log("[Remote] State response sent:", stateResponse);
 }
 
 /**
- * Handle viewport update from GIS map (to sync zoom)
+ * Handle viewport update from GIS map - update authoritative state
  */
 function handleViewportUpdate(msg) {
   if (!validateViewportUpdate(msg)) {
@@ -181,28 +182,18 @@ function handleViewportUpdate(msg) {
     return;
   }
 
-  // Update zoom if it changed
-  if (typeof msg.zoom === "number" && msg.zoom !== currentState.zoom) {
-    // If we just sent a zoom command, only sync if it matches what we sent (confirmation)
-    // This prevents old zoom values from overriding our command
-    if (lastSentZoom !== null) {
-      if (msg.zoom === lastSentZoom) {
-        // Confirmation - zoom command worked!
-        currentState.zoom = msg.zoom;
-        updateZoomUI(msg.zoom);
-        lastSentZoom = null; // Clear after confirmation
-        console.log("[Remote] Zoom confirmed from GIS map:", msg.zoom);
-      } else {
-        // Different zoom - either user changed it on GIS map, or our command hasn't taken effect yet
-        // Only sync if it's significantly different (user action) or we've waited long enough
-        console.log("[Remote] Ignoring zoom sync (waiting for command confirmation):", msg.zoom, "expected:", lastSentZoom);
-      }
-    } else {
-      // Not sending zoom command, safe to sync (user changed zoom on GIS map)
-      currentState.zoom = msg.zoom;
-      updateZoomUI(msg.zoom);
-      console.log("[Remote] Zoom synced from GIS map:", msg.zoom);
-    }
+  // Update authoritative viewport state
+  if (msg.bbox) {
+    authoritativeState.viewport.bbox = msg.bbox;
+  }
+  if (msg.corners) {
+    authoritativeState.viewport.corners = msg.corners;
+  }
+  if (typeof msg.zoom === "number") {
+    authoritativeState.viewport.zoom = msg.zoom;
+    currentState.zoom = msg.zoom;
+    updateZoomUI(msg.zoom);
+    console.log("[Remote] Viewport state updated, zoom:", msg.zoom);
   }
 }
 
@@ -355,24 +346,12 @@ function initializeZoomControls() {
 function sendZoomCommand(zoom) {
   if (!wsClient || !wsClient.getConnected()) return;
 
-  // Remember what we're sending to prevent old zoom from overriding
-  lastSentZoom = zoom;
-  
   // Update UI optimistically
   updateZoomUI(zoom);
   
   const msg = createZoomControlMessage(zoom);
   wsClient.send(msg);
   console.log("[Remote] Zoom command sent:", zoom);
-  
-  // Clear the flag after a timeout in case GIS map doesn't respond
-  // This allows sync to work again if the command fails
-  setTimeout(() => {
-    if (lastSentZoom === zoom) {
-      console.log("[Remote] Zoom command timeout, clearing sent zoom flag");
-      lastSentZoom = null;
-    }
-  }, 2000);
 }
 
 function updateZoomUI(zoom) {
@@ -410,13 +389,9 @@ function initializeLayerControls() {
         return;
       }
 
-      // Don't send if we're currently receiving an update (prevent echo)
-      if (isReceivingLayerUpdate) {
-        return;
-      }
-
+      // Update authoritative state and broadcast
       const newLayers = {
-        ...currentState.layers,
+        ...authoritativeState.layers,
         [layerName]: e.target.checked,
       };
 
@@ -596,12 +571,15 @@ function sendLayerUpdate(layers) {
     return;
   }
 
+  // Update authoritative state
+  authoritativeState.layers = { ...layers };
+  currentState.layers = { ...layers };
+
+  // Broadcast layer update
   const msg = createLayerUpdateMessage(layers);
   const sent = wsClient.send(msg);
   if (sent) {
-    console.log("[Remote] Layer update sent:", layers);
-    // Update local state optimistically
-    currentState.layers = { ...layers };
+    console.log("[Remote] Layer update broadcast:", layers);
   } else {
     console.error("[Remote] Failed to send layer update");
   }
@@ -614,20 +592,12 @@ function updateLayerCheckboxes() {
     toggleModel: "model",
   };
 
-  // Set flag to prevent triggering change events
-  isReceivingLayerUpdate = true;
-
   Object.entries(toggles).forEach(([id, layerName]) => {
     const checkbox = document.getElementById(id);
     if (checkbox && checkbox.checked !== currentState.layers[layerName]) {
       checkbox.checked = currentState.layers[layerName];
     }
   });
-
-  // Reset flag after a short delay
-  setTimeout(() => {
-    isReceivingLayerUpdate = false;
-  }, 100);
 }
 
 /**

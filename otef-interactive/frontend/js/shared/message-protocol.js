@@ -106,6 +106,17 @@ function validateViewportUpdate(msg) {
 }
 
 /**
+ * Validates a STATE_REQUEST message
+ * @param {Object} msg - Message to validate
+ * @returns {boolean} True if valid
+ */
+function validateStateRequest(msg) {
+  if (!validateMessage(msg)) return false;
+  if (msg.type !== OTEF_MESSAGE_TYPES.STATE_REQUEST) return false;
+  return true;
+}
+
+/**
  * Validates a STATE_RESPONSE message
  * @param {Object} msg - Message to validate
  * @returns {boolean} True if valid
@@ -115,7 +126,7 @@ function validateStateResponse(msg) {
   if (msg.type !== OTEF_MESSAGE_TYPES.STATE_RESPONSE) return false;
   if (!msg.viewport || !msg.layers) return false;
 
-  // Validate viewport structure
+  // Validate viewport structure - bbox is required, zoom is required
   if (
     !msg.viewport.bbox ||
     !Array.isArray(msg.viewport.bbox) ||
@@ -246,6 +257,7 @@ if (typeof module !== "undefined" && module.exports) {
     validateViewportControl,
     validateViewportUpdate,
     validateLayerUpdate,
+    validateStateRequest,
     validateStateResponse,
     createPanControlMessage,
     createZoomControlMessage,
