@@ -7,7 +7,7 @@ import backend.models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('backend', '0005_table_indicator_backend_ind_table_i_1c5688_idx_and_more'),
+        ('backend', '0003_table_indicator_backend_ind_table_i_1c5688_idx_and_more'),
     ]
 
     operations = [

@@ -24,9 +24,6 @@ PRESENTATION_SEQUENCE = [
 PRESENTATION_SEQUENCE_INDEX = 0
 PRESENTATION_DURATION = 10
 
-# Active user upload - when set, projection shows this instead of indicator
-# Format: {"id": upload_id, "image_url": "/media/...", "display_name": "..."} or None
-ACTIVE_USER_UPLOAD = None
 
 # Default states for fallback
 DEFAULT_STATES = {"year": 2023, "scenario": "present", "label": "Present"}

@@ -14,7 +14,7 @@ React dashboard for urban planning visualization with interactive maps and chart
 
 - **Dashboard**: Main visualization with indicator switching (mobility/climate)
 - **Presentation Mode**: Full-screen slideshow with automated sequencing
-- **User Uploads**: Image management with categories
+- **UGC Management**: User-generated content indicators with states and media
 - **Charts Drawer**: Collapsible panel with indicator-specific visualizations
 
 ## Pages

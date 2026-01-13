@@ -462,12 +462,8 @@ class PresentationRemote {
         this.fetchThumbnail();
     }
 
-    // Generate cache key for a slide (include type for climate, uploadId for user uploads, stateId for UGC)
+    // Generate cache key for a slide (include type for climate, stateId for UGC)
     getCacheKey(indicator, state, type, uploadId, stateId) {
-        // User uploads
-        if (indicator.startsWith('user_upload') && uploadId) {
-            return `user_upload:${uploadId}`;
-        }
         // User-generated indicators (UGC)
         if (indicator.startsWith('ugc_') && stateId) {
             return `ugc:${stateId}`;
@@ -486,25 +482,6 @@ class PresentationRemote {
         // Return cached URL immediately if available
         if (this.imageCache.has(cacheKey)) {
             return this.imageCache.get(cacheKey);
-        }
-
-        // For user uploads, use the provided imageUrl directly
-        if (indicator.startsWith('user_upload') && imageUrl) {
-            const fullUrl = imageUrl.startsWith("http") ? imageUrl : `${API_BASE}${imageUrl}`;
-            
-            // Preload the image in browser cache
-            const img = new Image();
-            img.src = fullUrl;
-            if (priority === 'high') {
-                await new Promise((resolve) => {
-                    img.onload = resolve;
-                    img.onerror = resolve;
-                    setTimeout(resolve, 1500); // 1.5s timeout
-                });
-            }
-
-            this.imageCache.set(cacheKey, fullUrl);
-            return fullUrl;
         }
 
         // For UGC indicators, get media from file hierarchy
@@ -960,7 +937,7 @@ class PresentationRemote {
         return validStates.includes(state);
     }
     
-    // Check if a slide combo is already in use (includes type for climate, uploadId for user uploads, stateId for UGC)
+    // Check if a slide combo is already in use (includes type for climate, stateId for UGC)
     isSlideUsed(indicator, state, type = null, excludeIndex = -1, uploadId = null, stateId = null) {
         return this.slides.some((slide, idx) => {
             if (idx === excludeIndex) return false;
@@ -968,10 +945,6 @@ class PresentationRemote {
             // For climate slides, also check type
             if (indicator === 'climate') {
                 return slide.type === type;
-            }
-            // For user uploads, check uploadId
-            if (indicator.startsWith('user_upload')) {
-                return slide.uploadId === uploadId;
             }
             // For UGC indicators, check stateId
             if (indicator.startsWith('ugc_')) {

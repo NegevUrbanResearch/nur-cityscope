@@ -8,7 +8,7 @@ import django.utils.timezone
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('backend', '0004_useruploadcategory_userupload_category'),
+        ('backend', '0002_delete_maptype'),
     ]
 
     operations = [

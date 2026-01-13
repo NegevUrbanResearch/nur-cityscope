@@ -131,7 +131,7 @@ const App = () => {
   // Check if we're in presentation mode (either by state or URL)
   const isInPresentationMode = isPresentationMode || location.pathname.includes('/presentation');
   
-  // Don't show navbar in presentation mode or user uploads pages
+  // Don't show navbar in presentation mode or UGC management pages
   const showNavbar = !isInPresentationMode && !location.pathname.includes('/user-uploads');
 
   return (

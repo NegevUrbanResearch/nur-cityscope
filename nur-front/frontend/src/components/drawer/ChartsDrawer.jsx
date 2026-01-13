@@ -43,7 +43,6 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
     handleVisualizationModeChange, 
     currentIndicator,
     isPresentationMode,
-    activeUserUpload,
     exitPresentationAndResume,
     currentTable,
     availableTables,
@@ -316,19 +315,6 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
               Presentation Mode Active
             </Typography>
             
-            {activeUserUpload && (
-              <Typography 
-                variant="body2" 
-                sx={{ 
-                  color: '#64B5F6', 
-                  textAlign: 'center',
-                  fontWeight: 500,
-                }}
-              >
-                Showing: {activeUserUpload.displayName}
-              </Typography>
-            )}
-            
             <Box 
               sx={{ 
                 display: 'flex',
@@ -388,7 +374,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
       </Box>
 
 
-      {/* Presentation Mode and User Uploads Links */}
+      {/* Presentation Mode and UGC Management Links */}
       <Box
         sx={{
           p: 2,
@@ -445,7 +431,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
             transition: 'all 0.2s ease',
           }}
         >
-          Manage Uploads
+          Manage UGC
         </Button>
       </Box>
     </Drawer>

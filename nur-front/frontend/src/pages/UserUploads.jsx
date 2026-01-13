@@ -499,7 +499,7 @@ const UserUploads = () => {
             <ArrowBackIcon />
           </IconButton>
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
-            User Uploads
+            User-Generated Content
           </Typography>
         </Box>
         <Box sx={{ display: "flex", gap: 1 }}>

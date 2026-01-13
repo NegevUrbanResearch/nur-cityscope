@@ -8,8 +8,6 @@ from .models import (
     IndicatorImage,
     DashboardFeedState,
     LayerConfig,
-    UserUpload,
-    UserUploadCategory,
 )
 
 admin.site.register(Table)
@@ -19,5 +17,3 @@ admin.site.register(IndicatorData)
 admin.site.register(IndicatorImage)
 admin.site.register(DashboardFeedState)
 admin.site.register(LayerConfig)
-admin.site.register(UserUpload)
-admin.site.register(UserUploadCategory)

@@ -18,8 +18,6 @@ from .models import (
     State,
     DashboardFeedState,
     LayerConfig,
-    UserUpload,
-    UserUploadCategory,
 )
 
 from .serializers import (
@@ -30,8 +28,6 @@ from .serializers import (
     StateSerializer,
     DashboardFeedStateSerializer,
     LayerConfigSerializer,
-    UserUploadSerializer,
-    UserUploadCategorySerializer,
 )
 
 
@@ -179,121 +175,6 @@ class LayerConfigViewSet(viewsets.ModelViewSet):
     serializer_class = LayerConfigSerializer
 
 
-class UserUploadCategoryViewSet(viewsets.ModelViewSet):
-    queryset = UserUploadCategory.objects.all()
-    serializer_class = UserUploadCategorySerializer
-
-    def create(self, request, *args, **kwargs):
-        name = request.data.get("name", "").strip().lower().replace(" ", "_")
-        display_name = request.data.get("display_name", "").strip()
-
-        if not name or not display_name:
-            return Response(
-                {"error": "Name and display_name are required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Check if name already exists
-        if UserUploadCategory.objects.filter(name=name).exists():
-            return Response(
-                {"error": "Category with this name already exists"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            category = UserUploadCategory.objects.create(
-                name=name,
-                display_name=display_name,
-            )
-            serializer = self.get_serializer(category)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            return Response(
-                {"error": f"Failed to create category: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-
-class UserUploadViewSet(viewsets.ModelViewSet):
-    queryset = UserUpload.objects.all()
-    serializer_class = UserUploadSerializer
-    parser_classes = (MultiPartParser, FormParser, JSONParser)
-
-    def get_queryset(self):
-        queryset = UserUpload.objects.all()
-        category_id = self.request.query_params.get("category", None)
-        if category_id:
-            queryset = queryset.filter(category_id=category_id)
-        return queryset
-
-    def create(self, request, *args, **kwargs):
-        image_file = request.FILES.get("image")
-        display_name = request.data.get("display_name", "")
-        category_id = request.data.get("category_id")
-
-        if not image_file:
-            return Response(
-                {"error": "No image file provided"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Validate file type
-        image_extension = Path(image_file.name).suffix.lower()
-        allowed_extensions = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]
-
-        if image_extension not in allowed_extensions:
-            return Response(
-                {
-                    "error": "Invalid file type",
-                    "allowed_types": allowed_extensions,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Validate file size (max 10MB)
-        if image_file.size > 10 * 1024 * 1024:
-            return Response(
-                {"error": "File size exceeds 10MB limit"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            category = None
-            if category_id:
-                try:
-                    category = UserUploadCategory.objects.get(id=category_id)
-                except UserUploadCategory.DoesNotExist:
-                    pass
-
-            # If no category specified, use default
-            if not category:
-                category = UserUploadCategory.objects.filter(is_default=True).first()
-                if not category:
-                    # Create default category if it doesn't exist
-                    category, _ = UserUploadCategory.objects.get_or_create(
-                        name="user_uploads",
-                        defaults={"display_name": "User Uploads", "is_default": True}
-                    )
-
-            # Create user upload entry
-            user_upload = UserUpload.objects.create(
-                image=image_file,
-                display_name=display_name or image_file.name,
-                original_filename=image_file.name,
-                file_size=image_file.size,
-                category=category,
-            )
-
-            serializer = self.get_serializer(user_upload)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            return Response(
-                {"error": f"Failed to upload image: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-
 # Now lets program the views for the API as an interactive platform
 
 from . import globals
@@ -333,7 +214,6 @@ def broadcast_indicator_update():
                         'indicator_id': globals.INDICATOR_ID,
                         'indicator_state': globals.INDICATOR_STATE,
                         'visualization_mode': globals.VISUALIZATION_MODE,
-                        'active_user_upload': globals.ACTIVE_USER_UPLOAD,
                     }
                 }
             )
@@ -453,7 +333,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 "indicator_state": globals.INDICATOR_STATE,
                 "visualization_mode": globals.VISUALIZATION_MODE,
                 "presentation_playing": globals.PRESENTATION_PLAYING,
-                "active_user_upload": globals.ACTIVE_USER_UPLOAD,
             }
         )
         self._add_no_cache_headers(response)
@@ -521,10 +400,10 @@ class CustomActionsViewSet(viewsets.ViewSet):
                             image_path = img.image.name
 
                             # Determine correct URL path based on stored path:
-                            # - indicators/, ugc_indicators/, user_uploads/ - use as-is
+                            # - indicators/, ugc_indicators/ - use as-is
                             # - processed/... (legacy system data) - add indicators/ prefix
                             # - plain filename (no /) - use as-is (stored in media root)
-                            valid_prefixes = ('indicators/', 'ugc_indicators/', 'user_uploads/')
+                            valid_prefixes = ('indicators/', 'ugc_indicators/')
                             has_valid_prefix = any(image_path.startswith(p) for p in valid_prefixes)
                             is_plain_filename = '/' not in image_path
 
@@ -742,48 +621,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
             print(f"❌ Error syncing indicator from presentation slide: {e}")
 
     @action(detail=False, methods=["post"])
-    def set_active_user_upload(self, request):
-        """Set or clear the active user upload for display"""
-        upload_id = request.data.get("upload_id")
-        
-        if upload_id is None:
-            # Clear active user upload
-            globals.ACTIVE_USER_UPLOAD = None
-            print("✓ Cleared active user upload")
-            broadcast_indicator_update()
-            return JsonResponse({"status": "ok", "active_user_upload": None})
-        
-        try:
-            # Fetch the user upload
-            user_upload = UserUpload.objects.get(id=upload_id)
-            
-            # Set the active user upload
-            globals.ACTIVE_USER_UPLOAD = {
-                "id": user_upload.id,
-                "image_url": user_upload.image.url if user_upload.image else None,
-                "display_name": user_upload.display_name or user_upload.original_filename,
-                "category_id": user_upload.category_id,
-            }
-            print(f"✓ Set active user upload: {globals.ACTIVE_USER_UPLOAD['display_name']}")
-            broadcast_indicator_update()
-            
-            return JsonResponse({
-                "status": "ok", 
-                "active_user_upload": globals.ACTIVE_USER_UPLOAD
-            })
-        except UserUpload.DoesNotExist:
-            return JsonResponse(
-                {"status": "error", "message": "User upload not found"},
-                status=404
-            )
-        except Exception as e:
-            print(f"❌ Error setting active user upload: {e}")
-            return JsonResponse(
-                {"status": "error", "message": str(e)},
-                status=500
-            )
-
-    @action(detail=False, methods=["post"])
     def set_current_indicator(self, request):
         indicator_id = request.data.get("indicator_id", "")
         table_name = request.data.get("table")
@@ -927,77 +764,12 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def get_image_data(self, request):
-        # Priority: If there's an active user upload in global state, return it
-        # This ensures the projection module displays user uploads during presentation mode
-        if globals.ACTIVE_USER_UPLOAD and globals.ACTIVE_USER_UPLOAD.get("image_url"):
-            image_url = globals.ACTIVE_USER_UPLOAD["image_url"]
-            # Strip /media/ prefix if present since we add it in response handling
-            if image_url.startswith("/media/"):
-                image_url = image_url[7:]
-            response = JsonResponse({
-                "image_data": image_url,
-                "type": "image",
-                "is_user_upload": True,
-                "display_name": globals.ACTIVE_USER_UPLOAD.get("display_name"),
-            })
-            self._add_no_cache_headers(response)
-            return response
-        
-        # Check for user upload indicator first
-        indicator_param = request.query_params.get("indicator")
-        user_upload_id = request.query_params.get("user_upload_id")
-        
-        # Handle user upload images
-        if indicator_param and indicator_param.startswith("user_upload") or user_upload_id:
-            try:
-                if user_upload_id:
-                    # Direct user upload ID provided
-                    user_upload = UserUpload.objects.get(id=user_upload_id)
-                else:
-                    # Extract category name from indicator (format: user_upload_<category_name>)
-                    category_name = indicator_param.replace("user_upload_", "") if indicator_param else None
-                    if category_name:
-                        # Get first upload from this category
-                        category = UserUploadCategory.objects.filter(name=category_name).first()
-                        if category:
-                            user_upload = UserUpload.objects.filter(category=category).first()
-                        else:
-                            user_upload = None
-                    else:
-                        # Fallback: get any user upload
-                        user_upload = UserUpload.objects.first()
-                
-                if user_upload and user_upload.image:
-                    image_path = user_upload.image.name
-                    response = JsonResponse(
-                        {"image_data": image_path, "type": "image", "is_user_upload": True}
-                    )
-                    self._add_no_cache_headers(response)
-                    return response
-                else:
-                    response = JsonResponse(
-                        {"error": "User upload not found"}, status=404
-                    )
-                    self._add_no_cache_headers(response)
-                    return response
-            except UserUpload.DoesNotExist:
-                response = JsonResponse(
-                    {"error": "User upload not found"}, status=404
-                )
-                self._add_no_cache_headers(response)
-                return response
-            except Exception as e:
-                response = JsonResponse(
-                    {"error": f"Error fetching user upload: {str(e)}"}, status=500
-                )
-                self._add_no_cache_headers(response)
-                return response
-        
         # Ensure we have a default state
         self._initialize_default_state()
 
         # Check if query parameters were provided for PREFETCH mode
         # This allows fetching specific images without modifying globals
+        indicator_param = request.query_params.get("indicator")  # Indicator name from request
         scenario_param = request.query_params.get("scenario")  # For prefetching specific states
         type_param = request.query_params.get("type")  # For climate type (utci/plan)
         prefetch_mode = scenario_param is not None  # If scenario is specified, don't use globals

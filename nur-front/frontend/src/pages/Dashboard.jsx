@@ -18,7 +18,6 @@ const Dashboard = ({ openCharts}) => {
     dashboardData: data,
     currentIndicator,
     visualizationMode,
-    activeUserUpload,
     currentTable,
   } = useAppData();
   // Simple function to check if URL is HTML animation
@@ -142,21 +141,6 @@ const Dashboard = ({ openCharts}) => {
 
   // Fetch map data from API when indicator changes
   useEffect(() => {
-    // If user upload is active, skip normal fetching and show pause mode
-    if (activeUserUpload) {
-      setShowLoadingMessage(false);
-      const imageUrl = activeUserUpload.imageUrl.startsWith("http") 
-        ? activeUserUpload.imageUrl 
-        : `${config.api.baseUrl}${activeUserUpload.imageUrl}`;
-      setCurrentImageUrl(imageUrl);
-      setMapData({
-        url: imageUrl,
-        type: "image",
-        loading: false,
-        error: false,
-      });
-      return;
-    }
 
     // Clear any existing loading timer
     if (loadingTimerRef.current) {
@@ -277,7 +261,7 @@ const Dashboard = ({ openCharts}) => {
         clearTimeout(currentLoadingTimer);
       }
     };
-  }, [currentIndicator, visualizationMode, preloadImage, activeUserUpload, currentTable]);
+  }, [currentIndicator, visualizationMode, preloadImage, currentTable]);
 
   // State for tracking current indicator state
   const [currentState, setCurrentState] = useState({
@@ -304,11 +288,6 @@ const Dashboard = ({ openCharts}) => {
   // This prevents duplicate listeners and ensures consistent handling
   useEffect(() => {
     const handleStateChangeEvent = async (eventType) => {
-      // Skip state changes when user upload is active (pause mode)
-      if (activeUserUpload) {
-        return;
-      }
-      
       const indicator = currentIndicatorRef.current;
 
       // Update currentState for display (always do this)
@@ -410,7 +389,7 @@ const Dashboard = ({ openCharts}) => {
         clearTimeout(refreshDebounceRef.current);
       }
     };
-  }, [activeUserUpload, currentTable]); // Include activeUserUpload and currentTable to skip when in pause mode or table changes
+  }, [currentTable]); // Include currentTable to skip when table changes
 
   // Memoize state object to prevent unnecessary re-renders and iframe reloads
   // Must be called before any early returns (Rules of Hooks)
