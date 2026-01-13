@@ -181,23 +181,49 @@ from . import globals
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
-def broadcast_presentation_update():
+def broadcast_presentation_update(table_name=None):
     """Broadcast presentation state to all connected WebSocket clients"""
     channel_layer = get_channel_layer()
     if channel_layer:
         try:
-            async_to_sync(channel_layer.group_send)(
-                'presentation_channel',
-                {
-                    'type': 'presentation_update',
-                    'data': {
-                        'is_playing': globals.PRESENTATION_PLAYING,
-                        'sequence': globals.PRESENTATION_SEQUENCE,
-                        'sequence_index': globals.PRESENTATION_SEQUENCE_INDEX,
-                        'duration': globals.PRESENTATION_DURATION,
+            # If table_name is specified, broadcast only that table's state
+            # Otherwise, broadcast all table states
+            if table_name:
+                state = globals.get_presentation_state(table_name)
+                async_to_sync(channel_layer.group_send)(
+                    'presentation_channel',
+                    {
+                        'type': 'presentation_update',
+                        'data': {
+                            'table': table_name,
+                            'is_playing': state["is_playing"],
+                            'sequence': state["sequence"],
+                            'sequence_index': state["sequence_index"],
+                            'duration': state["duration"],
+                        }
                     }
-                }
-            )
+                )
+            else:
+                # Broadcast all table states for backward compatibility and multi-table support
+                all_states = {}
+                for table in globals.PRESENTATION_STATE_BY_TABLE.keys():
+                    all_states[table] = globals.get_presentation_state(table)
+                # Also include default table state for legacy clients
+                default_state = globals.get_presentation_state(globals.DEFAULT_TABLE_NAME)
+                async_to_sync(channel_layer.group_send)(
+                    'presentation_channel',
+                    {
+                        'type': 'presentation_update',
+                        'data': {
+                            'table': globals.DEFAULT_TABLE_NAME,
+                            'is_playing': default_state["is_playing"],
+                            'sequence': default_state["sequence"],
+                            'sequence_index': default_state["sequence_index"],
+                            'duration': default_state["duration"],
+                            'all_tables': all_states,  # Include all table states
+                        }
+                    }
+                )
         except Exception as e:
             print(f"WebSocket broadcast error: {e}")
 
@@ -457,89 +483,113 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def get_presentation_state(self, request):
-        """Get current presentation state (playing, sequence, index, duration)"""
+        """Get current presentation state (playing, sequence, index, duration) for a specific table"""
+        # Get table name from query params, default to idistrict for backward compatibility
+        table_name = request.query_params.get("table", globals.DEFAULT_TABLE_NAME)
+        state = globals.get_presentation_state(table_name)
+        
         response = JsonResponse({
-            "is_playing": globals.PRESENTATION_PLAYING,
-            "sequence": globals.PRESENTATION_SEQUENCE,
-            "sequence_index": globals.PRESENTATION_SEQUENCE_INDEX,
-            "duration": globals.PRESENTATION_DURATION,
+            "table": table_name,
+            "is_playing": state["is_playing"],
+            "sequence": state["sequence"],
+            "sequence_index": state["sequence_index"],
+            "duration": state["duration"],
         })
         self._add_no_cache_headers(response)
         return response
 
     @action(detail=False, methods=["post"])
     def set_presentation_state(self, request):
-        """Set presentation state (play/pause, sequence, index, duration)"""
+        """Set presentation state (play/pause, sequence, index, duration) for a specific table"""
         index_changed = False
         sequence_changed = False
         
+        # Get table name from request, default to idistrict for backward compatibility
+        table_name = request.data.get("table", globals.DEFAULT_TABLE_NAME)
+        
+        # Get presentation state for this table
+        state = globals.get_presentation_state(table_name)
+        
         # Update playing state if provided
         if "is_playing" in request.data:
-            was_playing = globals.PRESENTATION_PLAYING
-            globals.PRESENTATION_PLAYING = bool(request.data.get("is_playing"))
-            print(f"✓ Presentation playing: {globals.PRESENTATION_PLAYING}")
+            was_playing = state["is_playing"]
+            state["is_playing"] = bool(request.data.get("is_playing"))
+            print(f"✓ Presentation playing for table '{table_name}': {state['is_playing']}")
             # If presentation just started playing, sync indicator from current slide
-            if globals.PRESENTATION_PLAYING and not was_playing:
+            if state["is_playing"] and not was_playing:
                 index_changed = True
         
         # Update sequence if provided
         if "sequence" in request.data:
             sequence = request.data.get("sequence")
             if isinstance(sequence, list):
-                globals.PRESENTATION_SEQUENCE = sequence
+                state["sequence"] = sequence
                 sequence_changed = True
-                print(f"✓ Presentation sequence updated: {len(sequence)} slides")
+                print(f"✓ Presentation sequence updated for table '{table_name}': {len(sequence)} slides")
         
         # Update sequence index if provided
         if "sequence_index" in request.data:
             index = request.data.get("sequence_index")
             if isinstance(index, int):
                 # Clamp index to valid range instead of silently ignoring out-of-bounds values
-                sequence_length = len(globals.PRESENTATION_SEQUENCE)
+                sequence_length = len(state["sequence"])
                 if sequence_length > 0:
                     clamped_index = max(0, min(index, sequence_length - 1))
                     if clamped_index != index:
-                        print(f"⚠️ Presentation index {index} out of bounds, clamped to {clamped_index}")
-                    old_index = globals.PRESENTATION_SEQUENCE_INDEX
-                    globals.PRESENTATION_SEQUENCE_INDEX = clamped_index
+                        print(f"⚠️ Presentation index {index} out of bounds for table '{table_name}', clamped to {clamped_index}")
+                    old_index = state["sequence_index"]
+                    state["sequence_index"] = clamped_index
                     index_changed = (clamped_index != old_index)
-                    print(f"✓ Presentation index: {clamped_index}")
+                    print(f"✓ Presentation index for table '{table_name}': {clamped_index}")
                 else:
-                    globals.PRESENTATION_SEQUENCE_INDEX = 0
-                    print(f"⚠️ Empty sequence, index reset to 0")
+                    state["sequence_index"] = 0
+                    print(f"⚠️ Empty sequence for table '{table_name}', index reset to 0")
         
         # Update duration if provided
         if "duration" in request.data:
             duration = request.data.get("duration")
             if isinstance(duration, (int, float)) and duration >= 1:
-                globals.PRESENTATION_DURATION = int(duration)
-                print(f"✓ Presentation duration: {duration}s")
+                state["duration"] = int(duration)
+                print(f"✓ Presentation duration for table '{table_name}': {duration}s")
+        
+        # Update legacy globals for default table (backward compatibility)
+        if table_name == globals.DEFAULT_TABLE_NAME:
+            globals.PRESENTATION_PLAYING = state["is_playing"]
+            globals.PRESENTATION_SEQUENCE = state["sequence"]
+            globals.PRESENTATION_SEQUENCE_INDEX = state["sequence_index"]
+            globals.PRESENTATION_DURATION = state["duration"]
         
         # If presentation is playing and (index/sequence changed or just started), update indicator/state from current slide
-        if globals.PRESENTATION_PLAYING and (index_changed or sequence_changed) and globals.PRESENTATION_SEQUENCE:
-            self._sync_indicator_from_presentation_slide()
+        if state["is_playing"] and (index_changed or sequence_changed) and state["sequence"]:
+            self._sync_indicator_from_presentation_slide(table_name, state)
         
         # Broadcast to all connected clients via WebSocket
-        broadcast_presentation_update()
+        broadcast_presentation_update(table_name)
         
         return JsonResponse({
             "status": "ok",
-            "is_playing": globals.PRESENTATION_PLAYING,
-            "sequence": globals.PRESENTATION_SEQUENCE,
-            "sequence_index": globals.PRESENTATION_SEQUENCE_INDEX,
-            "duration": globals.PRESENTATION_DURATION,
+            "table": table_name,
+            "is_playing": state["is_playing"],
+            "sequence": state["sequence"],
+            "sequence_index": state["sequence_index"],
+            "duration": state["duration"],
         })
     
-    def _sync_indicator_from_presentation_slide(self):
-        """Update global indicator and state from current presentation slide"""
+    def _sync_indicator_from_presentation_slide(self, table_name=None, presentation_state=None):
+        """Update global indicator and state from current presentation slide for a specific table"""
         try:
-            if not globals.PRESENTATION_SEQUENCE or len(globals.PRESENTATION_SEQUENCE) == 0:
+            if presentation_state is None:
+                if table_name is None:
+                    table_name = globals.DEFAULT_TABLE_NAME
+                presentation_state = globals.get_presentation_state(table_name)
+            
+            if not presentation_state["sequence"] or len(presentation_state["sequence"]) == 0:
                 return
             
             current_index = max(
-                0, min(globals.PRESENTATION_SEQUENCE_INDEX, len(globals.PRESENTATION_SEQUENCE) - 1)
+                0, min(presentation_state["sequence_index"], len(presentation_state["sequence"]) - 1)
             )
-            current_slide = globals.PRESENTATION_SEQUENCE[current_index]
+            current_slide = presentation_state["sequence"][current_index]
             
             if not current_slide or not current_slide.get("indicator"):
                 return
@@ -556,9 +606,9 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 print(f"⚠️ Invalid indicator in presentation slide: {indicator_name}")
                 return
             
-            # Update global indicator ID
+            # Update global indicator ID and set table
             globals.INDICATOR_ID = indicator_id
-            print(f"🎬 Synced indicator from presentation: {indicator_name} (ID: {indicator_id})")
+            print(f"🎬 Synced indicator from presentation (table: {table_name}): {indicator_name} (ID: {indicator_id})")
             
             # Update global state based on indicator type
             if indicator_name == "climate" and state_name and slide_type:
@@ -572,11 +622,11 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 
                 if scenario_key:
                     # Find the state object to get full state values
-                    state = State.objects.filter(
+                    state_obj = State.objects.filter(
                         scenario_name=scenario_key, scenario_type=slide_type
                     ).first()
-                    if state:
-                        globals.INDICATOR_STATE = state.state_values.copy()
+                    if state_obj:
+                        globals.INDICATOR_STATE = state_obj.state_values.copy()
                         print(f"✓ Synced climate state: {scenario_key} ({slide_type})")
                     else:
                         # Fallback: create minimal state
@@ -597,14 +647,14 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 if state_name:
                     scenario_key = state_name.lower()
                     states = State.objects.filter(scenario_type="general")
-                    state = None
+                    state_obj = None
                     for s in states:
                         if s.state_values.get("scenario") == scenario_key:
-                            state = s
+                            state_obj = s
                             break
                     
-                    if state:
-                        globals.INDICATOR_STATE = state.state_values.copy()
+                    if state_obj:
+                        globals.INDICATOR_STATE = state_obj.state_values.copy()
                         print(f"✓ Synced {indicator_name} state: {scenario_key}")
                     else:
                         # Fallback: create minimal state
@@ -641,6 +691,14 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
     def _set_current_indicator(self, indicator_id, table_name):
         try:
+            # Pause presentation for this table when dashboard is actively using it
+            presentation_state = globals.get_presentation_state(table_name)
+            if presentation_state["is_playing"]:
+                presentation_state["is_playing"] = False
+                print(f"⏸️ Paused presentation for table '{table_name}' (dashboard is using it)")
+                # Broadcast the pause
+                broadcast_presentation_update(table_name)
+            
             table = Table.objects.filter(name=table_name).first()
             if not table:
                 print(f"❌ Table '{table_name}' not found")
@@ -774,6 +832,19 @@ class CustomActionsViewSet(viewsets.ViewSet):
         type_param = request.query_params.get("type")  # For climate type (utci/plan)
         prefetch_mode = scenario_param is not None  # If scenario is specified, don't use globals
 
+        # Get table name (required parameter)
+        table_name = request.query_params.get("table")
+        if not table_name:
+            response = JsonResponse(
+                {"error": "Table parameter is required"},
+                status=400
+            )
+            self._add_no_cache_headers(response)
+            return response
+        
+        # Get presentation state for this table
+        presentation_state = globals.get_presentation_state(table_name)
+        
         # Indicator name to ID mapping
         indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
         
@@ -787,17 +858,17 @@ class CustomActionsViewSet(viewsets.ViewSet):
         # Only use presentation mode if NOT in prefetch mode (prefetch has explicit params)
         use_presentation_mode = (
             not prefetch_mode
-            and globals.PRESENTATION_PLAYING
-            and globals.PRESENTATION_SEQUENCE
-            and len(globals.PRESENTATION_SEQUENCE) > 0
+            and presentation_state["is_playing"]
+            and presentation_state["sequence"]
+            and len(presentation_state["sequence"]) > 0
         )
 
         if use_presentation_mode:
-            # Get current slide from presentation sequence
+            # Get current slide from presentation sequence for this table
             current_index = max(
-                0, min(globals.PRESENTATION_SEQUENCE_INDEX, len(globals.PRESENTATION_SEQUENCE) - 1)
+                0, min(presentation_state["sequence_index"], len(presentation_state["sequence"]) - 1)
             )
-            current_slide = globals.PRESENTATION_SEQUENCE[current_index]
+            current_slide = presentation_state["sequence"][current_index]
 
             if current_slide and current_slide.get("indicator") and current_slide.get("state"):
                 # Extract indicator and state from current slide
@@ -812,7 +883,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     try:
                         indicator_db_id = int(slide_indicator.replace('ugc_', ''))
                         slide_state_id = current_slide.get('stateId')
-                        print(f"🎬 Presentation mode active (UGC) - using slide {current_index + 1}/{len(globals.PRESENTATION_SEQUENCE)}")
+                        print(f"🎬 Presentation mode active (UGC) - using slide {current_index + 1}/{len(presentation_state['sequence'])} for table '{table_name}'")
                         print(f"   UGC Indicator ID: {indicator_db_id}, State ID: {slide_state_id}, State: {slide_state}")
                         # Set prefetch_mode to True so we use the params instead of globals
                         prefetch_mode = True
@@ -826,7 +897,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     effective_indicator_id = indicator_mapping.get(slide_indicator)
                     
                     if effective_indicator_id:
-                        print(f"🎬 Presentation mode active - using slide {current_index + 1}/{len(globals.PRESENTATION_SEQUENCE)}")
+                        print(f"🎬 Presentation mode active - using slide {current_index + 1}/{len(presentation_state['sequence'])} for table '{table_name}'")
                         print(f"   Indicator: {slide_indicator}, State: {slide_state}" + (f", Type: {slide_type}" if slide_type else ""))
                         
                         # Override indicator_param and scenario_param to use presentation slide data
@@ -888,17 +959,8 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 print(f"Current state: {globals.INDICATOR_STATE}")
                 print(f"Visualization mode: {globals.VISUALIZATION_MODE}")
 
-        # Query indicator - table parameter is required
-        table_name = request.query_params.get("table")
+        # Table name already retrieved above for presentation mode check
         exclude_ugc = request.query_params.get("exclude_ugc", "false").lower() == "true"
-
-        if not table_name:
-            response = JsonResponse(
-                {"error": "Table parameter is required"},
-                status=400
-            )
-            self._add_no_cache_headers(response)
-            return response
 
         table = Table.objects.filter(name=table_name).first()
         if not table:

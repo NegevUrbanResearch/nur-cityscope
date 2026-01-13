@@ -123,19 +123,14 @@ export const DataProvider = ({ children }) => {
     if (isPresentationModeRef.current) {
       setTimeout(() => {
         api.post("/api/actions/set_presentation_state/", {
+          table: currentTable,
           sequence: newSequence
         }).then(() => {
-          console.log(`✓ Synced sequence to backend: ${newSequence.length} slides`);
+          console.log(`✓ Synced sequence to backend for table '${currentTable}': ${newSequence.length} slides`);
         }).catch(err => console.error("Error syncing sequence:", err));
       }, 0);
     }
-    // Sync with backend if in presentation mode
-    if (isPresentationModeRef.current) {
-      api.post("/api/actions/set_presentation_state/", { 
-        sequence: newSequence 
-      }).catch(err => console.error("Error syncing sequence:", err));
-    }
-  }, []);
+  }, [currentTable]);
 
   const [sequenceIndex, setSequenceIndexInternal] = useState(0);
   const [globalDuration, setGlobalDurationInternal] = useState(10);
@@ -149,15 +144,16 @@ export const DataProvider = ({ children }) => {
         // Use setTimeout to ensure state update happens first, then sync
         setTimeout(() => {
           api.post("/api/actions/set_presentation_state/", { 
+            table: currentTable,
             sequence_index: newIndex 
           }).then(() => {
-            console.log(`✓ Synced sequence index to backend: ${newIndex}`);
+            console.log(`✓ Synced sequence index to backend for table '${currentTable}': ${newIndex}`);
           }).catch(err => console.error("Error syncing index:", err));
         }, 0);
       }
       return newIndex;
     });
-  }, []);
+  }, [currentTable]);
   
   // Wrapper to sync duration with backend
   const setGlobalDuration = useCallback((newDuration) => {
@@ -167,13 +163,14 @@ export const DataProvider = ({ children }) => {
     if (isPresentationModeRef.current) {
       setTimeout(() => {
         api.post("/api/actions/set_presentation_state/", { 
+          table: currentTable,
           duration: newDuration 
         }).then(() => {
-          console.log(`✓ Synced duration to backend: ${newDuration}s`);
+          console.log(`✓ Synced duration to backend for table '${currentTable}': ${newDuration}s`);
         }).catch(err => console.error("Error syncing duration:", err));
       }, 0);
     }
-  }, []);
+  }, [currentTable]);
 
   const presentationTimerRef = useRef(null);
   const indicatorRef = useRef(currentIndicator);
@@ -186,6 +183,7 @@ export const DataProvider = ({ children }) => {
   const isPlayingRef = useRef(isPlaying);
   const presentationSequenceRef = useRef(presentationSequence);
   const globalDurationRef = useRef(globalDuration);
+  const currentTableRef = useRef(currentTable);
 
   const [prevIndicator, setPrevIndicator] = useState(null);
   const [prevVisualizationMode, setPrevVisualizationMode] = useState(null);
@@ -208,7 +206,8 @@ export const DataProvider = ({ children }) => {
     isPlayingRef.current = isPlaying;
     presentationSequenceRef.current = presentationSequence;
     globalDurationRef.current = globalDuration;
-  }, [currentIndicator]);
+    currentTableRef.current = currentTable;
+  }, [currentIndicator, currentTable, isPresentationMode, isPlaying, presentationSequence, globalDuration]);
 
   useEffect(() => {
     visualizationModeRef.current = visualizationMode;
@@ -260,7 +259,14 @@ export const DataProvider = ({ children }) => {
                 return;
               }
 
-              console.log('📡 WS: presentation update');
+              // Filter by table - only process updates for the current table
+              const messageTable = data.table || globals.DEFAULT_TABLE_NAME;
+              if (messageTable !== currentTableRef.current) {
+                // This update is for a different table, ignore it
+                return;
+              }
+
+              console.log(`📡 WS: presentation update for table '${messageTable}'`);
 
               // Update presentation state from WebSocket (use internal setters to avoid loops)
               if (data.is_playing !== undefined) {
@@ -557,6 +563,18 @@ export const DataProvider = ({ children }) => {
       setCurrentTable(tableName);
       // Clear dashboard data to force refresh with new table
       setDashboardData(null);
+      
+      // Pause presentation for the new table when dashboard is actively using it
+      try {
+        await api.post("/api/actions/set_presentation_state/", {
+          table: tableName,
+          is_playing: false,
+        });
+        console.log(`⏸️ Paused presentation for table '${tableName}' (dashboard is using it)`);
+      } catch (err) {
+        console.error("Error pausing presentation for table:", err);
+      }
+      
       // Refresh current indicator with new table
       if (currentIndicator) {
         const indicatorId = INDICATOR_CONFIG[currentIndicator]?.id;
@@ -616,9 +634,12 @@ export const DataProvider = ({ children }) => {
   const pausePresentationMode = useCallback(async () => {
     // Always try to pause via backend, even if local state thinks we're not playing
     // This ensures cross-tab sync works
-    console.log("📌 Manual override: pausing presentation mode via backend");
+    console.log(`📌 Manual override: pausing presentation mode via backend for table '${currentTable}'`);
     try {
-      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: false });
+      const response = await api.post("/api/actions/set_presentation_state/", { 
+        table: currentTable,
+        is_playing: false 
+      });
       if (response.data?.status === "ok") {
         setIsPlaying(false);
       }
@@ -627,7 +648,7 @@ export const DataProvider = ({ children }) => {
       // Still set local state to false to be safe
       setIsPlaying(false);
     }
-  }, []);
+  }, [currentTable]);
 
   // Resume presentation mode via backend API
   const resumePresentationMode = useCallback(async () => {
@@ -637,16 +658,19 @@ export const DataProvider = ({ children }) => {
       return;
     }
     
-    console.log("▶️ Resuming presentation mode via backend");
+    console.log(`▶️ Resuming presentation mode via backend for table '${currentTable}'`);
     try {
-      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: true });
+      const response = await api.post("/api/actions/set_presentation_state/", { 
+        table: currentTable,
+        is_playing: true 
+      });
       if (response.data?.status === "ok") {
         setIsPlaying(true);
       }
     } catch (err) {
       console.error("Error resuming presentation:", err);
     }
-  }, []);
+  }, [currentTable]);
 
   // Enter pause mode
   const enterPauseMode = useCallback(async () => {
@@ -694,7 +718,10 @@ export const DataProvider = ({ children }) => {
     
     // Resume presentation mode if it was active
     if (isPresentationModeRef.current) {
-      api.post("/api/actions/set_presentation_state/", { is_playing: true })
+      api.post("/api/actions/set_presentation_state/", { 
+        table: currentTable,
+        is_playing: true 
+      })
         .then(response => {
           if (response.data?.status === "ok") {
             setIsPlaying(true);
@@ -714,16 +741,19 @@ export const DataProvider = ({ children }) => {
     
     const newState = !isPlayingRef.current;
     try {
-      const response = await api.post("/api/actions/set_presentation_state/", { is_playing: newState });
+      const response = await api.post("/api/actions/set_presentation_state/", { 
+        table: currentTable,
+        is_playing: newState 
+      });
       if (response.data?.status === "ok") {
         setIsPlaying(newState);
-        console.log(`✓ Presentation ${newState ? 'resumed' : 'paused'}`);
+        console.log(`✓ Presentation ${newState ? 'resumed' : 'paused'} for table '${currentTable}'`);
       }
     } catch (err) {
       console.error("Error toggling presentation:", err);
       // Attempt to sync state from backend on error
       try {
-        const syncResponse = await api.get("/api/actions/get_presentation_state/");
+        const syncResponse = await api.get(`/api/actions/get_presentation_state/?table=${currentTable}`);
         if (syncResponse.data?.is_playing !== undefined) {
           setIsPlaying(syncResponse.data.is_playing);
         }
@@ -731,7 +761,7 @@ export const DataProvider = ({ children }) => {
         console.error("Error syncing presentation state:", syncErr);
       }
     }
-  }, []);
+  }, [currentTable]);
 
   // Function to change state (climate scenario or mobility state)
   // For climate, type can be 'utci' or 'plan'
@@ -1062,12 +1092,13 @@ export const DataProvider = ({ children }) => {
             // Sync our state to backend for remote controller
             try {
                 await api.post("/api/actions/set_presentation_state/", {
+                    table: currentTable,
                     is_playing: autoPlay,
                     sequence: presentationSequenceRef.current || [],
                     sequence_index: 0,
                     duration: globalDurationRef.current
                 });
-                console.log("✓ Presentation state synced to backend");
+                console.log(`✓ Presentation state synced to backend for table '${currentTable}'`);
             } catch (err) {
                 console.error("Error syncing presentation state:", err);
             }
@@ -1077,7 +1108,10 @@ export const DataProvider = ({ children }) => {
             setIsPresentationMode(false);
             // Sync with backend
             try {
-                await api.post("/api/actions/set_presentation_state/", { is_playing: false });
+                await api.post("/api/actions/set_presentation_state/", { 
+                    table: currentTable,
+                    is_playing: false 
+                });
             } catch (err) {
                 console.error("Error syncing presentation state:", err);
             }
@@ -1139,7 +1173,10 @@ export const DataProvider = ({ children }) => {
     
     // Sync with backend
     try {
-      await api.post("/api/actions/set_presentation_state/", { is_playing: false });
+      await api.post("/api/actions/set_presentation_state/", { 
+        table: currentTable,
+        is_playing: false 
+      });
     } catch (err) {
       console.error("Error stopping presentation:", err);
     }

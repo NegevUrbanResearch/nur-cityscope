@@ -293,9 +293,25 @@ const PresentationMode = () => {
                 });
                 setTableStates(Array.from(states));
                 
-                // Clear presentation sequence when table changes (slides from old table are invalid)
-                setPresentationSequence([]);
-                setSequenceIndex(0);
+                // Fetch presentation state for the new table from backend
+                try {
+                    const presentationStateResponse = await api.get(`/api/actions/get_presentation_state/?table=${currentTable}`);
+                    if (presentationStateResponse.data && presentationStateResponse.data.sequence) {
+                        // Use the sequence from backend for this table
+                        setPresentationSequence(presentationStateResponse.data.sequence);
+                        setSequenceIndex(presentationStateResponse.data.sequence_index || 0);
+                        console.log(`📡 Loaded presentation sequence for table '${currentTable}': ${presentationStateResponse.data.sequence.length} slides`);
+                    } else {
+                        // No sequence for this table yet, start fresh
+                        setPresentationSequence([]);
+                        setSequenceIndex(0);
+                    }
+                } catch (err) {
+                    console.error("Error fetching presentation state for table:", err);
+                    // Clear presentation sequence when table changes (slides from old table are invalid)
+                    setPresentationSequence([]);
+                    setSequenceIndex(0);
+                }
             } catch (err) {
                 console.error("Error fetching table data:", err);
                 setTableIndicators([]);

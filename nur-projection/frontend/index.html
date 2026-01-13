@@ -91,6 +91,12 @@
           Toggle Config Mode (Shift+Z)
         </button>
       </div>
+      <div class="control-row" style="margin-top: 10px;">
+        <label for="tableSelect" style="color: white; margin-right: 10px; font-size: 14px;">Table:</label>
+        <select id="tableSelect" class="control-button" style="flex: 1; padding: 5px 10px;">
+          <option value="">Loading...</option>
+        </select>
+      </div>
       <p>In config mode:</p>
       <ul>
         <li>Drag corners to warp projection</li>
@@ -107,6 +113,7 @@
         <li><strong>B</strong> - Toggle bounds</li>
         <li><strong>X</strong> - Reset calibration</li>
         <li><strong>F</strong> - Fullscreen</li>
+        <li><strong>T</strong> - Switch to next table</li>
       </ul>
       <p>
         <em
@@ -138,8 +145,9 @@
       const apiEndpoint = "/api/actions/get_image_data/";
       
       // Table management
-      let currentTable = 'idistrict';
+      let currentTable = localStorage.getItem('projectionTable') || 'idistrict';
       let availableTables = [];
+      const $tableSelect = document.getElementById('tableSelect');
       
       // Fetch available tables
       async function fetchTables() {
@@ -149,9 +157,29 @@
             const tables = await response.json();
             if (Array.isArray(tables)) {
               availableTables = tables;
-              // Set current table to idistrict if available, otherwise first table
-              const idistrictTable = tables.find(t => t.name === 'idistrict');
-              currentTable = idistrictTable ? 'idistrict' : (tables[0]?.name || 'idistrict');
+              
+              // Populate table selector
+              $tableSelect.innerHTML = '';
+              tables.forEach(table => {
+                const option = document.createElement('option');
+                option.value = table.name;
+                option.textContent = table.display_name || table.name;
+                $tableSelect.appendChild(option);
+              });
+              
+              // Set current table - use saved value if valid, otherwise default
+              const savedTable = localStorage.getItem('projectionTable');
+              if (savedTable && tables.find(t => t.name === savedTable)) {
+                currentTable = savedTable;
+              } else {
+                // Set current table to idistrict if available, otherwise first table
+                const idistrictTable = tables.find(t => t.name === 'idistrict');
+                currentTable = idistrictTable ? 'idistrict' : (tables[0]?.name || 'idistrict');
+                localStorage.setItem('projectionTable', currentTable);
+              }
+              
+              // Update selector to show current table
+              $tableSelect.value = currentTable;
             }
           }
         } catch (error) {
@@ -159,6 +187,18 @@
           currentTable = 'idistrict'; // Fallback
         }
       }
+      
+      // Handle table selection change
+      $tableSelect.addEventListener('change', async (e) => {
+        const newTable = e.target.value;
+        if (newTable && newTable !== currentTable) {
+          currentTable = newTable;
+          localStorage.setItem('projectionTable', currentTable);
+          console.log(`📊 Switched to table: ${currentTable}`);
+          // Immediately update image for new table
+          updateImage();
+        }
+      });
       
       // Fetch tables on load
       fetchTables();
@@ -414,11 +454,35 @@
       // Initial update
       updateImage();
 
+      // Function to switch to next table
+      function switchToNextTable() {
+        if (availableTables.length === 0) return;
+        
+        const currentIndex = availableTables.findIndex(t => t.name === currentTable);
+        const nextIndex = (currentIndex + 1) % availableTables.length;
+        const nextTable = availableTables[nextIndex];
+        
+        if (nextTable && nextTable.name !== currentTable) {
+          currentTable = nextTable.name;
+          localStorage.setItem('projectionTable', currentTable);
+          $tableSelect.value = currentTable;
+          console.log(`📊 Switched to table: ${currentTable}`);
+          // Immediately update image for new table
+          updateImage();
+        }
+      }
+
       // Keyboard event listener for calibration toggle and other shortcuts
       window.addEventListener("keydown", function (event) {
         // Shift+Z to toggle configuration mode
         if (event.key === "Z" && event.shiftKey) {
           toggleConfigMode();
+        }
+
+        // T to switch tables
+        if (event.key === "T" || event.key === "t") {
+          event.preventDefault();
+          switchToNextTable();
         }
 
         // X key for reset calibration
