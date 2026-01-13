@@ -20,12 +20,7 @@ let joystickInterval = null; // For continuous pan updates
 // WebSocket client instance
 let wsClient = null;
 
-// Connection monitoring
-let connectionMonitor = null;
-let gisMapLastSeen = null;
-const CONNECTION_CHECK_INTERVAL = 1000; // Check every second
-const GIS_MAP_TIMEOUT = 5000; // Consider offline if no messages for 5 seconds
-const STATE_REQUEST_INTERVAL = 10000; // Request state every 10s if not connected
+// Connection status - simple: connected if we've received viewport updates (GIS map is responding)
 
 // Throttle/debounce timers
 let panThrottleTimer = null;
@@ -35,6 +30,9 @@ const ZOOM_THROTTLE_MS = 100;
 
 // Flag to prevent echo when receiving layer updates
 let isReceivingLayerUpdate = false;
+
+// Track the zoom we just sent to prevent echo
+let lastSentZoom = null;
 
 // Initialize on DOM ready
 if (document.readyState === "loading") {
@@ -67,36 +65,35 @@ function initialize() {
 function initializeWebSocket() {
   wsClient = new OTEFWebSocketClient("/ws/otef/", {
     onConnect: () => {
+      // WebSocket is connected - enable controls
+      // Status will show "connecting" until GIS map responds, but controls work
+      currentState.gisMapConnected = true;
       updateConnectionStatus("connecting");
-      requestState();
-      startConnectionMonitor();
+      updateUI();
     },
     onDisconnect: () => {
       updateConnectionStatus("disconnected");
       currentState.gisMapConnected = false;
-      stopConnectionMonitor();
       updateUI();
     },
     onError: (error) => {
       console.error("[Remote] WebSocket error:", error);
       updateConnectionStatus("error");
       currentState.gisMapConnected = false;
-      stopConnectionMonitor();
       updateUI();
     },
   });
 
-  // Listen for state responses (indicates GIS map is connected)
-  wsClient.on(OTEF_MESSAGE_TYPES.STATE_RESPONSE, handleStateResponse);
-
-  // Listen for layer updates (from GIS map or remote)
-  // Note: handleLayerUpdate will mark GIS map as seen if it's from GIS map
+  // Listen for layer updates (from remote controller echo or other clients)
   wsClient.on(OTEF_MESSAGE_TYPES.LAYER_UPDATE, handleLayerUpdate);
 
-  // Listen for viewport updates (to sync zoom when GIS map changes)
+  // Listen for viewport updates (indicates GIS map is responding to commands)
   wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE, (msg) => {
     handleViewportUpdate(msg);
-    markGISMapSeen();
+    
+    // Viewport update means GIS map is responding - update status to connected
+    // Controls are already enabled when WebSocket connects
+    updateConnectionStatus("connected");
   });
 
   // Connect
@@ -114,10 +111,10 @@ function updateConnectionStatus(status) {
   if (!indicator || !text) return;
 
   const statusConfig = {
-    connected: { class: "connected", text: "Connected", connected: true, showWarning: false },
-    disconnected: { class: "disconnected", text: "Disconnected", connected: false, showWarning: true },
-    connecting: { class: "connecting", text: "Connecting...", connected: false, showWarning: false },
-    error: { class: "disconnected", text: "Error", connected: false, showWarning: true },
+    connected: { class: "connected", text: "Connected", showWarning: false },
+    disconnected: { class: "disconnected", text: "Disconnected", showWarning: true },
+    connecting: { class: "connecting", text: "Connecting...", showWarning: false },
+    error: { class: "disconnected", text: "Error", showWarning: true },
   };
 
   const config = statusConfig[status] || statusConfig.disconnected;
@@ -125,7 +122,16 @@ function updateConnectionStatus(status) {
   indicator.classList.remove("connected", "disconnected", "connecting");
   indicator.classList.add(config.class);
   text.textContent = config.text;
-  currentState.gisMapConnected = config.connected;
+
+  // Only update gisMapConnected for connected/disconnected/error, not for connecting
+  // "connecting" means WebSocket is connected but waiting for GIS map response
+  // Controls should still work when WebSocket is connected
+  if (status === "connected") {
+    currentState.gisMapConnected = true;
+  } else if (status === "disconnected" || status === "error") {
+    currentState.gisMapConnected = false;
+  }
+  // "connecting" status doesn't change gisMapConnected - it's set when WebSocket connects
 
   if (warning) {
     warning.classList.toggle("hidden", !config.showWarning);
@@ -134,104 +140,8 @@ function updateConnectionStatus(status) {
   updateUI();
 }
 
-/**
- * Mark GIS map as seen (received a message from it)
- */
-function markGISMapSeen() {
-  gisMapLastSeen = Date.now();
-  if (!currentState.gisMapConnected) {
-    // GIS map just came online, request full state
-    requestState();
-  }
-}
-
-/**
- * Start connection monitoring (heartbeat + state requests)
- */
-function startConnectionMonitor() {
-  stopConnectionMonitor();
-  
-  let lastStateRequest = 0;
-  
-  connectionMonitor = setInterval(() => {
-    if (!wsClient || !wsClient.getConnected()) {
-      return;
-    }
-    
-    const now = Date.now();
-    
-    if (currentState.gisMapConnected) {
-      // Monitor heartbeat - check if GIS map is still alive
-      const timeSinceLastSeen = gisMapLastSeen ? now - gisMapLastSeen : Infinity;
-      
-      if (timeSinceLastSeen > GIS_MAP_TIMEOUT) {
-        console.warn("[Remote] GIS map appears offline (no messages for", Math.round(timeSinceLastSeen / 1000), "seconds)");
-        currentState.gisMapConnected = false;
-        updateConnectionStatus("disconnected");
-        updateUI();
-        lastStateRequest = 0; // Reset to allow immediate retry
-      }
-    } else {
-      // Not connected - periodically request state
-      if (now - lastStateRequest >= STATE_REQUEST_INTERVAL) {
-        requestState();
-        lastStateRequest = now;
-      }
-    }
-  }, CONNECTION_CHECK_INTERVAL);
-}
-
-/**
- * Stop connection monitoring
- */
-function stopConnectionMonitor() {
-  if (connectionMonitor) {
-    clearInterval(connectionMonitor);
-    connectionMonitor = null;
-  }
-}
-
-/**
- * Request current state from GIS map
- */
-function requestState() {
-  if (!wsClient || !wsClient.getConnected()) {
-    console.warn("[Remote] Cannot request state: not connected");
-    return;
-  }
-
-  const msg = createStateRequestMessage();
-  wsClient.send(msg);
-  console.log("[Remote] State request sent");
-}
-
-/**
- * Handle state response from GIS map
- */
-function handleStateResponse(msg) {
-  if (!validateStateResponse(msg)) {
-    console.warn("[Remote] Invalid state response:", msg);
-    return;
-  }
-
-  console.log("[Remote] Received state response:", msg);
-
-  // Update local state
-  currentState.zoom = msg.viewport.zoom;
-  currentState.layers = { ...msg.layers };
-  currentState.gisMapConnected = true;
-
-  // Mark GIS map as seen
-  markGISMapSeen();
-
-  // Update UI
-  updateUI();
-
-  // Update connection status - GIS map is now confirmed connected
-  updateConnectionStatus("connected");
-  
-  // Connection monitor is already running, it will handle heartbeat from now on
-}
+// Connection status is simple: "connecting" until GIS map responds with viewport updates
+// No heartbeat monitoring needed - if GIS map stops responding, user will notice controls don't work
 
 /**
  * Handle layer update from GIS map
@@ -266,15 +176,33 @@ function handleLayerUpdate(msg) {
  * Handle viewport update from GIS map (to sync zoom)
  */
 function handleViewportUpdate(msg) {
-  if (!msg || msg.type !== OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE) {
+  if (!validateViewportUpdate(msg)) {
+    console.warn("[Remote] Invalid viewport update message:", msg);
     return;
   }
 
   // Update zoom if it changed
   if (typeof msg.zoom === "number" && msg.zoom !== currentState.zoom) {
-    currentState.zoom = msg.zoom;
-    updateZoomUI(msg.zoom);
-    console.log("[Remote] Zoom synced from GIS map:", msg.zoom);
+    // If we just sent a zoom command, only sync if it matches what we sent (confirmation)
+    // This prevents old zoom values from overriding our command
+    if (lastSentZoom !== null) {
+      if (msg.zoom === lastSentZoom) {
+        // Confirmation - zoom command worked!
+        currentState.zoom = msg.zoom;
+        updateZoomUI(msg.zoom);
+        lastSentZoom = null; // Clear after confirmation
+        console.log("[Remote] Zoom confirmed from GIS map:", msg.zoom);
+      } else {
+        // Different zoom - either user changed it on GIS map, or our command hasn't taken effect yet
+        // Only sync if it's significantly different (user action) or we've waited long enough
+        console.log("[Remote] Ignoring zoom sync (waiting for command confirmation):", msg.zoom, "expected:", lastSentZoom);
+      }
+    } else {
+      // Not sending zoom command, safe to sync (user changed zoom on GIS map)
+      currentState.zoom = msg.zoom;
+      updateZoomUI(msg.zoom);
+      console.log("[Remote] Zoom synced from GIS map:", msg.zoom);
+    }
   }
 }
 
@@ -427,9 +355,24 @@ function initializeZoomControls() {
 function sendZoomCommand(zoom) {
   if (!wsClient || !wsClient.getConnected()) return;
 
+  // Remember what we're sending to prevent old zoom from overriding
+  lastSentZoom = zoom;
+  
+  // Update UI optimistically
+  updateZoomUI(zoom);
+  
   const msg = createZoomControlMessage(zoom);
   wsClient.send(msg);
   console.log("[Remote] Zoom command sent:", zoom);
+  
+  // Clear the flag after a timeout in case GIS map doesn't respond
+  // This allows sync to work again if the command fails
+  setTimeout(() => {
+    if (lastSentZoom === zoom) {
+      console.log("[Remote] Zoom command timeout, clearing sent zoom flag");
+      lastSentZoom = null;
+    }
+  }, 2000);
 }
 
 function updateZoomUI(zoom) {
@@ -722,7 +665,6 @@ document.addEventListener("visibilitychange", () => {
 
 // Cleanup on page unload
 window.addEventListener("beforeunload", () => {
-  stopConnectionMonitor();
   if (wsClient) {
     wsClient.disconnect();
   }

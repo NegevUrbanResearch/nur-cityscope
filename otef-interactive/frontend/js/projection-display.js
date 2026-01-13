@@ -59,6 +59,11 @@ function connectWebSocket() {
 
   // Listen for viewport updates
   wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE, (msg) => {
+    if (!validateViewportUpdate(msg)) {
+      console.warn("[Projection] Invalid viewport update message:", msg);
+      return;
+    }
+    
     if (msg.corners) {
       updateHighlightQuad(msg.corners);
     } else if (msg.bbox) {

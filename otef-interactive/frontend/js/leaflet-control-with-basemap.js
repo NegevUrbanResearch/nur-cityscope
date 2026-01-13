@@ -59,8 +59,7 @@ let layerState = {
 // WebSocket client instance
 let wsClient = null;
 
-// Flag to prevent processing our own broadcasts (echo prevention)
-let isProcessingLocalLayerUpdate = false;
+// GIS map is receive-only - no need for echo prevention flags
 
 // Helper function to transform coordinates from EPSG:2039 to WGS84
 function transformItmToWgs84(x, y) {
@@ -151,7 +150,8 @@ fetch("data/model-bounds.json")
     }); // Don't add to map on init
 
     window.modelLayer = modelOverlay;
-    document.getElementById("toggleModel").checked = false; // Unchecked by default
+      layerState.model = false;
+      updateMapLegend(); // Update legend
 
     console.log("Map initialized with WGS84 basemap!");
 
@@ -207,20 +207,12 @@ function loadGeoJSONLayers() {
       }); // Don't add to map on init
 
       window.parcelsLayer = parcelsLayer;
-      const parcelToggle = document.getElementById("toggleParcels");
-      parcelToggle.disabled = false;
-      parcelToggle.checked = false; // Unchecked by default (matches DEFAULT_LAYER_STATES)
-      parcelToggle.nextSibling.textContent = " Parcels";
       layerState.parcels = false;
+      updateMapLegend(); // Update legend
       console.log("Parcels layer ready (hidden by default)");
     })
     .catch((error) => {
       console.error("Error loading parcels:", error);
-      const parcelToggle = document.getElementById("toggleParcels");
-      parcelToggle.nextSibling.textContent = " Parcels (ERROR - check console)";
-      alert(
-        "Failed to load parcels layer. Check browser console (F12) for details."
-      );
     });
 
   // Load roads (fixed and simplified version)
@@ -254,22 +246,20 @@ function loadGeoJSONLayers() {
       }).addTo(map); // Add to map on init (visible by default)
 
       window.roadsLayer = roadsLayer;
-      const roadToggle = document.getElementById("toggleRoads");
-      roadToggle.disabled = false;
-      roadToggle.checked = true; // Checked by default (matches DEFAULT_LAYER_STATES)
-      roadToggle.nextSibling.textContent = " Roads";
-      document.getElementById("roadsLegend").style.display = "block"; // Show legend
       layerState.roads = true;
+      updateMapLegend(); // Update legend
       console.log("Roads layer ready and visible");
     })
     .catch((error) => {
       console.error("Error loading roads:", error);
-      const roadToggle = document.getElementById("toggleRoads");
-      roadToggle.nextSibling.textContent = " Roads (ERROR - check console)";
     });
 }
 
-map.on("moveend", () => {
+/**
+ * Send viewport update to all connected clients
+ * @param {number} zoomOverride - Optional zoom value to use instead of map.getZoom()
+ */
+function sendViewportUpdate(zoomOverride = null) {
   const size = map.getSize();
   const corners_pixel = {
     sw: L.point(0, size.y),
@@ -301,35 +291,27 @@ map.on("moveend", () => {
     Math.max(...all_y),
   ];
 
+  const zoom = zoomOverride !== null ? zoomOverride : map.getZoom();
+
   if (window.DebugOverlay) {
     window.DebugOverlay.updateMapDimensions(size.x, size.y);
-    window.DebugOverlay.setZoom(map.getZoom());
+    window.DebugOverlay.setZoom(zoom);
     window.DebugOverlay.updateSentBbox(bbox);
   }
 
-  // Send viewport update via shared WebSocket client
+  // Send viewport update via shared WebSocket client using factory function
   if (wsClient && wsClient.getConnected()) {
-    wsClient.send({
-      type: OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE,
+    const viewportMsg = createViewportUpdateMessage({
       bbox,
       corners: corners_itm,
-      zoom: map.getZoom(),
-      timestamp: Date.now(),
+      zoom: zoom,
     });
+    wsClient.send(viewportMsg);
   }
+}
 
-  // Also send via legacy WebSocket if it exists (for backward compatibility)
-  if (window.ws?.readyState === WebSocket.OPEN) {
-    window.ws.send(
-      JSON.stringify({
-        type: "otef_viewport_update",
-        bbox,
-        corners: corners_itm,
-        zoom: map.getZoom(),
-        timestamp: Date.now(),
-      })
-    );
-  }
+map.on("moveend", () => {
+  sendViewportUpdate();
 });
 
 map.on("click", (e) => {
@@ -349,53 +331,7 @@ map.on("click", (e) => {
   });
 });
 
-document.getElementById("layerToggle").addEventListener("click", () => {
-  document.getElementById("layerPanel").classList.toggle("hidden");
-});
-
-const toggleLayer = (layerName, legendId, stateKey) => (e) => {
-  if (!window[layerName]) return;
-  if (e.target.checked) {
-    map.addLayer(window[layerName]);
-    document.getElementById(legendId).style.display = "block";
-    layerState[stateKey] = true;
-  } else {
-    map.removeLayer(window[layerName]);
-    document.getElementById(legendId).style.display = "none";
-    layerState[stateKey] = false;
-  }
-
-  // Broadcast layer update to all clients (this is a user action from UI)
-  if (wsClient && wsClient.getConnected()) {
-    isProcessingLocalLayerUpdate = true;
-    const msg = createLayerUpdateMessage(layerState);
-    wsClient.send(msg);
-    console.log("[GIS Map] Broadcasting layer update from UI:", layerState);
-    // Reset flag after sending (we'll ignore our own echo)
-    setTimeout(() => {
-      isProcessingLocalLayerUpdate = false;
-    }, 500);
-  }
-};
-
-document
-  .getElementById("toggleParcels")
-  .addEventListener(
-    "change",
-    toggleLayer("parcelsLayer", "parcelsLegend", "parcels")
-  );
-document
-  .getElementById("toggleRoads")
-  .addEventListener(
-    "change",
-    toggleLayer("roadsLayer", "roadsLegend", "roads")
-  );
-document
-  .getElementById("toggleModel")
-  .addEventListener(
-    "change",
-    toggleLayer("modelLayer", "modelLegend", "model")
-  );
+// GIS map is receive-only - no layer controls, only displays state from remote
 
 // Add basemap control
 L.control.layers(basemaps, null, { position: "topleft" }).addTo(map);
@@ -416,16 +352,8 @@ function showFeatureInfo(feature) {
 function initializeWebSocket() {
   wsClient = new OTEFWebSocketClient("/ws/otef/", {
     onConnect: () => {
-      console.log("[GIS Map] WebSocket connected for remote control");
+      console.log("[GIS Map] WebSocket connected (receive-only mode)");
       updateConnectionStatus(true);
-      
-      // Notify remote controller that GIS map is online by broadcasting current state
-      // Wait a moment for map to be fully initialized
-      setTimeout(() => {
-        if (map && wsClient && wsClient.getConnected()) {
-          broadcastCurrentState();
-        }
-      }, 500);
     },
     onDisconnect: () => {
       console.log("[GIS Map] WebSocket disconnected");
@@ -443,9 +371,6 @@ function initializeWebSocket() {
 
   // Handle LAYER_UPDATE messages (from remote)
   wsClient.on(OTEF_MESSAGE_TYPES.LAYER_UPDATE, handleLayerUpdate);
-
-  // Handle STATE_REQUEST messages (from remote)
-  wsClient.on(OTEF_MESSAGE_TYPES.STATE_REQUEST, handleStateRequest);
 
   // Connect
   wsClient.connect();
@@ -548,12 +473,26 @@ function handleZoomCommand(zoom) {
   const targetZoom = Math.max(minZoom, Math.min(maxZoom, Math.round(zoom)));
 
   if (targetZoom !== currentZoom) {
-    map.setZoom(targetZoom, { animate: true });
+    console.log(`[GIS Map] Zoom command: ${currentZoom} -> ${targetZoom}`);
+    
+    // Use setZoom without animation for immediate effect, especially when tab is inactive
+    // Animation can be throttled/skipped when tab is inactive, preventing zoom from working
+    map.setZoom(targetZoom, { animate: false });
+    
+    // Immediately send viewport update with the TARGET zoom value
+    // This ensures the update is sent even if map.getZoom() hasn't updated yet (tab inactive)
+    // Use requestAnimationFrame to ensure the zoom change has been processed
+    requestAnimationFrame(() => {
+      // Send update with target zoom to ensure correct value is broadcast
+      sendViewportUpdate(targetZoom);
+      console.log(`[GIS Map] Viewport update sent with zoom: ${targetZoom}`);
+    });
   }
 }
 
 /**
- * Handle layer update from remote or WebSocket echo
+ * Handle layer update from remote controller
+ * GIS map is receive-only, so all updates come from remote
  */
 function handleLayerUpdate(msg) {
   if (!validateLayerUpdate(msg)) {
@@ -562,18 +501,6 @@ function handleLayerUpdate(msg) {
   }
 
   const layers = msg.layers;
-
-  // Check if this update matches our current state (echo from our own broadcast)
-  const isEcho =
-    layers.roads === layerState.roads &&
-    layers.parcels === layerState.parcels &&
-    layers.model === layerState.model;
-
-  // If it's an echo from our own UI action, ignore it
-  if (isEcho && isProcessingLocalLayerUpdate) {
-    console.log("[GIS Map] Ignoring echo of our own layer update");
-    return;
-  }
 
   // Check if there are any actual changes
   const hasChanges =
@@ -588,113 +515,122 @@ function handleLayerUpdate(msg) {
 
   console.log("[GIS Map] Processing layer update from remote:", layers);
 
-  // Update layer visibility
+  // Update layer visibility (GIS map is receive-only, no broadcasting)
   if (layers.roads !== undefined && layers.roads !== layerState.roads) {
     if (layers.roads) {
       map.addLayer(roadsLayer);
-      document.getElementById("roadsLegend").style.display = "block";
     } else {
       map.removeLayer(roadsLayer);
-      document.getElementById("roadsLegend").style.display = "none";
     }
-    document.getElementById("toggleRoads").checked = layers.roads;
     layerState.roads = layers.roads;
   }
 
   if (layers.parcels !== undefined && layers.parcels !== layerState.parcels) {
     if (layers.parcels) {
       map.addLayer(parcelsLayer);
-      document.getElementById("parcelsLegend").style.display = "block";
     } else {
       map.removeLayer(parcelsLayer);
-      document.getElementById("parcelsLegend").style.display = "none";
     }
-    document.getElementById("toggleParcels").checked = layers.parcels;
     layerState.parcels = layers.parcels;
   }
 
   if (layers.model !== undefined && layers.model !== layerState.model) {
     if (layers.model) {
       map.addLayer(modelOverlay);
-      document.getElementById("modelLegend").style.display = "block";
     } else {
       map.removeLayer(modelOverlay);
-      document.getElementById("modelLegend").style.display = "none";
     }
-    document.getElementById("toggleModel").checked = layers.model;
     layerState.model = layers.model;
   }
 
-  // DO NOT broadcast - this update came from WebSocket (either remote or our own echo)
-  // Broadcasting here would create an infinite loop
+  // Update legend to show only active layers
+  updateMapLegend();
+
+  // GIS map is receive-only - no broadcasting needed
 }
 
 /**
- * Broadcast current state to all connected clients (used when GIS map comes online)
+ * Update cartographic legend to show only active layers
  */
-function broadcastCurrentState() {
-  if (!map || !wsClient || !wsClient.getConnected()) {
+function updateMapLegend() {
+  const legend = document.getElementById("mapLegend");
+  if (!legend) return;
+
+  const activeLayers = [];
+
+  // Roads layer
+  if (layerState.roads) {
+    activeLayers.push({
+      title: "Roads",
+      items: [
+        {
+          symbol: { background: "#505050", border: "#303030" },
+          label: "Road Network"
+        }
+      ]
+    });
+  }
+
+  // Parcels layer with land use categories
+  if (layerState.parcels) {
+    activeLayers.push({
+      title: "Land Use",
+      items: [
+        { symbol: { background: "#ffd700", border: "#b8860b" }, label: "Residential" },
+        { symbol: { background: "#ff6b6b", border: "#cc5555" }, label: "Commercial" },
+        { symbol: { background: "#9370db", border: "#7b5cb5" }, label: "Industry" },
+        { symbol: { background: "#90ee90", border: "#5fad5f" }, label: "Public Open Space" },
+        { symbol: { background: "#228b22", border: "#1a6b1a" }, label: "Forest" },
+        { symbol: { background: "#87ceeb", border: "#6ba5c7" }, label: "Public Institution" },
+        { symbol: { background: "#e0e0e0", border: "#b0b0b0" }, label: "Other" }
+      ]
+    });
+  }
+
+  // Model base layer
+  if (layerState.model) {
+    activeLayers.push({
+      title: "Model Base",
+      items: [
+        {
+          symbol: null,
+          label: "Physical 3D model overlay"
+        }
+      ]
+    });
+  }
+
+  // Build legend HTML
+  if (activeLayers.length === 0) {
+    legend.innerHTML = "";
     return;
   }
 
-  // Get current viewport state
-  const size = map.getSize();
-  const corners_pixel = {
-    sw: L.point(0, size.y),
-    se: L.point(size.x, size.y),
-    nw: L.point(0, 0),
-    ne: L.point(size.x, 0),
-  };
+  let html = '<div class="map-legend-title">Legend</div>';
 
-  const corners_wgs84 = Object.fromEntries(
-    Object.entries(corners_pixel).map(([name, pixel]) => [
-      name,
-      map.containerPointToLatLng(pixel),
-    ])
-  );
+  activeLayers.forEach((group, groupIndex) => {
+    html += '<div class="map-legend-group">';
+    html += `<div class="map-legend-group-title">${group.title}</div>`;
+    
+    group.items.forEach(item => {
+      html += '<div class="map-legend-item">';
+      if (item.symbol) {
+        html += `<span class="map-legend-symbol" style="background: ${item.symbol.background}; border-color: ${item.symbol.border};"></span>`;
+      } else {
+        html += '<span class="map-legend-symbol" style="background: transparent; border: none;"></span>';
+      }
+      html += `<span class="map-legend-label">${item.label}</span>`;
+      html += '</div>';
+    });
+    
+    html += '</div>';
+  });
 
-  const corners_itm = Object.fromEntries(
-    Object.entries(corners_wgs84).map(([name, latlng]) => {
-      const [x, y] = proj4("EPSG:4326", "EPSG:2039", [latlng.lng, latlng.lat]);
-      return [name, { x, y }];
-    })
-  );
-
-  const all_x = Object.values(corners_itm).map((c) => c.x);
-  const all_y = Object.values(corners_itm).map((c) => c.y);
-  const bbox = [
-    Math.min(...all_x),
-    Math.min(...all_y),
-    Math.max(...all_x),
-    Math.max(...all_y),
-  ];
-
-  // Send state response
-  const response = createStateResponseMessage(
-    {
-      bbox: bbox,
-      zoom: map.getZoom(),
-      corners: corners_itm,
-    },
-    layerState
-  );
-
-  wsClient.send(response);
-  console.log("[GIS Map] Broadcasted current state to remote controllers");
+  legend.innerHTML = html;
 }
 
-/**
- * Handle state request from remote
- */
-function handleStateRequest(msg) {
-  if (!msg || msg.type !== OTEF_MESSAGE_TYPES.STATE_REQUEST) {
-    console.warn("[GIS Map] Invalid state request:", msg);
-    return;
-  }
-
-  console.log("[GIS Map] Received state request, sending response...");
-  broadcastCurrentState();
-}
+// GIS map is receive-only - it does not send state updates
+// The remote controller is the single source of truth for state
 
 /**
  * Update connection status UI

@@ -75,6 +75,37 @@ function validateLayerUpdate(msg) {
 }
 
 /**
+ * Validates a VIEWPORT_UPDATE message
+ * @param {Object} msg - Message to validate
+ * @returns {boolean} True if valid
+ */
+function validateViewportUpdate(msg) {
+  if (!validateMessage(msg)) return false;
+  if (msg.type !== OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE) return false;
+
+  // Must have bbox or corners
+  if (msg.bbox) {
+    if (!Array.isArray(msg.bbox) || msg.bbox.length !== 4) return false;
+  } else if (msg.corners) {
+    if (typeof msg.corners !== "object") return false;
+    // Validate corners structure (should have sw, se, nw, ne)
+    const requiredCorners = ["sw", "se", "nw", "ne"];
+    for (const corner of requiredCorners) {
+      if (!msg.corners[corner] || typeof msg.corners[corner].x !== "number" || typeof msg.corners[corner].y !== "number") {
+        return false;
+      }
+    }
+  } else {
+    return false; // Must have either bbox or corners
+  }
+
+  // Zoom is optional but should be a number if present
+  if (msg.zoom !== undefined && typeof msg.zoom !== "number") return false;
+
+  return true;
+}
+
+/**
  * Validates a STATE_RESPONSE message
  * @param {Object} msg - Message to validate
  * @returns {boolean} True if valid
@@ -162,6 +193,32 @@ function createStateRequestMessage() {
 }
 
 /**
+ * Message factory: Create VIEWPORT_UPDATE message
+ * @param {Object} viewport - Viewport state { bbox: [minX, minY, maxX, maxY], corners?: object, zoom?: number }
+ * @returns {Object} Message object
+ */
+function createViewportUpdateMessage(viewport) {
+  const msg = {
+    type: OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE,
+    timestamp: Date.now(),
+  };
+
+  if (viewport.bbox) {
+    msg.bbox = viewport.bbox;
+  }
+
+  if (viewport.corners) {
+    msg.corners = viewport.corners;
+  }
+
+  if (typeof viewport.zoom === "number") {
+    msg.zoom = viewport.zoom;
+  }
+
+  return msg;
+}
+
+/**
  * Message factory: Create STATE_RESPONSE message
  * @param {Object} viewport - Viewport state { bbox: [minX, minY, maxX, maxY], zoom: number, corners?: object }
  * @param {Object} layers - Layer states { roads: boolean, parcels: boolean, model: boolean }
@@ -187,10 +244,12 @@ if (typeof module !== "undefined" && module.exports) {
     DEFAULT_LAYER_STATES,
     validateMessage,
     validateViewportControl,
+    validateViewportUpdate,
     validateLayerUpdate,
     validateStateResponse,
     createPanControlMessage,
     createZoomControlMessage,
+    createViewportUpdateMessage,
     createLayerUpdateMessage,
     createStateRequestMessage,
     createStateResponseMessage,
