@@ -178,7 +178,9 @@ const SlideItem = ({
                                     ? (step.categoryName 
                                         ? userUploadCategories.find(c => c.name === step.categoryName)?.display_name || 'User Upload'
                                         : 'User Upload')
-                                    : indicatorConfig[step.indicator]?.name.replace(' Dashboard', '') || step.indicator || 'No indicator'
+                                    : step.indicator.startsWith('ugc_')
+                                        ? (step.indicatorName || step.indicator)
+                                        : indicatorConfig[step.indicator]?.name.replace(' Dashboard', '') || step.indicator || 'No indicator'
                             }
                         </Typography>
                     </Button>
@@ -261,8 +263,8 @@ const PresentationMode = () => {
     useEffect(() => {
         const fetchTableData = async () => {
             try {
-                // Fetch indicators for current table
-                const indicatorsResponse = await api.get(`/api/indicators/?table=${currentTable}&include_ugc=false`);
+                // Fetch indicators for current table (include UGC indicators)
+                const indicatorsResponse = await api.get(`/api/indicators/?table=${currentTable}&include_ugc=true`);
                 const indicators = indicatorsResponse.data || [];
                 setTableIndicators(indicators);
                 
@@ -542,8 +544,8 @@ const PresentationMode = () => {
 
     // Helper function to fetch and cache an image for a specific slide
     // Uses PREFETCH mode API params to fetch specific states without modifying backend globals
-    const fetchAndCacheImage = React.useCallback(async (indicator, state, type, uploadId, imageUrl, priority = 'normal') => {
-        const cacheKey = getCacheKey(indicator, state, type, uploadId);
+    const fetchAndCacheImage = React.useCallback(async (indicator, state, type, uploadId, imageUrl, priority = 'normal', stateId = null) => {
+        const cacheKey = getCacheKey(indicator, state, type, uploadId, stateId);
 
         // Check if already cached
         if (imageCacheRef.current.has(cacheKey)) {
@@ -569,6 +571,47 @@ const PresentationMode = () => {
             return fullUrl;
         }
 
+        // For UGC indicators, get media from file hierarchy
+        if (indicator.startsWith('ugc_') && stateId) {
+            // Find the media from file hierarchy
+            const indicatorId = parseInt(indicator.replace('ugc_', ''));
+            const tableData = fileHierarchy.find(t => t.name === currentTable);
+            const tableIndicator = tableData?.indicators?.find(ind => ind.id === indicatorId && ind.is_user_generated);
+            
+            if (tableIndicator && tableIndicator.states) {
+                const matchingState = tableIndicator.states.find(s => s.id === stateId);
+                if (matchingState && matchingState.media && matchingState.media.length > 0) {
+                    // Get first image/video media
+                    const mediaItem = matchingState.media.find(m => m.media_type === 'image' || m.media_type === 'video');
+                    if (mediaItem) {
+                        const mediaUrl = mediaItem.url;
+                        const fullUrl = mediaUrl.startsWith("http") 
+                            ? mediaUrl 
+                            : mediaUrl.startsWith("/")
+                                ? `${config.media.baseUrl}${mediaUrl}`
+                                : `${config.media.baseUrl}/media/${mediaUrl}`;
+                        
+                        // Preload the image in browser cache
+                        const img = new Image();
+                        img.src = fullUrl;
+                        if (priority === 'high') {
+                            await new Promise((resolve, reject) => {
+                                img.onload = resolve;
+                                img.onerror = reject;
+                                setTimeout(resolve, 2000); // 2s timeout
+                            });
+                        }
+
+                        imageCacheRef.current.set(cacheKey, fullUrl);
+                        return fullUrl;
+                    }
+                }
+            }
+            
+            console.error(`❌ No media found for UGC indicator ${indicator}, stateId ${stateId}`);
+            return null;
+        }
+
         // Prevent duplicate requests
         if (inFlightRequestsRef.current.has(cacheKey)) {
             return null;
@@ -580,6 +623,12 @@ const PresentationMode = () => {
             const timestamp = Date.now();
 
             // Build URL with PREFETCH mode params - this fetches specific images without modifying backend state
+            // Only for standard indicators (mobility, climate)
+            if (indicator !== 'mobility' && indicator !== 'climate') {
+                console.error(`❌ Attempted to fetch non-standard indicator via API: ${indicator}`);
+                return null;
+            }
+
             let url = `/api/actions/get_image_data/?_=${timestamp}&indicator=${indicator}&table=${currentTable}`;
 
             if (indicator === 'climate') {
@@ -587,7 +636,7 @@ const PresentationMode = () => {
                 const scenarioKey = CLIMATE_SCENARIO_KEYS[state] || state.toLowerCase().replace(/ /g, '_');
                 url += `&scenario=${scenarioKey}&type=${type || 'utci'}`;
             } else {
-                // For mobility/other, convert display name to scenario key
+                // For mobility, convert display name to scenario key
                 const scenarioKey = state.toLowerCase(); // "Present" -> "present"
                 url += `&scenario=${scenarioKey}`;
             }
@@ -621,7 +670,7 @@ const PresentationMode = () => {
         } finally {
             inFlightRequestsRef.current.delete(cacheKey);
         }
-    }, [currentTable]);
+    }, [currentTable, fileHierarchy]);
 
     // Aggressive preloading: preload all slides immediately, prioritizing upcoming ones
     useEffect(() => {
@@ -640,7 +689,8 @@ const PresentationMode = () => {
                     currentSlide.type || null, 
                     currentSlide.uploadId || null,
                     currentSlide.imageUrl || null,
-                    'high'
+                    'high',
+                    currentSlide.stateId || null
                 );
             }
 
@@ -656,7 +706,8 @@ const PresentationMode = () => {
                         slide.type || null, 
                         slide.uploadId || null,
                         slide.imageUrl || null,
-                        'high'
+                        'high',
+                        slide.stateId || null
                     );
                 }
             }
@@ -673,7 +724,8 @@ const PresentationMode = () => {
                         slide.type || null, 
                         slide.uploadId || null,
                         slide.imageUrl || null,
-                        'normal'
+                        'normal',
+                        slide.stateId || null
                     ); // No await - background
                 }
             }
@@ -694,7 +746,8 @@ const PresentationMode = () => {
                 currentStep.indicator, 
                 currentStep.state, 
                 currentStep.type || null, 
-                currentStep.uploadId || null
+                currentStep.uploadId || null,
+                currentStep.stateId || null
             );
 
             // Check cache first
@@ -712,7 +765,8 @@ const PresentationMode = () => {
                         nextSlide.type || null, 
                         nextSlide.uploadId || null,
                         nextSlide.imageUrl || null,
-                        'high'
+                        'high',
+                        nextSlide.stateId || null
                     );
                 }
             } else {
@@ -723,7 +777,8 @@ const PresentationMode = () => {
                     currentStep.type || null, 
                     currentStep.uploadId || null,
                     currentStep.imageUrl || null,
-                    'high'
+                    'high',
+                    currentStep.stateId || null
                 );
                 if (url) {
                     setThumbnailUrl(url);
@@ -812,7 +867,7 @@ const PresentationMode = () => {
         setActiveMenu(null);
     };
 
-    const handleSelection = (indicator, state, slideType = null, uploadId = null, imageUrl = null) => {
+    const handleSelection = (indicator, state, slideType = null, uploadId = null, imageUrl = null, stateId = null, indicatorName = null, tableName = null) => {
         if (!activeMenu) return;
 
         const { index, type: menuType } = activeMenu;
@@ -823,13 +878,51 @@ const PresentationMode = () => {
             // When changing indicator, find first unused valid state
             // For climate, also need to find unused type
             // For user_upload categories, find first unused upload from that category
-            if (indicator.startsWith('user_upload')) {
+            // For UGC indicators, find first unused state from file hierarchy
+            if (indicator.startsWith('ugc_')) {
+                const indicatorId = parseInt(indicator.replace('ugc_', ''));
+                const tableData = fileHierarchy.find(t => t.name === currentTable);
+                const tableIndicator = tableData?.indicators?.find(ind => ind.id === indicatorId && ind.is_user_generated);
+                
+                if (tableIndicator && tableIndicator.states) {
+                    const availableState = tableIndicator.states.find(s => 
+                        !isSlideUsed(indicator, s.scenario_name || JSON.stringify(s.state_values), null, null, s.id, index)
+                    );
+                    if (availableState) {
+                        newSequence[index] = {
+                            indicator: indicator,
+                            state: availableState.scenario_name || JSON.stringify(availableState.state_values),
+                            indicatorId: indicatorId,
+                            stateId: availableState.id,
+                            indicatorDataId: availableState.indicator_data_id,
+                            indicatorName: tableIndicator.name,
+                            tableName: tableData?.display_name || tableData?.name,
+                            isUGC: true,
+                            media: availableState.media || []
+                        };
+                    } else if (tableIndicator.states.length > 0) {
+                        // Fallback to first state
+                        const firstState = tableIndicator.states[0];
+                        newSequence[index] = {
+                            indicator: indicator,
+                            state: firstState.scenario_name || JSON.stringify(firstState.state_values),
+                            indicatorId: indicatorId,
+                            stateId: firstState.id,
+                            indicatorDataId: firstState.indicator_data_id,
+                            indicatorName: tableIndicator.name,
+                            tableName: tableData?.display_name || tableData?.name,
+                            isUGC: true,
+                            media: firstState.media || []
+                        };
+                    }
+                }
+            } else if (indicator.startsWith('user_upload')) {
                 const categoryName = indicator.replace('user_upload_', '');
                 const categoryUploads = userUploads.filter(u => 
                     categoryName ? u.categoryName === categoryName : !u.categoryName
                 );
-                const availableUpload = categoryUploads.find(upload => 
-                    !isSlideUsed(indicator, upload.displayName, null, upload.id, index)
+                    const availableUpload = categoryUploads.find(upload => 
+                    !isSlideUsed(indicator, upload.displayName, null, upload.id, null, index)
                 );
                 if (availableUpload) {
                     newSequence[index] = { 
@@ -855,8 +948,8 @@ const PresentationMode = () => {
                 const availableSlide = StateConfig[indicator]?.flatMap(s => {
                     if (!isValidSlide(indicator, s)) return [];
                     const slides = [];
-                    if (!isSlideUsed(indicator, s, 'utci', null, index)) slides.push({ state: s, type: 'utci' });
-                    if (!isSlideUsed(indicator, s, 'plan', null, index)) slides.push({ state: s, type: 'plan' });
+                    if (!isSlideUsed(indicator, s, 'utci', null, null, index)) slides.push({ state: s, type: 'utci' });
+                    if (!isSlideUsed(indicator, s, 'plan', null, null, index)) slides.push({ state: s, type: 'plan' });
                     return slides;
                 })?.[0];
                 if (availableSlide) {
@@ -869,7 +962,7 @@ const PresentationMode = () => {
             } else {
                 // Non-climate indicator
                 const availableStates = StateConfig[indicator]?.filter(s =>
-                    isValidSlide(indicator, s) && !isSlideUsed(indicator, s, null, null, index)
+                    isValidSlide(indicator, s) && !isSlideUsed(indicator, s, null, null, null, index)
                 ) || [];
                 const firstState = availableStates[0] || StateConfig[indicator]?.[0];
                 newSequence[index] = { indicator, state: firstState };
@@ -877,7 +970,25 @@ const PresentationMode = () => {
         } else if (menuType === 'state') {
             // Changing state - for climate, slideType contains the new type
             // For user_upload, uploadId and imageUrl are provided
-            if (indicator.startsWith('user_upload') && uploadId && imageUrl) {
+            // For UGC, stateId, indicatorName, and tableName are provided
+            if (indicator.startsWith('ugc_') && stateId && indicatorName) {
+                const indicatorId = parseInt(indicator.replace('ugc_', ''));
+                const tableData = fileHierarchy.find(t => t.name === currentTable);
+                const tableIndicator = tableData?.indicators?.find(ind => ind.id === indicatorId && ind.is_user_generated);
+                const selectedState = tableIndicator?.states?.find(s => s.id === stateId);
+                
+                newSequence[index] = {
+                    indicator: indicator,
+                    state: state,
+                    indicatorId: indicatorId,
+                    stateId: stateId,
+                    indicatorDataId: selectedState?.indicator_data_id,
+                    indicatorName: indicatorName,
+                    tableName: tableName,
+                    isUGC: true,
+                    media: selectedState?.media || []
+                };
+            } else if (indicator.startsWith('user_upload') && uploadId && imageUrl) {
                 const categoryName = indicator.replace('user_upload_', '');
                 newSequence[index] = { 
                     indicator: indicator, 
@@ -903,7 +1014,7 @@ const PresentationMode = () => {
     const addStep = () => {
         // Find first unused valid slide (must pass type for proper climate detection, uploadId for user uploads)
         const unusedSlide = allValidSlides.find(slide =>
-            !isSlideUsed(slide.indicator, slide.state, slide.type, slide.uploadId)
+            !isSlideUsed(slide.indicator, slide.state, slide.type, slide.uploadId, slide.stateId)
         );
 
         if (unusedSlide) {
@@ -959,7 +1070,7 @@ const PresentationMode = () => {
     };
 
     const allSlidesUsed = allValidSlides.every(slide =>
-        isSlideUsed(slide.indicator, slide.state, slide.type, slide.uploadId)
+        isSlideUsed(slide.indicator, slide.state, slide.type, slide.uploadId, slide.stateId)
     );
 
     const isVideo = thumbnailUrl?.includes('.mp4');
@@ -1110,7 +1221,9 @@ const PresentationMode = () => {
                             ? 'No slide selected'
                             : currentStep?.indicator?.startsWith('user_upload') 
                                 ? `${currentStep?.categoryName ? userUploadCategories.find(c => c.name === currentStep.categoryName)?.display_name || 'User Upload' : 'User Upload'} - ${currentStep?.state || 'No state'}`
-                                : `${indicatorConfig[currentStep?.indicator]?.name.replace(' Dashboard', '') || currentStep?.indicator || 'No indicator'} - ${currentStep?.indicator === 'climate' && currentStep?.type ? `${currentStep?.state || 'No state'} (${currentStep.type.toUpperCase()})` : (currentStep?.state || 'No state')}`
+                                : currentStep?.indicator?.startsWith('ugc_')
+                                    ? `${currentStep?.indicatorName || currentStep?.indicator || 'UGC Indicator'} - ${currentStep?.state || 'No state'}`
+                                    : `${indicatorConfig[currentStep?.indicator]?.name.replace(' Dashboard', '') || currentStep?.indicator || 'No indicator'} - ${currentStep?.indicator === 'climate' && currentStep?.type ? `${currentStep?.state || 'No state'} (${currentStep.type.toUpperCase()})` : (currentStep?.state || 'No state')}`
                         }
                     </Typography>
 
@@ -1362,6 +1475,33 @@ const PresentationMode = () => {
                                     );
                                 })
                         )}
+                        {/* Add UGC indicators from file hierarchy */}
+                        {fileHierarchy
+                            .filter(table => table.name === currentTable)
+                            .flatMap(table => 
+                                (table.indicators || [])
+                                    .filter(ind => ind.is_user_generated)
+                                    .map(indicator => ({
+                                        key: `ugc_${indicator.id}`,
+                                        name: indicator.name,
+                                        indicator
+                                    }))
+                            )
+                            .map(({ key, name, indicator }) => {
+                                // Check if this indicator has states
+                                const hasStates = indicator.states && indicator.states.length > 0;
+                                if (!hasStates) return null;
+                                
+                                return (
+                                    <MenuItem 
+                                        key={key}
+                                        onClick={() => handleSelection(key, null)}
+                                        selected={presentationSequence[activeMenu.index]?.indicator === key}
+                                    >
+                                        {name}
+                                    </MenuItem>
+                                );
+                            })}
                         {userUploadCategories.map((category) => {
                             const categoryUploads = userUploads.filter(u => u.categoryName === category.name);
                             if (categoryUploads.length === 0) return null;
@@ -1440,14 +1580,55 @@ const PresentationMode = () => {
                     
                     const tableStates = getTableStates();
 
-                    if (indicator.startsWith('user_upload')) {
+                    if (indicator.startsWith('ugc_')) {
+                        // For UGC indicators, show states from file hierarchy
+                        const indicatorId = parseInt(indicator.replace('ugc_', ''));
+                        const tableData = fileHierarchy.find(t => t.name === currentTable);
+                        const tableIndicator = tableData?.indicators?.find(ind => ind.id === indicatorId && ind.is_user_generated);
+                        
+                        if (!tableIndicator || !tableIndicator.states || tableIndicator.states.length === 0) {
+                            return (
+                                <MenuItem disabled>
+                                    <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.5)' }}>
+                                        No states available for this indicator
+                                    </Typography>
+                                </MenuItem>
+                            );
+                        }
+                        
+                        return tableIndicator.states.map(state => {
+                            const stateName = state.scenario_name || JSON.stringify(state.state_values);
+                            const isUsed = isSlideUsed(indicator, stateName, null, null, state.id, activeMenu.index);
+                            const isCurrentSelection = currentSlide?.stateId === state.id;
+                            
+                            return (
+                                <MenuItem
+                                    key={state.id}
+                                    onClick={() => !isUsed && handleSelection(indicator, stateName, null, null, null, state.id, tableIndicator.name, tableData?.display_name || tableData?.name)}
+                                    selected={isCurrentSelection}
+                                    disabled={isUsed && !isCurrentSelection}
+                                    sx={{
+                                        opacity: isUsed && !isCurrentSelection ? 0.4 : 1,
+                                        '&.Mui-disabled': { opacity: 0.4 }
+                                    }}
+                                >
+                                    {stateName}
+                                    {isUsed && !isCurrentSelection && (
+                                        <Typography variant="caption" sx={{ ml: 1, color: 'text.secondary' }}>
+                                            (in use)
+                                        </Typography>
+                                    )}
+                                </MenuItem>
+                            );
+                        });
+                    } else if (indicator.startsWith('user_upload')) {
                         // For user uploads, show list of uploads from the selected category
                         const categoryName = indicator.replace('user_upload_', '');
                         const categoryUploads = userUploads.filter(u => 
                             categoryName ? u.categoryName === categoryName : !u.categoryName
                         );
                         return categoryUploads.map(upload => {
-                            const isUsed = isSlideUsed(indicator, upload.displayName, null, upload.id, activeMenu.index);
+                            const isUsed = isSlideUsed(indicator, upload.displayName, null, upload.id, null, activeMenu.index);
                             const isCurrentSelection = currentSlide?.uploadId === upload.id;
                             return (
                                 <MenuItem
@@ -1492,7 +1673,7 @@ const PresentationMode = () => {
                         
                         Array.from(uniqueStates.values()).forEach(state => {
                             if (!isValidSlide(indicator, state.name)) return;
-                            const isUsed = isSlideUsed(indicator, state.name, state.type, null, activeMenu.index);
+                            const isUsed = isSlideUsed(indicator, state.name, state.type, null, null, activeMenu.index);
                             const isCurrentSelection = currentSlide?.state === state.name && currentSlide?.type === state.type;
                             items.push(
                                 <MenuItem
@@ -1529,7 +1710,7 @@ const PresentationMode = () => {
                         
                         return tableStates.map(state => {
                             if (!isValidSlide(indicator, state.name)) return null;
-                            const isUsed = isSlideUsed(indicator, state.name, null, null, activeMenu.index);
+                            const isUsed = isSlideUsed(indicator, state.name, null, null, null, activeMenu.index);
                             const isCurrentSelection = currentSlide?.state === state.name;
                             return (
                                 <MenuItem
