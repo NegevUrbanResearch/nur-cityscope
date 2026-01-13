@@ -1,0 +1,198 @@
+// OTEF Shared Message Protocol
+// Defines message types, validation, and factory functions for WebSocket communication
+
+const OTEF_MESSAGE_TYPES = {
+  VIEWPORT_UPDATE: "otef_viewport_update",
+  VIEWPORT_CONTROL: "otef_viewport_control",
+  LAYER_UPDATE: "otef_layer_update",
+  STATE_REQUEST: "otef_state_request",
+  STATE_RESPONSE: "otef_state_response",
+};
+
+// Default layer states
+const DEFAULT_LAYER_STATES = {
+  roads: true,
+  parcels: false,
+  model: false,
+};
+
+/**
+ * Validates a message structure
+ * @param {Object} msg - Message object to validate
+ * @returns {boolean} True if valid
+ */
+function validateMessage(msg) {
+  if (!msg || typeof msg !== "object") return false;
+  if (!msg.type || !Object.values(OTEF_MESSAGE_TYPES).includes(msg.type))
+    return false;
+  return true;
+}
+
+/**
+ * Validates a VIEWPORT_CONTROL message
+ * @param {Object} msg - Message to validate
+ * @returns {boolean} True if valid
+ */
+function validateViewportControl(msg) {
+  if (!validateMessage(msg)) return false;
+  if (msg.type !== OTEF_MESSAGE_TYPES.VIEWPORT_CONTROL) return false;
+
+  // Must have either pan or zoom
+  if (msg.pan && typeof msg.pan === "object") {
+    if (
+      typeof msg.pan.direction !== "string" ||
+      typeof msg.pan.delta !== "number"
+    ) {
+      return false;
+    }
+  } else if (typeof msg.zoom === "number") {
+    // Zoom is valid
+  } else {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validates a LAYER_UPDATE message
+ * @param {Object} msg - Message to validate
+ * @returns {boolean} True if valid
+ */
+function validateLayerUpdate(msg) {
+  if (!validateMessage(msg)) return false;
+  if (msg.type !== OTEF_MESSAGE_TYPES.LAYER_UPDATE) return false;
+  if (!msg.layers || typeof msg.layers !== "object") return false;
+
+  // Check that layers object has valid boolean values
+  const validLayers = ["roads", "parcels", "model"];
+  for (const key in msg.layers) {
+    if (!validLayers.includes(key)) return false;
+    if (typeof msg.layers[key] !== "boolean") return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validates a STATE_RESPONSE message
+ * @param {Object} msg - Message to validate
+ * @returns {boolean} True if valid
+ */
+function validateStateResponse(msg) {
+  if (!validateMessage(msg)) return false;
+  if (msg.type !== OTEF_MESSAGE_TYPES.STATE_RESPONSE) return false;
+  if (!msg.viewport || !msg.layers) return false;
+
+  // Validate viewport structure
+  if (
+    !msg.viewport.bbox ||
+    !Array.isArray(msg.viewport.bbox) ||
+    msg.viewport.bbox.length !== 4
+  ) {
+    return false;
+  }
+  if (typeof msg.viewport.zoom !== "number") return false;
+
+  // Validate layers
+  if (
+    !validateLayerUpdate({
+      type: OTEF_MESSAGE_TYPES.LAYER_UPDATE,
+      layers: msg.layers,
+    })
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Message factory: Create VIEWPORT_CONTROL message for panning
+ * @param {string} direction - Pan direction: 'north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest'
+ * @param {number} delta - Pan distance percentage (0-1, typically 0.1-0.2)
+ * @returns {Object} Message object
+ */
+function createPanControlMessage(direction, delta = 0.15) {
+  return {
+    type: OTEF_MESSAGE_TYPES.VIEWPORT_CONTROL,
+    pan: {
+      direction: direction,
+      delta: delta,
+    },
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * Message factory: Create VIEWPORT_CONTROL message for zooming
+ * @param {number} zoom - Target zoom level
+ * @returns {Object} Message object
+ */
+function createZoomControlMessage(zoom) {
+  return {
+    type: OTEF_MESSAGE_TYPES.VIEWPORT_CONTROL,
+    zoom: zoom,
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * Message factory: Create LAYER_UPDATE message
+ * @param {Object} layers - Layer states object { roads: boolean, parcels: boolean, model: boolean }
+ * @returns {Object} Message object
+ */
+function createLayerUpdateMessage(layers) {
+  return {
+    type: OTEF_MESSAGE_TYPES.LAYER_UPDATE,
+    layers: { ...layers },
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * Message factory: Create STATE_REQUEST message
+ * @returns {Object} Message object
+ */
+function createStateRequestMessage() {
+  return {
+    type: OTEF_MESSAGE_TYPES.STATE_REQUEST,
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * Message factory: Create STATE_RESPONSE message
+ * @param {Object} viewport - Viewport state { bbox: [minX, minY, maxX, maxY], zoom: number, corners?: object }
+ * @param {Object} layers - Layer states { roads: boolean, parcels: boolean, model: boolean }
+ * @returns {Object} Message object
+ */
+function createStateResponseMessage(viewport, layers) {
+  return {
+    type: OTEF_MESSAGE_TYPES.STATE_RESPONSE,
+    viewport: {
+      bbox: viewport.bbox,
+      zoom: viewport.zoom,
+      corners: viewport.corners || null,
+    },
+    layers: { ...layers },
+    timestamp: Date.now(),
+  };
+}
+
+// Export for use in other modules
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    OTEF_MESSAGE_TYPES,
+    DEFAULT_LAYER_STATES,
+    validateMessage,
+    validateViewportControl,
+    validateLayerUpdate,
+    validateStateResponse,
+    createPanControlMessage,
+    createZoomControlMessage,
+    createLayerUpdateMessage,
+    createStateRequestMessage,
+    createStateResponseMessage,
+  };
+}
