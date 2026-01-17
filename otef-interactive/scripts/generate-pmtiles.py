@@ -25,7 +25,7 @@ except ImportError:
 # Paths
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-DATA_SOURCE = PROJECT_ROOT / "public" / "layers"
+DATA_SOURCE = PROJECT_ROOT / "public" / "source" / "layers"
 OUTPUT_DIR = PROJECT_ROOT / "frontend" / "data"
 
 print("Generating PMTiles using Python...")

@@ -10,7 +10,7 @@ echo.
 REM Get script directory and project root
 set SCRIPT_DIR=%~dp0
 set PROJECT_ROOT=%SCRIPT_DIR%..
-set DATA_SOURCE=%PROJECT_ROOT%\public\layers
+set DATA_SOURCE=%PROJECT_ROOT%\public\source\layers
 set OUTPUT_DIR=%PROJECT_ROOT%\frontend\data
 
 echo Source: %DATA_SOURCE%
@@ -48,7 +48,7 @@ docker run --rm -v "%PROJECT_ROOT%:/data" yonesmiller/tippecanoe:latest ^
   --layer=parcels ^
   --name="OTEF Parcels" ^
   --force ^
-  /data/public/layers/migrashim.json
+  /data/public/source/layers/migrashim.json
 
 if errorlevel 1 (
     echo ERROR: Failed to generate parcels tiles
@@ -70,7 +70,7 @@ docker run --rm -v "%PROJECT_ROOT%:/data" yonesmiller/tippecanoe:latest ^
   --layer=roads ^
   --name="OTEF Roads" ^
   --force ^
-  /data/public/layers/small_roads.json
+  /data/public/source/layers/small_roads.json
 
 if errorlevel 1 (
     echo ERROR: Failed to generate roads tiles

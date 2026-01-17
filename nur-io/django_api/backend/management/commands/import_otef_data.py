@@ -18,9 +18,14 @@ class Command(BaseCommand):
             return
         
         # Import model config (using mounted Docker path)
+        # Try import folder first, then fallback to frontend/data for backward compatibility
         model_bounds_path = os.path.join(
-            settings.BASE_DIR, 'otef-interactive', 'frontend', 'data', 'model-bounds.json'
+            settings.BASE_DIR, 'otef-interactive', 'public', 'import', 'model-bounds.json'
         )
+        if not os.path.exists(model_bounds_path):
+            model_bounds_path = os.path.join(
+                settings.BASE_DIR, 'otef-interactive', 'frontend', 'data', 'model-bounds.json'
+            )
         
         if os.path.exists(model_bounds_path):
             with open(model_bounds_path) as f:
@@ -46,13 +51,13 @@ class Command(BaseCommand):
             {
                 'name': 'parcels',
                 'display_name': 'Parcels (Migrashim)',
-                'file_path': self._get_layer_path('layers-simplified', 'migrashim_simplified.json'),
+                'file_path': self._get_layer_path('import', 'layers', 'migrashim_simplified.json'),
                 'order': 1
             },
             {
                 'name': 'roads',
                 'display_name': 'Roads',
-                'file_path': self._get_layer_path('layers-simplified', 'small_roads_simplified.json'),
+                'file_path': self._get_layer_path('import', 'layers', 'small_roads_simplified.json'),
                 'order': 2
             }
         ]
@@ -95,10 +100,11 @@ class Command(BaseCommand):
             self.style.SUCCESS('\n[SUCCESS] OTEF data import completed!')
         )
     
-    def _get_layer_path(self, subdir, filename):
+    def _get_layer_path(self, *path_parts):
         """Get layer file path (using mounted Docker path)"""
+        # path_parts: e.g., ('import', 'layers', 'filename.json')
         return os.path.join(
-            settings.BASE_DIR, 'otef-interactive', 'public', subdir, filename
+            settings.BASE_DIR, 'otef-interactive', 'public', *path_parts
         )
     
     def _get_default_style(self, layer_name):

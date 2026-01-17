@@ -153,8 +153,8 @@ def main():
     print(f"Project root: {project_root}\n")
     
     # Simplify parcels (aggressive - for web display)
-    parcels_input = project_root / "public" / "layers" / "migrashim.json"
-    parcels_output = project_root / "public" / "layers-simplified" / "migrashim_simplified.json"
+    parcels_input = project_root / "public" / "source" / "layers" / "migrashim.json"
+    parcels_output = project_root / "public" / "import" / "layers" / "migrashim_simplified.json"
     
     if parcels_input.exists():
         # Use 5-meter tolerance for parcels (won't be visually noticeable)
@@ -163,8 +163,8 @@ def main():
         print(f"WARNING: {parcels_input} not found")
     
     # Simplify roads (moderate - need more detail for roads)
-    roads_input = project_root / "public" / "layers-fixed" / "small_roads_fixed.json"
-    roads_output = project_root / "public" / "layers-simplified" / "small_roads_simplified.json"
+    roads_input = project_root / "public" / "source" / "layers" / "small_roads.json"
+    roads_output = project_root / "public" / "import" / "layers" / "small_roads_simplified.json"
     
     if roads_input.exists():
         # Use 2-meter tolerance for roads
@@ -176,8 +176,8 @@ def main():
     print("SIMPLIFICATION COMPLETE!")
     print("=" * 80)
     print("\nTo use simplified layers, update your frontend code:")
-    print("- Use '../public/layers-simplified/migrashim_simplified.json'")
-    print("- Use '../public/layers-simplified/small_roads_simplified.json'")
+    print("- Use '../public/import/layers/migrashim_simplified.json'")
+    print("- Use '../public/import/layers/small_roads_simplified.json'")
     print("\nNote: Always keep original files as backup!")
 
 

@@ -34,7 +34,7 @@ class DataAnalyzer:
     
     def __init__(self, project_root):
         self.project_root = Path(project_root)
-        self.data_source = self.project_root / "public"
+        self.data_source = self.project_root / "public" / "source"
         self.model_dir = self.data_source / "model"
         self.layers_dir = self.data_source / "layers"
         

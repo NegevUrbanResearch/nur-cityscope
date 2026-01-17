@@ -82,7 +82,7 @@ if (Test-Path $logoSource) {
 }
 
 # Setup OTEF Interactive module (simplified layers are auto-generated if missing)
-$simplifiedLayers = "$SCRIPT_DIR\otef-interactive\public\layers-simplified\migrashim_simplified.json"
+$simplifiedLayers = "$SCRIPT_DIR\otef-interactive\public\import\layers\migrashim_simplified.json"
 if (-not (Test-Path $simplifiedLayers)) {
     Write-Host "Generating simplified GeoJSON layers for OTEF..." -ForegroundColor Cyan
     $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
