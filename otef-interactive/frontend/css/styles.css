@@ -145,6 +145,15 @@ body {
     color: #333;
     margin-bottom: 10px;
     padding-bottom: 8px;
+}
+
+.map-legend-title:not(.has-groups) {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.map-legend-title.has-groups {
+    margin-bottom: 0;
+    padding-bottom: 12px;
     border-bottom: 1px solid rgba(0, 0, 0, 0.1);
 }
 
@@ -180,10 +189,10 @@ body {
     border-top: 1px solid rgba(0, 0, 0, 0.1);
 }
 
-.map-legend-group:first-child {
+.map-legend-title + .map-legend-group {
     margin-top: 0;
-    padding-top: 0;
-    border-top: none;
+    padding-top: 8px;
+    border-top: none !important;
 }
 
 .map-legend-group-title {

@@ -685,7 +685,7 @@ function updateMapLegend() {
     return;
   }
 
-  let html = '<div class="map-legend-title">Legend</div>';
+  let html = '<div class="map-legend-title has-groups">Legend</div>';
 
   activeLayers.forEach((group, groupIndex) => {
     html += '<div class="map-legend-group">';
