@@ -19,10 +19,10 @@ const TableSwitcherPopup = () => {
   }, [availableTables, currentTable, changeTable]);
 
   const handleKeyDown = useCallback((event) => {
-    if (event.key === 'Z' && event.shiftKey) {
+    if (event.key.toLowerCase() === 'z' && event.shiftKey) {
       event.preventDefault();
       setIsOpen(prev => !prev);
-    } else if (isOpen && event.key === 'T' && !event.shiftKey) {
+    } else if (event.key.toLowerCase() === 't' && !event.shiftKey) {
       event.preventDefault();
       switchToNextTable();
     } else if (isOpen && event.key === 'Escape') {
@@ -101,7 +101,7 @@ const TableSwitcherPopup = () => {
         </Typography>
         <Typography variant="body2" sx={{ fontSize: '0.85rem', lineHeight: 1.6 }}>
           <strong>Shift+Z</strong> - Toggle this panel<br />
-          <strong>T</strong> - Switch to next table (when panel is open)<br />
+          <strong>T</strong> - Switch to next table<br />
           <strong>Esc</strong> - Close panel
         </Typography>
       </Box>

@@ -87,7 +87,7 @@ class TableSwitcherPopup {
         <p style="margin: 5px 0; color: rgba(255,255,255,0.7);"><strong>Keyboard Shortcuts:</strong></p>
         <p style="margin: 5px 0; font-size: 0.85rem; line-height: 1.6;">
           <strong>Shift+Z</strong> - Toggle this panel<br>
-          <strong>T</strong> - Switch to next table (when panel is open)<br>
+          <strong>T</strong> - Switch to next table<br>
           <strong>Esc</strong> - Close panel
         </p>
       </div>
@@ -119,10 +119,10 @@ class TableSwitcherPopup {
 
   attachKeyboardListeners() {
     window.addEventListener('keydown', (event) => {
-      if (event.key === 'Z' && event.shiftKey) {
+      if (event.key.toLowerCase() === 'z' && event.shiftKey) {
         event.preventDefault();
         this.toggle();
-      } else if (this.isOpen && event.key === 'T' && !event.shiftKey) {
+      } else if (event.key.toLowerCase() === 't' && !event.shiftKey) {
         event.preventDefault();
         this.switchToNextTable();
       } else if (this.isOpen && event.key === 'Escape') {
