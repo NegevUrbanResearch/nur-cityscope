@@ -185,8 +185,6 @@ export const DataProvider = ({ children }) => {
   const globalDurationRef = useRef(globalDuration);
   const currentTableRef = useRef(currentTable);
 
-  const [prevIndicator, setPrevIndicator] = useState(null);
-  const [prevVisualizationMode, setPrevVisualizationMode] = useState(null);
   
   // Refs for functions to avoid circular dependencies
   const changeIndicatorRef = useRef(null);
@@ -1132,80 +1130,6 @@ export const DataProvider = ({ children }) => {
         changeState
     ]);
   
-    const togglePresentationMode = useCallback(async (isEntering, autoPlay = false) => {
-        if (isEntering) {
-            console.log("✓ Starting Presentation Mode");
-            // Save current state
-            setPrevIndicator(indicatorRef.current);
-            setPrevVisualizationMode(visualizationModeRef.current);
-
-            // Force 'image' mode for presentation
-            if (visualizationModeRef.current !== 'image') {
-                 handleVisualizationModeChange(null, 'image');
-            }
-
-            // First, try to fetch existing presentation state from backend
-            // This ensures we sync with any existing remote controller session
-            try {
-                const existingState = await api.get("/api/actions/get_presentation_state/");
-                if (existingState.data && existingState.data.sequence && existingState.data.sequence.length > 0) {
-                    // Backend has existing state - sync with it
-                    console.log("📡 Syncing with existing presentation state from backend");
-                    setPresentationSequence(existingState.data.sequence);
-                    setSequenceIndex(existingState.data.sequence_index || 0);
-                    setGlobalDuration(existingState.data.duration || 10);
-                    setIsPresentationMode(true);
-                    // Don't auto-play if backend isn't playing (respect remote controller state)
-                    setIsPlaying(existingState.data.is_playing || autoPlay);
-                    return;
-                }
-            } catch (err) {
-                console.log("No existing presentation state, starting fresh");
-            }
-
-            // No existing state - start fresh
-            setIsPresentationMode(true);
-            // Update ref immediately so togglePlayPause works
-            isPresentationModeRef.current = true;
-            setSequenceIndex(0);
-            setIsPlaying(autoPlay);
-            isPlayingRef.current = autoPlay;
-
-            // Sync our state to backend for remote controller
-            try {
-                await api.post("/api/actions/set_presentation_state/", {
-                    table: currentTable,
-                    is_playing: autoPlay,
-                    sequence: presentationSequenceRef.current || [],
-                    sequence_index: 0,
-                    duration: globalDurationRef.current
-                });
-                console.log(`✓ Presentation state synced to backend for table '${currentTable}'`);
-            } catch (err) {
-                console.error("Error syncing presentation state:", err);
-            }
-        } else {
-            console.log("✓ Stopping Presentation Mode");
-            setIsPlaying(false);
-            setIsPresentationMode(false);
-            // Sync with backend
-            try {
-                await api.post("/api/actions/set_presentation_state/", { 
-                    table: currentTable,
-                    is_playing: false 
-                });
-            } catch (err) {
-                console.error("Error syncing presentation state:", err);
-            }
-            
-            // Restore state
-            setTimeout(() => {
-                if (prevIndicator) changeIndicator(prevIndicator);
-                if (prevVisualizationMode) handleVisualizationModeChange(null, prevVisualizationMode);
-            }, 100);
-        }
-    }, [prevIndicator, prevVisualizationMode, changeIndicator, handleVisualizationModeChange]);
-  
     const skipToNextStep = useCallback(() => {
       // Guard: only allow skipping when playing
       if (!isPlayingRef.current) {
@@ -1303,7 +1227,6 @@ export const DataProvider = ({ children }) => {
     visualizationMode,
     handleVisualizationModeChange,
     isPresentationMode, 
-    togglePresentationMode, 
     presentationSequence, 
     setPresentationSequence,
     isPlaying, 

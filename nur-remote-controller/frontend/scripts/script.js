@@ -87,8 +87,21 @@ class PresentationRemote {
             previewContainer: document.getElementById('previewContainer'),
             dropdownMenu: document.getElementById('dropdownMenu'),
             dropdownContent: document.getElementById('dropdownContent'),
-            tableSelector: document.getElementById('tableSelector')
+            tableSelector: document.getElementById('tableSelector'),
+            backToDashboardBtn: document.getElementById('backToDashboardBtn')
         };
+
+        // Detect if desktop (screen width >= 1024px)
+        this.isDesktop = window.innerWidth >= 1024;
+        
+        // Update desktop detection on resize
+        window.addEventListener('resize', () => {
+            const wasDesktop = this.isDesktop;
+            this.isDesktop = window.innerWidth >= 1024;
+            if (wasDesktop !== this.isDesktop) {
+                this.updateDesktopLayout();
+            }
+        });
 
         this.init();
     }
@@ -245,12 +258,29 @@ class PresentationRemote {
         this.elements.addSlideBtn.addEventListener('click', () => this.addSlide());
         this.elements.tableSelector.addEventListener('change', (e) => this.changeTable(e.target.value));
         
+        // Back to dashboard button (desktop only)
+        if (this.elements.backToDashboardBtn) {
+            this.elements.backToDashboardBtn.addEventListener('click', () => {
+                window.location.href = '/dashboard/mobility';
+            });
+        }
+        
         // Close dropdown when clicking backdrop
         this.elements.dropdownMenu.addEventListener('click', (e) => {
             if (e.target === this.elements.dropdownMenu) {
                 this.closeDropdown();
             }
         });
+        
+        // Update desktop layout on init
+        this.updateDesktopLayout();
+    }
+    
+    updateDesktopLayout() {
+        // Show/hide back button based on device
+        if (this.elements.backToDashboardBtn) {
+            this.elements.backToDashboardBtn.style.display = this.isDesktop ? 'flex' : 'none';
+        }
     }
     
     async changeTable(tableName) {

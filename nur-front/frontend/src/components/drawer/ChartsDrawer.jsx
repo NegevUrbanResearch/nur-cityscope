@@ -57,7 +57,7 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
   };
 
   const handleOpenPresentation = () => {
-    navigate('/presentation');
+    window.location.href = '/remote-controller/';
   };
 
   const handleOpenUserUploads = () => {

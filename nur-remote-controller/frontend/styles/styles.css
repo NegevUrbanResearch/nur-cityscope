@@ -46,6 +46,16 @@ body {
     padding-bottom: calc(env(safe-area-inset-bottom, 12px) + 12px);
 }
 
+/* Desktop layout */
+@media (min-width: 1024px) {
+    .remote-container {
+        max-width: 100%;
+        padding: 24px;
+        height: 100vh;
+        overflow: hidden;
+    }
+}
+
 /* Header */
 .header {
     display: flex;
@@ -54,6 +64,13 @@ body {
     padding-bottom: 10px;
     border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
+}
+
+@media (min-width: 1024px) {
+    .header {
+        padding: 16px 24px;
+        padding-bottom: 16px;
+    }
 }
 
 .logo {
@@ -93,10 +110,98 @@ body {
     box-shadow: 0 0 0 2px rgba(100, 181, 246, 0.2);
 }
 
+.back-to-dashboard-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.back-to-dashboard-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.back-to-dashboard-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-light);
+}
+
+.back-to-dashboard-btn:active {
+    transform: scale(0.98);
+}
+
+/* Main content area (desktop) */
+.main-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+@media (min-width: 1024px) {
+    .main-content {
+        flex-direction: row;
+        gap: 24px;
+        padding: 0;
+    }
+}
+
+/* Left panel (desktop) */
+.left-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+@media (min-width: 1024px) {
+    .left-panel {
+        flex: 1;
+        align-items: center;
+        justify-content: center;
+    }
+}
+
+/* Right panel (desktop) */
+.right-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+}
+
+@media (min-width: 1024px) {
+    .right-panel {
+        width: 380px;
+        flex-shrink: 0;
+        background: var(--bg-secondary);
+        border-radius: 8px;
+        padding: 16px;
+        overflow: hidden;
+    }
+}
+
 /* Preview section - compact */
 .preview-section {
     padding: 10px 0;
     flex-shrink: 0;
+}
+
+@media (min-width: 1024px) {
+    .preview-section {
+        padding: 0 0 24px 0;
+        width: 100%;
+        max-width: 900px;
+    }
 }
 
 .preview-container {
@@ -108,6 +213,14 @@ body {
     overflow: hidden;
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
+}
+
+@media (min-width: 1024px) {
+    .preview-container {
+        max-width: 100%;
+        border-radius: 8px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
 }
 
 .preview-container img,
@@ -132,6 +245,12 @@ body {
     text-align: center;
     padding: 6px 0 10px;
     flex-shrink: 0;
+}
+
+@media (min-width: 1024px) {
+    .current-slide-display {
+        padding: 16px 0 24px 0;
+    }
 }
 
 .slide-label {
@@ -178,6 +297,14 @@ body {
     border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
     flex-wrap: wrap;
+}
+
+@media (min-width: 1024px) {
+    .controls-section {
+        border-bottom: none;
+        padding: 24px 0;
+        gap: 16px;
+    }
 }
 
 /* Navigation controls */
@@ -335,6 +462,17 @@ body {
     padding-top: 10px;
 }
 
+@media (min-width: 1024px) {
+    .slides-section {
+        padding-top: 0;
+        min-height: 0;
+        height: 100%;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+}
+
 .slides-header {
     display: flex;
     align-items: center;
@@ -382,6 +520,34 @@ body {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+@media (min-width: 1024px) {
+    .slides-list {
+        gap: 8px;
+        padding-right: 4px;
+    }
+    
+    .slides-list::-webkit-scrollbar {
+        width: 8px;
+    }
+    
+    .slides-list::-webkit-scrollbar-track {
+        background: var(--bg-tertiary);
+        border-radius: 4px;
+    }
+    
+    .slides-list::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 4px;
+    }
+    
+    .slides-list::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.35);
+    }
 }
 
 /* Slide item */

@@ -18,7 +18,6 @@ import {
 import darkTheme from "./theme";
 import Navbar from "./components/Navbar";
 import Dashboard from "./pages/Dashboard";
-import PresentationMode from "./pages/PresentationMode";
 import UserUploads from "./pages/UserUploads";
 import { useAppData } from "./DataContext";
 import { setupGlobalErrorHandlers } from "./utils/errorLogger";
@@ -65,16 +64,15 @@ const App = () => {
 
   // Restore drawer state when exiting presentation mode
   useEffect(() => {
-    if (!isPresentationMode && !location.pathname.includes('/presentation')) {
+    if (!isPresentationMode) {
       // Restore the drawer state
       setOpenCharts(prevOpenChartsRef.current);
     }
-  }, [isPresentationMode, location.pathname]);
+  }, [isPresentationMode]);
 
   const getIndicatorFromPath = useCallback((path) => {
     if (path.includes("/mobility")) return "mobility";
     if (path.includes("/climate")) return "climate";
-    if (path.includes("/presentation")) return "presentation";
     if (path.includes("/user-uploads")) return "user-uploads";
     return null;
   }, []);
@@ -88,12 +86,12 @@ const App = () => {
     if (isPresentationMode) return; 
 
     const pathIndicator = getIndicatorFromPath(location.pathname);
-    // Skip syncing for special routes (presentation, user-uploads)
-    if (pathIndicator === 'presentation' || pathIndicator === 'user-uploads') {
+    // Skip syncing for special routes (user-uploads)
+    if (pathIndicator === 'user-uploads') {
       return;
     }
-    
-    if (currentIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation' && pathIndicator !== 'user-uploads') {
+
+    if (currentIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'user-uploads') {
       console.log(`Context changed to '${currentIndicator}'. Navigating to sync URL.`);
       // Set navigation target BEFORE navigating to guard against URL->Context sync
       navigationTargetRef.current = currentIndicator;
@@ -101,13 +99,13 @@ const App = () => {
     }
   }, [currentIndicator, location.pathname, navigate, getIndicatorFromPath, isPresentationMode]);
 
-  // Effect: Sync URL -> Context (for non-presentation and non-special routes)
+  // Effect: Sync URL -> Context (for non-special routes)
   // This effect handles when URL changes (e.g., user clicks browser back/forward or navbar)
   useEffect(() => {
     const pathIndicator = getIndicatorFromPath(location.pathname);
 
-    // Skip syncing for special routes (presentation, user-uploads)
-    if (pathIndicator === 'presentation' || pathIndicator === 'user-uploads') {
+    // Skip syncing for special routes (user-uploads)
+    if (pathIndicator === 'user-uploads') {
       return;
     }
 
@@ -123,17 +121,14 @@ const App = () => {
       return;
     }
     
-    if (pathIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'presentation' && pathIndicator !== 'user-uploads') {
+    if (pathIndicator && pathIndicator !== currentIndicator && pathIndicator !== 'user-uploads') {
       console.log(`URL changed to '${pathIndicator}'. Syncing context.`);
       changeIndicator(pathIndicator);
     }
   }, [location.pathname, changeIndicator, currentIndicator, getIndicatorFromPath]);
 
-  // Check if we're in presentation mode (either by state or URL)
-  const isInPresentationMode = isPresentationMode || location.pathname.includes('/presentation');
-  
-  // Don't show navbar in presentation mode or UGC management pages
-  const showNavbar = !isInPresentationMode && !location.pathname.includes('/user-uploads');
+  // Don't show navbar in UGC management pages
+  const showNavbar = !location.pathname.includes('/user-uploads');
 
   return (
     <ThemeProvider theme={darkTheme}>
@@ -158,7 +153,7 @@ const App = () => {
 
         <main style={{ flex: 1 }}>
           <TableSwitcherPopup />
-          {loading && !isInPresentationMode ? (
+          {loading ? (
             <Box
               sx={{
                 display: "flex",
@@ -196,7 +191,6 @@ const App = () => {
             </Box>
           ) : (
             <Routes>
-              <Route path="presentation" element={<PresentationMode />} />
               <Route path="user-uploads" element={<UserUploads />} />
               <Route path="mobility" element={<DashboardWrapper openCharts={openCharts} />} />
               <Route path="climate" element={<DashboardWrapper openCharts={openCharts} />} />

@@ -17,69 +17,81 @@
             <select id="tableSelector" class="table-selector">
                 <option value="idistrict">iDistrict</option>
             </select>
+            <button id="backToDashboardBtn" class="back-to-dashboard-btn" style="display: none;">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+                <span>Back to Dashboard</span>
+            </button>
         </header>
 
-        <!-- Preview thumbnail -->
-        <div class="preview-section">
-            <div class="preview-container" id="previewContainer">
-                <div class="preview-placeholder">
-                    <span>Loading preview...</span>
+        <!-- Main Content Area (desktop layout) -->
+        <div class="main-content">
+            <!-- Left Panel - Preview and Controls (desktop) -->
+            <div class="left-panel">
+                <!-- Preview thumbnail -->
+                <div class="preview-section">
+                    <div class="preview-container" id="previewContainer">
+                        <div class="preview-placeholder">
+                            <span>Loading preview...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Current slide display -->
+                <div class="current-slide-display">
+                    <span class="slide-label">Now Showing</span>
+                    <div class="slide-info">
+                        <span class="indicator-name">-</span>
+                        <span class="separator">—</span>
+                        <span class="state-name">-</span>
+                    </div>
+                </div>
+
+                <!-- Main controls -->
+                <div class="controls-section">
+                    <div class="navigation-controls">
+                        <button class="nav-btn prev-btn" id="prevBtn" disabled>
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                        </button>
+                        
+                        <div class="slide-counter">
+                            <span class="current-index">1</span>
+                            <span class="counter-sep">/</span>
+                            <span class="total-slides">1</span>
+                        </div>
+                        
+                        <button class="nav-btn next-btn" id="nextBtn" disabled>
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg>
+                        </button>
+                    </div>
+
+                    <button class="play-pause-btn" id="playPauseBtn">
+                        <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                        <svg class="pause-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                    </button>
+
+                    <div class="duration-controls">
+                        <div class="duration-adjuster">
+                            <button class="duration-btn minus" id="durationMinus">−</button>
+                            <span class="duration-value" id="durationValue">10s</span>
+                            <button class="duration-btn plus" id="durationPlus">+</button>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Current slide display -->
-        <div class="current-slide-display">
-            <span class="slide-label">Now Showing</span>
-            <div class="slide-info">
-                <span class="indicator-name">-</span>
-                <span class="separator">—</span>
-                <span class="state-name">-</span>
-            </div>
-        </div>
-
-        <!-- Main controls -->
-        <div class="controls-section">
-            <div class="navigation-controls">
-                <button class="nav-btn prev-btn" id="prevBtn" disabled>
-                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
-                </button>
-                
-                <div class="slide-counter">
-                    <span class="current-index">1</span>
-                    <span class="counter-sep">/</span>
-                    <span class="total-slides">1</span>
+            <!-- Right Panel - Slide sequence list (desktop) -->
+            <div class="right-panel">
+                <div class="slides-section">
+                    <div class="slides-header">
+                        <h2 class="section-title">Sequence</h2>
+                        <button class="add-slide-btn" id="addSlideBtn">
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                        </button>
+                    </div>
+                    <div class="slides-list" id="slidesList">
+                        <!-- Slides will be dynamically populated -->
+                    </div>
                 </div>
-                
-                <button class="nav-btn next-btn" id="nextBtn" disabled>
-                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg>
-                </button>
-            </div>
-
-            <button class="play-pause-btn" id="playPauseBtn">
-                <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-                <svg class="pause-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-            </button>
-
-            <div class="duration-controls">
-                <div class="duration-adjuster">
-                    <button class="duration-btn minus" id="durationMinus">−</button>
-                    <span class="duration-value" id="durationValue">10s</span>
-                    <button class="duration-btn plus" id="durationPlus">+</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Slide sequence list -->
-        <div class="slides-section">
-            <div class="slides-header">
-                <h2 class="section-title">Sequence</h2>
-                <button class="add-slide-btn" id="addSlideBtn">
-                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-                </button>
-            </div>
-            <div class="slides-list" id="slidesList">
-                <!-- Slides will be dynamically populated -->
             </div>
         </div>
     </div>
