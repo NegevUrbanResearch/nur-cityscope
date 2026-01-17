@@ -10,8 +10,7 @@ services:
       - ./nur-io/django_api/.:/app
       - nur-api_data:/app/data
       - media_files:/app/media # Share media files with nginx
-      - ./otef-interactive/public:/app/otef-interactive/public # Mount OTEF public data for import
-      - ./otef-interactive/frontend/data:/app/otef-interactive/frontend/data # Mount model bounds
+      - ./otef-interactive/frontend/data:/app/otef-interactive/frontend/data # Mount model images
     depends_on:
       db:
         condition: service_healthy
