@@ -126,9 +126,9 @@ server {
         return 301 /remote-controller/;
     }
 
-    # OTEF Data Source (MUST come BEFORE /otef-interactive/ - more specific match)
-    location ^~ /otef-interactive/data-source/ {
-        alias /usr/share/nginx/html/otef-interactive/data-source/;
+    # OTEF Public Data (MUST come BEFORE /otef-interactive/ - more specific match)
+    location ^~ /otef-interactive/public/ {
+        alias /usr/share/nginx/html/otef-interactive/public/;
         add_header Access-Control-Allow-Origin *;
         add_header Content-Type application/json;
         expires 1h;

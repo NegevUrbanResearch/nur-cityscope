@@ -43,7 +43,7 @@ echo "Ensuring logo is accessible in nginx container..."
 docker cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
 
 # Setup OTEF Interactive module (simplified layers are auto-generated if missing)
-if [ ! -f "$SCRIPT_DIR/otef-interactive/data-source/layers-simplified/migrashim_simplified.json" ]; then
+if [ ! -f "$SCRIPT_DIR/otef-interactive/public/layers-simplified/migrashim_simplified.json" ]; then
     echo "Generating simplified GeoJSON layers for OTEF..."
     python3 "$SCRIPT_DIR/otef-interactive/scripts/simplify_geometries.py"
 fi

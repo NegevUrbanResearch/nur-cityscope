@@ -4,7 +4,7 @@
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-DATA_SOURCE="$PROJECT_ROOT/data-source/layers"
+DATA_SOURCE="$PROJECT_ROOT/public/layers"
 OUTPUT_DIR="$PROJECT_ROOT/frontend/data"
 
 echo "Generating PMTiles..."

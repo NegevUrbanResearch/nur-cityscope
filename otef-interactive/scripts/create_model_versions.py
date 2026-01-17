@@ -12,7 +12,7 @@ from pathlib import Path
 
 def create_model_versions():
     project_root = Path(__file__).parent.parent
-    tif_path = project_root / "data-source" / "model" / "Model.tif"
+    tif_path = project_root / "public" / "model" / "Model.tif"
     output_proj = project_root / "frontend" / "data" / "model.png"
     output_interactive = project_root / "frontend" / "data" / "model-transparent.png"
     

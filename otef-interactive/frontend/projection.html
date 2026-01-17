@@ -124,6 +124,9 @@
         }
       });
       
+      // Make tableSwitcher globally available for layer loading
+      window.tableSwitcher = tableSwitcher;
+      
       // Only show OTEF interface if table is 'otef'
       if (tableSwitcher.getCurrentTable() !== 'otef') {
         window.location.href = `/projection/?table=${tableSwitcher.getCurrentTable()}`;

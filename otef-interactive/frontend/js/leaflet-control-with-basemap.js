@@ -165,94 +165,107 @@ fetch("data/model-bounds.json")
     console.error("Error loading model bounds:", error);
   });
 
-function loadGeoJSONLayers() {
-  console.log(
-    "Loading GeoJSON layers (simplified versions for performance)..."
-  );
+async function loadGeoJSONLayers() {
+  console.log("Loading GeoJSON layers from database...");
 
-  // Load parcels (simplified)
-  fetch(
-    "/otef-interactive/data-source/layers-simplified/migrashim_simplified.json"
-  )
-    .then((res) => res.json())
-    .then((geojson) => {
-      console.log(
-        `Loaded ${geojson.features.length} parcels (EPSG:2039, simplified)`
-      );
-      console.log("Transforming parcels to WGS84...");
+  // Get current table name
+  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+
+  try {
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load layers: ${response.status} ${response.statusText}`);
+    }
+
+    const layers = await response.json();
+    console.log(`Loaded ${layers.length} layers from database`);
+
+    // Process each layer (API already filters to active layers)
+    for (const layerData of layers) {
+      let geojson;
+      
+      // Load GeoJSON data
+      if (layerData.geojson) {
+        // Data is embedded in response
+        geojson = layerData.geojson;
+      } else if (layerData.url) {
+        // Data is served via separate endpoint
+        const geojsonResponse = await fetch(layerData.url);
+        if (!geojsonResponse.ok) {
+          console.warn(`Failed to load layer data from ${layerData.url}`);
+          continue;
+        }
+        geojson = await geojsonResponse.json();
+      } else {
+        console.warn(`Layer ${layerData.name} has no data source`);
+        continue;
+      }
+
+      console.log(`Processing layer: ${layerData.display_name} (${geojson.features?.length || 0} features)`);
+      console.log("Transforming to WGS84...");
 
       const transformed = transformGeojsonToWgs84(geojson);
 
-      parcelsLayer = L.geoJSON(transformed, {
-        style:
-          typeof getParcelStyle === "function"
-            ? getParcelStyle
-            : {
-                color: "#6495ED",
-                fillColor: "#6495ED",
-                weight: 1,
-                fillOpacity: 0.3,
-                opacity: 0.8,
-              },
+      // Get style from layer config or use defaults
+      const styleConfig = layerData.style_config || {};
+      const defaultStyle = layerData.name === 'parcels' 
+        ? {
+            color: "#6495ED",
+            fillColor: "#6495ED",
+            weight: 1,
+            fillOpacity: 0.3,
+            opacity: 0.8,
+          }
+        : {
+            color: "#FF8C00",
+            weight: 2,
+            opacity: 0.8,
+          };
+
+      const layerStyle = {
+        ...defaultStyle,
+        ...styleConfig,
+      };
+
+      // Create Leaflet layer
+      const leafletLayer = L.geoJSON(transformed, {
+        style: layerData.name === 'parcels' && typeof getParcelStyle === "function"
+          ? getParcelStyle
+          : layerData.name === 'roads' && typeof getRoadStyle === "function"
+          ? getRoadStyle
+          : layerStyle,
         onEachFeature: (feature, layer) => {
-          // Bind popup with rich content
-          if (typeof createPopupContent === "function") {
+          if (layerData.name === 'parcels' && typeof createPopupContent === "function") {
             layer.bindPopup(() => createPopupContent(feature.properties));
           }
-
           layer.on("click", () => {
             showFeatureInfo(feature);
           });
         },
-      }); // Don't add to map on init
+      });
 
-      window.parcelsLayer = parcelsLayer;
-      layerState.parcels = false;
-      updateMapLegend(); // Update legend
-      console.log("Parcels layer ready (hidden by default)");
-    })
-    .catch((error) => {
-      console.error("Error loading parcels:", error);
-    });
+      // Store layer reference
+      if (layerData.name === 'parcels') {
+        parcelsLayer = leafletLayer;
+        window.parcelsLayer = parcelsLayer;
+        layerState.parcels = false;
+      } else if (layerData.name === 'roads') {
+        roadsLayer = leafletLayer;
+        window.roadsLayer = roadsLayer;
+        layerState.roads = true;
+        leafletLayer.addTo(map); // Add roads to map on init (visible by default)
+      }
 
-  // Load roads (fixed and simplified version)
-  fetch(
-    "/otef-interactive/data-source/layers-simplified/small_roads_simplified.json"
-  )
-    .then((res) => res.json())
-    .then((geojson) => {
-      console.log(
-        `Loaded ${geojson.features.length} road features (EPSG:2039, simplified)`
-      );
+      console.log(`Layer ${layerData.display_name} ready`);
+    }
 
-      // Roads are already in EPSG:2039 after fixing, so transform them
-      console.log("Transforming roads to WGS84...");
-      const transformed = transformGeojsonToWgs84(geojson);
-
-      roadsLayer = L.geoJSON(transformed, {
-        style:
-          typeof getRoadStyle === "function"
-            ? getRoadStyle
-            : {
-                color: "#FF8C00",
-                weight: 2,
-                opacity: 0.8,
-              },
-        onEachFeature: (feature, layer) => {
-          layer.on("click", () => {
-            showFeatureInfo(feature);
-          });
-        },
-      }).addTo(map); // Add to map on init (visible by default)
-
-      window.roadsLayer = roadsLayer;
-      layerState.roads = true;
-      updateMapLegend(); // Update legend
-      console.log("Roads layer ready and visible");
-    })
-    .catch((error) => {
-      console.error("Error loading roads:", error);
-    });
+    updateMapLegend();
+    console.log("All layers loaded from database");
+  } catch (error) {
+    console.error("Error loading layers from database:", error);
+    throw error;
+  }
 }
 
 /**

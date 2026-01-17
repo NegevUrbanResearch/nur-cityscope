@@ -17,11 +17,10 @@ class Command(BaseCommand):
             )
             return
         
-        # Import model config
+        # Import model config (using mounted Docker path)
         model_bounds_path = os.path.join(
-            settings.BASE_DIR, '..', '..', 'otef-interactive', 'frontend', 'data', 'model-bounds.json'
+            settings.BASE_DIR, 'otef-interactive', 'frontend', 'data', 'model-bounds.json'
         )
-        model_bounds_path = os.path.normpath(model_bounds_path)
         
         if os.path.exists(model_bounds_path):
             with open(model_bounds_path) as f:
@@ -47,19 +46,13 @@ class Command(BaseCommand):
             {
                 'name': 'parcels',
                 'display_name': 'Parcels (Migrashim)',
-                'file_path': os.path.join(
-                    settings.BASE_DIR, '..', '..', 'otef-interactive', 
-                    'data-source', 'layers-simplified', 'migrashim_simplified.json'
-                ),
+                'file_path': self._get_layer_path('layers-simplified', 'migrashim_simplified.json'),
                 'order': 1
             },
             {
                 'name': 'roads',
                 'display_name': 'Roads',
-                'file_path': os.path.join(
-                    settings.BASE_DIR, '..', '..', 'otef-interactive',
-                    'data-source', 'layers-simplified', 'small_roads_simplified.json'
-                ),
+                'file_path': self._get_layer_path('layers-simplified', 'small_roads_simplified.json'),
                 'order': 2
             }
         ]
@@ -100,6 +93,12 @@ class Command(BaseCommand):
         
         self.stdout.write(
             self.style.SUCCESS('\n[SUCCESS] OTEF data import completed!')
+        )
+    
+    def _get_layer_path(self, subdir, filename):
+        """Get layer file path (using mounted Docker path)"""
+        return os.path.join(
+            settings.BASE_DIR, 'otef-interactive', 'public', subdir, filename
         )
     
     def _get_default_style(self, layer_name):

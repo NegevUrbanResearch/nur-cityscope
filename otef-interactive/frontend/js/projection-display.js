@@ -49,6 +49,14 @@ function connectWebSocket() {
       
       // Request current state from remote controller
       requestCurrentState();
+      
+      // Retry loading roads layer if it failed during init (server might be ready now)
+      if (layerState.roads && !loadedLayers.roads) {
+        console.log("[Projection] Retrying roads layer load after WebSocket connection");
+        loadRoadsLayer().catch((error) => {
+          console.error("[Projection] Failed to load roads layer after retry:", error);
+        });
+      }
     },
     onDisconnect: () => {
       console.log("[Projection] WebSocket disconnected");
@@ -120,7 +128,14 @@ function handleStateResponse(msg) {
     // Update layer visibility to match state
     if (msg.layers.roads !== undefined && msg.layers.roads !== layerState.roads) {
       layerState.roads = msg.layers.roads;
-      updateLayerVisibility("roads", msg.layers.roads);
+      if (msg.layers.roads && !loadedLayers.roads) {
+        // Load roads layer if not already loaded
+        loadRoadsLayer().catch((error) => {
+          console.error("[Projection] Failed to load roads layer:", error);
+        });
+      } else {
+        updateLayerVisibility("roads", msg.layers.roads);
+      }
     }
 
     if (msg.layers.parcels !== undefined && msg.layers.parcels !== layerState.parcels) {
@@ -392,13 +407,17 @@ function initializeLayers() {
     return;
   }
 
-  // Load roads layer (enabled by default, matching DEFAULT_LAYER_STATES)
-  loadRoadsLayer();
-
   // Set default layer states (roads on, others off)
   layerState.roads = true;
   layerState.parcels = false;
   layerState.model = false;
+
+  // Load roads layer (enabled by default, matching DEFAULT_LAYER_STATES)
+  // Handle async call and errors gracefully
+  loadRoadsLayer().catch((error) => {
+    console.error("[Projection] Failed to load roads layer on init:", error);
+    // Will retry when WebSocket connects and state is synced
+  });
 
   // Set model image visibility to match default state
   const img = document.getElementById("displayedImage");
@@ -410,56 +429,90 @@ function initializeLayers() {
 /**
  * Load and render roads layer
  */
-function loadRoadsLayer() {
-  loadLayerData(
-    "/otef-interactive/data-source/layers-simplified/small_roads_simplified.json"
-  )
-    .then((geojson) => {
-      const displayBounds = getDisplayedImageBounds();
-      if (!displayBounds) {
-        throw new Error("Display bounds not available");
+async function loadRoadsLayer() {
+  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+
+  try {
+    // Try loading from database first
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load layers: ${response.status}`);
+    }
+
+    const layers = await response.json();
+    const roadsLayer = layers.find(l => l.name === 'roads');
+    
+    if (roadsLayer) {
+      let geojson;
+      if (roadsLayer.geojson) {
+        geojson = roadsLayer.geojson;
+      } else if (roadsLayer.url) {
+        const geojsonResponse = await fetch(roadsLayer.url);
+        if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
+        geojson = await geojsonResponse.json();
+      } else {
+        throw new Error('Layer has no data source');
       }
 
-      // Transform GeoJSON to display pixels
-      const transformed = CoordUtils.transformGeojsonToDisplayPixels(
-        geojson,
-        modelBounds,
-        displayBounds
-      );
+      await renderLayerFromGeojson(geojson, 'roads', getRoadStyle);
+      return;
+    } else {
+      throw new Error('Roads layer not found in database');
+    }
+  } catch (error) {
+    console.error("Error loading roads layer from database:", error);
+    throw error;
+  }
+}
 
-      // Set up SVG position and viewBox before rendering
-      svgOverlay.style.left = displayBounds.offsetX + "px";
-      svgOverlay.style.top = displayBounds.offsetY + "px";
-      svgOverlay.style.width = displayBounds.width + "px";
-      svgOverlay.style.height = displayBounds.height + "px";
-      svgOverlay.setAttribute(
-        "viewBox",
-        `0 0 ${displayBounds.width} ${displayBounds.height}`
-      );
+/**
+ * Helper function to render a layer from GeoJSON
+ */
+async function renderLayerFromGeojson(geojson, layerName, styleFunction) {
+  const displayBounds = getDisplayedImageBounds();
+  if (!displayBounds) {
+    throw new Error("Display bounds not available");
+  }
 
-      // Render as SVG
-      renderLayerAsSVG(svgOverlay, "roads", transformed, getRoadStyle);
+  // Transform GeoJSON to display pixels
+  const transformed = CoordUtils.transformGeojsonToDisplayPixels(
+    geojson,
+    modelBounds,
+    displayBounds
+  );
 
-      // Store for resize handling
-      loadedLayers.roads = {
-        originalGeojson: geojson,
-        styleFunction: getRoadStyle,
-      };
+  // Set up SVG position and viewBox before rendering
+  if (!svgOverlay.hasAttribute("viewBox")) {
+    svgOverlay.style.left = displayBounds.offsetX + "px";
+    svgOverlay.style.top = displayBounds.offsetY + "px";
+    svgOverlay.style.width = displayBounds.width + "px";
+    svgOverlay.style.height = displayBounds.height + "px";
+    svgOverlay.setAttribute(
+      "viewBox",
+      `0 0 ${displayBounds.width} ${displayBounds.height}`
+    );
+  }
 
-      // Set visibility based on layer state
-      updateLayerVisibility("roads", layerState.roads);
+  // Render as SVG
+  renderLayerAsSVG(svgOverlay, layerName, transformed, styleFunction);
 
-      console.log("Roads layer loaded and rendered");
-    })
-    .catch((error) => {
-      console.error("Error loading roads layer:", error);
-    });
+  // Store for resize handling
+  loadedLayers[layerName] = {
+    originalGeojson: geojson,
+    styleFunction: styleFunction,
+  };
+
+  // Set visibility based on layer state
+  updateLayerVisibility(layerName, layerState[layerName]);
+
+  console.log(`${layerName} layer loaded and rendered`);
 }
 
 /**
  * Load and render parcels layer (lazy load when enabled via WebSocket)
  */
-function loadParcelsLayer() {
+async function loadParcelsLayer() {
   // Check if already loaded
   if (loadedLayers.parcels) {
     updateLayerVisibility("parcels", layerState.parcels);
@@ -468,51 +521,40 @@ function loadParcelsLayer() {
 
   console.log("[Projection] Loading parcels layer...");
 
-  loadLayerData(
-    "/otef-interactive/data-source/layers-simplified/migrashim_simplified.json"
-  )
-    .then((geojson) => {
-      const displayBounds = getDisplayedImageBounds();
-      if (!displayBounds) {
-        throw new Error("Display bounds not available");
+  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+
+  try {
+    // Try loading from database first
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load layers: ${response.status}`);
+    }
+
+    const layers = await response.json();
+    const parcelsLayer = layers.find(l => l.name === 'parcels');
+    
+    if (parcelsLayer) {
+      let geojson;
+      if (parcelsLayer.geojson) {
+        geojson = parcelsLayer.geojson;
+      } else if (parcelsLayer.url) {
+        const geojsonResponse = await fetch(parcelsLayer.url);
+        if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
+        geojson = await geojsonResponse.json();
+      } else {
+        throw new Error('Layer has no data source');
       }
 
-      // Transform GeoJSON to display pixels
-      const transformed = CoordUtils.transformGeojsonToDisplayPixels(
-        geojson,
-        modelBounds,
-        displayBounds
-      );
-
-      // Set up SVG position and viewBox before rendering (if not already set)
-      if (!svgOverlay.hasAttribute("viewBox")) {
-        svgOverlay.style.left = displayBounds.offsetX + "px";
-        svgOverlay.style.top = displayBounds.offsetY + "px";
-        svgOverlay.style.width = displayBounds.width + "px";
-        svgOverlay.style.height = displayBounds.height + "px";
-        svgOverlay.setAttribute(
-          "viewBox",
-          `0 0 ${displayBounds.width} ${displayBounds.height}`
-        );
-      }
-
-      // Render as SVG
-      renderLayerAsSVG(svgOverlay, "parcels", transformed, getParcelStyle);
-
-      // Store for resize handling
-      loadedLayers.parcels = {
-        originalGeojson: geojson,
-        styleFunction: getParcelStyle,
-      };
-
-      // Set visibility based on layer state
-      updateLayerVisibility("parcels", layerState.parcels);
-
-      console.log("[Projection] Parcels layer loaded and rendered");
-    })
-    .catch((error) => {
-      console.error("[Projection] Error loading parcels layer:", error);
-    });
+      await renderLayerFromGeojson(geojson, 'parcels', getParcelStyle);
+      return;
+    } else {
+      throw new Error('Parcels layer not found in database');
+    }
+  } catch (error) {
+    console.error("[Projection] Error loading parcels layer from database:", error);
+    throw error;
+  }
 }
 
 /**
@@ -528,10 +570,17 @@ function handleLayerUpdate(msg) {
 
   const layers = msg.layers;
 
-  // Update roads layer
+  // Update roads layer (lazy load if needed)
   if (layers.roads !== undefined && layers.roads !== layerState.roads) {
     layerState.roads = layers.roads;
-    updateLayerVisibility("roads", layers.roads);
+    if (layers.roads && !loadedLayers.roads) {
+      // Load roads layer if not already loaded
+      loadRoadsLayer().catch((error) => {
+        console.error("[Projection] Failed to load roads layer:", error);
+      });
+    } else {
+      updateLayerVisibility("roads", layers.roads);
+    }
   }
 
   // Update parcels layer (lazy load if needed)

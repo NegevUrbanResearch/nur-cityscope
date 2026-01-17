@@ -8,6 +8,10 @@ while ! nc -z db 5432; do
 done
 echo "Database is ready!"
 
+# Create migrations for any model changes
+echo "Creating database migrations..."
+python manage.py makemigrations --no-input || true
+
 # Run migrations
 echo "Running database migrations..."
 python manage.py migrate --no-input
@@ -58,6 +62,10 @@ if [ ! -f "$INIT_FLAG" ]; then
     echo "First time initialization..."
     python manage.py create_data
     
+    # Import OTEF data (layers and model config)
+    echo "Importing OTEF GIS layers and model config..."
+    python manage.py import_otef_data || echo "Warning: OTEF data import failed (files may not exist yet)"
+    
     # Create default admin user
     python manage.py shell -c "
 from django.contrib.auth.models import User
@@ -68,6 +76,10 @@ if not User.objects.filter(username='admin').exists():
     mkdir -p "$(dirname "$INIT_FLAG")"
     touch "$INIT_FLAG"
 fi
+
+# Always try to import/update OTEF data (idempotent - won't duplicate)
+echo "Updating OTEF data (if available)..."
+python manage.py import_otef_data || echo "Note: OTEF data files not found or already up to date"
 
 # Setup media directories and copy files from public/processed
 mkdir -p /app/media/indicators

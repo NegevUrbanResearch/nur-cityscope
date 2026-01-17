@@ -10,6 +10,8 @@ services:
       - ./nur-io/django_api/.:/app
       - nur-api_data:/app/data
       - media_files:/app/media # Share media files with nginx
+      - ./otef-interactive/public:/app/otef-interactive/public # Mount OTEF public data for import
+      - ./otef-interactive/frontend/data:/app/otef-interactive/frontend/data # Mount model bounds
     depends_on:
       db:
         condition: service_healthy
@@ -49,7 +51,7 @@ services:
       - ./nur-projection/frontend:/usr/share/nginx/html/nur-projection/frontend
       - ./nur-remote-controller/frontend:/usr/share/nginx/html/nur-remote-controller/frontend
       - ./otef-interactive/frontend:/usr/share/nginx/html/otef-interactive/frontend
-      - ./otef-interactive/data-source:/usr/share/nginx/html/otef-interactive/data-source
+      - ./otef-interactive/public:/usr/share/nginx/html/otef-interactive/public
       - dashboard_build:/usr/share/nginx/html/nur-front/frontend
       - media_files:/usr/share/nginx/html/media # Mount the shared media volume
     ports:
