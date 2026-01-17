@@ -107,9 +107,21 @@ class PresentationRemote {
             const response = await this.apiGet('/api/tables/?is_active=true');
             if (response && Array.isArray(response)) {
                 this.availableTables = response;
-                // Set current table to idistrict if available, otherwise first table
-                const idistrictTable = response.find(t => t.name === 'idistrict');
-                this.currentTable = idistrictTable ? 'idistrict' : (response[0]?.name || 'idistrict');
+                // Get table from URL or default to idistrict
+                const urlParams = new URLSearchParams(window.location.search);
+                const urlTable = urlParams.get('table');
+                if (urlTable && response.find(t => t.name === urlTable)) {
+                    this.currentTable = urlTable;
+                } else {
+                    // Set current table to idistrict if available, otherwise first table
+                    const idistrictTable = response.find(t => t.name === 'idistrict');
+                    this.currentTable = idistrictTable ? 'idistrict' : (response[0]?.name || 'idistrict');
+                }
+                // If table is OTEF, redirect to OTEF remote-controller
+                if (this.currentTable === 'otef') {
+                    window.location.href = `/otef-interactive/remote-controller.html?table=otef`;
+                    return;
+                }
                 this.updateTableSelector();
                 // Fetch indicators and states for initial table
                 await this.fetchTableData();
@@ -243,7 +255,17 @@ class PresentationRemote {
     
     async changeTable(tableName) {
         if (tableName !== this.currentTable) {
+            // If switching to OTEF, redirect to OTEF remote-controller
+            if (tableName === 'otef') {
+                window.location.href = `/otef-interactive/remote-controller.html?table=otef`;
+                return;
+            }
+            // If switching from OTEF to another table, stay on this page
             this.currentTable = tableName;
+            // Update URL
+            const url = new URL(window.location.href);
+            url.searchParams.set('table', tableName);
+            window.history.replaceState({}, '', url);
             // Clear cache to force refresh with new table
             this.imageCache.clear();
             // Clear slides when table changes
@@ -254,6 +276,7 @@ class PresentationRemote {
             // Sync empty sequence to backend
             try {
                 await this.apiPost('/api/actions/set_presentation_state/', {
+                    table: tableName,
                     sequence: [],
                     sequence_index: 0
                 });

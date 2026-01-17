@@ -167,19 +167,39 @@
                 $tableSelect.appendChild(option);
               });
               
-              // Set current table - use saved value if valid, otherwise default
-              const savedTable = localStorage.getItem('projectionTable');
-              if (savedTable && tables.find(t => t.name === savedTable)) {
-                currentTable = savedTable;
-              } else {
-                // Set current table to idistrict if available, otherwise first table
-                const idistrictTable = tables.find(t => t.name === 'idistrict');
-                currentTable = idistrictTable ? 'idistrict' : (tables[0]?.name || 'idistrict');
-                localStorage.setItem('projectionTable', currentTable);
+              // Check URL for table parameter first
+              const urlParams = new URLSearchParams(window.location.search);
+              const urlTable = urlParams.get('table');
+              
+              // If URL has table=otef, redirect to OTEF projection
+              if (urlTable === 'otef') {
+                window.location.href = `/otef-interactive/projection.html?table=otef`;
+                return;
               }
+              
+              // Set current table - use URL param if valid, then saved value, otherwise default
+              if (urlTable && tables.find(t => t.name === urlTable)) {
+                currentTable = urlTable;
+              } else {
+                const savedTable = localStorage.getItem('projectionTable');
+                if (savedTable && tables.find(t => t.name === savedTable)) {
+                  currentTable = savedTable;
+                } else {
+                  // Set current table to idistrict if available, otherwise first table
+                  const idistrictTable = tables.find(t => t.name === 'idistrict');
+                  currentTable = idistrictTable ? 'idistrict' : (tables[0]?.name || 'idistrict');
+                }
+              }
+              
+              localStorage.setItem('projectionTable', currentTable);
               
               // Update selector to show current table
               $tableSelect.value = currentTable;
+              
+              // Update URL to reflect current table
+              const url = new URL(window.location.href);
+              url.searchParams.set('table', currentTable);
+              window.history.replaceState({}, '', url);
             }
           }
         } catch (error) {
@@ -192,7 +212,16 @@
       $tableSelect.addEventListener('change', async (e) => {
         const newTable = e.target.value;
         if (newTable && newTable !== currentTable) {
+          // If switching to OTEF, redirect to OTEF projection page
+          if (newTable === 'otef') {
+            window.location.href = `/otef-interactive/projection.html?table=otef`;
+            return;
+          }
+          // If switching from OTEF to another table, update URL and continue
           currentTable = newTable;
+          const url = new URL(window.location.href);
+          url.searchParams.set('table', currentTable);
+          window.history.replaceState({}, '', url);
           localStorage.setItem('projectionTable', currentTable);
           console.log(`📊 Switched to table: ${currentTable}`);
           // Immediately update image for new table

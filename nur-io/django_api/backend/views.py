@@ -18,6 +18,9 @@ from .models import (
     State,
     DashboardFeedState,
     LayerConfig,
+    GISLayer,
+    OTEFModelConfig,
+    OTEFViewportState,
 )
 
 from .serializers import (
@@ -28,6 +31,9 @@ from .serializers import (
     StateSerializer,
     DashboardFeedStateSerializer,
     LayerConfigSerializer,
+    GISLayerSerializer,
+    OTEFModelConfigSerializer,
+    OTEFViewportStateSerializer,
 )
 
 
@@ -175,6 +181,65 @@ class LayerConfigViewSet(viewsets.ModelViewSet):
     serializer_class = LayerConfigSerializer
 
 
+class GISLayerViewSet(viewsets.ModelViewSet):
+    """CRUD operations for GIS layers"""
+    serializer_class = GISLayerSerializer
+    
+    def get_queryset(self):
+        queryset = GISLayer.objects.all()
+        table_name = self.request.query_params.get('table')
+        if table_name:
+            queryset = queryset.filter(table__name=table_name)
+        return queryset.filter(is_active=True)
+    
+    @action(detail=True, methods=['get'])
+    def get_layer_geojson(self, request, pk=None):
+        """Serve GeoJSON data for a layer (for large files)"""
+        layer = self.get_object()
+        if layer.layer_type != 'geojson':
+            return Response({'error': 'Not a GeoJSON layer'}, status=400)
+        
+        if layer.data:
+            response = JsonResponse(layer.data, safe=False)
+            response['Content-Type'] = 'application/json'
+            return response
+        elif layer.file_path:
+            # Serve file from storage
+            import os
+            from django.conf import settings
+            file_path = os.path.join(settings.MEDIA_ROOT, layer.file_path) if not os.path.isabs(layer.file_path) else layer.file_path
+            if os.path.exists(file_path):
+                return FileResponse(open(file_path, 'rb'), content_type='application/json')
+            else:
+                return Response({'error': 'File not found'}, status=404)
+        
+        return Response({'error': 'No data available'}, status=404)
+
+
+class OTEFModelConfigViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only access to OTEF model configuration"""
+    serializer_class = OTEFModelConfigSerializer
+    
+    def get_queryset(self):
+        queryset = OTEFModelConfig.objects.all()
+        table_name = self.request.query_params.get('table')
+        if table_name:
+            queryset = queryset.filter(table__name=table_name)
+        return queryset
+
+
+class OTEFViewportStateViewSet(viewsets.ModelViewSet):
+    """Manage viewport state for OTEF"""
+    serializer_class = OTEFViewportStateSerializer
+    
+    def get_queryset(self):
+        queryset = OTEFViewportState.objects.all()
+        table_name = self.request.query_params.get('table')
+        if table_name:
+            queryset = queryset.filter(table__name=table_name)
+        return queryset
+
+
 # Now lets program the views for the API as an interactive platform
 
 from . import globals
@@ -227,19 +292,24 @@ def broadcast_presentation_update(table_name=None):
         except Exception as e:
             print(f"WebSocket broadcast error: {e}")
 
-def broadcast_indicator_update():
-    """Broadcast indicator state to all connected WebSocket clients"""
+def broadcast_indicator_update(table_name=None):
+    """Broadcast indicator state update notification for a specific table
+    
+    Note: This sends a lightweight notification. Clients should fetch their 
+    table-specific state via get_global_variables endpoint rather than 
+    relying on broadcasted values to avoid cross-tab interference.
+    """
     channel_layer = get_channel_layer()
     if channel_layer:
         try:
+            # Send notification with table name so clients can filter
             async_to_sync(channel_layer.group_send)(
                 'presentation_channel',
                 {
                     'type': 'indicator_update',
                     'data': {
-                        'indicator_id': globals.INDICATOR_ID,
-                        'indicator_state': globals.INDICATOR_STATE,
-                        'visualization_mode': globals.VISUALIZATION_MODE,
+                        'table': table_name,
+                        'message': 'Indicator state updated - fetch table-specific state'
                     }
                 }
             )
@@ -463,8 +533,9 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["post"])
     def set_visualization_mode(self, request):
-        """Set the visualization mode (image or map)"""
+        """Set the visualization mode (image or map) for a specific table"""
         mode = request.data.get("mode", "image")
+        table_name = request.data.get("table", globals.DEFAULT_TABLE_NAME)
 
         if mode not in ["image", "map"]:
             return JsonResponse(
@@ -475,11 +546,17 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 status=400,
             )
 
-        globals.VISUALIZATION_MODE = mode
-        broadcast_indicator_update()
-        print(f"✓ Visualization mode set to: {mode}")
+        indicator_state = globals.get_indicator_state(table_name)
+        indicator_state["visualization_mode"] = mode
+        
+        # Update legacy global for default table (backward compatibility)
+        if table_name == globals.DEFAULT_TABLE_NAME:
+            globals.VISUALIZATION_MODE = mode
+        
+        broadcast_indicator_update(table_name)
+        print(f"✓ Visualization mode set to: {mode} for table '{table_name}'")
 
-        return JsonResponse({"status": "ok", "visualization_mode": mode})
+        return JsonResponse({"status": "ok", "visualization_mode": mode, "table": table_name})
 
     @action(detail=False, methods=["get"])
     def get_presentation_state(self, request):
@@ -606,11 +683,14 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 print(f"⚠️ Invalid indicator in presentation slide: {indicator_name}")
                 return
             
-            # Update global indicator ID and set table
-            globals.INDICATOR_ID = indicator_id
+            # Get table-specific indicator state
+            indicator_state = globals.get_indicator_state(table_name)
+            
+            # Update table-specific indicator ID
+            indicator_state["indicator_id"] = indicator_id
             print(f"🎬 Synced indicator from presentation (table: {table_name}): {indicator_name} (ID: {indicator_id})")
             
-            # Update global state based on indicator type
+            # Update table-specific state based on indicator type
             if indicator_name == "climate" and state_name and slide_type:
                 # For climate, map display name to scenario key
                 from backend.climate_scenarios import CLIMATE_SCENARIO_MAPPING
@@ -626,18 +706,18 @@ class CustomActionsViewSet(viewsets.ViewSet):
                         scenario_name=scenario_key, scenario_type=slide_type
                     ).first()
                     if state_obj:
-                        globals.INDICATOR_STATE = state_obj.state_values.copy()
+                        indicator_state["indicator_state"] = state_obj.state_values.copy()
                         print(f"✓ Synced climate state: {scenario_key} ({slide_type})")
                     else:
                         # Fallback: create minimal state
-                        globals.INDICATOR_STATE = {
+                        indicator_state["indicator_state"] = {
                             "scenario": scenario_key,
                             "type": slide_type,
                             "label": state_name
                         }
                 else:
                     # Fallback: use state name as scenario
-                    globals.INDICATOR_STATE = {
+                    indicator_state["indicator_state"] = {
                         "scenario": state_name.lower().replace(" ", "_"),
                         "type": slide_type or "utci",
                         "label": state_name
@@ -654,18 +734,23 @@ class CustomActionsViewSet(viewsets.ViewSet):
                             break
                     
                     if state_obj:
-                        globals.INDICATOR_STATE = state_obj.state_values.copy()
+                        indicator_state["indicator_state"] = state_obj.state_values.copy()
                         print(f"✓ Synced {indicator_name} state: {scenario_key}")
                     else:
                         # Fallback: create minimal state
-                        globals.INDICATOR_STATE = {
+                        indicator_state["indicator_state"] = {
                             "scenario": scenario_key,
                             "label": state_name
                         }
             
-            # Broadcast indicator update so dashboard syncs
-            broadcast_indicator_update()
-            print(f"✓ Broadcasted indicator update for presentation slide")
+            # Update legacy global for default table (backward compatibility)
+            if table_name == globals.DEFAULT_TABLE_NAME:
+                globals.INDICATOR_ID = indicator_state["indicator_id"]
+                globals.INDICATOR_STATE = indicator_state["indicator_state"]
+            
+            # Broadcast indicator update for this table only
+            broadcast_indicator_update(table_name)
+            print(f"✓ Broadcasted indicator update for presentation slide (table: {table_name})")
             
         except Exception as e:
             print(f"❌ Error syncing indicator from presentation slide: {e}")
@@ -731,10 +816,11 @@ class CustomActionsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"])
     def set_current_state(self, request):
         state_id = request.data.get("state_id")
+        table_name = request.data.get("table", globals.DEFAULT_TABLE_NAME)
         try:
             state = State.objects.get(id=state_id)
-            if self._set_current_state(state.state_values):
-                return JsonResponse({"status": "ok", "state": state.state_values})
+            if self._set_current_state(state.state_values, table_name):
+                return JsonResponse({"status": "ok", "state": state.state_values, "table": table_name})
             else:
                 return JsonResponse(
                     {"status": "error", "message": "Failed to set current state"}
@@ -788,17 +874,20 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 ),
             }
 
-            if self._set_current_state(new_state):
+            table_name = request.data.get("table", globals.DEFAULT_TABLE_NAME)
+            if self._set_current_state(new_state, table_name):
+                indicator_state = globals.get_indicator_state(table_name)
                 print(
-                    f"✓ Climate scenario set successfully: {scenario_name} ({scenario_type})"
+                    f"✓ Climate scenario set successfully: {scenario_name} ({scenario_type}) for table '{table_name}'"
                 )
-                print(f"✓ globals.INDICATOR_STATE is now: {globals.INDICATOR_STATE}")
+                print(f"✓ Indicator state is now: {indicator_state['indicator_state']}")
                 return JsonResponse(
                     {
                         "status": "ok",
                         "scenario": scenario_name,
                         "type": scenario_type,
                         "state": new_state,
+                        "table": table_name,
                     }
                 )
             else:
@@ -809,12 +898,21 @@ class CustomActionsViewSet(viewsets.ViewSet):
             print(f"Error setting climate scenario: {e}")
             return JsonResponse({"status": "error", "message": str(e)}, status=500)
 
-    def _set_current_state(self, state):
-        """Set the current indicator state globally"""
+    def _set_current_state(self, state, table_name=None):
+        """Set the current indicator state for a specific table"""
         try:
-            globals.INDICATOR_STATE = state
-            print(f"✓ State updated to: {state}")
-            broadcast_indicator_update()
+            if table_name is None:
+                table_name = globals.DEFAULT_TABLE_NAME
+            
+            indicator_state = globals.get_indicator_state(table_name)
+            indicator_state["indicator_state"] = state
+            print(f"✓ State updated to: {state} (table: {table_name})")
+            
+            # Update legacy global for default table (backward compatibility)
+            if table_name == globals.DEFAULT_TABLE_NAME:
+                globals.INDICATOR_STATE = state
+            
+            broadcast_indicator_update(table_name)
             return True
         except Exception as e:
             print(f"❌ Error setting state: {e}")
@@ -936,28 +1034,34 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 use_presentation_mode = False
                 effective_indicator_id = None  # Reset since presentation mode failed
 
+        # Get table-specific indicator state
+        indicator_state = globals.get_indicator_state(table_name)
+        
         # Determine which indicator to use (if not already set by presentation mode)
         if not use_presentation_mode or effective_indicator_id is None:
             if indicator_param:
                 indicator_id = indicator_mapping.get(indicator_param)
                 if indicator_id and not prefetch_mode:
-                    # Only modify globals if NOT in prefetch mode
-                    globals.INDICATOR_ID = indicator_id
+                    # Only modify table-specific state if NOT in prefetch mode
+                    indicator_state["indicator_id"] = indicator_id
+                    # Update legacy global for default table (backward compatibility)
+                    if table_name == globals.DEFAULT_TABLE_NAME:
+                        globals.INDICATOR_ID = indicator_id
             else:
-                indicator_id = globals.INDICATOR_ID
+                indicator_id = indicator_state["indicator_id"]
 
-            # Use the indicator_id we determined (either from param or globals)
-            effective_indicator_id = indicator_mapping.get(indicator_param) if indicator_param else globals.INDICATOR_ID
+            # Use the indicator_id we determined (either from param or table-specific state)
+            effective_indicator_id = indicator_mapping.get(indicator_param) if indicator_param else indicator_state["indicator_id"]
         # else: effective_indicator_id was already set above from presentation slide
 
         # Debug (reduced logging in prefetch mode, but show presentation mode info)
         if not prefetch_mode or use_presentation_mode:
             if use_presentation_mode:
-                print(f"Current indicator_id (from presentation): {effective_indicator_id}")
+                print(f"Current indicator_id (from presentation): {effective_indicator_id} (table: {table_name})")
             else:
-                print(f"Current indicator_id: {globals.INDICATOR_ID}")
-                print(f"Current state: {globals.INDICATOR_STATE}")
-                print(f"Visualization mode: {globals.VISUALIZATION_MODE}")
+                print(f"Current indicator_id: {indicator_state['indicator_id']} (table: {table_name})")
+                print(f"Current state: {indicator_state['indicator_state']}")
+                print(f"Visualization mode: {indicator_state['visualization_mode']}")
 
         # Table name already retrieved above for presentation mode check
         exclude_ugc = request.query_params.get("exclude_ugc", "false").lower() == "true"
@@ -1019,15 +1123,15 @@ class CustomActionsViewSet(viewsets.ViewSet):
             print(f"✓ Found UGC state by ID: {slide_state_id}")
         # Special handling for climate scenarios
         elif indicator_obj.category == "climate":
-            # Use query params if in prefetch mode, otherwise use globals
+            # Use query params if in prefetch mode, otherwise use table-specific state
             if prefetch_mode and scenario_param:
                 scenario_name = scenario_param
                 scenario_type = type_param or "utci"
-                print(f"🌡️ PREFETCH mode - climate scenario: {scenario_name}, type: {scenario_type}")
+                print(f"🌡️ PREFETCH mode - climate scenario: {scenario_name}, type: {scenario_type} (table: {table_name})")
             else:
-                scenario_name = globals.INDICATOR_STATE.get("scenario")
-                scenario_type = globals.INDICATOR_STATE.get("type", "utci")
-                print(f"🌡️ get_image_data for climate - scenario: {scenario_name}, type: {scenario_type}")
+                scenario_name = indicator_state["indicator_state"].get("scenario")
+                scenario_type = indicator_state["indicator_state"].get("type", "utci")
+                print(f"🌡️ get_image_data for climate - scenario: {scenario_name}, type: {scenario_type} (table: {table_name})")
 
             if scenario_name:
                 state = State.objects.filter(
@@ -1088,10 +1192,10 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
         if not state:
             # Default to the first available state
-            # WARNING: Do NOT modify globals.INDICATOR_STATE here - GET endpoints should not have side effects
+            # WARNING: Do NOT modify indicator_state here - GET endpoints should not have side effects
             state = State.objects.first()
             if state:
-                print(f"⚠️ No matching state found for {globals.INDICATOR_STATE}")
+                print(f"⚠️ No matching state found for {indicator_state['indicator_state']} (table: {table_name})")
                 print(
                     f"   Using first available state for image lookup: {state.state_values}"
                 )
@@ -1186,24 +1290,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
         # Ensure we have a default state and initialize variables
         self._initialize_default_state()
 
-        # Check if an indicator parameter was provided
-        indicator_param = request.query_params.get("indicator")
-        if indicator_param:
-            # Map the indicator name to ID
-            indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
-            indicator_id = indicator_mapping.get(indicator_param)
-            if indicator_id:
-                globals.INDICATOR_ID = indicator_id
-                print(
-                    f"Using indicator from query parameter: {indicator_param} (ID: {indicator_id})"
-                )
-
-        # Get year from state or query param
-        year = globals.INDICATOR_STATE.get("year", 2023)
-        year_param = request.query_params.get("year")
-        if year_param and year_param.isdigit():
-            year = int(year_param)
-
         # Get the indicator and state - table parameter is required
         table_name = request.query_params.get("table")
         if not table_name:
@@ -1221,10 +1307,34 @@ class CustomActionsViewSet(viewsets.ViewSet):
             )
             return response
         
-        indicator = Indicator.objects.filter(table=table, indicator_id=globals.INDICATOR_ID).first()
+        # Get table-specific indicator state
+        indicator_state = globals.get_indicator_state(table_name)
+        
+        # Check if an indicator parameter was provided
+        indicator_param = request.query_params.get("indicator")
+        if indicator_param:
+            # Map the indicator name to ID
+            indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
+            indicator_id = indicator_mapping.get(indicator_param)
+            if indicator_id:
+                indicator_state["indicator_id"] = indicator_id
+                # Update legacy global for default table (backward compatibility)
+                if table_name == globals.DEFAULT_TABLE_NAME:
+                    globals.INDICATOR_ID = indicator_id
+                print(
+                    f"Using indicator from query parameter: {indicator_param} (ID: {indicator_id}) (table: {table_name})"
+                )
+
+        # Get year from table-specific state or query param
+        year = indicator_state["indicator_state"].get("year", 2023)
+        year_param = request.query_params.get("year")
+        if year_param and year_param.isdigit():
+            year = int(year_param)
+        
+        indicator = Indicator.objects.filter(table=table, indicator_id=indicator_state["indicator_id"]).first()
         if not indicator:
             response = JsonResponse(
-                {"error": f"Indicator with ID {globals.INDICATOR_ID} not found in table '{table_name}'"},
+                {"error": f"Indicator with ID {indicator_state['indicator_id']} not found in table '{table_name}'"},
                 status=404,
             )
             return response
@@ -1233,14 +1343,14 @@ class CustomActionsViewSet(viewsets.ViewSet):
         if indicator.has_states == False:
             state = State.objects.filter(state_values={}).first()
         else:
-            # Try to find a state that matches the current indicator state (year + scenario)
+            # Try to find a state that matches the current table-specific indicator state (year + scenario)
             state = State.objects.filter(
-                state_values=globals.INDICATOR_STATE
+                state_values=indicator_state["indicator_state"]
             ).first()
             
             # If no exact match found, try to find a state with the specified year and scenario
             if not state:
-                current_scenario = globals.INDICATOR_STATE.get("scenario")
+                current_scenario = indicator_state["indicator_state"].get("scenario")
                 states = State.objects.all()
                 for s in states:
                     if (s.state_values.get("year") == year and 
@@ -1401,6 +1511,38 @@ class CustomActionsViewSet(viewsets.ViewSet):
             )
             self._add_no_cache_headers(response)
             return response
+
+    @action(detail=False, methods=['get'])
+    def get_otef_layers(self, request):
+        """Get all active GIS layers for a table"""
+        table_name = request.query_params.get('table', 'otef')
+        table = Table.objects.filter(name=table_name).first()
+        if not table:
+            return Response({'error': 'Table not found'}, status=404)
+        
+        layers = GISLayer.objects.filter(table=table, is_active=True).order_by('order')
+        data = []
+        for layer in layers:
+            layer_data = {
+                'id': layer.id,
+                'name': layer.name,
+                'display_name': layer.display_name,
+                'layer_type': layer.layer_type,
+                'style_config': layer.style_config,
+            }
+            
+            # For GeoJSON, include data or URL
+            if layer.layer_type == 'geojson':
+                if layer.data:
+                    layer_data['geojson'] = layer.data
+                elif layer.file_path:
+                    layer_data['url'] = f'/api/gis_layers/{layer.id}/get_layer_geojson/'
+            
+            data.append(layer_data)
+        
+        response = JsonResponse(data, safe=False)
+        self._add_no_cache_headers(response)
+        return response
 
 
 # Custom view to serve map files directly

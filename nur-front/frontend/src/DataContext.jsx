@@ -295,8 +295,63 @@ export const DataProvider = ({ children }) => {
 
             if (message.type === 'indicator_update' && message.data) {
               const data = message.data;
-              console.log('📡 WS: indicator update');
-
+              
+              // Filter by table - only process updates for the current table
+              const messageTable = data.table;
+              if (messageTable && messageTable !== currentTableRef.current) {
+                // This update is for a different table, ignore it
+                console.log(`📡 WS: indicator update ignored (for table '${messageTable}', current is '${currentTableRef.current}')`);
+                return;
+              }
+              
+              console.log(`📡 WS: indicator update (table: ${messageTable || 'default'})`);
+              
+              // For table-specific updates, fetch state from API instead of using broadcasted values
+              // This ensures we get the correct table-specific state
+              if (messageTable) {
+                // Fetch table-specific state from API
+                api.get(`/api/actions/get_global_variables/?table=${messageTable}`)
+                  .then(response => {
+                    if (response.data) {
+                      if (response.data.indicator_state) {
+                        const state = { ...response.data.indicator_state };
+                        if (state.scenario === "current") {
+                          state.scenario = "present";
+                        }
+                        globals.INDICATOR_STATE = state;
+                        window.dispatchEvent(new CustomEvent("indicatorStateChanged"));
+                        if (indicatorRef.current === 'climate') {
+                          window.dispatchEvent(new CustomEvent("climateStateChanged"));
+                        }
+                      }
+                      
+                      if (response.data.indicator_id !== undefined) {
+                        const newIndicator = ID_TO_INDICATOR[response.data.indicator_id];
+                        if (indicatorChangeInProgressRef.current) {
+                          if (newIndicator !== indicatorChangeInProgressRef.current) {
+                            return;
+                          }
+                        }
+                        if (newIndicator && newIndicator !== indicatorRef.current) {
+                          setCurrentIndicator(newIndicator);
+                        }
+                      }
+                      
+                      if (response.data.visualization_mode) {
+                        const newMode = response.data.visualization_mode === "map" ? "deck" : "image";
+                        if (newMode !== visualizationModeRef.current) {
+                          setVisualizationMode(newMode);
+                        }
+                      }
+                    }
+                  })
+                  .catch(err => {
+                    console.error("Error fetching table-specific state:", err);
+                  });
+                return; // Don't process broadcasted values
+              }
+              
+              // Legacy: process broadcasted values if no table specified (backward compatibility)
               if (data.indicator_id !== undefined) {
                 const newIndicator = ID_TO_INDICATOR[data.indicator_id];
 
@@ -452,7 +507,8 @@ export const DataProvider = ({ children }) => {
     }
 
     try {
-      const response = await api.get("/api/actions/get_global_variables/");
+      // Fetch table-specific state
+      const response = await api.get(`/api/actions/get_global_variables/?table=${currentTableRef.current}`);
       if (!response.data) return;
 
       // Update globals state
@@ -537,17 +593,32 @@ export const DataProvider = ({ children }) => {
     }
   }, []);
 
-  // Fetch available tables on mount
+  // Fetch available tables on mount and detect table from URL
   useEffect(() => {
     const fetchTables = async () => {
       try {
         const response = await api.get("/api/tables/?is_active=true");
         if (response.data && Array.isArray(response.data)) {
           setAvailableTables(response.data);
-          // If current table is not in available tables, switch to default
-          const tableExists = response.data.some(t => t.name === currentTable);
-          if (!tableExists && response.data.length > 0) {
-            setCurrentTable(DEFAULT_TABLE);
+          
+          // Get table from URL parameter
+          const urlParams = new URLSearchParams(window.location.search);
+          const urlTable = urlParams.get('table');
+          
+          // If table is in URL and available, use it
+          if (urlTable && response.data.some(t => t.name === urlTable)) {
+            if (urlTable === 'otef') {
+              // Redirect to OTEF interactive page
+              window.location.href = `/otef-interactive/?table=otef`;
+              return;
+            }
+            setCurrentTable(urlTable);
+          } else {
+            // If current table is not in available tables, switch to default
+            const tableExists = response.data.some(t => t.name === currentTable);
+            if (!tableExists && response.data.length > 0) {
+              setCurrentTable(DEFAULT_TABLE);
+            }
           }
         }
       } catch (err) {
@@ -560,6 +631,17 @@ export const DataProvider = ({ children }) => {
   // Function to change table
   const changeTable = useCallback(async (tableName) => {
     if (tableName !== currentTable) {
+      // If switching to OTEF, redirect to OTEF interactive page
+      if (tableName === 'otef') {
+        window.location.href = `/otef-interactive/?table=otef`;
+        return;
+      }
+      
+      // If switching from OTEF to another table, update URL and continue
+      const url = new URL(window.location.href);
+      url.searchParams.set('table', tableName);
+      window.history.replaceState({}, '', url);
+      
       setCurrentTable(tableName);
       // Clear dashboard data to force refresh with new table
       setDashboardData(null);

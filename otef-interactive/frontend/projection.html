@@ -51,6 +51,36 @@
         pointer-events: none;
       }
 
+      /* Table Switcher */
+      #table-switcher {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 200;
+      }
+      .table-switcher {
+        background: rgba(0, 0, 0, 0.8);
+        border-radius: 4px;
+        padding: 8px;
+      }
+      .table-select {
+        padding: 6px 12px;
+        border: 1px solid #444;
+        border-radius: 4px;
+        background: #222;
+        color: #fff;
+        font-size: 14px;
+        cursor: pointer;
+        min-width: 150px;
+      }
+      .table-select:hover {
+        border-color: #0ff;
+      }
+      .table-select:focus {
+        outline: none;
+        border-color: #0ff;
+      }
+
       /* Simple instruction overlay - press H to toggle */
       #instructions {
         position: fixed;
@@ -89,6 +119,9 @@
       <div id="highlightOverlay"></div>
     </div>
 
+    <!-- Table Switcher -->
+    <div id="table-switcher"></div>
+
     <div id="instructions" class="hidden">
       <h3>OTEF Projection Display</h3>
       <p><strong>Keyboard Shortcuts:</strong></p>
@@ -108,6 +141,26 @@
     <script src="js/debug-overlay.js"></script>
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
+    <script src="js/shared/table-switcher.js"></script>
     <script src="js/projection-display.js"></script>
+    <script>
+      // Initialize table switcher
+      const tableSwitcher = new TableSwitcher({
+        defaultTable: 'otef',
+        onTableChange: (tableName) => {
+          if (tableName !== 'otef') {
+            // Redirect to unified projection page for other tables
+            window.location.href = `/projection/?table=${tableName}`;
+          }
+        }
+      });
+      
+      // Only show OTEF interface if table is 'otef'
+      if (tableSwitcher.getCurrentTable() !== 'otef') {
+        window.location.href = `/projection/?table=${tableSwitcher.getCurrentTable()}`;
+      } else {
+        tableSwitcher.createSwitcherUI();
+      }
+    </script>
   </body>
 </html>

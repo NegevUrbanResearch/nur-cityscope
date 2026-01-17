@@ -257,6 +257,38 @@ body {
     font-size: 14px;
 }
 
+/* Table Switcher */
+.table-switcher {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 4px;
+    padding: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.table-select {
+    padding: 6px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: white;
+    font-size: 14px;
+    cursor: pointer;
+    min-width: 150px;
+}
+
+.table-select:hover {
+    border-color: #64B5F6;
+}
+
+.table-select:focus {
+    outline: none;
+    border-color: #64B5F6;
+    box-shadow: 0 0 0 2px rgba(100, 181, 246, 0.2);
+}
+
 /* Mobile optimization */
 @media (max-width: 768px) {
     .panel {
@@ -268,6 +300,11 @@ body {
     #controls {
         top: 10px;
         right: 10px;
+    }
+    
+    .table-switcher {
+        top: 50px;
+        left: 10px;
     }
 }
 

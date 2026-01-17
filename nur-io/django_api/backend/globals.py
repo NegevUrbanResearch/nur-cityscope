@@ -4,16 +4,50 @@ These variables are used to track the current state of the application
 and will be passed between the API and WebSocket server.
 """
 
-# Current indicator ID being displayed
+# Indicator state per table (allows multiple tabs with different tables)
+# Structure: {
+#   'table_name': {
+#       'indicator_id': 1,
+#       'indicator_state': {...},
+#       'visualization_mode': 'image'
+#   }
+# }
+INDICATOR_STATE_BY_TABLE = {}
+
+# Default indicator state structure
+DEFAULT_INDICATOR_STATE = {
+    "indicator_id": 1,
+    "indicator_state": {"year": 2023, "scenario": "present", "label": "Present"},
+    "visualization_mode": "image"
+}
+
+# Default table name for legacy code (defined early so it can be used below)
+DEFAULT_TABLE_NAME = "idistrict"
+
+# Legacy global variables for backward compatibility (use default table)
+# These are maintained for code that hasn't been updated yet
 INDICATOR_ID = 1
-
-# Current state of the indicator (year, parameters, etc.)
-# For climate indicator: {'scenario': 'existing', 'type': 'utci', 'label': 'Existing - UTCI'}
-# For other indicators: {'year': 2023, 'scenario': 'present', 'label': 'Present'}
 INDICATOR_STATE = {"year": 2023, "scenario": "present", "label": "Present"}
-
-# Visualization mode (image or map)
 VISUALIZATION_MODE = "image"
+
+# Helper function to get indicator state for a table
+def get_indicator_state(table_name=None):
+    """Get indicator state for a specific table, creating default if needed"""
+    if table_name is None:
+        table_name = DEFAULT_TABLE_NAME
+    if table_name not in INDICATOR_STATE_BY_TABLE:
+        INDICATOR_STATE_BY_TABLE[table_name] = {
+            "indicator_id": DEFAULT_INDICATOR_STATE["indicator_id"],
+            "indicator_state": DEFAULT_INDICATOR_STATE["indicator_state"].copy(),
+            "visualization_mode": DEFAULT_INDICATOR_STATE["visualization_mode"],
+        }
+    return INDICATOR_STATE_BY_TABLE[table_name]
+
+# Initialize default table state
+_default_indicator = get_indicator_state(DEFAULT_TABLE_NAME)
+INDICATOR_ID = _default_indicator["indicator_id"]
+INDICATOR_STATE = _default_indicator["indicator_state"]
+VISUALIZATION_MODE = _default_indicator["visualization_mode"]
 
 # Presentation mode state per table (shared across tabs via backend)
 # Structure: {
@@ -36,9 +70,6 @@ DEFAULT_PRESENTATION_STATE = {
     "sequence_index": 0,
     "duration": 10,
 }
-
-# Default table name for legacy code
-DEFAULT_TABLE_NAME = "idistrict"
 
 # Helper function to get presentation state for a table
 def get_presentation_state(table_name=None):

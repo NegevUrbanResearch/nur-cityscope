@@ -12,6 +12,9 @@ from .views import (
     IndicatorDataViewSet,
     IndicatorImageViewSet,
     LayerConfigViewSet,
+    GISLayerViewSet,
+    OTEFModelConfigViewSet,
+    OTEFViewportStateViewSet,
     ImageUploadView,
     serve_map_file,
 )
@@ -41,6 +44,9 @@ router.register(r"states", StateViewSet, basename="state")
 router.register(r"indicator_data", IndicatorDataViewSet, basename="indicator-data")
 router.register(r"indicator_images", IndicatorImageViewSet, basename="indicator-image")
 router.register(r"layer_config", LayerConfigViewSet, basename="layer-config")
+router.register(r"gis_layers", GISLayerViewSet, basename="gis-layer")
+router.register(r"otef_model_config", OTEFModelConfigViewSet, basename="otef-model-config")
+router.register(r"otef_viewport", OTEFViewportStateViewSet, basename="otef-viewport")
 router.register(r"actions", CustomActionsViewSet, basename="actions")
 
 urlpatterns = [

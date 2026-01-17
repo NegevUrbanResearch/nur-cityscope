@@ -199,3 +199,67 @@ class LayerConfig(models.Model):
         return f"LayerConfig {self.id}"
 
 
+class GISLayer(models.Model):
+    """
+    Stores GIS layer definitions (GeoJSON, vector tiles, etc.)
+    """
+    id = models.AutoField(primary_key=True)
+    table = models.ForeignKey(Table, on_delete=models.CASCADE, related_name="gis_layers")
+    name = models.CharField(max_length=100)
+    display_name = models.CharField(max_length=255)
+    layer_type = models.CharField(
+        max_length=50,
+        choices=[
+            ('geojson', 'GeoJSON'),
+            ('vector_tiles', 'Vector Tiles'),
+            ('raster', 'Raster'),
+        ],
+        default='geojson'
+    )
+    data = models.JSONField(default=dict)
+    file_path = models.CharField(max_length=500, blank=True, null=True)
+    style_config = models.JSONField(default=dict)
+    is_active = models.BooleanField(default=True)
+    order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = [['table', 'name']]
+        ordering = ['order', 'name']
+    
+    def __str__(self):
+        return f"{self.table.name}/{self.display_name}"
+
+
+class OTEFModelConfig(models.Model):
+    """
+    Stores OTEF physical model configuration (bounds, calibration, etc.)
+    """
+    id = models.AutoField(primary_key=True)
+    table = models.OneToOneField(Table, on_delete=models.CASCADE, related_name="otef_config")
+    model_bounds = models.JSONField(default=dict)
+    model_image = models.FileField(upload_to='otef/models/', blank=True, null=True)
+    model_image_transparent = models.FileField(upload_to='otef/models/', blank=True, null=True)
+    calibration_data = models.JSONField(default=dict)
+    coordinate_system = models.CharField(max_length=50, default='EPSG:2039')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"OTEF Config for {self.table.name}"
+
+
+class OTEFViewportState(models.Model):
+    """
+    Stores current viewport state for OTEF table (for persistence across sessions)
+    """
+    id = models.AutoField(primary_key=True)
+    table = models.OneToOneField(Table, on_delete=models.CASCADE, related_name="otef_viewport")
+    viewport = models.JSONField(default=dict)
+    layers = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"Viewport State for {self.table.name}"
+

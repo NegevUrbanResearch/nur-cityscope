@@ -8,6 +8,9 @@ from .models import (
     State,
     DashboardFeedState,
     LayerConfig,
+    GISLayer,
+    OTEFModelConfig,
+    OTEFViewportState,
 )
 
 
@@ -149,4 +152,27 @@ class LayerConfigSerializer(serializers.ModelSerializer):
         model = LayerConfig
         fields = "__all__"
 
+
+class GISLayerSerializer(serializers.ModelSerializer):
+    table_name = serializers.CharField(source="table.name", read_only=True)
+    
+    class Meta:
+        model = GISLayer
+        fields = "__all__"
+
+
+class OTEFModelConfigSerializer(serializers.ModelSerializer):
+    table_name = serializers.CharField(source="table.name", read_only=True)
+    
+    class Meta:
+        model = OTEFModelConfig
+        fields = "__all__"
+
+
+class OTEFViewportStateSerializer(serializers.ModelSerializer):
+    table_name = serializers.CharField(source="table.name", read_only=True)
+    
+    class Meta:
+        model = OTEFViewportState
+        fields = "__all__"
 

@@ -33,16 +33,61 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             data = json.loads(text_data)
             message_type = data.get('type', 'unknown')
             
-            # Broadcast to all clients in the group
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
-                    'type': 'broadcast_message',
-                    'message': data
-                }
-            )
+            # Handle OTEF-specific messages
+            if message_type.startswith('otef_'):
+                await self.handle_otef_message(data)
+            else:
+                # Existing message handling
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'broadcast_message',
+                        'message': data
+                    }
+                )
         except json.JSONDecodeError:
             print(f"Invalid JSON received: {text_data}")
+    
+    async def handle_otef_message(self, data):
+        """Handle OTEF-specific WebSocket messages"""
+        from backend.models import OTEFViewportState, Table
+        from asgiref.sync import sync_to_async
+        
+        message_type = data.get('type')
+        table_name = data.get('table', 'otef')
+        
+        if message_type == 'otef_viewport_update':
+            # Persist viewport state to database
+            try:
+                await self._update_viewport_state(table_name, data)
+            except Exception as e:
+                print(f"Error updating viewport state: {e}")
+        
+        # Broadcast to all clients
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': 'broadcast_message',
+                'message': data
+            }
+        )
+    
+    async def _update_viewport_state(self, table_name, data):
+        """Update viewport state in database"""
+        from backend.models import OTEFViewportState, Table
+        from asgiref.sync import sync_to_async
+        
+        def _sync_update():
+            table = Table.objects.filter(name=table_name).first()
+            if not table:
+                return
+            
+            viewport_state, _ = OTEFViewportState.objects.get_or_create(table=table)
+            viewport_state.viewport = data.get('viewport', {})
+            viewport_state.layers = data.get('layers', {})
+            viewport_state.save()
+        
+        await sync_to_async(_sync_update)()
 
     async def broadcast_message(self, event):
         """Send message to WebSocket client"""

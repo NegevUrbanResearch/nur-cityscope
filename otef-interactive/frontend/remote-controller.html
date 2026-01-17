@@ -24,6 +24,8 @@
           <span class="status-text" id="statusText">Connecting...</span>
         </div>
       </div>
+      <!-- Table Switcher -->
+      <div id="table-switcher" style="padding: 0 16px 8px 16px;"></div>
     </header>
 
     <!-- Main content area -->
@@ -189,6 +191,26 @@
     <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
+    <script src="js/shared/table-switcher.js"></script>
     <script src="js/remote-controller.js"></script>
+    <script>
+      // Initialize table switcher
+      const tableSwitcher = new TableSwitcher({
+        defaultTable: 'otef',
+        onTableChange: (tableName) => {
+          if (tableName !== 'otef') {
+            // Redirect to unified remote-controller page for other tables
+            window.location.href = `/remote-controller/?table=${tableName}`;
+          }
+        }
+      });
+      
+      // Only show OTEF interface if table is 'otef'
+      if (tableSwitcher.getCurrentTable() !== 'otef') {
+        window.location.href = `/remote-controller/?table=${tableSwitcher.getCurrentTable()}`;
+      } else {
+        tableSwitcher.createSwitcherUI();
+      }
+    </script>
   </body>
 </html>
