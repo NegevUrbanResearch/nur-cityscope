@@ -191,6 +191,12 @@
                 }
               }
               
+              // If current table is OTEF, redirect immediately
+              if (currentTable === 'otef') {
+                window.location.href = `/otef-interactive/projection.html?table=otef`;
+                return;
+              }
+              
               localStorage.setItem('projectionTable', currentTable);
               
               // Update selector to show current table
@@ -229,8 +235,14 @@
         }
       });
       
-      // Fetch tables on load
-      fetchTables();
+      // Fetch tables on load, then initialize
+      (async () => {
+        await fetchTables();
+        // Only update image if we didn't redirect (i.e., table is not OTEF)
+        if (currentTable !== 'otef') {
+          updateImage();
+        }
+      })();
       
       // WebSocket connection for real-time updates
       let ws = null;
@@ -254,13 +266,30 @@
               const message = JSON.parse(event.data);
               
               // When indicator or presentation state changes, fetch new image
+              // Only process updates for the current table
               if (message.type === 'indicator_update') {
                 const data = message.data || {};
+                const messageTable = data.table;
                 
-                console.log('📡 Projection: indicator update, fetching new content');
+                // Filter by table - only process updates for current table
+                if (messageTable && messageTable !== currentTable) {
+                  console.log(`📡 Projection: indicator update ignored (for table '${messageTable}', current is '${currentTable}')`);
+                  return;
+                }
+                
+                console.log(`📡 Projection: indicator update, fetching new content (table: ${messageTable || 'default'})`);
                 updateImage();
               } else if (message.type === 'presentation_update') {
-                console.log('📡 Projection: presentation update, fetching new content');
+                const data = message.data || {};
+                const messageTable = data.table;
+                
+                // Filter by table - only process updates for current table
+                if (messageTable && messageTable !== currentTable) {
+                  console.log(`📡 Projection: presentation update ignored (for table '${messageTable}', current is '${currentTable}')`);
+                  return;
+                }
+                
+                console.log(`📡 Projection: presentation update, fetching new content (table: ${messageTable || 'default'})`);
                 updateImage();
               }
             } catch (err) {
@@ -325,6 +354,13 @@
 
       // Function to get and update the image
       function updateImage() {
+        // Don't fetch if current table is OTEF (should have redirected)
+        if (currentTable === 'otef') {
+          console.log('⚠️ Attempted to fetch image for OTEF table - redirecting...');
+          window.location.href = `/otef-interactive/projection.html?table=otef`;
+          return;
+        }
+        
         fetch(`${apiEndpoint}?table=${currentTable}`)
           .then((response) => {
             if (!response.ok) {
@@ -480,8 +516,8 @@
       // Auto-reset calibration to fix sideways display
       autoResetCalibration();
 
-      // Initial update
-      updateImage();
+      // Initial update will be called after fetchTables() completes
+      // (see fetchTables().then() above)
 
       // Function to switch to next table
       function switchToNextTable() {
@@ -492,9 +528,22 @@
         const nextTable = availableTables[nextIndex];
         
         if (nextTable && nextTable.name !== currentTable) {
+          // If switching to OTEF, redirect to OTEF projection page
+          if (nextTable.name === 'otef') {
+            window.location.href = `/otef-interactive/projection.html?table=otef`;
+            return;
+          }
+          
+          // Update current table
           currentTable = nextTable.name;
           localStorage.setItem('projectionTable', currentTable);
           $tableSelect.value = currentTable;
+          
+          // Update URL
+          const url = new URL(window.location.href);
+          url.searchParams.set('table', currentTable);
+          window.history.replaceState({}, '', url);
+          
           console.log(`📊 Switched to table: ${currentTable}`);
           // Immediately update image for new table
           updateImage();
