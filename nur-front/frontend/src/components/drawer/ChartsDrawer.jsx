@@ -8,8 +8,6 @@ import {
   Tooltip,
   Box,
   useTheme,
-  Menu,
-  MenuItem,
   useMediaQuery,
   Button,
   Typography,
@@ -21,7 +19,6 @@ import SlideshowIcon from "@mui/icons-material/Slideshow";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import PauseIcon from "@mui/icons-material/Pause";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import buttonStyles from "../../style/buttonStyles";
 
 
@@ -145,7 +142,6 @@ const ChartsDrawer = ({ handleChartsClick, openCharts }) => {
             <InfoOutlineIcon fontSize="small" />
           </IconButton>
 
-          <TableMenu />
 
         </Box>
 
@@ -443,122 +439,3 @@ export default ChartsDrawer;
 
 
 
-const TableMenu = () => {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
-  const isTablet = useMediaQuery(theme.breakpoints.between("sm", "md"));
-
-  const [anchorEl, setAnchorEl] = React.useState(null);
-  const open = Boolean(anchorEl);
-
-  const { currentTable, availableTables, changeTable } = useAppData();
-
-  const handleClick = (event) => {
-    setAnchorEl(event.currentTarget);
-  };
-
-  const handleClose = () => {
-    setAnchorEl(null);
-  };
-
-  const handleTableSelect = (tableName) => {
-    handleClose();
-    if (tableName !== currentTable) {
-      changeTable(tableName);
-    }
-  };
-
-  const currButtonStyles = {
-    minWidth: { xs: "90px", sm: "100px" },
-    height: { xs: "32px", sm: "36px" },
-    ...buttonStyles 
-  };
-
-  const currentTableDisplayName = availableTables.find(t => t.name === currentTable)?.display_name || currentTable;
-
-  return (
-    <Box>
-      <Button
-        sx={currButtonStyles}
-        onClick={handleClick}
-        color="inherit"
-        endIcon={<ArrowDropDownIcon fontSize="small" />}
-      >
-        <Typography
-          variant="body2"
-          sx={{
-            fontWeight: 600,
-            fontSize: { xs: "0.95rem", sm: "1rem" },
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis", 
-            letterSpacing: "0.3px",
-            textTransform: "none",
-          }}
-        >
-          {currentTableDisplayName}
-        </Typography>
-      </Button>
-
-      <Menu
-        anchorEl={anchorEl}
-        open={open}
-        onClose={handleClose}
-        PaperProps={{
-          sx: {
-            mt: 0.5,
-            minWidth: isMobile ? "80vw" : isTablet ? "180px" : "200px",
-            backgroundColor: "rgba(25, 25, 25, 0.98)",
-            backdropFilter: "blur(16px)",
-            border: "1px solid rgba(255, 255, 255, 0.12)",
-            borderRadius: "8px",
-            boxShadow:
-              "0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3)",
-          },
-        }}
-      >
-        {availableTables && availableTables.length > 0 ? (
-          availableTables.map((table) => {
-            const isCurrentTable = table.name === currentTable;
-
-            return (
-              <MenuItem
-                key={table.id || table.name}
-                onClick={() => handleTableSelect(table.name)}
-                sx={{
-                  py: 1,
-                  px: 2,
-                  backgroundColor: isCurrentTable ? "rgba(100, 181, 246, 0.12)" : "transparent",
-                  borderLeft: isCurrentTable ? "3px solid #64B5F6" : "3px solid transparent",
-                  transition: "all 0.15s ease",
-                  "&:hover": {
-                    backgroundColor: "rgba(100, 181, 246, 0.18)",
-                    borderLeft: "3px solid #64B5F6",
-                  },
-                }}
-              >
-                <Typography
-                  variant="body1"
-                  sx={{
-                    fontSize: { xs: "0.9rem", sm: "0.95rem" },
-                    fontWeight: isCurrentTable ? 600 : 500,
-                    color: isCurrentTable ? "#64B5F6" : "rgba(255, 255, 255, 0.85)",
-                    letterSpacing: "0.2px",
-                  }}
-                >
-                  {table.display_name || table.name}
-                </Typography>
-              </MenuItem>
-            );
-          })
-        ) : (
-          <MenuItem disabled>
-            <Typography variant="body2" sx={{ color: "rgba(255, 255, 255, 0.5)" }}>
-              No tables available
-            </Typography>
-          </MenuItem>
-        )}
-      </Menu>
-    </Box>
-  );
-};

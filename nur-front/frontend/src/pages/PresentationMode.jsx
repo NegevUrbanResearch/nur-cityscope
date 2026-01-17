@@ -245,7 +245,6 @@ const PresentationMode = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
     const isTablet = useMediaQuery(theme.breakpoints.between("sm", "md"));
-    const [tableMenuAnchor, setTableMenuAnchor] = useState(null);
     
     const [fileHierarchy, setFileHierarchy] = useState([]);
     const [tableIndicators, setTableIndicators] = useState([]);
@@ -987,27 +986,6 @@ const PresentationMode = () => {
                     style={{ width: '80px', filter: 'brightness(0) invert(1)' }}
                 />
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    {/* Table Selector */}
-                    <Button
-                        onClick={(e) => setTableMenuAnchor(e.currentTarget)}
-                        endIcon={<ArrowDropDownIcon />}
-                        sx={{
-                            color: 'rgba(255,255,255,0.8)',
-                            border: '1px solid rgba(255,255,255,0.2)',
-                            borderRadius: '4px',
-                            px: 2,
-                            py: 0.5,
-                            textTransform: 'none',
-                            fontSize: '0.9rem',
-                            '&:hover': {
-                                backgroundColor: 'rgba(255,255,255,0.1)',
-                                borderColor: '#64B5F6',
-                            }
-                        }}
-                    >
-                        {availableTables.find(t => t.name === currentTable)?.display_name || currentTable}
-                    </Button>
-                    
                     <IconButton 
                         onClick={() => setOpenInfo(true)}
                         sx={{ color: 'rgba(255,255,255,0.6)', '&:hover': { color: 'white' } }}
@@ -1022,65 +1000,6 @@ const PresentationMode = () => {
                     </IconButton>
                 </Box>
             </Box>
-            
-            {/* Table Menu */}
-            <Menu
-                anchorEl={tableMenuAnchor}
-                open={Boolean(tableMenuAnchor)}
-                onClose={() => setTableMenuAnchor(null)}
-                PaperProps={{
-                    sx: {
-                        backgroundColor: "rgba(25, 25, 25, 0.98)",
-                        backdropFilter: "blur(16px)",
-                        border: "1px solid rgba(255, 255, 255, 0.12)",
-                        borderRadius: "8px",
-                        minWidth: 200,
-                    },
-                }}
-            >
-                {availableTables && availableTables.length > 0 ? (
-                    availableTables.map((table) => {
-                        const isCurrentTable = table.name === currentTable;
-                        return (
-                            <MenuItem
-                                key={table.id || table.name}
-                                onClick={() => {
-                                    changeTable(table.name);
-                                    setTableMenuAnchor(null);
-                                }}
-                                sx={{
-                                    py: 1,
-                                    px: 2,
-                                    backgroundColor: isCurrentTable ? "rgba(100, 181, 246, 0.12)" : "transparent",
-                                    borderLeft: isCurrentTable ? "3px solid #64B5F6" : "3px solid transparent",
-                                    transition: "all 0.15s ease",
-                                    "&:hover": {
-                                        backgroundColor: "rgba(100, 181, 246, 0.18)",
-                                        borderLeft: "3px solid #64B5F6",
-                                    },
-                                }}
-                            >
-                                <Typography
-                                    variant="body1"
-                                    sx={{
-                                        fontSize: "0.95rem",
-                                        fontWeight: isCurrentTable ? 600 : 500,
-                                        color: isCurrentTable ? "#64B5F6" : "rgba(255, 255, 255, 0.85)",
-                                    }}
-                                >
-                                    {table.display_name || table.name}
-                                </Typography>
-                            </MenuItem>
-                        );
-                    })
-                ) : (
-                    <MenuItem disabled>
-                        <Typography variant="body2" sx={{ color: "rgba(255, 255, 255, 0.5)" }}>
-                            No tables available
-                        </Typography>
-                    </MenuItem>
-                )}
-            </Menu>
 
             {/* Main Content */}
             <Box sx={{ flex: 1, display: 'flex', p: 3, gap: 3, overflow: 'hidden', minHeight: 0 }}>

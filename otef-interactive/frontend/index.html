@@ -30,8 +30,6 @@
   <body>
     <div id="map"></div>
 
-    <!-- Table Switcher -->
-    <div id="table-switcher"></div>
 
     <!-- Floating controls -->
     <div id="controls">
@@ -50,6 +48,7 @@
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
     <script src="js/shared/table-switcher.js"></script>
+    <script src="js/shared/table-switcher-popup.js"></script>
     <script src="js/leaflet-control-with-basemap.js"></script>
     <script>
       // Initialize table switcher
@@ -67,7 +66,8 @@
       if (tableSwitcher.getCurrentTable() !== 'otef') {
         window.location.href = `/dashboard/?table=${tableSwitcher.getCurrentTable()}`;
       } else {
-        tableSwitcher.createSwitcherUI();
+        // Initialize keyboard-driven table switcher popup
+        new TableSwitcherPopup(tableSwitcher);
       }
     </script>
   </body>

@@ -22,6 +22,7 @@ import PresentationMode from "./pages/PresentationMode";
 import UserUploads from "./pages/UserUploads";
 import { useAppData } from "./DataContext";
 import { setupGlobalErrorHandlers } from "./utils/errorLogger";
+import TableSwitcherPopup from "./components/TableSwitcherPopup";
 import "./style/index.css";
 
 // Wrapper component to render Dashboard with URL params
@@ -156,6 +157,7 @@ const App = () => {
         )}
 
         <main style={{ flex: 1 }}>
+          <TableSwitcherPopup />
           {loading && !isInPresentationMode ? (
             <Box
               sx={{
