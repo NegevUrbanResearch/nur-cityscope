@@ -74,7 +74,25 @@ echo "Creating data structure..."
 docker exec nur-api python manage.py create_data
 
 echo "✅ All services have been successfully configured and data has been loaded."
+echo ""
+
+# Get local IP address
+get_local_ip() {
+    # Try different methods to get the local IP
+    if command -v ip >/dev/null 2>&1; then
+        ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' | grep -v "^$"
+    elif command -v hostname >/dev/null 2>&1; then
+        hostname -I 2>/dev/null | awk '{print $1}' | grep -v "^$"
+    elif [ "$(uname)" = "Darwin" ]; then
+        ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null
+    fi
+}
+
+LOCAL_IP=$(get_local_ip)
+
 echo "You can now access:"
+echo ""
+echo "📍 Local access (localhost):"
 echo "- Dashboard: http://localhost/dashboard/"
 echo "- Projection: http://localhost/projection/"
 echo "- Remote Controller: http://localhost/remote/"
@@ -82,3 +100,16 @@ echo "- OTEF Interactive: http://localhost/otef-interactive/"
 echo "- OTEF Projection: http://localhost/otef-interactive/projection.html"
 echo "- Admin Interface: http://localhost:9900/admin"
 
+if [ -n "$LOCAL_IP" ]; then
+    echo ""
+    echo "🌐 Network access (from other devices):"
+    echo "- Dashboard: http://$LOCAL_IP/dashboard/"
+    echo "- Projection: http://$LOCAL_IP/projection/"
+    echo "- Remote Controller: http://$LOCAL_IP/remote/"
+    echo "- OTEF Interactive: http://$LOCAL_IP/otef-interactive/"
+    echo "- OTEF Projection: http://$LOCAL_IP/otef-interactive/projection.html"
+    echo "- Admin Interface: http://$LOCAL_IP:9900/admin"
+else
+    echo ""
+    echo "⚠️  Could not detect local IP address for network access"
+fi
