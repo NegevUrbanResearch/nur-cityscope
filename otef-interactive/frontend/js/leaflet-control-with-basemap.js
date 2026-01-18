@@ -166,107 +166,135 @@ fetch("data/model-bounds.json")
   });
 
 async function loadGeoJSONLayers() {
-  console.log("Loading GeoJSON layers from database...");
+  console.log("Loading layers...");
 
-  // Get current table name
+  // Load parcels from PMTiles (fast vector tiles)
+  await loadParcelsFromPMTiles();
+
+  // Load roads from GeoJSON (small layer, keep simple)
+  await loadRoadsFromGeoJSON();
+
+  updateMapLegend();
+  console.log("All layers loaded");
+}
+
+/**
+ * Load parcels layer from PMTiles (vector tiles for performance)
+ */
+async function loadParcelsFromPMTiles() {
+  console.log("Loading parcels from PMTiles...");
+
+  try {
+    // Land use color mapping for protomaps styling
+    const LAND_USE_COLORS = {
+      'מגורים': '#FFD700', 'דיור': '#FFE4B5',
+      'מסחר': '#FF6B6B', 'משרדים': '#FFA07A',
+      'תעשיה': '#9370DB', 'תעשיה ומלאכה': '#8A2BE2', 'מלאכה': '#BA55D3',
+      'שטח ציבורי פתוח': '#90EE90', 'שטחים פתוחים': '#98FB98', 'גן': '#7CFC00', 'פארק': '#ADFF2F',
+      'חקלאות': '#F0E68C', 'יערות': '#228B22', 'יערות - חורשות': '#2E8B57',
+      'דרכים': '#C0C0C0', 'שטח לדרכים': '#D3D3D3', 'דרך': '#BEBEBE',
+      'מוסד ציבורי': '#87CEEB', 'מבנה ציבור': '#4682B4', 'חינוך': '#4169E1', 'בריאות': '#6495ED',
+      'ספורט': '#7FFFD4', 'תיירות': '#FF69B4', 'דת': '#E6E6FA', 'בית עלמין': '#2F4F4F',
+    };
+    const DEFAULT_COLOR = '#E0E0E0';
+
+    // Create paint rules for protomaps-leaflet
+    // Each rule colors parcels based on TARGUMYEUD or KVUZ_TRG property
+    const paintRules = [
+      {
+        dataLayer: "parcels",
+        symbolizer: new protomapsL.PolygonSymbolizer({
+          fill: (zoom, feature) => {
+            const landUse = feature.props?.TARGUMYEUD || feature.props?.KVUZ_TRG || '';
+            for (const [key, color] of Object.entries(LAND_USE_COLORS)) {
+              if (landUse.includes(key)) return color;
+            }
+            return DEFAULT_COLOR;
+          },
+          stroke: "#333333",
+          width: 0.5,
+          opacity: 0.5,  // Transparency to see map beneath
+        })
+      }
+    ];
+
+    // Create vector tile layer from local PMTiles file
+    parcelsLayer = protomapsL.leafletLayer({
+      url: 'data/parcels.pmtiles',
+      paintRules: paintRules,
+      labelRules: [],
+      minZoom: 9,
+      minDataZoom: 9,
+      maxDataZoom: 18,
+      attribution: 'OTEF Parcels',
+    });
+
+    window.parcelsLayer = parcelsLayer;
+    layerState.parcels = false;
+
+    console.log("Parcels layer ready (PMTiles)");
+  } catch (error) {
+    console.error("Error loading parcels from PMTiles:", error);
+    // Fallback: parcels layer unavailable
+    parcelsLayer = null;
+  }
+}
+
+/**
+ * Load roads layer from GeoJSON (small layer, simple approach)
+ */
+async function loadRoadsFromGeoJSON() {
+  console.log("Loading roads from GeoJSON...");
+
   const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
   const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
 
   try {
     const response = await fetch(apiUrl);
     if (!response.ok) {
-      throw new Error(`Failed to load layers: ${response.status} ${response.statusText}`);
+      throw new Error(`Failed to load layers: ${response.status}`);
     }
 
     const layers = await response.json();
-    console.log(`Loaded ${layers.length} layers from database`);
+    const roadsData = layers.find(l => l.name === 'roads');
 
-    // Process each layer (API already filters to active layers)
-    for (const layerData of layers) {
-      let geojson;
-      
-      // Load GeoJSON data
-      if (layerData.geojson) {
-        // Data is embedded in response
-        geojson = layerData.geojson;
-      } else if (layerData.url) {
-        // Data is served via separate endpoint
-        const geojsonResponse = await fetch(layerData.url);
-        if (!geojsonResponse.ok) {
-          console.warn(`Failed to load layer data from ${layerData.url}`);
-          continue;
-        }
-        geojson = await geojsonResponse.json();
-      } else {
-        console.warn(`Layer ${layerData.name} has no data source`);
-        continue;
-      }
-
-      console.log(`Processing layer: ${layerData.display_name} (${geojson.features?.length || 0} features)`);
-      console.log("Transforming to WGS84...");
-
-      const transformed = transformGeojsonToWgs84(geojson);
-
-      // Get style from layer config or use defaults
-      const styleConfig = layerData.style_config || {};
-      const defaultStyle = layerData.name === 'parcels' 
-        ? {
-            color: "#6495ED",
-            fillColor: "#6495ED",
-            weight: 1,
-            fillOpacity: 0.3,
-            opacity: 0.8,
-          }
-        : {
-            color: "#FF8C00",
-            weight: 2,
-            opacity: 0.8,
-          };
-
-      const layerStyle = {
-        ...defaultStyle,
-        ...styleConfig,
-      };
-
-      // Create Leaflet layer
-      const leafletLayer = L.geoJSON(transformed, {
-        style: layerData.name === 'parcels' && typeof getParcelStyle === "function"
-          ? getParcelStyle
-          : layerData.name === 'roads' && typeof getRoadStyle === "function"
-          ? getRoadStyle
-          : layerStyle,
-        onEachFeature: (feature, layer) => {
-          if (layerData.name === 'parcels' && typeof createPopupContent === "function") {
-            layer.bindPopup(() => createPopupContent(feature.properties));
-          }
-          layer.on("click", () => {
-            showFeatureInfo(feature);
-          });
-        },
-      });
-
-      // Store layer reference
-      if (layerData.name === 'parcels') {
-        parcelsLayer = leafletLayer;
-        window.parcelsLayer = parcelsLayer;
-        layerState.parcels = false;
-      } else if (layerData.name === 'roads') {
-        roadsLayer = leafletLayer;
-        window.roadsLayer = roadsLayer;
-        layerState.roads = true;
-        leafletLayer.addTo(map); // Add roads to map on init (visible by default)
-      }
-
-      console.log(`Layer ${layerData.display_name} ready`);
+    if (!roadsData) {
+      console.warn("Roads layer not found in database");
+      return;
     }
 
-    updateMapLegend();
-    console.log("All layers loaded from database");
+    let geojson;
+    if (roadsData.geojson) {
+      geojson = roadsData.geojson;
+    } else if (roadsData.url) {
+      const geojsonResponse = await fetch(roadsData.url);
+      if (!geojsonResponse.ok) throw new Error('Failed to load roads data');
+      geojson = await geojsonResponse.json();
+    } else {
+      throw new Error('Roads layer has no data source');
+    }
+
+    console.log(`Roads: ${geojson.features?.length || 0} features, transforming...`);
+    const transformed = transformGeojsonToWgs84(geojson);
+
+    roadsLayer = L.geoJSON(transformed, {
+      style: typeof getRoadStyle === "function" ? getRoadStyle : {
+        color: "#505050",
+        weight: 2,
+        opacity: 0.8,
+      },
+    });
+
+    window.roadsLayer = roadsLayer;
+    layerState.roads = true;
+    roadsLayer.addTo(map);
+
+    console.log("Roads layer ready (GeoJSON)");
   } catch (error) {
-    console.error("Error loading layers from database:", error);
-    throw error;
+    console.error("Error loading roads:", error);
   }
 }
+
 
 /**
  * Send viewport update to all connected clients
@@ -367,10 +395,10 @@ function initializeWebSocket() {
     onConnect: () => {
       console.log("[GIS Map] WebSocket connected");
       updateConnectionStatus(true);
-      
+
       // Send initial viewport update so remote controller has state
       sendViewportUpdate();
-      
+
       // Request current state from remote controller
       requestCurrentState();
     },
@@ -402,7 +430,7 @@ function initializeWebSocket() {
  */
 function requestCurrentState() {
   if (!wsClient || !wsClient.getConnected()) return;
-  
+
   const request = createStateRequestMessage();
   wsClient.send(request);
   console.log("[GIS Map] State request sent");
@@ -435,19 +463,23 @@ function handleStateResponse(msg) {
   if (msg.layers) {
     // Update layer visibility to match state
     if (msg.layers.roads !== undefined && msg.layers.roads !== layerState.roads) {
-      if (msg.layers.roads) {
-        map.addLayer(roadsLayer);
-      } else {
-        map.removeLayer(roadsLayer);
+      if (roadsLayer) {
+        if (msg.layers.roads) {
+          map.addLayer(roadsLayer);
+        } else {
+          map.removeLayer(roadsLayer);
+        }
       }
       layerState.roads = msg.layers.roads;
     }
 
     if (msg.layers.parcels !== undefined && msg.layers.parcels !== layerState.parcels) {
-      if (msg.layers.parcels) {
-        map.addLayer(parcelsLayer);
-      } else {
-        map.removeLayer(parcelsLayer);
+      if (parcelsLayer) {
+        if (msg.layers.parcels) {
+          map.addLayer(parcelsLayer);
+        } else {
+          map.removeLayer(parcelsLayer);
+        }
       }
       layerState.parcels = msg.layers.parcels;
     }
@@ -566,11 +598,11 @@ function handleZoomCommand(zoom) {
 
   if (targetZoom !== currentZoom) {
     console.log(`[GIS Map] Zoom command: ${currentZoom} -> ${targetZoom}`);
-    
+
     // Use setZoom without animation for immediate effect, especially when tab is inactive
     // Animation can be throttled/skipped when tab is inactive, preventing zoom from working
     map.setZoom(targetZoom, { animate: false });
-    
+
     // Immediately send viewport update with the TARGET zoom value
     // This ensures the update is sent even if map.getZoom() hasn't updated yet (tab inactive)
     // Use requestAnimationFrame to ensure the zoom change has been processed
@@ -703,7 +735,7 @@ function updateMapLegend() {
   activeLayers.forEach((group, groupIndex) => {
     html += '<div class="map-legend-group">';
     html += `<div class="map-legend-group-title">${group.title}</div>`;
-    
+
     group.items.forEach(item => {
       html += '<div class="map-legend-item">';
       if (item.symbol) {
@@ -714,7 +746,7 @@ function updateMapLegend() {
       html += `<span class="map-legend-label">${item.label}</span>`;
       html += '</div>';
     });
-    
+
     html += '</div>';
   });
 

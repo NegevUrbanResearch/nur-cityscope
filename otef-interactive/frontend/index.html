@@ -19,11 +19,9 @@
     <!-- Proj4 for coordinate transformations -->
     <script src="https://unpkg.com/proj4@2.9.0/dist/proj4.js"></script>
 
-    <!-- PMTiles for vector tiles (uncomment after generating tiles) -->
-    <!--
-    <script src="https://unpkg.com/pmtiles@2.11.0/dist/index.js"></script>
-    <script src="https://unpkg.com/protomaps-leaflet@2.0.0/dist/protomaps-leaflet.js"></script>
-    -->
+    <!-- PMTiles for vector tiles -->
+    <script src="https://unpkg.com/pmtiles@3.0.6/dist/pmtiles.js"></script>
+    <script src="https://unpkg.com/protomaps-leaflet@4.0.0/dist/protomaps-leaflet.js"></script>
 
     <link rel="stylesheet" href="css/styles.css" />
   </head>
@@ -61,10 +59,10 @@
           }
         }
       });
-      
+
       // Make tableSwitcher globally available for layer loading
       window.tableSwitcher = tableSwitcher;
-      
+
       // Only show OTEF interface if table is 'otef'
       if (tableSwitcher.getCurrentTable() !== 'otef') {
         window.location.href = `/dashboard/?table=${tableSwitcher.getCurrentTable()}`;

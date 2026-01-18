@@ -71,6 +71,41 @@ otef-interactive/
 - Source files: `otef-interactive/public/source/` (original files, not imported)
 - Static assets: `otef-interactive/frontend/data/` (model images served directly)
 
+## Vector Tiles (PMTiles)
+
+For performance, the parcels layer uses vector tiles (PMTiles) instead of raw GeoJSON.
+
+### Generated Automatically
+
+The `setup.ps1`/`setup.sh` scripts automatically:
+1. Create a Python venv in `otef-interactive/scripts/.venv`
+2. Install dependencies (pyproj, pmtiles)
+3. Generate `frontend/data/parcels.pmtiles` from source GeoJSON
+
+### Manual Regeneration
+
+If you need to regenerate tiles (e.g., after updating source data):
+
+```bash
+cd otef-interactive/scripts
+
+# On Windows (PowerShell)
+.venv\Scripts\python generate-pmtiles.py
+
+# On macOS/Linux
+.venv/bin/python generate-pmtiles.py
+```
+
+Requirements: Docker running (uses tippecanoe docker image)
+
+### Files
+
+| File | Description |
+|------|-------------|
+| `public/source/layers/migrashim.json` | Source GeoJSON (EPSG:2039, 60MB) |
+| `frontend/data/parcels.pmtiles` | Generated tiles (45MB, zoom 9-18) |
+| `scripts/generate-pmtiles.py` | Cross-platform generation script |
+
 ## How It Works
 
 1. Import command loads GeoJSON from `nur-io/django_api/public/processed/otef/layers/` into database

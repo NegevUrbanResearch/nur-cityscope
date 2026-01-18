@@ -42,10 +42,28 @@ sleep 10
 echo "Ensuring logo is accessible in nginx container..."
 docker cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
 
-# Setup OTEF Interactive module (simplified layers are auto-generated if missing)
-if [ ! -f "$SCRIPT_DIR/otef-interactive/public/import/layers/migrashim_simplified.json" ]; then
-    echo "Generating simplified GeoJSON layers for OTEF..."
-    python3 "$SCRIPT_DIR/otef-interactive/scripts/simplify_geometries.py"
+# Setup OTEF Interactive module - PMTiles generation
+if [ ! -f "$SCRIPT_DIR/otef-interactive/frontend/data/parcels.pmtiles" ]; then
+    echo "Setting up OTEF PMTiles generation environment..."
+
+    # Create venv if not exists
+    VENV_PATH="$SCRIPT_DIR/otef-interactive/scripts/.venv"
+    if [ ! -d "$VENV_PATH" ]; then
+        echo "Creating Python virtual environment for tile generation..."
+        python3 -m venv "$VENV_PATH"
+    fi
+
+    # Install dependencies
+    echo "Installing tile generation dependencies..."
+    "$VENV_PATH/bin/pip" install pyproj pmtiles -q
+
+    # Check if Docker is running for tile generation
+    if docker info >/dev/null 2>&1; then
+        echo "Generating PMTiles for parcels layer..."
+        "$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/generate-pmtiles.py"
+    else
+        echo "Warning: Docker not running, skipping PMTiles generation"
+    fi
 fi
 
 # Run migrations

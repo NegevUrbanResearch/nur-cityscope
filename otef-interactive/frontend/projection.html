@@ -85,7 +85,7 @@
         alt="OTEF Model"
         style="opacity: 0"
       />
-      <svg id="layersOverlay"></svg>
+      <canvas id="layersCanvas"></canvas>
       <div id="highlightOverlay"></div>
     </div>
 
@@ -104,8 +104,7 @@
     <script src="js/coordinate-utils.js"></script>
     <script src="js/vector-styling.js"></script>
     <script src="js/layer-loader.js"></script>
-    <script src="js/svg-style-adapter.js"></script>
-    <script src="js/layer-renderer-svg.js"></script>
+    <script src="js/layer-renderer-canvas.js"></script>
     <script src="js/debug-overlay.js"></script>
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
@@ -123,10 +122,10 @@
           }
         }
       });
-      
+
       // Make tableSwitcher globally available for layer loading
       window.tableSwitcher = tableSwitcher;
-      
+
       // Only show OTEF interface if table is 'otef'
       if (tableSwitcher.getCurrentTable() !== 'otef') {
         window.location.href = `/projection/?table=${tableSwitcher.getCurrentTable()}`;

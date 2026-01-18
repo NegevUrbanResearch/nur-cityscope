@@ -1,87 +1,309 @@
 #!/usr/bin/env python3
 """
-Generate PMTiles from GeoJSON using Python
-This is an alternative to using tippecanoe via Docker
+Generate PMTiles from GeoJSON using Docker + tippecanoe
+
+Cross-platform script (Windows/macOS/Linux) that:
+1. Transforms source GeoJSON from EPSG:2039 to WGS84
+2. Generates MBTiles with tippecanoe (via Docker)
+3. Converts MBTiles to PMTiles
+
+Usage:
+  python generate-pmtiles.py
+
+Requirements:
+  - Docker (with tippecanoe image)
+  - Python 3.8+ with packages: pyproj, pmtiles
 """
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
-
-# Check if pmtiles is installed
-try:
-    import pmtiles
-    from pmtiles.writer import Writer
-    from pmtiles.tile import Compression
-except ImportError:
-    print("ERROR: pmtiles library not found")
-    print("\nPlease install it:")
-    print("  pip install pmtiles")
-    print("\nOr use WSL/Docker approach:")
-    print("  wsl bash generate-tiles.sh")
-    sys.exit(1)
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 DATA_SOURCE = PROJECT_ROOT / "public" / "source" / "layers"
 OUTPUT_DIR = PROJECT_ROOT / "frontend" / "data"
+TEMP_DIR = SCRIPT_DIR / "temp"
 
-print("Generating PMTiles using Python...")
-print(f"Source: {DATA_SOURCE}")
-print(f"Output: {OUTPUT_DIR}")
-print()
+# Docker image
+TIPPECANOE_IMAGE = "ingmapping/tippecanoe"
 
-# Create output directory
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Process GeoJSON files
-files_to_process = [
-    ("migrashim.json", "parcels.pmtiles", "parcels", "OTEF Parcels"),
-    ("small_roads.json", "roads.pmtiles", "roads", "OTEF Roads")
-]
-
-for input_file, output_file, layer_name, display_name in files_to_process:
-    input_path = DATA_SOURCE / input_file
-    output_path = OUTPUT_DIR / output_file
-    
-    print(f"Processing {input_file}...")
-    
-    if not input_path.exists():
-        print(f"ERROR: {input_path} not found")
-        continue
-    
+def check_docker():
+    """Check if Docker is available"""
     try:
-        # Load GeoJSON
-        with open(input_path, 'r', encoding='utf-8') as f:
-            geojson = json.load(f)
-        
-        # Get feature count
-        feature_count = len(geojson.get('features', []))
-        print(f"  Features: {feature_count:,}")
-        
-        # For now, we'll use a simpler approach - convert to a single-tile PMTiles
-        # This is a temporary solution until we can use proper tiling with tippecanoe
-        
-        print(f"  NOTE: For large datasets, consider using tippecanoe via WSL:")
-        print(f"    wsl bash {SCRIPT_DIR}/generate-tiles.sh")
-        print()
-        
+        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10)
+        return result.returncode == 0
+    except:
+        return False
+
+
+def ensure_docker_image():
+    """Pull tippecanoe Docker image if not present"""
+    result = subprocess.run(
+        ["docker", "images", "-q", TIPPECANOE_IMAGE],
+        capture_output=True, text=True
+    )
+    if not result.stdout.strip():
+        print(f"Pulling {TIPPECANOE_IMAGE}...")
+        subprocess.run(["docker", "pull", TIPPECANOE_IMAGE])
+
+
+def check_dependencies():
+    """Check if required Python packages are installed"""
+    missing = []
+    try:
+        import pyproj
+    except ImportError:
+        missing.append("pyproj")
+
+    try:
+        import pmtiles
+    except ImportError:
+        missing.append("pmtiles")
+
+    if missing:
+        print(f"Missing packages: {', '.join(missing)}")
+        print(f"Install with: pip install {' '.join(missing)}")
+        return False
+    return True
+
+
+def get_file_size_mb(path):
+    return path.stat().st_size / (1024 * 1024) if path.exists() else 0
+
+
+def count_features(geojson_path):
+    try:
+        with open(geojson_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            return len(data.get('features', []))
+    except:
+        return 0
+
+
+def to_docker_path(path):
+    """Convert path to Docker-compatible format (for Windows)"""
+    posix = str(path).replace('\\', '/')
+    if len(posix) >= 2 and posix[1] == ':':
+        # Windows: D:\path -> /d/path
+        return '/' + posix[0].lower() + posix[2:]
+    return posix
+
+
+def transform_to_wgs84(input_path, output_path):
+    """Transform GeoJSON from EPSG:2039 to WGS84"""
+    from pyproj import Transformer
+
+    print("Transforming coordinates from EPSG:2039 to WGS84...")
+
+    transformer = Transformer.from_crs("EPSG:2039", "EPSG:4326", always_xy=True)
+
+    with open(input_path, 'r', encoding='utf-8') as f:
+        geojson = json.load(f)
+
+    def transform_coords(coords, depth=0):
+        if depth > 10:
+            return coords
+        if isinstance(coords[0], (int, float)):
+            lon, lat = transformer.transform(coords[0], coords[1])
+            return [lon, lat]
+        else:
+            return [transform_coords(c, depth + 1) for c in coords]
+
+    count = 0
+    for feature in geojson.get('features', []):
+        if 'geometry' in feature and feature['geometry'] and 'coordinates' in feature['geometry']:
+            feature['geometry']['coordinates'] = transform_coords(feature['geometry']['coordinates'])
+            count += 1
+
+    geojson['crs'] = {"type": "name", "properties": {"name": "EPSG:4326"}}
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(geojson, f)
+
+    print(f"Transformed {count} features")
+    return True
+
+
+def generate_mbtiles(input_file, output_file):
+    """Generate MBTiles using tippecanoe Docker"""
+    print()
+    print("=" * 60)
+    print("Generating MBTiles with tippecanoe")
+    print("=" * 60)
+
+    if output_file.exists():
+        output_file.unlink()
+
+    abs_input = input_file.resolve()
+    abs_output_dir = output_file.parent.resolve()
+
+    # Convert paths for Docker
+    if sys.platform == 'win32':
+        docker_input_dir = to_docker_path(abs_input.parent)
+        docker_output_dir = to_docker_path(abs_output_dir)
+    else:
+        docker_input_dir = str(abs_input.parent)
+        docker_output_dir = str(abs_output_dir)
+
+    docker_cmd = [
+        "docker", "run", "--rm",
+        "-v", f"{docker_input_dir}:/input:ro",
+        "-v", f"{docker_output_dir}:/output",
+        TIPPECANOE_IMAGE,
+        "tippecanoe",
+        "-o", f"/output/{output_file.name}",
+        "--minimum-zoom=9",
+        "--maximum-zoom=18",
+        "--no-feature-limit",
+        "--no-tile-size-limit",
+        "--detect-shared-borders",
+        "--simplification=5",
+        "--layer=parcels",
+        "--force",
+        f"/input/{abs_input.name}"
+    ]
+
+    print(f"Input: {input_file.name} ({get_file_size_mb(input_file):.1f} MB)")
+    print("Running tippecanoe... (1-2 minutes)")
+
+    try:
+        result = subprocess.run(docker_cmd, capture_output=True, text=True, timeout=300)
+
+        if output_file.exists() and output_file.stat().st_size > 100000:
+            print(f"SUCCESS: MBTiles generated ({get_file_size_mb(output_file):.1f} MB)")
+            return True
+        else:
+            print("ERROR: MBTiles generation failed")
+            if result.stderr:
+                lines = [l for l in result.stderr.strip().split('\n') if l.strip()][-10:]
+                print('\n'.join(lines))
+            return False
+    except subprocess.TimeoutExpired:
+        print("ERROR: Timed out")
+        return False
     except Exception as e:
-        print(f"ERROR processing {input_file}: {e}")
-        continue
+        print(f"ERROR: {e}")
+        return False
 
-print("\nAlternative approaches:")
-print("1. Use WSL with tippecanoe:")
-print("   wsl sudo apt-get install tippecanoe")
-print(f"   wsl bash {SCRIPT_DIR}/generate-tiles.sh")
-print()
-print("2. Use Docker with a working image:")
-print("   docker pull osgeo/gdal")
-print("   # Then convert GeoJSON to MBTiles, then to PMTiles")
-print()
-print("3. Use online tools:")
-print("   https://felt.com (supports PMTiles export)")
-print("   https://mapshaper.org (for simplification)")
 
+def convert_to_pmtiles(mbtiles_path, pmtiles_path):
+    """Convert MBTiles to PMTiles using pmtiles-convert script"""
+    print()
+    print("=" * 60)
+    print("Converting to PMTiles")
+    print("=" * 60)
+
+    if pmtiles_path.exists():
+        pmtiles_path.unlink()
+
+    # Find the pmtiles-convert script in the venv
+    venv_dir = SCRIPT_DIR / ".venv"
+    if sys.platform == 'win32':
+        pmtiles_convert = venv_dir / "Scripts" / "pmtiles-convert"
+    else:
+        pmtiles_convert = venv_dir / "bin" / "pmtiles-convert"
+
+    # Use venv python to run pmtiles-convert script
+    if pmtiles_convert.exists():
+        # Run conversion using python with the script
+        cmd = [sys.executable, str(pmtiles_convert), str(mbtiles_path), str(pmtiles_path)]
+    else:
+        # Try system pmtiles-convert
+        cmd = ["pmtiles-convert", str(mbtiles_path), str(pmtiles_path)]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+        if pmtiles_path.exists() and pmtiles_path.stat().st_size > 100000:
+            print(f"SUCCESS: PMTiles generated ({get_file_size_mb(pmtiles_path):.1f} MB)")
+            return True
+        else:
+            print("ERROR: PMTiles conversion failed")
+            print(result.stderr if result.stderr else result.stdout)
+            return False
+    except FileNotFoundError:
+        print("ERROR: pmtiles-convert not found")
+        print("Ensure pmtiles is installed: pip install pmtiles")
+        return False
+    except Exception as e:
+        print(f"ERROR: {e}")
+        return False
+
+
+def cleanup(files):
+    """Remove temporary files"""
+    for f in files:
+        if f.exists():
+            f.unlink()
+
+
+def main():
+    print()
+    print("=" * 60)
+    print("OTEF Parcels - PMTiles Generator")
+    print("=" * 60)
+    print()
+
+    # Pre-checks
+    if not check_docker():
+        print("ERROR: Docker not available or not running")
+        print("Please start Docker Desktop and try again")
+        sys.exit(1)
+    print("Docker: OK")
+
+    if not check_dependencies():
+        sys.exit(1)
+    print("Dependencies: OK")
+
+    ensure_docker_image()
+    print()
+
+    # File paths
+    source_file = DATA_SOURCE / "migrashim.json"
+    wgs84_file = TEMP_DIR / "migrashim_wgs84.json"
+    mbtiles_file = OUTPUT_DIR / "parcels.mbtiles"
+    pmtiles_file = OUTPUT_DIR / "parcels.pmtiles"
+
+    if not source_file.exists():
+        print(f"ERROR: Source not found: {source_file}")
+        sys.exit(1)
+
+    print(f"Source: {source_file.name} ({get_file_size_mb(source_file):.1f} MB)")
+    print(f"Features: {count_features(source_file):,}")
+
+    # Step 1: Transform to WGS84
+    if not transform_to_wgs84(source_file, wgs84_file):
+        sys.exit(1)
+    print(f"WGS84: {wgs84_file.name} ({get_file_size_mb(wgs84_file):.1f} MB)")
+
+    # Step 2: Generate MBTiles
+    if not generate_mbtiles(wgs84_file, mbtiles_file):
+        cleanup([wgs84_file])
+        sys.exit(1)
+
+    # Step 3: Convert to PMTiles
+    if not convert_to_pmtiles(mbtiles_file, pmtiles_file):
+        print("\nMBTiles available but PMTiles conversion failed.")
+        cleanup([wgs84_file])
+        sys.exit(1)
+
+    # Cleanup temp files
+    cleanup([wgs84_file, mbtiles_file])
+
+    # Summary
+    print()
+    print("=" * 60)
+    print("COMPLETE!")
+    print("=" * 60)
+    print(f"Output: {pmtiles_file}")
+    print(f"Size:   {get_file_size_mb(pmtiles_file):.1f} MB")
+
+
+if __name__ == '__main__':
+    main()
