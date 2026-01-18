@@ -47,13 +47,15 @@ const basemaps = {
 };
 
 // Layer references
-let parcelsLayer, roadsLayer, modelOverlay;
+let parcelsLayer, roadsLayer, modelOverlay, majorRoadsLayer, smallRoadsLayer;
 
 // Layer state tracking
 let layerState = {
   roads: true,
   parcels: false,
   model: false,
+  majorRoads: false,
+  smallRoads: false,
 };
 
 // WebSocket client instance
@@ -230,7 +232,11 @@ async function loadParcelsFromPMTiles() {
     });
 
     window.parcelsLayer = parcelsLayer;
-    layerState.parcels = false;
+
+    // If state says parcels should be visible, add layer now
+    if (layerState.parcels) {
+      map.addLayer(parcelsLayer);
+    }
 
     console.log("Parcels layer ready (PMTiles)");
   } catch (error) {
@@ -295,6 +301,119 @@ async function loadRoadsFromGeoJSON() {
   }
 }
 
+/**
+ * Load major roads layer from GeoJSON file (road-big.geojson)
+ * Data is in EPSG:2039, needs transformation
+ */
+async function loadMajorRoadsFromGeoJSON() {
+  console.log("Loading major roads from GeoJSON...");
+
+  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+
+  try {
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load layers: ${response.status}`);
+    }
+
+    const layers = await response.json();
+    const majorRoadsData = layers.find(l => l.name === 'majorRoads');
+
+    if (!majorRoadsData) {
+      console.warn("Major roads layer not found in database");
+      return;
+    }
+
+    let geojson;
+    if (majorRoadsData.geojson) {
+      geojson = majorRoadsData.geojson;
+    } else if (majorRoadsData.url) {
+      const geojsonResponse = await fetch(majorRoadsData.url);
+      if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
+      geojson = await geojsonResponse.json();
+    } else {
+      throw new Error('Layer has no data source');
+    }
+
+    console.log(`Major roads: ${geojson.features?.length || 0} features, transforming...`);
+
+    // Transform from EPSG:2039 to WGS84
+    const transformed = transformGeojsonToWgs84(geojson);
+
+    majorRoadsLayer = L.geoJSON(transformed, {
+      style: typeof getMajorRoadStyle === "function" ? getMajorRoadStyle : {
+        color: "#B22222",
+        weight: 3,
+        opacity: 0.9,
+      },
+    });
+
+    window.majorRoadsLayer = majorRoadsLayer;
+    // Don't add to map - starts hidden
+
+    console.log("Major roads layer ready (GeoJSON)");
+  } catch (error) {
+    console.error("Error loading major roads:", error);
+  }
+}
+
+/**
+ * Load small roads layer from GeoJSON file (Small-road-limited.geojson)
+ * Data is already in WGS84, no transformation needed
+ */
+async function loadSmallRoadsFromGeoJSON() {
+  console.log("Loading small roads from GeoJSON...");
+
+  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+
+  try {
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load layers: ${response.status}`);
+    }
+
+    const layers = await response.json();
+    const smallRoadsData = layers.find(l => l.name === 'smallRoads');
+
+    if (!smallRoadsData) {
+      console.warn("Small roads layer not found in database");
+      return;
+    }
+
+    let geojson;
+    if (smallRoadsData.geojson) {
+      geojson = smallRoadsData.geojson;
+    } else if (smallRoadsData.url) {
+      const geojsonResponse = await fetch(smallRoadsData.url);
+      if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
+      geojson = await geojsonResponse.json();
+    } else {
+      throw new Error('Layer has no data source');
+    }
+
+    console.log(`Small roads: ${geojson.features?.length || 0} features`);
+
+    // Already in WGS84, no transformation needed
+    smallRoadsLayer = L.geoJSON(geojson, {
+      style: typeof getSmallRoadStyle === "function" ? getSmallRoadStyle : {
+        fillColor: "#A0A0A0",
+        fillOpacity: 0.6,
+        color: "#707070",
+        weight: 0.5,
+        opacity: 0.8,
+      },
+    });
+
+    window.smallRoadsLayer = smallRoadsLayer;
+    // Don't add to map - starts hidden
+
+    console.log("Small roads layer ready (GeoJSON)");
+  } catch (error) {
+    console.error("Error loading small roads:", error);
+  }
+}
 
 /**
  * Send viewport update to all connected clients
@@ -493,6 +612,44 @@ function handleStateResponse(msg) {
       layerState.model = msg.layers.model;
     }
 
+    // Sync majorRoads layer
+    if (msg.layers.majorRoads !== undefined && msg.layers.majorRoads !== layerState.majorRoads) {
+      if (msg.layers.majorRoads && !majorRoadsLayer) {
+        // Lazy load if needed
+        loadMajorRoadsFromGeoJSON().then(() => {
+          if (majorRoadsLayer && msg.layers.majorRoads) {
+            map.addLayer(majorRoadsLayer);
+          }
+        });
+      } else if (majorRoadsLayer) {
+        if (msg.layers.majorRoads) {
+          map.addLayer(majorRoadsLayer);
+        } else {
+          map.removeLayer(majorRoadsLayer);
+        }
+      }
+      layerState.majorRoads = msg.layers.majorRoads;
+    }
+
+    // Sync smallRoads layer
+    if (msg.layers.smallRoads !== undefined && msg.layers.smallRoads !== layerState.smallRoads) {
+      if (msg.layers.smallRoads && !smallRoadsLayer) {
+        // Lazy load if needed
+        loadSmallRoadsFromGeoJSON().then(() => {
+          if (smallRoadsLayer && msg.layers.smallRoads) {
+            map.addLayer(smallRoadsLayer);
+          }
+        });
+      } else if (smallRoadsLayer) {
+        if (msg.layers.smallRoads) {
+          map.addLayer(smallRoadsLayer);
+        } else {
+          map.removeLayer(smallRoadsLayer);
+        }
+      }
+      layerState.smallRoads = msg.layers.smallRoads;
+    }
+
     updateMapLegend();
   }
 
@@ -630,7 +787,9 @@ function handleLayerUpdate(msg) {
   const hasChanges =
     (layers.roads !== undefined && layers.roads !== layerState.roads) ||
     (layers.parcels !== undefined && layers.parcels !== layerState.parcels) ||
-    (layers.model !== undefined && layers.model !== layerState.model);
+    (layers.model !== undefined && layers.model !== layerState.model) ||
+    (layers.majorRoads !== undefined && layers.majorRoads !== layerState.majorRoads) ||
+    (layers.smallRoads !== undefined && layers.smallRoads !== layerState.smallRoads);
 
   if (!hasChanges) {
     console.log("[GIS Map] Layer update matches current state, ignoring");
@@ -665,6 +824,46 @@ function handleLayerUpdate(msg) {
       map.removeLayer(modelOverlay);
     }
     layerState.model = layers.model;
+  }
+
+  // Update majorRoads layer
+  if (layers.majorRoads !== undefined && layers.majorRoads !== layerState.majorRoads) {
+    if (layers.majorRoads && !majorRoadsLayer) {
+      // Lazy load if needed
+      loadMajorRoadsFromGeoJSON().then(() => {
+        if (majorRoadsLayer && layers.majorRoads) {
+          map.addLayer(majorRoadsLayer);
+          updateMapLegend();
+        }
+      });
+    } else if (majorRoadsLayer) {
+      if (layers.majorRoads) {
+        map.addLayer(majorRoadsLayer);
+      } else {
+        map.removeLayer(majorRoadsLayer);
+      }
+    }
+    layerState.majorRoads = layers.majorRoads;
+  }
+
+  // Update smallRoads layer
+  if (layers.smallRoads !== undefined && layers.smallRoads !== layerState.smallRoads) {
+    if (layers.smallRoads && !smallRoadsLayer) {
+      // Lazy load if needed
+      loadSmallRoadsFromGeoJSON().then(() => {
+        if (smallRoadsLayer && layers.smallRoads) {
+          map.addLayer(smallRoadsLayer);
+          updateMapLegend();
+        }
+      });
+    } else if (smallRoadsLayer) {
+      if (layers.smallRoads) {
+        map.addLayer(smallRoadsLayer);
+      } else {
+        map.removeLayer(smallRoadsLayer);
+      }
+    }
+    layerState.smallRoads = layers.smallRoads;
   }
 
   // Update legend to show only active layers
@@ -720,6 +919,27 @@ function updateMapLegend() {
           symbol: null,
           label: "Physical 3D model overlay"
         }
+      ]
+    });
+  }
+
+  // Major roads layer
+  if (layerState.majorRoads) {
+    activeLayers.push({
+      title: "Major Roads",
+      items: [
+        { symbol: { background: "#B22222", border: "#8B1A1A" }, label: "Primary Road" },
+        { symbol: { background: "#CD853F", border: "#A06B30" }, label: "Regional Road" }
+      ]
+    });
+  }
+
+  // Small roads layer
+  if (layerState.smallRoads) {
+    activeLayers.push({
+      title: "Small Roads",
+      items: [
+        { symbol: { background: "#A0A0A0", border: "#707070" }, label: "Local Roads" }
       ]
     });
   }

@@ -42,8 +42,45 @@ Write-Host ""
 Write-Host "Reset complete!" -ForegroundColor Green
 Write-Host ""
 
+# Regenerate PMTiles (before starting containers)
+Write-Host "5. Setting up OTEF PMTiles..." -ForegroundColor Cyan
+
+$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+if (-not $pythonCmd) {
+    $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
+}
+
+if ($pythonCmd) {
+    # Create venv if it doesn't exist
+    $venvPath = "otef-interactive\scripts\.venv"
+    if (-not (Test-Path $venvPath)) {
+        Write-Host "   Creating Python virtual environment..." -ForegroundColor Gray
+        & $pythonCmd.Name -m venv "$venvPath"
+    }
+
+    # Install dependencies (quick check, pip handles already-installed packages efficiently)
+    Write-Host "   Ensuring tile generation dependencies..." -ForegroundColor Gray
+    & "$venvPath\Scripts\pip" install pyproj pmtiles -q
+
+    # Check if Docker is running for tile generation
+    $dockerRunning = docker info 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "   Generating PMTiles for parcels layer..." -ForegroundColor Gray
+        & "$venvPath\Scripts\python" "otef-interactive\scripts\generate-pmtiles.py"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Warning: PMTiles generation failed. Parcels will load slower via GeoJSON." -ForegroundColor Yellow
+        } else {
+            Write-Host "   PMTiles generated successfully." -ForegroundColor Green
+        }
+    } else {
+        Write-Host "   Warning: Docker not running, skipping PMTiles generation" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "   Warning: Python not found, skipping PMTiles generation" -ForegroundColor Yellow
+}
+
 # Rebuild and start containers
-Write-Host "5. Rebuilding and starting containers..." -ForegroundColor Cyan
+Write-Host "6. Rebuilding and starting containers..." -ForegroundColor Cyan
 $env:COMPOSE_BAKE = "true"
 docker-compose up --build -d
 
@@ -54,22 +91,22 @@ Write-Host ""
 # Get local IP address
 $localIP = $null
 try {
-    $networkAdapters = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | 
-        Where-Object { 
-            $_.IPAddress -notlike "127.*" -and 
+    $networkAdapters = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.IPAddress -notlike "127.*" -and
             $_.IPAddress -notlike "169.254.*" -and
             $_.InterfaceAlias -notlike "*Loopback*"
-        } | 
-        Sort-Object InterfaceIndex | 
+        } |
+        Sort-Object InterfaceIndex |
         Select-Object -First 1
-    
+
     if ($networkAdapters) {
         $localIP = $networkAdapters.IPAddress
     }
 } catch {
     # Fallback method
-    $localIP = (Get-NetIPConfiguration -ErrorAction SilentlyContinue | 
-        Where-Object { $_.IPv4Address.IPAddress -notlike "127.*" -and $_.IPv4Address.IPAddress -notlike "169.254.*" } | 
+    $localIP = (Get-NetIPConfiguration -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPv4Address.IPAddress -notlike "127.*" -and $_.IPv4Address.IPAddress -notlike "169.254.*" } |
         Select-Object -First 1).IPv4Address.IPAddress
 }
 

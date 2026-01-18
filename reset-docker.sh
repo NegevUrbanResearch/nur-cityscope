@@ -22,7 +22,35 @@ docker system prune -f
 echo ""
 echo "✅ Reset complete!"
 echo ""
-echo "5️⃣  Rebuilding and starting containers..."
+
+# Regenerate PMTiles (before starting containers)
+echo "5️⃣  Setting up OTEF PMTiles..."
+
+# Create venv if it doesn't exist
+VENV_PATH="otef-interactive/scripts/.venv"
+if [ ! -d "$VENV_PATH" ]; then
+    echo "   Creating Python virtual environment..."
+    python3 -m venv "$VENV_PATH"
+fi
+
+# Install dependencies
+echo "   Ensuring tile generation dependencies..."
+"$VENV_PATH/bin/pip" install pyproj pmtiles -q
+
+# Check if Docker is running for tile generation
+if docker info >/dev/null 2>&1; then
+    echo "   Generating PMTiles for parcels layer..."
+    "$VENV_PATH/bin/python" "otef-interactive/scripts/generate-pmtiles.py"
+    if [ $? -ne 0 ]; then
+        echo "   Warning: PMTiles generation failed. Parcels will load slower via GeoJSON."
+    else
+        echo "   PMTiles generated successfully."
+    fi
+else
+    echo "   Warning: Docker not running, skipping PMTiles generation"
+fi
+
+echo "6️⃣  Rebuilding and starting containers..."
 COMPOSE_BAKE=true docker-compose up --build -d
 
 echo ""

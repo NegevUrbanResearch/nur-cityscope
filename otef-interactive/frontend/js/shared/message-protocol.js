@@ -15,6 +15,8 @@ const DEFAULT_LAYER_STATES = {
   roads: true,
   parcels: false,
   model: false,
+  majorRoads: false,
+  smallRoads: false,
 };
 
 /**
@@ -66,7 +68,7 @@ function validateLayerUpdate(msg) {
   if (!msg.layers || typeof msg.layers !== "object") return false;
 
   // Check that layers object has valid boolean values
-  const validLayers = ["roads", "parcels", "model"];
+  const validLayers = ["roads", "parcels", "model", "majorRoads", "smallRoads"];
   for (const key in msg.layers) {
     if (!validLayers.includes(key)) return false;
     if (typeof msg.layers[key] !== "boolean") return false;

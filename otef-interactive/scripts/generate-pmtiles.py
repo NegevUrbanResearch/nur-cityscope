@@ -193,7 +193,7 @@ def generate_mbtiles(input_file, output_file):
 
 
 def convert_to_pmtiles(mbtiles_path, pmtiles_path):
-    """Convert MBTiles to PMTiles using pmtiles-convert script"""
+    """Convert MBTiles to PMTiles using pmtiles Python module"""
     print()
     print("=" * 60)
     print("Converting to PMTiles")
@@ -202,33 +202,20 @@ def convert_to_pmtiles(mbtiles_path, pmtiles_path):
     if pmtiles_path.exists():
         pmtiles_path.unlink()
 
-    # Find the pmtiles-convert script in the venv
-    venv_dir = SCRIPT_DIR / ".venv"
-    if sys.platform == 'win32':
-        pmtiles_convert = venv_dir / "Scripts" / "pmtiles-convert"
-    else:
-        pmtiles_convert = venv_dir / "bin" / "pmtiles-convert"
-
-    # Use venv python to run pmtiles-convert script
-    if pmtiles_convert.exists():
-        # Run conversion using python with the script
-        cmd = [sys.executable, str(pmtiles_convert), str(mbtiles_path), str(pmtiles_path)]
-    else:
-        # Try system pmtiles-convert
-        cmd = ["pmtiles-convert", str(mbtiles_path), str(pmtiles_path)]
-
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        from pmtiles.convert import mbtiles_to_pmtiles
+
+        print(f"Converting {mbtiles_path.name} to {pmtiles_path.name}...")
+        mbtiles_to_pmtiles(str(mbtiles_path), str(pmtiles_path), maxzoom=18)
 
         if pmtiles_path.exists() and pmtiles_path.stat().st_size > 100000:
             print(f"SUCCESS: PMTiles generated ({get_file_size_mb(pmtiles_path):.1f} MB)")
             return True
         else:
-            print("ERROR: PMTiles conversion failed")
-            print(result.stderr if result.stderr else result.stdout)
+            print("ERROR: PMTiles conversion failed - output file too small or missing")
             return False
-    except FileNotFoundError:
-        print("ERROR: pmtiles-convert not found")
+    except ImportError:
+        print("ERROR: pmtiles module not found")
         print("Ensure pmtiles is installed: pip install pmtiles")
         return False
     except Exception as e:

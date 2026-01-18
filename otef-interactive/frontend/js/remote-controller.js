@@ -12,6 +12,8 @@ let authoritativeState = {
     roads: true,
     parcels: false,
     model: false,
+    majorRoads: false,
+    smallRoads: false,
   },
   animations: {
     parcels: false,  // Parcel animation enabled/disabled
@@ -25,6 +27,8 @@ let currentState = {
     roads: true,
     parcels: false,
     model: false,
+    majorRoads: false,
+    smallRoads: false,
   },
   gisMapConnected: false,
 };
@@ -380,6 +384,8 @@ function initializeLayerControls() {
     toggleRoads: "roads",
     toggleParcels: "parcels",
     toggleModel: "model",
+    toggleMajorRoads: "majorRoads",
+    toggleSmallRoads: "smallRoads",
   };
 
   Object.entries(toggles).forEach(([id, layerName]) => {
@@ -665,6 +671,8 @@ function updateLayerCheckboxes() {
     toggleRoads: "roads",
     toggleParcels: "parcels",
     toggleModel: "model",
+    toggleMajorRoads: "majorRoads",
+    toggleSmallRoads: "smallRoads",
   };
 
   Object.entries(toggles).forEach(([id, layerName]) => {

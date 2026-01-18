@@ -1,5 +1,7 @@
 # Generated files (only PMTiles, not used yet)
 frontend/data/*.pmtiles
+frontend/data/*.mbtiles
+
 
 # Python cache
 scripts/__pycache__/

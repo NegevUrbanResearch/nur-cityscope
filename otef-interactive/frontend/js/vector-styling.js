@@ -75,6 +75,48 @@ function getRoadStyle() {
     };
 }
 
+/**
+ * Style for major roads (road-big.geojson) - uses MAVAT_NAME for categorization
+ * "דרך ראשית" = Primary Road (red/brown, thicker)
+ * "דרך אזורית" = Regional Road (orange/tan, medium)
+ */
+function getMajorRoadStyle(feature) {
+    const roadType = feature.properties?.MAVAT_NAME || '';
+
+    if (roadType.includes('ראשית')) {
+        // Primary road - bold red/brown
+        return {
+            color: '#B22222',  // Fire brick red
+            weight: 4,
+            opacity: 0.9,
+            lineCap: 'round',
+            lineJoin: 'round'
+        };
+    } else {
+        // Regional road - orange/tan
+        return {
+            color: '#CD853F',  // Peru/tan
+            weight: 3,
+            opacity: 0.85,
+            lineCap: 'round',
+            lineJoin: 'round'
+        };
+    }
+}
+
+/**
+ * Style for small roads (Small-road-limited.geojson) - MultiPolygon, single style
+ */
+function getSmallRoadStyle() {
+    return {
+        fillColor: '#A0A0A0',  // Light gray
+        fillOpacity: 0.6,
+        color: '#707070',      // Medium gray stroke
+        weight: 0.5,
+        opacity: 0.8
+    };
+}
+
 function createPopupContent(properties) {
     const keyProps = {
         'MIGRASH': 'Parcel ID',

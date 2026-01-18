@@ -35,6 +35,8 @@ let layerState = {
   roads: true,
   parcels: false,
   model: false,
+  majorRoads: false,
+  smallRoads: false,
 };
 
 // Animation state
@@ -164,6 +166,26 @@ function handleStateResponse(msg) {
       const img = document.getElementById("displayedImage");
       if (img) {
         img.style.opacity = msg.layers.model ? "1" : "0";
+      }
+    }
+
+    // Sync majorRoads layer
+    if (msg.layers.majorRoads !== undefined && msg.layers.majorRoads !== layerState.majorRoads) {
+      layerState.majorRoads = msg.layers.majorRoads;
+      if (msg.layers.majorRoads && !loadedLayers.majorRoads) {
+        loadMajorRoadsLayer();
+      } else {
+        updateLayerVisibility("majorRoads", msg.layers.majorRoads);
+      }
+    }
+
+    // Sync smallRoads layer
+    if (msg.layers.smallRoads !== undefined && msg.layers.smallRoads !== layerState.smallRoads) {
+      layerState.smallRoads = msg.layers.smallRoads;
+      if (msg.layers.smallRoads && !loadedLayers.smallRoads) {
+        loadSmallRoadsLayer();
+      } else {
+        updateLayerVisibility("smallRoads", msg.layers.smallRoads);
       }
     }
   }
@@ -598,6 +620,102 @@ function initializeParcelsAnimator(geojson) {
 }
 
 /**
+ * Load and render major roads layer (road-big.geojson)
+ * Data is in EPSG:2039, same as model bounds
+ */
+async function loadMajorRoadsLayer() {
+  if (loadedLayers.majorRoads) {
+    updateLayerVisibility("majorRoads", layerState.majorRoads);
+    return;
+  }
+
+  console.log("[Projection] Loading major roads layer...");
+
+  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+
+  try {
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load layers: ${response.status}`);
+    }
+
+    const layers = await response.json();
+    const majorRoadsData = layers.find(l => l.name === 'majorRoads');
+
+    if (!majorRoadsData) {
+      console.warn("[Projection] Major roads layer not found in database");
+      return;
+    }
+
+    let geojson;
+    if (majorRoadsData.geojson) {
+      geojson = majorRoadsData.geojson;
+    } else if (majorRoadsData.url) {
+      const geojsonResponse = await fetch(majorRoadsData.url);
+      if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
+      geojson = await geojsonResponse.json();
+    } else {
+      throw new Error('Layer has no data source');
+    }
+
+    console.log(`[Projection] Major roads: ${geojson.features?.length || 0} features`);
+    await renderLayerFromGeojson(geojson, 'majorRoads', getMajorRoadStyle);
+    console.log("[Projection] Major roads layer loaded");
+  } catch (error) {
+    console.error("[Projection] Error loading major roads layer:", error);
+  }
+}
+
+/**
+ * Load and render small roads layer (Small-road-limited.geojson)
+ * Data is in WGS84 (lat/lon), but we render in ITM space - Canvas handles it
+ */
+async function loadSmallRoadsLayer() {
+  if (loadedLayers.smallRoads) {
+    updateLayerVisibility("smallRoads", layerState.smallRoads);
+    return;
+  }
+
+  console.log("[Projection] Loading small roads layer...");
+
+  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+
+  try {
+    const response = await fetch(apiUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load layers: ${response.status}`);
+    }
+
+    const layers = await response.json();
+    const smallRoadsData = layers.find(l => l.name === 'smallRoads');
+
+    if (!smallRoadsData) {
+      console.warn("[Projection] Small roads layer not found in database");
+      return;
+    }
+
+    let geojson;
+    if (smallRoadsData.geojson) {
+      geojson = smallRoadsData.geojson;
+    } else if (smallRoadsData.url) {
+      const geojsonResponse = await fetch(smallRoadsData.url);
+      if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
+      geojson = await geojsonResponse.json();
+    } else {
+      throw new Error('Layer has no data source');
+    }
+
+    console.log(`[Projection] Small roads: ${geojson.features?.length || 0} features`);
+    await renderLayerFromGeojson(geojson, 'smallRoads', getSmallRoadStyle);
+    console.log("[Projection] Small roads layer loaded");
+  } catch (error) {
+    console.error("[Projection] Error loading small roads layer:", error);
+  }
+}
+
+/**
  * Handle layer update from WebSocket
  */
 function handleLayerUpdate(msg) {
@@ -646,6 +764,26 @@ function handleLayerUpdate(msg) {
     const img = document.getElementById("displayedImage");
     if (img) {
       img.style.opacity = layers.model ? "1" : "0";
+    }
+  }
+
+  // Update major roads layer (lazy load if needed)
+  if (layers.majorRoads !== undefined && layers.majorRoads !== layerState.majorRoads) {
+    layerState.majorRoads = layers.majorRoads;
+    if (layers.majorRoads && !loadedLayers.majorRoads) {
+      loadMajorRoadsLayer();
+    } else {
+      updateLayerVisibility("majorRoads", layers.majorRoads);
+    }
+  }
+
+  // Update small roads layer (lazy load if needed)
+  if (layers.smallRoads !== undefined && layers.smallRoads !== layerState.smallRoads) {
+    layerState.smallRoads = layers.smallRoads;
+    if (layers.smallRoads && !loadedLayers.smallRoads) {
+      loadSmallRoadsLayer();
+    } else {
+      updateLayerVisibility("smallRoads", layers.smallRoads);
     }
   }
 }

@@ -129,3 +129,4 @@ calculations/export/*
 *.msi
 *-to-load*
 
+otef-interactive/frontend/data/*.mbtiles
