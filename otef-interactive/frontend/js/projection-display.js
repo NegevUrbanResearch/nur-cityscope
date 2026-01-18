@@ -376,11 +376,11 @@ function handleResize() {
   if (lastMessage?.corners) updateHighlightQuad(lastMessage.corners);
   else if (lastMessage?.bbox) updateHighlightRect(lastMessage.bbox);
 
-  // Update SVG overlay position and re-render layers
-  if (svgOverlay && modelBounds) {
+  // Update canvas renderer position on resize
+  if (canvasRenderer && modelBounds) {
     const displayBounds = getDisplayedImageBounds();
     if (displayBounds) {
-      updateSVGPosition(svgOverlay, displayBounds, modelBounds, loadedLayers);
+      canvasRenderer.updatePosition(displayBounds, modelBounds);
     }
   }
 }

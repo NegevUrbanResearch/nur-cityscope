@@ -16,6 +16,7 @@ class CanvasLayerRenderer {
     this.layers = {};  // { layerId: { geojson, styleFunction, visible } }
     this.modelBounds = null;
     this.displayBounds = null;
+    this.dpr = 1;  // Device pixel ratio for high-DPI rendering
 
     this._createCanvas();
   }
@@ -25,10 +26,10 @@ class CanvasLayerRenderer {
     const existing = this.container.querySelector('#layersCanvas');
     if (existing) existing.remove();
 
-    // Create canvas element
+    // Create canvas element with crisp rendering for projector output
     this.canvas = document.createElement('canvas');
     this.canvas.id = 'layersCanvas';
-    this.canvas.style.cssText = 'position: absolute; pointer-events: none; z-index: 5;';
+    this.canvas.style.cssText = 'position: absolute; pointer-events: none; z-index: 5; image-rendering: crisp-edges; image-rendering: -webkit-optimize-contrast;';
 
     // Insert before highlight overlay
     const highlightOverlay = this.container.querySelector('#highlightOverlay');
@@ -43,6 +44,7 @@ class CanvasLayerRenderer {
 
   /**
    * Update canvas position and size to match displayed image
+   * Supports high-DPI rendering via devicePixelRatio and optional URL override
    */
   updatePosition(displayBounds, modelBounds) {
     if (!displayBounds || !modelBounds) return;
@@ -50,15 +52,38 @@ class CanvasLayerRenderer {
     this.displayBounds = displayBounds;
     this.modelBounds = modelBounds;
 
-    // Position canvas over the image
+    // Check for explicit resolution override via URL parameter (e.g., ?canvasRes=1920x1200)
+    const urlParams = new URLSearchParams(window.location.search);
+    const canvasRes = urlParams.get('canvasRes');
+
+    let canvasWidth, canvasHeight;
+
+    if (canvasRes && canvasRes.match(/^\d+x\d+$/)) {
+      // Explicit resolution override - render at exact specified resolution
+      const [w, h] = canvasRes.split('x').map(Number);
+      canvasWidth = w;
+      canvasHeight = h;
+      this.dpr = canvasWidth / displayBounds.width;  // Calculate effective DPR
+      console.log(`[CanvasLayerRenderer] Using explicit resolution: ${w}x${h}`);
+    } else {
+      // Use devicePixelRatio for high-DPI rendering
+      this.dpr = window.devicePixelRatio || 1;
+      canvasWidth = Math.round(displayBounds.width * this.dpr);
+      canvasHeight = Math.round(displayBounds.height * this.dpr);
+    }
+
+    // Position canvas over the image (CSS size)
     this.canvas.style.left = displayBounds.offsetX + 'px';
     this.canvas.style.top = displayBounds.offsetY + 'px';
     this.canvas.style.width = displayBounds.width + 'px';
     this.canvas.style.height = displayBounds.height + 'px';
 
-    // Set canvas resolution (use 1x for performance, could be 2x for retina)
-    this.canvas.width = displayBounds.width;
-    this.canvas.height = displayBounds.height;
+    // Set canvas internal resolution (scaled for high-DPI)
+    this.canvas.width = canvasWidth;
+    this.canvas.height = canvasHeight;
+
+    // Scale context so drawing operations use CSS pixel coordinates
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
     // Re-render all visible layers
     this.render();

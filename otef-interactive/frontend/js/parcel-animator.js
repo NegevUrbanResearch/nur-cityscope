@@ -36,7 +36,7 @@ class ParcelAnimator {
     // Create WebGL canvas
     this.canvas = document.createElement('canvas');
     this.canvas.id = 'animationCanvas';
-    this.canvas.style.cssText = 'position: absolute; pointer-events: none; z-index: 6; display: none;';
+    this.canvas.style.cssText = 'position: absolute; pointer-events: none; z-index: 6; display: none; image-rendering: crisp-edges; image-rendering: -webkit-optimize-contrast;';
 
     // Insert after layers canvas
     const layersCanvas = this.container.querySelector('#layersCanvas');
@@ -391,6 +391,7 @@ class ParcelAnimator {
 
   /**
    * Update canvas position to match display bounds
+   * Supports high-DPI rendering via devicePixelRatio and optional URL override
    */
   updatePosition(displayBounds, modelBounds) {
     if (!displayBounds || !modelBounds) return;
@@ -398,18 +399,38 @@ class ParcelAnimator {
     this.displayBounds = displayBounds;
     this.modelBounds = modelBounds;
 
-    // Position canvas exactly over the layers canvas
+    // Check for explicit resolution override via URL parameter (e.g., ?canvasRes=1920x1200)
+    const urlParams = new URLSearchParams(window.location.search);
+    const canvasRes = urlParams.get('canvasRes');
+
+    let canvasWidth, canvasHeight, dpr;
+
+    if (canvasRes && canvasRes.match(/^\d+x\d+$/)) {
+      // Explicit resolution override - render at exact specified resolution
+      const [w, h] = canvasRes.split('x').map(Number);
+      canvasWidth = w;
+      canvasHeight = h;
+      dpr = canvasWidth / displayBounds.width;
+      console.log(`[ParcelAnimator] Using explicit resolution: ${w}x${h}`);
+    } else {
+      // Use devicePixelRatio for high-DPI rendering
+      dpr = window.devicePixelRatio || 1;
+      canvasWidth = Math.round(displayBounds.width * dpr);
+      canvasHeight = Math.round(displayBounds.height * dpr);
+    }
+
+    // Position canvas exactly over the layers canvas (CSS size)
     this.canvas.style.left = displayBounds.offsetX + 'px';
     this.canvas.style.top = displayBounds.offsetY + 'px';
     this.canvas.style.width = displayBounds.width + 'px';
     this.canvas.style.height = displayBounds.height + 'px';
 
-    // Set canvas resolution
-    this.canvas.width = displayBounds.width;
-    this.canvas.height = displayBounds.height;
+    // Set canvas internal resolution (scaled for high-DPI)
+    this.canvas.width = canvasWidth;
+    this.canvas.height = canvasHeight;
 
     if (this.gl) {
-      this.gl.viewport(0, 0, displayBounds.width, displayBounds.height);
+      this.gl.viewport(0, 0, canvasWidth, canvasHeight);
     }
   }
 
