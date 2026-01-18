@@ -96,6 +96,30 @@ if (-not (Test-Path $simplifiedLayers)) {
     }
 }
 
+# Copy simplified layers to Django API public directory (where import command expects them)
+Write-Host "Copying OTEF simplified layers to Django API directory..." -ForegroundColor Cyan
+New-Item -ItemType Directory -Force -Path "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers" | Out-Null
+$migrashimSource = "$SCRIPT_DIR\otef-interactive\public\import\layers\migrashim_simplified.json"
+$roadsSource = "$SCRIPT_DIR\otef-interactive\public\import\layers\small_roads_simplified.json"
+$migrashimDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\migrashim_simplified.json"
+$roadsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\small_roads_simplified.json"
+
+if (Test-Path $migrashimSource) {
+    Copy-Item -Path $migrashimSource -Destination $migrashimDest -Force
+}
+if (Test-Path $roadsSource) {
+    Copy-Item -Path $roadsSource -Destination $roadsDest -Force
+}
+
+# Copy model-bounds.json if it doesn't exist in Django API directory
+$modelBoundsSource = "$SCRIPT_DIR\otef-interactive\frontend\data\model-bounds.json"
+$modelBoundsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\model-bounds.json"
+if (-not (Test-Path $modelBoundsDest) -and (Test-Path $modelBoundsSource)) {
+    Write-Host "Copying model-bounds.json to Django API directory..." -ForegroundColor Cyan
+    New-Item -ItemType Directory -Force -Path "$SCRIPT_DIR\nur-io\django_api\public\processed\otef" | Out-Null
+    Copy-Item -Path $modelBoundsSource -Destination $modelBoundsDest -Force
+}
+
 # Run migrations (only if container is running)
 Write-Host "Running database migrations..." -ForegroundColor Cyan
 $apiRunning = docker ps --filter "name=nur-api" --format "{{.Status}}" 2>$null
