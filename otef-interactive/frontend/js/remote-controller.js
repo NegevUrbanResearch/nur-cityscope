@@ -13,6 +13,9 @@ let authoritativeState = {
     parcels: false,
     model: false,
   },
+  animations: {
+    parcels: false,  // Parcel animation enabled/disabled
+  },
 };
 
 // UI state (for display purposes)
@@ -57,6 +60,7 @@ function initialize() {
   initializePanControls();
   initializeZoomControls();
   initializeLayerControls();
+  initializeAnimationControls();
   initializeJoystick();
 
   // Update UI with default state
@@ -154,21 +158,21 @@ function handleStateRequest(msg) {
   }
 
   console.log("[Remote] Received state request, responding with current state");
-  
+
   if (!wsClient || !wsClient.getConnected()) return;
-  
+
   // Only respond if we have valid viewport data (bbox and zoom required)
   if (!authoritativeState.viewport.bbox || !authoritativeState.viewport.zoom) {
     console.log("[Remote] Cannot respond to state request: viewport not initialized yet");
     return;
   }
-  
+
   // Respond with current authoritative state
   const stateResponse = createStateResponseMessage(
     authoritativeState.viewport,
     authoritativeState.layers
   );
-  
+
   wsClient.send(stateResponse);
   console.log("[Remote] State response sent:", stateResponse);
 }
@@ -348,7 +352,7 @@ function sendZoomCommand(zoom) {
 
   // Update UI optimistically
   updateZoomUI(zoom);
-  
+
   const msg = createZoomControlMessage(zoom);
   wsClient.send(msg);
   console.log("[Remote] Zoom command sent:", zoom);
@@ -396,8 +400,79 @@ function initializeLayerControls() {
       };
 
       sendLayerUpdate(newLayers);
+
+      // Update animation button state for parcels
+      if (layerName === 'parcels') {
+        updateAnimationButtonState();
+
+        // If parcels layer is turned off, also disable animation
+        if (!e.target.checked && authoritativeState.animations.parcels) {
+          sendAnimationToggle('parcels', false);
+        }
+      }
     });
   });
+}
+
+/**
+ * Initialize animation controls
+ */
+function initializeAnimationControls() {
+  const animateBtn = document.getElementById('animateParcels');
+  if (!animateBtn) return;
+
+  animateBtn.addEventListener('click', () => {
+    if (!currentState.gisMapConnected) return;
+    if (!authoritativeState.layers.parcels) return;  // Parcels must be enabled
+
+    // Toggle animation state
+    const newState = !authoritativeState.animations.parcels;
+    sendAnimationToggle('parcels', newState);
+  });
+
+  // Initial state
+  updateAnimationButtonState();
+}
+
+/**
+ * Update animation button enabled/disabled state
+ */
+function updateAnimationButtonState() {
+  const animateBtn = document.getElementById('animateParcels');
+  if (!animateBtn) return;
+
+  const parcelsEnabled = authoritativeState.layers.parcels;
+  animateBtn.disabled = !parcelsEnabled || !currentState.gisMapConnected;
+
+  // Update active state
+  if (authoritativeState.animations.parcels && parcelsEnabled) {
+    animateBtn.classList.add('active');
+  } else {
+    animateBtn.classList.remove('active');
+  }
+}
+
+/**
+ * Send animation toggle to projector
+ */
+function sendAnimationToggle(layerId, enabled) {
+  if (!wsClient || !wsClient.getConnected()) {
+    console.warn("[Remote] Cannot send animation toggle: not connected");
+    return;
+  }
+
+  // Update authoritative state
+  authoritativeState.animations[layerId] = enabled;
+
+  // Send animation toggle message
+  const msg = createAnimationToggleMessage(layerId, enabled);
+  const sent = wsClient.send(msg);
+  if (sent) {
+    console.log(`[Remote] Animation toggle sent: ${layerId} = ${enabled}`);
+    updateAnimationButtonState();
+  } else {
+    console.error("[Remote] Failed to send animation toggle");
+  }
 }
 
 /**
@@ -610,9 +685,12 @@ function updateUI() {
   // Update layer checkboxes
   updateLayerCheckboxes();
 
+  // Update animation button state
+  updateAnimationButtonState();
+
   // Disable controls if GIS map not connected
   const controls = document.querySelectorAll(
-    ".dpad-button, .zoom-button, .zoom-slider, .layer-toggle"
+    ".dpad-button, .zoom-button, .zoom-slider, .layer-toggle, .layer-toggle-with-action"
   );
   controls.forEach((control) => {
     if (currentState.gisMapConnected) {

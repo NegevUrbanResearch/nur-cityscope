@@ -152,11 +152,20 @@
             <span class="toggle-label">Roads</span>
           </label>
 
-          <label class="layer-toggle" id="layerParcelsLabel">
-            <input type="checkbox" id="toggleParcels" />
-            <span class="toggle-indicator"></span>
-            <span class="toggle-label">Parcels</span>
-          </label>
+          <div class="layer-toggle-with-action" id="layerParcelsLabel">
+            <label class="layer-toggle-main">
+              <input type="checkbox" id="toggleParcels" />
+              <span class="toggle-indicator"></span>
+              <span class="toggle-label">Parcels</span>
+            </label>
+            <button class="animation-toggle-btn" id="animateParcels" disabled title="Toggle fluid animation">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M2 12C2 12 5.5 6 12 6S22 12 22 12S18.5 18 12 18S2 12 2 12Z"></path>
+                <path d="M5 12C7 9 9.5 8 12 8S17 9 19 12C17 15 14.5 16 12 16S7 15 5 12Z"></path>
+                <circle cx="12" cy="12" r="2"></circle>
+              </svg>
+            </button>
+          </div>
 
           <label class="layer-toggle" id="layerModelLabel">
             <input type="checkbox" id="toggleModel" />
@@ -204,7 +213,7 @@
           }
         }
       });
-      
+
       // Only show OTEF interface if table is 'otef'
       if (tableSwitcher.getCurrentTable() !== 'otef') {
         window.location.href = `/remote-controller/?table=${tableSwitcher.getCurrentTable()}`;

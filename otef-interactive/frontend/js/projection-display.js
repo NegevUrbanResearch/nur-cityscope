@@ -3,7 +3,7 @@
 
 // Load model bounds
 let modelBounds;
-let svgOverlay = null;
+let canvasRenderer = null;  // Canvas-based layer renderer for performance
 let loadedLayers = {}; // Store layer data for resize handling
 
 fetch("data/model-bounds.json")
@@ -37,6 +37,14 @@ let layerState = {
   model: false,
 };
 
+// Animation state
+let animationState = {
+  parcels: false,  // Parcel animation enabled/disabled
+};
+
+// Parcel animator instance (WebGL-based)
+let parcelAnimator = null;
+
 function setDebugStatus(status) {
   if (window.DebugOverlay) window.DebugOverlay.setWebSocketStatus(status);
 }
@@ -46,10 +54,10 @@ function connectWebSocket() {
     onConnect: () => {
       console.log("[Projection] WebSocket connected");
       setDebugStatus("connected");
-      
+
       // Request current state from remote controller
       requestCurrentState();
-      
+
       // Retry loading roads layer if it failed during init (server might be ready now)
       if (layerState.roads && !loadedLayers.roads) {
         console.log("[Projection] Retrying roads layer load after WebSocket connection");
@@ -77,7 +85,7 @@ function connectWebSocket() {
       console.warn("[Projection] Invalid viewport update message:", msg);
       return;
     }
-    
+
     if (msg.corners) {
       updateHighlightQuad(msg.corners);
     } else if (msg.bbox) {
@@ -88,6 +96,9 @@ function connectWebSocket() {
   // Listen for layer updates (from remote controller)
   wsClient.on(OTEF_MESSAGE_TYPES.LAYER_UPDATE, handleLayerUpdate);
 
+  // Listen for animation toggle (from remote controller)
+  wsClient.on(OTEF_MESSAGE_TYPES.ANIMATION_TOGGLE, handleAnimationToggle);
+
   // Connect
   wsClient.connect();
 }
@@ -97,7 +108,7 @@ function connectWebSocket() {
  */
 function requestCurrentState() {
   if (!wsClient || !wsClient.getConnected()) return;
-  
+
   const request = createStateRequestMessage();
   wsClient.send(request);
   console.log("[Projection] State request sent");
@@ -155,6 +166,15 @@ function handleStateResponse(msg) {
         img.style.opacity = msg.layers.model ? "1" : "0";
       }
     }
+  }
+}
+
+/**
+ * Update visibility of a layer using Canvas renderer
+ */
+function updateLayerVisibility(layerId, visible) {
+  if (canvasRenderer) {
+    canvasRenderer.setLayerVisibility(layerId, visible);
   }
 }
 
@@ -390,7 +410,7 @@ function toggleFullScreen() {
 }
 
 /**
- * Initialize layers - create SVG overlay and load default layers
+ * Initialize layers - create Canvas renderer and load default layers
  */
 function initializeLayers() {
   if (!modelBounds) {
@@ -398,12 +418,18 @@ function initializeLayers() {
     return;
   }
 
-  // Create SVG overlay
+  // Create Canvas renderer (replaces SVG for performance)
   try {
-    svgOverlay = createSVGOverlay("displayContainer");
-    console.log("SVG overlay created");
+    canvasRenderer = new CanvasLayerRenderer("displayContainer");
+    console.log("Canvas layer renderer created");
+
+    // Update canvas position now
+    const displayBounds = getDisplayedImageBounds();
+    if (displayBounds) {
+      canvasRenderer.updatePosition(displayBounds, modelBounds);
+    }
   } catch (error) {
-    console.error("Failed to create SVG overlay:", error);
+    console.error("Failed to create Canvas renderer:", error);
     return;
   }
 
@@ -413,10 +439,8 @@ function initializeLayers() {
   layerState.model = false;
 
   // Load roads layer (enabled by default, matching DEFAULT_LAYER_STATES)
-  // Handle async call and errors gracefully
   loadRoadsLayer().catch((error) => {
     console.error("[Projection] Failed to load roads layer on init:", error);
-    // Will retry when WebSocket connects and state is synced
   });
 
   // Set model image visibility to match default state
@@ -442,7 +466,7 @@ async function loadRoadsLayer() {
 
     const layers = await response.json();
     const roadsLayer = layers.find(l => l.name === 'roads');
-    
+
     if (roadsLayer) {
       let geojson;
       if (roadsLayer.geojson) {
@@ -467,7 +491,7 @@ async function loadRoadsLayer() {
 }
 
 /**
- * Helper function to render a layer from GeoJSON
+ * Helper function to render a layer from GeoJSON using Canvas
  */
 async function renderLayerFromGeojson(geojson, layerName, styleFunction) {
   const displayBounds = getDisplayedImageBounds();
@@ -475,38 +499,20 @@ async function renderLayerFromGeojson(geojson, layerName, styleFunction) {
     throw new Error("Display bounds not available");
   }
 
-  // Transform GeoJSON to display pixels
-  const transformed = CoordUtils.transformGeojsonToDisplayPixels(
-    geojson,
-    modelBounds,
-    displayBounds
-  );
-
-  // Set up SVG position and viewBox before rendering
-  if (!svgOverlay.hasAttribute("viewBox")) {
-    svgOverlay.style.left = displayBounds.offsetX + "px";
-    svgOverlay.style.top = displayBounds.offsetY + "px";
-    svgOverlay.style.width = displayBounds.width + "px";
-    svgOverlay.style.height = displayBounds.height + "px";
-    svgOverlay.setAttribute(
-      "viewBox",
-      `0 0 ${displayBounds.width} ${displayBounds.height}`
-    );
-  }
-
-  // Render as SVG
-  renderLayerAsSVG(svgOverlay, layerName, transformed, styleFunction);
-
-  // Store for resize handling
+  // Store for Canvas renderer (raw ITM coordinates, Canvas does transformation)
   loadedLayers[layerName] = {
     originalGeojson: geojson,
     styleFunction: styleFunction,
   };
 
-  // Set visibility based on layer state
-  updateLayerVisibility(layerName, layerState[layerName]);
+  // Add layer to Canvas renderer
+  if (canvasRenderer) {
+    canvasRenderer.setLayer(layerName, geojson, styleFunction);
+    canvasRenderer.updatePosition(displayBounds, modelBounds);
+    canvasRenderer.setLayerVisibility(layerName, layerState[layerName]);
+  }
 
-  console.log(`${layerName} layer loaded and rendered`);
+  console.log(`${layerName} layer loaded and rendered (Canvas)`);
 }
 
 /**
@@ -533,7 +539,7 @@ async function loadParcelsLayer() {
 
     const layers = await response.json();
     const parcelsLayer = layers.find(l => l.name === 'parcels');
-    
+
     if (parcelsLayer) {
       let geojson;
       if (parcelsLayer.geojson) {
@@ -547,6 +553,10 @@ async function loadParcelsLayer() {
       }
 
       await renderLayerFromGeojson(geojson, 'parcels', getParcelStyle);
+
+      // Initialize WebGL animator for parcels
+      initializeParcelsAnimator(geojson);
+
       return;
     } else {
       throw new Error('Parcels layer not found in database');
@@ -554,6 +564,36 @@ async function loadParcelsLayer() {
   } catch (error) {
     console.error("[Projection] Error loading parcels layer from database:", error);
     throw error;
+  }
+}
+
+/**
+ * Initialize the WebGL animator for parcels
+ */
+function initializeParcelsAnimator(geojson) {
+  if (!window.ParcelAnimator) {
+    console.warn("[Projection] ParcelAnimator not available, animation disabled");
+    return;
+  }
+
+  const container = document.getElementById('displayContainer');
+  if (!container || !modelBounds) {
+    console.warn("[Projection] Cannot initialize animator: missing container or bounds");
+    return;
+  }
+
+  try {
+    parcelAnimator = new ParcelAnimator(container);
+
+    const displayBounds = getDisplayedImageBounds();
+    if (displayBounds) {
+      parcelAnimator.updatePosition(displayBounds, modelBounds);
+      parcelAnimator.setPolygonData(geojson, getParcelStyle, modelBounds, displayBounds);
+    }
+
+    console.log("[Projection] Parcel animator initialized");
+  } catch (error) {
+    console.error("[Projection] Failed to initialize parcel animator:", error);
   }
 }
 
@@ -591,6 +631,12 @@ function handleLayerUpdate(msg) {
       loadParcelsLayer();
     } else {
       updateLayerVisibility("parcels", layers.parcels);
+
+      // If parcels layer is hidden, stop animation
+      if (!layers.parcels && animationState.parcels && parcelAnimator) {
+        parcelAnimator.stop();
+        animationState.parcels = false;
+      }
     }
   }
 
@@ -600,6 +646,51 @@ function handleLayerUpdate(msg) {
     const img = document.getElementById("displayedImage");
     if (img) {
       img.style.opacity = layers.model ? "1" : "0";
+    }
+  }
+}
+
+/**
+ * Handle animation toggle from WebSocket
+ */
+function handleAnimationToggle(msg) {
+  if (!validateAnimationToggle(msg)) {
+    console.warn("[Projection] Invalid animation toggle message:", msg);
+    return;
+  }
+
+  console.log("[Projection] Received animation toggle:", msg);
+
+  if (msg.layerId === 'parcels') {
+    animationState.parcels = msg.enabled;
+
+    if (msg.enabled) {
+      // Start animation - hide static canvas, show WebGL
+      if (parcelAnimator) {
+        // Ensure animator has latest data and position
+        const displayBounds = getDisplayedImageBounds();
+        if (displayBounds && modelBounds) {
+          parcelAnimator.updatePosition(displayBounds, modelBounds);
+        }
+
+        // Hide static parcels layer, show animated version
+        if (canvasRenderer) {
+          canvasRenderer.setLayerVisibility('parcels', false);
+        }
+        parcelAnimator.start();
+        console.log("[Projection] Parcel animation started");
+      } else {
+        console.warn("[Projection] Cannot start animation: animator not initialized");
+      }
+    } else {
+      // Stop animation - show static canvas, hide WebGL
+      if (parcelAnimator) {
+        parcelAnimator.stop();
+      }
+      if (canvasRenderer && layerState.parcels) {
+        canvasRenderer.setLayerVisibility('parcels', true);
+      }
+      console.log("[Projection] Parcel animation stopped");
     }
   }
 }

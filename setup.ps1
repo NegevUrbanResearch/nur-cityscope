@@ -81,18 +81,41 @@ if (Test-Path $logoSource) {
     }
 }
 
-# Setup OTEF Interactive module (simplified layers are auto-generated if missing)
-$simplifiedLayers = "$SCRIPT_DIR\otef-interactive\public\import\layers\migrashim_simplified.json"
-if (-not (Test-Path $simplifiedLayers)) {
-    Write-Host "Generating simplified GeoJSON layers for OTEF..." -ForegroundColor Cyan
+# Setup OTEF Interactive module - PMTiles generation
+$pmtilesFile = "$SCRIPT_DIR\otef-interactive\frontend\data\parcels.pmtiles"
+if (-not (Test-Path $pmtilesFile)) {
+    Write-Host "Setting up OTEF PMTiles generation environment..." -ForegroundColor Cyan
+
     $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
     if (-not $pythonCmd) {
         $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
     }
+
     if ($pythonCmd) {
-        & $pythonCmd.Name "$SCRIPT_DIR\otef-interactive\scripts\simplify_geometries.py"
+        # Create venv and install dependencies
+        $venvPath = "$SCRIPT_DIR\otef-interactive\scripts\.venv"
+        if (-not (Test-Path $venvPath)) {
+            Write-Host "Creating Python virtual environment for tile generation..." -ForegroundColor Gray
+            & $pythonCmd.Name -m venv "$venvPath"
+        }
+
+        # Install dependencies
+        Write-Host "Installing tile generation dependencies..." -ForegroundColor Gray
+        & "$venvPath\Scripts\pip" install pyproj pmtiles -q
+
+        # Check if Docker is running for tile generation
+        $dockerRunning = docker info 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Generating PMTiles for parcels layer..." -ForegroundColor Cyan
+            & "$venvPath\Scripts\python" "$SCRIPT_DIR\otef-interactive\scripts\generate-pmtiles.py"
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Warning: PMTiles generation failed. Parcels will load slower via GeoJSON." -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "Warning: Docker not running, skipping PMTiles generation" -ForegroundColor Yellow
+        }
     } else {
-        Write-Host "Warning: Python not found, skipping layer simplification" -ForegroundColor Yellow
+        Write-Host "Warning: Python not found, skipping PMTiles generation" -ForegroundColor Yellow
     }
 }
 

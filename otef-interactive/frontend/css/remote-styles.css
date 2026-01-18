@@ -461,6 +461,94 @@ body {
   color: var(--text-primary);
 }
 
+/* Layer toggle with action button (e.g., animation toggle) */
+.layer-toggle-with-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  min-height: var(--touch-target-size);
+}
+
+.layer-toggle-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.layer-toggle-main input[type="checkbox"] {
+  display: none;
+}
+
+.layer-toggle-main input[type="checkbox"]:checked + .toggle-indicator {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.layer-toggle-main input[type="checkbox"]:checked + .toggle-indicator::after {
+  transform: translateX(20px);
+  background: var(--text-primary);
+}
+
+/* Animation toggle button */
+.animation-toggle-btn {
+  width: 40px;
+  height: 40px;
+  padding: 8px;
+  background: var(--bg-primary);
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-speed) ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.animation-toggle-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.animation-toggle-btn:not(:disabled):hover {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.animation-toggle-btn:not(:disabled):active {
+  transform: scale(0.95);
+}
+
+.animation-toggle-btn.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+  box-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(0, 212, 255, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(0, 212, 255, 0.8);
+  }
+}
+
+.animation-toggle-btn svg {
+  width: 100%;
+  height: 100%;
+}
+
 /* Warning overlay */
 .warning-overlay {
   position: fixed;
