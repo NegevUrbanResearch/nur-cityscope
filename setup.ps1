@@ -169,7 +169,7 @@ try {
 
 Write-Host "You can now access:" -ForegroundColor Green
 Write-Host ""
-Write-Host "📍 Local access (localhost):" -ForegroundColor Yellow
+Write-Host "Local access (localhost):" -ForegroundColor Yellow
 Write-Host "- Dashboard: http://localhost/dashboard/" -ForegroundColor Cyan
 Write-Host "- Projection: http://localhost/projection/" -ForegroundColor Cyan
 Write-Host "- Remote Controller: http://localhost/remote/" -ForegroundColor Cyan
@@ -179,7 +179,7 @@ Write-Host "- Admin Interface: http://localhost:9900/admin" -ForegroundColor Cya
 
 if ($localIP) {
     Write-Host ""
-    Write-Host "🌐 Network access (from other devices):" -ForegroundColor Yellow
+    Write-Host "Network access (from other devices):" -ForegroundColor Yellow
     Write-Host "- Dashboard: http://$localIP/dashboard/" -ForegroundColor Cyan
     Write-Host "- Projection: http://$localIP/projection/" -ForegroundColor Cyan
     Write-Host "- Remote Controller: http://$localIP/remote/" -ForegroundColor Cyan
@@ -188,5 +188,5 @@ if ($localIP) {
     Write-Host "- Admin Interface: http://$localIP:9900/admin" -ForegroundColor Cyan
 } else {
     Write-Host ""
-    Write-Host "⚠️  Could not detect local IP address for network access" -ForegroundColor Yellow
+    Write-Host "Could not detect local IP address for network access" -ForegroundColor Yellow
 }
