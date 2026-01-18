@@ -7,6 +7,7 @@ const OTEF_MESSAGE_TYPES = {
   LAYER_UPDATE: "otef_layer_update",
   STATE_REQUEST: "otef_state_request",
   STATE_RESPONSE: "otef_state_response",
+  ANIMATION_TOGGLE: "otef_animation_toggle",
 };
 
 // Default layer states
@@ -248,6 +249,34 @@ function createStateResponseMessage(viewport, layers) {
   };
 }
 
+/**
+ * Validates an ANIMATION_TOGGLE message
+ * @param {Object} msg - Message to validate
+ * @returns {boolean} True if valid
+ */
+function validateAnimationToggle(msg) {
+  if (!validateMessage(msg)) return false;
+  if (msg.type !== OTEF_MESSAGE_TYPES.ANIMATION_TOGGLE) return false;
+  if (typeof msg.layerId !== "string") return false;
+  if (typeof msg.enabled !== "boolean") return false;
+  return true;
+}
+
+/**
+ * Message factory: Create ANIMATION_TOGGLE message
+ * @param {string} layerId - Layer to toggle animation for (e.g. 'parcels')
+ * @param {boolean} enabled - Whether animation is enabled
+ * @returns {Object} Message object
+ */
+function createAnimationToggleMessage(layerId, enabled) {
+  return {
+    type: OTEF_MESSAGE_TYPES.ANIMATION_TOGGLE,
+    layerId: layerId,
+    enabled: enabled,
+    timestamp: Date.now(),
+  };
+}
+
 // Export for use in other modules
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
@@ -259,11 +288,13 @@ if (typeof module !== "undefined" && module.exports) {
     validateLayerUpdate,
     validateStateRequest,
     validateStateResponse,
+    validateAnimationToggle,
     createPanControlMessage,
     createZoomControlMessage,
     createViewportUpdateMessage,
     createLayerUpdateMessage,
     createStateRequestMessage,
     createStateResponseMessage,
+    createAnimationToggleMessage,
   };
 }

@@ -37,6 +37,14 @@ let layerState = {
   model: false,
 };
 
+// Animation state
+let animationState = {
+  parcels: false,  // Parcel animation enabled/disabled
+};
+
+// Parcel animator instance (WebGL-based)
+let parcelAnimator = null;
+
 function setDebugStatus(status) {
   if (window.DebugOverlay) window.DebugOverlay.setWebSocketStatus(status);
 }
@@ -87,6 +95,9 @@ function connectWebSocket() {
 
   // Listen for layer updates (from remote controller)
   wsClient.on(OTEF_MESSAGE_TYPES.LAYER_UPDATE, handleLayerUpdate);
+
+  // Listen for animation toggle (from remote controller)
+  wsClient.on(OTEF_MESSAGE_TYPES.ANIMATION_TOGGLE, handleAnimationToggle);
 
   // Connect
   wsClient.connect();
@@ -542,6 +553,10 @@ async function loadParcelsLayer() {
       }
 
       await renderLayerFromGeojson(geojson, 'parcels', getParcelStyle);
+
+      // Initialize WebGL animator for parcels
+      initializeParcelsAnimator(geojson);
+
       return;
     } else {
       throw new Error('Parcels layer not found in database');
@@ -549,6 +564,36 @@ async function loadParcelsLayer() {
   } catch (error) {
     console.error("[Projection] Error loading parcels layer from database:", error);
     throw error;
+  }
+}
+
+/**
+ * Initialize the WebGL animator for parcels
+ */
+function initializeParcelsAnimator(geojson) {
+  if (!window.ParcelAnimator) {
+    console.warn("[Projection] ParcelAnimator not available, animation disabled");
+    return;
+  }
+
+  const container = document.getElementById('displayContainer');
+  if (!container || !modelBounds) {
+    console.warn("[Projection] Cannot initialize animator: missing container or bounds");
+    return;
+  }
+
+  try {
+    parcelAnimator = new ParcelAnimator(container);
+
+    const displayBounds = getDisplayedImageBounds();
+    if (displayBounds) {
+      parcelAnimator.updatePosition(displayBounds, modelBounds);
+      parcelAnimator.setPolygonData(geojson, getParcelStyle, modelBounds, displayBounds);
+    }
+
+    console.log("[Projection] Parcel animator initialized");
+  } catch (error) {
+    console.error("[Projection] Failed to initialize parcel animator:", error);
   }
 }
 
@@ -586,6 +631,12 @@ function handleLayerUpdate(msg) {
       loadParcelsLayer();
     } else {
       updateLayerVisibility("parcels", layers.parcels);
+
+      // If parcels layer is hidden, stop animation
+      if (!layers.parcels && animationState.parcels && parcelAnimator) {
+        parcelAnimator.stop();
+        animationState.parcels = false;
+      }
     }
   }
 
@@ -595,6 +646,51 @@ function handleLayerUpdate(msg) {
     const img = document.getElementById("displayedImage");
     if (img) {
       img.style.opacity = layers.model ? "1" : "0";
+    }
+  }
+}
+
+/**
+ * Handle animation toggle from WebSocket
+ */
+function handleAnimationToggle(msg) {
+  if (!validateAnimationToggle(msg)) {
+    console.warn("[Projection] Invalid animation toggle message:", msg);
+    return;
+  }
+
+  console.log("[Projection] Received animation toggle:", msg);
+
+  if (msg.layerId === 'parcels') {
+    animationState.parcels = msg.enabled;
+
+    if (msg.enabled) {
+      // Start animation - hide static canvas, show WebGL
+      if (parcelAnimator) {
+        // Ensure animator has latest data and position
+        const displayBounds = getDisplayedImageBounds();
+        if (displayBounds && modelBounds) {
+          parcelAnimator.updatePosition(displayBounds, modelBounds);
+        }
+
+        // Hide static parcels layer, show animated version
+        if (canvasRenderer) {
+          canvasRenderer.setLayerVisibility('parcels', false);
+        }
+        parcelAnimator.start();
+        console.log("[Projection] Parcel animation started");
+      } else {
+        console.warn("[Projection] Cannot start animation: animator not initialized");
+      }
+    } else {
+      // Stop animation - show static canvas, hide WebGL
+      if (parcelAnimator) {
+        parcelAnimator.stop();
+      }
+      if (canvasRenderer && layerState.parcels) {
+        canvasRenderer.setLayerVisibility('parcels', true);
+      }
+      console.log("[Projection] Parcel animation stopped");
     }
   }
 }
