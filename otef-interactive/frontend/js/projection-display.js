@@ -51,14 +51,17 @@ function setDebugStatus(status) {
   if (window.DebugOverlay) window.DebugOverlay.setWebSocketStatus(status);
 }
 
+// Table name for state management
+const TABLE_NAME = 'otef';
+
 function connectWebSocket() {
   wsClient = new OTEFWebSocketClient("/ws/otef/", {
-    onConnect: () => {
+    onConnect: async () => {
       console.log("[Projection] WebSocket connected");
       setDebugStatus("connected");
 
-      // Request current state from remote controller
-      requestCurrentState();
+      // Fetch initial state from API (database) - no longer depends on remote controller
+      await fetchStateFromAPI();
 
       // Retry loading roads layer if it failed during init (server might be ready now)
       if (layerState.roads && !loadedLayers.roads) {
@@ -78,115 +81,131 @@ function connectWebSocket() {
     },
   });
 
-  // Handle STATE_RESPONSE - sync initial state
-  wsClient.on(OTEF_MESSAGE_TYPES.STATE_RESPONSE, handleStateResponse);
-
-  // Listen for viewport updates
-  wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE, (msg) => {
-    if (!validateViewportUpdate(msg)) {
-      console.warn("[Projection] Invalid viewport update message:", msg);
-      return;
-    }
-
-    if (msg.corners) {
-      updateHighlightQuad(msg.corners);
-    } else if (msg.bbox) {
-      updateHighlightRect(msg.bbox);
+  // Listen for state change notifications (new API-first pattern)
+  wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async (msg) => {
+    console.log("[Projection] Viewport changed notification");
+    // Re-fetch viewport from API and update highlight
+    const state = await OTEF_API.getState(TABLE_NAME);
+    if (state.viewport) {
+      if (state.viewport.corners) {
+        updateHighlightQuad(state.viewport.corners);
+      } else if (state.viewport.bbox) {
+        updateHighlightRect(state.viewport.bbox);
+      }
     }
   });
 
-  // Listen for layer updates (from remote controller)
-  wsClient.on(OTEF_MESSAGE_TYPES.LAYER_UPDATE, handleLayerUpdate);
+  wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async (msg) => {
+    console.log("[Projection] Layers changed notification");
+    const state = await OTEF_API.getState(TABLE_NAME);
+    if (state.layers) {
+      syncLayersFromState(state.layers);
+    }
+  });
 
-  // Listen for animation toggle (from remote controller)
-  wsClient.on(OTEF_MESSAGE_TYPES.ANIMATION_TOGGLE, handleAnimationToggle);
+  wsClient.on(OTEF_MESSAGE_TYPES.ANIMATION_CHANGED, (msg) => {
+    console.log("[Projection] Animation changed:", msg);
+    if (msg.layerId && typeof msg.enabled === 'boolean') {
+      handleAnimationToggle(msg);
+    }
+  });
 
   // Connect
   wsClient.connect();
 }
 
-/**
- * Request current state from remote controller
- */
-function requestCurrentState() {
-  if (!wsClient || !wsClient.getConnected()) return;
 
-  const request = createStateRequestMessage();
-  wsClient.send(request);
-  console.log("[Projection] State request sent");
+/**
+ * Fetch current state from API (database) - no longer depends on remote controller
+ */
+async function fetchStateFromAPI() {
+  try {
+    const state = await OTEF_API.getState(TABLE_NAME);
+    console.log("[Projection] State fetched from API:", state);
+
+    // Sync viewport highlight
+    if (state.viewport) {
+      if (state.viewport.corners) {
+        updateHighlightQuad(state.viewport.corners);
+      } else if (state.viewport.bbox) {
+        updateHighlightRect(state.viewport.bbox);
+      }
+    }
+
+    // Sync layers
+    if (state.layers) {
+      syncLayersFromState(state.layers);
+    }
+
+    // Sync animations
+    if (state.animations) {
+      if (state.animations.parcels !== undefined && state.animations.parcels !== animationState.parcels) {
+        handleAnimationToggle({ layerId: 'parcels', enabled: state.animations.parcels });
+      }
+    }
+  } catch (error) {
+    console.error("[Projection] Failed to fetch state from API:", error);
+  }
 }
 
 /**
- * Handle STATE_RESPONSE - sync initial state
+ * Sync layers from state object (shared by API fetch and notifications)
  */
-function handleStateResponse(msg) {
-  if (!validateStateResponse(msg)) {
-    console.warn("[Projection] Invalid state response:", msg);
-    return;
-  }
-
-  console.log("[Projection] Received state response, syncing...");
-
-  // Sync viewport highlight
-  if (msg.viewport) {
-    if (msg.viewport.corners) {
-      updateHighlightQuad(msg.viewport.corners);
-    } else if (msg.viewport.bbox) {
-      updateHighlightRect(msg.viewport.bbox);
+function syncLayersFromState(layers) {
+  // Update roads layer
+  if (layers.roads !== undefined && layers.roads !== layerState.roads) {
+    layerState.roads = layers.roads;
+    if (layers.roads && !loadedLayers.roads) {
+      loadRoadsLayer().catch((error) => {
+        console.error("[Projection] Failed to load roads layer:", error);
+      });
+    } else {
+      updateLayerVisibility("roads", layers.roads);
     }
   }
 
-  // Sync layers
-  if (msg.layers) {
-    // Update layer visibility to match state
-    if (msg.layers.roads !== undefined && msg.layers.roads !== layerState.roads) {
-      layerState.roads = msg.layers.roads;
-      if (msg.layers.roads && !loadedLayers.roads) {
-        // Load roads layer if not already loaded
-        loadRoadsLayer().catch((error) => {
-          console.error("[Projection] Failed to load roads layer:", error);
-        });
-      } else {
-        updateLayerVisibility("roads", msg.layers.roads);
+  // Update parcels layer
+  if (layers.parcels !== undefined && layers.parcels !== layerState.parcels) {
+    layerState.parcels = layers.parcels;
+    if (layers.parcels && !loadedLayers.parcels) {
+      loadParcelsLayer();
+    } else {
+      updateLayerVisibility("parcels", layers.parcels);
+
+      // If parcels layer is hidden, stop animation
+      if (!layers.parcels && animationState.parcels && parcelAnimator) {
+        parcelAnimator.stop();
+        animationState.parcels = false;
       }
     }
+  }
 
-    if (msg.layers.parcels !== undefined && msg.layers.parcels !== layerState.parcels) {
-      layerState.parcels = msg.layers.parcels;
-      if (msg.layers.parcels && !loadedLayers.parcels) {
-        // Load parcels layer if not already loaded
-        loadParcelsLayer();
-      } else {
-        updateLayerVisibility("parcels", msg.layers.parcels);
-      }
+  // Update model base layer
+  if (layers.model !== undefined && layers.model !== layerState.model) {
+    layerState.model = layers.model;
+    const img = document.getElementById("displayedImage");
+    if (img) {
+      img.style.opacity = layers.model ? "1" : "0";
     }
+  }
 
-    if (msg.layers.model !== undefined && msg.layers.model !== layerState.model) {
-      layerState.model = msg.layers.model;
-      const img = document.getElementById("displayedImage");
-      if (img) {
-        img.style.opacity = msg.layers.model ? "1" : "0";
-      }
+  // Update majorRoads layer
+  if (layers.majorRoads !== undefined && layers.majorRoads !== layerState.majorRoads) {
+    layerState.majorRoads = layers.majorRoads;
+    if (layers.majorRoads && !loadedLayers.majorRoads) {
+      loadMajorRoadsLayer();
+    } else {
+      updateLayerVisibility("majorRoads", layers.majorRoads);
     }
+  }
 
-    // Sync majorRoads layer
-    if (msg.layers.majorRoads !== undefined && msg.layers.majorRoads !== layerState.majorRoads) {
-      layerState.majorRoads = msg.layers.majorRoads;
-      if (msg.layers.majorRoads && !loadedLayers.majorRoads) {
-        loadMajorRoadsLayer();
-      } else {
-        updateLayerVisibility("majorRoads", msg.layers.majorRoads);
-      }
-    }
-
-    // Sync smallRoads layer
-    if (msg.layers.smallRoads !== undefined && msg.layers.smallRoads !== layerState.smallRoads) {
-      layerState.smallRoads = msg.layers.smallRoads;
-      if (msg.layers.smallRoads && !loadedLayers.smallRoads) {
-        loadSmallRoadsLayer();
-      } else {
-        updateLayerVisibility("smallRoads", msg.layers.smallRoads);
-      }
+  // Update smallRoads layer
+  if (layers.smallRoads !== undefined && layers.smallRoads !== layerState.smallRoads) {
+    layerState.smallRoads = layers.smallRoads;
+    if (layers.smallRoads && !loadedLayers.smallRoads) {
+      loadSmallRoadsLayer();
+    } else {
+      updateLayerVisibility("smallRoads", layers.smallRoads);
     }
   }
 }
@@ -646,6 +665,18 @@ function initializeParcelsAnimator(geojson) {
     }
 
     console.log("[Projection] Parcel animator initialized");
+
+    // Check if animation should be running (from initial API state)
+    if (animationState.parcels) {
+      console.log("[Projection] Starting pending animation after initialization");
+
+      // Hide static parcels layer
+      if (canvasRenderer) {
+        canvasRenderer.setLayerVisibility('parcels', false);
+      }
+
+      parcelAnimator.start();
+    }
   } catch (error) {
     console.error("[Projection] Failed to initialize parcel animator:", error);
   }
@@ -823,10 +854,11 @@ function handleLayerUpdate(msg) {
 }
 
 /**
- * Handle animation toggle from WebSocket
+ * Handle animation toggle from WebSocket (supports both legacy and new format)
  */
 function handleAnimationToggle(msg) {
-  if (!validateAnimationToggle(msg)) {
+  // Validate basic structure (layerId and enabled must exist)
+  if (typeof msg.layerId !== 'string' || typeof msg.enabled !== 'boolean') {
     console.warn("[Projection] Invalid animation toggle message:", msg);
     return;
   }
@@ -866,6 +898,7 @@ function handleAnimationToggle(msg) {
     }
   }
 }
+
 
 // Connect on load
 connectWebSocket();

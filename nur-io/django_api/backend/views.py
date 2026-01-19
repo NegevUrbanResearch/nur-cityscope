@@ -231,7 +231,13 @@ class OTEFModelConfigViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class OTEFViewportStateViewSet(viewsets.ModelViewSet):
-    """Manage viewport state for OTEF"""
+    """
+    Manage OTEF interactive state - single source of truth.
+
+    GET /api/otef_viewport/by-table/{table_name}/ - Get full state
+    PATCH /api/otef_viewport/by-table/{table_name}/ - Update state partially
+    POST /api/otef_viewport/by-table/{table_name}/command/ - Execute command (pan/zoom)
+    """
     serializer_class = OTEFViewportStateSerializer
 
     def get_queryset(self):
@@ -240,6 +246,165 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         if table_name:
             queryset = queryset.filter(table__name=table_name)
         return queryset
+
+    def _broadcast_state_change(self, table_name, changed_fields):
+        """Broadcast WebSocket notifications for state changes."""
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        channel_layer = get_channel_layer()
+        # Must match consumer's room_group_name: f'{channel_type}_channel'
+        group_name = 'otef_channel'
+
+        for field in changed_fields:
+
+            if field == 'viewport':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_viewport_changed',
+                        'table': table_name,
+                    }
+                }
+            elif field == 'layers':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_layers_changed',
+                        'table': table_name,
+                    }
+                }
+            elif field == 'animations':
+                # Get current animation state to include in notification
+                try:
+                    state = OTEFViewportState.objects.filter(table__name=table_name).first()
+                    animations = state.animations if state else {}
+                except:
+                    animations = {}
+
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_animation_changed',
+                        'table': table_name,
+                        'layerId': 'parcels',
+                        'enabled': animations.get('parcels', False),
+                    }
+                }
+            else:
+                continue
+
+            async_to_sync(channel_layer.group_send)(group_name, message)
+            print(f"📡 Broadcast: {field} changed for {table_name}")
+
+
+    @action(detail=False, methods=['get', 'patch'], url_path='by-table/(?P<table_name>[^/.]+)')
+    def by_table(self, request, table_name=None):
+        """
+        GET/PATCH state by table name.
+
+        GET: Returns full state with defaults applied
+        PATCH: Partial update of viewport, layers, or animations
+        """
+        from django.shortcuts import get_object_or_404
+
+        table = get_object_or_404(Table, name=table_name)
+        state, created = OTEFViewportState.objects.get_or_create(
+            table=table,
+            defaults={
+                'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+                'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
+                'animations': {'parcels': False}
+            }
+        )
+
+        if request.method == 'PATCH':
+            changed_fields = []
+
+            # Partial updates for each field
+            if 'viewport' in request.data:
+                # Merge with existing viewport (preserve unset fields)
+                current = state.viewport or {}
+                new_viewport = request.data['viewport']
+                state.viewport = {**current, **new_viewport}
+                changed_fields.append('viewport')
+
+            if 'layers' in request.data:
+                state.layers = request.data['layers']
+                changed_fields.append('layers')
+
+            if 'animations' in request.data:
+                state.animations = request.data['animations']
+                changed_fields.append('animations')
+
+            state.save()
+
+            # Broadcast notifications for each changed field
+            self._broadcast_state_change(table_name, changed_fields)
+
+        # Return state with defaults applied
+        response_data = {
+            'id': state.id,
+            'table': table.id,
+            'table_name': table_name,
+            'viewport': state.get_viewport_with_defaults(),
+            'layers': state.get_layers_with_defaults(),
+            'animations': state.get_animations_with_defaults(),
+            'updated_at': state.updated_at.isoformat() if state.updated_at else None,
+        }
+
+        return Response(response_data)
+
+    @action(detail=False, methods=['post'], url_path='by-table/(?P<table_name>[^/.]+)/command')
+    def command(self, request, table_name=None):
+        """
+        Execute a command (pan/zoom) server-side without requiring GIS map.
+
+        POST body:
+        - Pan: {"action": "pan", "direction": "north", "delta": 0.15}
+        - Zoom: {"action": "zoom", "level": 16}
+        """
+        from django.shortcuts import get_object_or_404
+
+        table = get_object_or_404(Table, name=table_name)
+        state, created = OTEFViewportState.objects.get_or_create(
+            table=table,
+            defaults={
+                'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+                'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
+                'animations': {'parcels': False}
+            }
+        )
+
+        action = request.data.get('action')
+
+        if action == 'pan':
+            direction = request.data.get('direction', 'north')
+            delta = float(request.data.get('delta', 0.15))
+            state.viewport = state.apply_pan_command(direction, delta)
+            state.save()
+            self._broadcast_state_change(table_name, ['viewport'])
+
+        elif action == 'zoom':
+            level = int(request.data.get('level', 15))
+            level = max(10, min(19, level))  # Clamp to valid range
+            state.viewport = state.apply_zoom_command(level)
+            state.save()
+            self._broadcast_state_change(table_name, ['viewport'])
+
+        else:
+            return Response(
+                {'error': f'Unknown action: {action}. Use "pan" or "zoom".'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Return updated state
+        return Response({
+            'status': 'ok',
+            'action': action,
+            'viewport': state.get_viewport_with_defaults(),
+        })
+
 
 
 # Now lets program the views for the API as an interactive platform

@@ -51,7 +51,7 @@ let parcelsLayer, roadsLayer, modelOverlay, majorRoadsLayer, smallRoadsLayer;
 
 // Layer state tracking
 let layerState = {
-  roads: true,
+  roads: false, // Start false, let API enable it
   parcels: false,
   model: false,
   majorRoads: false,
@@ -61,7 +61,8 @@ let layerState = {
 // WebSocket client instance
 let wsClient = null;
 
-// GIS map is receive-only - no need for echo prevention flags
+// Flag to prevent echo when applying remote state
+let isApplyingRemoteState = false;
 
 // Helper function to transform coordinates from EPSG:2039 to WGS84
 function transformItmToWgs84(x, y) {
@@ -249,7 +250,7 @@ async function loadParcelsFromPMTiles(layerConfig) {
 
     window.parcelsLayer = parcelsLayer;
 
-    // If state says parcels should be visible, add layer now
+    // Check state - if enabled, add to map immediately
     if (layerState.parcels) {
       map.addLayer(parcelsLayer);
     }
@@ -310,14 +311,18 @@ async function loadRoadsFromGeoJSON(layerConfig) {
     });
 
     window.roadsLayer = roadsLayer;
-    layerState.roads = true;
-    roadsLayer.addTo(map);
+
+    // Check state - if enabled, add to map immediately
+    if (layerState.roads) {
+      map.addLayer(roadsLayer);
+    }
 
     console.log("Roads layer ready (GeoJSON)");
   } catch (error) {
     console.error("Error loading roads:", error);
   }
 }
+
 
 /**
  * Load major roads layer from GeoJSON file (road-big.geojson)
@@ -370,7 +375,11 @@ async function loadMajorRoadsFromGeoJSON(layerConfig) {
     });
 
     window.majorRoadsLayer = majorRoadsLayer;
-    // Don't add to map - starts hidden
+
+    // Check state - if enabled, add to map immediately
+    if (layerState.majorRoads) {
+      map.addLayer(majorRoadsLayer);
+    }
 
     console.log("Major roads layer ready (GeoJSON)");
   } catch (error) {
@@ -429,7 +438,11 @@ async function loadSmallRoadsFromGeoJSON(layerConfig) {
     });
 
     window.smallRoadsLayer = smallRoadsLayer;
-    // Don't add to map - starts hidden
+
+    // Check state - if enabled, add to map immediately
+    if (layerState.smallRoads) {
+      map.addLayer(smallRoadsLayer);
+    }
 
     console.log("Small roads layer ready (GeoJSON)");
   } catch (error) {
@@ -493,6 +506,11 @@ function sendViewportUpdate(zoomOverride = null) {
 }
 
 map.on("moveend", () => {
+  // Skip sending update if we're applying remote state (prevents feedback loop)
+  if (isApplyingRemoteState) {
+    console.log("[GIS Map] Skipping viewport update (applying remote state)");
+    return;
+  }
   sendViewportUpdate();
 });
 
@@ -533,15 +551,15 @@ function showFeatureInfo(feature) {
  */
 function initializeWebSocket() {
   wsClient = new OTEFWebSocketClient("/ws/otef/", {
-    onConnect: () => {
+    onConnect: async () => {
       console.log("[GIS Map] WebSocket connected");
       updateConnectionStatus(true);
 
-      // Send initial viewport update so remote controller has state
+      // Send initial viewport update so others have state
       sendViewportUpdate();
 
-      // Request current state from remote controller
-      requestCurrentState();
+      // Fetch initial state from API (database)
+      await fetchStateFromAPI();
     },
     onDisconnect: () => {
       console.log("[GIS Map] WebSocket disconnected");
@@ -553,245 +571,190 @@ function initializeWebSocket() {
     },
   });
 
-  // Handle STATE_RESPONSE - sync initial state
-  wsClient.on(OTEF_MESSAGE_TYPES.STATE_RESPONSE, handleStateResponse);
+  // Listen for LAYERS_CHANGED notification (new API-first pattern)
+  wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async (msg) => {
+    console.log("[GIS Map] Layers changed notification");
+    const state = await OTEF_API.getState('otef');
+    if (state.layers) {
+      applyLayerState(state.layers);
+    }
+  });
 
-  // Handle VIEWPORT_CONTROL messages (from remote)
-  wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CONTROL, handleViewportControl);
-
-  // Handle LAYER_UPDATE messages (from remote)
-  wsClient.on(OTEF_MESSAGE_TYPES.LAYER_UPDATE, handleLayerUpdate);
+  // Listen for VIEWPORT_CHANGED notification (pan/zoom from remote via API)
+  wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async (msg) => {
+    console.log("[GIS Map] Viewport changed notification");
+    const state = await OTEF_API.getState('otef');
+    if (state.viewport) {
+      applyViewportFromAPI(state.viewport);
+    }
+  });
 
   // Connect
   wsClient.connect();
 }
 
-/**
- * Request current state from remote controller
- */
-function requestCurrentState() {
-  if (!wsClient || !wsClient.getConnected()) return;
 
-  const request = createStateRequestMessage();
-  wsClient.send(request);
-  console.log("[GIS Map] State request sent");
+
+/**
+ * Fetch current state from API (database)
+ */
+async function fetchStateFromAPI() {
+  try {
+    const state = await OTEF_API.getState('otef');
+    console.log("[GIS Map] State fetched from API:", state);
+
+    // Sync viewport if present
+    if (state.viewport) {
+      applyViewportFromAPI(state.viewport);
+    }
+
+    // Sync layers
+    if (state.layers) {
+      applyLayerState(state.layers);
+    }
+
+    // Note: Do NOT send viewport update here - that would create a feedback loop
+    // The viewport was just read from DB, no need to write it back
+  } catch (error) {
+    console.error("[GIS Map] Failed to fetch state from API:", error);
+  }
 }
 
+
 /**
- * Handle STATE_RESPONSE - sync initial state
+ * Apply viewport state from API (pan map to match server state)
  */
-function handleStateResponse(msg) {
-  if (!validateStateResponse(msg)) {
-    console.warn("[GIS Map] Invalid state response:", msg);
-    return;
+function applyViewportFromAPI(viewport) {
+  if (!viewport || !viewport.bbox) return;
+
+  const bbox = viewport.bbox;
+  const zoom = viewport.zoom;
+
+  // Convert ITM bbox to WGS84 for Leaflet
+  const [swLng, swLat] = proj4("EPSG:2039", "EPSG:4326", [bbox[0], bbox[1]]);
+  const [neLng, neLat] = proj4("EPSG:2039", "EPSG:4326", [bbox[2], bbox[3]]);
+
+  // Calculate center
+  const centerLat = (swLat + neLat) / 2;
+  const centerLng = (swLng + neLng) / 2;
+
+  // Check if we need to update (avoid loops from our own updates)
+  const currentCenter = map.getCenter();
+  const currentZoom = map.getZoom();
+
+  const centerDiff = Math.abs(currentCenter.lat - centerLat) + Math.abs(currentCenter.lng - centerLng);
+  const zoomDiff = Math.abs(currentZoom - zoom);
+
+  // Only update if significantly different (threshold to avoid echo)
+  if (centerDiff > 0.0001 || zoomDiff > 0.1) {
+    console.log(`[GIS Map] Applying viewport: center=${centerLat.toFixed(4)},${centerLng.toFixed(4)} zoom=${zoom}`);
+
+    // Set flag to prevent feedback loop (don't broadcast this change back)
+    isApplyingRemoteState = true;
+    map.setView([centerLat, centerLng], zoom, { animate: true, duration: 0.3 });
+
+    // Clear flag after animation completes (500ms to be safe, animation is 300ms)
+    setTimeout(() => {
+      isApplyingRemoteState = false;
+    }, 500);
+  }
+}
+
+
+
+/**
+ * Apply layer state from API/notification
+ */
+function applyLayerState(layers) {
+
+  let hasChanges = false;
+
+  // Update roads layer
+  if (layers.roads !== undefined && layers.roads !== layerState.roads) {
+    if (roadsLayer) {
+      if (layers.roads) {
+        map.addLayer(roadsLayer);
+      } else {
+        map.removeLayer(roadsLayer);
+      }
+    }
+    layerState.roads = layers.roads;
+    hasChanges = true;
   }
 
-  console.log("[GIS Map] Received state response, syncing...");
-
-  // Sync viewport
-  if (msg.viewport && msg.viewport.zoom) {
-    const targetZoom = Math.max(
-      map.getMinZoom(),
-      Math.min(map.getMaxZoom(), Math.round(msg.viewport.zoom))
-    );
-    if (targetZoom !== map.getZoom()) {
-      map.setZoom(targetZoom, { animate: false });
-      console.log(`[GIS Map] Zoom synced to ${targetZoom}`);
+  // Update parcels layer
+  if (layers.parcels !== undefined && layers.parcels !== layerState.parcels) {
+    if (parcelsLayer) {
+      if (layers.parcels) {
+        map.addLayer(parcelsLayer);
+      } else {
+        map.removeLayer(parcelsLayer);
+      }
     }
+    layerState.parcels = layers.parcels;
+    hasChanges = true;
   }
 
-  // Sync layers
-  if (msg.layers) {
-    // Update layer visibility to match state
-    if (msg.layers.roads !== undefined && msg.layers.roads !== layerState.roads) {
-      if (roadsLayer) {
-        if (msg.layers.roads) {
-          map.addLayer(roadsLayer);
-        } else {
-          map.removeLayer(roadsLayer);
-        }
-      }
-      layerState.roads = msg.layers.roads;
-    }
-
-    if (msg.layers.parcels !== undefined && msg.layers.parcels !== layerState.parcels) {
-      if (parcelsLayer) {
-        if (msg.layers.parcels) {
-          map.addLayer(parcelsLayer);
-        } else {
-          map.removeLayer(parcelsLayer);
-        }
-      }
-      layerState.parcels = msg.layers.parcels;
-    }
-
-    if (msg.layers.model !== undefined && msg.layers.model !== layerState.model) {
-      if (msg.layers.model) {
+  // Update model layer
+  if (layers.model !== undefined && layers.model !== layerState.model) {
+    if (modelOverlay) {
+      if (layers.model) {
         map.addLayer(modelOverlay);
       } else {
         map.removeLayer(modelOverlay);
       }
-      layerState.model = msg.layers.model;
     }
+    layerState.model = layers.model;
+    hasChanges = true;
+  }
 
-    // Sync majorRoads layer
-    if (msg.layers.majorRoads !== undefined && msg.layers.majorRoads !== layerState.majorRoads) {
-      if (msg.layers.majorRoads && !majorRoadsLayer) {
-        // Lazy load if needed
-        loadMajorRoadsFromGeoJSON().then(() => {
-          if (majorRoadsLayer && msg.layers.majorRoads) {
-            map.addLayer(majorRoadsLayer);
-          }
-        });
-      } else if (majorRoadsLayer) {
-        if (msg.layers.majorRoads) {
+  // Update majorRoads layer
+  if (layers.majorRoads !== undefined && layers.majorRoads !== layerState.majorRoads) {
+    if (layers.majorRoads && !majorRoadsLayer) {
+      loadMajorRoadsFromGeoJSON().then(() => {
+        if (majorRoadsLayer && layers.majorRoads) {
           map.addLayer(majorRoadsLayer);
-        } else {
-          map.removeLayer(majorRoadsLayer);
+          updateMapLegend();
         }
+      });
+    } else if (majorRoadsLayer) {
+      if (layers.majorRoads) {
+        map.addLayer(majorRoadsLayer);
+      } else {
+        map.removeLayer(majorRoadsLayer);
       }
-      layerState.majorRoads = msg.layers.majorRoads;
     }
+    layerState.majorRoads = layers.majorRoads;
+    hasChanges = true;
+  }
 
-    // Sync smallRoads layer
-    if (msg.layers.smallRoads !== undefined && msg.layers.smallRoads !== layerState.smallRoads) {
-      if (msg.layers.smallRoads && !smallRoadsLayer) {
-        // Lazy load if needed
-        loadSmallRoadsFromGeoJSON().then(() => {
-          if (smallRoadsLayer && msg.layers.smallRoads) {
-            map.addLayer(smallRoadsLayer);
-          }
-        });
-      } else if (smallRoadsLayer) {
-        if (msg.layers.smallRoads) {
+  // Update smallRoads layer
+  if (layers.smallRoads !== undefined && layers.smallRoads !== layerState.smallRoads) {
+    if (layers.smallRoads && !smallRoadsLayer) {
+      loadSmallRoadsFromGeoJSON().then(() => {
+        if (smallRoadsLayer && layers.smallRoads) {
           map.addLayer(smallRoadsLayer);
-        } else {
-          map.removeLayer(smallRoadsLayer);
+          updateMapLegend();
         }
+      });
+    } else if (smallRoadsLayer) {
+      if (layers.smallRoads) {
+        map.addLayer(smallRoadsLayer);
+      } else {
+        map.removeLayer(smallRoadsLayer);
       }
-      layerState.smallRoads = msg.layers.smallRoads;
     }
+    layerState.smallRoads = layers.smallRoads;
+    hasChanges = true;
+  }
 
+  if (hasChanges) {
     updateMapLegend();
-  }
-
-  // Send viewport update to confirm sync
-  sendViewportUpdate();
-}
-
-/**
- * Handle viewport control commands from remote
- */
-function handleViewportControl(msg) {
-  if (!validateViewportControl(msg)) {
-    console.warn("[GIS Map] Invalid viewport control message:", msg);
-    return;
-  }
-
-  console.log("[GIS Map] Received viewport control:", msg);
-
-  // Handle pan command
-  if (msg.pan && msg.pan.direction) {
-    handlePanCommand(msg.pan.direction, msg.pan.delta || 0.15);
-  }
-
-  // Handle zoom command
-  if (typeof msg.zoom === "number") {
-    handleZoomCommand(msg.zoom);
+    console.log("[GIS Map] Layer state applied:", layerState);
   }
 }
 
-/**
- * Handle pan command
- */
-function handlePanCommand(direction, delta) {
-  if (!modelBounds) return;
 
-  const bounds = map.getBounds();
-  const center = map.getCenter();
-  const zoom = map.getZoom();
-
-  // Calculate viewport size in meters (approximate)
-  const ne = bounds.getNorthEast();
-  const sw = bounds.getSouthWest();
-  const [neX, neY] = proj4("EPSG:4326", "EPSG:2039", [ne.lng, ne.lat]);
-  const [swX, swY] = proj4("EPSG:4326", "EPSG:2039", [sw.lng, sw.lat]);
-
-  const widthMeters = neX - swX;
-  const heightMeters = neY - swY;
-
-  // Calculate pan distance as percentage of viewport
-  const panDistanceX = widthMeters * delta;
-  const panDistanceY = heightMeters * delta;
-
-  // Convert to lat/lng delta
-  let deltaLat = 0;
-  let deltaLng = 0;
-
-  switch (direction) {
-    case "north":
-      deltaLat = (ne.lat - sw.lat) * delta;
-      break;
-    case "south":
-      deltaLat = -(ne.lat - sw.lat) * delta;
-      break;
-    case "east":
-      deltaLng = (ne.lng - sw.lng) * delta;
-      break;
-    case "west":
-      deltaLng = -(ne.lng - sw.lng) * delta;
-      break;
-    case "northeast":
-      deltaLat = (ne.lat - sw.lat) * delta;
-      deltaLng = (ne.lng - sw.lng) * delta;
-      break;
-    case "northwest":
-      deltaLat = (ne.lat - sw.lat) * delta;
-      deltaLng = -(ne.lng - sw.lng) * delta;
-      break;
-    case "southeast":
-      deltaLat = -(ne.lat - sw.lat) * delta;
-      deltaLng = (ne.lng - sw.lng) * delta;
-      break;
-    case "southwest":
-      deltaLat = -(ne.lat - sw.lat) * delta;
-      deltaLng = -(ne.lng - sw.lng) * delta;
-      break;
-  }
-
-  // Pan the map
-  const newCenter = L.latLng(center.lat + deltaLat, center.lng + deltaLng);
-  map.panTo(newCenter, { animate: true, duration: 0.3 });
-}
-
-/**
- * Handle zoom command
- */
-function handleZoomCommand(zoom) {
-  const currentZoom = map.getZoom();
-  const minZoom = map.getMinZoom();
-  const maxZoom = map.getMaxZoom();
-
-  // Clamp zoom to valid range
-  const targetZoom = Math.max(minZoom, Math.min(maxZoom, Math.round(zoom)));
-
-  if (targetZoom !== currentZoom) {
-    console.log(`[GIS Map] Zoom command: ${currentZoom} -> ${targetZoom}`);
-
-    // Use setZoom without animation for immediate effect, especially when tab is inactive
-    // Animation can be throttled/skipped when tab is inactive, preventing zoom from working
-    map.setZoom(targetZoom, { animate: false });
-
-    // Immediately send viewport update with the TARGET zoom value
-    // This ensures the update is sent even if map.getZoom() hasn't updated yet (tab inactive)
-    // Use requestAnimationFrame to ensure the zoom change has been processed
-    requestAnimationFrame(() => {
-      // Send update with target zoom to ensure correct value is broadcast
-      sendViewportUpdate(targetZoom);
-      console.log(`[GIS Map] Viewport update sent with zoom: ${targetZoom}`);
-    });
-  }
-}
 
 /**
  * Handle layer update from remote controller
@@ -1008,3 +971,43 @@ function updateConnectionStatus(connected) {
     el.title = connected ? "Connected to remote" : "Disconnected";
   }
 }
+
+/**
+ * Send viewport update to API (GIS -> Write: viewport)
+ */
+function sendViewportUpdate() {
+  if (isApplyingRemoteState) return;
+  if (!map) return;
+
+  const zoom = map.getZoom();
+  const bounds = map.getBounds();
+
+  // Convert to ITM for storage (API expects ITM)
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+
+  // Project from WGS84 (Leaflet) to ITM (EPSG:2039)
+  // Ensure proj4 is available
+  if (typeof proj4 === 'undefined') return;
+
+  const [swX, swY] = proj4("EPSG:4326", "EPSG:2039", [sw.lng, sw.lat]);
+  const [neX, neY] = proj4("EPSG:4326", "EPSG:2039", [ne.lng, ne.lat]);
+
+  const viewportState = {
+    bbox: [swX, swY, neX, neY],
+    zoom: zoom,
+    // Add corners for projector quad (Projector reads this)
+    corners: {
+        sw: { x: swX, y: swY },
+        se: { x: neX, y: swY },
+        nw: { x: swX, y: neY },
+        ne: { x: neX, y: neY }
+    }
+  };
+
+  // Use debounced update to avoid flooding API
+  OTEF_API.updateViewportDebounced('otef', viewportState);
+}
+
+// Attach listener to map movement
+map.on("moveend", sendViewportUpdate);

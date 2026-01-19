@@ -223,11 +223,11 @@ class GISLayer(models.Model):
     order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         unique_together = [['table', 'name']]
         ordering = ['order', 'name']
-    
+
     def __str__(self):
         return f"{self.table.name}/{self.display_name}"
 
@@ -245,21 +245,173 @@ class OTEFModelConfig(models.Model):
     coordinate_system = models.CharField(max_length=50, default='EPSG:2039')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     def __str__(self):
         return f"OTEF Config for {self.table.name}"
 
 
 class OTEFViewportState(models.Model):
     """
-    Stores current viewport state for OTEF table (for persistence across sessions)
+    Stores complete OTEF interactive state - single source of truth.
+    All controllers read from and write to this model.
     """
+    # Default layer visibility states
+    DEFAULT_LAYERS = {
+        'roads': True,
+        'parcels': False,
+        'model': False,
+        'majorRoads': False,
+        'smallRoads': False,
+    }
+
+    # Default viewport (EPSG:2039 ITM coordinates for Otef area)
+    DEFAULT_VIEWPORT = {
+        'bbox': [165000, 595000, 175000, 605000],  # [minX, minY, maxX, maxY]
+        'corners': None,
+        'zoom': 15,
+    }
+
     id = models.AutoField(primary_key=True)
     table = models.OneToOneField(Table, on_delete=models.CASCADE, related_name="otef_viewport")
+
+    # Viewport state (written by GIS map, or calculated server-side)
     viewport = models.JSONField(default=dict)
+
+    # Layer visibility (written by remote controller)
     layers = models.JSONField(default=dict)
+
+    # Animation state (written by remote controller)
+    animations = models.JSONField(default=dict)
+
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     def __str__(self):
-        return f"Viewport State for {self.table.name}"
+        return f"State for {self.table.name}"
+
+    def get_viewport_with_defaults(self):
+        """Return viewport with defaults for missing fields"""
+        viewport = self.viewport or {}
+        return {
+            'bbox': viewport.get('bbox', self.DEFAULT_VIEWPORT['bbox']),
+            'corners': viewport.get('corners', self.DEFAULT_VIEWPORT['corners']),
+            'zoom': viewport.get('zoom', self.DEFAULT_VIEWPORT['zoom']),
+        }
+
+    def get_layers_with_defaults(self):
+        """Return layers with defaults for missing fields"""
+        layers = self.layers or {}
+        return {**self.DEFAULT_LAYERS, **layers}
+
+    def get_animations_with_defaults(self):
+        """Return animations with defaults"""
+        return self.animations or {'parcels': False}
+
+    def _extract_coord_value(self, coord):
+        """
+        Extract x, y from corner coordinate, handling multiple formats:
+        - Dict: {'x': val, 'y': val}
+        - List: [x, y]
+        """
+        if isinstance(coord, dict):
+            return coord.get('x', 0), coord.get('y', 0)
+        elif isinstance(coord, (list, tuple)) and len(coord) >= 2:
+            return coord[0], coord[1]
+        return 0, 0
+
+    def apply_pan_command(self, direction, delta=0.15):
+        """
+        Apply a pan command server-side without requiring GIS map.
+        Modifies bbox based on direction and delta percentage.
+
+        Args:
+            direction: 'north', 'south', 'east', 'west', etc.
+            delta: Percentage of viewport size to pan (0.0-1.0)
+
+        Returns:
+            Updated viewport dict
+        """
+        viewport = self.get_viewport_with_defaults()
+        bbox = viewport['bbox']
+
+        if not bbox or len(bbox) != 4:
+            return viewport
+
+        min_x, min_y, max_x, max_y = bbox
+        width = max_x - min_x
+        height = max_y - min_y
+
+        dx, dy = 0, 0
+
+        # Handle 8-way directions
+        if 'north' in direction:
+            dy = height * delta
+        if 'south' in direction:
+            dy = -height * delta
+        if 'east' in direction:
+            dx = width * delta
+        if 'west' in direction:
+            dx = -width * delta
+
+        new_bbox = [min_x + dx, min_y + dy, max_x + dx, max_y + dy]
+
+        # Generate corners in format projector expects: {sw: {x, y}, se: {x, y}, nw: {x, y}, ne: {x, y}}
+        viewport['corners'] = {
+            'sw': {'x': new_bbox[0], 'y': new_bbox[1]},
+            'se': {'x': new_bbox[2], 'y': new_bbox[1]},
+            'nw': {'x': new_bbox[0], 'y': new_bbox[3]},
+            'ne': {'x': new_bbox[2], 'y': new_bbox[3]},
+        }
+
+        viewport['bbox'] = new_bbox
+        return viewport
+
+    def apply_zoom_command(self, new_zoom):
+        """
+        Apply a zoom command server-side without requiring GIS map.
+        Scales bbox around center based on zoom level change.
+
+        Args:
+            new_zoom: Target zoom level (10-19)
+
+        Returns:
+            Updated viewport dict
+        """
+        viewport = self.get_viewport_with_defaults()
+        bbox = viewport['bbox']
+        current_zoom = viewport.get('zoom', 15)
+
+        if not bbox or len(bbox) != 4:
+            viewport['zoom'] = new_zoom
+            return viewport
+
+        min_x, min_y, max_x, max_y = bbox
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+
+        # Each zoom level doubles/halves the scale
+        zoom_diff = new_zoom - current_zoom
+        scale_factor = 2 ** (-zoom_diff)  # Zoom in = smaller bbox
+
+        half_width = (max_x - min_x) / 2 * scale_factor
+        half_height = (max_y - min_y) / 2 * scale_factor
+
+        new_bbox = [
+            center_x - half_width,
+            center_y - half_height,
+            center_x + half_width,
+            center_y + half_height
+        ]
+
+        viewport['bbox'] = new_bbox
+        viewport['zoom'] = new_zoom
+
+        # Generate corners in format projector expects: {sw: {x, y}, se: {x, y}, nw: {x, y}, ne: {x, y}}
+        viewport['corners'] = {
+            'sw': {'x': new_bbox[0], 'y': new_bbox[1]},
+            'se': {'x': new_bbox[2], 'y': new_bbox[1]},
+            'nw': {'x': new_bbox[0], 'y': new_bbox[3]},
+            'ne': {'x': new_bbox[2], 'y': new_bbox[3]},
+        }
+
+        return viewport
 

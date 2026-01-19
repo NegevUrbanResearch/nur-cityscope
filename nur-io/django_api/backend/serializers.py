@@ -155,7 +155,7 @@ class LayerConfigSerializer(serializers.ModelSerializer):
 
 class GISLayerSerializer(serializers.ModelSerializer):
     table_name = serializers.CharField(source="table.name", read_only=True)
-    
+
     class Meta:
         model = GISLayer
         fields = "__all__"
@@ -163,7 +163,7 @@ class GISLayerSerializer(serializers.ModelSerializer):
 
 class OTEFModelConfigSerializer(serializers.ModelSerializer):
     table_name = serializers.CharField(source="table.name", read_only=True)
-    
+
     class Meta:
         model = OTEFModelConfig
         fields = "__all__"
@@ -171,8 +171,9 @@ class OTEFModelConfigSerializer(serializers.ModelSerializer):
 
 class OTEFViewportStateSerializer(serializers.ModelSerializer):
     table_name = serializers.CharField(source="table.name", read_only=True)
-    
+
     class Meta:
         model = OTEFViewportState
-        fields = "__all__"
+        fields = ['id', 'table', 'table_name', 'viewport', 'layers', 'animations', 'updated_at']
+        read_only_fields = ['id', 'updated_at', 'table_name']
 

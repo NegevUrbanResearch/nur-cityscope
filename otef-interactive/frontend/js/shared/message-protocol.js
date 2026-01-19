@@ -2,12 +2,20 @@
 // Defines message types, validation, and factory functions for WebSocket communication
 
 const OTEF_MESSAGE_TYPES = {
+  // Commands (sent by clients)
   VIEWPORT_UPDATE: "otef_viewport_update",
   VIEWPORT_CONTROL: "otef_viewport_control",
   LAYER_UPDATE: "otef_layer_update",
+  ANIMATION_TOGGLE: "otef_animation_toggle",
+
+  // Notifications (broadcast by server after DB update)
+  VIEWPORT_CHANGED: "otef_viewport_changed",
+  LAYERS_CHANGED: "otef_layers_changed",
+  ANIMATION_CHANGED: "otef_animation_changed",
+
+  // Legacy (deprecated - will be removed)
   STATE_REQUEST: "otef_state_request",
   STATE_RESPONSE: "otef_state_response",
-  ANIMATION_TOGGLE: "otef_animation_toggle",
 };
 
 // Default layer states
@@ -18,6 +26,7 @@ const DEFAULT_LAYER_STATES = {
   majorRoads: false,
   smallRoads: false,
 };
+
 
 /**
  * Validates a message structure
