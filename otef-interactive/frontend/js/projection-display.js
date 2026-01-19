@@ -434,6 +434,9 @@ function toggleFullScreen() {
 /**
  * Initialize layers - create Canvas renderer and load default layers
  */
+/**
+ * Initialize layers - create Canvas renderer and load default layers
+ */
 function initializeLayers() {
   if (!modelBounds) {
     console.error("Cannot initialize layers: model bounds not loaded");
@@ -460,10 +463,37 @@ function initializeLayers() {
   layerState.parcels = false;
   layerState.model = false;
 
-  // Load roads layer (enabled by default, matching DEFAULT_LAYER_STATES)
-  loadRoadsLayer().catch((error) => {
-    console.error("[Projection] Failed to load roads layer on init:", error);
-  });
+  // Parallel loading for initial layers
+  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+
+  fetch(apiUrl)
+    .then(res => {
+      if (!res.ok) throw new Error("Failed to load layer config");
+      return res.json();
+    })
+    .then(layers => {
+       // Load roads layer immediately (it's default visible)
+       // We can also preload others if we want, but for now stick to default behavior
+       // Note: we could load all in parallel here if we wanted to preload everything
+       // But for projector, we might want to keep memory usage low until needed
+
+       // Load roads (default on)
+       loadRoadsLayer(layers.find(l => l.name === 'roads')).catch((error) => {
+         console.error("[Projection] Failed to load roads layer on init:", error);
+       });
+
+       // Store config for lazy loading? Or just fetch again?
+       // For simplicity and consistency with previous code, we'll let lazy loaders fetch if needed
+       // OR we can pass the config if we have it.
+    })
+    .catch(err => {
+       console.error("[Projection] Failed to fetch initial layer config:", err);
+       // Fallback to legacy single load
+       loadRoadsLayer().catch((error) => {
+         console.error("[Projection] Failed to load roads layer on init:", error);
+       });
+    });
 
   // Set model image visibility to match default state
   const img = document.getElementById("displayedImage");
@@ -475,26 +505,31 @@ function initializeLayers() {
 /**
  * Load and render roads layer
  */
-async function loadRoadsLayer() {
-  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+async function loadRoadsLayer(layerConfig) {
+  // If config not provided (legacy call), fetch it
+  if (!layerConfig) {
+    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+    const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+    try {
+      const response = await fetch(apiUrl);
+      if (response.ok) {
+         const layers = await response.json();
+         layerConfig = layers.find(l => l.name === 'roads');
+      }
+    } catch(e) { console.warn("Failed to fetch legacy layer config", e); }
+  }
+
+  if (!layerConfig) {
+      console.warn('Roads layer not found in database');
+      return;
+  }
 
   try {
-    // Try loading from database first
-    const response = await fetch(apiUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to load layers: ${response.status}`);
-    }
-
-    const layers = await response.json();
-    const roadsLayer = layers.find(l => l.name === 'roads');
-
-    if (roadsLayer) {
       let geojson;
-      if (roadsLayer.geojson) {
-        geojson = roadsLayer.geojson;
-      } else if (roadsLayer.url) {
-        const geojsonResponse = await fetch(roadsLayer.url);
+      if (layerConfig.geojson) {
+        geojson = layerConfig.geojson;
+      } else if (layerConfig.url) {
+        const geojsonResponse = await fetch(layerConfig.url);
         if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
         geojson = await geojsonResponse.json();
       } else {
@@ -502,10 +537,6 @@ async function loadRoadsLayer() {
       }
 
       await renderLayerFromGeojson(geojson, 'roads', getRoadStyle);
-      return;
-    } else {
-      throw new Error('Roads layer not found in database');
-    }
   } catch (error) {
     console.error("Error loading roads layer from database:", error);
     throw error;
@@ -540,7 +571,7 @@ async function renderLayerFromGeojson(geojson, layerName, styleFunction) {
 /**
  * Load and render parcels layer (lazy load when enabled via WebSocket)
  */
-async function loadParcelsLayer() {
+async function loadParcelsLayer(layerConfig) {
   // Check if already loaded
   if (loadedLayers.parcels) {
     updateLayerVisibility("parcels", layerState.parcels);
@@ -549,25 +580,26 @@ async function loadParcelsLayer() {
 
   console.log("[Projection] Loading parcels layer...");
 
-  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+   // If config not provided, fetch it
+  if (!layerConfig) {
+    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+    const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+    try {
+      const response = await fetch(apiUrl);
+      if (response.ok) {
+         const layers = await response.json();
+         layerConfig = layers.find(l => l.name === 'parcels');
+      }
+    } catch(e) { console.warn("Failed to fetch legacy layer config", e); }
+  }
 
   try {
-    // Try loading from database first
-    const response = await fetch(apiUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to load layers: ${response.status}`);
-    }
-
-    const layers = await response.json();
-    const parcelsLayer = layers.find(l => l.name === 'parcels');
-
-    if (parcelsLayer) {
+    if (layerConfig) {
       let geojson;
-      if (parcelsLayer.geojson) {
-        geojson = parcelsLayer.geojson;
-      } else if (parcelsLayer.url) {
-        const geojsonResponse = await fetch(parcelsLayer.url);
+      if (layerConfig.geojson) {
+        geojson = layerConfig.geojson;
+      } else if (layerConfig.url) {
+        const geojsonResponse = await fetch(layerConfig.url);
         if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
         geojson = await geojsonResponse.json();
       } else {
@@ -623,7 +655,7 @@ function initializeParcelsAnimator(geojson) {
  * Load and render major roads layer (road-big.geojson)
  * Data is in EPSG:2039, same as model bounds
  */
-async function loadMajorRoadsLayer() {
+async function loadMajorRoadsLayer(layerConfig) {
   if (loadedLayers.majorRoads) {
     updateLayerVisibility("majorRoads", layerState.majorRoads);
     return;
@@ -631,28 +663,30 @@ async function loadMajorRoadsLayer() {
 
   console.log("[Projection] Loading major roads layer...");
 
-  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+  // If config not provided, fetch it
+  if (!layerConfig) {
+    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+    const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+    try {
+      const response = await fetch(apiUrl);
+      if (response.ok) {
+         const layers = await response.json();
+         layerConfig = layers.find(l => l.name === 'majorRoads');
+      }
+    } catch(e) { console.warn("Failed to fetch legacy layer config", e); }
+  }
 
   try {
-    const response = await fetch(apiUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to load layers: ${response.status}`);
-    }
-
-    const layers = await response.json();
-    const majorRoadsData = layers.find(l => l.name === 'majorRoads');
-
-    if (!majorRoadsData) {
+    if (!layerConfig) {
       console.warn("[Projection] Major roads layer not found in database");
       return;
     }
 
     let geojson;
-    if (majorRoadsData.geojson) {
-      geojson = majorRoadsData.geojson;
-    } else if (majorRoadsData.url) {
-      const geojsonResponse = await fetch(majorRoadsData.url);
+    if (layerConfig.geojson) {
+      geojson = layerConfig.geojson;
+    } else if (layerConfig.url) {
+      const geojsonResponse = await fetch(layerConfig.url);
       if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
       geojson = await geojsonResponse.json();
     } else {

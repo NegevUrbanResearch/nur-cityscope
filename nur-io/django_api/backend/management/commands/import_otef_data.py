@@ -46,34 +46,57 @@ class Command(BaseCommand):
             {
                 'name': 'parcels',
                 'display_name': 'Parcels (Migrashim)',
-                'file_path': self._get_layer_path('layers', 'migrashim_simplified.json'),
+                'file_name': 'migrashim_simplified.json',
+                'source_type': 'processed',
                 'order': 1
             },
             {
                 'name': 'roads',
                 'display_name': 'Roads',
-                'file_path': self._get_layer_path('layers', 'small_roads_simplified.json'),
+                'file_name': 'small_roads_simplified.json',
+                'source_type': 'processed',
                 'order': 2
             },
             {
                 'name': 'majorRoads',
                 'display_name': 'Major Roads',
-                'file_path': self._get_source_layer_path('road-big.geojson'),
+                'file_name': 'road-big.geojson',
+                'source_type': 'source',
                 'order': 3
             },
             {
                 'name': 'smallRoads',
                 'display_name': 'Small Roads',
-                'file_path': self._get_source_layer_path('Small-road-limited.geojson'),
+                'file_name': 'Small-road-limited.geojson',
+                'source_type': 'source',
                 'order': 4
             }
         ]
 
+        # Ensure media layers directory exists
+        layers_media_dir = os.path.join(settings.MEDIA_ROOT, 'layers')
+        os.makedirs(layers_media_dir, exist_ok=True)
+
         for layer_info in layers_to_import:
-            file_path = os.path.normpath(layer_info['file_path'])
-            if os.path.exists(file_path):
-                with open(file_path) as f:
-                    geojson_data = json.load(f)
+            # Determine source path
+            if layer_info['source_type'] == 'processed':
+                source_path = self._get_layer_path('layers', layer_info['file_name'])
+            else:
+                source_path = self._get_source_layer_path(layer_info['file_name'])
+
+            source_path = os.path.normpath(source_path)
+
+            if os.path.exists(source_path):
+                # Copy file to media directory instead of reading content
+                dest_filename = f"{layer_info['name']}.geojson"
+                dest_path = os.path.join(layers_media_dir, dest_filename)
+
+                # Copy file
+                import shutil
+                shutil.copy2(source_path, dest_path)
+
+                # Relative path for API
+                media_relative_path = f"layers/{dest_filename}"
 
                 layer, created = GISLayer.objects.get_or_create(
                     table=otef_table,
@@ -81,30 +104,32 @@ class Command(BaseCommand):
                     defaults={
                         'display_name': layer_info['display_name'],
                         'layer_type': 'geojson',
-                        'data': geojson_data,
+                        'data': {},  # store empty data to keep DB light
+                        'file_path': media_relative_path, # store path to file
                         'order': layer_info['order'],
                         'style_config': self._get_default_style(layer_info['name'])
                     }
                 )
                 if created:
                     self.stdout.write(
-                        self.style.SUCCESS(f'✓ Imported {layer_info["name"]} layer')
+                        self.style.SUCCESS(f'✓ Imported {layer_info["name"]} layer (linked to file)')
                     )
                 else:
-                    layer.data = geojson_data
+                    layer.data = {} # convert existing heavy layers to light ones
+                    layer.file_path = media_relative_path
                     layer.save()
                     self.stdout.write(
-                        self.style.SUCCESS(f'✓ Updated {layer_info["name"]} layer')
+                        self.style.SUCCESS(f'✓ Updated {layer_info["name"]} layer (linked to file)')
                     )
             else:
                 self.stdout.write(
                     self.style.WARNING(
-                        f'⚠️ Layer file not found: {file_path}'
+                        f'⚠️ Layer file not found: {source_path}'
                     )
                 )
 
         self.stdout.write(
-            self.style.SUCCESS('\n[SUCCESS] OTEF data import completed!')
+            self.style.SUCCESS('\n[SUCCESS] OTEF data import completed! Layers optimized.')
         )
 
     def _get_layer_path(self, *path_parts):

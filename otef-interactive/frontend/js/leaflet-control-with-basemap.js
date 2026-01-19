@@ -170,20 +170,36 @@ fetch("data/model-bounds.json")
 async function loadGeoJSONLayers() {
   console.log("Loading layers...");
 
-  // Load parcels from PMTiles (fast vector tiles)
-  await loadParcelsFromPMTiles();
+  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
 
-  // Load roads from GeoJSON (small layer, keep simple)
-  await loadRoadsFromGeoJSON();
+  try {
+    // 1. Fetch configuration for ALL layers
+    const response = await fetch(apiUrl);
+    if (!response.ok) throw new Error(`Failed to load layer config: ${response.status}`);
+    const layers = await response.json();
 
-  updateMapLegend();
-  console.log("All layers loaded");
+    // 2. Start all layer downloads in parallel
+    // We pass the layer config object to the loader functions so they don't need to fetch it again
+    await Promise.all([
+      loadParcelsFromPMTiles(layers.find(l => l.name === 'parcels')),
+      loadRoadsFromGeoJSON(layers.find(l => l.name === 'roads')),
+      loadMajorRoadsFromGeoJSON(layers.find(l => l.name === 'majorRoads')),
+      loadSmallRoadsFromGeoJSON(layers.find(l => l.name === 'smallRoads'))
+    ]);
+
+    updateMapLegend();
+    console.log("All layers loaded successfully");
+
+  } catch (error) {
+    console.error("Critical error during layer loading:", error);
+  }
 }
 
 /**
  * Load parcels layer from PMTiles (vector tiles for performance)
  */
-async function loadParcelsFromPMTiles() {
+async function loadParcelsFromPMTiles(layerConfig) {
   console.log("Loading parcels from PMTiles...");
 
   try {
@@ -249,31 +265,33 @@ async function loadParcelsFromPMTiles() {
 /**
  * Load roads layer from GeoJSON (small layer, simple approach)
  */
-async function loadRoadsFromGeoJSON() {
+async function loadRoadsFromGeoJSON(layerConfig) {
+  // If config not provided (legacy call), fetch it
+  if (!layerConfig) {
+    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+    const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+    try {
+      const response = await fetch(apiUrl);
+      if (response.ok) {
+         const layers = await response.json();
+         layerConfig = layers.find(l => l.name === 'roads');
+      }
+    } catch(e) { console.warn("Failed to fetch legacy layer config", e); }
+  }
+
+  if (!layerConfig) {
+    console.warn("Roads layer configuration not found");
+    return;
+  }
+
   console.log("Loading roads from GeoJSON...");
 
-  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
-
   try {
-    const response = await fetch(apiUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to load layers: ${response.status}`);
-    }
-
-    const layers = await response.json();
-    const roadsData = layers.find(l => l.name === 'roads');
-
-    if (!roadsData) {
-      console.warn("Roads layer not found in database");
-      return;
-    }
-
     let geojson;
-    if (roadsData.geojson) {
-      geojson = roadsData.geojson;
-    } else if (roadsData.url) {
-      const geojsonResponse = await fetch(roadsData.url);
+    if (layerConfig.geojson) {
+      geojson = layerConfig.geojson;
+    } else if (layerConfig.url) {
+      const geojsonResponse = await fetch(layerConfig.url);
       if (!geojsonResponse.ok) throw new Error('Failed to load roads data');
       geojson = await geojsonResponse.json();
     } else {
@@ -305,31 +323,33 @@ async function loadRoadsFromGeoJSON() {
  * Load major roads layer from GeoJSON file (road-big.geojson)
  * Data is in EPSG:2039, needs transformation
  */
-async function loadMajorRoadsFromGeoJSON() {
+async function loadMajorRoadsFromGeoJSON(layerConfig) {
+   // If config not provided (legacy call), fetch it
+  if (!layerConfig) {
+    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+    const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+    try {
+      const response = await fetch(apiUrl);
+      if (response.ok) {
+         const layers = await response.json();
+         layerConfig = layers.find(l => l.name === 'majorRoads');
+      }
+    } catch(e) { console.warn("Failed to fetch legacy layer config", e); }
+  }
+
+  if (!layerConfig) {
+    console.warn("Major roads layer configuration not found");
+    return;
+  }
+
   console.log("Loading major roads from GeoJSON...");
 
-  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
-
   try {
-    const response = await fetch(apiUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to load layers: ${response.status}`);
-    }
-
-    const layers = await response.json();
-    const majorRoadsData = layers.find(l => l.name === 'majorRoads');
-
-    if (!majorRoadsData) {
-      console.warn("Major roads layer not found in database");
-      return;
-    }
-
     let geojson;
-    if (majorRoadsData.geojson) {
-      geojson = majorRoadsData.geojson;
-    } else if (majorRoadsData.url) {
-      const geojsonResponse = await fetch(majorRoadsData.url);
+    if (layerConfig.geojson) {
+      geojson = layerConfig.geojson;
+    } else if (layerConfig.url) {
+      const geojsonResponse = await fetch(layerConfig.url);
       if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
       geojson = await geojsonResponse.json();
     } else {
@@ -362,31 +382,33 @@ async function loadMajorRoadsFromGeoJSON() {
  * Load small roads layer from GeoJSON file (Small-road-limited.geojson)
  * Data is already in WGS84, no transformation needed
  */
-async function loadSmallRoadsFromGeoJSON() {
+async function loadSmallRoadsFromGeoJSON(layerConfig) {
+  // If config not provided (legacy call), fetch it
+  if (!layerConfig) {
+    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+    const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
+    try {
+      const response = await fetch(apiUrl);
+      if (response.ok) {
+         const layers = await response.json();
+         layerConfig = layers.find(l => l.name === 'smallRoads');
+      }
+    } catch(e) { console.warn("Failed to fetch legacy layer config", e); }
+  }
+
+  if (!layerConfig) {
+    console.warn("Small roads layer configuration not found");
+    return;
+  }
+
   console.log("Loading small roads from GeoJSON...");
 
-  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
-
   try {
-    const response = await fetch(apiUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to load layers: ${response.status}`);
-    }
-
-    const layers = await response.json();
-    const smallRoadsData = layers.find(l => l.name === 'smallRoads');
-
-    if (!smallRoadsData) {
-      console.warn("Small roads layer not found in database");
-      return;
-    }
-
     let geojson;
-    if (smallRoadsData.geojson) {
-      geojson = smallRoadsData.geojson;
-    } else if (smallRoadsData.url) {
-      const geojsonResponse = await fetch(smallRoadsData.url);
+    if (layerConfig.geojson) {
+      geojson = layerConfig.geojson;
+    } else if (layerConfig.url) {
+      const geojsonResponse = await fetch(layerConfig.url);
       if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
       geojson = await geojsonResponse.json();
     } else {
