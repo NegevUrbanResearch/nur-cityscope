@@ -130,3 +130,4 @@ calculations/export/*
 *-to-load*
 
 otef-interactive/frontend/data/*.mbtiles
+otef-interactive/playground

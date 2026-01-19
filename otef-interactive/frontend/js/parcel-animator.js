@@ -21,8 +21,18 @@ class ParcelAnimator {
     this.displayBounds = null;
 
     // Particle settings
-    this.particleSize = 3.0;  // Size of each dot
-    this.particlesPerFeature = 50;  // Number of particles to sample per parcel
+    // Particle settings (defaults from optimization)
+    this.params = {
+      speed: 1.63,
+      flowDistance: 30.0,
+      fadeRange: 0.2,
+      curlScale: 0.005,
+      pointSize: 3.0,
+      phaseScale: 1.0,
+      opacity: 0.8
+    };
+
+    this.particlesPerFeature = 200;
 
     this._createCanvas();
     this._initWebGL();
@@ -66,105 +76,173 @@ class ParcelAnimator {
   _compileShaders() {
     const gl = this.gl;
 
-    // Vertex shader - particles with fluid motion using simplex noise
+    // Vertex Shader: Curl Noise with Flow & Reset
     const vertexShaderSource = `
       precision highp float;
 
-      attribute vec2 a_position;      // Original position
-      attribute vec3 a_color;         // Particle color
-      attribute float a_phase;        // Random phase offset for variety
+      attribute vec2 a_position;      // Original position (0..1 normalized usually, but effectively pixels here)
+      attribute vec3 a_color;
+      attribute float a_phase;
 
       uniform vec2 u_resolution;
       uniform float u_time;
+
+      // Parameters
+      uniform float u_speed;          // Cycle frequency
+      uniform float u_flowDistance;   // Max distance
+      uniform float u_curlScale;      // Noise scale
       uniform float u_pointSize;
+      uniform float u_phaseScale;
+      uniform float u_fadeRange;      // Fade in/out range
 
       varying vec3 v_color;
+      varying float v_alpha;
 
-      // Simplex noise functions for fluid motion
+      // --- Simplex Noise 3D ---
       vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-      vec2 mod289v2(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
-      vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
+      vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+      vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
 
-      float snoise(vec2 v) {
-        const vec4 C = vec4(0.211324865405187, 0.366025403784439,
-                           -0.577350269189626, 0.024390243902439);
-        vec2 i  = floor(v + dot(v, C.yy));
-        vec2 x0 = v - i + dot(i, C.xx);
-        vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-        vec4 x12 = x0.xyxy + C.xxzz;
-        x12.xy -= i1;
-        i = mod289v2(i);
-        vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0)) + i.x + vec3(0.0, i1.x, 1.0));
-        vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
-        m = m*m;
-        m = m*m;
-        vec3 x = 2.0 * fract(p * C.www) - 1.0;
-        vec3 h = abs(x) - 0.5;
-        vec3 ox = floor(x + 0.5);
-        vec3 a0 = x - ox;
-        m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);
-        vec3 g;
-        g.x = a0.x * x0.x + h.x * x0.y;
-        g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-        return 130.0 * dot(m, g);
+      float snoise(vec3 v) {
+        const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
+        const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+
+        // First corner
+        vec3 i  = floor(v + dot(v, C.yyy) );
+        vec3 x0 = v - i + dot(i, C.xxx) ;
+
+        // Other corners
+        vec3 g = step(x0.yzx, x0.xyz);
+        vec3 l = 1.0 - g;
+        vec3 i1 = min( g.xyz, l.zxy );
+        vec3 i2 = max( g.xyz, l.zxy );
+
+        vec3 x1 = x0 - i1 + C.xxx;
+        vec3 x2 = x0 - i2 + C.yyy;
+        vec3 x3 = x0 - D.yyy;
+
+        // Permutations
+        i = mod289(i);
+        vec4 p = permute( permute( permute(
+                  i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+                + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
+                + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+
+        float n_ = 0.142857142857;
+        vec3  ns = n_ * D.wyz - D.xzx;
+
+        vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+
+        vec4 x_ = floor(j * ns.z);
+        vec4 y_ = floor(j - 7.0 * x_ );
+
+        vec4 x = x_ *ns.x + ns.yyyy;
+        vec4 y = y_ *ns.x + ns.yyyy;
+        vec4 h = 1.0 - abs(x) - abs(y);
+
+        vec4 b0 = vec4( x.xy, y.xy );
+        vec4 b1 = vec4( x.zw, y.zw );
+
+        vec4 s0 = floor(b0)*2.0 + 1.0;
+        vec4 s1 = floor(b1)*2.0 + 1.0;
+        vec4 sh = -step(h, vec4(0.0));
+
+        vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+        vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+
+        vec3 p0 = vec3(a0.xy,h.x);
+        vec3 p1 = vec3(a0.zw,h.y);
+        vec3 p2 = vec3(a1.xy,h.z);
+        vec3 p3 = vec3(a1.zw,h.w);
+
+        vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+        p0 *= norm.x;
+        p1 *= norm.y;
+        p2 *= norm.z;
+        p3 *= norm.w;
+
+        vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+        m = m * m;
+        return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1),
+                                      dot(p2,x2), dot(p3,x3) ) );
+      }
+
+      vec2 curlScale(vec2 p, float t) {
+         float eps = 0.5;
+         float n1 = snoise(vec3(p.x, p.y + eps, t));
+         float n2 = snoise(vec3(p.x, p.y - eps, t));
+         float a = (n1 - n2) / (2.0 * eps);
+         float n3 = snoise(vec3(p.x + eps, p.y, t));
+         float n4 = snoise(vec3(p.x - eps, p.y, t));
+         float b = (n3 - n4) / (2.0 * eps);
+         return vec2(a, -b);
       }
 
       void main() {
         v_color = a_color;
 
-        // Time with per-particle phase offset
-        float t = u_time * 0.5 + a_phase;
+        // Lifecycle (0..1)
+        float cycleDuration = max(0.1, 1.0 / max(0.001, u_speed));
+        float globalTime = u_time;
+        float phaseOffset = a_phase * u_phaseScale * cycleDuration;
 
-        // Multi-octave noise for organic fluid motion
-        float noiseScale = 0.008;
+        float t = globalTime + phaseOffset;
+        float age = mod(t, cycleDuration) / cycleDuration; // 0..1
 
-        // Sample noise at particle position to get flow direction
-        float noise1 = snoise(vec2(a_position.x * noiseScale + t * 0.3,
-                                    a_position.y * noiseScale + t * 0.2));
-        float noise2 = snoise(vec2(a_position.x * noiseScale * 2.0 - t * 0.25,
-                                    a_position.y * noiseScale * 2.0 + t * 0.15));
-        float noise3 = snoise(vec2(a_position.y * noiseScale * 0.5 + t * 0.4,
-                                    a_position.x * noiseScale * 0.5 - t * 0.2));
+        // Fade In/Out
+        float fade = max(0.001, u_fadeRange);
+        float fadeIn = smoothstep(0.0, fade, age);
+        float fadeOut = 1.0 - smoothstep(1.0 - fade, 1.0, age);
+        v_alpha = min(fadeIn, fadeOut);
 
-        // Combined noise for swirling effect
-        float swirl = noise1 * 0.5 + noise2 * 0.35 + noise3 * 0.15;
+        // Flow
+        // Unlike playground, a_position here is likely pixels or projected coords?
+        // Let's assume a_position is in PIXELS relative to the canvas origin.
+        vec2 p = a_position;
 
-        // Create circular swirling motion
-        float angle = swirl * 6.28318;  // Convert to radians
-        float radius = 8.0 + sin(t * 0.7 + a_phase * 3.0) * 4.0;  // Pulsing radius
+        float fieldTime = globalTime * 0.1;
 
-        // Apply fluid displacement
-        vec2 offset = vec2(
-          cos(angle) * radius,
-          sin(angle) * radius
-        );
+        // 1. Direction
+        vec2 dir1 = curlScale(p * u_curlScale, fieldTime);
 
-        vec2 pos = a_position + offset;
+        // 2. Midpoint
+        vec2 midP = p + dir1 * (u_flowDistance * 0.5 * age);
+        vec2 dir2 = curlScale(midP * u_curlScale, fieldTime);
 
-        // Convert to clip space
+        // 3. Displacement
+        vec2 displacement = dir2 * u_flowDistance * age;
+
+        // Apply
+        vec2 pos = a_position + displacement;
+
+        // Clip space conversion
+        // u_resolution is canvas width/height
+        // WebGL origin is bottom-left, but standard 2D canvas/screen is top-left.
+        // Usually we flip Y if needed. Let's stick to standard behavior:
         vec2 clipSpace = (pos / u_resolution) * 2.0 - 1.0;
-        gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+        gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1); // Flip Y for screen coords
         gl_PointSize = u_pointSize;
       }
     `;
 
-    // Fragment shader - render circular dots
+    // Fragment shader - render soft circular dots with lifecycle alpha
     const fragmentShaderSource = `
       precision highp float;
 
       varying vec3 v_color;
+      varying float v_alpha;
+      uniform float u_opacity;
 
       void main() {
-        // Create circular dot
         vec2 center = gl_PointCoord - vec2(0.5);
         float dist = length(center);
-
         // Smooth circle edge
-        float alpha = 1.0 - smoothstep(0.35, 0.5, dist);
+        float alphaShape = 1.0 - smoothstep(0.3, 0.5, dist);
 
-        if (alpha < 0.01) discard;
+        if (alphaShape < 0.01) discard;
 
-        gl_FragColor = vec4(v_color, alpha);
+        gl_FragColor = vec4(v_color, alphaShape * v_alpha * u_opacity);
       }
     `;
 
@@ -200,9 +278,16 @@ class ParcelAnimator {
     }
 
     // Get uniform locations
+    // Get uniform locations
     this.uniforms.resolution = gl.getUniformLocation(this.program, 'u_resolution');
     this.uniforms.time = gl.getUniformLocation(this.program, 'u_time');
+    this.uniforms.speed = gl.getUniformLocation(this.program, 'u_speed');
+    this.uniforms.flowDistance = gl.getUniformLocation(this.program, 'u_flowDistance');
+    this.uniforms.curlScale = gl.getUniformLocation(this.program, 'u_curlScale');
     this.uniforms.pointSize = gl.getUniformLocation(this.program, 'u_pointSize');
+    this.uniforms.phaseScale = gl.getUniformLocation(this.program, 'u_phaseScale');
+    this.uniforms.fadeRange = gl.getUniformLocation(this.program, 'u_fadeRange');
+    this.uniforms.opacity = gl.getUniformLocation(this.program, 'u_opacity');
 
     // Get attribute locations
     this.attributes = {
@@ -490,7 +575,13 @@ class ParcelAnimator {
     const time = (performance.now() - this.startTime) / 1000;
     gl.uniform2f(this.uniforms.resolution, this.canvas.width, this.canvas.height);
     gl.uniform1f(this.uniforms.time, time);
-    gl.uniform1f(this.uniforms.pointSize, this.particleSize);
+    gl.uniform1f(this.uniforms.speed, this.params.speed);
+    gl.uniform1f(this.uniforms.flowDistance, this.params.flowDistance);
+    gl.uniform1f(this.uniforms.curlScale, this.params.curlScale);
+    gl.uniform1f(this.uniforms.pointSize, this.params.pointSize);
+    gl.uniform1f(this.uniforms.phaseScale, this.params.phaseScale);
+    gl.uniform1f(this.uniforms.fadeRange, this.params.fadeRange);
+    gl.uniform1f(this.uniforms.opacity, this.params.opacity);
 
     // Bind position buffer
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffers.position);
