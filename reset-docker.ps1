@@ -45,38 +45,44 @@ Write-Host ""
 # Regenerate PMTiles (before starting containers)
 Write-Host "5. Setting up OTEF PMTiles..." -ForegroundColor Cyan
 
-$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
-if (-not $pythonCmd) {
-    $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
-}
-
-if ($pythonCmd) {
-    # Create venv if it doesn't exist
-    $venvPath = "otef-interactive\scripts\.venv"
-    if (-not (Test-Path $venvPath)) {
-        Write-Host "   Creating Python virtual environment..." -ForegroundColor Gray
-        & $pythonCmd.Name -m venv "$venvPath"
+# Only generate PMTiles if they don't already exist
+$pmtilesPath = "otef-interactive\frontend\data\parcels.pmtiles"
+if (-not (Test-Path $pmtilesPath)) {
+    $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $pythonCmd) {
+        $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
     }
 
-    # Install dependencies (quick check, pip handles already-installed packages efficiently)
-    Write-Host "   Ensuring tile generation dependencies..." -ForegroundColor Gray
-    & "$venvPath\Scripts\pip" install pyproj pmtiles -q
+    if ($pythonCmd) {
+        # Create venv if it doesn't exist
+        $venvPath = "otef-interactive\scripts\.venv"
+        if (-not (Test-Path $venvPath)) {
+            Write-Host "   Creating Python virtual environment..." -ForegroundColor Gray
+            & $pythonCmd.Name -m venv "$venvPath"
+        }
 
-    # Check if Docker is running for tile generation
-    $dockerRunning = docker info 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "   Generating PMTiles for parcels layer..." -ForegroundColor Gray
-        & "$venvPath\Scripts\python" "otef-interactive\scripts\generate-pmtiles.py"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "   Warning: PMTiles generation failed. Parcels will load slower via GeoJSON." -ForegroundColor Yellow
+        # Install dependencies (quick check, pip handles already-installed packages efficiently)
+        Write-Host "   Ensuring tile generation dependencies..." -ForegroundColor Gray
+        & "$venvPath\Scripts\pip" install pyproj pmtiles -q
+
+        # Check if Docker is running for tile generation
+        $dockerRunning = docker info 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "   Generating PMTiles for parcels layer..." -ForegroundColor Gray
+            & "$venvPath\Scripts\python" "otef-interactive\scripts\generate-pmtiles.py"
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "   Warning: PMTiles generation failed. Parcels will load slower via GeoJSON." -ForegroundColor Yellow
+            } else {
+                Write-Host "   PMTiles generated successfully." -ForegroundColor Green
+            }
         } else {
-            Write-Host "   PMTiles generated successfully." -ForegroundColor Green
+            Write-Host "   Warning: Docker not running, skipping PMTiles generation" -ForegroundColor Yellow
         }
     } else {
-        Write-Host "   Warning: Docker not running, skipping PMTiles generation" -ForegroundColor Yellow
+        Write-Host "   Warning: Python not found, skipping PMTiles generation" -ForegroundColor Yellow
     }
 } else {
-    Write-Host "   Warning: Python not found, skipping PMTiles generation" -ForegroundColor Yellow
+    Write-Host "   PMTiles already exist, skipping generation" -ForegroundColor Gray
 }
 
 # Rebuild and start containers

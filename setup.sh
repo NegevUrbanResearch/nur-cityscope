@@ -103,12 +103,30 @@ echo ""
 # Get local IP address
 get_local_ip() {
     # Try different methods to get the local IP
-    if command -v ip >/dev/null 2>&1; then
+    if [ "$(uname)" = "Darwin" ]; then
+        # macOS: Get the default interface and its IP
+        local default_if=$(route get default 2>/dev/null | grep interface | awk '{print $2}')
+        if [ -n "$default_if" ]; then
+            local ip=$(ipconfig getifaddr "$default_if" 2>/dev/null)
+            if [ -n "$ip" ] && [ "$ip" != "127.0.0.1" ]; then
+                echo "$ip"
+                return
+            fi
+        fi
+        # Fallback: try common interfaces
+        for iface in en0 en1 en2 en3; do
+            local ip=$(ipconfig getifaddr "$iface" 2>/dev/null)
+            if [ -n "$ip" ] && [ "$ip" != "127.0.0.1" ]; then
+                echo "$ip"
+                return
+            fi
+        done
+        # Last resort: use ifconfig to find first non-loopback IPv4
+        ifconfig 2>/dev/null | grep -E "inet [0-9]" | grep -v "127.0.0.1" | awk '{print $2}' | head -1 | grep -v "^$"
+    elif command -v ip >/dev/null 2>&1; then
         ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' | grep -v "^$"
     elif command -v hostname >/dev/null 2>&1; then
         hostname -I 2>/dev/null | awk '{print $1}' | grep -v "^$"
-    elif [ "$(uname)" = "Darwin" ]; then
-        ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null
     fi
 }
 
