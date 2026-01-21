@@ -121,18 +121,16 @@ class OTEFDataContextClass {
     });
 
     // Bounds polygon changed (e.g. via another client or backend-side update)
-    if (OTEF_MESSAGE_TYPES.BOUNDS_CHANGED) {
-      this._wsClient.on(OTEF_MESSAGE_TYPES.BOUNDS_CHANGED, async () => {
-        try {
-          const state = await OTEF_API.getState(this._tableName);
-          if (state.bounds_polygon || state.bounds) {
-            this._setBounds(state.bounds_polygon || state.bounds);
-          }
-        } catch (err) {
-          console.error('[OTEFDataContext] Failed to refresh bounds after BOUNDS_CHANGED:', err);
+    this._wsClient.on(OTEF_MESSAGE_TYPES.BOUNDS_CHANGED, async () => {
+      try {
+        const state = await OTEF_API.getState(this._tableName);
+        if (state.bounds_polygon || state.bounds) {
+          this._setBounds(state.bounds_polygon || state.bounds);
         }
-      });
-    }
+      } catch (err) {
+        console.error('[OTEFDataContext] Failed to refresh bounds after BOUNDS_CHANGED:', err);
+      }
+    });
 
     this._wsClient.connect();
   }

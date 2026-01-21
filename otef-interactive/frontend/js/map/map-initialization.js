@@ -131,21 +131,32 @@ function initializeMap(bounds) {
       const initialConnection = OTEFDataContext.isConnected();
       updateConnectionStatus(!!initialConnection);
 
-      OTEFDataContext.subscribe('viewport', (viewport) => {
-        if (viewport) {
-          applyViewportFromAPI(viewport);
-        }
-      });
+      // Store unsubscribe functions for cleanup
+      if (!window._otefUnsubscribeFunctions) {
+        window._otefUnsubscribeFunctions = [];
+      }
 
-      OTEFDataContext.subscribe('layers', (layers) => {
-        if (layers) {
-          applyLayerState(layers);
-        }
-      });
+      window._otefUnsubscribeFunctions.push(
+        OTEFDataContext.subscribe('viewport', (viewport) => {
+          if (viewport) {
+            applyViewportFromAPI(viewport);
+          }
+        })
+      );
 
-      OTEFDataContext.subscribe('connection', (connected) => {
-        updateConnectionStatus(!!connected);
-      });
+      window._otefUnsubscribeFunctions.push(
+        OTEFDataContext.subscribe('layers', (layers) => {
+          if (layers) {
+            applyLayerState(layers);
+          }
+        })
+      );
+
+      window._otefUnsubscribeFunctions.push(
+        OTEFDataContext.subscribe('connection', (connected) => {
+          updateConnectionStatus(!!connected);
+        })
+      );
     });
   }
 
@@ -162,6 +173,18 @@ fetch("data/model-bounds.json")
   .catch((error) => {
     console.error("Error loading model bounds:", error);
   });
+
+// Cleanup subscriptions on page unload
+window.addEventListener("beforeunload", () => {
+  if (window._otefUnsubscribeFunctions) {
+    window._otefUnsubscribeFunctions.forEach(unsubscribe => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    });
+    window._otefUnsubscribeFunctions = [];
+  }
+});
 
 // Map click handler
 map.on("click", (e) => {

@@ -36,6 +36,9 @@ const ZOOM_THROTTLE_MS = 100;
 // Table name for this controller
 const TABLE_NAME = 'otef';
 
+// Store unsubscribe functions for cleanup
+let unsubscribeFunctions = [];
+
 // Initialize on DOM ready
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initialize);
@@ -50,29 +53,37 @@ async function initialize() {
   await OTEFDataContext.init(TABLE_NAME);
 
   // Wire DataContext subscriptions to local UI state
-  OTEFDataContext.subscribe('viewport', (viewport) => {
-    if (!viewport) return;
-    currentState.viewport = viewport;
-    updateZoomUI(viewport.zoom);
-    updateUI();
-  });
+  unsubscribeFunctions.push(
+    OTEFDataContext.subscribe('viewport', (viewport) => {
+      if (!viewport) return;
+      currentState.viewport = viewport;
+      updateZoomUI(viewport.zoom);
+      updateUI();
+    })
+  );
 
-  OTEFDataContext.subscribe('layers', (layers) => {
-    if (!layers) return;
-    currentState.layers = layers;
-    updateUI();
-  });
+  unsubscribeFunctions.push(
+    OTEFDataContext.subscribe('layers', (layers) => {
+      if (!layers) return;
+      currentState.layers = layers;
+      updateUI();
+    })
+  );
 
-  OTEFDataContext.subscribe('animations', (animations) => {
-    if (!animations) return;
-    currentState.animations = animations;
-    updateAnimationButtonState();
-  });
+  unsubscribeFunctions.push(
+    OTEFDataContext.subscribe('animations', (animations) => {
+      if (!animations) return;
+      currentState.animations = animations;
+      updateAnimationButtonState();
+    })
+  );
 
-  OTEFDataContext.subscribe('connection', (isConnected) => {
-    currentState.isConnected = !!isConnected;
-    updateConnectionStatus(isConnected ? "connected" : "disconnected");
-  });
+  unsubscribeFunctions.push(
+    OTEFDataContext.subscribe('connection', (isConnected) => {
+      currentState.isConnected = !!isConnected;
+      updateConnectionStatus(isConnected ? "connected" : "disconnected");
+    })
+  );
 
   // Initialize UI controls
   initializePanControls();
@@ -567,6 +578,14 @@ function updateUI() {
 
 // Cleanup on page unload
 window.addEventListener("beforeunload", () => {
+  // Unsubscribe from all DataContext subscriptions
+  unsubscribeFunctions.forEach(unsubscribe => {
+    if (typeof unsubscribe === 'function') {
+      unsubscribe();
+    }
+  });
+  unsubscribeFunctions = [];
+
   if (joystickManager) {
     joystickManager.destroy();
   }

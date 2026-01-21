@@ -45,26 +45,37 @@ fetch("data/model-bounds.json")
           handleAnimationToggle({ layerId: 'parcels', enabled: initialAnimations.parcels });
         }
 
-        OTEFDataContext.subscribe('viewport', (viewport) => {
-          if (!viewport) return;
-          if (viewport.corners) {
-            updateHighlightQuad(viewport.corners);
-          } else if (viewport.bbox) {
-            updateHighlightRect(viewport.bbox);
-          }
-        });
+        // Store unsubscribe functions for cleanup
+        if (!window._otefUnsubscribeFunctions) {
+          window._otefUnsubscribeFunctions = [];
+        }
 
-        OTEFDataContext.subscribe('layers', (layers) => {
-          if (layers) {
-            syncLayersFromState(layers);
-          }
-        });
+        window._otefUnsubscribeFunctions.push(
+          OTEFDataContext.subscribe('viewport', (viewport) => {
+            if (!viewport) return;
+            if (viewport.corners) {
+              updateHighlightQuad(viewport.corners);
+            } else if (viewport.bbox) {
+              updateHighlightRect(viewport.bbox);
+            }
+          })
+        );
 
-        OTEFDataContext.subscribe('animations', (animations) => {
-          if (animations && animations.parcels !== undefined) {
-            handleAnimationToggle({ layerId: 'parcels', enabled: animations.parcels });
-          }
-        });
+        window._otefUnsubscribeFunctions.push(
+          OTEFDataContext.subscribe('layers', (layers) => {
+            if (layers) {
+              syncLayersFromState(layers);
+            }
+          })
+        );
+
+        window._otefUnsubscribeFunctions.push(
+          OTEFDataContext.subscribe('animations', (animations) => {
+            if (animations && animations.parcels !== undefined) {
+              handleAnimationToggle({ layerId: 'parcels', enabled: animations.parcels });
+            }
+          })
+        );
       });
     }
   })
@@ -1052,3 +1063,15 @@ setTimeout(() => {
     instructions.classList.add("hidden");
   }, 3000);
 }, 500);
+
+// Cleanup subscriptions on page unload
+window.addEventListener("beforeunload", () => {
+  if (window._otefUnsubscribeFunctions) {
+    window._otefUnsubscribeFunctions.forEach(unsubscribe => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    });
+    window._otefUnsubscribeFunctions = [];
+  }
+});
