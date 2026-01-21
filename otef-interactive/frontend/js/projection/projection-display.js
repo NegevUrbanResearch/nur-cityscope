@@ -739,37 +739,18 @@ function initializeLayers() {
  * Load and render roads layer
  */
 async function loadRoadsLayer(layerConfig) {
-  // If config not provided (legacy call), fetch it
-  if (!layerConfig) {
-    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-    const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
-    try {
-      const response = await fetch(apiUrl);
-      if (response.ok) {
-         const layers = await response.json();
-         layerConfig = layers.find(l => l.name === 'roads');
-      }
-    } catch(e) { console.warn("Failed to fetch legacy layer config", e); }
-  }
-
-  if (!layerConfig) {
-      console.warn('Roads layer not found in database');
-      return;
-  }
-
   try {
-      let geojson;
-      if (layerConfig.geojson) {
-        geojson = layerConfig.geojson;
-      } else if (layerConfig.url) {
-        const geojsonResponse = await fetch(layerConfig.url);
-        if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
-        geojson = await geojsonResponse.json();
-      } else {
-        throw new Error('Layer has no data source');
+      const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+      const result = layerConfig
+        ? { geojson: await loadGeojsonFromConfig(layerConfig) }
+        : await loadLayerGeojson(tableName, 'roads');
+
+      if (!result || !result.geojson) {
+        console.warn('[Projection] Roads layer not found in database');
+        return;
       }
 
-      await renderLayerFromGeojson(geojson, 'roads', getRoadStyle);
+      await renderLayerFromGeojson(result.geojson, 'roads', getRoadStyle);
   } catch (error) {
     console.error("Error loading roads layer from database:", error);
     throw error;
@@ -813,31 +794,14 @@ async function loadParcelsLayer(layerConfig) {
 
   console.log("[Projection] Loading parcels layer...");
 
-   // If config not provided, fetch it
-  if (!layerConfig) {
-    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-    const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
-    try {
-      const response = await fetch(apiUrl);
-      if (response.ok) {
-         const layers = await response.json();
-         layerConfig = layers.find(l => l.name === 'parcels');
-      }
-    } catch(e) { console.warn("Failed to fetch legacy layer config", e); }
-  }
-
   try {
-    if (layerConfig) {
-      let geojson;
-      if (layerConfig.geojson) {
-        geojson = layerConfig.geojson;
-      } else if (layerConfig.url) {
-        const geojsonResponse = await fetch(layerConfig.url);
-        if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
-        geojson = await geojsonResponse.json();
-      } else {
-        throw new Error('Layer has no data source');
-      }
+    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+    const result = layerConfig
+      ? { geojson: await loadGeojsonFromConfig(layerConfig) }
+      : await loadLayerGeojson(tableName, 'parcels');
+
+    if (result && result.geojson) {
+      const geojson = result.geojson;
 
       await renderLayerFromGeojson(geojson, 'parcels', getParcelStyle);
 
@@ -908,35 +872,18 @@ async function loadMajorRoadsLayer(layerConfig) {
 
   console.log("[Projection] Loading major roads layer...");
 
-  // If config not provided, fetch it
-  if (!layerConfig) {
-    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-    const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
-    try {
-      const response = await fetch(apiUrl);
-      if (response.ok) {
-         const layers = await response.json();
-         layerConfig = layers.find(l => l.name === 'majorRoads');
-      }
-    } catch(e) { console.warn("Failed to fetch legacy layer config", e); }
-  }
-
   try {
-    if (!layerConfig) {
+    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+    const result = layerConfig
+      ? { geojson: await loadGeojsonFromConfig(layerConfig) }
+      : await loadLayerGeojson(tableName, 'majorRoads');
+
+    if (!result || !result.geojson) {
       console.warn("[Projection] Major roads layer not found in database");
       return;
     }
 
-    let geojson;
-    if (layerConfig.geojson) {
-      geojson = layerConfig.geojson;
-    } else if (layerConfig.url) {
-      const geojsonResponse = await fetch(layerConfig.url);
-      if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
-      geojson = await geojsonResponse.json();
-    } else {
-      throw new Error('Layer has no data source');
-    }
+    const geojson = result.geojson;
 
     console.log(`[Projection] Major roads: ${geojson.features?.length || 0} features`);
     await renderLayerFromGeojson(geojson, 'majorRoads', getMajorRoadStyle);
@@ -958,33 +905,16 @@ async function loadSmallRoadsLayer() {
 
   console.log("[Projection] Loading small roads layer...");
 
-  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-  const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
-
   try {
-    const response = await fetch(apiUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to load layers: ${response.status}`);
-    }
+    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
+    const result = await loadLayerGeojson(tableName, 'smallRoads');
 
-    const layers = await response.json();
-    const smallRoadsData = layers.find(l => l.name === 'smallRoads');
-
-    if (!smallRoadsData) {
+    if (!result || !result.geojson) {
       console.warn("[Projection] Small roads layer not found in database");
       return;
     }
 
-    let geojson;
-    if (smallRoadsData.geojson) {
-      geojson = smallRoadsData.geojson;
-    } else if (smallRoadsData.url) {
-      const geojsonResponse = await fetch(smallRoadsData.url);
-      if (!geojsonResponse.ok) throw new Error('Failed to load layer data');
-      geojson = await geojsonResponse.json();
-    } else {
-      throw new Error('Layer has no data source');
-    }
+    const geojson = result.geojson;
 
     console.log(`[Projection] Small roads: ${geojson.features?.length || 0} features`);
     await renderLayerFromGeojson(geojson, 'smallRoads', getSmallRoadStyle);

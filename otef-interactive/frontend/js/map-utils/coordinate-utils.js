@@ -21,6 +21,62 @@ const CoordUtils = {
         const [pxMax, pyMin] = this.itmToPixel(xMax, yMax, bounds);
         return [pxMin, pyMin, pxMax, pyMax];
     },
+
+    /**
+     * Transform coordinates from EPSG:2039 (ITM) to WGS84 (lat/lon).
+     * Returns [lat, lon] for Leaflet compatibility.
+     * @param {number} x - ITM X coordinate
+     * @param {number} y - ITM Y coordinate
+     * @returns {Array<number>} [lat, lon] for Leaflet
+     */
+    transformItmToWgs84(x, y) {
+        const [lon, lat] = proj4("EPSG:2039", "EPSG:4326", [x, y]);
+        return [lat, lon]; // Return as [lat, lon] for Leaflet
+    },
+
+    /**
+     * Transform entire GeoJSON from EPSG:2039 to WGS84.
+     * @param {Object} geojson - GeoJSON object with features in EPSG:2039
+     * @returns {Object} Transformed GeoJSON with WGS84 coordinates
+     */
+    transformGeojsonToWgs84(geojson) {
+        const transformed = JSON.parse(JSON.stringify(geojson)); // Deep clone
+
+        function transformCoords(coords, depth = 0) {
+            if (depth > 10) return coords; // Safety limit
+
+            if (typeof coords[0] === "number") {
+                // This is a coordinate pair [x, y] in EPSG:2039
+                const [lon, lat] = proj4("EPSG:2039", "EPSG:4326", [
+                    coords[0],
+                    coords[1],
+                ]);
+                return [lon, lat];
+            } else {
+                // Recurse into nested arrays
+                return coords.map((c) => transformCoords(c, depth + 1));
+            }
+        }
+
+        // Transform each feature's geometry
+        if (transformed.features) {
+            transformed.features.forEach((feature) => {
+                if (feature.geometry && feature.geometry.coordinates) {
+                    feature.geometry.coordinates = transformCoords(
+                        feature.geometry.coordinates
+                    );
+                }
+            });
+        }
+
+        // Update CRS to WGS84
+        transformed.crs = {
+            type: "name",
+            properties: { name: "EPSG:4326" },
+        };
+
+        return transformed;
+    },
     
     /**
      * Transforms entire GeoJSON from ITM (EPSG:2039) to display pixel coordinates

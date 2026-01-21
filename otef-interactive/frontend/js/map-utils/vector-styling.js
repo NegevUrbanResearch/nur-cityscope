@@ -4,6 +4,8 @@
  */
 
 // Land use color scheme (based on common Israeli planning color codes)
+// This file is the single source of truth for land-use based styling across
+// both the Leaflet GIS map and the projection display.
 const LAND_USE_COLORS = {
     // Residential
     'מגורים': { fill: '#FFD700', stroke: '#B8860B', label: 'Residential' },
@@ -52,9 +54,26 @@ const LAND_USE_COLORS = {
     'default': { fill: '#E0E0E0', stroke: '#B0B0B0', label: 'Other' }
 };
 
+/**
+ * Internal helper to resolve a full land use color scheme from a raw value.
+ * Keeps the matching logic centralized so both Leaflet and PMTiles styling
+ * can share it without duplicating the mapping.
+ */
+function getLandUseScheme(landUseString) {
+    const landUse = (landUseString || '').toString();
+    return Object.entries(LAND_USE_COLORS).find(([key]) => landUse.includes(key))?.[1] || LAND_USE_COLORS.default;
+}
+
+/**
+ * Helper for PMTiles / protomaps usage – returns only the fill color string.
+ */
+function getLandUseColor(landUseString) {
+    return getLandUseScheme(landUseString).fill;
+}
+
 function getParcelStyle(feature) {
-    const landUse = (feature.properties?.TARGUMYEUD || feature.properties?.KVUZ_TRG || '').toString();
-    const scheme = Object.entries(LAND_USE_COLORS).find(([key]) => landUse.includes(key))?.[1] || LAND_USE_COLORS.default;
+    const landUse = feature.properties?.TARGUMYEUD || feature.properties?.KVUZ_TRG || '';
+    const scheme = getLandUseScheme(landUse);
 
     return {
         fillColor: scheme.fill,
@@ -117,53 +136,14 @@ function getSmallRoadStyle() {
     };
 }
 
-function createPopupContent(properties) {
-    const keyProps = {
-        'MIGRASH': 'Parcel ID',
-        'TOCHNIT': 'Plan Number',
-        'TARGUMYEUD': 'Land Use',
-        'KVUZ_TRG': 'Land Use Type',
-        'Shape_Area': 'Area (m²)',
-        'MrMegurim': 'Residential Area',
-        'yDiur': 'Housing Units'
-    };
-
-    const items = Object.entries(keyProps)
-        .filter(([key]) => properties[key] != null && properties[key] !== 0)
-        .map(([key, label]) => {
-            let value = properties[key];
-            if (key === 'Shape_Area') value = Math.round(value).toLocaleString() + ' m²';
-            return `<p><strong>${label}:</strong> ${value}</p>`;
-        });
-
-    return `<div class="feature-popup">${items.join('')}</div>`;
-}
-
-function createLandUseLegend() {
-    const mainCategories = {
-        'Residential': '#FFD700',
-        'Commercial': '#FF6B6B',
-        'Industry': '#9370DB',
-        'Open Space': '#90EE90',
-        'Forest': '#228B22',
-        'Roads': '#C0C0C0',
-        'Public': '#87CEEB'
-    };
-
-    const div = document.createElement('div');
-    div.className = 'land-use-legend';
-    div.innerHTML = '<h4>Land Use</h4>' +
-        Object.entries(mainCategories).map(([label, color]) =>
-            `<div class="legend-item">
-                <span class="legend-color" style="background: ${color}"></span>
-                <span>${label}</span>
-            </div>`
-        ).join('');
-
-    return div;
-}
-
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getParcelStyle, getRoadStyle, createPopupContent, createLandUseLegend };
+    module.exports = {
+        LAND_USE_COLORS,
+        getLandUseColor,
+        getParcelStyle,
+        getRoadStyle,
+        getMajorRoadStyle,
+        getSmallRoadStyle
+    };
 }
 
