@@ -1,6 +1,6 @@
 // OTEF Remote Controller
 // Mobile-friendly remote control for OTEF interactive GIS map
-// Now uses API-first stateless architecture - all state from PostgreSQL
+// Uses centralized OTEFDataContext for shared state (viewport, layers, animations, connection)
 
 // Current UI state (synced from API)
 let currentState = {
@@ -27,9 +27,6 @@ let activeControl = null; // null, 'dpad', or 'joystick'
 let joystickManager = null; // Nipple.js instance
 let joystickInterval = null; // For continuous pan updates
 
-// WebSocket client instance
-let wsClient = null;
-
 // Throttle/debounce timers
 let panThrottleTimer = null;
 let zoomThrottleTimer = null;
@@ -47,13 +44,35 @@ if (document.readyState === "loading") {
 }
 
 async function initialize() {
-  console.log("[Remote] Initializing with API-first architecture...");
+  console.log("[Remote] Initializing with OTEFDataContext...");
 
-  // Initialize WebSocket connection (for notifications)
-  initializeWebSocket();
+  // Initialize shared DataContext (single WS + API state)
+  await OTEFDataContext.init(TABLE_NAME);
 
-  // Fetch initial state from API
-  await fetchStateFromAPI();
+  // Wire DataContext subscriptions to local UI state
+  OTEFDataContext.subscribe('viewport', (viewport) => {
+    if (!viewport) return;
+    currentState.viewport = viewport;
+    updateZoomUI(viewport.zoom);
+    updateUI();
+  });
+
+  OTEFDataContext.subscribe('layers', (layers) => {
+    if (!layers) return;
+    currentState.layers = layers;
+    updateUI();
+  });
+
+  OTEFDataContext.subscribe('animations', (animations) => {
+    if (!animations) return;
+    currentState.animations = animations;
+    updateAnimationButtonState();
+  });
+
+  OTEFDataContext.subscribe('connection', (isConnected) => {
+    currentState.isConnected = !!isConnected;
+    updateConnectionStatus(isConnected ? "connected" : "disconnected");
+  });
 
   // Initialize UI controls
   initializePanControls();
@@ -62,81 +81,11 @@ async function initialize() {
   initializeAnimationControls();
   initializeJoystick();
 
-  // Update UI with fetched state
+  // Initial UI render with whatever state DataContext has
   updateUI();
 
   console.log("[Remote] Initialized");
 }
-
-/**
- * Fetch current state from API (database)
- */
-async function fetchStateFromAPI() {
-  try {
-    const state = await OTEF_API.getState(TABLE_NAME);
-
-    // Update local state from API response
-    currentState.viewport = state.viewport || currentState.viewport;
-    currentState.layers = state.layers || currentState.layers;
-    currentState.animations = state.animations || currentState.animations;
-
-    console.log("[Remote] State fetched from API:", state);
-    updateUI();
-  } catch (error) {
-    console.error("[Remote] Failed to fetch state from API:", error);
-    // Use defaults if API fails
-  }
-}
-
-/**
- * Initialize WebSocket connection for notifications
- */
-function initializeWebSocket() {
-  wsClient = new OTEFWebSocketClient("/ws/otef/", {
-    onConnect: () => {
-      currentState.isConnected = true;
-      updateConnectionStatus("connected");
-      console.log("[Remote] WebSocket connected - ready to send commands");
-    },
-    onDisconnect: () => {
-      updateConnectionStatus("disconnected");
-      currentState.isConnected = false;
-      updateUI();
-    },
-    onError: (error) => {
-      console.error("[Remote] WebSocket error:", error);
-      updateConnectionStatus("error");
-      currentState.isConnected = false;
-      updateUI();
-    },
-  });
-
-  // Listen for state change notifications
-  // Remote controller initiated changes, so we only need to fetch if NOT waiting for our own update
-  wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async (msg) => {
-    console.log("[Remote] Viewport changed notification");
-    // Always fetch viewport changes (these come from server-side commands)
-    await fetchStateFromAPI();
-  });
-
-  // Skip layer refetch - we already have the local state after our own update
-  wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, (msg) => {
-    console.log("[Remote] Layers changed notification (ignored - using local state)");
-    // Don't refetch - we initiated the change
-  });
-
-  wsClient.on(OTEF_MESSAGE_TYPES.ANIMATION_CHANGED, (msg) => {
-    console.log("[Remote] Animation changed:", msg);
-    if (msg.layerId && typeof msg.enabled === 'boolean') {
-      currentState.animations[msg.layerId] = msg.enabled;
-      updateAnimationButtonState();
-    }
-  });
-
-  // Connect
-  wsClient.connect();
-}
-
 
 /**
  * Update connection status UI
@@ -260,13 +209,9 @@ async function sendPanCommand(direction) {
   // Throttle rapid pan commands
   if (panThrottleTimer) return;
 
-  // Send command via API for server-side execution
   try {
-    await OTEF_API.executeCommand(TABLE_NAME, {
-      action: 'pan',
-      direction: direction,
-      delta: 0.15
-    });
+    // Delegate to centralized DataContext (will enforce bounds + call API)
+    await OTEFDataContext.pan(direction, 0.15);
   } catch (error) {
     console.error("[Remote] Pan command failed:", error);
   }
@@ -319,17 +264,12 @@ function initializeZoomControls() {
 async function sendZoomCommand(zoom) {
   if (!currentState.isConnected) return;
 
-  // Update UI optimistically
+  // Update UI optimistically; DataContext will sync real value via subscription
   updateZoomUI(zoom);
-  currentState.viewport.zoom = zoom;
 
-  // Send command via API for server-side execution
   try {
-    await OTEF_API.executeCommand(TABLE_NAME, {
-      action: 'zoom',
-      level: zoom
-    });
-    console.log("[Remote] Zoom command sent:", zoom);
+    await OTEFDataContext.zoom(zoom);
+    console.log("[Remote] Zoom command sent via DataContext:", zoom);
   } catch (error) {
     console.error("[Remote] Zoom command failed:", error);
   }
@@ -370,17 +310,12 @@ function initializeLayerControls() {
         return;
       }
 
-      // Update local state and send to API
-      const newLayers = {
-        ...currentState.layers,
-        [layerName]: e.target.checked,
-      };
-
-      currentState.layers = newLayers;
-
       try {
-        await OTEF_API.updateLayers(TABLE_NAME, newLayers);
-        console.log("[Remote] Layers updated:", newLayers);
+        const result = await OTEFDataContext.toggleLayer(layerName, e.target.checked);
+        if (!result || !result.ok) {
+          throw result && result.error ? result.error : new Error("Layer update failed");
+        }
+        console.log("[Remote] Layers updated via DataContext");
       } catch (error) {
         console.error("[Remote] Layer update failed:", error);
         // Revert on error
@@ -448,18 +383,14 @@ async function sendAnimationToggle(layerId, enabled) {
     return;
   }
 
-  // Update local state optimistically
-  currentState.animations[layerId] = enabled;
-  updateAnimationButtonState();
-
   try {
-    await OTEF_API.updateAnimations(TABLE_NAME, currentState.animations);
-    console.log(`[Remote] Animation toggle sent: ${layerId} = ${enabled}`);
+    const result = await OTEFDataContext.toggleAnimation(layerId, enabled);
+    if (!result || !result.ok) {
+      throw result && result.error ? result.error : new Error("Animation toggle failed");
+    }
+    console.log(`[Remote] Animation toggle sent via DataContext: ${layerId} = ${enabled}`);
   } catch (error) {
     console.error("[Remote] Animation toggle failed:", error);
-    // Revert on error
-    currentState.animations[layerId] = !enabled;
-    updateAnimationButtonState();
   }
 }
 
@@ -515,7 +446,12 @@ function handleJoystickMove(evt, data) {
   const angle = data.angle.degree;
   const direction = getDirectionFromAngle(angle);
 
-  let panSpeed = 0.15 + (magnitude - 0.15) * 0.35;
+  // Reduced speed: base 0.1 + up to 0.1 extra based on magnitude (max 0.2 total)
+  // This is much slower than the previous 0.15 + 0.35 = 0.5 max
+  let panSpeed = 0.1 + (magnitude - 0.15) * 0.1;
+  // Clamp to reasonable range
+  panSpeed = Math.min(0.2, Math.max(0.1, panSpeed));
+  // Zoom multiplier makes it slower at higher zoom (smaller movements)
   const zoomMultiplier = 10 / currentState.viewport.zoom;
   panSpeed = panSpeed * zoomMultiplier;
 
@@ -560,12 +496,9 @@ async function sendJoystickPanCommand(direction, magnitude) {
   if (!currentState.isConnected) return;
 
   try {
-    await OTEF_API.executeCommand(TABLE_NAME, {
-      action: 'pan',
-      direction: direction,
-      delta: magnitude
-    });
-    console.log(`[Remote] Joystick pan: ${direction} @ ${magnitude.toFixed(2)}`);
+    // Delegate to centralized DataContext (will enforce bounds + call API)
+    await OTEFDataContext.pan(direction, magnitude);
+    console.log(`[Remote] Joystick pan via DataContext: ${direction} @ ${magnitude.toFixed(2)}`);
   } catch (error) {
     console.error("[Remote] Joystick pan failed:", error);
   }
@@ -632,19 +565,8 @@ function updateUI() {
   });
 }
 
-// Handle page visibility changes (reconnect when visible)
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && wsClient && !wsClient.getConnected()) {
-    console.log("[Remote] Page visible, reconnecting...");
-    wsClient.connect();
-  }
-});
-
 // Cleanup on page unload
 window.addEventListener("beforeunload", () => {
-  if (wsClient) {
-    wsClient.disconnect();
-  }
   if (joystickManager) {
     joystickManager.destroy();
   }

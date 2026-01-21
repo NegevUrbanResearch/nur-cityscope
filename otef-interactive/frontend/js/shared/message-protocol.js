@@ -12,6 +12,7 @@ const OTEF_MESSAGE_TYPES = {
   VIEWPORT_CHANGED: "otef_viewport_changed",
   LAYERS_CHANGED: "otef_layers_changed",
   ANIMATION_CHANGED: "otef_animation_changed",
+  BOUNDS_CHANGED: "otef_bounds_changed",
 
   // Legacy (deprecated - will be removed)
   STATE_REQUEST: "otef_state_request",

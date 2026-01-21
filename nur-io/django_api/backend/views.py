@@ -291,6 +291,14 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'enabled': animations.get('parcels', False),
                     }
                 }
+            elif field == 'bounds':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_bounds_changed',
+                        'table': table_name,
+                    }
+                }
             else:
                 continue
 
@@ -337,6 +345,13 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 state.animations = request.data['animations']
                 changed_fields.append('animations')
 
+            # Optional bounds polygon updates (used by bounds editor / apply endpoint)
+            # Accept both "bounds_polygon" and legacy "bounds" keys.
+            if 'bounds_polygon' in request.data or 'bounds' in request.data:
+                polygon = request.data.get('bounds_polygon') or request.data.get('bounds')
+                state.bounds_polygon = polygon or []
+                changed_fields.append('bounds')
+
             state.save()
 
             # Broadcast notifications for each changed field
@@ -350,6 +365,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'viewport': state.get_viewport_with_defaults(),
             'layers': state.get_layers_with_defaults(),
             'animations': state.get_animations_with_defaults(),
+            'bounds_polygon': state.get_bounds_polygon(),
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -1713,7 +1729,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
         return response
 
 
-# Custom view to serve map files directly
 from django.http import FileResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 import os
@@ -1839,3 +1854,125 @@ class ImageUploadView(APIView):
                 {"error": f"Failed to upload image: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+class OTEFBoundsApplyView(APIView):
+    """
+    Apply bounds polygon for a given OTEF table and persist it to:
+    - OTEFViewportState.bounds_polygon in the database
+    - ot ef-interactive/frontend/data/model-bounds.json on disk
+    """
+
+    def post(self, request, *args, **kwargs):
+        table_name = request.data.get("table", "otef")
+        polygon = request.data.get("polygon")
+
+        if not isinstance(polygon, list) or len(polygon) < 3:
+            return Response(
+                {
+                    "error": "Invalid polygon. Must be a list of at least 3 vertices.",
+                    "expected_format": [{"x": 0, "y": 0}],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Basic vertex shape validation
+        cleaned_vertices = []
+        for vertex in polygon:
+            if not isinstance(vertex, dict):
+                return Response(
+                    {"error": "Each vertex must be an object with x and y properties."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                x = float(vertex.get("x"))
+                y = float(vertex.get("y"))
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "Vertex x and y must be numeric."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            cleaned_vertices.append({"x": x, "y": y})
+
+        # Persist to DB
+        table = Table.objects.filter(name=table_name).first()
+        if not table:
+            return Response(
+                {"error": f"Table '{table_name}' not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        state, _ = OTEFViewportState.objects.get_or_create(
+            table=table,
+            defaults={
+                "viewport": OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+                "layers": OTEFViewportState.DEFAULT_LAYERS.copy(),
+                "animations": {"parcels": False},
+            },
+        )
+        state.bounds_polygon = cleaned_vertices
+        state.save()
+
+        # Also mirror into OTEFModelConfig.model_bounds (if exists)
+        try:
+            config = OTEFModelConfig.objects.filter(table=table).first()
+            if config:
+                bounds = config.model_bounds or {}
+                bounds["polygon"] = cleaned_vertices
+                config.model_bounds = bounds
+                config.save()
+        except Exception as e:
+            # Non-fatal; log to console
+            print(f"Warning: failed to update OTEFModelConfig.model_bounds: {e}")
+
+        # Update Git-tracked JSON snapshot on disk
+        try:
+            # BASE_DIR typically points to nur-io/django_api; go up to repo root
+            project_root = os.path.abspath(os.path.join(settings.BASE_DIR, "..", ".."))
+            bounds_path = os.path.join(
+                project_root,
+                "otef-interactive",
+                "frontend",
+                "data",
+                "model-bounds.json",
+            )
+
+            if os.path.exists(bounds_path):
+                with open(bounds_path, "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
+            else:
+                json_data = {}
+
+            json_data["polygon"] = cleaned_vertices
+
+            # Ensure directory exists and write back with pretty formatting
+            os.makedirs(os.path.dirname(bounds_path), exist_ok=True)
+            with open(bounds_path, "w", encoding="utf-8") as f:
+                json.dump(json_data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Warning: failed to update model-bounds.json: {e}")
+
+        # Broadcast bounds change over WebSocket (optional, lightweight notification)
+        try:
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    "otef_channel",
+                    {
+                        "type": "broadcast_message",
+                        "message": {
+                            "type": "otef_bounds_changed",
+                            "table": table_name,
+                        },
+                    },
+                )
+        except Exception as e:
+            print(f"Warning: failed to broadcast bounds change: {e}")
+
+        return Response(
+            {
+                "status": "ok",
+                "table": table_name,
+                "bounds_polygon": cleaned_vertices,
+            }
+        )

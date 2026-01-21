@@ -107,7 +107,8 @@ const OTEF_API = {
   _layersDebounce: null,
 
   /**
-   * Debounced viewport update (300ms) - use for continuous updates like map movement
+   * Debounced viewport update (500ms) - use for continuous updates like map movement
+   * Increased from 300ms to reduce update frequency and prevent feedback loops
    * @param {string} tableName - Table name
    * @param {Object} viewport - Viewport state
    */
@@ -115,7 +116,7 @@ const OTEF_API = {
     clearTimeout(this._viewportDebounce);
     this._viewportDebounce = setTimeout(() => {
       this.updateViewport(tableName, viewport);
-    }, 300);
+    }, 500);
   },
 
   /**
@@ -128,6 +129,35 @@ const OTEF_API = {
     this._layersDebounce = setTimeout(() => {
       this.updateLayers(tableName, layers);
     }, 100);
+  },
+
+  /**
+   * Save bounds polygon (hard-wall navigation limits) for a given table.
+   * This calls a dedicated backend endpoint that updates both DB state and
+   * the Git-tracked model-bounds.json snapshot on disk.
+   *
+   * @param {string} tableName - Table name
+   * @param {Array<{x:number,y:number}>} polygon - Bounds polygon in EPSG:2039
+   */
+  async saveBounds(tableName = this.defaultTable, polygon) {
+    try {
+      const response = await fetch('/api/otef/bounds/apply/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ table: tableName, polygon })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to save bounds: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('[OTEF API] Bounds saved:', data);
+      return data;
+    } catch (error) {
+      console.error('[OTEF API] Error saving bounds:', error);
+      throw error;
+    }
   }
 };
 

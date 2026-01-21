@@ -283,6 +283,10 @@ class OTEFViewportState(models.Model):
     # Animation state (written by remote controller)
     animations = models.JSONField(default=dict)
 
+    # Optional hard-wall navigation bounds (polygon in EPSG:2039)
+    # Stored as an ordered list of {"x": number, "y": number} vertices
+    bounds_polygon = models.JSONField(default=list, blank=True)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
@@ -305,6 +309,17 @@ class OTEFViewportState(models.Model):
     def get_animations_with_defaults(self):
         """Return animations with defaults"""
         return self.animations or {'parcels': False}
+
+    def get_bounds_polygon(self):
+        """
+        Return bounds polygon as a list of vertices.
+        Always returns a list (possibly empty).
+        """
+        polygon = self.bounds_polygon or []
+        # Ensure it's a list to keep JSONField usages consistent
+        if isinstance(polygon, list):
+            return polygon
+        return []
 
     def _extract_coord_value(self, coord):
         """

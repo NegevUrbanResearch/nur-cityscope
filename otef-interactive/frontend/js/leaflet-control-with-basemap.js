@@ -58,9 +58,6 @@ let layerState = {
   smallRoads: false,
 };
 
-// WebSocket client instance
-let wsClient = null;
-
 // Flag to prevent echo when applying remote state
 let isApplyingRemoteState = false;
 
@@ -158,10 +155,39 @@ fetch("data/model-bounds.json")
 
     console.log("Map initialized with WGS84 basemap!");
 
-    // Initialize WebSocket for remote control (before loading layers)
-    initializeWebSocket();
+    // Initialize shared OTEFDataContext and subscribe to state
+    if (typeof OTEFDataContext !== 'undefined') {
+      OTEFDataContext.init('otef').then(() => {
+        const initialViewport = OTEFDataContext.getViewport();
+        if (initialViewport) {
+          applyViewportFromAPI(initialViewport);
+        }
+        const initialLayers = OTEFDataContext.getLayers();
+        if (initialLayers) {
+          applyLayerState(initialLayers);
+        }
+        const initialConnection = OTEFDataContext.isConnected();
+        updateConnectionStatus(!!initialConnection);
 
-    // Load GeoJSON layers
+        OTEFDataContext.subscribe('viewport', (viewport) => {
+          if (viewport) {
+            applyViewportFromAPI(viewport);
+          }
+        });
+
+        OTEFDataContext.subscribe('layers', (layers) => {
+          if (layers) {
+            applyLayerState(layers);
+          }
+        });
+
+        OTEFDataContext.subscribe('connection', (connected) => {
+          updateConnectionStatus(!!connected);
+        });
+      });
+    }
+
+    // Load GeoJSON layers (independent of shared state)
     loadGeoJSONLayers();
   })
   .catch((error) => {
@@ -450,70 +476,6 @@ async function loadSmallRoadsFromGeoJSON(layerConfig) {
   }
 }
 
-/**
- * Send viewport update to all connected clients
- * @param {number} zoomOverride - Optional zoom value to use instead of map.getZoom()
- */
-function sendViewportUpdate(zoomOverride = null) {
-  const size = map.getSize();
-  const corners_pixel = {
-    sw: L.point(0, size.y),
-    se: L.point(size.x, size.y),
-    nw: L.point(0, 0),
-    ne: L.point(size.x, 0),
-  };
-
-  const corners_wgs84 = Object.fromEntries(
-    Object.entries(corners_pixel).map(([name, pixel]) => [
-      name,
-      map.containerPointToLatLng(pixel),
-    ])
-  );
-
-  const corners_itm = Object.fromEntries(
-    Object.entries(corners_wgs84).map(([name, latlng]) => {
-      const [x, y] = proj4("EPSG:4326", "EPSG:2039", [latlng.lng, latlng.lat]);
-      return [name, { x, y }];
-    })
-  );
-
-  const all_x = Object.values(corners_itm).map((c) => c.x);
-  const all_y = Object.values(corners_itm).map((c) => c.y);
-  const bbox = [
-    Math.min(...all_x),
-    Math.min(...all_y),
-    Math.max(...all_x),
-    Math.max(...all_y),
-  ];
-
-  const zoom = zoomOverride !== null ? zoomOverride : map.getZoom();
-
-  if (window.DebugOverlay) {
-    window.DebugOverlay.updateMapDimensions(size.x, size.y);
-    window.DebugOverlay.setZoom(zoom);
-    window.DebugOverlay.updateSentBbox(bbox);
-  }
-
-  // Send viewport update via shared WebSocket client using factory function
-  if (wsClient && wsClient.getConnected()) {
-    const viewportMsg = createViewportUpdateMessage({
-      bbox,
-      corners: corners_itm,
-      zoom: zoom,
-    });
-    wsClient.send(viewportMsg);
-  }
-}
-
-map.on("moveend", () => {
-  // Skip sending update if we're applying remote state (prevents feedback loop)
-  if (isApplyingRemoteState) {
-    console.log("[GIS Map] Skipping viewport update (applying remote state)");
-    return;
-  }
-  sendViewportUpdate();
-});
-
 map.on("click", (e) => {
   const { lat, lng } = e.latlng;
   const [x, y] = proj4("EPSG:4326", "EPSG:2039", [lng, lat]);
@@ -547,81 +509,6 @@ function showFeatureInfo(feature) {
 }
 
 /**
- * Initialize WebSocket connection for remote control
- */
-function initializeWebSocket() {
-  wsClient = new OTEFWebSocketClient("/ws/otef/", {
-    onConnect: async () => {
-      console.log("[GIS Map] WebSocket connected");
-      updateConnectionStatus(true);
-
-      // Send initial viewport update so others have state
-      sendViewportUpdate();
-
-      // Fetch initial state from API (database)
-      await fetchStateFromAPI();
-    },
-    onDisconnect: () => {
-      console.log("[GIS Map] WebSocket disconnected");
-      updateConnectionStatus(false);
-    },
-    onError: (error) => {
-      console.error("[GIS Map] WebSocket error:", error);
-      updateConnectionStatus(false);
-    },
-  });
-
-  // Listen for LAYERS_CHANGED notification (new API-first pattern)
-  wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async (msg) => {
-    console.log("[GIS Map] Layers changed notification");
-    const state = await OTEF_API.getState('otef');
-    if (state.layers) {
-      applyLayerState(state.layers);
-    }
-  });
-
-  // Listen for VIEWPORT_CHANGED notification (pan/zoom from remote via API)
-  wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async (msg) => {
-    console.log("[GIS Map] Viewport changed notification");
-    const state = await OTEF_API.getState('otef');
-    if (state.viewport) {
-      applyViewportFromAPI(state.viewport);
-    }
-  });
-
-  // Connect
-  wsClient.connect();
-}
-
-
-
-/**
- * Fetch current state from API (database)
- */
-async function fetchStateFromAPI() {
-  try {
-    const state = await OTEF_API.getState('otef');
-    console.log("[GIS Map] State fetched from API:", state);
-
-    // Sync viewport if present
-    if (state.viewport) {
-      applyViewportFromAPI(state.viewport);
-    }
-
-    // Sync layers
-    if (state.layers) {
-      applyLayerState(state.layers);
-    }
-
-    // Note: Do NOT send viewport update here - that would create a feedback loop
-    // The viewport was just read from DB, no need to write it back
-  } catch (error) {
-    console.error("[GIS Map] Failed to fetch state from API:", error);
-  }
-}
-
-
-/**
  * Apply viewport state from API (pan map to match server state)
  */
 function applyViewportFromAPI(viewport) {
@@ -646,17 +533,18 @@ function applyViewportFromAPI(viewport) {
   const zoomDiff = Math.abs(currentZoom - zoom);
 
   // Only update if significantly different (threshold to avoid echo)
-  if (centerDiff > 0.0001 || zoomDiff > 0.1) {
+  // Increased thresholds to reduce unnecessary updates, but still animate for smoothness
+  if (centerDiff > 0.0005 || zoomDiff > 0.5) {
     console.log(`[GIS Map] Applying viewport: center=${centerLat.toFixed(4)},${centerLng.toFixed(4)} zoom=${zoom}`);
 
     // Set flag to prevent feedback loop (don't broadcast this change back)
     isApplyingRemoteState = true;
-    map.setView([centerLat, centerLng], zoom, { animate: true, duration: 0.3 });
+    map.setView([centerLat, centerLng], zoom, { animate: true, duration: 0.25 });
 
-    // Clear flag after animation completes (500ms to be safe, animation is 300ms)
+    // Clear flag after animation completes (~250ms)
     setTimeout(() => {
       isApplyingRemoteState = false;
-    }, 500);
+    }, 300);
   }
 }
 
@@ -973,11 +861,12 @@ function updateConnectionStatus(connected) {
 }
 
 /**
- * Send viewport update to API (GIS -> Write: viewport)
+ * Send viewport update via OTEFDataContext (GIS -> Write: viewport)
+ * Applies hard-wall bounds and debounces API writes inside DataContext/API client.
  */
 function sendViewportUpdate() {
   if (isApplyingRemoteState) return;
-  if (!map) return;
+  if (!map || typeof OTEFDataContext === 'undefined') return;
 
   const zoom = map.getZoom();
   const bounds = map.getBounds();
@@ -987,7 +876,6 @@ function sendViewportUpdate() {
   const ne = bounds.getNorthEast();
 
   // Project from WGS84 (Leaflet) to ITM (EPSG:2039)
-  // Ensure proj4 is available
   if (typeof proj4 === 'undefined') return;
 
   const [swX, swY] = proj4("EPSG:4326", "EPSG:2039", [sw.lng, sw.lat]);
@@ -996,18 +884,27 @@ function sendViewportUpdate() {
   const viewportState = {
     bbox: [swX, swY, neX, neY],
     zoom: zoom,
-    // Add corners for projector quad (Projector reads this)
     corners: {
-        sw: { x: swX, y: swY },
-        se: { x: neX, y: swY },
-        nw: { x: swX, y: neY },
-        ne: { x: neX, y: neY }
+      sw: { x: swX, y: swY },
+      se: { x: neX, y: swY },
+      nw: { x: swX, y: neY },
+      ne: { x: neX, y: neY }
     }
   };
 
-  // Use debounced update to avoid flooding API
-  OTEF_API.updateViewportDebounced('otef', viewportState);
+  // Delegate to DataContext for bounds enforcement + debounced write
+  const accepted = OTEFDataContext.updateViewportFromUI(viewportState, 'gis');
+
+  // If the update was rejected by bounds, snap back to the last accepted viewport
+  // so the GIS map cannot visually move/zoom beyond the hard-wall polygon.
+  if (accepted === false) {
+    const latestViewport = OTEFDataContext.getViewport();
+    if (latestViewport) {
+      applyViewportFromAPI(latestViewport);
+    }
+  }
 }
 
-// Attach listener to map movement
+// Attach listeners to map movement and zoom
 map.on("moveend", sendViewportUpdate);
+map.on("zoomend", sendViewportUpdate); // Ensure zoom changes are synced

@@ -43,7 +43,6 @@
         left: 0;
         width: 100%;
         height: 100%;
-        pointer-events: none;
         z-index: 10;
       }
       .highlight-box {
@@ -80,6 +79,63 @@
       #instructions.hidden {
         display: none;
       }
+
+      /* Bounds editor overlay */
+      #boundsEditorOverlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none; /* enabled selectively on shapes when editing */
+        z-index: 15;
+      }
+
+      .bounds-editor-active #boundsEditorOverlay {
+        pointer-events: auto;
+      }
+
+      .bounds-vertex {
+        fill: #00ffff;
+        stroke: #003b3b;
+        stroke-width: 2;
+        cursor: pointer;
+      }
+
+      .bounds-edge {
+        stroke: rgba(0, 255, 255, 0.7);
+        stroke-width: 2;
+        cursor: pointer;
+      }
+
+      #boundsToolbar {
+        position: fixed;
+        bottom: 12px;
+        left: 12px;
+        background: rgba(0, 0, 0, 0.85);
+        color: #fff;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-family: Arial, sans-serif;
+        font-size: 13px;
+        z-index: 120;
+        display: none;
+      }
+
+      #boundsToolbar button {
+        margin-left: 8px;
+        padding: 4px 10px;
+        background: #00bcd4;
+        border: none;
+        border-radius: 3px;
+        color: #fff;
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      #boundsToolbar button.secondary {
+        background: #555;
+      }
     </style>
   </head>
   <body>
@@ -92,6 +148,7 @@
       />
       <canvas id="layersCanvas"></canvas>
       <div id="highlightOverlay"></div>
+      <svg id="boundsEditorOverlay"></svg>
     </div>
 
 
@@ -101,9 +158,16 @@
       <p><strong>D</strong> - Toggle debug overlay</p>
       <p><strong>H</strong> - Toggle this help</p>
       <p><strong>F</strong> - Toggle fullscreen</p>
+      <p><strong>B</strong> - Toggle bounds editor</p>
       <p style="margin-top: 10px; font-size: 12px; color: #888">
         Warping/calibration should be done in TouchDesigner
       </p>
+    </div>
+
+    <div id="boundsToolbar">
+      <span>Bounds edit mode (click edges to add, double-click vertices to remove, drag to move)</span>
+      <button id="boundsApplyBtn">Apply</button>
+      <button id="boundsCancelBtn" class="secondary">Cancel</button>
     </div>
 
     <script src="js/coordinate-utils.js"></script>
@@ -115,6 +179,7 @@
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
     <script src="js/shared/api-client.js"></script>
+    <script src="js/shared/OTEFDataContext.js"></script>
     <script src="js/shared/table-switcher.js"></script>
     <script src="js/shared/table-switcher-popup.js"></script>
     <script src="js/projection-display.js"></script>

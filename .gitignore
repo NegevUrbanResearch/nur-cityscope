@@ -1,6 +1,7 @@
 # nur-CityScope - Comprehensive .gitignore
 # ----------------------------------------
 .cursor
+.agent
 *claude*
 
 # Python

@@ -22,13 +22,55 @@ fetch("data/model-bounds.json")
 
     // Initialize layers after model bounds are loaded
     initializeLayers();
+
+    // Initialize shared OTEFDataContext and subscribe to state
+    if (typeof OTEFDataContext !== 'undefined') {
+      OTEFDataContext.init(TABLE_NAME).then(() => {
+        const initialViewport = OTEFDataContext.getViewport();
+        if (initialViewport) {
+          if (initialViewport.corners) {
+            updateHighlightQuad(initialViewport.corners);
+          } else if (initialViewport.bbox) {
+            updateHighlightRect(initialViewport.bbox);
+          }
+        }
+
+        const initialLayers = OTEFDataContext.getLayers();
+        if (initialLayers) {
+          syncLayersFromState(initialLayers);
+        }
+
+        const initialAnimations = OTEFDataContext.getAnimations();
+        if (initialAnimations && initialAnimations.parcels !== undefined) {
+          handleAnimationToggle({ layerId: 'parcels', enabled: initialAnimations.parcels });
+        }
+
+        OTEFDataContext.subscribe('viewport', (viewport) => {
+          if (!viewport) return;
+          if (viewport.corners) {
+            updateHighlightQuad(viewport.corners);
+          } else if (viewport.bbox) {
+            updateHighlightRect(viewport.bbox);
+          }
+        });
+
+        OTEFDataContext.subscribe('layers', (layers) => {
+          if (layers) {
+            syncLayersFromState(layers);
+          }
+        });
+
+        OTEFDataContext.subscribe('animations', (animations) => {
+          if (animations && animations.parcels !== undefined) {
+            handleAnimationToggle({ layerId: 'parcels', enabled: animations.parcels });
+          }
+        });
+      });
+    }
   })
   .catch((error) => {
     console.error("Error loading model bounds:", error);
   });
-
-// WebSocket client instance
-let wsClient = null;
 
 // Layer state tracking
 let layerState = {
@@ -53,100 +95,6 @@ function setDebugStatus(status) {
 
 // Table name for state management
 const TABLE_NAME = 'otef';
-
-function connectWebSocket() {
-  wsClient = new OTEFWebSocketClient("/ws/otef/", {
-    onConnect: async () => {
-      console.log("[Projection] WebSocket connected");
-      setDebugStatus("connected");
-
-      // Fetch initial state from API (database) - no longer depends on remote controller
-      await fetchStateFromAPI();
-
-      // Retry loading roads layer if it failed during init (server might be ready now)
-      if (layerState.roads && !loadedLayers.roads) {
-        console.log("[Projection] Retrying roads layer load after WebSocket connection");
-        loadRoadsLayer().catch((error) => {
-          console.error("[Projection] Failed to load roads layer after retry:", error);
-        });
-      }
-    },
-    onDisconnect: () => {
-      console.log("[Projection] WebSocket disconnected");
-      setDebugStatus("disconnected");
-    },
-    onError: (error) => {
-      console.error("[Projection] WebSocket error:", error);
-      setDebugStatus("error");
-    },
-  });
-
-  // Listen for state change notifications (new API-first pattern)
-  wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async (msg) => {
-    console.log("[Projection] Viewport changed notification");
-    // Re-fetch viewport from API and update highlight
-    const state = await OTEF_API.getState(TABLE_NAME);
-    if (state.viewport) {
-      if (state.viewport.corners) {
-        updateHighlightQuad(state.viewport.corners);
-      } else if (state.viewport.bbox) {
-        updateHighlightRect(state.viewport.bbox);
-      }
-    }
-  });
-
-  wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async (msg) => {
-    console.log("[Projection] Layers changed notification");
-    const state = await OTEF_API.getState(TABLE_NAME);
-    if (state.layers) {
-      syncLayersFromState(state.layers);
-    }
-  });
-
-  wsClient.on(OTEF_MESSAGE_TYPES.ANIMATION_CHANGED, (msg) => {
-    console.log("[Projection] Animation changed:", msg);
-    if (msg.layerId && typeof msg.enabled === 'boolean') {
-      handleAnimationToggle(msg);
-    }
-  });
-
-  // Connect
-  wsClient.connect();
-}
-
-
-/**
- * Fetch current state from API (database) - no longer depends on remote controller
- */
-async function fetchStateFromAPI() {
-  try {
-    const state = await OTEF_API.getState(TABLE_NAME);
-    console.log("[Projection] State fetched from API:", state);
-
-    // Sync viewport highlight
-    if (state.viewport) {
-      if (state.viewport.corners) {
-        updateHighlightQuad(state.viewport.corners);
-      } else if (state.viewport.bbox) {
-        updateHighlightRect(state.viewport.bbox);
-      }
-    }
-
-    // Sync layers
-    if (state.layers) {
-      syncLayersFromState(state.layers);
-    }
-
-    // Sync animations
-    if (state.animations) {
-      if (state.animations.parcels !== undefined && state.animations.parcels !== animationState.parcels) {
-        handleAnimationToggle({ layerId: 'parcels', enabled: state.animations.parcels });
-      }
-    }
-  } catch (error) {
-    console.error("[Projection] Failed to fetch state from API:", error);
-  }
-}
 
 /**
  * Sync layers from state object (shared by API fetch and notifications)
@@ -421,6 +369,11 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "f" || event.key === "F") {
     toggleFullScreen();
   }
+
+  // B key for bounds editor toggle
+  if (event.key === "b" || event.key === "B") {
+    toggleBoundsEditMode();
+  }
 });
 
 // Toggle fullscreen
@@ -447,6 +400,267 @@ function toggleFullScreen() {
     requestFullScreen.call(docElement);
   } else {
     cancelFullScreen.call(doc);
+  }
+}
+
+// ------------------------
+// Bounds editor (polygon)
+// ------------------------
+
+let boundsEditMode = false;
+let boundsWorkingPolygon = null; // Array of { x, y } in ITM
+let boundsDragState = null; // { index, offsetX, offsetY }
+
+function displayPixelsToItm(px, py) {
+  const bounds = getDisplayedImageBounds();
+  if (!bounds || !modelBounds) return null;
+
+  const pctX = (px - bounds.offsetX) / bounds.width;
+  const pctY = (py - bounds.offsetY) / bounds.height;
+
+  const x = modelBounds.west + pctX * (modelBounds.east - modelBounds.west);
+  const y = modelBounds.north - pctY * (modelBounds.north - modelBounds.south);
+
+  return { x, y };
+}
+
+function ensureBoundsEditorElements() {
+  const svg = document.getElementById("boundsEditorOverlay");
+  if (!svg) return null;
+  return svg;
+}
+
+function getDefaultBoundsPolygon() {
+  if (!modelBounds) return null;
+  return [
+    { x: modelBounds.west, y: modelBounds.south },
+    { x: modelBounds.east, y: modelBounds.south },
+    { x: modelBounds.east, y: modelBounds.north },
+    { x: modelBounds.west, y: modelBounds.north },
+  ];
+}
+
+function renderBoundsEditorPolygon() {
+  const svg = ensureBoundsEditorElements();
+  if (!svg) return;
+  const polygon = boundsWorkingPolygon;
+  const displayBounds = getDisplayedImageBounds();
+  if (!polygon || polygon.length < 2 || !displayBounds) {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    return;
+  }
+
+  // Clear existing
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  // SVG needs its own size to match container
+  const container = document.getElementById("displayContainer");
+  const rect = container.getBoundingClientRect();
+  svg.setAttribute("width", rect.width);
+  svg.setAttribute("height", rect.height);
+
+  // Convert ITM vertices to pixels
+  const pixelPoints = polygon
+    .map((v) => itmToDisplayPixels(v.x, v.y))
+    .filter(Boolean);
+
+  if (pixelPoints.length < 2) return;
+
+  // Draw edges
+  for (let i = 0; i < pixelPoints.length; i++) {
+    const a = pixelPoints[i];
+    const b = pixelPoints[(i + 1) % pixelPoints.length];
+    const edge = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    edge.setAttribute("x1", a.x);
+    edge.setAttribute("y1", a.y);
+    edge.setAttribute("x2", b.x);
+    edge.setAttribute("y2", b.y);
+    edge.classList.add("bounds-edge");
+    edge.dataset.edgeIndex = String(i);
+
+    edge.addEventListener("click", (event) => {
+      event.stopPropagation();
+      handleBoundsEdgeClick(i);
+    });
+
+    svg.appendChild(edge);
+  }
+
+  // Draw vertices
+  pixelPoints.forEach((pt, index) => {
+    const vertex = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    vertex.setAttribute("cx", pt.x);
+    vertex.setAttribute("cy", pt.y);
+    vertex.setAttribute("r", 6);
+    vertex.classList.add("bounds-vertex");
+    vertex.dataset.vertexIndex = String(index);
+
+    vertex.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      startBoundsVertexDrag(event, index);
+    });
+
+    vertex.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handleBoundsVertexDelete(index);
+    });
+
+    svg.appendChild(vertex);
+  });
+}
+
+function startBoundsVertexDrag(event, index) {
+  const container = document.getElementById("displayContainer");
+  const rect = container.getBoundingClientRect();
+  const startX = event.clientX - rect.left;
+  const startY = event.clientY - rect.top;
+
+  boundsDragState = {
+    index,
+    startX,
+    startY,
+  };
+
+  const onMove = (moveEvent) => {
+    if (!boundsDragState) return;
+    const currentX = moveEvent.clientX - rect.left;
+    const currentY = moveEvent.clientY - rect.top;
+    const itm = displayPixelsToItm(currentX, currentY);
+    if (!itm) return;
+
+    boundsWorkingPolygon[boundsDragState.index] = { x: itm.x, y: itm.y };
+    renderBoundsEditorPolygon();
+  };
+
+  const onUp = () => {
+    boundsDragState = null;
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+  };
+
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+}
+
+function handleBoundsEdgeClick(edgeIndex) {
+  if (!boundsWorkingPolygon || boundsWorkingPolygon.length < 2) return;
+
+  const a = boundsWorkingPolygon[edgeIndex];
+  const b = boundsWorkingPolygon[(edgeIndex + 1) % boundsWorkingPolygon.length];
+  const mid = {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+  };
+
+  boundsWorkingPolygon.splice(edgeIndex + 1, 0, mid);
+  renderBoundsEditorPolygon();
+}
+
+function handleBoundsVertexDelete(vertexIndex) {
+  if (!boundsWorkingPolygon || boundsWorkingPolygon.length <= 3) return;
+  boundsWorkingPolygon.splice(vertexIndex, 1);
+  renderBoundsEditorPolygon();
+}
+
+function enterBoundsEditMode() {
+  if (boundsEditMode) return;
+  if (!modelBounds) {
+    console.warn("[Projection] Cannot enter bounds editor: modelBounds not loaded");
+    return;
+  }
+
+  const root = document.body;
+  root.classList.add("bounds-editor-active");
+
+  // Get current bounds from DataContext or fall back to rectangle
+  let polygon = null;
+  if (typeof OTEFDataContext !== "undefined") {
+    const current = OTEFDataContext.getBounds();
+    if (Array.isArray(current) && current.length >= 3) {
+      polygon = current;
+    }
+  }
+  if (!polygon) {
+    polygon = getDefaultBoundsPolygon();
+  }
+
+  // Deep copy to avoid mutating live state until Apply
+  boundsWorkingPolygon = polygon.map((v) => ({ x: v.x, y: v.y }));
+  boundsEditMode = true;
+
+  const toolbar = document.getElementById("boundsToolbar");
+  if (toolbar) {
+    toolbar.style.display = "block";
+  }
+
+  const applyBtn = document.getElementById("boundsApplyBtn");
+  const cancelBtn = document.getElementById("boundsCancelBtn");
+
+  if (applyBtn) {
+    applyBtn.onclick = async () => {
+      await handleBoundsApply();
+    };
+  }
+  if (cancelBtn) {
+    cancelBtn.onclick = () => {
+      exitBoundsEditMode(true);
+    };
+  }
+
+  renderBoundsEditorPolygon();
+}
+
+function exitBoundsEditMode(discardChanges) {
+  if (!boundsEditMode) return;
+  boundsEditMode = false;
+  boundsWorkingPolygon = discardChanges ? null : boundsWorkingPolygon;
+
+  const root = document.body;
+  root.classList.remove("bounds-editor-active");
+
+  const toolbar = document.getElementById("boundsToolbar");
+  if (toolbar) {
+    toolbar.style.display = "none";
+  }
+
+  const svg = document.getElementById("boundsEditorOverlay");
+  if (svg) {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+  }
+}
+
+async function handleBoundsApply() {
+  if (!boundsWorkingPolygon || boundsWorkingPolygon.length < 3) {
+    alert("Bounds polygon must have at least 3 vertices.");
+    return;
+  }
+
+  if (typeof OTEFDataContext === "undefined") {
+    console.warn("[Projection] OTEFDataContext not available; cannot save bounds");
+    return;
+  }
+
+  try {
+    const result = await OTEFDataContext.saveBounds(boundsWorkingPolygon);
+    if (!result || !result.ok) {
+      console.error("[Projection] Failed to save bounds:", result && result.error);
+      alert("Failed to save bounds. See console for details.");
+      return;
+    }
+    exitBoundsEditMode(false);
+  } catch (err) {
+    console.error("[Projection] Error while saving bounds:", err);
+    alert("Error while saving bounds. See console for details.");
+  }
+}
+
+function toggleBoundsEditMode() {
+  if (boundsEditMode) {
+    exitBoundsEditMode(true);
+  } else {
+    enterBoundsEditMode();
   }
 }
 
@@ -899,9 +1113,6 @@ function handleAnimationToggle(msg) {
   }
 }
 
-
-// Connect on load
-connectWebSocket();
 
 // Show help for 3 seconds on load
 setTimeout(() => {
