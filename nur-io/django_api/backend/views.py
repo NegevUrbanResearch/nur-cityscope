@@ -394,6 +394,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
         action = request.data.get('action')
 
+        # Support base_viewport to prevent snapback during rapid movements
+        base_viewport = request.data.get('base_viewport')
+        if base_viewport:
+            state.viewport = base_viewport
+
         if action == 'pan':
             direction = request.data.get('direction', 'north')
             delta = float(request.data.get('delta', 0.15))
