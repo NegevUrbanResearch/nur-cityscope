@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTEF Remote Connection</title>
+    <link rel="stylesheet" href="css/remote-styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+            overflow: auto;
+            background: radial-gradient(circle at center, #151520 0%, #0a0a0f 100%);
+        }
+
+        .qr-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 24px;
+            padding: 40px;
+            width: 100%;
+            max-width: 450px;
+            text-align: center;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(20px);
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .logo-container {
+            margin-bottom: 30px;
+        }
+
+        .qr-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent-primary);
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 10px;
+        }
+
+        .qr-subtitle {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-bottom: 30px;
+            line-height: 1.5;
+        }
+
+        #qrcode {
+            background: #fff;
+            padding: 20px;
+            border-radius: 16px;
+            display: inline-block;
+            margin-bottom: 30px;
+            box-shadow: 0 0 30px rgba(0, 212, 255, 0.2);
+            transition: transform 0.3s ease;
+        }
+
+        #qrcode:hover {
+            transform: scale(1.02);
+        }
+
+        .ip-display {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 12px;
+            font-family: 'Courier New', Courier, monospace;
+            color: var(--accent-primary);
+            font-size: 18px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .ip-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 1px;
+        }
+
+        .footer-text {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .connection-url {
+            word-break: break-all;
+            font-size: 11px;
+            margin-top: 10px;
+            color: var(--text-muted);
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <div class="qr-card">
+        <div class="qr-title">Connect Remote</div>
+        <p class="qr-subtitle">Scan this QR code with your smartphone to access the OTEF Remote Controller</p>
+
+        <div id="qrcode"></div>
+
+        <div class="ip-display">
+            <span class="ip-label">Detected IP:</span>
+            <span id="ipAddress">---</span>
+        </div>
+
+        <div class="footer-text">Ensure your device is connected to the same network.</div>
+        <div class="connection-url" id="targetUrl">---</div>
+    </div>
+
+    <script>
+        // Get IP from URL query parameters OR fragment identifier (#)
+        // file:// protocol often strips query params, so we check hash as well
+        const urlParams = new URLSearchParams(window.location.search);
+        let ip = urlParams.get('ip');
+
+        if (!ip && window.location.hash) {
+            // Check for #ip=value or just #value
+            const hash = window.location.hash.substring(1);
+            if (hash.includes('ip=')) {
+                const hashParams = new URLSearchParams(hash);
+                ip = hashParams.get('ip');
+            } else {
+                ip = hash;
+            }
+        }
+
+        if (!ip) {
+            ip = window.location.hostname || "localhost";
+        }
+
+        // Final destination URL
+        const targetUrl = `http://${ip}/otef-interactive/remote-controller.html`;
+
+        document.getElementById('ipAddress').textContent = ip;
+        document.getElementById('targetUrl').textContent = targetUrl;
+
+        // Generate QR Code
+        new QRCode(document.getElementById("qrcode"), {
+            text: targetUrl,
+            width: 256,
+            height: 256,
+            colorDark : "#000000",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.H
+        });
+    </script>
+</body>
+</html>
