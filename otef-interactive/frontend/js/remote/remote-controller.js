@@ -28,9 +28,7 @@ let joystickManager = null; // Nipple.js instance
 let joystickInterval = null; // For continuous pan updates
 
 // Throttle/debounce timers
-let panThrottleTimer = null;
 let zoomThrottleTimer = null;
-const PAN_THROTTLE_MS = 150;
 const ZOOM_THROTTLE_MS = 100;
 
 // Table name for this controller
@@ -135,102 +133,48 @@ function updateConnectionStatus(status) {
  */
 function initializePanControls() {
   const directions = {
-    panNorth: "north",
-    panSouth: "south",
-    panEast: "east",
-    panWest: "west",
+    panNorth: { vx: 0, vy: 1 },
+    panSouth: { vx: 0, vy: -1 },
+    panEast: { vx: 1, vy: 0 },
+    panWest: { vx: -1, vy: 0 },
   };
 
-  Object.entries(directions).forEach(([id, direction]) => {
+  Object.entries(directions).forEach(([id, vector]) => {
     const button = document.getElementById(id);
     if (!button) return;
 
-    button.addEventListener(
-      "touchstart",
-      (e) => {
-        e.preventDefault();
-        handlePanStart(direction, button);
-      },
-      { passive: false }
-    );
-
-    button.addEventListener(
-      "touchend",
-      (e) => {
-        e.preventDefault();
-        handlePanEnd(button);
-      },
-      { passive: false }
-    );
-
-    button.addEventListener("mousedown", (e) => {
+    const startHandler = (e) => {
       e.preventDefault();
-      handlePanStart(direction, button);
-    });
+      if (!currentState.isConnected || activeControl === "joystick") return;
+      activeControl = "dpad";
+      button.classList.add("active");
 
-    button.addEventListener("mouseup", () => {
-      handlePanEnd(button);
-    });
+      const viewport = currentState.viewport;
+      if (!viewport || !viewport.bbox) return;
+      const width = viewport.bbox[2] - viewport.bbox[0];
+      const height = viewport.bbox[3] - viewport.bbox[1];
+      const speed = 0.5; // 50% of viewport per second
 
-    button.addEventListener("mouseleave", () => {
-      handlePanEnd(button);
-    });
+      OTEFDataContext.sendVelocity(vector.vx * width * speed, vector.vy * height * speed);
+      if (navigator.vibrate) navigator.vibrate(20);
+    };
+
+    const endHandler = (e) => {
+      if (activeControl === "dpad") {
+        activeControl = null;
+        button.classList.remove("active");
+        OTEFDataContext.sendVelocity(0, 0);
+      }
+    };
+
+    button.addEventListener("touchstart", startHandler, { passive: false });
+    button.addEventListener("touchend", endHandler, { passive: false });
+    button.addEventListener("mousedown", startHandler);
+    button.addEventListener("mouseup", endHandler);
+    button.addEventListener("mouseleave", endHandler);
   });
 }
 
-let panActive = false;
-let panDirection = null;
-let panInterval = null;
-
-function handlePanStart(direction, button) {
-  if (!currentState.isConnected) return;
-  if (activeControl === "joystick") return;
-
-  activeControl = "dpad";
-  panActive = true;
-  panDirection = direction;
-  button.classList.add("active");
-
-  // Send immediate pan command
-  sendPanCommand(direction);
-
-  // Set up continuous panning
-  panInterval = setInterval(() => {
-    if (panActive && panDirection === direction) {
-      sendPanCommand(direction);
-    }
-  }, PAN_THROTTLE_MS);
-}
-
-function handlePanEnd(button) {
-  activeControl = null;
-  panActive = false;
-  panDirection = null;
-  button.classList.remove("active");
-
-  if (panInterval) {
-    clearInterval(panInterval);
-    panInterval = null;
-  }
-}
-
-async function sendPanCommand(direction) {
-  if (!currentState.isConnected) return;
-
-  // Throttle rapid pan commands
-  if (panThrottleTimer) return;
-
-  try {
-    // Delegate to centralized DataContext (will enforce bounds + call API)
-    await OTEFDataContext.pan(direction, 0.15);
-  } catch (error) {
-    console.error("[Remote] Pan command failed:", error);
-  }
-
-  panThrottleTimer = setTimeout(() => {
-    panThrottleTimer = null;
-  }, PAN_THROTTLE_MS);
-}
 
 /**
  * Initialize zoom controls
@@ -450,28 +394,33 @@ function handleJoystickStart(evt, data) {
 
 function handleJoystickMove(evt, data) {
   if (!currentState.isConnected || activeControl !== "joystick") return;
+  console.log('[Remote] Joystick Move:', data.force.toFixed(2), data.angle.radian.toFixed(2));
 
-  const magnitude = Math.min(data.force, 1.0);
-  if (magnitude < 0.15) return;
+  const force = Math.min(data.force, 1.5);
+  if (force < 0.15) {
+    OTEFDataContext.sendVelocity(0, 0);
+    return;
+  }
 
-  const angle = data.angle.degree;
-  const direction = getDirectionFromAngle(angle);
+  const angleRad = data.angle.radian;
+  const viewport = currentState.viewport;
+  if (!viewport || !viewport.bbox) return;
 
-  // Reduced speed: base 0.1 + up to 0.1 extra based on magnitude (max 0.2 total)
-  // This is much slower than the previous 0.15 + 0.35 = 0.5 max
-  let panSpeed = 0.1 + (magnitude - 0.15) * 0.1;
-  // Clamp to reasonable range
-  panSpeed = Math.min(0.2, Math.max(0.1, panSpeed));
-  // Zoom multiplier makes it slower at higher zoom (smaller movements)
-  const zoomMultiplier = 10 / currentState.viewport.zoom;
-  panSpeed = panSpeed * zoomMultiplier;
+  const width = viewport.bbox[2] - viewport.bbox[0];
+  const height = viewport.bbox[3] - viewport.bbox[1];
 
-  // Throttle continuous updates
+  // Max speed factor: move fraction of viewport per second
+  // We use 0.4 (40%) to keep it smooth but responsive
+  const maxSpeedFactor = 0.4;
+  const vx = Math.cos(angleRad) * force * width * maxSpeedFactor;
+  const vy = Math.sin(angleRad) * force * height * maxSpeedFactor;
+
+  // Reduced frequency for network messages (DataContext manages local 60fps loop)
   if (!joystickInterval) {
-    sendJoystickPanCommand(direction, panSpeed);
+    OTEFDataContext.sendVelocity(vx, vy);
     joystickInterval = setTimeout(() => {
       joystickInterval = null;
-    }, PAN_THROTTLE_MS);
+    }, 100);
   }
 }
 
@@ -491,29 +440,12 @@ function handleJoystickEnd(evt, data) {
     joystickInterval = null;
   }
 
+  // Send explicit stop command
+  OTEFDataContext.sendVelocity(0, 0);
+
   console.log("[Remote] Joystick released");
 }
 
-function getDirectionFromAngle(degrees) {
-  const normalized = ((degrees + 22.5) % 360) / 45;
-  const directions = [
-    "east", "northeast", "north", "northwest",
-    "west", "southwest", "south", "southeast",
-  ];
-  return directions[Math.floor(normalized)];
-}
-
-async function sendJoystickPanCommand(direction, magnitude) {
-  if (!currentState.isConnected) return;
-
-  try {
-    // Delegate to centralized DataContext (will enforce bounds + call API)
-    await OTEFDataContext.pan(direction, magnitude);
-    console.log(`[Remote] Joystick pan via DataContext: ${direction} @ ${magnitude.toFixed(2)}`);
-  } catch (error) {
-    console.error("[Remote] Joystick pan failed:", error);
-  }
-}
 
 function disableDPad() {
   const buttons = document.querySelectorAll(".dpad-button");

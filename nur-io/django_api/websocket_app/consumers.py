@@ -98,6 +98,24 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             # Viewport update from GIS map
             await self._save_viewport(table_name, data)
 
+        elif message_type == 'otef_velocity_update':
+            # NEW: Velocity relay (transient bypass)
+            # Broadcast to all clients including the sender
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_velocity_sync',
+                        'table': table_name,
+                        'vx': data.get('vx', 0),
+                        'vy': data.get('vy', 0),
+                        'sourceId': data.get('sourceId'),
+                        'timestamp': data.get('timestamp')
+                    }
+                }
+            )
+
         else:
             # Unknown OTEF message - just broadcast
             await self.channel_layer.group_send(
@@ -125,6 +143,11 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                     'animations': {'parcels': False}
                 }
             )
+
+            base_viewport = data.get('base_viewport')
+            if base_viewport:
+                # Update state with client's latest viewport before applying delta
+                state.viewport = base_viewport
 
             state.viewport = state.apply_pan_command(direction, delta)
             state.save()
@@ -156,6 +179,10 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                     'animations': {'parcels': False}
                 }
             )
+
+            base_viewport = data.get('base_viewport')
+            if base_viewport:
+                state.viewport = base_viewport
 
             state.viewport = state.apply_zoom_command(level)
             state.save()
@@ -198,7 +225,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             state.save()
 
         await sync_to_async(_sync)()
-        await self._broadcast_change(table_name, 'viewport')
+        # Include the viewport data in the broadcast to eliminate HTTP GET round-trip
+        await self._broadcast_change(table_name, 'viewport', data.get('viewport', viewport_data))
 
     async def _save_layers(self, table_name, layers):
         """Save layers to DB and broadcast notification"""
@@ -265,10 +293,15 @@ class GeneralConsumer(AsyncWebsocketConsumer):
         """Broadcast a state change notification"""
         message = {
             'type': f'otef_{field}_changed',
-            'table': table_name
+            'table': table_name,
+            'sourceId': data.get('sourceId') if isinstance(data, dict) else None,
+            'timestamp': data.get('timestamp') if isinstance(data, dict) else None
         }
         if data:
-            message[field] = data
+            if isinstance(data, dict) and field in data:
+                 message[field] = data[field]
+            else:
+                 message[field] = data
 
         await self.channel_layer.group_send(
             self.room_group_name,

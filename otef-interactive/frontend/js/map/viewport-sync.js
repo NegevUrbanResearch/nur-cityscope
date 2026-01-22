@@ -4,6 +4,10 @@
  * and `OTEFDataContext` objects defined elsewhere.
  */
 
+// Flag and timer to prevent feedback loops (declared in map-initialization.js)
+// But we need to ensure they are accessible or use the ones from there.
+// Since they are defined with 'let' in another file in the same scope, we don't redeclare here.
+
 /**
  * Apply viewport state from API (pan map to match server state)
  */
@@ -39,13 +43,14 @@ function applyViewportFromAPI(viewport) {
     );
 
     // Set flag to prevent feedback loop (don't broadcast this change back)
-    isApplyingRemoteState = true;
+    window.isApplyingRemoteState = true;
     map.setView([centerLat, centerLng], zoom, { animate: true, duration: 0.25 });
 
-    // Clear flag after animation completes (~250ms)
-    setTimeout(() => {
-      isApplyingRemoteState = false;
-    }, 300);
+    // Mark synchronization as active to ignore ensuing moveend events
+    if (window.syncLockTimer) clearTimeout(window.syncLockTimer);
+    window.syncLockTimer = setTimeout(() => {
+      window.isApplyingRemoteState = false;
+    }, 800);
   }
 }
 
@@ -54,7 +59,7 @@ function applyViewportFromAPI(viewport) {
  * Applies hard-wall bounds and debounces API writes inside DataContext/API client.
  */
 function sendViewportUpdate() {
-  if (isApplyingRemoteState) return;
+  if (window.isApplyingRemoteState) return;
   if (!map || typeof OTEFDataContext === "undefined") return;
 
   const zoom = map.getZoom();
@@ -82,11 +87,14 @@ function sendViewportUpdate() {
   };
 
   // Delegate to DataContext for bounds enforcement + debounced write
-  const accepted = OTEFDataContext.updateViewportFromUI(viewportState, "gis");
+  // Pass clientId as sourceId to allow other clients to ignore this echo
+  const result = OTEFDataContext.updateViewportFromUI(viewportState, "gis");
 
   // If the update was rejected by bounds, snap back to the last accepted viewport
   // so the GIS map cannot visually move/zoom beyond the hard-wall polygon.
-  if (accepted === false) {
+  // We ignore 'interaction_guard' rejections to prevent infinite snapback loops
+  // during active remote movement.
+  if (result && result.accepted === false && result.reason === 'bounds') {
     const latestViewport = OTEFDataContext.getViewport();
     if (latestViewport) {
       applyViewportFromAPI(latestViewport);

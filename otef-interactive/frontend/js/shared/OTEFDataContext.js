@@ -26,8 +26,12 @@ class OTEFDataContextClass {
     this._initialized = false;
     this._initializingPromise = null;
 
-    // Interaction bookkeeping (used for future feedback-loop control, if needed)
+    // Interaction bookkeeping
+    this._clientId = Math.random().toString(36).substring(2, 10);
     this._currentInteractionSource = null; // 'remote', 'gis', etc.
+    this._velocity = { vx: 0, vy: 0 }; // units per second
+    this._lastVelocityUpdate = 0;
+    this._lastLocalStateTimestamp = 0;
   }
 
   /**
@@ -81,14 +85,41 @@ class OTEFDataContextClass {
     });
 
     // Listen for notifications and re-sync from API
-    this._wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async () => {
+    this._wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async (msg) => {
       try {
+        // Feedback guard: Ignore updates from ourselves
+        if (msg && msg.sourceId === this._clientId) {
+          return;
+        }
+
+        // Timestamp guard: Ignore stale updates
+        if (msg && msg.timestamp && msg.timestamp < this._lastLocalStateTimestamp - 200) {
+          console.log('[OTEFDataContext] Ignoring stale VIEWPORT_CHANGED');
+          return;
+        }
+
+        // Optimization: Use viewport data directly from message if available
+        if (msg && msg.viewport) {
+           this._setViewport(msg.viewport);
+           return;
+        }
+
+        // Fallback: full re-fetch
         const state = await OTEF_API.getState(this._tableName);
         if (state.viewport) {
           this._setViewport(state.viewport);
         }
       } catch (err) {
         console.error('[OTEFDataContext] Failed to refresh viewport after VIEWPORT_CHANGED:', err);
+      }
+    });
+
+    this._wsClient.on(OTEF_MESSAGE_TYPES.VELOCITY_SYNC, (msg) => {
+      console.log(`[OTEFDataContext] VELOCITY_SYNC received: vx=${msg.vx}, vy=${msg.vy}, remote=${msg.sourceId !== this._clientId}`);
+      this._velocity = { vx: msg.vx || 0, vy: msg.vy || 0 };
+      this._lastVelocityUpdate = Date.now();
+      if (this._velocity.vx !== 0 || this._velocity.vy !== 0) {
+        this._startVelocityLoop();
       }
     });
 
@@ -274,16 +305,132 @@ class OTEFDataContextClass {
 
     try {
       this._currentInteractionSource = 'remote';
+      this._lastLocalStateTimestamp = Date.now();
       await OTEF_API.executeCommand(this._tableName, {
         action: 'pan',
         direction,
         delta,
+        sourceId: this._clientId,
+        timestamp: this._lastLocalStateTimestamp,
+        // Pass current bbox to prevent snapback to stale DB state
+        base_viewport: this._viewport
       });
     } catch (err) {
       console.error('[OTEFDataContext] Pan command failed:', err);
     } finally {
       this._currentInteractionSource = null;
     }
+  }
+
+  /**
+   * Send a velocity update for continuous movement.
+   *
+   * @param {number} vx - X velocity (ITM units/sec)
+   * @param {number} vy - Y velocity (ITM units/sec)
+   */
+  sendVelocity(vx, vy) {
+    if (!this._tableName || !this._wsClient || !this._wsClient.getConnected()) return;
+
+    const wasMoving = (this._velocity && (this._velocity.vx !== 0 || this._velocity.vy !== 0));
+    this._velocity = { vx, vy };
+    const isMoving = (vx !== 0 || vy !== 0);
+
+    if (isMoving && !wasMoving) {
+      this._lastVelocityUpdate = Date.now();
+      this._startVelocityLoop();
+    }
+    this._lastLocalStateTimestamp = Date.now();
+
+    try {
+      if (isMoving) {
+        console.log(`[OTEFDataContext] Sending velocity: vx=${vx.toFixed(1)}, vy=${vy.toFixed(1)}`);
+      }
+      this._wsClient.send({
+        type: OTEF_MESSAGE_TYPES.VELOCITY_UPDATE,
+        vx,
+        vy,
+        sourceId: this._clientId,
+        timestamp: this._lastLocalStateTimestamp
+      });
+    } catch (err) {
+      console.error('[OTEFDataContext] Velocity update failed:', err);
+    }
+  }
+
+  _startVelocityLoop() {
+    if (this._velocityLoopActive) return;
+    this._velocityLoopActive = true;
+
+    const step = () => {
+      if (!this._velocity || (this._velocity.vx === 0 && this._velocity.vy === 0)) {
+        this._velocityLoopActive = false;
+        return;
+      }
+
+      const now = Date.now();
+      const dt = Math.min(0.1, (now - this._lastVelocityUpdate) / 1000); // Cap dt at 100ms
+      this._lastVelocityUpdate = now;
+
+      if (this._viewport && this._viewport.bbox) {
+        const [minX, minY, maxX, maxY] = this._viewport.bbox;
+        const dx = this._velocity.vx * dt;
+        const dy = this._velocity.vy * dt;
+
+        // Log movement for debugging
+        if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
+           // console.log(`[OTEFDataContext] Moving: dx=${dx.toFixed(3)}, dy=${dy.toFixed(3)}`);
+        }
+
+        let finalDx = dx;
+        let finalDy = dy;
+        let canMove = false;
+
+        // Multi-pass bounds check to allow "sliding" along edges
+        // 1. Try moving on both axes
+        const fullBbox = [minX + dx, minY + dy, maxX + dx, maxY + dy];
+        if (this._isViewportInsideBounds({ ...this._viewport, bbox: fullBbox })) {
+          canMove = true;
+        } else {
+          // 2. Try moving ONLY on X axis (slide along North/South bounds)
+          const xOnlyBbox = [minX + dx, minY, maxX + dx, maxY];
+          if (this._isViewportInsideBounds({ ...this._viewport, bbox: xOnlyBbox })) {
+            finalDy = 0;
+            canMove = true;
+          } else {
+            // 3. Try moving ONLY on Y axis (slide along East/West bounds)
+            const yOnlyBbox = [minX, minY + dy, maxX, maxY + dy];
+            if (this._isViewportInsideBounds({ ...this._viewport, bbox: yOnlyBbox })) {
+              finalDx = 0;
+              canMove = true;
+            }
+          }
+        }
+
+        if (canMove) {
+          const finalBbox = [minX + finalDx, minY + finalDy, maxX + finalDx, maxY + finalDy];
+          const finalViewport = {
+            ...this._viewport,
+            bbox: finalBbox,
+            corners: {
+              sw: { x: finalBbox[0], y: finalBbox[1] },
+              se: { x: finalBbox[2], y: finalBbox[1] },
+              nw: { x: finalBbox[0], y: finalBbox[3] },
+              ne: { x: finalBbox[2], y: finalBbox[3] },
+            }
+          };
+          this._setViewport(finalViewport);
+        } else {
+          // Both axes blocked or no movement possible
+          this._velocity = { vx: 0, vy: 0 };
+          this._velocityLoopActive = false;
+          return;
+        }
+      }
+
+      requestAnimationFrame(step);
+    };
+
+    requestAnimationFrame(step);
   }
 
   /**
@@ -312,9 +459,14 @@ class OTEFDataContextClass {
 
     try {
       this._currentInteractionSource = 'remote';
+      this._lastLocalStateTimestamp = Date.now();
       await OTEF_API.executeCommand(this._tableName, {
         action: 'zoom',
         level: clampedZoom,
+        sourceId: this._clientId,
+        timestamp: this._lastLocalStateTimestamp,
+        // Pass current bbox to prevent snapback to stale DB state
+        base_viewport: this._viewport
       });
     } catch (err) {
       console.error('[OTEFDataContext] Zoom command failed:', err);
@@ -338,9 +490,15 @@ class OTEFDataContextClass {
 
     const insideBounds = this._isViewportInsideBounds(viewport);
 
+    // Feedback guard: Ignore GIS updates while the Remote is actively moving us via velocity
+    // This stops the GIS Map (follower) from fighting the Remote (master)
+    if (source === 'gis' && (this._velocityLoopActive || this._currentInteractionSource === 'remote')) {
+      return { accepted: false, reason: 'interaction_guard' };
+    }
+
     if (!insideBounds) {
       console.log('[OTEFDataContext] Viewport update blocked by bounds polygon');
-      return false;
+      return { accepted: false, reason: 'bounds' };
     }
 
     this._currentInteractionSource = source;
@@ -352,11 +510,13 @@ class OTEFDataContextClass {
 
     // Delegate actual write/debounce behavior to API client
     try {
+      const payload = { ...viewport, sourceId: this._clientId, timestamp: Date.now() };
       if (typeof OTEF_API.updateViewportDebounced === 'function') {
-        OTEF_API.updateViewportDebounced(this._tableName, viewport);
+        OTEF_API.updateViewportDebounced(this._tableName, payload);
       } else {
-        OTEF_API.updateViewport(this._tableName, viewport);
+        OTEF_API.updateViewport(this._tableName, payload);
       }
+      return { accepted: true };
     } catch (err) {
       console.error('[OTEFDataContext] Failed to send viewport update:', err);
     } finally {

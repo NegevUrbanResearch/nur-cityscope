@@ -65,8 +65,9 @@ let layerState = {
   smallRoads: false,
 };
 
-// Flag to prevent echo when applying remote state
-let isApplyingRemoteState = false;
+// Flag and timer to prevent echo when applying remote state
+window.isApplyingRemoteState = false;
+window.syncLockTimer = null;
 
 /**
  * Initialize the map with model bounds and set up OTEFDataContext subscriptions.

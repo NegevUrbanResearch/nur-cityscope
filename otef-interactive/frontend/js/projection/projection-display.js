@@ -200,17 +200,9 @@ function itmToDisplayPixels(x, y) {
   const bounds = getDisplayedImageBounds();
   if (!bounds || !modelBounds) return null;
 
-  const pctX = Math.max(
-    0,
-    Math.min(1, (x - modelBounds.west) / (modelBounds.east - modelBounds.west))
-  );
-  const pctY = Math.max(
-    0,
-    Math.min(
-      1,
-      (modelBounds.north - y) / (modelBounds.north - modelBounds.south)
-    )
-  );
+  // REMOVED rigid clamping [0, 1] to allow highlight to bleed off model area
+  const pctX = (x - modelBounds.west) / (modelBounds.east - modelBounds.west);
+  const pctY = (modelBounds.north - y) / (modelBounds.north - modelBounds.south);
 
   return {
     x: bounds.offsetX + pctX * bounds.width,
@@ -235,12 +227,39 @@ function getOrCreateHighlightBox() {
   if (!box) {
     box = document.createElement("div");
     box.className = "highlight-box";
+    // REMOVED CSS transition for LERP-based smoothing
     box.style.cssText =
-      "position: absolute; border: 3px solid rgba(0, 255, 255, 0.9); background: rgba(0, 255, 255, 0.15); box-shadow: 0 0 30px rgba(0, 255, 255, 0.8), inset 0 0 30px rgba(0, 255, 255, 0.4); pointer-events: none; transition: left 0.15s ease-out, top 0.15s ease-out, width 0.15s ease-out, height 0.15s ease-out;";
+      "position: absolute; border: 3px solid rgba(0, 255, 255, 0.9); background: rgba(0, 255, 255, 0.15); box-shadow: 0 0 30px rgba(0, 255, 255, 0.8), inset 0 0 30px rgba(0, 255, 255, 0.4); pointer-events: none;";
     overlay.querySelector("svg")?.remove();
     overlay.appendChild(box);
+
+    // Initialize smoothing loop
+    startSmoothingLoop(box);
   }
   return box;
+}
+
+// Smoothing state
+let targetHighlight = { x: 0, y: 0, w: 0, h: 0 };
+let currentHighlight = { x: 0, y: 0, w: 0, h: 0 };
+const LERP_FACTOR = 0.15; // Lower = smoother/slower, Higher = snappier
+
+function startSmoothingLoop(box) {
+  const step = () => {
+    // Linear Interpolation (LERP)
+    currentHighlight.x += (targetHighlight.x - currentHighlight.x) * LERP_FACTOR;
+    currentHighlight.y += (targetHighlight.y - currentHighlight.y) * LERP_FACTOR;
+    currentHighlight.w += (targetHighlight.w - currentHighlight.w) * LERP_FACTOR;
+    currentHighlight.h += (targetHighlight.h - currentHighlight.h) * LERP_FACTOR;
+
+    box.style.left = currentHighlight.x + "px";
+    box.style.top = currentHighlight.y + "px";
+    box.style.width = currentHighlight.w + "px";
+    box.style.height = currentHighlight.h + "px";
+
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 function updateHighlightQuad(corners) {
@@ -296,15 +315,18 @@ function updateHighlightQuad(corners) {
     );
   }
 
-  const box = getOrCreateHighlightBox();
+  getOrCreateHighlightBox(); // Ensure loop is running
   const minPX = Math.min(sw_px.x, nw_px.x, se_px.x, ne_px.x);
   const maxPX = Math.max(sw_px.x, nw_px.x, se_px.x, ne_px.x);
   const minPY = Math.min(sw_px.y, nw_px.y, se_px.y, ne_px.y);
   const maxPY = Math.max(sw_px.y, nw_px.y, se_px.y, ne_px.y);
-  box.style.left = minPX + "px";
-  box.style.top = minPY + "px";
-  box.style.width = maxPX - minPX + "px";
-  box.style.height = maxPY - minPY + "px";
+
+  targetHighlight = {
+    x: minPX,
+    y: minPY,
+    w: maxPX - minPX,
+    h: maxPY - minPY
+  };
 }
 
 function updateHighlightRect(itmBbox) {
@@ -339,11 +361,13 @@ function updateHighlightRect(itmBbox) {
     window.DebugOverlay.updateHighlightPercentages(left, top, width, height);
   }
 
-  const box = getOrCreateHighlightBox();
-  box.style.left = sw_px.x + "px";
-  box.style.top = ne_px.y + "px";
-  box.style.width = ne_px.x - sw_px.x + "px";
-  box.style.height = sw_px.y - ne_px.y + "px";
+  getOrCreateHighlightBox(); // Ensure loop is running
+  targetHighlight = {
+    x: sw_px.x,
+    y: ne_px.y,
+    w: ne_px.x - sw_px.x,
+    h: sw_px.y - ne_px.y
+  };
 }
 
 let lastMessage = null;
@@ -607,11 +631,18 @@ function enterBoundsEditMode() {
   }
 
   const applyBtn = document.getElementById("boundsApplyBtn");
+  const resetBtn = document.getElementById("boundsResetBtn");
   const cancelBtn = document.getElementById("boundsCancelBtn");
 
   if (applyBtn) {
     applyBtn.onclick = async () => {
       await handleBoundsApply();
+    };
+  }
+  if (resetBtn) {
+    resetBtn.onclick = () => {
+      boundsWorkingPolygon = getDefaultBoundsPolygon();
+      renderBoundsEditorPolygon();
     };
   }
   if (cancelBtn) {

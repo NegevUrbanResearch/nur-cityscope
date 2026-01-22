@@ -5,14 +5,16 @@ const OTEF_MESSAGE_TYPES = {
   // Commands (sent by clients)
   VIEWPORT_UPDATE: "otef_viewport_update",
   VIEWPORT_CONTROL: "otef_viewport_control",
+  VELOCITY_UPDATE: "otef_velocity_update", // New: for continuous movement
   LAYER_UPDATE: "otef_layer_update",
   ANIMATION_TOGGLE: "otef_animation_toggle",
 
-  // Notifications (broadcast by server after DB update)
+  // Notifications (broadcast by server after DB update or transient event)
   VIEWPORT_CHANGED: "otef_viewport_changed",
   LAYERS_CHANGED: "otef_layers_changed",
   ANIMATION_CHANGED: "otef_animation_changed",
   BOUNDS_CHANGED: "otef_bounds_changed",
+  VELOCITY_SYNC: "otef_velocity_sync", // New: sync velocity across clients
 
   // Legacy (deprecated - will be removed)
   STATE_REQUEST: "otef_state_request",
@@ -168,13 +170,14 @@ function validateStateResponse(msg) {
  * @param {number} delta - Pan distance percentage (0-1, typically 0.1-0.2)
  * @returns {Object} Message object
  */
-function createPanControlMessage(direction, delta = 0.15) {
+function createPanControlMessage(direction, delta = 0.15, sourceId = null) {
   return {
     type: OTEF_MESSAGE_TYPES.VIEWPORT_CONTROL,
     pan: {
       direction: direction,
       delta: delta,
     },
+    sourceId: sourceId,
     timestamp: Date.now(),
   };
 }
@@ -217,28 +220,32 @@ function createStateRequestMessage() {
 }
 
 /**
+ * Message factory: Create VELOCITY_UPDATE message
+ * @param {Object} velocity - { vx: number, vy: number } in units/sec
+ * @returns {Object} Message object
+ */
+function createVelocityUpdateMessage(velocity, sourceId = null) {
+  return {
+    type: OTEF_MESSAGE_TYPES.VELOCITY_UPDATE,
+    vx: velocity.vx || 0,
+    vy: velocity.vy || 0,
+    sourceId: sourceId,
+    timestamp: Date.now(),
+  };
+}
+
+/**
  * Message factory: Create VIEWPORT_UPDATE message
  * @param {Object} viewport - Viewport state { bbox: [minX, minY, maxX, maxY], corners?: object, zoom?: number }
  * @returns {Object} Message object
  */
-function createViewportUpdateMessage(viewport) {
+function createViewportUpdateMessage(viewport, sourceId = null) {
   const msg = {
     type: OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE,
+    viewport: { ...viewport }, // Include full viewport in payload
+    sourceId: sourceId,
     timestamp: Date.now(),
   };
-
-  if (viewport.bbox) {
-    msg.bbox = viewport.bbox;
-  }
-
-  if (viewport.corners) {
-    msg.corners = viewport.corners;
-  }
-
-  if (typeof viewport.zoom === "number") {
-    msg.zoom = viewport.zoom;
-  }
-
   return msg;
 }
 
@@ -308,5 +315,6 @@ if (typeof module !== "undefined" && module.exports) {
     createStateRequestMessage,
     createStateResponseMessage,
     createAnimationToggleMessage,
+    createVelocityUpdateMessage,
   };
 }
