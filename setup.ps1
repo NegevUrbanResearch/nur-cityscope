@@ -124,14 +124,24 @@ Write-Host "Copying OTEF simplified layers to Django API directory..." -Foregrou
 New-Item -ItemType Directory -Force -Path "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers" | Out-Null
 $migrashimSource = "$SCRIPT_DIR\otef-interactive\public\import\layers\migrashim_simplified.json"
 $roadsSource = "$SCRIPT_DIR\otef-interactive\public\import\layers\small_roads_simplified.json"
+$majorRoadsSource = "$SCRIPT_DIR\otef-interactive\public\source\layers\road-big.geojson"
+$smallRoadsSource = "$SCRIPT_DIR\otef-interactive\public\source\layers\Small-road-limited.geojson"
 $migrashimDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\migrashim_simplified.json"
 $roadsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\small_roads_simplified.json"
+$majorRoadsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\road-big.geojson"
+$smallRoadsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\Small-road-limited.geojson"
 
 if (Test-Path $migrashimSource) {
     Copy-Item -Path $migrashimSource -Destination $migrashimDest -Force
 }
 if (Test-Path $roadsSource) {
     Copy-Item -Path $roadsSource -Destination $roadsDest -Force
+}
+if (Test-Path $majorRoadsSource) {
+    Copy-Item -Path $majorRoadsSource -Destination $majorRoadsDest -Force
+}
+if (Test-Path $smallRoadsSource) {
+    Copy-Item -Path $smallRoadsSource -Destination $smallRoadsDest -Force
 }
 
 # Copy model-bounds.json if it doesn't exist in Django API directory
@@ -171,22 +181,22 @@ Write-Host ""
 # Get local IP address
 $localIP = $null
 try {
-    $networkAdapters = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | 
-        Where-Object { 
-            $_.IPAddress -notlike "127.*" -and 
+    $networkAdapters = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.IPAddress -notlike "127.*" -and
             $_.IPAddress -notlike "169.254.*" -and
             $_.InterfaceAlias -notlike "*Loopback*"
-        } | 
-        Sort-Object InterfaceIndex | 
+        } |
+        Sort-Object InterfaceIndex |
         Select-Object -First 1
-    
+
     if ($networkAdapters) {
         $localIP = $networkAdapters.IPAddress
     }
 } catch {
     # Fallback method
-    $localIP = (Get-NetIPConfiguration -ErrorAction SilentlyContinue | 
-        Where-Object { $_.IPv4Address.IPAddress -notlike "127.*" -and $_.IPv4Address.IPAddress -notlike "169.254.*" } | 
+    $localIP = (Get-NetIPConfiguration -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPv4Address.IPAddress -notlike "127.*" -and $_.IPv4Address.IPAddress -notlike "169.254.*" } |
         Select-Object -First 1).IPv4Address.IPAddress
 }
 

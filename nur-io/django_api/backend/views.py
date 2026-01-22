@@ -184,21 +184,21 @@ class LayerConfigViewSet(viewsets.ModelViewSet):
 class GISLayerViewSet(viewsets.ModelViewSet):
     """CRUD operations for GIS layers"""
     serializer_class = GISLayerSerializer
-    
+
     def get_queryset(self):
         queryset = GISLayer.objects.all()
         table_name = self.request.query_params.get('table')
         if table_name:
             queryset = queryset.filter(table__name=table_name)
         return queryset.filter(is_active=True)
-    
+
     @action(detail=True, methods=['get'])
     def get_layer_geojson(self, request, pk=None):
         """Serve GeoJSON data for a layer (for large files)"""
         layer = self.get_object()
         if layer.layer_type != 'geojson':
             return Response({'error': 'Not a GeoJSON layer'}, status=400)
-        
+
         if layer.data:
             response = JsonResponse(layer.data, safe=False)
             response['Content-Type'] = 'application/json'
@@ -209,17 +209,19 @@ class GISLayerViewSet(viewsets.ModelViewSet):
             from django.conf import settings
             file_path = os.path.join(settings.MEDIA_ROOT, layer.file_path) if not os.path.isabs(layer.file_path) else layer.file_path
             if os.path.exists(file_path):
-                return FileResponse(open(file_path, 'rb'), content_type='application/json')
+                response = FileResponse(open(file_path, 'rb'), content_type='application/json')
+                response["Cache-Control"] = "public, max-age=86400"
+                return response
             else:
                 return Response({'error': 'File not found'}, status=404)
-        
+
         return Response({'error': 'No data available'}, status=404)
 
 
 class OTEFModelConfigViewSet(viewsets.ReadOnlyModelViewSet):
     """Read-only access to OTEF model configuration"""
     serializer_class = OTEFModelConfigSerializer
-    
+
     def get_queryset(self):
         queryset = OTEFModelConfig.objects.all()
         table_name = self.request.query_params.get('table')
@@ -229,15 +231,196 @@ class OTEFModelConfigViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class OTEFViewportStateViewSet(viewsets.ModelViewSet):
-    """Manage viewport state for OTEF"""
+    """
+    Manage OTEF interactive state - single source of truth.
+
+    GET /api/otef_viewport/by-table/{table_name}/ - Get full state
+    PATCH /api/otef_viewport/by-table/{table_name}/ - Update state partially
+    POST /api/otef_viewport/by-table/{table_name}/command/ - Execute command (pan/zoom)
+    """
     serializer_class = OTEFViewportStateSerializer
-    
+
     def get_queryset(self):
         queryset = OTEFViewportState.objects.all()
         table_name = self.request.query_params.get('table')
         if table_name:
             queryset = queryset.filter(table__name=table_name)
         return queryset
+
+    def _broadcast_state_change(self, table_name, changed_fields):
+        """Broadcast WebSocket notifications for state changes."""
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        channel_layer = get_channel_layer()
+        # Must match consumer's room_group_name: f'{channel_type}_channel'
+        group_name = 'otef_channel'
+
+        for field in changed_fields:
+
+            if field == 'viewport':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_viewport_changed',
+                        'table': table_name,
+                    }
+                }
+            elif field == 'layers':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_layers_changed',
+                        'table': table_name,
+                    }
+                }
+            elif field == 'animations':
+                # Get current animation state to include in notification
+                try:
+                    state = OTEFViewportState.objects.filter(table__name=table_name).first()
+                    animations = state.animations if state else {}
+                except:
+                    animations = {}
+
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_animation_changed',
+                        'table': table_name,
+                        'layerId': 'parcels',
+                        'enabled': animations.get('parcels', False),
+                    }
+                }
+            elif field == 'bounds':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_bounds_changed',
+                        'table': table_name,
+                    }
+                }
+            else:
+                continue
+
+            async_to_sync(channel_layer.group_send)(group_name, message)
+            print(f"📡 Broadcast: {field} changed for {table_name}")
+
+
+    @action(detail=False, methods=['get', 'patch'], url_path='by-table/(?P<table_name>[^/.]+)')
+    def by_table(self, request, table_name=None):
+        """
+        GET/PATCH state by table name.
+
+        GET: Returns full state with defaults applied
+        PATCH: Partial update of viewport, layers, or animations
+        """
+        from django.shortcuts import get_object_or_404
+
+        table = get_object_or_404(Table, name=table_name)
+        state, created = OTEFViewportState.objects.get_or_create(
+            table=table,
+            defaults={
+                'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+                'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
+                'animations': {'parcels': False}
+            }
+        )
+
+        if request.method == 'PATCH':
+            changed_fields = []
+
+            # Partial updates for each field
+            if 'viewport' in request.data:
+                # Merge with existing viewport (preserve unset fields)
+                current = state.viewport or {}
+                new_viewport = request.data['viewport']
+                state.viewport = {**current, **new_viewport}
+                changed_fields.append('viewport')
+
+            if 'layers' in request.data:
+                state.layers = request.data['layers']
+                changed_fields.append('layers')
+
+            if 'animations' in request.data:
+                state.animations = request.data['animations']
+                changed_fields.append('animations')
+
+            # Optional bounds polygon updates (used by bounds editor / apply endpoint)
+            # Accept both "bounds_polygon" and legacy "bounds" keys.
+            if 'bounds_polygon' in request.data or 'bounds' in request.data:
+                polygon = request.data.get('bounds_polygon') or request.data.get('bounds')
+                state.bounds_polygon = polygon or []
+                changed_fields.append('bounds')
+
+            state.save()
+
+            # Broadcast notifications for each changed field
+            self._broadcast_state_change(table_name, changed_fields)
+
+        # Return state with defaults applied
+        response_data = {
+            'id': state.id,
+            'table': table.id,
+            'table_name': table_name,
+            'viewport': state.get_viewport_with_defaults(),
+            'layers': state.get_layers_with_defaults(),
+            'animations': state.get_animations_with_defaults(),
+            'bounds_polygon': state.get_bounds_polygon(),
+            'updated_at': state.updated_at.isoformat() if state.updated_at else None,
+        }
+
+        return Response(response_data)
+
+    @action(detail=False, methods=['post'], url_path='by-table/(?P<table_name>[^/.]+)/command')
+    def command(self, request, table_name=None):
+        """
+        Execute a command (pan/zoom) server-side without requiring GIS map.
+
+        POST body:
+        - Pan: {"action": "pan", "direction": "north", "delta": 0.15}
+        - Zoom: {"action": "zoom", "level": 16}
+        """
+        from django.shortcuts import get_object_or_404
+
+        table = get_object_or_404(Table, name=table_name)
+        state, created = OTEFViewportState.objects.get_or_create(
+            table=table,
+            defaults={
+                'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+                'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
+                'animations': {'parcels': False}
+            }
+        )
+
+        action = request.data.get('action')
+
+        if action == 'pan':
+            direction = request.data.get('direction', 'north')
+            delta = float(request.data.get('delta', 0.15))
+            state.viewport = state.apply_pan_command(direction, delta)
+            state.save()
+            self._broadcast_state_change(table_name, ['viewport'])
+
+        elif action == 'zoom':
+            level = int(request.data.get('level', 15))
+            level = max(10, min(19, level))  # Clamp to valid range
+            state.viewport = state.apply_zoom_command(level)
+            state.save()
+            self._broadcast_state_change(table_name, ['viewport'])
+
+        else:
+            return Response(
+                {'error': f'Unknown action: {action}. Use "pan" or "zoom".'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Return updated state
+        return Response({
+            'status': 'ok',
+            'action': action,
+            'viewport': state.get_viewport_with_defaults(),
+        })
+
 
 
 # Now lets program the views for the API as an interactive platform
@@ -294,9 +477,9 @@ def broadcast_presentation_update(table_name=None):
 
 def broadcast_indicator_update(table_name=None):
     """Broadcast indicator state update notification for a specific table
-    
-    Note: This sends a lightweight notification. Clients should fetch their 
-    table-specific state via get_global_variables endpoint rather than 
+
+    Note: This sends a lightweight notification. Clients should fetch their
+    table-specific state via get_global_variables endpoint rather than
     relying on broadcasted values to avoid cross-tab interference.
     """
     channel_layer = get_channel_layer()
@@ -548,11 +731,11 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
         indicator_state = globals.get_indicator_state(table_name)
         indicator_state["visualization_mode"] = mode
-        
+
         # Update legacy global for default table (backward compatibility)
         if table_name == globals.DEFAULT_TABLE_NAME:
             globals.VISUALIZATION_MODE = mode
-        
+
         broadcast_indicator_update(table_name)
         print(f"✓ Visualization mode set to: {mode} for table '{table_name}'")
 
@@ -564,7 +747,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
         # Get table name from query params, default to idistrict for backward compatibility
         table_name = request.query_params.get("table", globals.DEFAULT_TABLE_NAME)
         state = globals.get_presentation_state(table_name)
-        
+
         response = JsonResponse({
             "table": table_name,
             "is_playing": state["is_playing"],
@@ -580,13 +763,13 @@ class CustomActionsViewSet(viewsets.ViewSet):
         """Set presentation state (play/pause, sequence, index, duration) for a specific table"""
         index_changed = False
         sequence_changed = False
-        
+
         # Get table name from request, default to idistrict for backward compatibility
         table_name = request.data.get("table", globals.DEFAULT_TABLE_NAME)
-        
+
         # Get presentation state for this table
         state = globals.get_presentation_state(table_name)
-        
+
         # Update playing state if provided
         if "is_playing" in request.data:
             was_playing = state["is_playing"]
@@ -595,7 +778,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             # If presentation just started playing, sync indicator from current slide
             if state["is_playing"] and not was_playing:
                 index_changed = True
-        
+
         # Update sequence if provided
         if "sequence" in request.data:
             sequence = request.data.get("sequence")
@@ -603,7 +786,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 state["sequence"] = sequence
                 sequence_changed = True
                 print(f"✓ Presentation sequence updated for table '{table_name}': {len(sequence)} slides")
-        
+
         # Update sequence index if provided
         if "sequence_index" in request.data:
             index = request.data.get("sequence_index")
@@ -621,28 +804,28 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 else:
                     state["sequence_index"] = 0
                     print(f"⚠️ Empty sequence for table '{table_name}', index reset to 0")
-        
+
         # Update duration if provided
         if "duration" in request.data:
             duration = request.data.get("duration")
             if isinstance(duration, (int, float)) and duration >= 1:
                 state["duration"] = int(duration)
                 print(f"✓ Presentation duration for table '{table_name}': {duration}s")
-        
+
         # Update legacy globals for default table (backward compatibility)
         if table_name == globals.DEFAULT_TABLE_NAME:
             globals.PRESENTATION_PLAYING = state["is_playing"]
             globals.PRESENTATION_SEQUENCE = state["sequence"]
             globals.PRESENTATION_SEQUENCE_INDEX = state["sequence_index"]
             globals.PRESENTATION_DURATION = state["duration"]
-        
+
         # If presentation is playing and (index/sequence changed or just started), update indicator/state from current slide
         if state["is_playing"] and (index_changed or sequence_changed) and state["sequence"]:
             self._sync_indicator_from_presentation_slide(table_name, state)
-        
+
         # Broadcast to all connected clients via WebSocket
         broadcast_presentation_update(table_name)
-        
+
         return JsonResponse({
             "status": "ok",
             "table": table_name,
@@ -651,7 +834,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             "sequence_index": state["sequence_index"],
             "duration": state["duration"],
         })
-    
+
     def _sync_indicator_from_presentation_slide(self, table_name=None, presentation_state=None):
         """Update global indicator and state from current presentation slide for a specific table"""
         try:
@@ -659,37 +842,37 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 if table_name is None:
                     table_name = globals.DEFAULT_TABLE_NAME
                 presentation_state = globals.get_presentation_state(table_name)
-            
+
             if not presentation_state["sequence"] or len(presentation_state["sequence"]) == 0:
                 return
-            
+
             current_index = max(
                 0, min(presentation_state["sequence_index"], len(presentation_state["sequence"]) - 1)
             )
             current_slide = presentation_state["sequence"][current_index]
-            
+
             if not current_slide or not current_slide.get("indicator"):
                 return
-            
+
             indicator_name = current_slide.get("indicator")
             state_name = current_slide.get("state")
             slide_type = current_slide.get("type")
-            
+
             # Map indicator name to ID
             indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
             indicator_id = indicator_mapping.get(indicator_name)
-            
+
             if not indicator_id:
                 print(f"⚠️ Invalid indicator in presentation slide: {indicator_name}")
                 return
-            
+
             # Get table-specific indicator state
             indicator_state = globals.get_indicator_state(table_name)
-            
+
             # Update table-specific indicator ID
             indicator_state["indicator_id"] = indicator_id
             print(f"🎬 Synced indicator from presentation (table: {table_name}): {indicator_name} (ID: {indicator_id})")
-            
+
             # Update table-specific state based on indicator type
             if indicator_name == "climate" and state_name and slide_type:
                 # For climate, map display name to scenario key
@@ -699,7 +882,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     if config["display_name"] == state_name:
                         scenario_key = key
                         break
-                
+
                 if scenario_key:
                     # Find the state object to get full state values
                     state_obj = State.objects.filter(
@@ -732,7 +915,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                         if s.state_values.get("scenario") == scenario_key:
                             state_obj = s
                             break
-                    
+
                     if state_obj:
                         indicator_state["indicator_state"] = state_obj.state_values.copy()
                         print(f"✓ Synced {indicator_name} state: {scenario_key}")
@@ -742,16 +925,16 @@ class CustomActionsViewSet(viewsets.ViewSet):
                             "scenario": scenario_key,
                             "label": state_name
                         }
-            
+
             # Update legacy global for default table (backward compatibility)
             if table_name == globals.DEFAULT_TABLE_NAME:
                 globals.INDICATOR_ID = indicator_state["indicator_id"]
                 globals.INDICATOR_STATE = indicator_state["indicator_state"]
-            
+
             # Broadcast indicator update for this table only
             broadcast_indicator_update(table_name)
             print(f"✓ Broadcasted indicator update for presentation slide (table: {table_name})")
-            
+
         except Exception as e:
             print(f"❌ Error syncing indicator from presentation slide: {e}")
 
@@ -759,13 +942,13 @@ class CustomActionsViewSet(viewsets.ViewSet):
     def set_current_indicator(self, request):
         indicator_id = request.data.get("indicator_id", "")
         table_name = request.data.get("table")
-        
+
         if not table_name:
             return JsonResponse(
                 {"status": "error", "message": "Table parameter is required"},
                 status=400
             )
-        
+
         if self._set_current_indicator(indicator_id, table_name):
             return JsonResponse({"status": "ok", "indicator_id": indicator_id})
         else:
@@ -783,20 +966,20 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 print(f"⏸️ Paused presentation for table '{table_name}' (dashboard is using it)")
                 # Broadcast the pause
                 broadcast_presentation_update(table_name)
-            
+
             table = Table.objects.filter(name=table_name).first()
             if not table:
                 print(f"❌ Table '{table_name}' not found")
                 return False
-            
+
             indicator = Indicator.objects.filter(table=table, indicator_id=indicator_id).first()
             if not indicator:
                 print(f"❌ Indicator with ID {indicator_id} not found in table '{table_name}'")
                 return False
-            
+
             globals.INDICATOR_ID = indicator_id
             print(f"✓ Indicator set to ID: {indicator_id} (table: {table_name})")
-            
+
             # Update INDICATOR_STATE to match the new indicator's default state
             if indicator.category == "climate":
                 # Set default climate state
@@ -806,7 +989,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 # Set default mobility/other state
                 globals.INDICATOR_STATE = globals.DEFAULT_STATES.copy()
                 print(f"✓ Set default mobility state: {globals.INDICATOR_STATE}")
-            
+
             broadcast_indicator_update()
             return True
         except Exception as e:
@@ -903,15 +1086,15 @@ class CustomActionsViewSet(viewsets.ViewSet):
         try:
             if table_name is None:
                 table_name = globals.DEFAULT_TABLE_NAME
-            
+
             indicator_state = globals.get_indicator_state(table_name)
             indicator_state["indicator_state"] = state
             print(f"✓ State updated to: {state} (table: {table_name})")
-            
+
             # Update legacy global for default table (backward compatibility)
             if table_name == globals.DEFAULT_TABLE_NAME:
                 globals.INDICATOR_STATE = state
-            
+
             broadcast_indicator_update(table_name)
             return True
         except Exception as e:
@@ -939,13 +1122,13 @@ class CustomActionsViewSet(viewsets.ViewSet):
             )
             self._add_no_cache_headers(response)
             return response
-        
+
         # Get presentation state for this table
         presentation_state = globals.get_presentation_state(table_name)
-        
+
         # Indicator name to ID mapping
         indicator_mapping = {"mobility": 1, "climate": 2, "land_use": 3}
-        
+
         # Initialize effective_indicator_id (will be set based on mode)
         effective_indicator_id = None
         is_ugc = False
@@ -993,11 +1176,11 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 else:
                     # Map indicator name to ID for standard indicators
                     effective_indicator_id = indicator_mapping.get(slide_indicator)
-                    
+
                     if effective_indicator_id:
                         print(f"🎬 Presentation mode active - using slide {current_index + 1}/{len(presentation_state['sequence'])} for table '{table_name}'")
                         print(f"   Indicator: {slide_indicator}, State: {slide_state}" + (f", Type: {slide_type}" if slide_type else ""))
-                        
+
                         # Override indicator_param and scenario_param to use presentation slide data
                         # This ensures the rest of the function uses the presentation slide values
                         indicator_param = slide_indicator
@@ -1011,7 +1194,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                                 if config["display_name"] == slide_state:
                                     scenario_key = key
                                     break
-                            
+
                             if scenario_key:
                                 scenario_param = scenario_key
                                 type_param = slide_type or "utci"
@@ -1022,7 +1205,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                         else:
                             # For mobility and other indicators, use state name as scenario
                             scenario_param = slide_state.lower()
-                        
+
                         # Set prefetch_mode to True so we use the params instead of globals
                         prefetch_mode = True
                     else:
@@ -1036,7 +1219,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
         # Get table-specific indicator state
         indicator_state = globals.get_indicator_state(table_name)
-        
+
         # Determine which indicator to use (if not already set by presentation mode)
         if not use_presentation_mode or effective_indicator_id is None:
             if indicator_param:
@@ -1074,7 +1257,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             )
             self._add_no_cache_headers(response)
             return response
-        
+
         # Handle UGC indicators differently - look up by database ID instead of indicator_id
         if is_ugc and indicator_db_id:
             indicator = Indicator.objects.filter(id=indicator_db_id, table=table).first()
@@ -1089,7 +1272,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
         else:
             # Standard indicator lookup by indicator_id
             indicator = Indicator.objects.filter(table=table, indicator_id=effective_indicator_id)
-            
+
             if not indicator.exists() or not indicator.first():
                 response = JsonResponse(
                     {"error": f"Indicator with ID {effective_indicator_id} not found in table '{table_name}'"},
@@ -1237,7 +1420,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 # Don't modify paths that already have a valid prefix
                 valid_prefixes = ('indicators/', 'ugc_indicators/')
                 has_valid_prefix = any(image_path.startswith(p) for p in valid_prefixes)
-                
+
                 if not has_valid_prefix:
                     # Only add indicators/ prefix for non-UGC indicators
                     if is_ugc:
@@ -1298,7 +1481,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 status=400,
             )
             return response
-        
+
         table = Table.objects.filter(name=table_name).first()
         if not table:
             response = JsonResponse(
@@ -1306,10 +1489,10 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 status=404,
             )
             return response
-        
+
         # Get table-specific indicator state
         indicator_state = globals.get_indicator_state(table_name)
-        
+
         # Check if an indicator parameter was provided
         indicator_param = request.query_params.get("indicator")
         if indicator_param:
@@ -1330,7 +1513,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
         year_param = request.query_params.get("year")
         if year_param and year_param.isdigit():
             year = int(year_param)
-        
+
         indicator = Indicator.objects.filter(table=table, indicator_id=indicator_state["indicator_id"]).first()
         if not indicator:
             response = JsonResponse(
@@ -1347,13 +1530,13 @@ class CustomActionsViewSet(viewsets.ViewSet):
             state = State.objects.filter(
                 state_values=indicator_state["indicator_state"]
             ).first()
-            
+
             # If no exact match found, try to find a state with the specified year and scenario
             if not state:
                 current_scenario = indicator_state["indicator_state"].get("scenario")
                 states = State.objects.all()
                 for s in states:
-                    if (s.state_values.get("year") == year and 
+                    if (s.state_values.get("year") == year and
                         s.state_values.get("scenario") == current_scenario):
                         state = s
                         break
@@ -1519,7 +1702,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
         table = Table.objects.filter(name=table_name).first()
         if not table:
             return Response({'error': 'Table not found'}, status=404)
-        
+
         layers = GISLayer.objects.filter(table=table, is_active=True).order_by('order')
         data = []
         for layer in layers:
@@ -1530,22 +1713,22 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 'layer_type': layer.layer_type,
                 'style_config': layer.style_config,
             }
-            
+
             # For GeoJSON, include data or URL
             if layer.layer_type == 'geojson':
                 if layer.data:
                     layer_data['geojson'] = layer.data
                 elif layer.file_path:
                     layer_data['url'] = f'/api/gis_layers/{layer.id}/get_layer_geojson/'
-            
+
             data.append(layer_data)
-        
+
         response = JsonResponse(data, safe=False)
-        self._add_no_cache_headers(response)
+        # Enable caching for layer list (1 day) - significantly speeds up subsequent loads
+        response["Cache-Control"] = "public, max-age=86400"
         return response
 
 
-# Custom view to serve map files directly
 from django.http import FileResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 import os
@@ -1588,7 +1771,7 @@ class ImageUploadView(APIView):
                     {"error": "Table parameter is required"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            
+
             try:
                 table = Table.objects.filter(name=table_name).first()
                 if not table:
@@ -1596,7 +1779,7 @@ class ImageUploadView(APIView):
                         {"error": f"Table '{table_name}' not found"},
                         status=status.HTTP_404_NOT_FOUND,
                     )
-                
+
                 indicator = Indicator.objects.get(table=table, indicator_id=indicator_id)
                 state = State.objects.get(id=state_id)
 
@@ -1671,3 +1854,125 @@ class ImageUploadView(APIView):
                 {"error": f"Failed to upload image: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+class OTEFBoundsApplyView(APIView):
+    """
+    Apply bounds polygon for a given OTEF table and persist it to:
+    - OTEFViewportState.bounds_polygon in the database
+    - ot ef-interactive/frontend/data/model-bounds.json on disk
+    """
+
+    def post(self, request, *args, **kwargs):
+        table_name = request.data.get("table", "otef")
+        polygon = request.data.get("polygon")
+
+        if not isinstance(polygon, list) or len(polygon) < 3:
+            return Response(
+                {
+                    "error": "Invalid polygon. Must be a list of at least 3 vertices.",
+                    "expected_format": [{"x": 0, "y": 0}],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Basic vertex shape validation
+        cleaned_vertices = []
+        for vertex in polygon:
+            if not isinstance(vertex, dict):
+                return Response(
+                    {"error": "Each vertex must be an object with x and y properties."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                x = float(vertex.get("x"))
+                y = float(vertex.get("y"))
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "Vertex x and y must be numeric."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            cleaned_vertices.append({"x": x, "y": y})
+
+        # Persist to DB
+        table = Table.objects.filter(name=table_name).first()
+        if not table:
+            return Response(
+                {"error": f"Table '{table_name}' not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        state, _ = OTEFViewportState.objects.get_or_create(
+            table=table,
+            defaults={
+                "viewport": OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+                "layers": OTEFViewportState.DEFAULT_LAYERS.copy(),
+                "animations": {"parcels": False},
+            },
+        )
+        state.bounds_polygon = cleaned_vertices
+        state.save()
+
+        # Also mirror into OTEFModelConfig.model_bounds (if exists)
+        try:
+            config = OTEFModelConfig.objects.filter(table=table).first()
+            if config:
+                bounds = config.model_bounds or {}
+                bounds["polygon"] = cleaned_vertices
+                config.model_bounds = bounds
+                config.save()
+        except Exception as e:
+            # Non-fatal; log to console
+            print(f"Warning: failed to update OTEFModelConfig.model_bounds: {e}")
+
+        # Update Git-tracked JSON snapshot on disk
+        try:
+            # BASE_DIR typically points to nur-io/django_api; go up to repo root
+            project_root = os.path.abspath(os.path.join(settings.BASE_DIR, "..", ".."))
+            bounds_path = os.path.join(
+                project_root,
+                "otef-interactive",
+                "frontend",
+                "data",
+                "model-bounds.json",
+            )
+
+            if os.path.exists(bounds_path):
+                with open(bounds_path, "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
+            else:
+                json_data = {}
+
+            json_data["polygon"] = cleaned_vertices
+
+            # Ensure directory exists and write back with pretty formatting
+            os.makedirs(os.path.dirname(bounds_path), exist_ok=True)
+            with open(bounds_path, "w", encoding="utf-8") as f:
+                json.dump(json_data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Warning: failed to update model-bounds.json: {e}")
+
+        # Broadcast bounds change over WebSocket (optional, lightweight notification)
+        try:
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    "otef_channel",
+                    {
+                        "type": "broadcast_message",
+                        "message": {
+                            "type": "otef_bounds_changed",
+                            "table": table_name,
+                        },
+                    },
+                )
+        except Exception as e:
+            print(f"Warning: failed to broadcast bounds change: {e}")
+
+        return Response(
+            {
+                "status": "ok",
+                "table": table_name,
+                "bounds_polygon": cleaned_vertices,
+            }
+        )

@@ -32,13 +32,17 @@
         pointer-events: none;
         z-index: 5;
       }
+      /* Ensure crisp rendering for all canvas elements (projector output) */
+      canvas {
+        image-rendering: crisp-edges;
+        image-rendering: -webkit-optimize-contrast;
+      }
       #highlightOverlay {
         position: absolute;
         top: 0;
         left: 0;
         width: 100%;
         height: 100%;
-        pointer-events: none;
         z-index: 10;
       }
       .highlight-box {
@@ -47,8 +51,8 @@
         background: rgba(0, 255, 255, 0.15);
         box-shadow: 0 0 30px rgba(0, 255, 255, 0.8),
           inset 0 0 30px rgba(0, 255, 255, 0.4);
-        transition: all 300ms ease-out;
         pointer-events: none;
+        /* transition removed to favor 60fps LERP smoothing */
       }
 
       /* Simple instruction overlay - press H to toggle */
@@ -75,6 +79,63 @@
       #instructions.hidden {
         display: none;
       }
+
+      /* Bounds editor overlay */
+      #boundsEditorOverlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none; /* enabled selectively on shapes when editing */
+        z-index: 15;
+      }
+
+      .bounds-editor-active #boundsEditorOverlay {
+        pointer-events: auto;
+      }
+
+      .bounds-vertex {
+        fill: #00ffff;
+        stroke: #003b3b;
+        stroke-width: 2;
+        cursor: pointer;
+      }
+
+      .bounds-edge {
+        stroke: rgba(0, 255, 255, 0.7);
+        stroke-width: 2;
+        cursor: pointer;
+      }
+
+      #boundsToolbar {
+        position: fixed;
+        bottom: 12px;
+        left: 12px;
+        background: rgba(0, 0, 0, 0.85);
+        color: #fff;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-family: Arial, sans-serif;
+        font-size: 13px;
+        z-index: 120;
+        display: none;
+      }
+
+      #boundsToolbar button {
+        margin-left: 8px;
+        padding: 4px 10px;
+        background: #00bcd4;
+        border: none;
+        border-radius: 3px;
+        color: #fff;
+        cursor: pointer;
+        font-size: 12px;
+      }
+
+      #boundsToolbar button.secondary {
+        background: #555;
+      }
     </style>
   </head>
   <body>
@@ -87,6 +148,7 @@
       />
       <canvas id="layersCanvas"></canvas>
       <div id="highlightOverlay"></div>
+      <svg id="boundsEditorOverlay"></svg>
     </div>
 
 
@@ -96,22 +158,32 @@
       <p><strong>D</strong> - Toggle debug overlay</p>
       <p><strong>H</strong> - Toggle this help</p>
       <p><strong>F</strong> - Toggle fullscreen</p>
+      <p><strong>B</strong> - Toggle bounds editor</p>
       <p style="margin-top: 10px; font-size: 12px; color: #888">
         Warping/calibration should be done in TouchDesigner
       </p>
     </div>
 
-    <script src="js/coordinate-utils.js"></script>
-    <script src="js/vector-styling.js"></script>
-    <script src="js/layer-loader.js"></script>
-    <script src="js/layer-renderer-canvas.js"></script>
-    <script src="js/parcel-animator.js"></script>
-    <script src="js/debug-overlay.js"></script>
+    <div id="boundsToolbar">
+      <span>Bounds edit mode (click edges to add, double-click vertices to remove, drag to move)</span>
+      <button id="boundsApplyBtn">Apply</button>
+      <button id="boundsResetBtn" class="secondary">Reset to Rect</button>
+      <button id="boundsCancelBtn" class="secondary">Cancel</button>
+    </div>
+
+    <script src="js/map-utils/coordinate-utils.js"></script>
+    <script src="js/map-utils/vector-styling.js"></script>
+    <script src="js/map-utils/layer-loader.js"></script>
+    <script src="js/projection/layer-renderer-canvas.js"></script>
+    <script src="js/projection/parcel-animator.js"></script>
+    <script src="js/map-utils/debug-overlay.js"></script>
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
+    <script src="js/shared/api-client.js"></script>
+    <script src="js/shared/OTEFDataContext.js"></script>
     <script src="js/shared/table-switcher.js"></script>
     <script src="js/shared/table-switcher-popup.js"></script>
-    <script src="js/projection-display.js"></script>
+    <script src="js/projection/projection-display.js"></script>
     <script>
       // Initialize table switcher
       const tableSwitcher = new TableSwitcher({

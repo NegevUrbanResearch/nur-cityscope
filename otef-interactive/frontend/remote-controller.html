@@ -172,6 +172,18 @@
             <span class="toggle-indicator"></span>
             <span class="toggle-label">Model Base</span>
           </label>
+
+          <label class="layer-toggle" id="layerMajorRoadsLabel">
+            <input type="checkbox" id="toggleMajorRoads" />
+            <span class="toggle-indicator"></span>
+            <span class="toggle-label">Major Roads</span>
+          </label>
+
+          <label class="layer-toggle" id="layerSmallRoadsLabel">
+            <input type="checkbox" id="toggleSmallRoads" />
+            <span class="toggle-indicator"></span>
+            <span class="toggle-label">Small Roads</span>
+          </label>
         </div>
       </section>
     </main>
@@ -200,8 +212,10 @@
     <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
+    <script src="js/shared/api-client.js"></script>
+    <script src="js/shared/OTEFDataContext.js"></script>
     <script src="js/shared/table-switcher.js"></script>
-    <script src="js/remote-controller.js"></script>
+    <script src="js/remote/remote-controller.js"></script>
     <script>
       // Initialize table switcher
       const tableSwitcher = new TableSwitcher({

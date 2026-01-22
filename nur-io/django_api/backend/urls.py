@@ -17,6 +17,7 @@ from .views import (
     OTEFViewportStateViewSet,
     ImageUploadView,
     serve_map_file,
+    OTEFBoundsApplyView,
 )
 
 from rest_framework import permissions
@@ -63,8 +64,10 @@ urlpatterns = [
     ),
     path("redoc/", schema_view.with_ui("redoc", cache_timeout=0), name="schema-redoc"),
     path("swagger.json", schema_view.without_ui(cache_timeout=0), name="schema-json"),
-    # Add the new image upload endpoint
+    # Image upload endpoint
     path("upload_image/", ImageUploadView.as_view(), name="upload_image"),
+    # Bounds apply endpoint for OTEF interactive
+    path("otef/bounds/apply/", OTEFBoundsApplyView.as_view(), name="otef_bounds_apply"),
     # For serving map files directly
     path("maps/<path:path>", serve_map_file, name="serve_map_file"),
 ]

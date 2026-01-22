@@ -22,7 +22,40 @@ docker system prune -f
 echo ""
 echo "✅ Reset complete!"
 echo ""
-echo "5️⃣  Rebuilding and starting containers..."
+
+# Regenerate PMTiles (before starting containers)
+echo "5️⃣  Setting up OTEF PMTiles..."
+
+# Only generate PMTiles if they don't already exist
+if [ ! -f "otef-interactive/frontend/data/parcels.pmtiles" ]; then
+    # Create venv if it doesn't exist
+    VENV_PATH="otef-interactive/scripts/.venv"
+    if [ ! -d "$VENV_PATH" ]; then
+        echo "   Creating Python virtual environment..."
+        python3 -m venv "$VENV_PATH"
+    fi
+
+    # Install dependencies
+    echo "   Ensuring tile generation dependencies..."
+    "$VENV_PATH/bin/pip" install pyproj pmtiles -q
+
+    # Check if Docker is running for tile generation
+    if docker info >/dev/null 2>&1; then
+        echo "   Generating PMTiles for parcels layer..."
+        "$VENV_PATH/bin/python" "otef-interactive/scripts/generate-pmtiles.py"
+        if [ $? -ne 0 ]; then
+            echo "   Warning: PMTiles generation failed. Parcels will load slower via GeoJSON."
+        else
+            echo "   PMTiles generated successfully."
+        fi
+    else
+        echo "   Warning: Docker not running, skipping PMTiles generation"
+    fi
+else
+    echo "   PMTiles already exist, skipping generation"
+fi
+
+echo "6️⃣  Rebuilding and starting containers..."
 COMPOSE_BAKE=true docker-compose up --build -d
 
 echo ""
@@ -32,12 +65,30 @@ echo ""
 # Get local IP address
 get_local_ip() {
     # Try different methods to get the local IP
-    if command -v ip >/dev/null 2>&1; then
+    if [ "$(uname)" = "Darwin" ]; then
+        # macOS: Get the default interface and its IP
+        local default_if=$(route get default 2>/dev/null | grep interface | awk '{print $2}')
+        if [ -n "$default_if" ]; then
+            local ip=$(ipconfig getifaddr "$default_if" 2>/dev/null)
+            if [ -n "$ip" ] && [ "$ip" != "127.0.0.1" ]; then
+                echo "$ip"
+                return
+            fi
+        fi
+        # Fallback: try common interfaces
+        for iface in en0 en1 en2 en3; do
+            local ip=$(ipconfig getifaddr "$iface" 2>/dev/null)
+            if [ -n "$ip" ] && [ "$ip" != "127.0.0.1" ]; then
+                echo "$ip"
+                return
+            fi
+        done
+        # Last resort: use ifconfig to find first non-loopback IPv4
+        ifconfig 2>/dev/null | grep -E "inet [0-9]" | grep -v "127.0.0.1" | awk '{print $2}' | head -1 | grep -v "^$"
+    elif command -v ip >/dev/null 2>&1; then
         ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' | grep -v "^$"
     elif command -v hostname >/dev/null 2>&1; then
         hostname -I 2>/dev/null | awk '{print $1}' | grep -v "^$"
-    elif [ "$(uname)" = "Darwin" ]; then
-        ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null
     fi
 }
 
