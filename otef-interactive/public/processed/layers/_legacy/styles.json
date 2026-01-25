@@ -1,0 +1,43 @@
+{
+  "migrashim": {
+    "type": "polygon",
+    "renderer": "landUse",
+    "landUseField": "TARGUMYEUD",
+    "landUseFieldFallback": "KVUZ_TRG",
+    "defaultStyle": {
+      "fillColor": "#E0E0E0",
+      "fillOpacity": 0.7,
+      "strokeColor": "#333333",
+      "strokeWidth": 0.5
+    }
+  },
+  "small_roads": {
+    "type": "polygon",
+    "renderer": "simple",
+    "defaultStyle": {
+      "fillColor": "#A0A0A0",
+      "fillOpacity": 0.6,
+      "strokeColor": "#707070",
+      "strokeWidth": 0.5
+    }
+  },
+  "road_big": {
+    "type": "line",
+    "renderer": "majorRoad",
+    "defaultStyle": {
+      "strokeColor": "#CD853F",
+      "strokeWidth": 3.0,
+      "strokeOpacity": 0.85
+    }
+  },
+  "small_road_limited": {
+    "type": "polygon",
+    "renderer": "simple",
+    "defaultStyle": {
+      "fillColor": "#A0A0A0",
+      "fillOpacity": 0.6,
+      "strokeColor": "#707070",
+      "strokeWidth": 0.5
+    }
+  }
+}

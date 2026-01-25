@@ -1,0 +1,1082 @@
+{
+  "_legacy/migrashim": {
+    "hash": "5361eda760e68f22345d693f8a49d7235d8ef3d10a805c06ec398ac9ded9d158",
+    "lyrx_hash": null,
+    "style": {
+      "type": "polygon",
+      "renderer": "simple",
+      "defaultStyle": {
+        "fillColor": "#808080",
+        "fillOpacity": 0.7,
+        "strokeColor": "#000000",
+        "strokeWidth": 1.0
+      }
+    },
+    "format": "geojson"
+  },
+  "_legacy/small_roads": {
+    "hash": "53aa95536d82ccf3a2b00b12dfddbe1c92e9cd15d7b2e524d81411668240cc98",
+    "lyrx_hash": null,
+    "style": {
+      "type": "polygon",
+      "renderer": "simple",
+      "defaultStyle": {
+        "fillColor": "#808080",
+        "fillOpacity": 0.7,
+        "strokeColor": "#000000",
+        "strokeWidth": 1.0
+      }
+    },
+    "format": "geojson"
+  },
+  "_legacy/road-big": {
+    "hash": "86ddb39fa3c406c7940d526886f8c57c7bfd9fad38d84ee897d26952a1909abc",
+    "lyrx_hash": null,
+    "style": {
+      "type": "line",
+      "renderer": "simple",
+      "defaultStyle": {
+        "fillColor": "#808080",
+        "fillOpacity": 0.7,
+        "strokeColor": "#000000",
+        "strokeWidth": 1.0
+      }
+    },
+    "format": "geojson"
+  },
+  "_legacy/Small-road-limited": {
+    "hash": "53aa95536d82ccf3a2b00b12dfddbe1c92e9cd15d7b2e524d81411668240cc98",
+    "lyrx_hash": null,
+    "style": {
+      "type": "polygon",
+      "renderer": "simple",
+      "defaultStyle": {
+        "fillColor": "#808080",
+        "fillOpacity": 0.7,
+        "strokeColor": "#000000",
+        "strokeWidth": 1.0
+      }
+    },
+    "format": "geojson"
+  },
+  "map_3_future/\u05d0\u05e0\u05d3\u05e8\u05d8\u05d0\u05d5\u05ea \u05d5\u05de\u05d5\u05e7\u05d3\u05d9 \u05d4\u05e0\u05e6\u05d7\u05d4": {
+    "hash": "86abc01bcf56755df60afdc23fed8ec4ecd56ce568a7056a00cbcda3ce2fa77e",
+    "lyrx_hash": "9a52d9ea4fc168d3695eb68bff819d4bceeebfe7026d568f13d98041f82a9bda",
+    "style": {
+      "type": "point",
+      "renderer": "simple",
+      "defaultStyle": {
+        "fillColor": "#a83800",
+        "fillOpacity": 1.0,
+        "strokeColor": "#000000",
+        "strokeWidth": 0.7
+      },
+      "fullSymbolLayers": [
+        {
+          "type": "CIMVectorMarker",
+          "enable": true,
+          "anchorPoint": {
+            "x": 0,
+            "y": 0
+          },
+          "anchorPointUnits": "Relative",
+          "dominantSizeAxis3D": "Z",
+          "size": 6,
+          "billboardMode3D": "FaceNearPlane",
+          "frame": {
+            "xmin": -2,
+            "ymin": -2,
+            "xmax": 2,
+            "ymax": 2
+          },
+          "markerGraphics": [
+            {
+              "type": "CIMMarkerGraphic",
+              "geometry": {
+                "curveRings": [
+                  [
+                    [
+                      1.2246467991473532e-16,
+                      2
+                    ],
+                    {
+                      "a": [
+                        [
+                          1.2246467991473532e-16,
+                          2
+                        ],
+                        [
+                          2.143131898507868e-16,
+                          0
+                        ],
+                        0,
+                        1
+                      ]
+                    }
+                  ]
+                ]
+              },
+              "symbol": {
+                "type": "CIMPolygonSymbol",
+                "symbolLayers": [
+                  {
+                    "type": "CIMSolidStroke",
+                    "enable": true,
+                    "capStyle": "Round",
+                    "joinStyle": "Round",
+                    "lineStyle3D": "Strip",
+                    "miterLimit": 10,
+                    "width": 0.7,
+                    "height3D": 1,
+                    "anchor3D": "Center",
+                    "color": {
+                      "type": "CIMRGBColor",
+                      "values": [
+                        0,
+                        0,
+                        0,
+                        100
+                      ]
+                    }
+                  },
+                  {
+                    "type": "CIMSolidFill",
+                    "enable": true,
+                    "color": {
+                      "type": "CIMRGBColor",
+                      "values": [
+                        168,
+                        56,
+                        0,
+                        100
+                      ]
+                    }
+                  }
+                ],
+                "angleAlignment": "Map"
+              }
+            }
+          ],
+          "scaleSymbolsProportionally": true,
+          "respectFrame": true
+        },
+        {
+          "type": "CIMSolidStroke",
+          "enable": true,
+          "capStyle": "Round",
+          "joinStyle": "Round",
+          "lineStyle3D": "Strip",
+          "miterLimit": 10,
+          "width": 0.7,
+          "height3D": 1,
+          "anchor3D": "Center",
+          "color": {
+            "type": "CIMRGBColor",
+            "values": [
+              0,
+              0,
+              0,
+              100
+            ]
+          }
+        },
+        {
+          "type": "CIMSolidFill",
+          "enable": true,
+          "color": {
+            "type": "CIMRGBColor",
+            "values": [
+              168,
+              56,
+              0,
+              100
+            ]
+          }
+        }
+      ],
+      "labels": {
+        "field": "Name",
+        "font": "Tahoma",
+        "size": 10
+      }
+    },
+    "format": "geojson"
+  },
+  "map_3_future/\u05d4\u05e7\u05d5 \u05d4\u05d5\u05e8\u05d5\u05d3": {
+    "hash": "8a4e45433356db3c5bd2e838b366d564f484b6d3620e97d0807e9a9ae7b6f170",
+    "lyrx_hash": "5bae9ebee7716232c0ffc205a97fa228d629ad8d0e8f9f74e310a51f74de7778",
+    "style": {
+      "type": "line",
+      "renderer": "simple",
+      "defaultStyle": {
+        "fillColor": "#808080",
+        "fillOpacity": 1.0,
+        "strokeColor": "#ff7f7f",
+        "strokeWidth": 1
+      },
+      "fullSymbolLayers": [
+        {
+          "type": "CIMSolidStroke",
+          "enable": true,
+          "capStyle": "Round",
+          "joinStyle": "Round",
+          "lineStyle3D": "Strip",
+          "miterLimit": 10,
+          "width": 1,
+          "height3D": 1,
+          "anchor3D": "Center",
+          "color": {
+            "type": "CIMRGBColor",
+            "values": [
+              255,
+              127,
+              127,
+              100
+            ]
+          }
+        }
+      ],
+      "labels": {
+        "field": "RefName",
+        "font": "Tahoma",
+        "size": 10
+      }
+    },
+    "format": "geojson"
+  },
+  "map_3_future/\u05de\u05d5\u05d6\u05d9\u05d0\u05d5\u05e0\u05d9\u05dd \u05de\u05e8\u05db\u05d6\u05d9 \u05de\u05d1\u05e7\u05e8\u05d9\u05dd \u05d5\u05de\u05d5\u05e7\u05d3\u05d9 \u05ea\u05e8\u05d1\u05d5\u05ea": {
+    "hash": "5a5972ec29ac35f97c662d17520772c176f9c68027ca094501f37207b168b5d0",
+    "lyrx_hash": "bdb7e13ef66f0e02758f6bf21ad1006d34b681a4df594ab2d5b309e562c2e2a3",
+    "style": {
+      "type": "point",
+      "renderer": "simple",
+      "defaultStyle": {
+        "fillColor": "#a8a800",
+        "fillOpacity": 1.0,
+        "strokeColor": "#000000",
+        "strokeWidth": 0.7
+      },
+      "fullSymbolLayers": [
+        {
+          "type": "CIMVectorMarker",
+          "enable": true,
+          "anchorPoint": {
+            "x": 0,
+            "y": 0
+          },
+          "anchorPointUnits": "Relative",
+          "dominantSizeAxis3D": "Z",
+          "size": 6,
+          "billboardMode3D": "FaceNearPlane",
+          "frame": {
+            "xmin": -2,
+            "ymin": -2,
+            "xmax": 2,
+            "ymax": 2
+          },
+          "markerGraphics": [
+            {
+              "type": "CIMMarkerGraphic",
+              "geometry": {
+                "curveRings": [
+                  [
+                    [
+                      1.2246467991473532e-16,
+                      2
+                    ],
+                    {
+                      "a": [
+                        [
+                          1.2246467991473532e-16,
+                          2
+                        ],
+                        [
+                          2.143131898507868e-16,
+                          0
+                        ],
+                        0,
+                        1
+                      ]
+                    }
+                  ]
+                ]
+              },
+              "symbol": {
+                "type": "CIMPolygonSymbol",
+                "symbolLayers": [
+                  {
+                    "type": "CIMSolidStroke",
+                    "enable": true,
+                    "capStyle": "Round",
+                    "joinStyle": "Round",
+                    "lineStyle3D": "Strip",
+                    "miterLimit": 10,
+                    "width": 0.7,
+                    "height3D": 1,
+                    "anchor3D": "Center",
+                    "color": {
+                      "type": "CIMRGBColor",
+                      "values": [
+                        0,
+                        0,
+                        0,
+                        100
+                      ]
+                    }
+                  },
+                  {
+                    "type": "CIMSolidFill",
+                    "enable": true,
+                    "color": {
+                      "type": "CIMRGBColor",
+                      "values": [
+                        168,
+                        168,
+                        0,
+                        100
+                      ]
+                    }
+                  }
+                ],
+                "angleAlignment": "Map"
+              }
+            }
+          ],
+          "scaleSymbolsProportionally": true,
+          "respectFrame": true
+        },
+        {
+          "type": "CIMSolidStroke",
+          "enable": true,
+          "capStyle": "Round",
+          "joinStyle": "Round",
+          "lineStyle3D": "Strip",
+          "miterLimit": 10,
+          "width": 0.7,
+          "height3D": 1,
+          "anchor3D": "Center",
+          "color": {
+            "type": "CIMRGBColor",
+            "values": [
+              0,
+              0,
+              0,
+              100
+            ]
+          }
+        },
+        {
+          "type": "CIMSolidFill",
+          "enable": true,
+          "color": {
+            "type": "CIMRGBColor",
+            "values": [
+              168,
+              168,
+              0,
+              100
+            ]
+          }
+        }
+      ],
+      "labels": {
+        "field": "Name",
+        "font": "Tahoma",
+        "size": 10
+      }
+    },
+    "format": "geojson"
+  },
+  "map_3_future/\u05de\u05d5\u05e7\u05d3\u05d9 \u05de\u05d5\u05e8\u05e9\u05ea": {
+    "hash": "25d600357e28f7606cf7712a454f68dba7b64f68f5bfd7a4518d78fcdeb604b9",
+    "lyrx_hash": "a97ff83a360e7f303e9611e22db2339de7357192e1d35cfbf4dd6e9825f36f8f",
+    "style": {
+      "type": "point",
+      "renderer": "simple",
+      "defaultStyle": {
+        "fillColor": "#00a884",
+        "fillOpacity": 1.0,
+        "strokeColor": "#000000",
+        "strokeWidth": 0.7
+      },
+      "fullSymbolLayers": [
+        {
+          "type": "CIMVectorMarker",
+          "enable": true,
+          "anchorPoint": {
+            "x": 0,
+            "y": 0
+          },
+          "anchorPointUnits": "Relative",
+          "dominantSizeAxis3D": "Z",
+          "size": 6,
+          "billboardMode3D": "FaceNearPlane",
+          "frame": {
+            "xmin": -2,
+            "ymin": -2,
+            "xmax": 2,
+            "ymax": 2
+          },
+          "markerGraphics": [
+            {
+              "type": "CIMMarkerGraphic",
+              "geometry": {
+                "curveRings": [
+                  [
+                    [
+                      1.2246467991473532e-16,
+                      2
+                    ],
+                    {
+                      "a": [
+                        [
+                          1.2246467991473532e-16,
+                          2
+                        ],
+                        [
+                          2.143131898507868e-16,
+                          0
+                        ],
+                        0,
+                        1
+                      ]
+                    }
+                  ]
+                ]
+              },
+              "symbol": {
+                "type": "CIMPolygonSymbol",
+                "symbolLayers": [
+                  {
+                    "type": "CIMSolidStroke",
+                    "enable": true,
+                    "capStyle": "Round",
+                    "joinStyle": "Round",
+                    "lineStyle3D": "Strip",
+                    "miterLimit": 10,
+                    "width": 0.7,
+                    "height3D": 1,
+                    "anchor3D": "Center",
+                    "color": {
+                      "type": "CIMRGBColor",
+                      "values": [
+                        0,
+                        0,
+                        0,
+                        100
+                      ]
+                    }
+                  },
+                  {
+                    "type": "CIMSolidFill",
+                    "enable": true,
+                    "color": {
+                      "type": "CIMRGBColor",
+                      "values": [
+                        0,
+                        168,
+                        132,
+                        100
+                      ]
+                    }
+                  }
+                ],
+                "angleAlignment": "Map"
+              }
+            }
+          ],
+          "scaleSymbolsProportionally": true,
+          "respectFrame": true
+        },
+        {
+          "type": "CIMSolidStroke",
+          "enable": true,
+          "capStyle": "Round",
+          "joinStyle": "Round",
+          "lineStyle3D": "Strip",
+          "miterLimit": 10,
+          "width": 0.7,
+          "height3D": 1,
+          "anchor3D": "Center",
+          "color": {
+            "type": "CIMRGBColor",
+            "values": [
+              0,
+              0,
+              0,
+              100
+            ]
+          }
+        },
+        {
+          "type": "CIMSolidFill",
+          "enable": true,
+          "color": {
+            "type": "CIMRGBColor",
+            "values": [
+              0,
+              168,
+              132,
+              100
+            ]
+          }
+        }
+      ],
+      "labels": {
+        "field": "Name",
+        "font": "Tahoma",
+        "size": 10
+      }
+    },
+    "format": "geojson"
+  },
+  "map_3_future/\u05de\u05d5\u05e7\u05d3\u05d9\u05dd \u05d0\u05e8\u05db\u05d0\u05d5\u05dc\u05d5\u05d2\u05d9\u05d9\u05dd": {
+    "hash": "5a5b58b18d193efff63341fd769e06a7223aa6b61e61121c43278ba902cb3b21",
+    "lyrx_hash": "3fcef3392da1aa787f6cc57de7ddb0319f5d95a9ae5283797af7505c34a254ae",
+    "style": {
+      "type": "point",
+      "renderer": "simple",
+      "defaultStyle": {
+        "fillColor": "#737300",
+        "fillOpacity": 1.0,
+        "strokeColor": "#000000",
+        "strokeWidth": 0.7
+      },
+      "fullSymbolLayers": [
+        {
+          "type": "CIMVectorMarker",
+          "enable": true,
+          "anchorPoint": {
+            "x": 0,
+            "y": 0
+          },
+          "anchorPointUnits": "Relative",
+          "dominantSizeAxis3D": "Z",
+          "size": 6,
+          "billboardMode3D": "FaceNearPlane",
+          "frame": {
+            "xmin": -2,
+            "ymin": -2,
+            "xmax": 2,
+            "ymax": 2
+          },
+          "markerGraphics": [
+            {
+              "type": "CIMMarkerGraphic",
+              "geometry": {
+                "curveRings": [
+                  [
+                    [
+                      1.2246467991473532e-16,
+                      2
+                    ],
+                    {
+                      "a": [
+                        [
+                          1.2246467991473532e-16,
+                          2
+                        ],
+                        [
+                          1.8369701987210297e-16,
+                          0
+                        ],
+                        0,
+                        1
+                      ]
+                    }
+                  ]
+                ]
+              },
+              "symbol": {
+                "type": "CIMPolygonSymbol",
+                "symbolLayers": [
+                  {
+                    "type": "CIMSolidStroke",
+                    "enable": true,
+                    "capStyle": "Round",
+                    "joinStyle": "Round",
+                    "lineStyle3D": "Strip",
+                    "miterLimit": 10,
+                    "width": 0.7,
+                    "height3D": 1,
+                    "anchor3D": "Center",
+                    "color": {
+                      "type": "CIMRGBColor",
+                      "values": [
+                        0,
+                        0,
+                        0,
+                        100
+                      ]
+                    }
+                  },
+                  {
+                    "type": "CIMSolidFill",
+                    "enable": true,
+                    "color": {
+                      "type": "CIMRGBColor",
+                      "values": [
+                        115,
+                        115,
+                        0,
+                        100
+                      ]
+                    }
+                  }
+                ],
+                "angleAlignment": "Map"
+              }
+            }
+          ],
+          "scaleSymbolsProportionally": true,
+          "respectFrame": true
+        },
+        {
+          "type": "CIMSolidStroke",
+          "enable": true,
+          "capStyle": "Round",
+          "joinStyle": "Round",
+          "lineStyle3D": "Strip",
+          "miterLimit": 10,
+          "width": 0.7,
+          "height3D": 1,
+          "anchor3D": "Center",
+          "color": {
+            "type": "CIMRGBColor",
+            "values": [
+              0,
+              0,
+              0,
+              100
+            ]
+          }
+        },
+        {
+          "type": "CIMSolidFill",
+          "enable": true,
+          "color": {
+            "type": "CIMRGBColor",
+            "values": [
+              115,
+              115,
+              0,
+              100
+            ]
+          }
+        }
+      ],
+      "labels": {
+        "field": "Name",
+        "font": "Tahoma",
+        "size": 10
+      }
+    },
+    "format": "geojson"
+  },
+  "map_3_future/\u05de\u05d9\u05de\u05d5\u05e9\u05d9\u05dd": {
+    "hash": "5ba57de2a00100390c10201aef0960854f90d77bc48f9a78f2728ac522ed75f5",
+    "lyrx_hash": "f51cf944713fe74f70831c86d2d1732ae9a5895e49c8f3c5750e6db846bc0d7a",
+    "style": {
+      "type": "polygon",
+      "renderer": "uniqueValue",
+      "defaultStyle": {
+        "fillColor": "#d76e89",
+        "fillOpacity": 1.0,
+        "strokeColor": "#6e6e6e",
+        "strokeWidth": 0.4
+      },
+      "fullSymbolLayers": [],
+      "labels": {
+        "field": "MIGRASH",
+        "font": "Tahoma",
+        "size": 10
+      },
+      "scaleRange": null,
+      "uniqueValues": {
+        "fields": [
+          "mimush"
+        ],
+        "field": "mimush",
+        "classes": [
+          {
+            "values": [
+              [
+                "0"
+              ]
+            ],
+            "value": "0",
+            "label": "\u05dc\u05d0 \u05de\u05d5\u05de\u05e9",
+            "style": {
+              "fillColor": "#d76e89",
+              "fillOpacity": 1.0,
+              "strokeColor": "#6e6e6e",
+              "strokeWidth": 0.4
+            },
+            "fullSymbolLayers": [
+              {
+                "type": "CIMSolidStroke",
+                "enable": true,
+                "capStyle": "Round",
+                "joinStyle": "Round",
+                "lineStyle3D": "Strip",
+                "miterLimit": 10,
+                "width": 0.4,
+                "height3D": 1,
+                "anchor3D": "Center",
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    110,
+                    110,
+                    110,
+                    0
+                  ]
+                }
+              },
+              {
+                "type": "CIMSolidFill",
+                "enable": true,
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    215,
+                    110,
+                    137,
+                    100
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "values": [
+              [
+                "1"
+              ]
+            ],
+            "value": "1",
+            "label": "\u05de\u05d5\u05de\u05e9",
+            "style": {
+              "fillColor": "#76b5c5",
+              "fillOpacity": 1.0,
+              "strokeColor": "#cccccc",
+              "strokeWidth": 0.4
+            },
+            "fullSymbolLayers": [
+              {
+                "type": "CIMSolidStroke",
+                "enable": true,
+                "capStyle": "Round",
+                "joinStyle": "Round",
+                "lineStyle3D": "Strip",
+                "miterLimit": 10,
+                "width": 0.4,
+                "height3D": 1,
+                "anchor3D": "Center",
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    204,
+                    204,
+                    204,
+                    100
+                  ]
+                }
+              },
+              {
+                "type": "CIMSolidFill",
+                "enable": true,
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    118,
+                    181,
+                    197,
+                    100
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "format": "geojson",
+    "has_pmtiles": true
+  },
+  "map_3_future/\u05de\u05ea\u05d7\u05de\u05d9 \u05d3\u05d9\u05d5\u05e8": {
+    "hash": "98cb01a1b25dc8c60ccbc7328ed85a5124d022fcab0af542d7b39a771e4287d7",
+    "lyrx_hash": "e93290fbf0ed1ba8f5c99363870d0e9faa27345991981136f5c1b1237f141806",
+    "style": {
+      "type": "polygon",
+      "renderer": "uniqueValue",
+      "defaultStyle": {
+        "fillColor": "#000000",
+        "fillOpacity": 0.0,
+        "strokeColor": "#e60000",
+        "strokeWidth": 2
+      },
+      "fullSymbolLayers": [],
+      "labels": {
+        "field": "POLYGON_NAME",
+        "font": "Tahoma",
+        "size": 10
+      },
+      "uniqueValues": {
+        "fields": [
+          "SYMBOLOGY"
+        ],
+        "field": "SYMBOLOGY",
+        "classes": [
+          {
+            "values": [
+              [
+                "0"
+              ]
+            ],
+            "value": "0",
+            "label": "\u05d9\u05d5\u05d6\u05de\u05d5\u05ea \u05d5\u05db\u05d5\u05d5\u05e0\u05d5\u05ea \u05ea\u05db\u05e0\u05d5\u05df",
+            "style": {
+              "fillColor": "#000000",
+              "fillOpacity": 0.0,
+              "strokeColor": "#e60000",
+              "strokeWidth": 2
+            },
+            "fullSymbolLayers": [
+              {
+                "type": "CIMSolidStroke",
+                "enable": true,
+                "colorLocked": true,
+                "capStyle": "Butt",
+                "joinStyle": "Round",
+                "lineStyle3D": "Strip",
+                "miterLimit": 10,
+                "width": 2,
+                "height3D": 1,
+                "anchor3D": "Center",
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    230,
+                    0,
+                    0,
+                    100
+                  ]
+                }
+              },
+              {
+                "type": "CIMSolidFill",
+                "enable": true,
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "values": [
+              [
+                "1"
+              ]
+            ],
+            "value": "1",
+            "label": "\u05e7\u05d3\u05dd \u05ea\u05db\u05e0\u05d5\u05df",
+            "style": {
+              "fillColor": "#000000",
+              "fillOpacity": 0.0,
+              "strokeColor": "#e69800",
+              "strokeWidth": 2
+            },
+            "fullSymbolLayers": [
+              {
+                "type": "CIMSolidStroke",
+                "enable": true,
+                "colorLocked": true,
+                "capStyle": "Butt",
+                "joinStyle": "Round",
+                "lineStyle3D": "Strip",
+                "miterLimit": 10,
+                "width": 2,
+                "height3D": 1,
+                "anchor3D": "Center",
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    230,
+                    152,
+                    0,
+                    100
+                  ]
+                }
+              },
+              {
+                "type": "CIMSolidFill",
+                "enable": true,
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "values": [
+              [
+                "2"
+              ]
+            ],
+            "value": "2",
+            "label": "\u05d1\u05ea\u05d4\u05dc\u05d9\u05da",
+            "style": {
+              "fillColor": "#000000",
+              "fillOpacity": 0.0,
+              "strokeColor": "#6699cd",
+              "strokeWidth": 2
+            },
+            "fullSymbolLayers": [
+              {
+                "type": "CIMSolidStroke",
+                "enable": true,
+                "colorLocked": true,
+                "capStyle": "Butt",
+                "joinStyle": "Round",
+                "lineStyle3D": "Strip",
+                "miterLimit": 10,
+                "width": 2,
+                "height3D": 1,
+                "anchor3D": "Center",
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    102,
+                    153,
+                    205,
+                    100
+                  ]
+                }
+              },
+              {
+                "type": "CIMSolidFill",
+                "enable": true,
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "values": [
+              [
+                "3"
+              ]
+            ],
+            "value": "3",
+            "label": "\u05de\u05d0\u05d5\u05e9\u05e8",
+            "style": {
+              "fillColor": "#000000",
+              "fillOpacity": 0.0,
+              "strokeColor": "#005ce6",
+              "strokeWidth": 2
+            },
+            "fullSymbolLayers": [
+              {
+                "type": "CIMSolidStroke",
+                "enable": true,
+                "colorLocked": true,
+                "capStyle": "Butt",
+                "joinStyle": "Round",
+                "lineStyle3D": "Strip",
+                "miterLimit": 10,
+                "width": 2,
+                "height3D": 1,
+                "anchor3D": "Center",
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    0,
+                    92,
+                    230,
+                    100
+                  ]
+                }
+              },
+              {
+                "type": "CIMSolidFill",
+                "enable": true,
+                "color": {
+                  "type": "CIMRGBColor",
+                  "values": [
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "format": "geojson"
+  },
+  "map_3_future/\u05e6\u05d9\u05e8 232": {
+    "hash": "19bd40d315eb000d5f68038849b5c3006f2be3990036f14941870d56729961af",
+    "lyrx_hash": "39e777239a2adea6b666743a94f29085df870c15e597a4e1c806832c0c5fad6b",
+    "style": {
+      "type": "line",
+      "renderer": "simple",
+      "defaultStyle": {
+        "fillColor": "#808080",
+        "fillOpacity": 1.0,
+        "strokeColor": "#873e23",
+        "strokeWidth": 1
+      },
+      "fullSymbolLayers": [
+        {
+          "type": "CIMSolidStroke",
+          "enable": true,
+          "capStyle": "Round",
+          "joinStyle": "Round",
+          "lineStyle3D": "Strip",
+          "miterLimit": 10,
+          "width": 1,
+          "height3D": 1,
+          "anchor3D": "Center",
+          "color": {
+            "type": "CIMRGBColor",
+            "values": [
+              135,
+              62,
+              35,
+              100
+            ]
+          }
+        }
+      ],
+      "labels": {
+        "field": "NAME",
+        "font": "Tahoma",
+        "size": 10
+      }
+    },
+    "format": "geojson"
+  }
+}

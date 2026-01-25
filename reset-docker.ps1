@@ -45,26 +45,25 @@ Write-Host ""
 # Regenerate PMTiles (before starting containers)
 Write-Host "5. Setting up OTEF PMTiles..." -ForegroundColor Cyan
 
-# Only generate PMTiles if they don't already exist
 $pmtilesPath = "otef-interactive\frontend\data\parcels.pmtiles"
-if (-not (Test-Path $pmtilesPath)) {
-    $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $pythonCmd) {
-        $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
+$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+if (-not $pythonCmd) {
+    $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
+}
+
+if ($pythonCmd) {
+    # Create venv if it doesn't exist
+    $venvPath = "otef-interactive\scripts\.venv"
+    if (-not (Test-Path $venvPath)) {
+        Write-Host "   Creating Python virtual environment..." -ForegroundColor Gray
+        & $pythonCmd.Name -m venv "$venvPath"
     }
 
-    if ($pythonCmd) {
-        # Create venv if it doesn't exist
-        $venvPath = "otef-interactive\scripts\.venv"
-        if (-not (Test-Path $venvPath)) {
-            Write-Host "   Creating Python virtual environment..." -ForegroundColor Gray
-            & $pythonCmd.Name -m venv "$venvPath"
-        }
+    # Install dependencies (quick check, pip handles already-installed packages efficiently)
+    Write-Host "   Ensuring tile generation dependencies..." -ForegroundColor Gray
+    & "$venvPath\Scripts\pip" install -r "otef-interactive\scripts\requirements.txt" -q
 
-        # Install dependencies (quick check, pip handles already-installed packages efficiently)
-        Write-Host "   Ensuring tile generation dependencies..." -ForegroundColor Gray
-        & "$venvPath\Scripts\pip" install pyproj pmtiles -q
-
+    if (-not (Test-Path $pmtilesPath)) {
         # Check if Docker is running for tile generation
         $dockerRunning = docker info 2>$null
         if ($LASTEXITCODE -eq 0) {
@@ -79,10 +78,37 @@ if (-not (Test-Path $pmtilesPath)) {
             Write-Host "   Warning: Docker not running, skipping PMTiles generation" -ForegroundColor Yellow
         }
     } else {
-        Write-Host "   Warning: Python not found, skipping PMTiles generation" -ForegroundColor Yellow
+        Write-Host "   PMTiles already exist, skipping generation" -ForegroundColor Gray
+    }
+
+    $dockerRunning = docker info 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $manifestPath = "otef-interactive\public\processed\layers\layers-manifest.json"
+        # Only process if manifest doesn't exist or is older than source files
+        $shouldProcess = $true
+        if (Test-Path $manifestPath) {
+            $manifestTime = (Get-Item $manifestPath).LastWriteTime
+            $sourceDir = "otef-interactive\public\source\layers"
+            # Check if any source files are newer than manifest
+            $newerFiles = Get-ChildItem -Path $sourceDir -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -gt $manifestTime }
+            if ($null -eq $newerFiles -or $newerFiles.Count -eq 0) {
+                Write-Host "   Layer packs already processed (manifest up to date), skipping..." -ForegroundColor Gray
+                $shouldProcess = $false
+            }
+        }
+
+        if ($shouldProcess) {
+            Write-Host "   Processing layer packs (PMTiles/manifests)..." -ForegroundColor Gray
+            & "$venvPath\Scripts\python" "otef-interactive\scripts\process_layers.py" `
+                --source "otef-interactive\public\source\layers" `
+                --output "otef-interactive\public\processed\layers"
+        }
+    } else {
+        Write-Host "   Warning: Docker not running, skipping layer pack processing" -ForegroundColor Yellow
     }
 } else {
-    Write-Host "   PMTiles already exist, skipping generation" -ForegroundColor Gray
+    Write-Host "   Warning: Python not found, skipping PMTiles generation" -ForegroundColor Yellow
 }
 
 # Rebuild and start containers

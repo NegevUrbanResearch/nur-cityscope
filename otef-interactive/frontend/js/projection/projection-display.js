@@ -61,10 +61,23 @@ fetch("data/model-bounds.json")
           })
         );
 
+        const initialLayerGroups = OTEFDataContext.getLayerGroups();
+        if (initialLayerGroups) {
+          syncLayerGroupsFromState(initialLayerGroups);
+        }
+
         window._otefUnsubscribeFunctions.push(
           OTEFDataContext.subscribe('layers', (layers) => {
             if (layers) {
               syncLayersFromState(layers);
+            }
+          })
+        );
+
+        window._otefUnsubscribeFunctions.push(
+          OTEFDataContext.subscribe('layerGroups', (layerGroups) => {
+            if (layerGroups) {
+              syncLayerGroupsFromState(layerGroups);
             }
           })
         );
@@ -709,10 +722,7 @@ function toggleBoundsEditMode() {
 /**
  * Initialize layers - create Canvas renderer and load default layers
  */
-/**
- * Initialize layers - create Canvas renderer and load default layers
- */
-function initializeLayers() {
+async function initializeLayers() {
   if (!modelBounds) {
     console.error("Cannot initialize layers: model bounds not loaded");
     return;
@@ -721,7 +731,7 @@ function initializeLayers() {
   // Create Canvas renderer (replaces SVG for performance)
   try {
     canvasRenderer = new CanvasLayerRenderer("displayContainer");
-    console.log("Canvas layer renderer created");
+    console.log("[Projection] Canvas layer renderer created");
 
     // Update canvas position now
     const displayBounds = getDisplayedImageBounds();
@@ -729,8 +739,28 @@ function initializeLayers() {
       canvasRenderer.updatePosition(displayBounds, modelBounds);
     }
   } catch (error) {
-    console.error("Failed to create Canvas renderer:", error);
+    console.error("[Projection] Failed to create Canvas renderer:", error);
     return;
+  }
+
+  // Initialize layer registry if available
+  if (typeof layerRegistry !== 'undefined') {
+    await layerRegistry.init();
+
+    // Load layers from new layer groups system
+    if (layerRegistry._initialized) {
+      await loadProjectionLayerGroups();
+
+      // Now that layerRegistry is initialized, sync with current state from OTEFDataContext
+      // This handles the case where OTEFDataContext loaded state before layerRegistry was ready
+      if (typeof OTEFDataContext !== 'undefined') {
+        const currentLayerGroups = OTEFDataContext.getLayerGroups();
+        if (currentLayerGroups) {
+          // Sync layer groups after registry init
+          syncLayerGroupsFromState(currentLayerGroups);
+        }
+      }
+    }
   }
 
   // Set default layer states (roads on, others off)
@@ -738,7 +768,7 @@ function initializeLayers() {
   layerState.parcels = false;
   layerState.model = false;
 
-  // Parallel loading for initial layers
+  // Parallel loading for initial legacy layers
   const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
   const apiUrl = `/api/actions/get_otef_layers/?table=${tableName}`;
 
@@ -749,18 +779,9 @@ function initializeLayers() {
     })
     .then(layers => {
        // Load roads layer immediately (it's default visible)
-       // We can also preload others if we want, but for now stick to default behavior
-       // Note: we could load all in parallel here if we wanted to preload everything
-       // But for projector, we might want to keep memory usage low until needed
-
-       // Load roads (default on)
        loadRoadsLayer(layers.find(l => l.name === 'roads')).catch((error) => {
          console.error("[Projection] Failed to load roads layer on init:", error);
        });
-
-       // Store config for lazy loading? Or just fetch again?
-       // For simplicity and consistency with previous code, we'll let lazy loaders fetch if needed
-       // OR we can pass the config if we have it.
     })
     .catch(err => {
        console.error("[Projection] Failed to fetch initial layer config:", err);
@@ -774,6 +795,148 @@ function initializeLayers() {
   const img = document.getElementById("displayedImage");
   if (img) {
     img.style.opacity = layerState.model ? "1" : "0";
+  }
+}
+
+/**
+ * Load all layers from the new layer groups system for projection display.
+ */
+async function loadProjectionLayerGroups() {
+  if (!layerRegistry || !layerRegistry._initialized) {
+    console.warn("[Projection] Layer registry not initialized");
+    return;
+  }
+
+  const groups = layerRegistry.getGroups();
+  // Log only in debug mode
+  // console.log(`[Projection] Found ${groups.length} layer group(s)`);
+
+  // Load all layers from all groups
+  for (const group of groups) {
+    for (const layer of group.layers || []) {
+      const fullLayerId = `${group.id}.${layer.id}`;
+      await loadProjectionLayerFromRegistry(fullLayerId);
+    }
+  }
+
+  // Removed verbose log - layers loaded silently unless error
+}
+
+/**
+ * Load a single layer from the layer registry for projection display.
+ * @param {string} fullLayerId - Full layer ID (e.g., "map_3_future.mimushim")
+ */
+async function loadProjectionLayerFromRegistry(fullLayerId) {
+  if (loadedLayers[fullLayerId]) {
+    return;
+  }
+
+  const layerConfig = layerRegistry.getLayerConfig(fullLayerId);
+  if (!layerConfig) {
+    console.warn(`[Projection] Layer config not found: ${fullLayerId}`);
+    return;
+  }
+
+  try {
+    // Projection always uses GeoJSON (PMTiles not supported in Canvas renderer)
+
+    const dataUrl = layerRegistry.getLayerDataUrl(fullLayerId);
+    if (!dataUrl) {
+      console.warn(`[Projection] No GeoJSON data URL for layer: ${fullLayerId}`);
+      return;
+    }
+
+    const response = await fetch(dataUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load layer data: ${response.status}`);
+    }
+
+    let geojson = await response.json();
+
+    // Check CRS and transform from WGS84 to ITM if needed
+    // Projection canvas expects ITM coordinates to match model bounds
+    const crs = geojson.crs?.properties?.name || '';
+    if (crs.includes('4326') || crs.includes('WGS')) {
+      geojson = CoordUtils.transformGeojsonToItm(geojson);
+    } else if (!crs || crs === '') {
+      // No CRS specified - check if coordinates look like WGS84 (small values) vs ITM (large values)
+      const firstCoord = getFirstCoordinate(geojson);
+      if (firstCoord && Math.abs(firstCoord[0]) < 180 && Math.abs(firstCoord[1]) < 90) {
+        geojson = CoordUtils.transformGeojsonToItm(geojson);
+      }
+    }
+
+    // Get canvas style function from StyleApplicator
+    const canvasStyleFunction = StyleApplicator.getCanvasStyle(layerConfig);
+
+    // Render layer using Canvas renderer
+    await renderLayerFromGeojson(geojson, fullLayerId, canvasStyleFunction);
+  } catch (error) {
+    console.error(`[Projection] Error loading layer ${fullLayerId}:`, error);
+  }
+}
+
+/**
+ * Extract the first coordinate from a GeoJSON to detect CRS
+ * @param {Object} geojson - GeoJSON object
+ * @returns {Array|null} First coordinate [x, y] or null
+ */
+function getFirstCoordinate(geojson) {
+  if (!geojson.features || geojson.features.length === 0) return null;
+
+  for (const feature of geojson.features) {
+    if (!feature.geometry || !feature.geometry.coordinates) continue;
+
+    let coords = feature.geometry.coordinates;
+    // Drill down to find a coordinate pair
+    while (Array.isArray(coords) && Array.isArray(coords[0])) {
+      coords = coords[0];
+    }
+    if (Array.isArray(coords) && typeof coords[0] === 'number') {
+      return coords;
+    }
+  }
+  return null;
+}
+
+/**
+ * Sync layer groups state for projection display.
+ *
+ * Note: group.enabled acts as a "toggle all" shortcut, not a gate.
+ * Individual layers can be shown/hidden regardless of group.enabled state.
+ */
+function syncLayerGroupsFromState(layerGroups) {
+  if (!layerGroups || !Array.isArray(layerGroups)) {
+    console.warn("[Projection] Invalid layer groups state");
+    return;
+  }
+
+  // Guard against race condition: layerRegistry must be initialized before syncing
+  if (typeof layerRegistry === 'undefined' || !layerRegistry._initialized) {
+    return;
+  }
+
+  // Process each group - individual layer.enabled is the source of truth for visibility
+  for (const group of layerGroups) {
+    for (const layer of group.layers || []) {
+      const fullLayerId = `${group.id}.${layer.id}`;
+
+      if (layer.enabled) {
+        // Layer should be visible - load if needed, then show
+        if (!loadedLayers[fullLayerId]) {
+          loadProjectionLayerFromRegistry(fullLayerId).then(() => {
+            updateLayerVisibility(fullLayerId, true);
+          }).catch(err => {
+            console.error(`[Projection] Failed to load layer ${fullLayerId}:`, err);
+          });
+        } else {
+          updateLayerVisibility(fullLayerId, true);
+        }
+      } else {
+        // Layer is disabled, hide it
+        updateLayerVisibility(fullLayerId, false);
+      }
+    }
   }
 }
 
@@ -818,10 +981,39 @@ async function renderLayerFromGeojson(geojson, layerName, styleFunction) {
   if (canvasRenderer) {
     canvasRenderer.setLayer(layerName, geojson, styleFunction);
     canvasRenderer.updatePosition(displayBounds, modelBounds);
-    canvasRenderer.setLayerVisibility(layerName, layerState[layerName]);
+    
+    // For registry layers (fullLayerId format), check layerGroups state instead of legacy layerState
+    // Legacy layers use simple names like 'roads', 'parcels' which are in layerState
+    // Note: Individual layer.enabled is the source of truth, not group.enabled
+    let shouldBeVisible = false;
+    if (layerName.includes('.')) {
+      // Registry layer - check individual layer.enabled state (not group.enabled)
+      if (typeof OTEFDataContext !== 'undefined') {
+        const layerGroups = OTEFDataContext.getLayerGroups();
+        if (layerGroups) {
+          const [groupId, layerId] = layerName.split('.');
+          const group = layerGroups.find(g => g.id === groupId);
+          if (group) {
+            const layerStateObj = group.layers.find(l => l.id === layerId);
+            shouldBeVisible = layerStateObj ? layerStateObj.enabled : false;
+          }
+        } else {
+          // LayerGroups not loaded yet, default to hidden (state will update when loaded)
+          shouldBeVisible = false;
+        }
+      } else {
+        // OTEFDataContext not available, default to hidden
+        shouldBeVisible = false;
+      }
+    } else {
+      // Legacy layer - use layerState
+      shouldBeVisible = layerState[layerName] === true;
+    }
+    
+    canvasRenderer.setLayerVisibility(layerName, shouldBeVisible);
   }
 
-  console.log(`${layerName} layer loaded and rendered (Canvas)`);
+  // Layer loaded silently
 }
 
 /**
@@ -834,7 +1026,7 @@ async function loadParcelsLayer(layerConfig) {
     return;
   }
 
-  console.log("[Projection] Loading parcels layer...");
+  // Loading parcels layer
 
   try {
     const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
@@ -884,11 +1076,11 @@ function initializeParcelsAnimator(geojson) {
       parcelAnimator.setPolygonData(geojson, getParcelStyle, modelBounds, displayBounds);
     }
 
-    console.log("[Projection] Parcel animator initialized");
+    // Parcel animator initialized
 
     // Check if animation should be running (from initial API state)
     if (animationState.parcels) {
-      console.log("[Projection] Starting pending animation after initialization");
+      // Starting pending animation after initialization
 
       // Hide static parcels layer
       if (canvasRenderer) {
@@ -912,7 +1104,7 @@ async function loadMajorRoadsLayer(layerConfig) {
     return;
   }
 
-  console.log("[Projection] Loading major roads layer...");
+  // Loading major roads layer
 
   try {
     const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
@@ -927,9 +1119,7 @@ async function loadMajorRoadsLayer(layerConfig) {
 
     const geojson = result.geojson;
 
-    console.log(`[Projection] Major roads: ${geojson.features?.length || 0} features`);
     await renderLayerFromGeojson(geojson, 'majorRoads', getMajorRoadStyle);
-    console.log("[Projection] Major roads layer loaded");
   } catch (error) {
     console.error("[Projection] Error loading major roads layer:", error);
   }
@@ -945,7 +1135,7 @@ async function loadSmallRoadsLayer() {
     return;
   }
 
-  console.log("[Projection] Loading small roads layer...");
+  // Loading small roads layer
 
   try {
     const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
@@ -958,9 +1148,7 @@ async function loadSmallRoadsLayer() {
 
     const geojson = result.geojson;
 
-    console.log(`[Projection] Small roads: ${geojson.features?.length || 0} features`);
     await renderLayerFromGeojson(geojson, 'smallRoads', getSmallRoadStyle);
-    console.log("[Projection] Small roads layer loaded");
   } catch (error) {
     console.error("[Projection] Error loading small roads layer:", error);
   }
@@ -975,7 +1163,7 @@ function handleLayerUpdate(msg) {
     return;
   }
 
-  console.log("[Projection] Received layer update:", msg);
+  // Removed verbose log for layer update
 
   const layers = msg.layers;
 
@@ -1049,7 +1237,7 @@ function handleAnimationToggle(msg) {
     return;
   }
 
-  console.log("[Projection] Received animation toggle:", msg);
+  // Removed verbose log for animation toggle
 
   if (msg.layerId === 'parcels') {
     animationState.parcels = msg.enabled;
@@ -1068,7 +1256,7 @@ function handleAnimationToggle(msg) {
           canvasRenderer.setLayerVisibility('parcels', false);
         }
         parcelAnimator.start();
-        console.log("[Projection] Parcel animation started");
+        // Parcel animation started
       } else {
         console.warn("[Projection] Cannot start animation: animator not initialized");
       }
@@ -1080,7 +1268,7 @@ function handleAnimationToggle(msg) {
       if (canvasRenderer && layerState.parcels) {
         canvasRenderer.setLayerVisibility('parcels', true);
       }
-      console.log("[Projection] Parcel animation stopped");
+      // Parcel animation stopped
     }
   }
 }

@@ -139,6 +139,7 @@ function getSmallRoadStyle() {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         LAND_USE_COLORS,
+        getLandUseScheme,
         getLandUseColor,
         getParcelStyle,
         getRoadStyle,

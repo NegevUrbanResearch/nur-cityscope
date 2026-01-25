@@ -18,7 +18,7 @@ function loadLayerData(url) {
             if (!geojson || !geojson.features) {
                 throw new Error('Invalid GeoJSON format: missing features array');
             }
-            console.log(`Loaded ${geojson.features.length} features from ${url}`);
+            // Verbose load log removed
             return geojson;
         })
         .catch(error => {

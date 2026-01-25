@@ -35,6 +35,56 @@ const CoordUtils = {
     },
 
     /**
+     * Transform coordinates from WGS84 (lat/lon) to EPSG:2039 (ITM).
+     * @param {number} lon - Longitude (WGS84)
+     * @param {number} lat - Latitude (WGS84)
+     * @returns {Array<number>} [x, y] in ITM
+     */
+    transformWgs84ToItm(lon, lat) {
+        return proj4("EPSG:4326", "EPSG:2039", [lon, lat]);
+    },
+
+    /**
+     * Transform entire GeoJSON from WGS84 to EPSG:2039 (ITM).
+     * @param {Object} geojson - GeoJSON object with features in WGS84
+     * @returns {Object} Transformed GeoJSON with ITM coordinates
+     */
+    transformGeojsonToItm(geojson) {
+        const transformed = JSON.parse(JSON.stringify(geojson)); // Deep clone
+
+        function transformCoords(coords, depth = 0) {
+            if (depth > 10) return coords; // Safety limit
+
+            if (typeof coords[0] === "number") {
+                // This is a coordinate pair [lon, lat] in WGS84
+                return proj4("EPSG:4326", "EPSG:2039", [coords[0], coords[1]]);
+            } else {
+                // Recurse into nested arrays
+                return coords.map((c) => transformCoords(c, depth + 1));
+            }
+        }
+
+        // Transform each feature's geometry
+        if (transformed.features) {
+            transformed.features.forEach((feature) => {
+                if (feature.geometry && feature.geometry.coordinates) {
+                    feature.geometry.coordinates = transformCoords(
+                        feature.geometry.coordinates
+                    );
+                }
+            });
+        }
+
+        // Update CRS to ITM
+        transformed.crs = {
+            type: "name",
+            properties: { name: "EPSG:2039" },
+        };
+
+        return transformed;
+    },
+
+    /**
      * Transform entire GeoJSON from EPSG:2039 to WGS84.
      * @param {Object} geojson - GeoJSON object with features in EPSG:2039
      * @returns {Object} Transformed GeoJSON with WGS84 coordinates

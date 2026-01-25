@@ -133,3 +133,11 @@ calculations/export/*
 otef-interactive/frontend/data/*.mbtiles
 otef-interactive/playground
 nur-io/django_api/backend/migrations/
+
+# OTEF source files (ignored, but folder structure preserved with .gitkeep)
+# Ignore all files in source directory, but allow .gitkeep files
+otef-interactive/public/source/**/*
+!otef-interactive/public/source/
+!otef-interactive/public/source/**/
+!otef-interactive/public/source/.gitkeep
+!otef-interactive/public/source/**/.gitkeep

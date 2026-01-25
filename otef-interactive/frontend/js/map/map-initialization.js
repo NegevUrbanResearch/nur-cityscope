@@ -21,6 +21,11 @@ const map = L.map("map", {
   maxBoundsViscosity: 1.0, // Prevent dragging outside bounds
 });
 
+// Create custom pane for vector overlays to ensure they render above base tiles
+// This fixes the issue where switching basemaps causes overlays to disappear
+map.createPane('vectorOverlay');
+map.getPane('vectorOverlay').style.zIndex = 450;  // Above tilePane (200) and overlayPane (400)
+
 // Add OpenStreetMap basemap
 const osmLayer = L.tileLayer(
   "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -105,11 +110,12 @@ function initializeMap(bounds) {
 
   console.log("Map bounds restricted to model area");
 
-  // Add model image overlay (hidden by default)
+  // Add model image overlay (hidden by default) with custom pane for z-ordering
   modelOverlay = L.imageOverlay("data/model-transparent.png", wgs84Bounds, {
     opacity: 0.7,
     interactive: false,
     className: "model-overlay",
+    pane: 'vectorOverlay',  // Ensure overlay renders above basemaps
   }); // Don't add to map on init
 
   window.modelLayer = modelOverlay;
@@ -145,10 +151,23 @@ function initializeMap(bounds) {
         })
       );
 
+      const initialLayerGroups = OTEFDataContext.getLayerGroups();
+      if (initialLayerGroups) {
+        applyLayerGroupsState(initialLayerGroups);
+      }
+
       window._otefUnsubscribeFunctions.push(
         OTEFDataContext.subscribe('layers', (layers) => {
           if (layers) {
             applyLayerState(layers);
+          }
+        })
+      );
+
+      window._otefUnsubscribeFunctions.push(
+        OTEFDataContext.subscribe('layerGroups', (layerGroups) => {
+          if (layerGroups) {
+            applyLayerGroupsState(layerGroups);
           }
         })
       );

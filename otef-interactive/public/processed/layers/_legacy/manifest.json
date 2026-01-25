@@ -1,0 +1,35 @@
+{
+  "id": "_legacy",
+  "name": " Legacy",
+  "layers": [
+    {
+      "id": "migrashim",
+      "name": "migrashim",
+      "file": "migrashim.geojson",
+      "format": "geojson",
+      "geometryType": "polygon",
+      "pmtilesFile": "migrashim.pmtiles"
+    },
+    {
+      "id": "small_roads",
+      "name": "small_roads",
+      "file": "small_roads.geojson",
+      "format": "geojson",
+      "geometryType": "polygon"
+    },
+    {
+      "id": "road_big",
+      "name": "road-big",
+      "file": "road_big.geojson",
+      "format": "geojson",
+      "geometryType": "line"
+    },
+    {
+      "id": "small_road_limited",
+      "name": "Small-road-limited",
+      "file": "small_road_limited.geojson",
+      "format": "geojson",
+      "geometryType": "polygon"
+    }
+  ]
+}

@@ -641,6 +641,230 @@ body {
   }
 }
 
+/* Layer Bottom Sheet */
+.layer-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+  border-radius: var(--border-radius) var(--border-radius) 0 0;
+  max-height: 80vh;
+  transform: translateY(calc(100% - 60px));
+  transition: transform 0.3s ease-out;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.layer-sheet.open {
+  transform: translateY(0);
+}
+
+.sheet-handle {
+  width: 40px;
+  height: 4px;
+  background: var(--border-color);
+  border-radius: 2px;
+  margin: 12px auto;
+  cursor: pointer;
+  touch-action: none;
+  flex-shrink: 0;
+}
+
+.sheet-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 var(--spacing-unit) var(--spacing-unit);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.sheet-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.layer-count {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.sheet-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-unit);
+  -webkit-overflow-scrolling: touch;
+}
+
+.sheet-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: var(--spacing-unit) * 2;
+}
+
+/* Layer Groups */
+.layer-group {
+  margin-bottom: var(--spacing-unit);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-unit);
+  cursor: pointer;
+  user-select: none;
+  min-height: var(--touch-target-size);
+}
+
+.group-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.group-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.group-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.group-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.group-toggle {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.expand-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.expand-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.group-layers {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease-out;
+}
+
+.group-layers.expanded {
+  max-height: 1000px;
+  border-top: 1px solid var(--border-color);
+}
+
+.layer-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px var(--spacing-unit);
+  min-height: var(--touch-target-size);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-color);
+  transition: background 0.2s ease;
+}
+
+.layer-item:last-child {
+  border-bottom: none;
+}
+
+.layer-item:hover {
+  background: var(--bg-secondary);
+}
+
+.layer-item:active {
+  background: var(--bg-primary);
+}
+
+.layer-preview {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 2px solid;
+  flex-shrink: 0;
+}
+
+.layer-label {
+  flex: 1;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+/* Toggle Styles for Sheet */
+.layer-item input[type="checkbox"],
+.group-toggle input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.layer-item .toggle-indicator,
+.group-toggle .toggle-indicator {
+  width: 44px;
+  height: 24px;
+  background: var(--bg-primary);
+  border: 2px solid var(--border-color);
+  border-radius: 12px;
+  position: relative;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.layer-item .toggle-indicator::after,
+.group-toggle .toggle-indicator::after {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  top: 1px;
+  left: 1px;
+  transition: all 0.2s ease;
+}
+
+.layer-item input[type="checkbox"]:checked + .toggle-indicator,
+.group-toggle input[type="checkbox"]:checked + .toggle-indicator {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.layer-item input[type="checkbox"]:checked + .toggle-indicator::after,
+.group-toggle input[type="checkbox"]:checked + .toggle-indicator::after {
+  transform: translateX(20px);
+  background: var(--text-primary);
+}
+
 /* Accessibility */
 @media (prefers-reduced-motion: reduce) {
   * {

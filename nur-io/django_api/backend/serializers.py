@@ -11,6 +11,8 @@ from .models import (
     GISLayer,
     OTEFModelConfig,
     OTEFViewportState,
+    LayerGroup,
+    LayerState,
 )
 
 
@@ -19,7 +21,16 @@ class TableSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Table
-        fields = ["id", "name", "display_name", "description", "is_active", "created_at", "updated_at", "indicator_count"]
+        fields = [
+            "id",
+            "name",
+            "display_name",
+            "description",
+            "is_active",
+            "created_at",
+            "updated_at",
+            "indicator_count",
+        ]
 
     def get_indicator_count(self, obj):
         return obj.indicators.count()
@@ -27,7 +38,9 @@ class TableSerializer(serializers.ModelSerializer):
 
 class IndicatorSerializer(serializers.ModelSerializer):
     table_name = serializers.CharField(source="table.name", read_only=True)
-    table_display_name = serializers.CharField(source="table.display_name", read_only=True)
+    table_display_name = serializers.CharField(
+        source="table.display_name", read_only=True
+    )
     state_count = serializers.SerializerMethodField()
     media_count = serializers.SerializerMethodField()
 
@@ -36,7 +49,7 @@ class IndicatorSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
     def get_state_count(self, obj):
-        return obj.data.values('state').distinct().count()
+        return obj.data.values("state").distinct().count()
 
     def get_media_count(self, obj):
         return IndicatorImage.objects.filter(indicatorData__indicator=obj).count()
@@ -50,11 +63,12 @@ class StateSerializer(serializers.ModelSerializer):
 
 class IndicatorMediaSerializer(serializers.ModelSerializer):
     """Serializer for media with URL included"""
+
     url = serializers.SerializerMethodField()
 
     class Meta:
         model = IndicatorImage
-        fields = ['id', 'url', 'media_type', 'uploaded_at']
+        fields = ["id", "url", "media_type", "uploaded_at"]
 
     def get_url(self, obj):
         if obj.image:
@@ -64,42 +78,70 @@ class IndicatorMediaSerializer(serializers.ModelSerializer):
 
 class StateDetailSerializer(serializers.ModelSerializer):
     """Serializer for state with nested media"""
+
     media = serializers.SerializerMethodField()
 
     class Meta:
         model = State
-        fields = ['id', 'state_values', 'scenario_type', 'scenario_name', 'is_user_generated', 'media']
+        fields = [
+            "id",
+            "state_values",
+            "scenario_type",
+            "scenario_name",
+            "is_user_generated",
+            "media",
+        ]
 
     def get_media(self, obj):
         # Get media through IndicatorData - requires indicator context
-        indicator_data = getattr(obj, '_indicator_data', None)
+        indicator_data = getattr(obj, "_indicator_data", None)
         if indicator_data:
             media_list = []
             for img in indicator_data.images.all():
-                media_list.append({
-                    'id': img.id,
-                    'url': img.image.url if img.image else None,
-                    'media_type': img.media_type,
-                    'uploaded_at': img.uploaded_at.isoformat() if img.uploaded_at else None
-                })
+                media_list.append(
+                    {
+                        "id": img.id,
+                        "url": img.image.url if img.image else None,
+                        "media_type": img.media_type,
+                        "uploaded_at": (
+                            img.uploaded_at.isoformat() if img.uploaded_at else None
+                        ),
+                    }
+                )
             return media_list
         return []
 
 
 class IndicatorDetailSerializer(serializers.ModelSerializer):
     """Detailed serializer including nested states and media for hierarchy view"""
+
     table_name = serializers.CharField(source="table.name", read_only=True)
-    table_display_name = serializers.CharField(source="table.display_name", read_only=True)
+    table_display_name = serializers.CharField(
+        source="table.display_name", read_only=True
+    )
     states = serializers.SerializerMethodField()
 
     class Meta:
         model = Indicator
-        fields = ['id', 'indicator_id', 'name', 'has_states', 'description', 'category',
-                  'is_user_generated', 'table', 'table_name', 'table_display_name', 'states']
+        fields = [
+            "id",
+            "indicator_id",
+            "name",
+            "has_states",
+            "description",
+            "category",
+            "is_user_generated",
+            "table",
+            "table_name",
+            "table_display_name",
+            "states",
+        ]
 
     def get_states(self, obj):
         """Get all states linked to this indicator with their media"""
-        indicator_data_qs = obj.data.all().select_related('state').prefetch_related('images')
+        indicator_data_qs = (
+            obj.data.all().select_related("state").prefetch_related("images")
+        )
         states = {}
 
         for data in indicator_data_qs:
@@ -108,23 +150,27 @@ class IndicatorDetailSerializer(serializers.ModelSerializer):
 
             if state_id not in states:
                 states[state_id] = {
-                    'id': state_id,
-                    'state_values': state.state_values,
-                    'scenario_type': state.scenario_type,
-                    'scenario_name': state.scenario_name,
-                    'is_user_generated': state.is_user_generated,
-                    'indicator_data_id': data.id,
-                    'media': []
+                    "id": state_id,
+                    "state_values": state.state_values,
+                    "scenario_type": state.scenario_type,
+                    "scenario_name": state.scenario_name,
+                    "is_user_generated": state.is_user_generated,
+                    "indicator_data_id": data.id,
+                    "media": [],
                 }
 
             # Add media for this indicator data
             for img in data.images.all():
-                states[state_id]['media'].append({
-                    'id': img.id,
-                    'url': img.image.url if img.image else None,
-                    'media_type': img.media_type,
-                    'uploaded_at': img.uploaded_at.isoformat() if img.uploaded_at else None
-                })
+                states[state_id]["media"].append(
+                    {
+                        "id": img.id,
+                        "url": img.image.url if img.image else None,
+                        "media_type": img.media_type,
+                        "uploaded_at": (
+                            img.uploaded_at.isoformat() if img.uploaded_at else None
+                        ),
+                    }
+                )
 
         return list(states.values())
 
@@ -174,6 +220,41 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = OTEFViewportState
-        fields = ['id', 'table', 'table_name', 'viewport', 'layers', 'animations', 'updated_at']
-        read_only_fields = ['id', 'updated_at', 'table_name']
+        fields = [
+            "id",
+            "table",
+            "table_name",
+            "viewport",
+            "layers",
+            "animations",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "updated_at", "table_name"]
 
+
+class LayerStateSerializer(serializers.ModelSerializer):
+    """Serializer for individual layer visibility state"""
+
+    class Meta:
+        model = LayerState
+        fields = ["id", "layer_id", "enabled", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class LayerGroupSerializer(serializers.ModelSerializer):
+    """Serializer for layer group with nested layer states"""
+
+    layers = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LayerGroup
+        fields = ["id", "group_id", "enabled", "layers", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_layers(self, obj):
+        """Get all layer states for this group"""
+        # Extract group_id from layer_id (format: "group_id.layer_id")
+        layer_states = LayerState.objects.filter(
+            table=obj.table, layer_id__startswith=f"{obj.group_id}."
+        )
+        return LayerStateSerializer(layer_states, many=True).data

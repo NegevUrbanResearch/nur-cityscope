@@ -85,8 +85,8 @@ class CanvasLayerRenderer {
     // Scale context so drawing operations use CSS pixel coordinates
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
-    // Re-render all visible layers
-    this.render();
+    // Re-render all visible layers (use scheduled render to avoid blocking)
+    this._scheduleRender();
   }
 
   /**
@@ -106,8 +106,21 @@ class CanvasLayerRenderer {
   setLayerVisibility(layerId, visible) {
     if (this.layers[layerId]) {
       this.layers[layerId].visible = visible;
-      this.render();
+      this._scheduleRender();
     }
+  }
+
+  /**
+   * Debounced render to prevent excessive re-renders
+   */
+  _renderScheduled = false;
+  _scheduleRender() {
+    if (this._renderScheduled) return;
+    this._renderScheduled = true;
+    requestAnimationFrame(() => {
+      this._renderScheduled = false;
+      this.render();
+    });
   }
 
   /**
@@ -129,18 +142,23 @@ class CanvasLayerRenderer {
     }
 
     const elapsed = performance.now() - startTime;
-    if (elapsed > 50) {
-      console.log(`Canvas render took ${elapsed.toFixed(1)}ms`);
+    if (elapsed > 2000) {
+      console.warn(`[CanvasRenderer] Slow render: ${elapsed.toFixed(0)}ms`);
     }
   }
 
   /**
    * Render a single layer
+   * Optimized to reduce canvas operations for large feature sets
    */
   _renderLayer(geojson, styleFunction) {
     const ctx = this.ctx;
+    const features = geojson.features || [];
+    
+    if (features.length === 0) return;
 
-    for (const feature of geojson.features) {
+    // Batch style calculations to reduce function calls
+    for (const feature of features) {
       if (!feature.geometry) continue;
 
       const style = styleFunction ? styleFunction(feature) : {};
@@ -149,16 +167,17 @@ class CanvasLayerRenderer {
       const fillOpacity = style.fillOpacity ?? 1.0;  // Full opacity for projector
       const strokeOpacity = style.opacity ?? 1.0;
       const lineWidth = style.weight ?? 1;
+      const radius = style.radius ?? 5;  // Default radius for points
 
       // Draw the geometry
-      this._drawGeometry(ctx, feature.geometry, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth);
+      this._drawGeometry(ctx, feature.geometry, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius);
     }
   }
 
   /**
    * Draw a geometry to canvas
    */
-  _drawGeometry(ctx, geometry, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth) {
+  _drawGeometry(ctx, geometry, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius) {
     const type = geometry.type;
     const coords = geometry.coordinates;
 
@@ -173,6 +192,12 @@ class CanvasLayerRenderer {
     } else if (type === 'MultiLineString') {
       for (const line of coords) {
         this._drawLineString(ctx, line, strokeColor, strokeOpacity, lineWidth);
+      }
+    } else if (type === 'Point') {
+      this._drawPoint(ctx, coords, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius);
+    } else if (type === 'MultiPoint') {
+      for (const point of coords) {
+        this._drawPoint(ctx, point, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius);
       }
     }
   }
@@ -244,13 +269,44 @@ class CanvasLayerRenderer {
   }
 
   /**
+   * Draw a point (circle marker)
+   */
+  _drawPoint(ctx, coords, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius) {
+    if (!coords || coords.length < 2) return;
+
+    const pt = this._coordToPixel(coords);
+    
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+
+    // Fill
+    if (fillOpacity > 0) {
+      ctx.globalAlpha = fillOpacity;
+      ctx.fillStyle = fillColor;
+      ctx.fill();
+    }
+
+    // Stroke
+    if (strokeOpacity > 0 && lineWidth > 0) {
+      ctx.globalAlpha = strokeOpacity;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = lineWidth;
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+  }
+
+  /**
    * Convert ITM coordinate to canvas pixel
+   * Standard geographic orientation: west on left, east on right
    */
   _coordToPixel(coord) {
     const [x, y] = coord;
     const bounds = this.modelBounds;
     const display = this.displayBounds;
 
+    // Standard orientation: west on left (pctX=0), east on right (pctX=1)
     const pctX = (x - bounds.west) / (bounds.east - bounds.west);
     const pctY = (bounds.north - y) / (bounds.north - bounds.south);
 

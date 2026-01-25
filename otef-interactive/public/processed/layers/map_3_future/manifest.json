@@ -1,0 +1,63 @@
+{
+  "id": "map_3_future",
+  "name": "Map 3 Future",
+  "layers": [
+    {
+      "id": "אנדרטאות_ומוקדי_הנצחה",
+      "name": "אנדרטאות ומוקדי הנצחה",
+      "file": "אנדרטאות_ומוקדי_הנצחה.geojson",
+      "format": "geojson",
+      "geometryType": "point"
+    },
+    {
+      "id": "הקו_הורוד",
+      "name": "הקו הורוד",
+      "file": "הקו_הורוד.geojson",
+      "format": "geojson",
+      "geometryType": "line"
+    },
+    {
+      "id": "מוזיאונים_מרכזי_מבקרים_ומוקדי_תרבות",
+      "name": "מוזיאונים מרכזי מבקרים ומוקדי תרבות",
+      "file": "מוזיאונים_מרכזי_מבקרים_ומוקדי_תרבות.geojson",
+      "format": "geojson",
+      "geometryType": "point"
+    },
+    {
+      "id": "מוקדי_מורשת",
+      "name": "מוקדי מורשת",
+      "file": "מוקדי_מורשת.geojson",
+      "format": "geojson",
+      "geometryType": "point"
+    },
+    {
+      "id": "מוקדים_ארכאולוגיים",
+      "name": "מוקדים ארכאולוגיים",
+      "file": "מוקדים_ארכאולוגיים.geojson",
+      "format": "geojson",
+      "geometryType": "point"
+    },
+    {
+      "id": "מימושים",
+      "name": "מימושים",
+      "file": "מימושים.geojson",
+      "format": "geojson",
+      "geometryType": "polygon",
+      "pmtilesFile": "מימושים.pmtiles"
+    },
+    {
+      "id": "מתחמי_דיור",
+      "name": "מתחמי דיור",
+      "file": "מתחמי_דיור.geojson",
+      "format": "geojson",
+      "geometryType": "unknown"
+    },
+    {
+      "id": "ציר_232",
+      "name": "ציר 232",
+      "file": "ציר_232.geojson",
+      "format": "geojson",
+      "geometryType": "line"
+    }
+  ]
+}

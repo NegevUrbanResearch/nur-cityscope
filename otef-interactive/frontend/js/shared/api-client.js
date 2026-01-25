@@ -17,7 +17,7 @@ const OTEF_API = {
         throw new Error(`Failed to fetch state: ${response.status}`);
       }
       const data = await response.json();
-      console.log('[OTEF API] State fetched:', data);
+      // Removed verbose log - state polling is too frequent
       return data;
     } catch (error) {
       console.error('[OTEF API] Error fetching state:', error);
@@ -76,12 +76,21 @@ const OTEF_API = {
   },
 
   /**
-   * Update layers visibility
+   * Update layers visibility (legacy flat structure)
    * @param {string} tableName - Table name
    * @param {Object} layers - Layer states {roads: bool, parcels: bool, ...}
    */
   async updateLayers(tableName = this.defaultTable, layers) {
     return this.updateState(tableName, { layers });
+  },
+
+  /**
+   * Update layer groups (new hierarchical structure)
+   * @param {string} tableName - Table name
+   * @param {Array} layerGroups - Layer groups [{id, enabled, layers: [{id, enabled}]}]
+   */
+  async updateLayerGroups(tableName = this.defaultTable, layerGroups) {
+    return this.updateState(tableName, { layerGroups });
   },
 
   /**

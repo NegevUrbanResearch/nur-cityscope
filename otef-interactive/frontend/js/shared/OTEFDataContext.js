@@ -8,7 +8,8 @@ class OTEFDataContextClass {
 
     // Cached state
     this._viewport = null;    // { bbox, corners?, zoom }
-    this._layers = null;      // { roads, parcels, model, majorRoads, smallRoads }
+    this._layers = null;      // { roads, parcels, model, majorRoads, smallRoads } - legacy, kept for backward compat
+    this._layerGroups = null; // [{ id, enabled, layers: [{ id, enabled }] }] - new hierarchical structure
     this._animations = null;  // { parcels, ... }
     this._bounds = null;      // bounds_polygon from backend
     this._isConnected = false;
@@ -17,6 +18,7 @@ class OTEFDataContextClass {
     this._subscribers = {
       viewport: new Set(),
       layers: new Set(),
+      layerGroups: new Set(), // New subscription for hierarchical layers
       animations: new Set(),
       bounds: new Set(),
       connection: new Set(),
@@ -129,6 +131,9 @@ class OTEFDataContextClass {
         if (state.layers) {
           this._setLayers(state.layers);
         }
+        if (state.layerGroups) {
+          this._setLayerGroups(state.layerGroups);
+        }
       } catch (err) {
         console.error('[OTEFDataContext] Failed to refresh layers after LAYERS_CHANGED:', err);
       }
@@ -177,6 +182,10 @@ class OTEFDataContextClass {
       this._layers = state.layers;
       if (notify) this._notify('layers', this._layers);
     }
+    if (state.layerGroups) {
+      this._layerGroups = state.layerGroups;
+      if (notify) this._notify('layerGroups', this._layerGroups);
+    }
     if (state.animations) {
       this._animations = state.animations;
       if (notify) this._notify('animations', this._animations);
@@ -202,6 +211,11 @@ class OTEFDataContextClass {
   _setLayers(layers) {
     this._layers = layers;
     this._notify('layers', this._layers);
+  }
+
+  _setLayerGroups(layerGroups) {
+    this._layerGroups = layerGroups;
+    this._notify('layerGroups', this._layerGroups);
   }
 
   _setAnimations(animations) {
@@ -233,6 +247,10 @@ class OTEFDataContextClass {
 
   getLayers() {
     return this._layers;
+  }
+
+  getLayerGroups() {
+    return this._layerGroups;
   }
 
   getAnimations() {
@@ -528,13 +546,38 @@ class OTEFDataContextClass {
 
   /**
    * Toggle a layer's visibility with optimistic update and rollback on error.
+   * Supports both legacy flat structure and new hierarchical structure.
    *
-   * @param {string} layerId
+   * @param {string} layerId - Full layer ID (e.g., "map_3_future.mimushim") or legacy ID
    * @param {boolean} enabled
    */
   async toggleLayer(layerId, enabled) {
     if (!this._tableName || !layerId) return { ok: false, error: 'Missing layerId' };
 
+    // Legacy layers (model, roads, parcels, majorRoads, smallRoads) always use legacy structure
+    // even if layerGroups exist, because they're not part of the hierarchical system
+    const legacyLayerIds = ['model', 'roads', 'parcels', 'majorRoads', 'smallRoads'];
+    if (legacyLayerIds.includes(layerId)) {
+      const previous = this._layers || {};
+      const next = Object.assign({}, previous, { [layerId]: !!enabled });
+      this._setLayers(next);
+
+      try {
+        await OTEF_API.updateLayers(this._tableName, next);
+        return { ok: true };
+      } catch (err) {
+        console.error('[OTEFDataContext] Failed to update layers:', err);
+        this._setLayers(previous);
+        return { ok: false, error: err };
+      }
+    }
+
+    // Try new hierarchical structure for registry layers
+    if (this._layerGroups) {
+      return this._toggleLayerInGroups(layerId, enabled);
+    }
+
+    // Fallback to legacy flat structure for unknown layers
     const previous = this._layers || {};
     const next = Object.assign({}, previous, { [layerId]: !!enabled });
     this._setLayers(next);
@@ -545,6 +588,83 @@ class OTEFDataContextClass {
     } catch (err) {
       console.error('[OTEFDataContext] Failed to update layers:', err);
       this._setLayers(previous);
+      return { ok: false, error: err };
+    }
+  }
+
+  /**
+   * Toggle a layer within the hierarchical groups structure.
+   */
+  async _toggleLayerInGroups(layerId, enabled) {
+    console.log(`[OTEFDataContext] _toggleLayerInGroups: layerId=${layerId}, enabled=${enabled}`);
+    
+    const previous = JSON.parse(JSON.stringify(this._layerGroups || []));
+    const next = previous.map(group => {
+      const layers = group.layers.map(layer => {
+        const fullId = `${group.id}.${layer.id}`;
+        if (fullId === layerId) {
+          console.log(`[OTEFDataContext] Found layer ${fullId}, setting enabled=${enabled}`);
+          return { ...layer, enabled: !!enabled };
+        }
+        return layer;
+      });
+      return { ...group, layers };
+    });
+
+    this._setLayerGroups(next);
+
+    try {
+      console.log(`[OTEFDataContext] _toggleLayerInGroups: calling API to persist`);
+      await OTEF_API.updateLayerGroups(this._tableName, next);
+      console.log(`[OTEFDataContext] _toggleLayerInGroups: success`);
+      return { ok: true };
+    } catch (err) {
+      console.error('[OTEFDataContext] Failed to update layer groups:', err);
+      this._setLayerGroups(previous);
+      return { ok: false, error: err };
+    }
+  }
+
+  /**
+   * Toggle an entire group on/off.
+   *
+   * @param {string} groupId - Group ID (e.g., "map_3_future")
+   * @param {boolean} enabled
+   */
+  async toggleGroup(groupId, enabled) {
+    console.log(`[OTEFDataContext] toggleGroup called: groupId=${groupId}, enabled=${enabled}`);
+    
+    if (!this._tableName || !groupId) {
+      console.warn('[OTEFDataContext] toggleGroup: missing tableName or groupId');
+      return { ok: false, error: 'Missing groupId' };
+    }
+
+    if (!this._layerGroups) {
+      console.warn('[OTEFDataContext] toggleGroup: layer groups not available');
+      return { ok: false, error: 'Layer groups not available' };
+    }
+
+    const previous = JSON.parse(JSON.stringify(this._layerGroups || []));
+    const next = previous.map(group => {
+      if (group.id === groupId) {
+        // Toggle all layers in the group
+        const layers = group.layers.map(layer => ({ ...layer, enabled: !!enabled }));
+        return { ...group, enabled: !!enabled, layers };
+      }
+      return group;
+    });
+
+    console.log(`[OTEFDataContext] toggleGroup: updating state for ${groupId}`, next.find(g => g.id === groupId));
+    this._setLayerGroups(next);
+
+    try {
+      console.log(`[OTEFDataContext] toggleGroup: calling API to persist`);
+      await OTEF_API.updateLayerGroups(this._tableName, next);
+      console.log(`[OTEFDataContext] toggleGroup: success`);
+      return { ok: true };
+    } catch (err) {
+      console.error('[OTEFDataContext] Failed to update layer groups:', err);
+      this._setLayerGroups(previous);
       return { ok: false, error: err };
     }
   }
@@ -765,6 +885,9 @@ class OTEFDataContextClass {
         break;
       case 'layers':
         current = this._layers;
+        break;
+      case 'layerGroups':
+        current = this._layerGroups;
         break;
       case 'animations':
         current = this._animations;

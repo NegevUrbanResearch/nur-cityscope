@@ -47,6 +47,11 @@ if (document.readyState === "loading") {
 async function initialize() {
   console.log("[Remote] Initializing with OTEFDataContext...");
 
+  // Initialize layer registry if available
+  if (typeof layerRegistry !== 'undefined') {
+    await layerRegistry.init();
+  }
+
   // Initialize shared DataContext (single WS + API state)
   await OTEFDataContext.init(TABLE_NAME);
 

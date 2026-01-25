@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from backend.models import Table, GISLayer, OTEFModelConfig
+from backend.models import Table, GISLayer, OTEFModelConfig, LayerGroup, LayerState
 import json
 import os
 from django.conf import settings
@@ -41,34 +41,31 @@ class Command(BaseCommand):
                 self.style.WARNING(f'⚠️ Model bounds file not found at: {model_bounds_path}')
             )
 
-        # Import GIS layers
+        # Import GIS layers from processed _legacy pack
+        # Legacy layers are now processed as a pack in public/processed/layers/_legacy/
         layers_to_import = [
             {
                 'name': 'parcels',
                 'display_name': 'Parcels (Migrashim)',
-                'file_name': 'migrashim_simplified.json',
-                'source_type': 'processed',
+                'file_name': 'migrashim.geojson',  # Processed output name
                 'order': 1
             },
             {
                 'name': 'roads',
                 'display_name': 'Roads',
-                'file_name': 'small_roads_simplified.json',
-                'source_type': 'processed',
+                'file_name': 'small_roads.geojson',  # Processed output name
                 'order': 2
             },
             {
                 'name': 'majorRoads',
                 'display_name': 'Major Roads',
-                'file_name': 'road-big.geojson',
-                'source_type': 'source',
+                'file_name': 'road_big.geojson',  # Processed output name (normalized)
                 'order': 3
             },
             {
                 'name': 'smallRoads',
                 'display_name': 'Small Roads',
-                'file_name': 'Small-road-limited.geojson',
-                'source_type': 'source',
+                'file_name': 'small_road_limited.geojson',  # Processed output name (normalized)
                 'order': 4
             }
         ]
@@ -78,12 +75,8 @@ class Command(BaseCommand):
         os.makedirs(layers_media_dir, exist_ok=True)
 
         for layer_info in layers_to_import:
-            # Determine source path
-            if layer_info['source_type'] == 'processed':
-                source_path = self._get_layer_path('layers', layer_info['file_name'])
-            else:
-                source_path = self._get_source_layer_path(layer_info['file_name'])
-
+            # Load from processed _legacy pack
+            source_path = self._get_legacy_pack_path(layer_info['file_name'])
             source_path = os.path.normpath(source_path)
 
             if os.path.exists(source_path):
@@ -128,23 +121,18 @@ class Command(BaseCommand):
                     )
                 )
 
+        # Seed layer groups from processed manifests
+        self._seed_layer_groups(otef_table)
+
         self.stdout.write(
             self.style.SUCCESS('\n[SUCCESS] OTEF data import completed! Layers optimized.')
         )
 
-    def _get_layer_path(self, *path_parts):
-        """Get layer file path from public/processed/otef/"""
-        # path_parts: e.g., ('layers', 'filename.json')
-        return os.path.join(
-            settings.BASE_DIR, 'public', 'processed', 'otef', *path_parts
-        )
-
-    def _get_source_layer_path(self, filename):
-        """Get source layer file path from public/processed/otef/layers/"""
-        # Source layers are copied here by setup/reset scripts
-        return os.path.join(
-            settings.BASE_DIR, 'public', 'processed', 'otef', 'layers', filename
-        )
+    def _get_legacy_pack_path(self, filename):
+        """Get layer file path from processed _legacy pack"""
+        # Legacy layers are processed as a pack in mounted public directory
+        # Aligned with docker-compose volume mount: ./otef-interactive/public -> /app/public
+        return f'/app/public/processed/layers/_legacy/{filename}'
 
     def _get_default_style(self, layer_name):
         """Get default style config for layer"""
@@ -177,3 +165,87 @@ class Command(BaseCommand):
             }
         }
         return styles.get(layer_name, {})
+
+    def _seed_layer_groups(self, table):
+        """Seed LayerGroup and LayerState from processed manifests"""
+        # Use mounted public directory path (aligned with docker-compose volume mount)
+        # This matches where nginx serves files and where frontend LayerRegistry loads from
+        layers_manifest_path = '/app/public/processed/layers/layers-manifest.json'
+
+        if not os.path.exists(layers_manifest_path):
+            self.stdout.write(
+                self.style.WARNING(f'⚠️ Layers manifest not found at: {layers_manifest_path}, skipping layer groups seeding')
+            )
+            return
+
+        try:
+            with open(layers_manifest_path, 'r', encoding='utf-8') as f:
+                root_manifest = json.load(f)
+
+            packs = root_manifest.get('packs', [])
+            if not packs:
+                self.stdout.write(
+                    self.style.WARNING('⚠️ No packs found in layers manifest')
+                )
+                return
+
+            self.stdout.write(f'\nSeeding layer groups from {len(packs)} pack(s) (source: {layers_manifest_path})...')
+
+            for pack_id in packs:
+                pack_manifest_path = f'/app/public/processed/layers/{pack_id}/manifest.json'
+
+                if not os.path.exists(pack_manifest_path):
+                    self.stdout.write(
+                        self.style.WARNING(f'⚠️ Pack manifest not found: {pack_manifest_path}')
+                    )
+                    continue
+
+                with open(pack_manifest_path, 'r', encoding='utf-8') as f:
+                    pack_manifest = json.load(f)
+
+                # Create or update LayerGroup
+                group, group_created = LayerGroup.objects.get_or_create(
+                    table=table,
+                    group_id=pack_id,
+                    defaults={
+                        'enabled': False  # Default all groups to disabled
+                    }
+                )
+
+                if group_created:
+                    self.stdout.write(
+                        self.style.SUCCESS(f'✓ Created layer group: {pack_id}')
+                    )
+
+                # Process layers in this pack
+                layers = pack_manifest.get('layers', [])
+                for layer_info in layers:
+                    layer_id = layer_info.get('id')
+                    if not layer_id:
+                        continue
+
+                    # Full layer ID format: "group_id.layer_id"
+                    full_layer_id = f"{pack_id}.{layer_id}"
+
+                    # Create or update LayerState
+                    layer_state, layer_created = LayerState.objects.get_or_create(
+                        table=table,
+                        layer_id=full_layer_id,
+                        defaults={
+                            'enabled': False  # Default all layers to disabled
+                        }
+                    )
+
+                    if layer_created:
+                        self.stdout.write(
+                            self.style.SUCCESS(f'  ✓ Created layer state: {full_layer_id}')
+                        )
+
+            self.stdout.write(
+                self.style.SUCCESS(f'✓ Seeded {len(packs)} layer group(s)')
+            )
+
+        except Exception as e:
+            self.stdout.write(
+                self.style.ERROR(f'❌ Error seeding layer groups: {e}')
+            )

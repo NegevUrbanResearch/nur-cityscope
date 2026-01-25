@@ -43,20 +43,16 @@ echo "Ensuring logo is accessible in nginx container..."
 docker cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
 
 # Setup OTEF Interactive module - PMTiles generation
+VENV_PATH="$SCRIPT_DIR/otef-interactive/scripts/.venv"
+if [ ! -d "$VENV_PATH" ]; then
+    echo "Creating Python virtual environment for tile generation..."
+    python3 -m venv "$VENV_PATH"
+fi
+
+echo "Ensuring layer processing dependencies..."
+"$VENV_PATH/bin/pip" install -r "$SCRIPT_DIR/otef-interactive/scripts/requirements.txt" -q
+
 if [ ! -f "$SCRIPT_DIR/otef-interactive/frontend/data/parcels.pmtiles" ]; then
-    echo "Setting up OTEF PMTiles generation environment..."
-
-    # Create venv if not exists
-    VENV_PATH="$SCRIPT_DIR/otef-interactive/scripts/.venv"
-    if [ ! -d "$VENV_PATH" ]; then
-        echo "Creating Python virtual environment for tile generation..."
-        python3 -m venv "$VENV_PATH"
-    fi
-
-    # Install dependencies
-    echo "Installing tile generation dependencies..."
-    "$VENV_PATH/bin/pip" install pyproj pmtiles -q
-
     # Check if Docker is running for tile generation
     if docker info >/dev/null 2>&1; then
         echo "Generating PMTiles for parcels layer..."
@@ -64,6 +60,34 @@ if [ ! -f "$SCRIPT_DIR/otef-interactive/frontend/data/parcels.pmtiles" ]; then
     else
         echo "Warning: Docker not running, skipping PMTiles generation"
     fi
+fi
+
+# Process layer packs and generate PMTiles/manifests
+if docker info >/dev/null 2>&1; then
+    MANIFEST_PATH="$SCRIPT_DIR/otef-interactive/public/processed/layers/layers-manifest.json"
+    # Only process if manifest doesn't exist or is older than source files
+    SHOULD_PROCESS=true
+    if [ -f "$MANIFEST_PATH" ]; then
+        MANIFEST_TIME=$(stat -f "%m" "$MANIFEST_PATH" 2>/dev/null || stat -c "%Y" "$MANIFEST_PATH" 2>/dev/null || echo "0")
+        SOURCE_DIR="$SCRIPT_DIR/otef-interactive/public/source/layers"
+        # Check if any source files are newer than manifest
+        if [ -d "$SOURCE_DIR" ]; then
+            NEWER_FILES=$(find "$SOURCE_DIR" -type f -newer "$MANIFEST_PATH" 2>/dev/null | wc -l)
+            if [ "$NEWER_FILES" -eq 0 ]; then
+                echo "Layer packs already processed (manifest up to date), skipping..."
+                SHOULD_PROCESS=false
+            fi
+        fi
+    fi
+
+    if [ "$SHOULD_PROCESS" = true ]; then
+        echo "Processing layer packs (PMTiles/manifests)..."
+        "$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/process_layers.py" \
+            --source "$SCRIPT_DIR/otef-interactive/public/source/layers" \
+            --output "$SCRIPT_DIR/otef-interactive/public/processed/layers"
+    fi
+else
+    echo "Warning: Docker not running, skipping layer pack processing"
 fi
 
 # Copy simplified layers to Django API public directory (where import command expects them)
