@@ -204,6 +204,51 @@ body {
     letter-spacing: 0.3px;
 }
 
+.map-legend-layer {
+    margin-top: 10px;
+}
+
+.map-legend-layer:first-child {
+    margin-top: 0;
+}
+
+.map-legend-layer-title {
+    font-weight: 600;
+    font-size: 11px;
+    color: #444;
+    margin-bottom: 6px;
+    letter-spacing: 0.2px;
+}
+
+.map-legend-symbol--polygon {
+    width: 24px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.map-legend-symbol--line {
+    width: 24px;
+    height: 4px;
+    border-radius: 0;
+    border: none;
+}
+
+.map-legend-symbol--point {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.map-legend-symbol--none {
+    width: 24px;
+    height: 16px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+}
+
 .map-legend-subitem {
     display: flex;
     align-items: center;

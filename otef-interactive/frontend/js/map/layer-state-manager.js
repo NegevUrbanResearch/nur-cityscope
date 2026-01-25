@@ -230,13 +230,16 @@ function applyLayerGroupsState(layerGroups) {
             }
           } else {
             // Layer not loaded yet, load it first
-            loadLayerFromRegistry(fullLayerId).then(() => {
-              if (typeof updateLayerVisibilityFromRegistry === 'function') {
-                updateLayerVisibilityFromRegistry(fullLayerId, true);
-              }
-            }).catch(err => {
-              console.error(`[GIS Map] Failed to load layer ${fullLayerId}:`, err);
-            });
+            loadLayerFromRegistry(fullLayerId)
+              .then(() => {
+                if (typeof updateLayerVisibilityFromRegistry === 'function') {
+                  updateLayerVisibilityFromRegistry(fullLayerId, true);
+                }
+                updateMapLegend();
+              })
+              .catch((err) => {
+                console.error(`[GIS Map] Failed to load layer ${fullLayerId}:`, err);
+              });
           }
         }
       } else {
