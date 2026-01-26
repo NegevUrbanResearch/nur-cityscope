@@ -71,12 +71,45 @@ def scan_layer_packs(source_dir: Path) -> List[Path]:
     
     for item in source_dir.iterdir():
         if item.is_dir() and not item.name.startswith('.'):
-            # Check if it has a gis/ or styles/ subdirectory (or both)
-            has_gis = (item / 'gis').exists() or any(f.suffix in ['.json', '.geojson'] for f in item.iterdir() if f.is_file())
-            if has_gis:
+            # Check if it has actual GeoJSON files (not just empty directories)
+            gis_dir = item / 'gis'
+            has_geojson = False
+            
+            # Check in gis/ subdirectory
+            if gis_dir.exists():
+                has_geojson = any(f.suffix in ['.json', '.geojson'] for f in gis_dir.iterdir() if f.is_file())
+            
+            # Also check root of pack_dir for legacy structure
+            if not has_geojson:
+                has_geojson = any(f.suffix in ['.json', '.geojson'] for f in item.iterdir() if f.is_file())
+            
+            if has_geojson:
                 packs.append(item)
     
     return sorted(packs)
+
+
+def scan_processed_packs(output_dir: Path) -> List[str]:
+    """Discover existing processed layer packs in output directory."""
+    processed_pack_ids = []
+    if not output_dir.exists():
+        return processed_pack_ids
+    
+    for item in output_dir.iterdir():
+        if item.is_dir() and not item.name.startswith('.'):
+            # Check if it has a manifest.json (indicates it's a processed pack)
+            manifest_path = item / 'manifest.json'
+            if manifest_path.exists():
+                try:
+                    # Validate that manifest has layers
+                    with open(manifest_path, 'r', encoding='utf-8') as f:
+                        manifest = json.load(f)
+                        if manifest.get('layers') and len(manifest.get('layers', [])) > 0:
+                            processed_pack_ids.append(item.name)
+                except Exception as e:
+                    print(f"  Warning: Could not read manifest for {item.name}: {e}")
+    
+    return sorted(processed_pack_ids)
 
 
 def get_geometry_type(geojson_path: Path) -> str:
@@ -710,7 +743,7 @@ def process_pack(pack_dir: Path, output_dir: Path, cache: Dict) -> bool:
                 
                 if generate_mbtiles(wgs84_file, temp_mbtiles):
                     if convert_to_pmtiles(temp_mbtiles, pmtiles_file):
-                        print(f"    ✓ Created PMTiles (keeping GeoJSON for projection)")
+                        print(f"    Created PMTiles (keeping GeoJSON for projection)")
                     else:
                         print(f"    Warning: PMTiles conversion failed, GeoJSON only")
                         pmtiles_file = None
@@ -766,7 +799,7 @@ def process_pack(pack_dir: Path, output_dir: Path, cache: Dict) -> bool:
     with open(styles_path, 'w', encoding='utf-8') as f:
         json.dump(styles, f, indent=2, ensure_ascii=False)
     
-    print(f"  ✓ Processed {len(layers)} layers")
+    print(f"  Processed {len(layers)} layers")
     return True
 
 
@@ -791,31 +824,45 @@ def main():
     # Load cache
     cache = {} if args.no_cache else load_cache(cache_path)
     
-    # Discover packs
+    # Discover packs from source directory
     packs = scan_layer_packs(source_dir)
+    newly_processed_packs = []
+    
     if not packs:
         print(f"No layer packs found in {source_dir}")
-        sys.exit(0)
+    else:
+        print(f"Found {len(packs)} layer pack(s) in source directory")
+        
+        # Process each pack and track which ones have layers
+        for pack_dir in packs:
+            if process_pack(pack_dir, output_dir, cache):
+                # Only include packs that have at least one layer
+                newly_processed_packs.append(pack_dir.name)
+        
+        # Save cache
+        if not args.no_cache:
+            save_cache(cache_path, cache)
     
-    print(f"Found {len(packs)} layer pack(s)")
+    # Discover existing processed packs (that weren't just processed)
+    print(f"\nScanning for existing processed packs...")
+    existing_processed_packs = scan_processed_packs(output_dir)
     
-    # Process each pack
-    for pack_dir in packs:
-        process_pack(pack_dir, output_dir, cache)
+    # Combine newly processed and existing processed packs (avoid duplicates)
+    all_pack_ids = set(newly_processed_packs)
+    all_pack_ids.update(existing_processed_packs)
     
-    # Save cache
-    if not args.no_cache:
-        save_cache(cache_path, cache)
+    if existing_processed_packs:
+        print(f"Found {len(existing_processed_packs)} existing processed pack(s)")
     
-    # Generate root manifest
+    # Always generate root manifest - include both newly processed and existing packs
     root_manifest = {
-        'packs': [pack.name for pack in packs]
+        'packs': sorted(list(all_pack_ids))
     }
     root_manifest_path = output_dir / 'layers-manifest.json'
     with open(root_manifest_path, 'w', encoding='utf-8') as f:
         json.dump(root_manifest, f, indent=2, ensure_ascii=False)
     
-    print(f"\n✓ Processing complete. Output: {output_dir}")
+    print(f"\nProcessing complete. Output: {output_dir}")
 
 
 if __name__ == '__main__':
