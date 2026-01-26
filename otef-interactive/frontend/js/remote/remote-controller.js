@@ -45,7 +45,6 @@ if (document.readyState === "loading") {
 }
 
 async function initialize() {
-  console.log("[Remote] Initializing with OTEFDataContext...");
 
   // Initialize layer registry if available
   if (typeof layerRegistry !== 'undefined') {
@@ -97,8 +96,6 @@ async function initialize() {
 
   // Initial UI render with whatever state DataContext has
   updateUI();
-
-  console.log("[Remote] Initialized");
 }
 
 /**
@@ -229,7 +226,6 @@ async function sendZoomCommand(zoom) {
 
   try {
     await OTEFDataContext.zoom(zoom);
-    console.log("[Remote] Zoom command sent via DataContext:", zoom);
   } catch (error) {
     console.error("[Remote] Zoom command failed:", error);
   }
@@ -275,7 +271,6 @@ function initializeLayerControls() {
         if (!result || !result.ok) {
           throw result && result.error ? result.error : new Error("Layer update failed");
         }
-        console.log("[Remote] Layers updated via DataContext");
       } catch (error) {
         console.error("[Remote] Layer update failed:", error);
         // Revert on error
@@ -348,7 +343,6 @@ async function sendAnimationToggle(layerId, enabled) {
     if (!result || !result.ok) {
       throw result && result.error ? result.error : new Error("Animation toggle failed");
     }
-    console.log(`[Remote] Animation toggle sent via DataContext: ${layerId} = ${enabled}`);
   } catch (error) {
     console.error("[Remote] Animation toggle failed:", error);
   }
@@ -377,8 +371,6 @@ function initializeJoystick() {
   joystickManager.on("start", handleJoystickStart);
   joystickManager.on("move", handleJoystickMove);
   joystickManager.on("end", handleJoystickEnd);
-
-  console.log("[Remote] Joystick initialized");
 }
 
 function handleJoystickStart(evt, data) {
@@ -393,13 +385,10 @@ function handleJoystickStart(evt, data) {
   if (navigator.vibrate) {
     navigator.vibrate(20);
   }
-
-  console.log("[Remote] Joystick activated");
 }
 
 function handleJoystickMove(evt, data) {
   if (!currentState.isConnected || activeControl !== "joystick") return;
-  console.log('[Remote] Joystick Move:', data.force.toFixed(2), data.angle.radian.toFixed(2));
 
   const force = Math.min(data.force, 1.5);
   if (force < 0.15) {
@@ -447,8 +436,6 @@ function handleJoystickEnd(evt, data) {
 
   // Send explicit stop command
   OTEFDataContext.sendVelocity(0, 0);
-
-  console.log("[Remote] Joystick released");
 }
 
 

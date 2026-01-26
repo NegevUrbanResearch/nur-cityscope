@@ -7,6 +7,7 @@ This script provides detailed breakdowns of:
 - GeoJSON layer files (geometry types, properties, bounds, feature counts)
 """
 
+import argparse
 import json
 import os
 import sys
@@ -32,11 +33,12 @@ except ImportError:
 class DataAnalyzer:
     """Analyzes OTEF data files"""
 
-    def __init__(self, project_root):
+    def __init__(self, project_root, layers_base_dir=None, pack_id=None):
         self.project_root = Path(project_root)
         self.data_source = self.project_root / "public" / "source"
         self.model_dir = self.data_source / "model"
-        self.layers_dir = self.data_source / "layers"
+        self.layers_dir = Path(layers_base_dir) if layers_base_dir else (self.data_source / "layers")
+        self.pack_id = pack_id
 
     def analyze_all(self):
         """Run all analyses"""
@@ -46,8 +48,9 @@ class DataAnalyzer:
         print()
 
         # Analyze model
-        self.analyze_model()
-        print()
+        if self.layers_dir == (self.data_source / "layers"):
+            self.analyze_model()
+            print()
 
         # Analyze layers
         self.analyze_layers()
@@ -186,7 +189,8 @@ class DataAnalyzer:
 
         # Basic structure
         print("\n--- STRUCTURE ---")
-        print(f"Type: {data.get('type', 'UNKNOWN')}")
+        data_type = data.get('type', 'UNKNOWN')
+        print(f"Type: {data_type}")
 
         # CRS information
         if 'crs' in data:
@@ -199,6 +203,10 @@ class DataAnalyzer:
             print("CRS: Not specified (assumed WGS84/EPSG:4326)")
 
         # Features
+        if data_type != 'FeatureCollection':
+            print("Not a FeatureCollection - skipping feature analysis.")
+            return
+
         features = data.get('features', [])
         print(f"Feature count: {len(features):,}")
 
@@ -210,7 +218,7 @@ class DataAnalyzer:
         print("\n--- GEOMETRY TYPES ---")
         geometry_types = Counter()
         for feature in features:
-            geom = feature.get('geometry', {})
+            geom = feature.get('geometry') or {}
             geom_type = geom.get('type', 'UNKNOWN')
             geometry_types[geom_type] += 1
 
@@ -223,6 +231,7 @@ class DataAnalyzer:
         property_keys = set()
         property_samples = defaultdict(list)
         property_types = defaultdict(Counter)
+        property_null_counts = Counter()
 
         # Sample first 100 features for property analysis
         sample_size = min(100, len(features))
@@ -234,6 +243,8 @@ class DataAnalyzer:
                 # Track type
                 value_type = type(value).__name__
                 property_types[key][value_type] += 1
+                if value is None or value == "" or value == " ":
+                    property_null_counts[key] += 1
 
                 # Store sample values (first 3 unique)
                 if len(property_samples[key]) < 3:
@@ -247,6 +258,9 @@ class DataAnalyzer:
                 type_str = ", ".join([f"{t}({c})" for t, c in types.items()])
                 print(f"\n  '{key}':")
                 print(f"    Types: {type_str}")
+                null_count = property_null_counts.get(key, 0)
+                if null_count:
+                    print(f"    Empty/Nulls in sample: {null_count}/{sample_size}")
 
                 samples = property_samples[key]
                 if samples:
@@ -286,7 +300,7 @@ class DataAnalyzer:
         try:
             vertex_counts = []
             for feature in features[:100]:  # Sample first 100
-                count = self.count_vertices(feature.get('geometry', {}))
+                count = self.count_vertices(feature.get('geometry') or {})
                 if count > 0:
                     vertex_counts.append(count)
 
@@ -312,7 +326,7 @@ class DataAnalyzer:
         max_x = max_y = float('-inf')
 
         for feature in features:
-            geom = feature.get('geometry', {})
+            geom = feature.get('geometry') or {}
             coords = self.extract_coordinates(geom)
 
             for coord in coords:
@@ -330,6 +344,9 @@ class DataAnalyzer:
 
     def extract_coordinates(self, geometry):
         """Extract all coordinates from a geometry"""
+        if not geometry:
+            return []
+
         coords = []
         geom_type = geometry.get('type', '')
         coordinates = geometry.get('coordinates', [])
@@ -361,18 +378,118 @@ class DataAnalyzer:
         coords = self.extract_coordinates(geometry)
         return len(coords)
 
+    def summarize_layer_fields(self, file_path):
+        """Return a structured summary of fields for a layer file."""
+        summary = {
+            "file": file_path.name,
+            "path": str(file_path),
+            "featureCount": 0,
+            "geometryTypes": {},
+            "fields": {}
+        }
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            summary["error"] = str(e)
+            return summary
+
+        if data.get('type') != 'FeatureCollection':
+            summary["warning"] = "Not a FeatureCollection"
+            return summary
+
+        features = data.get('features', [])
+        summary["featureCount"] = len(features)
+
+        geometry_types = Counter()
+        for feature in features:
+            geom = feature.get('geometry') or {}
+            geom_type = geom.get('type', 'UNKNOWN')
+            geometry_types[geom_type] += 1
+        summary["geometryTypes"] = dict(geometry_types)
+
+        field_types = defaultdict(Counter)
+        field_samples = defaultdict(list)
+        field_nulls = Counter()
+
+        sample_size = min(200, len(features))
+        for feature in features[:sample_size]:
+            props = feature.get('properties', {})
+            for key, value in props.items():
+                value_type = type(value).__name__
+                field_types[key][value_type] += 1
+                if value is None or value == "" or value == " ":
+                    field_nulls[key] += 1
+                if len(field_samples[key]) < 5 and value not in field_samples[key]:
+                    field_samples[key].append(value)
+
+        for key in sorted(field_types.keys()):
+            summary["fields"][key] = {
+                "types": dict(field_types[key]),
+                "sampleValues": field_samples[key],
+                "sampleNulls": field_nulls.get(key, 0),
+                "sampleSize": sample_size
+            }
+
+        return summary
+
+    def export_field_summary(self, output_path):
+        """Export a JSON file with field summaries for all layers."""
+        if not self.layers_dir.exists():
+            raise FileNotFoundError(f"Layers directory not found at {self.layers_dir}")
+
+        json_files = list(self.layers_dir.glob("*.geojson")) + list(self.layers_dir.glob("*.json"))
+        summaries = {
+            "packId": self.pack_id,
+            "layersDir": str(self.layers_dir),
+            "layerCount": len(json_files),
+            "layers": []
+        }
+
+        for json_file in sorted(json_files):
+            summaries["layers"].append(self.summarize_layer_fields(json_file))
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(summaries, f, ensure_ascii=False, indent=2)
+        return output_path
+
 
 def main():
+    parser = argparse.ArgumentParser(description="Analyze OTEF model and layer files.")
+    parser.add_argument("--processed", action="store_true", help="Analyze processed layers instead of source layers")
+    parser.add_argument("--pack", help="Layer pack id (e.g., map_3_future)")
+    parser.add_argument("--export-fields", action="store_true", help="Export a JSON summary of layer fields")
+    parser.add_argument("--output", help="Output JSON path for field summary")
+    args = parser.parse_args()
+
     # Determine project root
     script_dir = Path(__file__).parent
     project_root = script_dir.parent
 
+    if args.processed:
+        if not args.pack:
+            print("ERROR: --processed requires --pack")
+            sys.exit(1)
+        layers_dir = project_root / "public" / "processed" / "layers" / args.pack
+    else:
+        layers_dir = project_root / "public" / "source" / "layers"
+
     print(f"Project root: {project_root}")
+    print(f"Layers dir: {layers_dir}")
     print()
 
     # Create analyzer and run
-    analyzer = DataAnalyzer(project_root)
+    analyzer = DataAnalyzer(project_root, layers_base_dir=layers_dir, pack_id=args.pack)
     analyzer.analyze_all()
+
+    if args.export_fields:
+        default_output = project_root / "scripts" / "outputs" / "layer_field_summary.json"
+        output_path = Path(args.output) if args.output else default_output
+        exported_path = analyzer.export_field_summary(output_path)
+        print()
+        print(f"Field summary exported to: {exported_path}")
 
 
 if __name__ == '__main__':

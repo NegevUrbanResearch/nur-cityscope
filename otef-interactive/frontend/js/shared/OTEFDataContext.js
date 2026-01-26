@@ -96,7 +96,6 @@ class OTEFDataContextClass {
 
         // Timestamp guard: Ignore stale updates
         if (msg && msg.timestamp && msg.timestamp < this._lastLocalStateTimestamp - 200) {
-          console.log('[OTEFDataContext] Ignoring stale VIEWPORT_CHANGED');
           return;
         }
 
@@ -117,7 +116,6 @@ class OTEFDataContextClass {
     });
 
     this._wsClient.on(OTEF_MESSAGE_TYPES.VELOCITY_SYNC, (msg) => {
-      console.log(`[OTEFDataContext] VELOCITY_SYNC received: vx=${msg.vx}, vy=${msg.vy}, remote=${msg.sourceId !== this._clientId}`);
       this._velocity = { vx: msg.vx || 0, vy: msg.vy || 0 };
       this._lastVelocityUpdate = Date.now();
       if (this._velocity.vx !== 0 || this._velocity.vy !== 0) {
@@ -360,9 +358,6 @@ class OTEFDataContextClass {
     this._lastLocalStateTimestamp = Date.now();
 
     try {
-      if (isMoving) {
-        console.log(`[OTEFDataContext] Sending velocity: vx=${vx.toFixed(1)}, vy=${vy.toFixed(1)}`);
-      }
       this._wsClient.send({
         type: OTEF_MESSAGE_TYPES.VELOCITY_UPDATE,
         vx,
@@ -596,14 +591,11 @@ class OTEFDataContextClass {
    * Toggle a layer within the hierarchical groups structure.
    */
   async _toggleLayerInGroups(layerId, enabled) {
-    console.log(`[OTEFDataContext] _toggleLayerInGroups: layerId=${layerId}, enabled=${enabled}`);
-    
     const previous = JSON.parse(JSON.stringify(this._layerGroups || []));
     const next = previous.map(group => {
       const layers = group.layers.map(layer => {
         const fullId = `${group.id}.${layer.id}`;
         if (fullId === layerId) {
-          console.log(`[OTEFDataContext] Found layer ${fullId}, setting enabled=${enabled}`);
           return { ...layer, enabled: !!enabled };
         }
         return layer;
@@ -614,9 +606,7 @@ class OTEFDataContextClass {
     this._setLayerGroups(next);
 
     try {
-      console.log(`[OTEFDataContext] _toggleLayerInGroups: calling API to persist`);
       await OTEF_API.updateLayerGroups(this._tableName, next);
-      console.log(`[OTEFDataContext] _toggleLayerInGroups: success`);
       return { ok: true };
     } catch (err) {
       console.error('[OTEFDataContext] Failed to update layer groups:', err);
@@ -632,15 +622,11 @@ class OTEFDataContextClass {
    * @param {boolean} enabled
    */
   async toggleGroup(groupId, enabled) {
-    console.log(`[OTEFDataContext] toggleGroup called: groupId=${groupId}, enabled=${enabled}`);
-    
     if (!this._tableName || !groupId) {
-      console.warn('[OTEFDataContext] toggleGroup: missing tableName or groupId');
       return { ok: false, error: 'Missing groupId' };
     }
 
     if (!this._layerGroups) {
-      console.warn('[OTEFDataContext] toggleGroup: layer groups not available');
       return { ok: false, error: 'Layer groups not available' };
     }
 
@@ -654,13 +640,10 @@ class OTEFDataContextClass {
       return group;
     });
 
-    console.log(`[OTEFDataContext] toggleGroup: updating state for ${groupId}`, next.find(g => g.id === groupId));
     this._setLayerGroups(next);
 
     try {
-      console.log(`[OTEFDataContext] toggleGroup: calling API to persist`);
       await OTEF_API.updateLayerGroups(this._tableName, next);
-      console.log(`[OTEFDataContext] toggleGroup: success`);
       return { ok: true };
     } catch (err) {
       console.error('[OTEFDataContext] Failed to update layer groups:', err);

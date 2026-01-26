@@ -131,7 +131,6 @@ class LayerSheetController {
   async toggleGroupEnabled(groupId, enabled) {
     if (typeof OTEFDataContext !== 'undefined') {
       try {
-        console.log(`[LayerSheet] Toggling group ${groupId} to ${enabled}`);
         const result = await OTEFDataContext.toggleGroup(groupId, enabled);
         if (!result || !result.ok) {
           console.error(`[LayerSheet] Failed to toggle group ${groupId}:`, result?.error);
@@ -139,17 +138,13 @@ class LayerSheetController {
       } catch (err) {
         console.error(`[LayerSheet] Error toggling group ${groupId}:`, err);
       }
-    } else {
-      console.warn('[LayerSheet] OTEFDataContext not available');
     }
   }
 
   async toggleLayer(layerId, enabled) {
-    console.log(`[LayerSheet] Toggling layer ${layerId} to ${enabled}`);
     if (typeof OTEFDataContext !== 'undefined') {
       // Special handling for model base - route to legacy layers.model
       if (layerId === '_legacy.model_base' || layerId === 'model_base') {
-        console.log(`[LayerSheet] Routing model_base to legacy layers.model`);
         await OTEFDataContext.toggleLayer('model', enabled);
       } else {
         await OTEFDataContext.toggleLayer(layerId, enabled);

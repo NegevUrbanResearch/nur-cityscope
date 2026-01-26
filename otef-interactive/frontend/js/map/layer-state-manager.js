@@ -94,7 +94,6 @@ function applyLayerState(layers) {
 
   if (hasChanges) {
     updateMapLegend();
-    console.log("[GIS Map] Layer state applied:", layerState);
   }
 }
 
@@ -119,11 +118,8 @@ function handleLayerUpdate(msg) {
     (layers.smallRoads !== undefined && layers.smallRoads !== layerState.smallRoads);
 
   if (!hasChanges) {
-    console.log("[GIS Map] Layer update matches current state, ignoring");
     return;
   }
-
-  console.log("[GIS Map] Processing layer update from remote:", layers);
 
   // Update layer visibility (GIS map is receive-only, no broadcasting)
   if (layers.roads !== undefined && layers.roads !== layerState.roads) {
@@ -212,8 +208,6 @@ function applyLayerGroupsState(layerGroups) {
     console.warn("[GIS Map] Invalid layer groups state");
     return;
   }
-
-  console.log("[GIS Map] Applying layer groups state:", layerGroups);
 
   // Process each group - individual layer.enabled is the source of truth for visibility
   for (const group of layerGroups) {

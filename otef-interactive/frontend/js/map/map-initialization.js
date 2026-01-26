@@ -80,7 +80,6 @@ window.syncLockTimer = null;
  */
 function initializeMap(bounds) {
   modelBounds = bounds;
-  console.log("Model bounds loaded (EPSG:2039):", bounds);
 
   // Transform bounds to WGS84
   const [swLat, swLon] = CoordUtils.transformItmToWgs84(bounds.west, bounds.south);
@@ -91,11 +90,6 @@ function initializeMap(bounds) {
     L.latLng(neLat, neLon)
   );
 
-  console.log("Model bounds in WGS84:", {
-    sw: [swLat, swLon],
-    ne: [neLat, neLon],
-  });
-
   // Restrict map to model bounds only
   map.setMaxBounds(wgs84Bounds);
 
@@ -104,11 +98,7 @@ function initializeMap(bounds) {
   const minZoomForBounds = map.getBoundsZoom(wgs84Bounds, false);
   map.setMinZoom(minZoomForBounds);
 
-  console.log(`Minimum zoom set to ${minZoomForBounds} to fit geotif bounds`);
-
   map.fitBounds(wgs84Bounds);
-
-  console.log("Map bounds restricted to model area");
 
   // Add model image overlay (hidden by default) with custom pane for z-ordering
   modelOverlay = L.imageOverlay("data/model-transparent.png", wgs84Bounds, {
@@ -121,8 +111,6 @@ function initializeMap(bounds) {
   window.modelLayer = modelOverlay;
   layerState.model = false;
   updateMapLegend(); // Update legend
-
-  console.log("Map initialized with WGS84 basemap!");
 
   // Initialize shared OTEFDataContext and subscribe to state
   if (typeof OTEFDataContext !== 'undefined') {
@@ -207,10 +195,83 @@ window.addEventListener("beforeunload", () => {
 });
 
 // Map click handler
-map.on("click", (e) => {
+map.on("click", async (e) => {
   const { lat, lng } = e.latlng;
-  const [x, y] = proj4("EPSG:4326", "EPSG:2039", [lng, lat]);
+  
+  // First, check if we can find a PMTiles feature with popup config
+  if (typeof window.pmtilesLayersWithConfigs !== 'undefined' && window.pmtilesLayersWithConfigs.size > 0) {
+    // Check each PMTiles layer that has a popup config
+    for (const [fullLayerId, layerInfo] of window.pmtilesLayersWithConfigs.entries()) {
+      // Only check if layer is visible on map
+      if (!map.hasLayer(layerInfo.layer)) {
+        continue;
+      }
 
+      try {
+        // Protomaps-leaflet has queryTileFeaturesDebug method for basic feature querying
+        const wrapped = map.wrapLatLng(e.latlng);
+        
+        // Check if the query method exists
+        if (typeof layerInfo.layer.queryTileFeaturesDebug !== 'function') {
+          continue;
+        }
+        
+        // Query features at the clicked location
+        const queryResult = layerInfo.layer.queryTileFeaturesDebug(wrapped.lng, wrapped.lat);
+        
+        // Convert result to array - queryTileFeaturesDebug returns a Map, not an array
+        // Map structure: Map { layerName => [features] }
+        let features = [];
+        if (queryResult instanceof Map) {
+          for (const [layerName, layerFeatures] of queryResult) {
+            if (Array.isArray(layerFeatures)) {
+              features = features.concat(layerFeatures);
+            }
+          }
+        } else if (Array.isArray(queryResult)) {
+          features = queryResult;
+        }
+        
+        if (features.length > 0) {
+          // Found a feature - use the first one
+          const wrappedFeature = features[0];
+          
+          // Protomaps-leaflet wraps features: { feature: {...}, layerName: 'layer' }
+          // The actual feature with props is inside .feature
+          const feature = wrappedFeature.feature || wrappedFeature;
+          
+          // Get properties from the unwrapped feature
+          const featureProps = feature.props || feature.properties || {};
+          
+          // Normalize feature to GeoJSON-like shape
+          const normalizedFeature = {
+            type: "Feature",
+            geometry: feature.geometry || feature.geom || { type: "Polygon" },
+            properties: featureProps
+          };
+
+          // Get layer display name
+          const layerDisplayName = layerInfo.config?.name || fullLayerId.split('.').pop();
+
+          // Render and show popup
+          if (typeof renderPopupContent === 'function') {
+            const content = renderPopupContent(normalizedFeature, layerInfo.popupConfig, layerDisplayName);
+            L.popup()
+              .setLatLng(e.latlng)
+              .setContent(content)
+              .openOn(map);
+            return; // Stop here, don't show coordinate popup
+          }
+        }
+      } catch (error) {
+        // If query fails, continue to next layer or fall back
+        console.warn(`[Map] Error querying PMTiles layer ${fullLayerId}:`, error);
+      }
+    }
+  }
+
+  // Fall back to coordinate display if no feature found
+  const [x, y] = proj4("EPSG:4326", "EPSG:2039", [lng, lat]);
   showFeatureInfo({
     type: "Point",
     coordinates: [lng, lat],

@@ -18,11 +18,14 @@
 // Store loaded layers by full layer ID (e.g., "map_3_future.mimushim")
 const loadedLayersMap = new Map();
 
+// Store PMTiles layers with their configs for feature picking (global for map click handler)
+window.pmtilesLayersWithConfigs = window.pmtilesLayersWithConfigs || new Map();
+const pmtilesLayersWithConfigs = window.pmtilesLayersWithConfigs;
+
 /**
  * Load all layers from the new layer groups system and legacy layers.
  */
 async function loadGeoJSONLayers() {
-  console.log("[Map] Loading layers...");
 
   // Initialize layer registry if available
   if (typeof layerRegistry !== 'undefined') {
@@ -47,7 +50,6 @@ async function loadGeoJSONLayers() {
     ]);
 
     updateMapLegend();
-    console.log("[Map] All layers loaded successfully");
 
   } catch (error) {
     console.error("[Map] Critical error during layer loading:", error);
@@ -64,7 +66,6 @@ async function loadLayerGroups() {
   }
 
   const groups = layerRegistry.getGroups();
-  console.log(`[Map] Found ${groups.length} layer group(s)`);
 
   // Load all layers from all groups
   const loadPromises = [];
@@ -76,7 +77,6 @@ async function loadLayerGroups() {
   }
 
   await Promise.all(loadPromises);
-  console.log(`[Map] Loaded ${loadedLayersMap.size} layer(s) from registry`);
 }
 
 /**
@@ -85,7 +85,7 @@ async function loadLayerGroups() {
  */
 async function loadLayerFromRegistry(fullLayerId) {
   if (loadedLayersMap.has(fullLayerId)) {
-    console.log(`[Map] Layer ${fullLayerId} already loaded`);
+    // Skip already loaded layers silently
     return;
   }
 
@@ -94,8 +94,6 @@ async function loadLayerFromRegistry(fullLayerId) {
     console.warn(`[Map] Layer config not found: ${fullLayerId}`);
     return;
   }
-
-  console.log(`[Map] Loading layer: ${fullLayerId} (${layerConfig.geometryType}, ${layerConfig.format})`);
 
   try {
     // Prefer PMTiles for GIS if available, fallback to GeoJSON
@@ -131,22 +129,23 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
     }
 
     let geojson = await response.json();
-    console.log(`[Map] Loaded ${geojson.features?.length || 0} features for ${fullLayerId}`);
 
     // Check CRS and transform from EPSG:2039 (ITM) to WGS84 if needed
     // Most processed layers are in EPSG:2039 and need transformation for Leaflet
     const crs = geojson.crs?.properties?.name || '';
-    if (crs.includes('2039') || crs.includes('ITM')) {
-      console.log(`[Map] Transforming ${fullLayerId} from EPSG:2039 to WGS84`);
-      geojson = CoordUtils.transformGeojsonToWgs84(geojson);
-    } else if (!crs || crs === '') {
-      // No CRS specified - assume EPSG:2039 for processed layers (safe default for this project)
-      console.log(`[Map] No CRS specified for ${fullLayerId}, assuming EPSG:2039 - transforming to WGS84`);
+    if (crs.includes('2039') || crs.includes('ITM') || !crs || crs === '') {
+      // Transform from EPSG:2039 (or assume it if no CRS)
       geojson = CoordUtils.transformGeojsonToWgs84(geojson);
     }
 
     // Get style function from StyleApplicator
     const styleFunction = StyleApplicator.getLeafletStyle(layerConfig);
+
+    // Get popup config if available
+    const popupConfig = layerConfig.ui?.popup;
+
+    // Get layer name for popup display
+    const layerDisplayName = layerConfig.name || fullLayerId.split('.').pop();
 
     // Create Leaflet layer with custom pane for proper z-ordering above basemaps
     let leafletLayer;
@@ -158,13 +157,37 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
         pane: 'vectorOverlay',
         pointToLayer: (feature, latlng) => {
           return L.circleMarker(latlng, markerOptions);
+        },
+        onEachFeature: (feature, layer) => {
+          // Attach click handler if popup config exists
+          if (popupConfig && typeof renderPopupContent === 'function') {
+            layer.on('click', (e) => {
+              const content = renderPopupContent(feature, popupConfig, layerDisplayName);
+              L.popup()
+                .setLatLng(e.latlng)
+                .setContent(content)
+                .openOn(map);
+            });
+          }
         }
       });
     } else {
       // Use style function for polygons and lines
       leafletLayer = L.geoJSON(geojson, {
         pane: 'vectorOverlay',
-        style: styleFunction
+        style: styleFunction,
+        onEachFeature: (feature, layer) => {
+          // Attach click handler if popup config exists
+          if (popupConfig && typeof renderPopupContent === 'function') {
+            layer.on('click', (e) => {
+              const content = renderPopupContent(feature, popupConfig, layerDisplayName);
+              L.popup()
+                .setLatLng(e.latlng)
+                .setContent(content)
+                .openOn(map);
+            });
+          }
+        }
       });
     }
 
@@ -187,8 +210,6 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
         }
       }
     }
-
-    console.log(`[Map] Layer ${fullLayerId} ready (GeoJSON)`);
   } catch (error) {
     console.error(`[Map] Error loading GeoJSON layer ${fullLayerId}:`, error);
     throw error;
@@ -200,7 +221,6 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
  */
 async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
   try {
-    console.log(`[Map] Loading PMTiles layer: ${fullLayerId}`);
 
     // Get style function from StyleApplicator
     const styleFunction = StyleApplicator.getLeafletStyle(layerConfig);
@@ -265,6 +285,16 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
     window[`layer_${fullLayerId.replace(/\./g, '_')}`] = pmtilesLayer;
     loadedLayersMap.set(fullLayerId, pmtilesLayer);
 
+    // Store PMTiles layer with config for feature picking if popup config exists
+    const popupConfig = layerConfig.ui?.popup;
+    if (popupConfig) {
+      pmtilesLayersWithConfigs.set(fullLayerId, {
+        layer: pmtilesLayer,
+        config: layerConfig,
+        popupConfig: popupConfig
+      });
+    }
+
     // Check if layer should be visible
     // Note: Individual layer.enabled is the source of truth, not group.enabled
     if (typeof OTEFDataContext !== 'undefined') {
@@ -280,8 +310,6 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
         }
       }
     }
-
-    console.log(`[Map] Layer ${fullLayerId} ready (PMTiles)`);
   } catch (error) {
     console.error(`[Map] Error loading PMTiles layer ${fullLayerId}:`, error);
     throw error;
@@ -296,20 +324,16 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
 function updateLayerVisibilityFromRegistry(fullLayerId, visible) {
   const layer = loadedLayersMap.get(fullLayerId);
   if (!layer) {
-    console.warn(`[Map] Layer not found for visibility update: ${fullLayerId}`);
+    // Layer may not be loaded yet - this is normal during initial load
     return;
   }
 
-  console.log(`[Map] Updating visibility for ${fullLayerId}: visible=${visible}, hasLayer=${map.hasLayer(layer)}`);
-  
   if (visible) {
     if (!map.hasLayer(layer)) {
-      console.log(`[Map] Adding layer to map: ${fullLayerId}`);
       map.addLayer(layer);
     }
   } else {
     if (map.hasLayer(layer)) {
-      console.log(`[Map] Removing layer from map: ${fullLayerId}`);
       map.removeLayer(layer);
     }
   }
@@ -319,7 +343,6 @@ function updateLayerVisibilityFromRegistry(fullLayerId, visible) {
  * Load parcels layer from PMTiles (vector tiles for performance)
  */
 async function loadParcelsFromPMTiles(layerConfig) {
-  console.log("Loading parcels from PMTiles...");
 
   try {
     // Create paint rules for protomaps-leaflet
@@ -362,8 +385,6 @@ async function loadParcelsFromPMTiles(layerConfig) {
     if (layerState.parcels) {
       map.addLayer(parcelsLayer);
     }
-
-    console.log("Parcels layer ready (PMTiles)");
   } catch (error) {
     console.error("Error loading parcels from PMTiles:", error);
     // Fallback: parcels layer unavailable
@@ -387,17 +408,12 @@ async function loadRoadsFromGeoJSON(layerConfig) {
   }
 
   if (!layerConfig) {
-    console.warn("Roads layer configuration not found");
     return;
   }
-
-  console.log("Loading roads from GeoJSON...");
 
   try {
     // Use shared helper to resolve config to GeoJSON
     const geojson = await loadGeojsonFromConfig(layerConfig);
-
-    console.log(`Roads: ${geojson.features?.length || 0} features, transforming...`);
 
     // Transform from EPSG:2039 to WGS84 using shared coordinate utils
     const transformed = CoordUtils.transformGeojsonToWgs84(geojson);
@@ -414,8 +430,6 @@ async function loadRoadsFromGeoJSON(layerConfig) {
     if (layerState.roads) {
       map.addLayer(roadsLayer);
     }
-
-    console.log("Roads layer ready (GeoJSON)");
   } catch (error) {
     console.error("Error loading roads:", error);
   }
@@ -438,17 +452,12 @@ async function loadMajorRoadsFromGeoJSON(layerConfig) {
   }
 
   if (!layerConfig) {
-    console.warn("Major roads layer configuration not found");
     return;
   }
-
-  console.log("Loading major roads from GeoJSON...");
 
   try {
     // Use shared helper to resolve config to GeoJSON
     const geojson = await loadGeojsonFromConfig(layerConfig);
-
-    console.log(`Major roads: ${geojson.features?.length || 0} features, transforming...`);
 
     // Transform from EPSG:2039 to WGS84 using shared coordinate utils
     const transformed = CoordUtils.transformGeojsonToWgs84(geojson);
@@ -465,8 +474,6 @@ async function loadMajorRoadsFromGeoJSON(layerConfig) {
     if (layerState.majorRoads) {
       map.addLayer(majorRoadsLayer);
     }
-
-    console.log("Major roads layer ready (GeoJSON)");
   } catch (error) {
     console.error("Error loading major roads:", error);
   }
@@ -489,22 +496,16 @@ async function loadSmallRoadsFromGeoJSON(layerConfig) {
   }
 
   if (!layerConfig) {
-    console.warn("Small roads layer configuration not found");
     return;
   }
-
-  console.log("Loading small roads from GeoJSON...");
 
   try {
     // Use shared helper to resolve config to GeoJSON
     let geojson = await loadGeojsonFromConfig(layerConfig);
 
-    console.log(`Small roads: ${geojson.features?.length || 0} features`);
-
     // Check CRS and transform if needed (some files may be in EPSG:2039)
     const crs = geojson.crs?.properties?.name || '';
     if (crs.includes('2039') || crs.includes('ITM')) {
-      console.log("Small roads: Transforming from EPSG:2039 to WGS84");
       geojson = CoordUtils.transformGeojsonToWgs84(geojson);
     }
 
@@ -520,8 +521,6 @@ async function loadSmallRoadsFromGeoJSON(layerConfig) {
     if (layerState.smallRoads) {
       map.addLayer(smallRoadsLayer);
     }
-
-    console.log("Small roads layer ready (GeoJSON)");
   } catch (error) {
     console.error("Error loading small roads:", error);
   }

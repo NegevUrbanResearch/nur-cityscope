@@ -249,9 +249,7 @@ class LayerGroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = LayerGroup
         fields = ["id", "group_id", "enabled", "layers", "created_at", "updated_at"]
-        read_only_fields = ["id", "created_at", "updated_at"]
-
-    def get_layers(self, obj):
+        read_only_fields = ["id", "created_at", "updated_at"]    def get_layers(self, obj):
         """Get all layer states for this group"""
         # Extract group_id from layer_id (format: "group_id.layer_id")
         layer_states = LayerState.objects.filter(
