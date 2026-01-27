@@ -45,19 +45,23 @@ const CoordUtils = {
     },
 
     /**
-     * Transform entire GeoJSON from WGS84 to EPSG:2039 (ITM).
-     * @param {Object} geojson - GeoJSON object with features in WGS84
-     * @returns {Object} Transformed GeoJSON with ITM coordinates
+     * Generic helper to transform GeoJSON coordinates using a provided transform function.
+     * Handles recursive coordinate arrays for all geometry types.
+     * @param {Object} geojson - GeoJSON object to transform
+     * @param {Function} transformFn - Function that takes [x, y] and returns transformed [x, y]
+     * @param {Object} [options] - Options object
+     * @param {Object} [options.crs] - CRS to set on output (optional)
+     * @returns {Object} Transformed GeoJSON
      */
-    transformGeojsonToItm(geojson) {
+    transformGeojsonCoords(geojson, transformFn, options = {}) {
         const transformed = JSON.parse(JSON.stringify(geojson)); // Deep clone
 
         function transformCoords(coords, depth = 0) {
             if (depth > 10) return coords; // Safety limit
 
             if (typeof coords[0] === "number") {
-                // This is a coordinate pair [lon, lat] in WGS84
-                return proj4("EPSG:4326", "EPSG:2039", [coords[0], coords[1]]);
+                // This is a coordinate pair [x, y]
+                return transformFn(coords[0], coords[1]);
             } else {
                 // Recurse into nested arrays
                 return coords.map((c) => transformCoords(c, depth + 1));
@@ -75,13 +79,28 @@ const CoordUtils = {
             });
         }
 
-        // Update CRS to ITM
-        transformed.crs = {
-            type: "name",
-            properties: { name: "EPSG:2039" },
-        };
+        // Update CRS if provided
+        if (options.crs) {
+            transformed.crs = {
+                type: "name",
+                properties: { name: options.crs },
+            };
+        }
 
         return transformed;
+    },
+
+    /**
+     * Transform entire GeoJSON from WGS84 to EPSG:2039 (ITM).
+     * @param {Object} geojson - GeoJSON object with features in WGS84
+     * @returns {Object} Transformed GeoJSON with ITM coordinates
+     */
+    transformGeojsonToItm(geojson) {
+        return this.transformGeojsonCoords(
+            geojson,
+            (lon, lat) => proj4("EPSG:4326", "EPSG:2039", [lon, lat]),
+            { crs: "EPSG:2039" }
+        );
     },
 
     /**
@@ -90,42 +109,14 @@ const CoordUtils = {
      * @returns {Object} Transformed GeoJSON with WGS84 coordinates
      */
     transformGeojsonToWgs84(geojson) {
-        const transformed = JSON.parse(JSON.stringify(geojson)); // Deep clone
-
-        function transformCoords(coords, depth = 0) {
-            if (depth > 10) return coords; // Safety limit
-
-            if (typeof coords[0] === "number") {
-                // This is a coordinate pair [x, y] in EPSG:2039
-                const [lon, lat] = proj4("EPSG:2039", "EPSG:4326", [
-                    coords[0],
-                    coords[1],
-                ]);
+        return this.transformGeojsonCoords(
+            geojson,
+            (x, y) => {
+                const [lon, lat] = proj4("EPSG:2039", "EPSG:4326", [x, y]);
                 return [lon, lat];
-            } else {
-                // Recurse into nested arrays
-                return coords.map((c) => transformCoords(c, depth + 1));
-            }
-        }
-
-        // Transform each feature's geometry
-        if (transformed.features) {
-            transformed.features.forEach((feature) => {
-                if (feature.geometry && feature.geometry.coordinates) {
-                    feature.geometry.coordinates = transformCoords(
-                        feature.geometry.coordinates
-                    );
-                }
-            });
-        }
-
-        // Update CRS to WGS84
-        transformed.crs = {
-            type: "name",
-            properties: { name: "EPSG:4326" },
-        };
-
-        return transformed;
+            },
+            { crs: "EPSG:4326" }
+        );
     },
     
     /**
@@ -136,24 +127,12 @@ const CoordUtils = {
      * @returns {Object} Transformed GeoJSON with pixel coordinates
      */
     transformGeojsonToDisplayPixels(geojson, modelBounds, displayBounds) {
-        const transformed = JSON.parse(JSON.stringify(geojson)); // Deep clone
-        
-        /**
-         * Recursively transform coordinate arrays
-         * @param {Array} coords - Coordinate array (nested for MultiPolygon, etc.)
-         * @param {number} depth - Recursion depth (safety limit)
-         * @returns {Array} Transformed coordinates
-         */
-        function transformCoords(coords, depth = 0) {
-            if (depth > 10) return coords; // Safety limit
-            
-            // Check if this is a coordinate pair [x, y]
-            if (Array.isArray(coords) && coords.length >= 2 && 
-                typeof coords[0] === 'number' && typeof coords[1] === 'number') {
-                // This is a coordinate pair [x, y] in EPSG:2039
-                // Calculate percentage directly from ITM coordinates (same as itmToDisplayPixels)
-                const pctX = Math.max(0, Math.min(1, (coords[0] - modelBounds.west) / (modelBounds.east - modelBounds.west)));
-                const pctY = Math.max(0, Math.min(1, (modelBounds.north - coords[1]) / (modelBounds.north - modelBounds.south)));
+        return this.transformGeojsonCoords(
+            geojson,
+            (x, y) => {
+                // Calculate percentage directly from ITM coordinates
+                const pctX = Math.max(0, Math.min(1, (x - modelBounds.west) / (modelBounds.east - modelBounds.west)));
+                const pctY = Math.max(0, Math.min(1, (modelBounds.north - y) / (modelBounds.north - modelBounds.south)));
                 
                 // Convert percentage to SVG-relative coordinates (SVG viewBox starts at 0,0)
                 // The SVG is positioned at offsetX,offsetY, so coordinates inside SVG are relative to SVG origin
@@ -161,23 +140,8 @@ const CoordUtils = {
                 const resultY = pctY * displayBounds.height;
                 
                 return [resultX, resultY];
-            } else if (Array.isArray(coords)) {
-                // Recurse into nested arrays
-                return coords.map(c => transformCoords(c, depth + 1));
             }
-            return coords;
-        }
-        
-        // Transform each feature's geometry
-        if (transformed.features) {
-            transformed.features.forEach(feature => {
-                if (feature.geometry && feature.geometry.coordinates) {
-                    feature.geometry.coordinates = transformCoords(feature.geometry.coordinates);
-                }
-            });
-        }
-        
-        return transformed;
+        );
     }
 };
 

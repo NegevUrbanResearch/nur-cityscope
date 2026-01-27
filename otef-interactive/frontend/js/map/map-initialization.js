@@ -59,15 +59,11 @@ const basemaps = {
 L.control.layers(basemaps, null, { position: "topleft" }).addTo(map);
 
 // Layer references (will be set by layer loaders)
-let parcelsLayer, roadsLayer, modelOverlay, majorRoadsLayer, smallRoadsLayer;
+let modelOverlay;
 
-// Layer state tracking
+// Layer state tracking (model only; vector layers use registry)
 let layerState = {
-  roads: false, // Start false, let API enable it
-  parcels: false,
   model: false,
-  majorRoads: false,
-  smallRoads: false,
 };
 
 // Flag and timer to prevent echo when applying remote state

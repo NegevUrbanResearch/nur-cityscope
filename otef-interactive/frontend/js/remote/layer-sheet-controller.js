@@ -129,15 +129,19 @@ class LayerSheetController {
   }
 
   async toggleGroupEnabled(groupId, enabled) {
-    if (typeof OTEFDataContext !== 'undefined') {
-      try {
-        const result = await OTEFDataContext.toggleGroup(groupId, enabled);
-        if (!result || !result.ok) {
-          console.error(`[LayerSheet] Failed to toggle group ${groupId}:`, result?.error);
-        }
-      } catch (err) {
-        console.error(`[LayerSheet] Error toggling group ${groupId}:`, err);
+    if (typeof OTEFDataContext === 'undefined') return;
+    try {
+      if (groupId === '_legacy') {
+        // Legacy group only has virtual "Model base"; sync group toggle to layers.model
+        await OTEFDataContext.toggleLayer('model', enabled);
+        return;
       }
+      const result = await OTEFDataContext.toggleGroup(groupId, enabled);
+      if (!result || !result.ok) {
+        console.error(`[LayerSheet] Failed to toggle group ${groupId}:`, result?.error);
+      }
+    } catch (err) {
+      console.error(`[LayerSheet] Error toggling group ${groupId}:`, err);
     }
   }
 
@@ -176,17 +180,18 @@ class LayerSheetController {
         groups = groups.map(group => {
           const state = stateMap.get(group.id);
           if (state) {
-            return {
-              ...group,
-              enabled: state.enabled,
-              layers: group.layers.map(layer => {
-                const layerState = state.layers.find(l => l.id === layer.id);
-                return {
-                  ...layer,
-                  enabled: layerState ? layerState.enabled : false
-                };
-              })
-            };
+            const layers = group.layers.map(layer => {
+              const layerState = state.layers.find(l => l.id === layer.id);
+              return {
+                ...layer,
+                enabled: layerState ? layerState.enabled : false
+              };
+            });
+            const enabled =
+              group.id === '_legacy'
+                ? state.enabled
+                : layers.length > 0 && layers.every((l) => l.enabled);
+            return { ...group, enabled, layers };
           }
           return group;
         });
@@ -202,23 +207,21 @@ class LayerSheetController {
       layerCountEl.textContent = `${totalEnabled} active`;
     }
 
-    // Inject virtual "Model base" layer into _legacy group
+    // Inject virtual "Model base" layer into _legacy group and derive group.enabled from it
     const legacyGroupIndex = groups.findIndex(g => g.id === '_legacy');
     if (legacyGroupIndex !== -1) {
       const legacyGroup = groups[legacyGroupIndex];
-      // Get model state from legacy layers
       const legacyLayers = typeof OTEFDataContext !== 'undefined' ? OTEFDataContext.getLayers() : null;
       const modelEnabled = legacyLayers && legacyLayers.model === true;
-      
-      // Add model base as first item in legacy group
+
       const modelBaseLayer = {
         id: 'model_base',
         name: 'Model base',
         enabled: modelEnabled,
-        virtual: true // Mark as virtual so it doesn't try to load from registry
+        virtual: true
       };
-      
       legacyGroup.layers = [modelBaseLayer, ...(legacyGroup.layers || [])];
+      legacyGroup.enabled = modelEnabled;
       groups[legacyGroupIndex] = legacyGroup;
     }
 
@@ -237,7 +240,7 @@ class LayerSheetController {
         <div class="layer-group" data-group-id="${group.id}">
           <div class="group-header">
             <div class="group-title-row" onclick="layerSheetController.toggleGroup('${group.id}')">
-              <span class="group-title">${this.escapeHtml(group.name)}</span>
+              <span class="group-title">${escapeHtml(group.name)}</span>
               <span class="group-count">${enabledLayers}/${totalLayers}</span>
             </div>
             <div class="group-controls">
@@ -269,7 +272,7 @@ class LayerSheetController {
                     onchange="layerSheetController.toggleLayer('${fullLayerId}', this.checked); event.stopPropagation();"
                   />
                   <span class="toggle-indicator"></span>
-                  <span class="layer-label">${this.escapeHtml(layer.name)}</span>
+                  <span class="layer-label">${escapeHtml(layer.name)}</span>
                 </label>
               `;
             }).join('')}
@@ -297,11 +300,7 @@ class LayerSheetController {
     };
   }
 
-  escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
+  // escapeHtml is provided by html-utils.js (loaded via script tag)
 }
 
 // Initialize singleton

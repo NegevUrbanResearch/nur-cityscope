@@ -15,19 +15,11 @@ const OTEF_MESSAGE_TYPES = {
   ANIMATION_CHANGED: "otef_animation_changed",
   BOUNDS_CHANGED: "otef_bounds_changed",
   VELOCITY_SYNC: "otef_velocity_sync", // New: sync velocity across clients
-
-  // Legacy (deprecated - will be removed)
-  STATE_REQUEST: "otef_state_request",
-  STATE_RESPONSE: "otef_state_response",
 };
 
-// Default layer states
+// Default layer states (legacy: model base only)
 const DEFAULT_LAYER_STATES = {
-  roads: true,
-  parcels: false,
   model: false,
-  majorRoads: false,
-  smallRoads: false,
 };
 
 
@@ -79,8 +71,7 @@ function validateLayerUpdate(msg) {
   if (msg.type !== OTEF_MESSAGE_TYPES.LAYER_UPDATE) return false;
   if (!msg.layers || typeof msg.layers !== "object") return false;
 
-  // Check that layers object has valid boolean values
-  const validLayers = ["roads", "parcels", "model", "majorRoads", "smallRoads"];
+  const validLayers = ["model"];
   for (const key in msg.layers) {
     if (!validLayers.includes(key)) return false;
     if (typeof msg.layers[key] !== "boolean") return false;
@@ -121,50 +112,6 @@ function validateViewportUpdate(msg) {
 }
 
 /**
- * Validates a STATE_REQUEST message
- * @param {Object} msg - Message to validate
- * @returns {boolean} True if valid
- */
-function validateStateRequest(msg) {
-  if (!validateMessage(msg)) return false;
-  if (msg.type !== OTEF_MESSAGE_TYPES.STATE_REQUEST) return false;
-  return true;
-}
-
-/**
- * Validates a STATE_RESPONSE message
- * @param {Object} msg - Message to validate
- * @returns {boolean} True if valid
- */
-function validateStateResponse(msg) {
-  if (!validateMessage(msg)) return false;
-  if (msg.type !== OTEF_MESSAGE_TYPES.STATE_RESPONSE) return false;
-  if (!msg.viewport || !msg.layers) return false;
-
-  // Validate viewport structure - bbox is required, zoom is required
-  if (
-    !msg.viewport.bbox ||
-    !Array.isArray(msg.viewport.bbox) ||
-    msg.viewport.bbox.length !== 4
-  ) {
-    return false;
-  }
-  if (typeof msg.viewport.zoom !== "number") return false;
-
-  // Validate layers
-  if (
-    !validateLayerUpdate({
-      type: OTEF_MESSAGE_TYPES.LAYER_UPDATE,
-      layers: msg.layers,
-    })
-  ) {
-    return false;
-  }
-
-  return true;
-}
-
-/**
  * Message factory: Create VIEWPORT_CONTROL message for panning
  * @param {string} direction - Pan direction: 'north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest'
  * @param {number} delta - Pan distance percentage (0-1, typically 0.1-0.2)
@@ -197,24 +144,13 @@ function createZoomControlMessage(zoom) {
 
 /**
  * Message factory: Create LAYER_UPDATE message
- * @param {Object} layers - Layer states object { roads: boolean, parcels: boolean, model: boolean }
+ * @param {Object} layers - Layer states object { model: boolean }
  * @returns {Object} Message object
  */
 function createLayerUpdateMessage(layers) {
   return {
     type: OTEF_MESSAGE_TYPES.LAYER_UPDATE,
     layers: { ...layers },
-    timestamp: Date.now(),
-  };
-}
-
-/**
- * Message factory: Create STATE_REQUEST message
- * @returns {Object} Message object
- */
-function createStateRequestMessage() {
-  return {
-    type: OTEF_MESSAGE_TYPES.STATE_REQUEST,
     timestamp: Date.now(),
   };
 }
@@ -250,25 +186,6 @@ function createViewportUpdateMessage(viewport, sourceId = null) {
 }
 
 /**
- * Message factory: Create STATE_RESPONSE message
- * @param {Object} viewport - Viewport state { bbox: [minX, minY, maxX, maxY], zoom: number, corners?: object }
- * @param {Object} layers - Layer states { roads: boolean, parcels: boolean, model: boolean }
- * @returns {Object} Message object
- */
-function createStateResponseMessage(viewport, layers) {
-  return {
-    type: OTEF_MESSAGE_TYPES.STATE_RESPONSE,
-    viewport: {
-      bbox: viewport.bbox,
-      zoom: viewport.zoom,
-      corners: viewport.corners || null,
-    },
-    layers: { ...layers },
-    timestamp: Date.now(),
-  };
-}
-
-/**
  * Validates an ANIMATION_TOGGLE message
  * @param {Object} msg - Message to validate
  * @returns {boolean} True if valid
@@ -283,7 +200,7 @@ function validateAnimationToggle(msg) {
 
 /**
  * Message factory: Create ANIMATION_TOGGLE message
- * @param {string} layerId - Layer to toggle animation for (e.g. 'parcels')
+ * @param {string} layerId - Layer to toggle animation for
  * @param {boolean} enabled - Whether animation is enabled
  * @returns {Object} Message object
  */
@@ -305,15 +222,11 @@ if (typeof module !== "undefined" && module.exports) {
     validateViewportControl,
     validateViewportUpdate,
     validateLayerUpdate,
-    validateStateRequest,
-    validateStateResponse,
     validateAnimationToggle,
     createPanControlMessage,
     createZoomControlMessage,
     createViewportUpdateMessage,
     createLayerUpdateMessage,
-    createStateRequestMessage,
-    createStateResponseMessage,
     createAnimationToggleMessage,
     createVelocityUpdateMessage,
   };

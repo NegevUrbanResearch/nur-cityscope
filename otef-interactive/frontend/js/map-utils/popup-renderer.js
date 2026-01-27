@@ -116,20 +116,7 @@ function formatFieldValue(value) {
   return String(value);
 }
 
-/**
- * Escape HTML to prevent XSS.
- * @param {string} text - Text to escape
- * @returns {string} Escaped HTML
- */
-function escapeHtml(text) {
-  if (text === null || text === undefined) {
-    return '';
-  }
-  
-  const div = document.createElement('div');
-  div.textContent = String(text);
-  return div.innerHTML;
-}
+// escapeHtml is provided by html-utils.js (loaded via script tag)
 
 // Export for use in other modules
 if (typeof module !== 'undefined' && module.exports) {

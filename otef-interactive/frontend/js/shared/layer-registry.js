@@ -60,7 +60,6 @@ class LayerRegistry {
       await Promise.all(loadPromises);
 
       this._initialized = true;
-      console.log(`[LayerRegistry] Initialized with ${this._manifest.packs.length} pack(s)`);
     } catch (error) {
       console.error('[LayerRegistry] Failed to initialize:', error);
       this._manifest = { packs: [] };

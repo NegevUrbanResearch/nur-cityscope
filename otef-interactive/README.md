@@ -6,7 +6,7 @@ Interactive mapping module for the OTEF physical model with synchronized project
 
 - Interactive Leaflet map with OpenStreetMap/Satellite basemap
 - Real-time coordinate transformation (EPSG:2039 ↔ WGS84)
-- Parcels and road network visualization
+- Layer groups from registry (GeoJSON + PMTiles for large layers)
 - Physical model overlay with transparent background
 - WebSocket sync between interactive map and projection display
 - Mobile remote controller for touch-based navigation
@@ -71,40 +71,16 @@ otef-interactive/
 - Source files: `otef-interactive/public/source/` (original files, not imported)
 - Static assets: `otef-interactive/frontend/data/` (model images served directly)
 
-## Vector Tiles (PMTiles)
+## Layer Processing
 
-For performance, the parcels layer uses vector tiles (PMTiles) instead of raw GeoJSON.
+Setup and reset scripts run `process_layers.py`, which:
 
-### Generated Automatically
+1. Discovers layer packs in `public/source/layers/` (see [Adding layers](docs/adding-layers.md))
+2. Transforms GeoJSON to WGS84, parses `.lyrx` styles
+3. Converts large layers to PMTiles (via Docker tippecanoe) for GIS performance
+4. Writes `manifest.json` and `styles.json` per pack under `public/processed/layers/`
 
-The `setup.ps1`/`setup.sh` scripts automatically:
-1. Create a Python venv in `otef-interactive/scripts/.venv`
-2. Install dependencies (pyproj, pmtiles)
-3. Generate `frontend/data/parcels.pmtiles` from source GeoJSON
-
-### Manual Regeneration
-
-If you need to regenerate tiles (e.g., after updating source data):
-
-```bash
-cd otef-interactive/scripts
-
-# On Windows (PowerShell)
-.venv\Scripts\python generate-pmtiles.py
-
-# On macOS/Linux
-.venv/bin/python generate-pmtiles.py
-```
-
-Requirements: Docker running (uses tippecanoe docker image)
-
-### Files
-
-| File | Description |
-|------|-------------|
-| `public/source/layers/migrashim.json` | Source GeoJSON (EPSG:2039, 60MB) |
-| `frontend/data/parcels.pmtiles` | Generated tiles (45MB, zoom 9-18) |
-| `scripts/generate-pmtiles.py` | Cross-platform generation script |
+Requires Python 3.8+ (pyproj, pmtiles), Docker for PMTiles. Venv: `otef-interactive/scripts/.venv`.
 
 ## How It Works
 
@@ -140,7 +116,7 @@ POST /api/otef_viewport/
 ### Remote Controller
 - Directional pad and virtual joystick for navigation
 - Zoom slider (10-19)
-- Layer toggles (Roads, Parcels, Model Base)
+- Layer toggles (layer groups, model base)
 - Real-time synchronization
 
 ## Development

@@ -5,26 +5,9 @@
  * Hebrew labels used where available.
  */
 
-const MAJOR_ROAD_LEGEND_ITEMS = [
-  { label: '\u05D3\u05E8\u05DA \u05E8\u05D0\u05E9\u05D9\u05EA', color: '#B22222' },
-  { label: '\u05D3\u05E8\u05DA \u05D0\u05D6\u05D5\u05E8\u05D9\u05EA', color: '#CD853F' }
-];
+const DEFAULT_LAND_USE_SCHEME = { fill: '#E0E0E0', stroke: '#B0B0B0' };
 
-const LEGACY_TO_REGISTRY = {
-  majorRoads: '_legacy.road_big',
-  smallRoads: '_legacy.small_road_limited',
-  parcels: '_legacy.migrashim'
-};
-
-function escapeHtml(s) {
-  if (s == null || typeof s !== 'string') return '';
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+// escapeHtml is provided by html-utils.js (loaded via script tag)
 
 function shapeForGeometry(geometryType) {
   const t = (geometryType || '').toLowerCase();
@@ -67,26 +50,6 @@ function itemsFromUniqueValue(config) {
   });
 }
 
-function itemsFromMajorRoad() {
-  return MAJOR_ROAD_LEGEND_ITEMS.map((it) => ({
-    label: it.label,
-    fill: it.color,
-    stroke: it.color,
-    shape: 'line'
-  }));
-}
-
-function itemsFromLegacySmallRoads() {
-  return [
-    {
-      label: '\u05D3\u05E8\u05DB\u05D9\u05DD \u05DE\u05E7\u05D5\u05DE\u05D9\u05D5\u05EA',
-      fill: '#A0A0A0',
-      stroke: '#707070',
-      shape: 'polygon'
-    }
-  ];
-}
-
 async function distinctLandUseFromGeoJSON(url, field, fallback) {
   try {
     const res = await fetch(url);
@@ -105,69 +68,28 @@ async function distinctLandUseFromGeoJSON(url, field, fallback) {
   }
 }
 
-function landUseMatchesKey(landUseStr, key) {
-  return key !== 'default' && (landUseStr || '').includes(key);
-}
-
 function itemsFromLandUse(config, distinctValues) {
   const geometryType = config.geometryType || 'polygon';
   const shape = shapeForGeometry(geometryType);
   const useKeys = distinctValues && distinctValues.length > 0
     ? distinctValues
     : [];
-
-  const entries = typeof LAND_USE_COLORS !== 'undefined' ? Object.entries(LAND_USE_COLORS) : [];
+  const fill = DEFAULT_LAND_USE_SCHEME.fill;
+  const stroke = DEFAULT_LAND_USE_SCHEME.stroke;
   const items = [];
-  const added = new Set();
 
   for (const raw of useKeys) {
-    for (const [key, scheme] of entries) {
-      if (key === 'default') continue;
-      if (!landUseMatchesKey(raw, key)) continue;
-      if (added.has(key)) continue;
-      added.add(key);
-      items.push({
-        label: key,
-        fill: scheme.fill || '#E0E0E0',
-        stroke: scheme.stroke || '#B0B0B0',
-        shape
-      });
-    }
+    if (!raw) continue;
+    items.push({ label: raw, fill, stroke, shape });
   }
-
-  const defaultScheme = entries.find(([k]) => k === 'default')?.[1];
-  const fallbackFill = defaultScheme?.fill || '#E0E0E0';
-  const fallbackStroke = defaultScheme?.stroke || '#B0B0B0';
-
-  for (const raw of useKeys) {
-    let found = false;
-    for (const [key] of entries) {
-      if (key === 'default') continue;
-      if (landUseMatchesKey(raw, key)) {
-        found = true;
-        break;
-      }
-    }
-    if (!found && raw && !added.has(raw)) {
-      added.add(raw);
-      items.push({
-        label: raw,
-        fill: fallbackFill,
-        stroke: fallbackStroke,
-        shape
-      });
-    }
-  }
-
-  if (items.length === 0 && useKeys.length === 0) {
+  if (items.length === 0) {
     items.push({
       label: '\u05D0\u05D7\u05E8',
-      fill: fallbackFill,
-      stroke: fallbackStroke,
+      fill,
+      stroke,
       shape
     });
   }
-
   return items;
 }
 
@@ -206,52 +128,6 @@ async function buildLegendModel() {
     });
   }
 
-  if (legacy.parcels) {
-    let parcelItems = [];
-    const regId = LEGACY_TO_REGISTRY.parcels;
-    if (registry && regId) {
-      const cfg = registry.getLayerConfig(regId);
-      const style = cfg?.style;
-      if (style?.renderer === 'landUse') {
-        const field = style.landUseField || 'TARGUMYEUD';
-        const fallback = style.landUseFieldFallback || 'KVUZ_TRG';
-        const url = registry.getLayerDataUrl(regId);
-        const canScanGeojson = url && cfg?.format === 'geojson';
-        const distinct = canScanGeojson
-          ? await distinctLandUseFromGeoJSON(url, field, fallback)
-          : [];
-        parcelItems = itemsFromLandUse(cfg || { geometryType: 'polygon' }, distinct);
-      }
-    }
-    if (parcelItems.length === 0) {
-      parcelItems = itemsFromLandUse({ geometryType: 'polygon' }, []);
-    }
-    legacyPack.layers.push({
-      id: 'parcels',
-      name: '\u05E9\u05D9\u05DE\u05D5\u05E9 \u05E7\u05E8\u05E7\u05E2\u05D5\u05EA',
-      geometryType: 'polygon',
-      items: parcelItems
-    });
-  }
-
-  if (legacy.majorRoads) {
-    legacyPack.layers.push({
-      id: 'majorRoads',
-      name: '\u05D3\u05E8\u05DB\u05D9\u05DD \u05E8\u05D0\u05E9\u05D9\u05D5\u05EA',
-      geometryType: 'line',
-      items: itemsFromMajorRoad()
-    });
-  }
-
-  if (legacy.smallRoads) {
-    legacyPack.layers.push({
-      id: 'smallRoads',
-      name: '\u05D3\u05E8\u05DB\u05D9\u05DD \u05DE\u05E7\u05D5\u05DE\u05D9\u05D5\u05EA',
-      geometryType: 'polygon',
-      items: itemsFromLegacySmallRoads()
-    });
-  }
-
   if (legacyPack.layers.length > 0) {
     packs.push(legacyPack);
   }
@@ -273,8 +149,6 @@ async function buildLegendModel() {
         items = itemsFromSimple(config);
       } else if (renderer === 'uniqueValue') {
         items = itemsFromUniqueValue(config);
-      } else if (renderer === 'majorRoad') {
-        items = itemsFromMajorRoad();
       } else if (renderer === 'landUse') {
         const field = style.landUseField || 'TARGUMYEUD';
         const fallback = style.landUseFieldFallback || 'KVUZ_TRG';

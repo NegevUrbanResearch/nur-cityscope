@@ -28,82 +28,25 @@ class StyleApplicator {
       return this._getUniqueValueStyle(style, layerConfig);
     } else if (renderer === 'landUse') {
       return this._getLandUseStyle(style);
-    } else if (renderer === 'majorRoad') {
-      return this._getMajorRoadStyle(style);
     } else {
       return this._getSimpleStyle(style);
     }
   }
 
   /**
-   * Get major road style function (uses getMajorRoadStyle from vector-styling.js).
-   */
-  static _getMajorRoadStyle(style) {
-    const defaultStyle = style.defaultStyle || {};
-
-    return (feature) => {
-      // Use getMajorRoadStyle from vector-styling.js if available
-      if (typeof getMajorRoadStyle === 'function') {
-        return getMajorRoadStyle(feature);
-      }
-
-      // Fallback to default style
-      return {
-        color: defaultStyle.strokeColor || '#CD853F',
-        weight: defaultStyle.strokeWidth || 3.0,
-        opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 0.85,
-        lineCap: 'round',
-        lineJoin: 'round'
-      };
-    };
-  }
-
-  /**
-   * Get land-use based style function (uses LAND_USE_COLORS from vector-styling.js).
+   * Get land-use based style function (config-based only).
    * Handles both GeoJSON features (properties) and PMTiles features (props).
    */
   static _getLandUseStyle(style) {
-    const field = style.landUseField || 'TARGUMYEUD';
-    const fallbackField = style.landUseFieldFallback || 'KVUZ_TRG';
     const defaultStyle = style.defaultStyle || {};
 
-    return (feature) => {
-      // Handle both GeoJSON (properties) and PMTiles (props) features
-      const props = feature.properties || feature.props || {};
-      const landUse = props[field] || props[fallbackField] || '';
-
-      // Use getLandUseScheme from vector-styling.js if available
-      if (typeof getLandUseScheme === 'function') {
-        const scheme = getLandUseScheme(landUse);
-        return {
-          fillColor: scheme.fill,
-          fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
-          color: scheme.stroke,
-          weight: defaultStyle.strokeWidth || 0.5,
-          opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0
-        };
-      }
-
-      // Fallback to getLandUseColor if only that's available
-      if (typeof getLandUseColor === 'function') {
-        return {
-          fillColor: getLandUseColor(landUse),
-          fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
-          color: defaultStyle.strokeColor || '#333333',
-          weight: defaultStyle.strokeWidth || 0.5,
-          opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0
-        };
-      }
-
-      // Final fallback to default style
-      return {
-        fillColor: defaultStyle.fillColor || '#E0E0E0',
-        fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
-        color: defaultStyle.strokeColor || '#333333',
-        weight: defaultStyle.strokeWidth || 0.5,
-        opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0
-      };
-    };
+    return () => ({
+      fillColor: defaultStyle.fillColor || '#E0E0E0',
+      fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
+      color: defaultStyle.strokeColor || '#333333',
+      weight: defaultStyle.strokeWidth || 0.5,
+      opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0
+    });
   }
 
   /**

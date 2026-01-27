@@ -10,14 +10,7 @@ let currentState = {
     zoom: 15,
   },
   layers: {
-    roads: true,
-    parcels: false,
     model: false,
-    majorRoads: false,
-    smallRoads: false,
-  },
-  animations: {
-    parcels: false,
   },
   isConnected: false,
 };
@@ -73,14 +66,6 @@ async function initialize() {
   );
 
   unsubscribeFunctions.push(
-    OTEFDataContext.subscribe('animations', (animations) => {
-      if (!animations) return;
-      currentState.animations = animations;
-      updateAnimationButtonState();
-    })
-  );
-
-  unsubscribeFunctions.push(
     OTEFDataContext.subscribe('connection', (isConnected) => {
       currentState.isConnected = !!isConnected;
       updateConnectionStatus(isConnected ? "connected" : "disconnected");
@@ -91,7 +76,6 @@ async function initialize() {
   initializePanControls();
   initializeZoomControls();
   initializeLayerControls();
-  initializeAnimationControls();
   initializeJoystick();
 
   // Initial UI render with whatever state DataContext has
@@ -248,11 +232,7 @@ function updateZoomUI(zoom) {
  */
 function initializeLayerControls() {
   const toggles = {
-    toggleRoads: "roads",
-    toggleParcels: "parcels",
     toggleModel: "model",
-    toggleMajorRoads: "majorRoads",
-    toggleSmallRoads: "smallRoads",
   };
 
   Object.entries(toggles).forEach(([id, layerName]) => {
@@ -278,74 +258,8 @@ function initializeLayerControls() {
         currentState.layers[layerName] = !currentState.layers[layerName];
       }
 
-      // Update animation button state for parcels
-      if (layerName === 'parcels') {
-        updateAnimationButtonState();
-
-        // If parcels layer is turned off, also disable animation
-        if (!e.target.checked && currentState.animations.parcels) {
-          await sendAnimationToggle('parcels', false);
-        }
-      }
     });
   });
-}
-
-/**
- * Initialize animation controls
- */
-function initializeAnimationControls() {
-  const animateBtn = document.getElementById('animateParcels');
-  if (!animateBtn) return;
-
-  animateBtn.addEventListener('click', async () => {
-    if (!currentState.isConnected) return;
-    if (!currentState.layers.parcels) return;  // Parcels must be enabled
-
-    // Toggle animation state
-    const newState = !currentState.animations.parcels;
-    await sendAnimationToggle('parcels', newState);
-  });
-
-  // Initial state
-  updateAnimationButtonState();
-}
-
-/**
- * Update animation button enabled/disabled state
- */
-function updateAnimationButtonState() {
-  const animateBtn = document.getElementById('animateParcels');
-  if (!animateBtn) return;
-
-  const parcelsEnabled = currentState.layers.parcels;
-  animateBtn.disabled = !parcelsEnabled || !currentState.isConnected;
-
-  // Update active state
-  if (currentState.animations.parcels && parcelsEnabled) {
-    animateBtn.classList.add('active');
-  } else {
-    animateBtn.classList.remove('active');
-  }
-}
-
-/**
- * Send animation toggle via API
- */
-async function sendAnimationToggle(layerId, enabled) {
-  if (!currentState.isConnected) {
-    console.warn("[Remote] Cannot send animation toggle: not connected");
-    return;
-  }
-
-  try {
-    const result = await OTEFDataContext.toggleAnimation(layerId, enabled);
-    if (!result || !result.ok) {
-      throw result && result.error ? result.error : new Error("Animation toggle failed");
-    }
-  } catch (error) {
-    console.error("[Remote] Animation toggle failed:", error);
-  }
 }
 
 /**
@@ -457,11 +371,7 @@ function enableDPad() {
 
 function updateLayerCheckboxes() {
   const toggles = {
-    toggleRoads: "roads",
-    toggleParcels: "parcels",
     toggleModel: "model",
-    toggleMajorRoads: "majorRoads",
-    toggleSmallRoads: "smallRoads",
   };
 
   Object.entries(toggles).forEach(([id, layerName]) => {
@@ -481,9 +391,6 @@ function updateUI() {
 
   // Update layer checkboxes
   updateLayerCheckboxes();
-
-  // Update animation button state
-  updateAnimationButtonState();
 
   // Disable controls if not connected
   const controls = document.querySelectorAll(

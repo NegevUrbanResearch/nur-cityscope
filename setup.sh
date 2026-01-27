@@ -42,27 +42,13 @@ sleep 10
 echo "Ensuring logo is accessible in nginx container..."
 docker cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
 
-# Setup OTEF Interactive module - PMTiles generation
+# Setup OTEF Interactive - process layer packs (process_layers.py)
 VENV_PATH="$SCRIPT_DIR/otef-interactive/scripts/.venv"
 if [ ! -d "$VENV_PATH" ]; then
-    echo "Creating Python virtual environment for tile generation..."
+    echo "Creating Python virtual environment for layer processing..."
     python3 -m venv "$VENV_PATH"
 fi
 
-echo "Ensuring layer processing dependencies..."
-"$VENV_PATH/bin/pip" install -r "$SCRIPT_DIR/otef-interactive/scripts/requirements.txt" -q
-
-if [ ! -f "$SCRIPT_DIR/otef-interactive/frontend/data/parcels.pmtiles" ]; then
-    # Check if Docker is running for tile generation
-    if docker info >/dev/null 2>&1; then
-        echo "Generating PMTiles for parcels layer..."
-        "$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/generate-pmtiles.py"
-    else
-        echo "Warning: Docker not running, skipping PMTiles generation"
-    fi
-fi
-
-# Process layer packs and generate PMTiles/manifests
 if docker info >/dev/null 2>&1; then
     MANIFEST_PATH="$SCRIPT_DIR/otef-interactive/public/processed/layers/layers-manifest.json"
     # Only process if manifest doesn't exist or is older than source files
@@ -81,7 +67,7 @@ if docker info >/dev/null 2>&1; then
     fi
 
     if [ "$SHOULD_PROCESS" = true ]; then
-        echo "Processing layer packs (PMTiles/manifests)..."
+        echo "Processing layer packs (process_layers.py)..."
         "$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/process_layers.py" \
             --source "$SCRIPT_DIR/otef-interactive/public/source/layers" \
             --output "$SCRIPT_DIR/otef-interactive/public/processed/layers"

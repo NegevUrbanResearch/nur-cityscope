@@ -1,12 +1,23 @@
 from django.core.management.base import BaseCommand
-from backend.models import Table, GISLayer, OTEFModelConfig, LayerGroup, LayerState
+from backend.models import Table, OTEFModelConfig, LayerGroup, LayerState
 import json
 import os
+from pathlib import Path
+
 from django.conf import settings
 
 
 class Command(BaseCommand):
-    help = 'Import OTEF GIS layers and model config into database'
+    help = 'Import OTEF model config and seed layer groups from processed manifests'
+
+    def _model_bounds_candidates(self):
+        """Paths to check for model-bounds.json (Docker mount, then repo-relative, then legacy)."""
+        base = Path(settings.BASE_DIR)
+        return [
+            Path('/app/otef-interactive/frontend/data/model-bounds.json'),  # Docker mount
+            base.resolve().parent.parent / 'otef-interactive' / 'frontend' / 'data' / 'model-bounds.json',
+            base / 'public' / 'processed' / 'otef' / 'model-bounds.json',
+        ]
 
     def handle(self, *args, **options):
         # Get OTEF table
@@ -17,13 +28,15 @@ class Command(BaseCommand):
             )
             return
 
-        # Import model config from public/processed/otef/
-        model_bounds_path = os.path.join(
-            settings.BASE_DIR, 'public', 'processed', 'otef', 'model-bounds.json'
-        )
+        # Import model config: try frontend data path first (Docker), then legacy locations
+        model_bounds_path = None
+        for p in self._model_bounds_candidates():
+            if p.exists():
+                model_bounds_path = p
+                break
 
-        if os.path.exists(model_bounds_path):
-            with open(model_bounds_path) as f:
+        if model_bounds_path:
+            with open(model_bounds_path, encoding='utf-8') as f:
                 bounds = json.load(f)
 
             config, created = OTEFModelConfig.objects.get_or_create(
@@ -38,133 +51,17 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS('✓ Updated model bounds'))
         else:
             self.stdout.write(
-                self.style.WARNING(f'⚠️ Model bounds file not found at: {model_bounds_path}')
+                self.style.WARNING(
+                    '⚠️ Model bounds file not found (tried frontend data and public/processed/otef).'
+                )
             )
-
-        # Import GIS layers from processed _legacy pack
-        # Legacy layers are now processed as a pack in public/processed/layers/_legacy/
-        layers_to_import = [
-            {
-                'name': 'parcels',
-                'display_name': 'Parcels (Migrashim)',
-                'file_name': 'migrashim.geojson',  # Processed output name
-                'order': 1
-            },
-            {
-                'name': 'roads',
-                'display_name': 'Roads',
-                'file_name': 'small_roads.geojson',  # Processed output name
-                'order': 2
-            },
-            {
-                'name': 'majorRoads',
-                'display_name': 'Major Roads',
-                'file_name': 'road_big.geojson',  # Processed output name (normalized)
-                'order': 3
-            },
-            {
-                'name': 'smallRoads',
-                'display_name': 'Small Roads',
-                'file_name': 'small_road_limited.geojson',  # Processed output name (normalized)
-                'order': 4
-            }
-        ]
-
-        # Ensure media layers directory exists
-        layers_media_dir = os.path.join(settings.MEDIA_ROOT, 'layers')
-        os.makedirs(layers_media_dir, exist_ok=True)
-
-        for layer_info in layers_to_import:
-            # Load from processed _legacy pack
-            source_path = self._get_legacy_pack_path(layer_info['file_name'])
-            source_path = os.path.normpath(source_path)
-
-            if os.path.exists(source_path):
-                # Copy file to media directory instead of reading content
-                dest_filename = f"{layer_info['name']}.geojson"
-                dest_path = os.path.join(layers_media_dir, dest_filename)
-
-                # Copy file
-                import shutil
-                shutil.copy2(source_path, dest_path)
-
-                # Relative path for API
-                media_relative_path = f"layers/{dest_filename}"
-
-                layer, created = GISLayer.objects.get_or_create(
-                    table=otef_table,
-                    name=layer_info['name'],
-                    defaults={
-                        'display_name': layer_info['display_name'],
-                        'layer_type': 'geojson',
-                        'data': {},  # store empty data to keep DB light
-                        'file_path': media_relative_path, # store path to file
-                        'order': layer_info['order'],
-                        'style_config': self._get_default_style(layer_info['name'])
-                    }
-                )
-                if created:
-                    self.stdout.write(
-                        self.style.SUCCESS(f'✓ Imported {layer_info["name"]} layer (linked to file)')
-                    )
-                else:
-                    layer.data = {} # convert existing heavy layers to light ones
-                    layer.file_path = media_relative_path
-                    layer.save()
-                    self.stdout.write(
-                        self.style.SUCCESS(f'✓ Updated {layer_info["name"]} layer (linked to file)')
-                    )
-            else:
-                self.stdout.write(
-                    self.style.WARNING(
-                        f'⚠️ Layer file not found: {source_path}'
-                    )
-                )
 
         # Seed layer groups from processed manifests
         self._seed_layer_groups(otef_table)
 
         self.stdout.write(
-            self.style.SUCCESS('\n[SUCCESS] OTEF data import completed! Layers optimized.')
+            self.style.SUCCESS('\n[SUCCESS] OTEF data import completed.')
         )
-
-    def _get_legacy_pack_path(self, filename):
-        """Get layer file path from processed _legacy pack"""
-        # Legacy layers are processed as a pack in mounted public directory
-        # Aligned with docker-compose volume mount: ./otef-interactive/public -> /app/public
-        return f'/app/public/processed/layers/_legacy/{filename}'
-
-    def _get_default_style(self, layer_name):
-        """Get default style config for layer"""
-        styles = {
-            'parcels': {
-                'color': '#6495ED',
-                'fillColor': '#6495ED',
-                'weight': 1,
-                'fillOpacity': 0.3,
-                'opacity': 0.8
-            },
-            'roads': {
-                'color': '#FF6347',
-                'weight': 2,
-                'opacity': 0.8
-            },
-            'majorRoads': {
-                'color': '#B22222',
-                'weight': 4,
-                'opacity': 0.9,
-                'lineCap': 'round',
-                'lineJoin': 'round'
-            },
-            'smallRoads': {
-                'fillColor': '#A0A0A0',
-                'fillOpacity': 0.6,
-                'color': '#707070',
-                'weight': 0.5,
-                'opacity': 0.8
-            }
-        }
-        return styles.get(layer_name, {})
 
     def _seed_layer_groups(self, table):
         """Seed LayerGroup and LayerState from processed manifests"""

@@ -27,11 +27,7 @@ PMTILES_SIZE_THRESHOLD_MB = 10
 PMTILES_FEATURE_THRESHOLD = 10000
 TIPPECANOE_IMAGE = "ingmapping/tippecanoe"
 CACHE_FILE = ".layer-cache.json"
-PMTILES_SKIP_LAYER_IDS = {
-    "road_big",
-    "small_roads",
-    "small_road_limited"
-}
+PMTILES_SKIP_LAYER_IDS = set()
 
 
 def compute_file_hash(path: Path) -> str:
@@ -101,10 +97,10 @@ def scan_processed_packs(output_dir: Path) -> List[str]:
             manifest_path = item / 'manifest.json'
             if manifest_path.exists():
                 try:
-                    # Validate that manifest has layers
+                    # Include pack if manifest has 'layers' (may be empty, e.g. _legacy)
                     with open(manifest_path, 'r', encoding='utf-8') as f:
                         manifest = json.load(f)
-                        if manifest.get('layers') and len(manifest.get('layers', [])) > 0:
+                        if 'layers' in manifest:
                             processed_pack_ids.append(item.name)
                 except Exception as e:
                     print(f"  Warning: Could not read manifest for {item.name}: {e}")

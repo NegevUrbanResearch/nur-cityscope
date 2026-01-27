@@ -42,54 +42,28 @@ Write-Host ""
 Write-Host "Reset complete!" -ForegroundColor Green
 Write-Host ""
 
-# Regenerate PMTiles (before starting containers)
-Write-Host "5. Setting up OTEF PMTiles..." -ForegroundColor Cyan
+# Process layer packs (before starting containers)
+Write-Host "5. Setting up OTEF layer packs..." -ForegroundColor Cyan
 
-$pmtilesPath = "otef-interactive\frontend\data\parcels.pmtiles"
 $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
 if (-not $pythonCmd) {
     $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
 }
 
 if ($pythonCmd) {
-    # Create venv if it doesn't exist
     $venvPath = "otef-interactive\scripts\.venv"
     if (-not (Test-Path $venvPath)) {
         Write-Host "   Creating Python virtual environment..." -ForegroundColor Gray
         & $pythonCmd.Name -m venv "$venvPath"
     }
 
-    # Install dependencies (quick check, pip handles already-installed packages efficiently)
-    Write-Host "   Ensuring tile generation dependencies..." -ForegroundColor Gray
-    & "$venvPath\Scripts\pip" install -r "otef-interactive\scripts\requirements.txt" -q
-
-    if (-not (Test-Path $pmtilesPath)) {
-        # Check if Docker is running for tile generation
-        $dockerRunning = docker info 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "   Generating PMTiles for parcels layer..." -ForegroundColor Gray
-            & "$venvPath\Scripts\python" "otef-interactive\scripts\generate-pmtiles.py"
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "   Warning: PMTiles generation failed. Parcels will load slower via GeoJSON." -ForegroundColor Yellow
-            } else {
-                Write-Host "   PMTiles generated successfully." -ForegroundColor Green
-            }
-        } else {
-            Write-Host "   Warning: Docker not running, skipping PMTiles generation" -ForegroundColor Yellow
-        }
-    } else {
-        Write-Host "   PMTiles already exist, skipping generation" -ForegroundColor Gray
-    }
-
     $dockerRunning = docker info 2>$null
     if ($LASTEXITCODE -eq 0) {
         $manifestPath = "otef-interactive\public\processed\layers\layers-manifest.json"
-        # Only process if manifest doesn't exist or is older than source files
         $shouldProcess = $true
         if (Test-Path $manifestPath) {
             $manifestTime = (Get-Item $manifestPath).LastWriteTime
             $sourceDir = "otef-interactive\public\source\layers"
-            # Check if any source files are newer than manifest
             $newerFiles = Get-ChildItem -Path $sourceDir -Recurse -File -ErrorAction SilentlyContinue |
                 Where-Object { $_.LastWriteTime -gt $manifestTime }
             if ($null -eq $newerFiles -or $newerFiles.Count -eq 0) {
@@ -97,9 +71,8 @@ if ($pythonCmd) {
                 $shouldProcess = $false
             }
         }
-
         if ($shouldProcess) {
-            Write-Host "   Processing layer packs (PMTiles/manifests)..." -ForegroundColor Gray
+            Write-Host "   Processing layer packs (process_layers.py)..." -ForegroundColor Gray
             & "$venvPath\Scripts\python" "otef-interactive\scripts\process_layers.py" `
                 --source "otef-interactive\public\source\layers" `
                 --output "otef-interactive\public\processed\layers"
@@ -108,7 +81,7 @@ if ($pythonCmd) {
         Write-Host "   Warning: Docker not running, skipping layer pack processing" -ForegroundColor Yellow
     }
 } else {
-    Write-Host "   Warning: Python not found, skipping PMTiles generation" -ForegroundColor Yellow
+    Write-Host "   Warning: Python not found, skipping layer pack processing" -ForegroundColor Yellow
 }
 
 # Rebuild and start containers

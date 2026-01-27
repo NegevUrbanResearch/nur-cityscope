@@ -64,7 +64,6 @@ class CanvasLayerRenderer {
       canvasWidth = w;
       canvasHeight = h;
       this.dpr = canvasWidth / displayBounds.width;  // Calculate effective DPR
-      console.log(`[CanvasLayerRenderer] Using explicit resolution: ${w}x${h}`);
     } else {
       // Use devicePixelRatio for high-DPI rendering
       this.dpr = window.devicePixelRatio || 1;
