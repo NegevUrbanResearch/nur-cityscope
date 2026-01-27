@@ -135,9 +135,10 @@ otef-interactive/playground
 nur-io/django_api/backend/migrations/
 
 # OTEF source files (ignored, but folder structure preserved with .gitkeep)
-# Ignore all files in source directory, but allow .gitkeep files
+# Ignore all files in source directory, but allow .gitkeep files and popup-config.json
 otef-interactive/public/source/**/*
 !otef-interactive/public/source/
 !otef-interactive/public/source/**/
 !otef-interactive/public/source/.gitkeep
 !otef-interactive/public/source/**/.gitkeep
+!otef-interactive/public/source/popup-config.json

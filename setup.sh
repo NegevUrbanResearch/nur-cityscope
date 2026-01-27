@@ -76,22 +76,6 @@ else
     echo "Warning: Docker not running, skipping layer pack processing"
 fi
 
-# Copy simplified layers to Django API public directory (where import command expects them)
-echo "Copying OTEF simplified layers to Django API directory..."
-mkdir -p "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/layers"
-if [ -f "$SCRIPT_DIR/otef-interactive/public/import/layers/migrashim_simplified.json" ]; then
-    cp "$SCRIPT_DIR/otef-interactive/public/import/layers/migrashim_simplified.json" "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/layers/"
-fi
-if [ -f "$SCRIPT_DIR/otef-interactive/public/import/layers/small_roads_simplified.json" ]; then
-    cp "$SCRIPT_DIR/otef-interactive/public/import/layers/small_roads_simplified.json" "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/layers/"
-fi
-if [ -f "$SCRIPT_DIR/otef-interactive/public/source/layers/road-big.geojson" ]; then
-    cp "$SCRIPT_DIR/otef-interactive/public/source/layers/road-big.geojson" "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/layers/"
-fi
-if [ -f "$SCRIPT_DIR/otef-interactive/public/source/layers/Small-road-limited.geojson" ]; then
-    cp "$SCRIPT_DIR/otef-interactive/public/source/layers/Small-road-limited.geojson" "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/layers/"
-fi
-
 # Copy model-bounds.json if it doesn't exist in Django API directory
 if [ ! -f "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/model-bounds.json" ] && [ -f "$SCRIPT_DIR/otef-interactive/frontend/data/model-bounds.json" ]; then
     echo "Copying model-bounds.json to Django API directory..."

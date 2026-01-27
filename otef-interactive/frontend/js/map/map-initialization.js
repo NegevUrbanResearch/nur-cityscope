@@ -265,31 +265,7 @@ map.on("click", async (e) => {
       }
     }
   }
-
-  // Fall back to coordinate display if no feature found
-  const [x, y] = proj4("EPSG:4326", "EPSG:2039", [lng, lat]);
-  showFeatureInfo({
-    type: "Point",
-    coordinates: [lng, lat],
-    properties: {
-      Latitude: lat.toFixed(6),
-      Longitude: lng.toFixed(6),
-      "ITM X": Math.round(x),
-      "ITM Y": Math.round(y),
-      Zoom: map.getZoom(),
-    },
-  });
 });
-
-function showFeatureInfo(feature) {
-  const panel = document.getElementById("featureInfo");
-  const props = Object.entries(feature.properties)
-    .map(([key, value]) => `<p><strong>${key}:</strong> ${value}</p>`)
-    .join("");
-  panel.innerHTML = "<h4>Feature Info</h4>" + props;
-  panel.classList.remove("hidden");
-  setTimeout(() => panel.classList.add("hidden"), 7000);
-}
 
 /**
  * Update connection status UI

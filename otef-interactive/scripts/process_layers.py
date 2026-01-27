@@ -599,19 +599,66 @@ def convert_to_pmtiles(mbtiles_path: Path, pmtiles_path: Path) -> bool:
         return False
 
 
-def process_pack(pack_dir: Path, output_dir: Path, cache: Dict) -> bool:
+def load_popup_config(source_dir: Path) -> Dict:
+    """
+    Load popup configuration from popup-config.json.
+    Returns empty dict if file doesn't exist or is invalid.
+    """
+    popup_config_path = source_dir.parent / 'popup-config.json'
+    if not popup_config_path.exists():
+        return {}
+    
+    try:
+        with open(popup_config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Warning: Failed to load popup-config.json: {e}")
+        return {}
+
+
+def load_existing_manifest_ui_popups(manifest_path: Path) -> Dict[str, Dict]:
+    """
+    Load existing ui.popup entries from a manifest file.
+    Returns dict mapping layer_id -> ui.popup config.
+    """
+    if not manifest_path.exists():
+        return {}
+    
+    try:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+            existing_popups = {}
+            for layer in manifest.get('layers', []):
+                layer_id = layer.get('id')
+                if layer_id and 'ui' in layer and 'popup' in layer['ui']:
+                    existing_popups[layer_id] = layer['ui']['popup']
+            return existing_popups
+    except Exception as e:
+        print(f"  Warning: Could not read existing manifest for popup preservation: {e}")
+        return {}
+
+
+def process_pack(pack_dir: Path, output_dir: Path, cache: Dict, popup_config: Dict = None) -> bool:
     """
     Process a single layer pack:
     - Find all GeoJSON files
     - Parse corresponding .lyrx styles
     - Convert large files to PMTiles
     - Generate manifest.json and styles.json
+    - Merge popup configuration from popup-config.json
     """
+    if popup_config is None:
+        popup_config = {}
+    
     pack_id = pack_dir.name
     pack_output = output_dir / pack_id
     pack_output.mkdir(parents=True, exist_ok=True)
     
     print(f"\nProcessing pack: {pack_id}")
+    
+    # Load existing manifest to preserve ui.popup if popup-config is missing
+    manifest_path = pack_output / 'manifest.json'
+    existing_popups = load_existing_manifest_ui_popups(manifest_path)
     
     # Find all GeoJSON files
     gis_dir = pack_dir / 'gis'
@@ -674,6 +721,15 @@ def process_pack(pack_dir: Path, output_dir: Path, cache: Dict) -> bool:
             # Add PMTiles if it exists
             if cached_pmtiles_file.exists():
                 layer_entry['pmtilesFile'] = cached_pmtiles_file.name
+            
+            # Merge popup config if available
+            pack_popup_config = popup_config.get(pack_id, {}).get('layers', {})
+            if layer_id in pack_popup_config:
+                layer_entry['ui'] = {'popup': pack_popup_config[layer_id]}
+            elif layer_id in existing_popups:
+                # Preserve existing popup if no config found
+                layer_entry['ui'] = {'popup': existing_popups[layer_id]}
+            
             layers.append(layer_entry)
             # Load cached style if available
             if cached_entry.get('style'):
@@ -764,6 +820,14 @@ def process_pack(pack_dir: Path, output_dir: Path, cache: Dict) -> bool:
         if pmtiles_file and pmtiles_file.exists():
             layer_entry['pmtilesFile'] = pmtiles_file.name
         
+        # Merge popup config if available
+        pack_popup_config = popup_config.get(pack_id, {}).get('layers', {})
+        if layer_id in pack_popup_config:
+            layer_entry['ui'] = {'popup': pack_popup_config[layer_id]}
+        elif layer_id in existing_popups:
+            # Preserve existing popup if no config found
+            layer_entry['ui'] = {'popup': existing_popups[layer_id]}
+        
         layers.append(layer_entry)
         
         # Store style
@@ -820,6 +884,9 @@ def main():
     # Load cache
     cache = {} if args.no_cache else load_cache(cache_path)
     
+    # Load popup configuration
+    popup_config = load_popup_config(source_dir)
+    
     # Discover packs from source directory
     packs = scan_layer_packs(source_dir)
     newly_processed_packs = []
@@ -831,7 +898,7 @@ def main():
         
         # Process each pack and track which ones have layers
         for pack_dir in packs:
-            if process_pack(pack_dir, output_dir, cache):
+            if process_pack(pack_dir, output_dir, cache, popup_config):
                 # Only include packs that have at least one layer
                 newly_processed_packs.append(pack_dir.name)
         

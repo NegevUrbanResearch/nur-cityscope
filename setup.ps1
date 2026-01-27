@@ -121,31 +121,6 @@ if ($pythonCmd) {
     Write-Host "Warning: Python not found, skipping layer pack processing" -ForegroundColor Yellow
 }
 
-# Copy simplified layers to Django API public directory (where import command expects them)
-Write-Host "Copying OTEF simplified layers to Django API directory..." -ForegroundColor Cyan
-New-Item -ItemType Directory -Force -Path "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers" | Out-Null
-$migrashimSource = "$SCRIPT_DIR\otef-interactive\public\import\layers\migrashim_simplified.json"
-$roadsSource = "$SCRIPT_DIR\otef-interactive\public\import\layers\small_roads_simplified.json"
-$majorRoadsSource = "$SCRIPT_DIR\otef-interactive\public\source\layers\road-big.geojson"
-$smallRoadsSource = "$SCRIPT_DIR\otef-interactive\public\source\layers\Small-road-limited.geojson"
-$migrashimDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\migrashim_simplified.json"
-$roadsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\small_roads_simplified.json"
-$majorRoadsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\road-big.geojson"
-$smallRoadsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\Small-road-limited.geojson"
-
-if (Test-Path $migrashimSource) {
-    Copy-Item -Path $migrashimSource -Destination $migrashimDest -Force
-}
-if (Test-Path $roadsSource) {
-    Copy-Item -Path $roadsSource -Destination $roadsDest -Force
-}
-if (Test-Path $majorRoadsSource) {
-    Copy-Item -Path $majorRoadsSource -Destination $majorRoadsDest -Force
-}
-if (Test-Path $smallRoadsSource) {
-    Copy-Item -Path $smallRoadsSource -Destination $smallRoadsDest -Force
-}
-
 # Copy model-bounds.json if it doesn't exist in Django API directory
 $modelBoundsSource = "$SCRIPT_DIR\otef-interactive\frontend\data\model-bounds.json"
 $modelBoundsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\model-bounds.json"

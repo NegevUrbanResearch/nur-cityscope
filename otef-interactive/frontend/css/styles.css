@@ -290,18 +290,6 @@ body {
     25%, 75% { opacity: 0.3; }
 }
 
-#featureInfo {
-    bottom: 10px;
-    top: auto;
-    left: 10px;
-    right: auto;
-}
-
-#featureInfo p {
-    margin: 5px 0;
-    font-size: 14px;
-}
-
 /* Leaflet popup styles for layer feature popups */
 .leaflet-popup-content-wrapper {
     border-radius: 8px;

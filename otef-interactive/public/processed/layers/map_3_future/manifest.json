@@ -7,7 +7,19 @@
       "name": "אנדרטאות ומוקדי הנצחה",
       "file": "אנדרטאות_ומוקדי_הנצחה.geojson",
       "format": "geojson",
-      "geometryType": "point"
+      "geometryType": "point",
+      "ui": {
+        "popup": {
+          "titleField": "Name",
+          "fields": [
+            {
+              "label": "Name",
+              "key": "Name"
+            }
+          ],
+          "hideEmpty": true
+        }
+      }
     },
     {
       "id": "הקו_הורוד",
@@ -21,21 +33,57 @@
       "name": "מוזיאונים מרכזי מבקרים ומוקדי תרבות",
       "file": "מוזיאונים_מרכזי_מבקרים_ומוקדי_תרבות.geojson",
       "format": "geojson",
-      "geometryType": "point"
+      "geometryType": "point",
+      "ui": {
+        "popup": {
+          "titleField": "Name",
+          "fields": [
+            {
+              "label": "Name",
+              "key": "Name"
+            }
+          ],
+          "hideEmpty": true
+        }
+      }
     },
     {
       "id": "מוקדי_מורשת",
       "name": "מוקדי מורשת",
       "file": "מוקדי_מורשת.geojson",
       "format": "geojson",
-      "geometryType": "point"
+      "geometryType": "point",
+      "ui": {
+        "popup": {
+          "titleField": "Name",
+          "fields": [
+            {
+              "label": "Name",
+              "key": "Name"
+            }
+          ],
+          "hideEmpty": true
+        }
+      }
     },
     {
       "id": "מוקדים_ארכאולוגיים",
       "name": "מוקדים ארכאולוגיים",
       "file": "מוקדים_ארכאולוגיים.geojson",
       "format": "geojson",
-      "geometryType": "point"
+      "geometryType": "point",
+      "ui": {
+        "popup": {
+          "titleField": "Name",
+          "fields": [
+            {
+              "label": "Name",
+              "key": "Name"
+            }
+          ],
+          "hideEmpty": true
+        }
+      }
     },
     {
       "id": "מימושים",
@@ -43,14 +91,81 @@
       "file": "מימושים.geojson",
       "format": "geojson",
       "geometryType": "polygon",
-      "pmtilesFile": "מימושים.pmtiles"
+      "pmtilesFile": "מימושים.pmtiles",
+      "ui": {
+        "popup": {
+          "fields": [
+            {
+              "label": "תכנית",
+              "key": "TOCHNIT"
+            },
+            {
+              "label": "KVUZ_TRG",
+              "key": "KVUZ_TRG"
+            },
+            {
+              "label": "תרגום יעוד",
+              "key": "TARGUMYEUD"
+            },
+            {
+              "label": "מימוש",
+              "key": "mimush"
+            }
+          ],
+          "hideEmpty": true
+        }
+      }
     },
     {
       "id": "מתחמי_דיור",
       "name": "מתחמי דיור",
       "file": "מתחמי_דיור.geojson",
       "format": "geojson",
-      "geometryType": "unknown"
+      "geometryType": "unknown",
+      "ui": {
+        "popup": {
+          "titleField": "PLAN_NAME",
+          "fields": [
+            {
+              "label": "מספר תכנית",
+              "key": "PLAN_NB"
+            },
+            {
+              "label": "שם תכנית",
+              "key": "PLAN_NAME"
+            },
+            {
+              "label": "סוג מתחם",
+              "key": "PLANING_TYPE"
+            },
+            {
+              "label": "סטטוס",
+              "key": "PLAN_STATUS"
+            },
+            {
+              "label": "תוספת יח\"ד",
+              "key": "FLAT_NUMBER"
+            },
+            {
+              "label": "תכנית עבודה",
+              "key": "YEARLY_WORK_PLAN"
+            },
+            {
+              "label": "חדש / התחדשות",
+              "key": "PLANING_TYPE"
+            },
+            {
+              "label": "שם יישוב",
+              "key": "SETTLE_NAME"
+            },
+            {
+              "label": "מרחב תכנון",
+              "key": "PLANING_AREA"
+            }
+          ],
+          "hideEmpty": true
+        }
+      }
     },
     {
       "id": "ציר_232",
