@@ -130,46 +130,56 @@
 
     try {
       // Projection always uses GeoJSON (PMTiles not supported in Canvas renderer)
-
       const dataUrl = layerRegistry.getLayerDataUrl(fullLayerId);
       if (!dataUrl) {
         console.warn(`[Projection] No GeoJSON data URL for layer: ${fullLayerId}`);
         return;
       }
 
+      console.log(`[Projection] Fetching layer data: ${fullLayerId} from ${dataUrl}`);
       const response = await fetch(dataUrl);
       if (!response.ok) {
         throw new Error(`Failed to load layer data: ${response.status}`);
       }
 
       let geojson = await response.json();
+      console.log(`[Projection] Loaded layer ${fullLayerId}, features: ${geojson.features?.length || 0}`);
 
       // Check CRS and transform from WGS84 to ITM if needed
       // Projection canvas expects ITM coordinates to match model bounds
       const crs = geojson.crs?.properties?.name || "";
-      if (crs.includes("4326") || crs.includes("WGS")) {
+
+      // Heuristic: Check if coordinates look like WGS84 (small values) vs ITM (large values)
+      const firstCoord = getFirstCoordinate(geojson);
+      let isWgs84 = false;
+
+      if (firstCoord) {
+          // If x < 1000 and y < 1000, it's definitely not ITM (ITM is usually ~200,000 / ~600,000)
+          if (Math.abs(firstCoord[0]) < 1000 && Math.abs(firstCoord[1]) < 1000) {
+              isWgs84 = true;
+          }
+      }
+
+      if (crs.includes("4326") || crs.includes("WGS") || isWgs84) {
+        if (isWgs84) console.log(`[Projection] Detected WGS84 coordinates for ${fullLayerId}, transforming to ITM...`);
         geojson = CoordUtils.transformGeojsonToItm(geojson);
       } else if (!crs || crs === "") {
-        // No CRS specified - check if coordinates look like WGS84 (small values) vs ITM (large values)
-        const firstCoord = getFirstCoordinate(geojson);
-        if (
-          firstCoord &&
-          Math.abs(firstCoord[0]) < 180 &&
-          Math.abs(firstCoord[1]) < 90
-        ) {
-          geojson = CoordUtils.transformGeojsonToItm(geojson);
-        }
+         // Fallback logic preserved but enhanced above
+         // If we are here, isWgs84 is false, meaning coordinates are likely large (ITM)
+         console.log(`[Projection] Detected existing ITM-like coordinates for ${fullLayerId}`);
       }
 
       // Get canvas style function from StyleApplicator
       const canvasStyleFunction = StyleApplicator.getCanvasStyle(layerConfig);
 
       // Render layer using Canvas renderer
-      await renderLayerFromGeojson(geojson, fullLayerId, canvasStyleFunction);
+      await renderLayerFromGeojson(geojson, fullLayerId, canvasStyleFunction, layerConfig.geometryType);
     } catch (error) {
       console.error(`[Projection] Error loading layer ${fullLayerId}:`, error);
     }
   }
+
+
 
   /**
    * Extract the first coordinate from a GeoJSON to detect CRS
@@ -240,7 +250,7 @@
   /**
    * Helper function to render a layer from GeoJSON using Canvas
    */
-  async function renderLayerFromGeojson(geojson, layerName, styleFunction) {
+  async function renderLayerFromGeojson(geojson, layerName, styleFunction, geometryType) {
     const displayBounds = getDisplayBoundsSafe();
     const modelBounds = getModelBoundsSafe();
     if (!displayBounds || !modelBounds) {
@@ -251,11 +261,12 @@
     loadedLayers[layerName] = {
       originalGeojson: geojson,
       styleFunction: styleFunction,
+      geometryType: geometryType
     };
 
     // Add layer to Canvas renderer
     if (canvasRenderer) {
-      canvasRenderer.setLayer(layerName, geojson, styleFunction);
+      canvasRenderer.setLayer(layerName, geojson, styleFunction, geometryType);
       canvasRenderer.updatePosition(displayBounds, modelBounds);
 
       // Registry layers: individual layer.enabled is the source of truth

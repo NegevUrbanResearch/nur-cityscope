@@ -236,8 +236,12 @@ class LayerSheetController {
       // Set default enabled state: sea and רקע_שחור should be on by default, model_base should be off
       projectorBaseGroup.layers = (projectorBaseGroup.layers || []).map(layer => {
         // Enable sea and רקע_שחור by default if not already set
-        if ((layer.id === 'sea' || layer.id === 'רקע_שחור') && layer.enabled === undefined) {
-          return { ...layer, enabled: true };
+        if ((layer.id === 'sea' || layer.id === 'רקע_שחור')) {
+           // If enabled is undefined (initial load), default to true.
+           // If it has a value, keep it.
+           if (layer.enabled === undefined) {
+             return { ...layer, enabled: true };
+           }
         }
         return layer;
       });

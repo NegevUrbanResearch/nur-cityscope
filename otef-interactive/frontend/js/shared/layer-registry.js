@@ -173,7 +173,10 @@ class LayerRegistry {
     const style = styles ? styles[layerIdOnly] : null;
 
     if (layerId.includes('שבילי_אופניים') || layerId.includes('דרכי_עפר')) {
-      console.log(`[LayerRegistry] Layer ${layerId}: Style found = ${!!style}`, style);
+      console.log(`[LayerRegistry] Layer ${layerId}: Style key="${layerIdOnly}", found=${!!style}`, style);
+      if (!style && styles) {
+          console.log(`[LayerRegistry] Available style keys in pack ${groupId}:`, Object.keys(styles));
+      }
     }
 
     return {

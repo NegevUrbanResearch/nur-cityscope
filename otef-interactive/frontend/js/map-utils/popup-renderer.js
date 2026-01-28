@@ -1,6 +1,6 @@
 /**
  * Popup Renderer
- * 
+ *
  * Unified popup rendering for GeoJSON and PMTiles layers.
  * Renders safe HTML from feature properties based on layer popup configuration.
  */
@@ -19,31 +19,28 @@ function renderPopupContent(feature, popupConfig, layerName) {
 
   const props = feature.properties || {};
   const hideEmpty = popupConfig.hideEmpty !== false; // Default to true
-  const titleField = popupConfig.titleField;
-  
+
   // Build layer category header if provided
   let categoryHeader = '';
   if (layerName) {
     categoryHeader = `<div class="popup-category">${escapeHtml(layerName)}</div>`;
   }
-  
-  // Build title if specified (from feature property)
-  let title = '';
-  if (titleField && props[titleField]) {
-    const titleValue = formatFieldValue(props[titleField]);
-    title = `<h3 class="popup-title">${escapeHtml(titleValue)}</h3>`;
-  }
 
   // Build field list
   const fieldItems = [];
   for (const field of popupConfig.fields) {
-    // Skip the titleField if it's also in the fields array (avoid duplication)
-    if (titleField && field.key === titleField) {
-      continue;
+    const key = field.key;
+
+    // Case-insensitive lookup
+    let value = props[key];
+    if (value === undefined) {
+       const lowerKey = key.toLowerCase();
+       const actualKey = Object.keys(props).find(k => k.toLowerCase() === lowerKey);
+       if (actualKey) {
+           value = props[actualKey];
+       }
     }
-    
-    const value = props[field.key];
-    
+
     // Skip empty fields if hideEmpty is true
     if (hideEmpty && (value === null || value === undefined || value === '' || value === ' ')) {
       continue;
@@ -52,7 +49,7 @@ function renderPopupContent(feature, popupConfig, layerName) {
     const formattedValue = formatFieldValue(value);
     const label = escapeHtml(field.label);
     const valueHtml = escapeHtml(formattedValue);
-    
+
     fieldItems.push(`
       <div class="popup-field">
         <span class="popup-label">${label}:</span>
@@ -61,25 +58,19 @@ function renderPopupContent(feature, popupConfig, layerName) {
     `);
   }
 
-  // If we have a title but no fields (because titleField was the only field), show just the title
-  if (fieldItems.length === 0 && title) {
+  // If no fields found
+  if (fieldItems.length === 0) {
     return `
       <div class="popup-content" dir="rtl">
         ${categoryHeader}
-        ${title}
+        <p>No information available</p>
       </div>
     `;
-  }
-
-  // If no title and no fields, return a message
-  if (fieldItems.length === 0 && !title) {
-    return '<div class="popup-content"><p>No information available</p></div>';
   }
 
   return `
     <div class="popup-content" dir="rtl">
       ${categoryHeader}
-      ${title}
       <div class="popup-fields">
         ${fieldItems.join('')}
       </div>
@@ -96,22 +87,22 @@ function formatFieldValue(value) {
   if (value === null || value === undefined) {
     return '';
   }
-  
+
   // Handle boolean values
   if (typeof value === 'boolean') {
     return value ? 'כן' : 'לא';
   }
-  
+
   // Handle numeric values (no special formatting for now)
   if (typeof value === 'number') {
     return value.toString();
   }
-  
+
   // Handle strings - trim whitespace
   if (typeof value === 'string') {
     return value.trim();
   }
-  
+
   // Fallback: convert to string
   return String(value);
 }

@@ -13,7 +13,7 @@ class CanvasLayerRenderer {
 
     this.canvas = null;
     this.ctx = null;
-    this.layers = {};  // { layerId: { geojson, styleFunction, visible } }
+    this.layers = {};  // { layerId: { geojson, styleFunction, visible, geometryType } }
     this.modelBounds = null;
     this.displayBounds = null;
     this.dpr = 1;  // Device pixel ratio for high-DPI rendering
@@ -92,11 +92,12 @@ class CanvasLayerRenderer {
   /**
    * Add/update a layer
    */
-  setLayer(layerId, geojson, styleFunction) {
+  setLayer(layerId, geojson, styleFunction, geometryType) {
     this.layers[layerId] = {
       geojson: geojson,
       styleFunction: styleFunction,
-      visible: false
+      visible: false,
+      geometryType: geometryType || 'polygon'
     };
   }
 
@@ -136,13 +137,43 @@ class CanvasLayerRenderer {
 
     // Render each visible layer
     // Base layers (projector_base group) should be rendered first (lowest z-index)
+    // Detailed order:
+    // 1. רקע_שחור (Black Background) - Absolute bottom
+    // 2. sea - Above background
+    // 3. Other projector_base layers
+    // 4. All other layers
     const layerEntries = Object.entries(this.layers);
-    layerEntries.sort(([idA], [idB]) => {
+    layerEntries.sort(([idA, layerA], [idB, layerB]) => {
+      // Helper to check if layer is specific ID (handling full ID with group prefix)
+      const isBlackBgA = idA.includes('רקע_שחור');
+      const isSeaA = idA.includes('sea');
+      const isBlackBgB = idB.includes('רקע_שחור');
+      const isSeaB = idB.includes('sea');
+
+      // 1. Black background is absolute bottom
+      if (isBlackBgA && !isBlackBgB) return -1;
+      if (!isBlackBgA && isBlackBgB) return 1;
+
+      // 2. Sea is above black background
+      if (isSeaA && !isSeaB) return -1;
+      if (!isSeaA && isSeaB) return 1;
+
+      // 3. Other projector_base layers are above background and sea
       const isBaseA = idA.startsWith('projector_base.');
       const isBaseB = idB.startsWith('projector_base.');
-      if (isBaseA && !isBaseB) return -1; // Base layers first
+      if (isBaseA && !isBaseB) return -1;
       if (!isBaseA && isBaseB) return 1;
-      return 0; // Maintain insertion order within same category
+
+      // 4. Geometry-based sorting: Polygon < Line < Point
+      const typeRank = { 'polygon': 0, 'line': 1, 'point': 2 };
+      const rankA = typeRank[layerA.geometryType] ?? 0;
+      const rankB = typeRank[layerB.geometryType] ?? 0;
+
+      if (rankA !== rankB) {
+        return rankA - rankB;
+      }
+
+      return 0; // Maintain insertion order within same rank
     });
 
     for (const [layerId, layer] of layerEntries) {

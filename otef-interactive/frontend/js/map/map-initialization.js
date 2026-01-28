@@ -21,10 +21,16 @@ const map = L.map("map", {
   maxBoundsViscosity: 1.0, // Prevent dragging outside bounds
 });
 
-// Create custom pane for vector overlays to ensure they render above base tiles
-// This fixes the issue where switching basemaps causes overlays to disappear
-map.createPane('vectorOverlay');
-map.getPane('vectorOverlay').style.zIndex = 450;  // Above tilePane (200) and overlayPane (400)
+// Create custom panes for vector overlays to ensure they render in the correct order:
+// Polygon < Line < Point
+map.createPane('overlayPolygon');
+map.getPane('overlayPolygon').style.zIndex = 440;
+
+map.createPane('overlayLine');
+map.getPane('overlayLine').style.zIndex = 450;
+
+map.createPane('overlayPoint');
+map.getPane('overlayPoint').style.zIndex = 460;
 
 // Add OpenStreetMap basemap
 const osmLayer = L.tileLayer(
@@ -193,7 +199,7 @@ window.addEventListener("beforeunload", () => {
 // Map click handler
 map.on("click", async (e) => {
   const { lat, lng } = e.latlng;
-  
+
   // First, check if we can find a PMTiles feature with popup config
   if (typeof window.pmtilesLayersWithConfigs !== 'undefined' && window.pmtilesLayersWithConfigs.size > 0) {
     // Check each PMTiles layer that has a popup config
@@ -206,15 +212,15 @@ map.on("click", async (e) => {
       try {
         // Protomaps-leaflet has queryTileFeaturesDebug method for basic feature querying
         const wrapped = map.wrapLatLng(e.latlng);
-        
+
         // Check if the query method exists
         if (typeof layerInfo.layer.queryTileFeaturesDebug !== 'function') {
           continue;
         }
-        
+
         // Query features at the clicked location
         const queryResult = layerInfo.layer.queryTileFeaturesDebug(wrapped.lng, wrapped.lat);
-        
+
         // Convert result to array - queryTileFeaturesDebug returns a Map, not an array
         // Map structure: Map { layerName => [features] }
         let features = [];
@@ -227,18 +233,18 @@ map.on("click", async (e) => {
         } else if (Array.isArray(queryResult)) {
           features = queryResult;
         }
-        
+
         if (features.length > 0) {
           // Found a feature - use the first one
           const wrappedFeature = features[0];
-          
+
           // Protomaps-leaflet wraps features: { feature: {...}, layerName: 'layer' }
           // The actual feature with props is inside .feature
           const feature = wrappedFeature.feature || wrappedFeature;
-          
+
           // Get properties from the unwrapped feature
           const featureProps = feature.props || feature.properties || {};
-          
+
           // Normalize feature to GeoJSON-like shape
           const normalizedFeature = {
             type: "Feature",

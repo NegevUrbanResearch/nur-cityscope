@@ -19,6 +19,22 @@ def update_metadata_only(source_dir: Path, processed_dir: Path):
 
     processed_packs = []
 
+    # Load popup config
+    popup_config = {}
+    popup_path = source_dir.parent / "popup-config.json"
+    if not popup_path.exists():
+         popup_path = source_dir / "popup-config.json"
+
+    if popup_path.exists():
+        try:
+            with open(popup_path, "r", encoding="utf-8") as f:
+                popup_config = json.load(f) # Load raw JSON, no top-level "layers" key
+                logger.info(f"Loaded popup config from {popup_path}")
+        except Exception as e:
+            logger.warning(f"Failed to load popup config: {e}")
+    else:
+        logger.warning("popup-config.json not found")
+
     for pack_dir in source_layers.iterdir():
         if not pack_dir.is_dir() or pack_dir.name.startswith("."):
             continue
@@ -51,7 +67,7 @@ def update_metadata_only(source_dir: Path, processed_dir: Path):
 
         for geo_file in geo_files:
             layer_id = geo_file.stem
-            logger.info(f"  Processing layer: {layer_id}")
+            # logger.info(f"  Processing layer: {layer_id}")
 
             # Find and parse style
             lyrx_file, _ = find_lyrx_file(geo_file, styles_dir)
@@ -72,6 +88,23 @@ def update_metadata_only(source_dir: Path, processed_dir: Path):
                 elif layer_id in existing_layers:
                     geom_type = existing_layers[layer_id].get("geometryType", "unknown")
 
+            # Get popup config from file, or fallback to existing
+            pack_entry = popup_config.get(pack_id, {})
+            pack_layers_config = pack_entry.get("layers", {})
+            layer_popup = pack_layers_config.get(layer_id)
+
+            # Debug match failure
+            # if not layer_popup and pack_id == "future_development":
+            #      logger.info(f"Checking {layer_id} in {list(pack_layers_config.keys())}")
+            #      pass
+
+            if not layer_popup:
+                layer_popup = existing_layers.get(layer_id, {}).get("ui", {}).get("popup")
+                if layer_popup:
+                     logger.info(f"  Restored popup from existing manifest for {layer_id}")
+            else:
+                logger.info(f"  Found popup config for {layer_id}")
+
             # Create layer entry
             entry = LayerEntry(
                 id=layer_id,
@@ -79,7 +112,7 @@ def update_metadata_only(source_dir: Path, processed_dir: Path):
                 file=f"{layer_id}.geojson",
                 geometry_type=geom_type,
                 pmtiles_file=f"{layer_id}.pmtiles" if (processed_pack_dir / f"{layer_id}.pmtiles").exists() else None,
-                ui_popup=existing_layers.get(layer_id, {}).get("ui", {}).get("popup")
+                ui_popup=layer_popup
             )
 
             new_layers.append(entry)
@@ -121,6 +154,17 @@ def update_metadata_only(source_dir: Path, processed_dir: Path):
 
 if __name__ == "__main__":
     import sys
-    source = Path("public/source/layers")
-    output = Path("public/processed/layers")
+    # Paths are relative to the scripts directory where this is run
+    source = Path("../public/source/layers")
+    output = Path("../public/processed/layers")
+
+    if not source.exists():
+        # Fallback if running from root
+        source = Path("otef-interactive/public/source/layers")
+        output = Path("otef-interactive/public/processed/layers")
+
+    if not source.exists():
+        logger.error(f"Source directory not found: {source.absolute()}")
+        sys.exit(1)
+
     update_metadata_only(source, output)

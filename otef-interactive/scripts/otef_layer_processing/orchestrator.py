@@ -72,13 +72,24 @@ class ProcessingOrchestrator:
                 json.dump(self.cache, f, indent=2)
 
     def _load_popup_config(self) -> Dict:
-        path = self.source_dir / "popup-config.json"
-        if path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f).get("layers", {})
-            except Exception as e:
-                logger.warning(f"Could not load popup config: {e}")
+        # source_dir is typically ".../public/source/layers" or just ".../public/source"
+        # We want to find ".../public/source/popup-config.json"
+
+        candidates = [
+            self.source_dir / "popup-config.json",          # If source is root
+            self.source_dir.parent / "popup-config.json",   # If source is layers/
+        ]
+
+        for path in candidates:
+            if path.exists():
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        logger.info(f"Loaded popup config from {path}")
+                        return json.load(f).get("layers", {})
+                except Exception as e:
+                    logger.warning(f"Could not load popup config from {path}: {e}")
+
+        logger.warning(f"popup-config.json not found in candidates: {[str(p) for p in candidates]}")
         return {}
 
     def scan_packs(self) -> List[Path]:

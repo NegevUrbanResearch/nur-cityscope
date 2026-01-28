@@ -92,6 +92,10 @@ async function loadLayerFromRegistry(fullLayerId) {
 
     console.log(`[Map] Loading layer ${fullLayerId}: pmtiles=${pmtilesUrl}, geojson=${geojsonUrl}`);
 
+    if (fullLayerId.includes('שבילי_אופניים')) {
+      console.log(`[Map Debug] Layer Config for ${fullLayerId}:`, JSON.stringify(layerConfig, null, 2));
+    }
+
     if (pmtilesUrl) {
       // Use PMTiles for better performance in GIS
       console.log(`[Map] Using PMTiles for ${fullLayerId}`);
@@ -144,12 +148,17 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
     // Get layer name for popup display
     const layerDisplayName = layerConfig.name || fullLayerId.split('.').pop();
 
-    // Create Leaflet layer with custom pane for proper z-ordering above basemaps
+    // Determine pane based on geometry type
+    let layerPane = 'overlayPolygon'; // Default
+    if (layerConfig.geometryType === 'line') layerPane = 'overlayLine';
+    if (layerConfig.geometryType === 'point') layerPane = 'overlayPoint';
+
+    // Create Leaflet layer with custom pane for proper z-ordering
     let leafletLayer;
     if (layerConfig.geometryType === 'point') {
       // Use style function for EACH point feature
       leafletLayer = L.geoJSON(geojson, {
-        pane: 'vectorOverlay',
+        pane: layerPane,
         pointToLayer: (feature, latlng) => {
           const style = styleFunction(feature);
           return L.circleMarker(latlng, {
@@ -159,14 +168,16 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
             weight: (style.strokeWidth || style.weight || 1),
             fillColor: style.fillColor || '#808080',
             fillOpacity: style.fillOpacity !== undefined ? style.fillOpacity : 0.7,
-            pane: 'vectorOverlay'
+            pane: layerPane
           });
         },
         onEachFeature: (feature, layer) => {
           // Attach click handler ...
           if (popupConfig && typeof renderPopupContent === 'function') {
             layer.on('click', (e) => {
+              console.log(`[Map] GeoJSON Point Click: ${layerDisplayName}`, feature);
               const content = renderPopupContent(feature, popupConfig, layerDisplayName);
+              console.log(`[Map] Popup Content:`, content);
               L.popup()
                 .setLatLng(e.latlng)
                 .setContent(content)
@@ -178,7 +189,7 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
     } else {
       // Use style function for polygons and lines
       leafletLayer = L.geoJSON(geojson, {
-        pane: 'vectorOverlay',
+        pane: layerPane,
         style: styleFunction,
         onEachFeature: (feature, layer) => {
           // Attach click handler ...
@@ -286,12 +297,20 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
              // Respect scale range if it exists
              const currentZoom = map.getZoom();
              const getZoomFromScale = (scale) => scale ? Math.log2(591657550 / scale) : null;
+
+             // In GIS, minScale usually means "most zoomed out" (largest denominator), which corresponds to MINIMUM zoom level.
+             // maxScale usually means "most zoomed in" (smallest denominator), which corresponds to MAXIMUM zoom level.
              const minZ = scaleRange ? getZoomFromScale(scaleRange.minScale) : null;
              const maxZ = scaleRange ? getZoomFromScale(scaleRange.maxScale) : null;
 
              let inRange = true;
+             // Ensure we check against correct boundaries. Use permissive range if one is null.
              if (minZ !== null && currentZoom < minZ) inRange = false;
              if (maxZ !== null && currentZoom > maxZ) inRange = false;
+
+             if (fullLayerId.includes('דרכי_עפר')) {
+                console.log(`[Map] Visibility Check ${fullLayerId}: Zoom=${currentZoom.toFixed(2)}, Range=[${minZ?.toFixed(2)||'-'}, ${maxZ?.toFixed(2)||'-'}], Visible=${inRange}`);
+             }
 
              if (inRange) {
                 map.addLayer(leafletLayer);
@@ -328,7 +347,7 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
             const style = styleFunction(feature);
             return style.fillColor || '#808080';
           },
-          stroke: (zoom, feature) => {
+          color: (zoom, feature) => {
             const style = styleFunction(feature);
             return style.color || '#000000';
           },
@@ -350,7 +369,7 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
             const style = styleFunction(feature);
             return style.fillColor || '#808080';
           },
-          stroke: (zoom, feature) => {
+          color: (zoom, feature) => {
             const style = styleFunction(feature);
             return style.color || '#000000';
           },
@@ -368,7 +387,7 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
       paintRules.push({
         dataLayer: dataLayerName,
         symbolizer: new protomapsL.LineSymbolizer({
-          stroke: (zoom, feature) => {
+          color: (zoom, feature) => {
             const style = styleFunction(feature);
             return style.color || '#000000';
           },
@@ -385,10 +404,16 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
       paintRules.push({
         dataLayer: "*",
         symbolizer: new protomapsL.LineSymbolizer({
-          stroke: (zoom, feature) => {
+          color: (zoom, feature) => {
             const style = styleFunction(feature);
             if (fullLayerId.includes('שבילי_אופניים')) {
-              console.log(`[PMTiles Style] ${fullLayerId} color:`, style.color, 'style:', style);
+              // Parse debug info
+              const props = feature.props || feature.properties || feature;
+              console.log(`[PMTiles Style Debug] ${fullLayerId}`, {
+                 props: props,
+                 calculatedStyle: style,
+                 zoom: zoom
+              });
             }
             return style.color || '#000000';
           },
@@ -405,6 +430,14 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
     }
 
     // Create vector tile layer from PMTiles file with custom pane for z-ordering
+    if (fullLayerId.includes('שבילי_אופניים')) {
+      console.log(`[PMTiles Debug] Creating layer for ${fullLayerId} with paintRules:`, paintRules);
+    }
+    // Determine pane based on geometry type
+    let layerPane = 'overlayPolygon'; // Default
+    if (layerConfig.geometryType === 'line') layerPane = 'overlayLine';
+    if (layerConfig.geometryType === 'point') layerPane = 'overlayPoint';
+
     const pmtilesLayer = protomapsL.leafletLayer({
       url: dataUrl,
       paintRules: paintRules,
@@ -413,7 +446,7 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
       minDataZoom: 9,
       maxDataZoom: 18,
       attribution: layerConfig.name || fullLayerId,
-      pane: 'vectorOverlay',  // Ensure layer renders above basemaps
+      pane: layerPane,  // Ensure layer renders in correct geometry-based pane
     });
 
     // Apply scale ranges if present
@@ -451,6 +484,20 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
 
       map.on('zoomend', updatePmtilesVisibility);
       // Initial check will be handled by the context listener or below
+    }
+
+    // Register with global map click handler for popups if config exists
+    const popupConfig = layerConfig.ui?.popup;
+    if (popupConfig) {
+      if (!window.pmtilesLayersWithConfigs) {
+        window.pmtilesLayersWithConfigs = new Map();
+      }
+      console.log(`[Map] Registering PMTiles layer ${fullLayerId} for popups`);
+      window.pmtilesLayersWithConfigs.set(fullLayerId, {
+        layer: pmtilesLayer,
+        config: layerConfig,
+        popupConfig: popupConfig
+      });
     }
 
     // Store layer reference
@@ -501,7 +548,40 @@ function updateLayerVisibilityFromRegistry(fullLayerId, visible) {
 
   if (visible) {
     if (!map.hasLayer(layer)) {
-      map.addLayer(layer);
+      // Check scale/zoom constraints before adding
+      if (!layer.options) layer.options = {}; // Ensure options exist
+
+      // We need access to the config to check scaleRange.
+      // The layer object itself doesn't easily expose the original config unless we stored it.
+      // But we can check if the layer has zIndex of 1000 (which we set for scaled layers)
+      // or try to find it in loaded configs.
+
+      // Better approach: Re-evaluate the scale check logic here.
+      // We stored the layer in loadedLayersMap. Check if we can get the config.
+      // NOTE: loadedLayersMap only stores the Leaflet layer instance.
+
+      // Let's retrieve the config from the registry again to be safe.
+      let inRange = true;
+      if (typeof layerRegistry !== 'undefined') {
+          const config = layerRegistry.getLayerConfig(fullLayerId);
+          if (config && config.style && config.style.scaleRange) {
+              const currentZoom = map.getZoom();
+              const getZoomFromScale = (scale) => scale ? Math.log2(591657550 / scale) : null;
+              const minZ = getZoomFromScale(config.style.scaleRange.minScale);
+              const maxZ = getZoomFromScale(config.style.scaleRange.maxScale);
+
+              if (minZ !== null && currentZoom < minZ) inRange = false;
+              if (maxZ !== null && currentZoom > maxZ) inRange = false;
+
+              if (!inRange) {
+                  console.log(`[Map] Skipping addLayer for ${fullLayerId} (Zoom ${currentZoom.toFixed(1)} out of range [${minZ?.toFixed(1)||'-'}, ${maxZ?.toFixed(1)||'-'}])`);
+              }
+          }
+      }
+
+      if (inRange) {
+          map.addLayer(layer);
+      }
     }
   } else {
     if (map.hasLayer(layer)) {

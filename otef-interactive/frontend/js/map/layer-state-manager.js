@@ -85,6 +85,11 @@ function applyLayerGroupsState(layerGroups) {
 
   // Process each group - individual layer.enabled is the source of truth for visibility
   for (const group of layerGroups) {
+    // Skip projector_base group - these are projector-only layers
+    if (group.id === 'projector_base') {
+      continue;
+    }
+
     for (const layer of group.layers || []) {
       const fullLayerId = `${group.id}.${layer.id}`;
 

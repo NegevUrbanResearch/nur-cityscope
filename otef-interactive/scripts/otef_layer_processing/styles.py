@@ -7,6 +7,12 @@ from .models import StyleConfig
 
 logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
+
+# Conversion factor from Points (ArcGIS) to CSS Pixels (Web)
+# 1pt = 1/72 inch, 1px = 1/96 inch -> 96/72 = 1.333
+PT_TO_PX = 96 / 72
+
 def normalize_name(name: str) -> str:
     """Normalize a name for matching: trim, lowercase, collapse whitespace."""
     return re.sub(r"\s+", " ", name.strip().lower())
@@ -139,7 +145,7 @@ def extract_simplified_style(symbol_layers: List[Dict]) -> Dict:
 
         if layer_type == "CIMVectorMarker":
             size = layer.get("size", 6)
-            style["radius"] = size  # Use size directly as radius for better visibility
+            style["radius"] = size * PT_TO_PX  # Scale point size/radius
 
             # If marker has internal symbols, we might need to rely on recursion results that should be in the list already.
             # But CIMVectorMarker itself is not a fill/stroke type, so it falls through.
@@ -162,7 +168,7 @@ def extract_simplified_style(symbol_layers: List[Dict]) -> Dict:
                 g = normalize_color_channel(color[1])
                 b = normalize_color_channel(color[2])
                 stroke_color = f"#{r:02x}{g:02x}{b:02x}"
-                stroke_width = layer.get("width", 1.0)
+                stroke_width = layer.get("width", 1.0) * PT_TO_PX # Scale line width
 
             # Check for dashed effects
             effects = layer.get("effects", [])
@@ -188,7 +194,7 @@ def extract_simplified_style(symbol_layers: List[Dict]) -> Dict:
                                 "color": h_color,
                                 "rotation": layer.get("rotation", 0),
                                 "separation": layer.get("separation", 5),
-                                "width": l_layer.get("width", 1)
+                                "width": l_layer.get("width", 1) * PT_TO_PX # Scale hatch line width
                             }
                             # Only set fallback if no solid fill found YET
                             break

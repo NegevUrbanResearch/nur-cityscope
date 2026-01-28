@@ -11,6 +11,10 @@
  */
 
 class StyleApplicator {
+  // Conversion factor from Points (ArcGIS) to CSS Pixels (Web)
+  // 1pt = 1/72 inch, 1px = 1/96 inch -> 96/72 = 1.333
+  static PT_TO_PX = 96 / 72;
+
   /**
    * Get Leaflet style function for a layer.
    * @param {Object} layerConfig - Layer config from registry (includes style)
@@ -44,7 +48,7 @@ class StyleApplicator {
       fillColor: defaultStyle.fillColor || '#E0E0E0',
       fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
       color: defaultStyle.strokeColor || '#333333',
-      weight: defaultStyle.strokeWidth || 0.5,
+      weight: (defaultStyle.strokeWidth || 0.5) * this.PT_TO_PX,
       opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0,
       dashArray: defaultStyle.dashArray || null,
       hatch: defaultStyle.hatch || null
@@ -62,14 +66,19 @@ class StyleApplicator {
         fillColor: defaultStyle.fillColor || '#808080',
         fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
         color: defaultStyle.strokeColor || '#000000',
-        weight: defaultStyle.strokeWidth || 1.0,
+        weight: (defaultStyle.strokeWidth || 1.0) * this.PT_TO_PX,
         opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0,
         dashArray: defaultStyle.dashArray || null,
         hatch: defaultStyle.hatch || null
       };
 
       if (style.id && (style.id.includes('שבילי_אופניים') || style.id.includes('דרכי_עפר'))) {
-          console.log(`[StyleApplicator] Simple Style for ${style.id}:`, result);
+          console.log(`[StyleApplicator] Simple Style for ${style.id} (scaled):`, result);
+      }
+
+      // Broader check because style.id might be missing
+      if (defaultStyle.strokeColor === '#898944' || defaultStyle.strokeColor === '#d76e89') {
+          console.log(`[StyleApplicator] Simple Style (by color match):`, result);
       }
 
       return result;
@@ -108,16 +117,25 @@ class StyleApplicator {
 
       // Look up style for this value
       const valueStyle = styleMap.get(fieldValue);
+
+      if (fieldValue.includes('אופניים') || (style.id && style.id.includes('אופניים'))) {
+          console.log(`[StyleApplicator] UniqueValue lookup for ${fieldValue}:`, {
+              found: !!valueStyle,
+              style: valueStyle,
+              props: props
+          });
+      }
+
       if (valueStyle) {
         return {
           fillColor: valueStyle.fillColor || defaultStyle.fillColor || '#808080',
           fillOpacity: valueStyle.fillOpacity !== undefined ? valueStyle.fillOpacity : (defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7),
           color: valueStyle.strokeColor || defaultStyle.strokeColor || '#000000',
-          weight: valueStyle.strokeWidth !== undefined ? valueStyle.strokeWidth : (defaultStyle.strokeWidth !== undefined ? defaultStyle.strokeWidth : 1.0),
+          weight: (valueStyle.strokeWidth !== undefined ? valueStyle.strokeWidth : (defaultStyle.strokeWidth !== undefined ? defaultStyle.strokeWidth : 1.0)) * this.PT_TO_PX,
           opacity: valueStyle.strokeOpacity !== undefined ? valueStyle.strokeOpacity : (defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0),
           dashArray: valueStyle.dashArray || defaultStyle.dashArray || null,
           hatch: valueStyle.hatch || defaultStyle.hatch || null,
-          radius: valueStyle.radius || defaultStyle.radius || 5
+          radius: (valueStyle.radius || defaultStyle.radius || 5) * this.PT_TO_PX
         };
       }
 
@@ -126,11 +144,11 @@ class StyleApplicator {
         fillColor: defaultStyle.fillColor || '#808080',
         fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
         color: defaultStyle.strokeColor || '#000000',
-        weight: defaultStyle.strokeWidth || 1.0,
+        weight: (defaultStyle.strokeWidth || 1.0) * this.PT_TO_PX,
         opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0,
         dashArray: defaultStyle.dashArray || null,
         hatch: defaultStyle.hatch || null,
-        radius: defaultStyle.radius || 5
+        radius: (defaultStyle.radius || 5) * this.PT_TO_PX
       };
     };
   }
@@ -169,11 +187,11 @@ class StyleApplicator {
     const defaultStyle = style.defaultStyle || {};
 
     return {
-      radius: defaultStyle.radius || 5,
+      radius: (defaultStyle.radius || 5) * this.PT_TO_PX,
       fillColor: defaultStyle.fillColor || '#808080',
       fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
       color: defaultStyle.strokeColor || '#000000',
-      weight: defaultStyle.strokeWidth || 1.0,
+      weight: (defaultStyle.strokeWidth || 1.0) * this.PT_TO_PX,
       opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0
     };
   }
