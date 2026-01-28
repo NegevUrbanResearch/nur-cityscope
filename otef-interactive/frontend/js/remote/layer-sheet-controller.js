@@ -136,6 +136,12 @@ class LayerSheetController {
         await OTEFDataContext.toggleLayer('model', enabled);
         return;
       }
+
+      // Sync model base state when toggling projector_base group
+      if (groupId === 'projector_base') {
+        await OTEFDataContext.toggleLayer('model', enabled);
+      }
+
       const result = await OTEFDataContext.toggleGroup(groupId, enabled);
       if (!result || !result.ok) {
         console.error(`[LayerSheet] Failed to toggle group ${groupId}:`, result?.error);
@@ -148,7 +154,12 @@ class LayerSheetController {
   async toggleLayer(layerId, enabled) {
     if (typeof OTEFDataContext !== 'undefined') {
       // Special handling for model base - route to legacy layers.model
-      if (layerId === '_legacy.model_base' || layerId === 'model_base') {
+      // Handle both legacy ID and new group-prefixed ID
+      if (
+        layerId === '_legacy.model_base' ||
+        layerId === 'model_base' ||
+        layerId === 'projector_base.model_base'
+      ) {
         await OTEFDataContext.toggleLayer('model', enabled);
       } else {
         await OTEFDataContext.toggleLayer(layerId, enabled);
@@ -207,22 +218,38 @@ class LayerSheetController {
       layerCountEl.textContent = `${totalEnabled} active`;
     }
 
-    // Inject virtual "Model base" layer into _legacy group and derive group.enabled from it
-    const legacyGroupIndex = groups.findIndex(g => g.id === '_legacy');
-    if (legacyGroupIndex !== -1) {
-      const legacyGroup = groups[legacyGroupIndex];
+    // Handle projector_base group: set default enabled state for sea and רקע_שחור (but not model_base)
+    const projectorBaseGroupIndex = groups.findIndex(g => g.id === 'projector_base');
+    if (projectorBaseGroupIndex !== -1) {
+      const projectorBaseGroup = groups[projectorBaseGroupIndex];
       const legacyLayers = typeof OTEFDataContext !== 'undefined' ? OTEFDataContext.getLayers() : null;
       const modelEnabled = legacyLayers && legacyLayers.model === true;
 
+      // Add model_base as a virtual layer to projector_base group (moved from _legacy)
       const modelBaseLayer = {
         id: 'model_base',
         name: 'Model base',
         enabled: modelEnabled,
         virtual: true
       };
-      legacyGroup.layers = [modelBaseLayer, ...(legacyGroup.layers || [])];
-      legacyGroup.enabled = modelEnabled;
-      groups[legacyGroupIndex] = legacyGroup;
+
+      // Set default enabled state: sea and רקע_שחור should be on by default, model_base should be off
+      projectorBaseGroup.layers = (projectorBaseGroup.layers || []).map(layer => {
+        // Enable sea and רקע_שחור by default if not already set
+        if ((layer.id === 'sea' || layer.id === 'רקע_שחור') && layer.enabled === undefined) {
+          return { ...layer, enabled: true };
+        }
+        return layer;
+      });
+
+      // Add model_base to the group (but keep it disabled by default)
+      projectorBaseGroup.layers = [modelBaseLayer, ...projectorBaseGroup.layers];
+
+      // Group is enabled if any non-model_base layer is enabled
+      const nonModelLayers = projectorBaseGroup.layers.filter(l => l.id !== 'model_base');
+      projectorBaseGroup.enabled = nonModelLayers.some(l => l.enabled);
+
+      groups[projectorBaseGroupIndex] = projectorBaseGroup;
     }
 
     // Render groups

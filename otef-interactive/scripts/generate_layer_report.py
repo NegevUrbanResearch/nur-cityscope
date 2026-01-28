@@ -21,20 +21,55 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-# Import the parser from process_layers.py
+# Import from the modularized package
 sys.path.insert(0, str(Path(__file__).parent))
-from process_layers import (
-    scan_layer_packs,
-    parse_lyrx_style,
-    get_geometry_type,
-    count_features,
-    get_file_size_mb,
-    should_convert_to_pmtiles,
-    compute_file_hash,
-    find_lyrx_file,
-    normalize_layer_id,
-    PMTILES_SKIP_LAYER_IDS,
-)
+try:
+    from otef_layer_processing.styles import find_lyrx_file, parse_lyrx_style
+    from otef_layer_processing.geo import get_geometry_type
+    from otef_layer_processing.orchestrator import compute_file_hash
+except ImportError as e:
+    print(f"Error: Could not import modularize package: {e}")
+    sys.exit(1)
+
+# Helper functions that were in process_layers.py
+def normalize_layer_id(layer_name: str) -> str:
+    return layer_name.lower().replace(" ", "_").replace("-", "_")
+
+def get_file_size_mb(path: Path) -> float:
+    if path.exists():
+        return path.stat().st_size / (1024 * 1024)
+    return 0.0
+
+def count_features(geojson_path: Path) -> int:
+    try:
+        with open(geojson_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return len(data.get("features", []))
+    except Exception:
+        return 0
+
+def should_convert_to_pmtiles(geojson_path: Path, layer_id: str = None) -> bool:
+    # Match logic in orchestrator: 15MB threshold
+    return get_file_size_mb(geojson_path) > 15
+
+PMTILES_SKIP_LAYER_IDS = set()
+
+def scan_layer_packs(source_dir: Path) -> List[Path]:
+    """Discover layer pack directories in source/layers/ or root."""
+    packs = []
+    # Check if we are pointing to the base source dir or the layers subfolder
+    source_layers = source_dir / "layers" if (source_dir / "layers").exists() else source_dir
+
+    if not source_layers.exists():
+        return packs
+
+    for item in source_layers.iterdir():
+        if item.is_dir() and not item.name.startswith("."):
+            gis_dir = item / "gis" if (item / "gis").exists() else item
+            geo_files = list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
+            if geo_files:
+                packs.append(item)
+    return sorted(packs)
 
 
 def format_color(color_hex: str, opacity: float = None) -> str:
@@ -115,6 +150,22 @@ def format_style_config(style: Dict) -> str:
             full_layers = cls.get("fullSymbolLayers", [])
             if full_layers:
                 lines.append(f"     - Symbol layers: {len(full_layers)}")
+                layer_types = {}
+                for layer in full_layers:
+                    ltype = layer.get("type", "unknown")
+                    layer_types[ltype] = layer_types.get(ltype, 0) + 1
+                if layer_types:
+                    type_summary = ", ".join(
+                        [f"{k}: {v}" for k, v in sorted(layer_types.items())]
+                    )
+                    lines.append(f"       - Types: {type_summary}")
+
+                # Report hatches/dashes specifically if present
+                if cls_style.get("dashArray"):
+                    lines.append(f"       - Dash pattern: {cls_style['dashArray']}")
+                if cls_style.get("hatch"):
+                    h = cls_style["hatch"]
+                    lines.append(f"       - Hatch: {h['color']} (rot: {h['rotation']}, sep: {h['separation']})")
 
     # Labels
     labels = style.get("labels")
@@ -230,8 +281,9 @@ def generate_report(source_dir: Path, output_path: Path):
                     )
                 report_lines.append("")
 
-                style_config = parse_lyrx_style(lyrx_file)
-                if style_config:
+                style_obj = parse_lyrx_style(lyrx_file)
+                if style_obj:
+                    style_config = style_obj.to_dict()
                     report_lines.append("**Parsed Style Configuration:**")
                     report_lines.append("")
                     report_lines.append(format_style_config(style_config))

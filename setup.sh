@@ -49,6 +49,15 @@ if [ ! -d "$VENV_PATH" ]; then
     python3 -m venv "$VENV_PATH"
 fi
 
+# Ensure dependencies are installed
+echo "Ensuring dependencies are installed..."
+"$VENV_PATH/bin/python" -m pip install -q -r "$SCRIPT_DIR/otef-interactive/scripts/requirements.txt"
+
+# Fetch source layers if needed
+echo "Fetching source layers if needed..."
+"$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/fetch_data.py" --output "$SCRIPT_DIR/otef-interactive/public/source"
+
+
 if docker info >/dev/null 2>&1; then
     MANIFEST_PATH="$SCRIPT_DIR/otef-interactive/public/processed/layers/layers-manifest.json"
     # Only process if manifest doesn't exist or is older than source files

@@ -1,0 +1,215 @@
+מפה,שם שכבה,מידע להצגה
+בסיס - תמיד דלוק,רקע שחור,
+בסיס - תמיד דלוק,SEA,
+תחבורה ומועצות,שבילים,
+תחבורה ומועצות,שבילי אופניים שקמה,SHVIL_NAME
+תחבורה ומועצות,שביל הנגב המערבי,Name
+תחבורה ומועצות,סעד,Name
+תחבורה ומועצות,סינגלים,Name
+תחבורה ומועצות,במה,Name
+תחבורה ומועצות,שבילי אופניים,"SHVIL_NAME
+STATUS"
+תחבורה ומועצות,מסלולי רכבת,Layer
+תחבורה ומועצות,תחנות רכבת,"Name
+STATUS"
+תחבורה ומועצות,מרכז תחבורה קיים ,
+תחבורה ומועצות,מרכז תחבורה מתוכנן,
+תחבורה ומועצות,דרכים אזוריות,Name
+תחבורה ומועצות,דרכים מקומיות,
+תחבורה ומועצות,דרכים ארציות,"Name
+"
+תחבורה ומועצות,דרכי עפר,
+תחבורה ומועצות,מועצות אזוריות,Muni_Heb
+ייעודי קרקע,ספורט,KVUZ_TRG
+ייעודי קרקע,בית עלמין,"MAVAT_NAME
+STATION_DESC
+KVUZ_TRG"
+ייעודי קרקע,תחבורה,KVUZ_TRG
+ייעודי קרקע,כריה וחציבה,KVUZ_TRG
+ייעודי קרקע,מתקני הנדסה,KVUZ_TRG
+ייעודי קרקע,שטח לדרכים,KVUZ_TRG
+ייעודי קרקע,אחסנה,KVUZ_TRG
+ייעודי קרקע,חניון,"MAVAT_NAME
+STATION_DESC
+"
+ייעודי קרקע,שטחי אש,FZ_NAME
+ייעודי קרקע,חקלאות מרעה ותעשייה,"MAVAT_NAME
+STATION_DESC
+KVUZ_TRG
+PL_NAME"
+ייעודי קרקע,שטחים פתוחים,"MAVAT_NAME
+STATION_DESC
+KVUZ_TRG
+PL_NAME"
+ייעודי קרקע,מוסדות ציבור,"MAVAT_NAME
+STATION_DESC
+KVUZ_TRG
+PL_NAME"
+ייעודי קרקע,תיירות ונופש,"MAVAT_NAME
+STATION_DESC
+KVUZ_TRG
+"
+ייעודי קרקע,תעשייה ומלאכה,"MAVAT_NAME
+STATION_DESC
+KVUZ_TRG
+PL_NAME"
+ייעודי קרקע,מסחר ומשרדים,"MAVAT_NAME
+STATION_DESC
+KVUZ_TRG
+PL_NAME"
+ייעודי קרקע,תעסוקה,"MAVAT_NAME
+STATION_DESC
+KVUZ_TRG
+PL_NAME"
+ייעודי קרקע,מעורב עם מסחר,KVUZ_TRG
+ייעודי קרקע,מעורב עם מגורים,KVUZ_TRG
+ייעודי קרקע,מגורים,"MAVAT_NAME
+STATION_DESC
+KVUZ_TRG
+PL_NAME"
+"""ירוקים""",נחלים,NAME
+"""ירוקים""",מישורי הצפה,סוג_פ
+"""ירוקים""",שמורות טבע,"MAVAT_NAME
+NAME
+STATUS
+STATION_DESC"
+"""ירוקים""",יער פארק,"MAVAT_NAME
+NAME
+STATUS
+"
+"""ירוקים""",יער טבעי,"MAVAT_NAME
+NAME
+STATUS
+"
+"""ירוקים""",גן לאומי,"MAVAT_NAME
+NAME
+STATUS
+"
+"""ירוקים""",יערות קקל,"MAVAT_NAME
+NAME
+STATUS
+"
+"""ירוקים""",חקלאות,"שם ישוב
+שם גידול
+דונם
+סוג כיסוי"
+"""ירוקים""",מסדרונות אקולוגיים,SymRTG
+"""ירוקים""",צוואר בקבוק,SymRTG
+7.1,אזור הרס - נקודה,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,אזור הרס - אזור,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,מרחב לחימה,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,"אירוע נקודתי - רציחה, חטיפה","Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,"אירוע נקודתי - רציחה, חטיפה - אזור","Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,פגיעה נקודתית - נקודה,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,פגיעה נקודתית - אזור,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,חדירה לישוב - אזור,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,חדירה לישוב - ציר,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,חדירה לישוב - נקודה,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,מאבק וגבורה - אזור,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,מאבק וגבורה - נקודה,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,מאבק וגבורה - ציר,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,מוקד מאבק וגבורה - אזור,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,מוקד מאבק וגבורה - נקודה,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,מוקד מאבק וגבורה - ציר,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,ביזה - נקודה,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,ביזה - אזור,"Site_name
+Setl_Name
+General_De
+Site_Type
+Oct7_Sit_1"
+7.1,שטחים פתוחים פגועים,Layer
+"עתיד - מורשת, תקומה ופיתוח",מורשת - מוצע,"Name
+type
+Status
+PopupInfo"
+"עתיד - מורשת, תקומה ופיתוח",מורשת - קיים,"Name
+type
+Status
+PopupInfo"
+"עתיד - מורשת, תקומה ופיתוח",ציר 232,
+"עתיד - מורשת, תקומה ופיתוח",הקו הורוד,
+"עתיד - מורשת, תקומה ופיתוח",מוקדי מורשת,Name
+"עתיד - מורשת, תקומה ופיתוח",מוזיאונים מרכזי מבקרים ומוקדי תרבות,Name
+"עתיד - מורשת, תקומה ופיתוח",אנדרטאות ומוקדי הנצחה,Name
+"עתיד - מורשת, תקומה ופיתוח",מוקדים ארכאולוגיים,Name
+"עתיד - מורשת, תקומה ופיתוח",מתחמי דיור,"מספר תכנית
+שם תכנית
+סוג מתחם
+סטטוס
+תוספת יח""ד
+תכנית עבודה
+חדש / התחדשות
+שם יישוב
+מרחב תכנון"
+"עתיד - מורשת, תקומה ופיתוח",מימושים ,"תכנית
+KVUZ_TRG
+תרגום יעוד
+מימוש"

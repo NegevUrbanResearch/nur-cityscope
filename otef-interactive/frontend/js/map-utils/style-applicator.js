@@ -45,7 +45,9 @@ class StyleApplicator {
       fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
       color: defaultStyle.strokeColor || '#333333',
       weight: defaultStyle.strokeWidth || 0.5,
-      opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0
+      opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0,
+      dashArray: defaultStyle.dashArray || null,
+      hatch: defaultStyle.hatch || null
     });
   }
 
@@ -56,13 +58,21 @@ class StyleApplicator {
     const defaultStyle = style.defaultStyle || {};
 
     return (feature) => {
-      return {
+      const result = {
         fillColor: defaultStyle.fillColor || '#808080',
         fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
         color: defaultStyle.strokeColor || '#000000',
         weight: defaultStyle.strokeWidth || 1.0,
-        opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0
+        opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0,
+        dashArray: defaultStyle.dashArray || null,
+        hatch: defaultStyle.hatch || null
       };
+
+      if (style.id && (style.id.includes('שבילי_אופניים') || style.id.includes('דרכי_עפר'))) {
+          console.log(`[StyleApplicator] Simple Style for ${style.id}:`, result);
+      }
+
+      return result;
     };
   }
 
@@ -84,8 +94,17 @@ class StyleApplicator {
     return (feature) => {
       // Get field value from feature properties
       // Handle both GeoJSON (properties) and PMTiles (props) features
-      const props = feature.properties || feature.props || {};
-      const fieldValue = String(props[field] || '');
+      const props = feature.properties || feature.props || feature || {};
+
+      // Try exact match first, then case-insensitive
+      let val = props[field];
+      if (val === undefined) {
+        const lowerField = field.toLowerCase();
+        const key = Object.keys(props).find(k => k.toLowerCase() === lowerField);
+        if (key) val = props[key];
+      }
+
+      const fieldValue = String(val !== undefined && val !== null ? val : '');
 
       // Look up style for this value
       const valueStyle = styleMap.get(fieldValue);
@@ -95,7 +114,10 @@ class StyleApplicator {
           fillOpacity: valueStyle.fillOpacity !== undefined ? valueStyle.fillOpacity : (defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7),
           color: valueStyle.strokeColor || defaultStyle.strokeColor || '#000000',
           weight: valueStyle.strokeWidth !== undefined ? valueStyle.strokeWidth : (defaultStyle.strokeWidth !== undefined ? defaultStyle.strokeWidth : 1.0),
-          opacity: valueStyle.strokeOpacity !== undefined ? valueStyle.strokeOpacity : (defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0)
+          opacity: valueStyle.strokeOpacity !== undefined ? valueStyle.strokeOpacity : (defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0),
+          dashArray: valueStyle.dashArray || defaultStyle.dashArray || null,
+          hatch: valueStyle.hatch || defaultStyle.hatch || null,
+          radius: valueStyle.radius || defaultStyle.radius || 5
         };
       }
 
@@ -105,7 +127,10 @@ class StyleApplicator {
         fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
         color: defaultStyle.strokeColor || '#000000',
         weight: defaultStyle.strokeWidth || 1.0,
-        opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0
+        opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0,
+        dashArray: defaultStyle.dashArray || null,
+        hatch: defaultStyle.hatch || null,
+        radius: defaultStyle.radius || 5
       };
     };
   }

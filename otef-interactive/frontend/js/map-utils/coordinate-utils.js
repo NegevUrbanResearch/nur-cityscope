@@ -118,6 +118,22 @@ const CoordUtils = {
             { crs: "EPSG:4326" }
         );
     },
+
+    /**
+     * Transform entire GeoJSON from EPSG:3857 (Web Mercator) to WGS84.
+     * @param {Object} geojson - GeoJSON object with features in EPSG:3857
+     * @returns {Object} Transformed GeoJSON with WGS84 coordinates
+     */
+    transformGeojsonFrom3857ToWgs84(geojson) {
+        return this.transformGeojsonCoords(
+            geojson,
+            (x, y) => {
+                const [lon, lat] = proj4("EPSG:3857", "EPSG:4326", [x, y]);
+                return [lon, lat];
+            },
+            { crs: "EPSG:4326" }
+        );
+    },
     
     /**
      * Transforms entire GeoJSON from ITM (EPSG:2039) to display pixel coordinates

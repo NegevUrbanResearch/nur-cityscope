@@ -17,6 +17,7 @@ class CanvasLayerRenderer {
     this.modelBounds = null;
     this.displayBounds = null;
     this.dpr = 1;  // Device pixel ratio for high-DPI rendering
+    this._patterns = {}; // Cache for hatch patterns
 
     this._createCanvas();
   }
@@ -134,7 +135,17 @@ class CanvasLayerRenderer {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     // Render each visible layer
-    for (const [layerId, layer] of Object.entries(this.layers)) {
+    // Base layers (projector_base group) should be rendered first (lowest z-index)
+    const layerEntries = Object.entries(this.layers);
+    layerEntries.sort(([idA], [idB]) => {
+      const isBaseA = idA.startsWith('projector_base.');
+      const isBaseB = idB.startsWith('projector_base.');
+      if (isBaseA && !isBaseB) return -1; // Base layers first
+      if (!isBaseA && isBaseB) return 1;
+      return 0; // Maintain insertion order within same category
+    });
+
+    for (const [layerId, layer] of layerEntries) {
       if (!layer.visible || !layer.geojson?.features) continue;
 
       this._renderLayer(layer.geojson, layer.styleFunction);
@@ -153,7 +164,7 @@ class CanvasLayerRenderer {
   _renderLayer(geojson, styleFunction) {
     const ctx = this.ctx;
     const features = geojson.features || [];
-    
+
     if (features.length === 0) return;
 
     // Batch style calculations to reduce function calls
@@ -169,34 +180,34 @@ class CanvasLayerRenderer {
       const radius = style.radius ?? 5;  // Default radius for points
 
       // Draw the geometry
-      this._drawGeometry(ctx, feature.geometry, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius);
+      this._drawGeometry(ctx, feature.geometry, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius, style);
     }
   }
 
   /**
    * Draw a geometry to canvas
    */
-  _drawGeometry(ctx, geometry, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius) {
+  _drawGeometry(ctx, geometry, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius, style) {
     const type = geometry.type;
     const coords = geometry.coordinates;
 
     if (type === 'Polygon') {
-      this._drawPolygon(ctx, coords, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth);
+      this._drawPolygon(ctx, coords, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, style);
     } else if (type === 'MultiPolygon') {
       for (const polygon of coords) {
-        this._drawPolygon(ctx, polygon, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth);
+        this._drawPolygon(ctx, polygon, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, style);
       }
     } else if (type === 'LineString') {
-      this._drawLineString(ctx, coords, strokeColor, strokeOpacity, lineWidth);
+      this._drawLineString(ctx, coords, strokeColor, strokeOpacity, lineWidth, style);
     } else if (type === 'MultiLineString') {
       for (const line of coords) {
-        this._drawLineString(ctx, line, strokeColor, strokeOpacity, lineWidth);
+        this._drawLineString(ctx, line, strokeColor, strokeOpacity, lineWidth, style);
       }
     } else if (type === 'Point') {
-      this._drawPoint(ctx, coords, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius);
+      this._drawPoint(ctx, coords, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius, style);
     } else if (type === 'MultiPoint') {
       for (const point of coords) {
-        this._drawPoint(ctx, point, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius);
+        this._drawPoint(ctx, point, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius, style);
       }
     }
   }
@@ -204,7 +215,7 @@ class CanvasLayerRenderer {
   /**
    * Draw a polygon (with holes support)
    */
-  _drawPolygon(ctx, rings, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth) {
+  _drawPolygon(ctx, rings, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, style) {
     if (!rings || rings.length === 0) return;
 
     ctx.beginPath();
@@ -229,8 +240,22 @@ class CanvasLayerRenderer {
     // Fill
     if (fillOpacity > 0) {
       ctx.globalAlpha = fillOpacity;
+
+      // Draw solid background first
       ctx.fillStyle = fillColor;
-      ctx.fill('evenodd');  // evenodd for holes
+      ctx.fill('evenodd');
+
+      // Draw hatch on top if defined
+      if (style && style.hatch) {
+        const hKey = `${style.hatch.color}_${style.hatch.rotation}_${style.hatch.separation}_${style.hatch.width || 1}`;
+        if (!this._patterns[hKey]) {
+          this._patterns[hKey] = this._createHatchPattern(style.hatch);
+        }
+        if (this._patterns[hKey]) {
+          ctx.fillStyle = this._patterns[hKey];
+          ctx.fill('evenodd');
+        }
+      }
     }
 
     // Stroke
@@ -238,7 +263,15 @@ class CanvasLayerRenderer {
       ctx.globalAlpha = strokeOpacity;
       ctx.strokeStyle = strokeColor;
       ctx.lineWidth = lineWidth;
+
+      if (style.dashArray && Array.isArray(style.dashArray)) {
+        ctx.setLineDash(style.dashArray);
+      } else {
+        ctx.setLineDash([]);
+      }
+
       ctx.stroke();
+      ctx.setLineDash([]); // Reset
     }
 
     ctx.globalAlpha = 1;
@@ -247,13 +280,13 @@ class CanvasLayerRenderer {
   /**
    * Draw a line string
    */
-  _drawLineString(ctx, coords, strokeColor, strokeOpacity, lineWidth) {
+  _drawLineString(ctx, coords, strokeColor, strokeOpacity, lineWidth, style) {
     if (!coords || coords.length < 2) return;
 
     ctx.beginPath();
 
-    const first = this._coordToPixel(coords[0]);
-    ctx.moveTo(first.x, first.y);
+    const pt = this._coordToPixel(coords[0]);
+    ctx.moveTo(pt.x, pt.y);
 
     for (let i = 1; i < coords.length; i++) {
       const pt = this._coordToPixel(coords[i]);
@@ -263,7 +296,15 @@ class CanvasLayerRenderer {
     ctx.globalAlpha = strokeOpacity;
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth = lineWidth;
+
+    if (style.dashArray && Array.isArray(style.dashArray)) {
+      ctx.setLineDash(style.dashArray);
+    } else {
+      ctx.setLineDash([]);
+    }
+
     ctx.stroke();
+    ctx.setLineDash([]); // Reset
     ctx.globalAlpha = 1;
   }
 
@@ -274,7 +315,7 @@ class CanvasLayerRenderer {
     if (!coords || coords.length < 2) return;
 
     const pt = this._coordToPixel(coords);
-    
+
     ctx.beginPath();
     ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
 
@@ -313,6 +354,59 @@ class CanvasLayerRenderer {
       x: pctX * display.width,
       y: pctY * display.height
     };
+  }
+
+  /**
+   * Create a hatch pattern for fills
+   */
+  _createHatchPattern(hatch) {
+    try {
+      const rotation = hatch.rotation || 0;
+      const separation = hatch.separation || 10;
+      const lineWidth = hatch.width || 1;
+      const color = hatch.color || '#000000';
+
+      // ArcGIS rotation is often arithmetic (CCW from East) but sometimes geographic (CW from North).
+      // Based on visual observation: 45 degrees in lyrx shows as / in ArcGIS Pro,
+      // which is CCW from East. In Canvas, positive rotate() is CW.
+      // So to get CCW, we use negative angle.
+      const angle = (rotation * Math.PI) / 180;
+
+      // Create a pattern canvas large enough to cover the separation comfortably
+      // We use a square that is a multiple of separation to ensure seamless tiling
+      const size = Math.round(separation * 5); // Larger size for better precision
+      if (size <= 0) return null;
+
+      const pCanvas = document.createElement('canvas');
+      pCanvas.width = size;
+      pCanvas.height = size;
+      const pCtx = pCanvas.getContext('2d');
+
+      pCtx.strokeStyle = color;
+      pCtx.lineWidth = lineWidth;
+
+      // Draw multiple lines to ensure seamless repetition
+      // We rotate the context and draw horizontal lines
+      pCtx.save();
+      pCtx.translate(size / 2, size / 2);
+      pCtx.rotate(-angle); // Negative because Canvas rotate is CW
+
+      const lineOffset = separation;
+      const limit = Math.ceil(size * 1.5 / lineOffset);
+
+      for (let i = -limit; i <= limit; i++) {
+        pCtx.beginPath();
+        pCtx.moveTo(-size * 2, i * lineOffset);
+        pCtx.lineTo(size * 2, i * lineOffset);
+        pCtx.stroke();
+      }
+      pCtx.restore();
+
+      return this.ctx.createPattern(pCanvas, 'repeat');
+    } catch (e) {
+      console.warn('Failed to create hatch pattern', e);
+      return null;
+    }
   }
 }
 

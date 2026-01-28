@@ -142,3 +142,11 @@ otef-interactive/public/source/**/*
 !otef-interactive/public/source/.gitkeep
 !otef-interactive/public/source/**/.gitkeep
 !otef-interactive/public/source/popup-config.json
+
+# Processed layers (Heavy files, share via GitHub Releases)
+otef-interactive/public/processed/**/*
+!otef-interactive/public/processed/
+!otef-interactive/public/processed/**/
+!otef-interactive/public/processed/.gitkeep
+!otef-interactive/public/processed/**/.gitkeep
+otef-interactive/public/*.zip

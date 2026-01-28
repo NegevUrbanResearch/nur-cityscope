@@ -172,6 +172,10 @@ class LayerRegistry {
     const styles = this._packStyles.get(groupId);
     const style = styles ? styles[layerIdOnly] : null;
 
+    if (layerId.includes('שבילי_אופניים') || layerId.includes('דרכי_עפר')) {
+      console.log(`[LayerRegistry] Layer ${layerId}: Style found = ${!!style}`, style);
+    }
+
     return {
       ...layer,
       style: style || {

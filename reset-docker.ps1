@@ -50,12 +50,20 @@ if (-not $pythonCmd) {
     $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
 }
 
-if ($pythonCmd) {
+    if ($pythonCmd) {
     $venvPath = "otef-interactive\scripts\.venv"
     if (-not (Test-Path $venvPath)) {
         Write-Host "   Creating Python virtual environment..." -ForegroundColor Gray
         & $pythonCmd.Name -m venv "$venvPath"
     }
+
+    # Ensure dependencies are installed (including new requests and tqdm)
+    Write-Host "   Ensuring dependencies are installed..." -ForegroundColor Gray
+    & "$venvPath\Scripts\python" -m pip install -q -r "otef-interactive\scripts\requirements.txt"
+
+    # Fetch source layers if needed
+    Write-Host "   Fetching source layers if needed..." -ForegroundColor Gray
+    & "$venvPath\Scripts\python" "otef-interactive\scripts\fetch_data.py" --output "otef-interactive\public\source"
 
     $dockerRunning = docker info 2>$null
     if ($LASTEXITCODE -eq 0) {
