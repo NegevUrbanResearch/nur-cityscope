@@ -91,18 +91,17 @@ fetch("data/model-bounds.json")
 const TABLE_NAME = 'otef';
 
 function getDisplayedImageBounds() {
-  const img = document.getElementById("displayedImage");
   const container = document.getElementById("displayContainer");
-  if (!img?.naturalWidth || !container) return null;
+  if (!container) return null;
 
-  const imgRect = img.getBoundingClientRect();
   const containerRect = container.getBoundingClientRect();
 
+  // Return full-frame bounds - the entire container is the active region
   return {
-    offsetX: imgRect.left - containerRect.left,
-    offsetY: imgRect.top - containerRect.top,
-    width: imgRect.width,
-    height: imgRect.height,
+    offsetX: 0,
+    offsetY: 0,
+    width: containerRect.width,
+    height: containerRect.height,
     containerWidth: containerRect.width,
     containerHeight: containerRect.height,
   };

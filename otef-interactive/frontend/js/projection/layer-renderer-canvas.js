@@ -30,7 +30,7 @@ class CanvasLayerRenderer {
     // Create canvas element with crisp rendering for projector output
     this.canvas = document.createElement('canvas');
     this.canvas.id = 'layersCanvas';
-    this.canvas.style.cssText = 'position: absolute; pointer-events: none; z-index: 5; image-rendering: crisp-edges; image-rendering: -webkit-optimize-contrast;';
+    this.canvas.style.cssText = 'position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; image-rendering: crisp-edges; image-rendering: -webkit-optimize-contrast;';
 
     // Insert before highlight overlay
     const highlightOverlay = this.container.querySelector('#highlightOverlay');
@@ -45,7 +45,8 @@ class CanvasLayerRenderer {
 
   /**
    * Update canvas position and size to match displayed image
-   * Supports high-DPI rendering via devicePixelRatio and optional URL override
+   * Uses devicePixelRatio for high-DPI rendering
+   * Resolution is driven by Web Render TOP size (TouchDesigner), not URL parameters
    */
   updatePosition(displayBounds, modelBounds) {
     if (!displayBounds || !modelBounds) return;
@@ -53,26 +54,12 @@ class CanvasLayerRenderer {
     this.displayBounds = displayBounds;
     this.modelBounds = modelBounds;
 
-    // Check for explicit resolution override via URL parameter (e.g., ?canvasRes=1920x1200)
-    const urlParams = new URLSearchParams(window.location.search);
-    const canvasRes = urlParams.get('canvasRes');
+    // Use devicePixelRatio for high-DPI rendering
+    this.dpr = window.devicePixelRatio || 1;
+    const canvasWidth = Math.round(displayBounds.width * this.dpr);
+    const canvasHeight = Math.round(displayBounds.height * this.dpr);
 
-    let canvasWidth, canvasHeight;
-
-    if (canvasRes && canvasRes.match(/^\d+x\d+$/)) {
-      // Explicit resolution override - render at exact specified resolution
-      const [w, h] = canvasRes.split('x').map(Number);
-      canvasWidth = w;
-      canvasHeight = h;
-      this.dpr = canvasWidth / displayBounds.width;  // Calculate effective DPR
-    } else {
-      // Use devicePixelRatio for high-DPI rendering
-      this.dpr = window.devicePixelRatio || 1;
-      canvasWidth = Math.round(displayBounds.width * this.dpr);
-      canvasHeight = Math.round(displayBounds.height * this.dpr);
-    }
-
-    // Position canvas over the image (CSS size)
+    // Position canvas over the full frame (CSS size)
     this.canvas.style.left = displayBounds.offsetX + 'px';
     this.canvas.style.top = displayBounds.offsetY + 'px';
     this.canvas.style.width = displayBounds.width + 'px';

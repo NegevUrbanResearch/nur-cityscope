@@ -10,30 +10,38 @@
         padding: 0;
         box-sizing: border-box;
       }
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
       body {
         overflow: hidden;
         background: #000;
       }
       #displayContainer {
         width: 100%;
-        height: 100vh;
+        height: 100%;
         position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: center;
       }
       #displayedImage {
-        max-width: 100%;
-        max-height: 100%;
-        object-fit: contain;
-      }
-      #layersOverlay {
         position: absolute;
-        pointer-events: none;
-        z-index: 5;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: fill;
       }
       /* Ensure crisp rendering for all canvas elements (projector output) */
       canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 5;
         image-rendering: crisp-edges;
         image-rendering: -webkit-optimize-contrast;
       }
