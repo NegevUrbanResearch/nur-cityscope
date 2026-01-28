@@ -1,0 +1,19 @@
+{
+  "name": "otef-interactive",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tests and tooling for the OTEF interactive frontend (Leaflet map, projection, remote controller).",
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "<rootDir>/tests/**/*.test.js"
+    ]
+  }
+}
+

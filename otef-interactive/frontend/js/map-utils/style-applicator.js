@@ -100,6 +100,21 @@ class StyleApplicator {
       styleMap.set(String(cls.value), cls.style);
     }
 
+    // Helper: clamp marker radius for specific layers
+    const clampRadiusIfNeeded = (radiusPx) => {
+      if (!layerConfig || !layerConfig.id) return radiusPx;
+      const id = layerConfig.id;
+      const isHeritageLayer =
+        id === 'מורשת-קיים' ||
+        id === 'מורשת-מוצע' ||
+        id === 'מורשת_קיים' ||
+        id === 'מורשת_מוצע';
+      if (!isHeritageLayer) return radiusPx;
+      // Cap heritage markers to a modest on-screen size (in CSS pixels)
+      const MAX_HERITAGE_RADIUS_PX = 6;
+      return Math.min(radiusPx, MAX_HERITAGE_RADIUS_PX);
+    };
+
     return (feature) => {
       // Get field value from feature properties
       // Handle both GeoJSON (properties) and PMTiles (props) features
@@ -127,28 +142,55 @@ class StyleApplicator {
       }
 
       if (valueStyle) {
+        const weightPx =
+          (valueStyle.strokeWidth !== undefined
+            ? valueStyle.strokeWidth
+            : defaultStyle.strokeWidth !== undefined
+            ? defaultStyle.strokeWidth
+            : 1.0) * this.PT_TO_PX;
+
+        const rawRadiusPx =
+          (valueStyle.radius || defaultStyle.radius || 5) * this.PT_TO_PX;
+        const radiusPx = clampRadiusIfNeeded(rawRadiusPx);
+
         return {
           fillColor: valueStyle.fillColor || defaultStyle.fillColor || '#808080',
-          fillOpacity: valueStyle.fillOpacity !== undefined ? valueStyle.fillOpacity : (defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7),
+          fillOpacity:
+            valueStyle.fillOpacity !== undefined
+              ? valueStyle.fillOpacity
+              : defaultStyle.fillOpacity !== undefined
+              ? defaultStyle.fillOpacity
+              : 0.7,
           color: valueStyle.strokeColor || defaultStyle.strokeColor || '#000000',
-          weight: (valueStyle.strokeWidth !== undefined ? valueStyle.strokeWidth : (defaultStyle.strokeWidth !== undefined ? defaultStyle.strokeWidth : 1.0)) * this.PT_TO_PX,
-          opacity: valueStyle.strokeOpacity !== undefined ? valueStyle.strokeOpacity : (defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0),
+          weight: weightPx,
+          opacity:
+            valueStyle.strokeOpacity !== undefined
+              ? valueStyle.strokeOpacity
+              : defaultStyle.strokeOpacity !== undefined
+              ? defaultStyle.strokeOpacity
+              : 1.0,
           dashArray: valueStyle.dashArray || defaultStyle.dashArray || null,
           hatch: valueStyle.hatch || defaultStyle.hatch || null,
-          radius: (valueStyle.radius || defaultStyle.radius || 5) * this.PT_TO_PX
+          radius: radiusPx
         };
       }
 
       // Fallback to default style
+      const fallbackRadiusPx = clampRadiusIfNeeded(
+        (defaultStyle.radius || 5) * this.PT_TO_PX
+      );
+
       return {
         fillColor: defaultStyle.fillColor || '#808080',
-        fillOpacity: defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
+        fillOpacity:
+          defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
         color: defaultStyle.strokeColor || '#000000',
         weight: (defaultStyle.strokeWidth || 1.0) * this.PT_TO_PX,
-        opacity: defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0,
+        opacity:
+          defaultStyle.strokeOpacity !== undefined ? defaultStyle.strokeOpacity : 1.0,
         dashArray: defaultStyle.dashArray || null,
         hatch: defaultStyle.hatch || null,
-        radius: (defaultStyle.radius || 5) * this.PT_TO_PX
+        radius: fallbackRadiusPx
       };
     };
   }

@@ -3,6 +3,10 @@ frontend/data/*.pmtiles
 frontend/data/*.mbtiles
 
 
+# Node dependencies (for local JS tooling/tests)
+node_modules/
+package-lock.json
+
 # Python cache
 scripts/__pycache__/
 scripts/*.pyc

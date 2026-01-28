@@ -20,6 +20,47 @@ window.pmtilesLayersWithConfigs = window.pmtilesLayersWithConfigs || new Map();
 const pmtilesLayersWithConfigs = window.pmtilesLayersWithConfigs;
 
 /**
+ * Helper: register a loaded layer with both internal map and window debug handle.
+ * @param {string} fullLayerId
+ * @param {Object} layerInstance
+ */
+function registerLoadedLayer(fullLayerId, layerInstance) {
+  if (!fullLayerId || !layerInstance) return;
+  const key = `layer_${fullLayerId.replace(/\./g, '_')}`;
+  window[key] = layerInstance;
+  loadedLayersMap.set(fullLayerId, layerInstance);
+}
+
+/**
+ * Helper: get a loaded layer instance by id.
+ * @param {string} fullLayerId
+ * @returns {Object|null}
+ */
+function getLoadedLayer(fullLayerId) {
+  return loadedLayersMap.get(fullLayerId) || null;
+}
+
+/**
+ * Helper: register a PMTiles layer for popup handling.
+ * Keeps the public window.pmtilesLayersWithConfigs API intact.
+ * @param {string} fullLayerId
+ * @param {Object} layerInstance
+ * @param {Object} layerConfig
+ * @param {Object} popupConfig
+ */
+function registerPmtilesPopupLayer(fullLayerId, layerInstance, layerConfig, popupConfig) {
+  if (!fullLayerId || !layerInstance || !popupConfig) return;
+  if (!window.pmtilesLayersWithConfigs) {
+    window.pmtilesLayersWithConfigs = new Map();
+  }
+  window.pmtilesLayersWithConfigs.set(fullLayerId, {
+    layer: layerInstance,
+    config: layerConfig,
+    popupConfig
+  });
+}
+
+/**
  * Load all layers from the layer registry (layer groups only).
  */
 async function loadGeoJSONLayers() {
@@ -139,71 +180,19 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
     }
     // If already WGS84 or no CRS (assume WGS84), no transformation needed
 
-    // Get style function from StyleApplicator
-    const styleFunction = StyleApplicator.getLeafletStyle(layerConfig);
+    // Create Leaflet layer (style + popups) via LayerFactory
+    const leafletLayer = typeof LayerFactory !== 'undefined'
+      ? LayerFactory.createGeoJsonLayer({
+          fullLayerId,
+          layerConfig,
+          geojson,
+          map
+        })
+      : null;
 
-    // Get popup config if available
-    const popupConfig = layerConfig.ui?.popup;
-
-    // Get layer name for popup display
-    const layerDisplayName = layerConfig.name || fullLayerId.split('.').pop();
-
-    // Determine pane based on geometry type
-    let layerPane = 'overlayPolygon'; // Default
-    if (layerConfig.geometryType === 'line') layerPane = 'overlayLine';
-    if (layerConfig.geometryType === 'point') layerPane = 'overlayPoint';
-
-    // Create Leaflet layer with custom pane for proper z-ordering
-    let leafletLayer;
-    if (layerConfig.geometryType === 'point') {
-      // Use style function for EACH point feature
-      leafletLayer = L.geoJSON(geojson, {
-        pane: layerPane,
-        pointToLayer: (feature, latlng) => {
-          const style = styleFunction(feature);
-          return L.circleMarker(latlng, {
-            ...style,
-            radius: (style.radius || 5),
-            color: style.strokeColor || style.color || '#000000',
-            weight: (style.strokeWidth || style.weight || 1),
-            fillColor: style.fillColor || '#808080',
-            fillOpacity: style.fillOpacity !== undefined ? style.fillOpacity : 0.7,
-            pane: layerPane
-          });
-        },
-        onEachFeature: (feature, layer) => {
-          // Attach click handler ...
-          if (popupConfig && typeof renderPopupContent === 'function') {
-            layer.on('click', (e) => {
-              console.log(`[Map] GeoJSON Point Click: ${layerDisplayName}`, feature);
-              const content = renderPopupContent(feature, popupConfig, layerDisplayName);
-              console.log(`[Map] Popup Content:`, content);
-              L.popup()
-                .setLatLng(e.latlng)
-                .setContent(content)
-                .openOn(map);
-            });
-          }
-        }
-      });
-    } else {
-      // Use style function for polygons and lines
-      leafletLayer = L.geoJSON(geojson, {
-        pane: layerPane,
-        style: styleFunction,
-        onEachFeature: (feature, layer) => {
-          // Attach click handler ...
-          if (popupConfig && typeof renderPopupContent === 'function') {
-            layer.on('click', (e) => {
-              const content = renderPopupContent(feature, popupConfig, layerDisplayName);
-              L.popup()
-                .setLatLng(e.latlng)
-                .setContent(content)
-                .openOn(map);
-            });
-          }
-        }
-      });
+    if (!leafletLayer) {
+      console.warn(`[Map] Failed to create GeoJSON layer for ${fullLayerId}`);
+      return;
     }
 
     // Apply minScale/maxScale visibility based on zoom level
@@ -212,52 +201,49 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
       const minScale = scaleRange.minScale;
       const maxScale = scaleRange.maxScale;
 
-      // Convert scale to zoom level (approximate: scale = 591657550 / (2^zoom))
-      // So zoom = log2(591657550 / scale)
-      const getZoomFromScale = (scale) => {
+      // Prefer shared visibility-utils conversion when available
+      const convertScaleToZoom = (scale) => {
         if (!scale) return null;
+        if (typeof VisibilityUtils !== 'undefined' && typeof VisibilityUtils.scaleToZoom === 'function') {
+          return VisibilityUtils.scaleToZoom(scale);
+        }
+        // Fallback to legacy inline formula (kept for safety)
         return Math.log2(591657550 / scale);
       };
 
-      const minZoom = minScale ? getZoomFromScale(minScale) : null;
-      const maxZoom = maxScale ? getZoomFromScale(maxScale) : null;
+      const minZoom = convertScaleToZoom(minScale);
+      const maxZoom = convertScaleToZoom(maxScale);
 
-      console.log(`[Map] Scale range for ${fullLayerId}: scale[${minScale||'-'}, ${maxScale||'-'}] -> zoom[${minZoom?.toFixed(1)||'-'}, ${maxZoom?.toFixed(1)||'-'}]`);
+      if (typeof MapProjectionConfig !== 'undefined' && MapProjectionConfig.ENABLE_MAP_VISIBILITY_DEBUG) {
+        console.log(
+          `[Map] Scale range for ${fullLayerId}: scale[${minScale || '-'}, ${maxScale || '-'}] -> zoom[${minZoom?.toFixed(1) || '-'}, ${maxZoom?.toFixed(1) || '-'}]`
+        );
+      }
 
       try {
         if (leafletLayer.setZIndex) leafletLayer.setZIndex(1000);
       } catch (e) { }
 
-      // Also handle visibility on zoom change
+      // Also handle visibility on zoom change using visibility controller
       const updateLayerVisibility = () => {
         const currentZoom = map.getZoom();
-        let inRange = true;
 
-        if (minZoom !== null && currentZoom < minZoom) inRange = false;
-        if (maxZoom !== null && currentZoom > maxZoom) inRange = false;
+        if (typeof VisibilityController !== 'undefined' && typeof LayerStateHelper !== 'undefined') {
+          const allowed = VisibilityController.shouldLayerBeVisible({
+            fullLayerId,
+            scaleRange,
+            zoom: currentZoom,
+            layerStateHelper: LayerStateHelper
+          });
 
-        if (!inRange) {
-          if (map.hasLayer(leafletLayer)) {
-            console.log(`[Map] Hiding ${fullLayerId} at zoom ${currentZoom.toFixed(1)} (range ${minZoom?.toFixed(1)||'-'} to ${maxZoom?.toFixed(1)||'-'})`);
-            map.removeLayer(leafletLayer);
-          }
-        } else {
-          // Check if layer should be enabled based on store
-          if (typeof OTEFDataContext !== 'undefined') {
-            const layerGroups = OTEFDataContext.getLayerGroups();
-            if (layerGroups) {
-              const [groupId, layerId] = fullLayerId.split('.');
-              const group = layerGroups.find(g => g.id === groupId);
-              if (group) {
-                const layerStateObj = group.layers.find(l => l.id === layerId);
-                if (layerStateObj && layerStateObj.enabled) {
-                  if (!map.hasLayer(leafletLayer)) {
-                    console.log(`[Map] Showing ${fullLayerId} at zoom ${currentZoom.toFixed(1)}`);
-                    map.addLayer(leafletLayer);
-                  }
-                }
-              }
+          if (!allowed) {
+            if (map.hasLayer(leafletLayer)) {
+              console.log(`[Map] Hiding ${fullLayerId} at zoom ${currentZoom.toFixed(1)} (range ${minZoom?.toFixed(1)||'-'} to ${maxZoom?.toFixed(1)||'-'})`);
+              map.removeLayer(leafletLayer);
             }
+          } else if (!map.hasLayer(leafletLayer)) {
+            console.log(`[Map] Showing ${fullLayerId} at zoom ${currentZoom.toFixed(1)}`);
+            map.addLayer(leafletLayer);
           }
         }
       };
@@ -266,57 +252,37 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
       updateLayerVisibility(); // Initial check
     } else {
       // No scale restrictions - use normal visibility logic
-      if (typeof OTEFDataContext !== 'undefined') {
-        const layerGroups = OTEFDataContext.getLayerGroups();
-        if (layerGroups) {
-          const [groupId, layerId] = fullLayerId.split('.');
-          const group = layerGroups.find(g => g.id === groupId);
-          if (group) {
-            const layerStateObj = group.layers.find(l => l.id === layerId);
-            if (layerStateObj && layerStateObj.enabled) {
-              map.addLayer(leafletLayer);
-            }
-          }
+      if (typeof LayerStateHelper !== 'undefined') {
+        const state = LayerStateHelper.getLayerState(fullLayerId);
+        if (state && state.enabled) {
+          map.addLayer(leafletLayer);
         }
       }
     }
 
     // Store layer reference
-    window[`layer_${fullLayerId.replace(/\./g, '_')}`] = leafletLayer;
-    loadedLayersMap.set(fullLayerId, leafletLayer);
+    registerLoadedLayer(fullLayerId, leafletLayer);
 
-    // Initial addition to map if enabled
-    if (typeof OTEFDataContext !== 'undefined') {
-      const layerGroups = OTEFDataContext.getLayerGroups();
-      if (layerGroups) {
-        const [groupId, layerId] = fullLayerId.split('.');
-        const group = layerGroups.find(g => g.id === groupId);
-        if (group) {
-          const layerStateObj = group.layers.find(l => l.id === layerId);
-          if (layerStateObj && layerStateObj.enabled) {
-             // Respect scale range if it exists
-             const currentZoom = map.getZoom();
-             const getZoomFromScale = (scale) => scale ? Math.log2(591657550 / scale) : null;
+    // Initial addition to map if enabled and in range
+    if (typeof VisibilityController !== 'undefined' && typeof LayerStateHelper !== 'undefined') {
+      const currentZoom = map.getZoom();
+      const allowed = VisibilityController.shouldLayerBeVisible({
+        fullLayerId,
+        scaleRange,
+        zoom: currentZoom,
+        layerStateHelper: LayerStateHelper
+      });
 
-             // In GIS, minScale usually means "most zoomed out" (largest denominator), which corresponds to MINIMUM zoom level.
-             // maxScale usually means "most zoomed in" (smallest denominator), which corresponds to MAXIMUM zoom level.
-             const minZ = scaleRange ? getZoomFromScale(scaleRange.minScale) : null;
-             const maxZ = scaleRange ? getZoomFromScale(scaleRange.maxScale) : null;
+      if (typeof MapProjectionConfig !== 'undefined' && MapProjectionConfig.ENABLE_MAP_VISIBILITY_DEBUG) {
+        const minZ = scaleRange && scaleRange.minScale ? convertScaleToZoom(scaleRange.minScale) : null;
+        const maxZ = scaleRange && scaleRange.maxScale ? convertScaleToZoom(scaleRange.maxScale) : null;
+        console.log(
+          `[Map] Visibility Check ${fullLayerId}: Zoom=${currentZoom.toFixed(2)}, Range=[${minZ?.toFixed(2) || '-'}, ${maxZ?.toFixed(2) || '-'}], Visible=${allowed}`
+        );
+      }
 
-             let inRange = true;
-             // Ensure we check against correct boundaries. Use permissive range if one is null.
-             if (minZ !== null && currentZoom < minZ) inRange = false;
-             if (maxZ !== null && currentZoom > maxZ) inRange = false;
-
-             if (fullLayerId.includes('דרכי_עפר')) {
-                console.log(`[Map] Visibility Check ${fullLayerId}: Zoom=${currentZoom.toFixed(2)}, Range=[${minZ?.toFixed(2)||'-'}, ${maxZ?.toFixed(2)||'-'}], Visible=${inRange}`);
-             }
-
-             if (inRange) {
-                map.addLayer(leafletLayer);
-             }
-          }
-        }
+      if (allowed) {
+        map.addLayer(leafletLayer);
       }
     }
   } catch (error) {
@@ -331,123 +297,19 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
 async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
   try {
 
-    // Get style function from StyleApplicator
-    const styleFunction = StyleApplicator.getLeafletStyle(layerConfig);
-
-    // Get data layer name - usually "layer" for our processed files, but fallback to filename stem
-    const dataLayerName = "layer";
-
-    // Create paint rules for protomaps-leaflet
-    const paintRules = [];
-    if (layerConfig.geometryType === 'polygon') {
-      paintRules.push({
-        dataLayer: dataLayerName,
-        symbolizer: new protomapsL.PolygonSymbolizer({
-          fill: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.fillColor || '#808080';
-          },
-          color: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.color || '#000000';
-          },
-          width: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.weight || 1.0;
-          },
-          opacity: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.fillOpacity !== undefined ? style.fillOpacity : 0.7;
-          }
-        })
-      });
-      // Add a fallback rule for when dataLayer is not "layer"
-      paintRules.push({
-        dataLayer: "*",
-        symbolizer: new protomapsL.PolygonSymbolizer({
-          fill: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.fillColor || '#808080';
-          },
-          color: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.color || '#000000';
-          },
-          width: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.weight || 1.0;
-          },
-          opacity: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.fillOpacity !== undefined ? style.fillOpacity : 0.7;
-          }
-        })
-      });
-    } else if (layerConfig.geometryType === 'line') {
-      paintRules.push({
-        dataLayer: dataLayerName,
-        symbolizer: new protomapsL.LineSymbolizer({
-          color: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.color || '#000000';
-          },
-          width: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.weight || 1.0;
-          },
-          opacity: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.opacity !== undefined ? style.opacity : 1.0;
-          }
-        })
-      });
-      paintRules.push({
-        dataLayer: "*",
-        symbolizer: new protomapsL.LineSymbolizer({
-          color: (zoom, feature) => {
-            const style = styleFunction(feature);
-            if (fullLayerId.includes('שבילי_אופניים')) {
-              // Parse debug info
-              const props = feature.props || feature.properties || feature;
-              console.log(`[PMTiles Style Debug] ${fullLayerId}`, {
-                 props: props,
-                 calculatedStyle: style,
-                 zoom: zoom
-              });
-            }
-            return style.color || '#000000';
-          },
-          width: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.weight || 1.0;
-          },
-          opacity: (zoom, feature) => {
-            const style = styleFunction(feature);
-            return style.opacity !== undefined ? style.opacity : 1.0;
-          }
-        })
-      });
-    }
-
     // Create vector tile layer from PMTiles file with custom pane for z-ordering
-    if (fullLayerId.includes('שבילי_אופניים')) {
-      console.log(`[PMTiles Debug] Creating layer for ${fullLayerId} with paintRules:`, paintRules);
-    }
-    // Determine pane based on geometry type
-    let layerPane = 'overlayPolygon'; // Default
-    if (layerConfig.geometryType === 'line') layerPane = 'overlayLine';
-    if (layerConfig.geometryType === 'point') layerPane = 'overlayPoint';
+    const pmtilesLayer = typeof LayerFactory !== 'undefined'
+      ? LayerFactory.createPmtilesLayer({
+          fullLayerId,
+          layerConfig,
+          dataUrl
+        })
+      : null;
 
-    const pmtilesLayer = protomapsL.leafletLayer({
-      url: dataUrl,
-      paintRules: paintRules,
-      labelRules: [],
-      minZoom: 9,
-      minDataZoom: 9,
-      maxDataZoom: 18,
-      attribution: layerConfig.name || fullLayerId,
-      pane: layerPane,  // Ensure layer renders in correct geometry-based pane
-    });
+    if (!pmtilesLayer) {
+      console.warn(`[Map] Failed to create PMTiles layer for ${fullLayerId}`);
+      return;
+    }
 
     // Apply scale ranges if present
     const scaleRange = layerConfig.style?.scaleRange;
@@ -458,26 +320,19 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
 
       const updatePmtilesVisibility = () => {
         const currentZoom = map.getZoom();
-        let inRange = true;
-        if (minZoom !== null && currentZoom < minZoom) inRange = false;
-        if (maxZoom !== null && currentZoom > maxZoom) inRange = false;
 
-        if (!inRange) {
-          if (map.hasLayer(pmtilesLayer)) map.removeLayer(pmtilesLayer);
-        } else {
-          // Normal logic for enabled check
-          if (typeof OTEFDataContext !== 'undefined') {
-            const layerGroups = OTEFDataContext.getLayerGroups();
-            if (layerGroups) {
-              const [groupId, layerId] = fullLayerId.split('.');
-              const group = layerGroups.find(g => g.id === groupId);
-              if (group) {
-                const layerStateObj = group.layers.find(l => l.id === layerId);
-                if (layerStateObj && layerStateObj.enabled) {
-                  if (!map.hasLayer(pmtilesLayer)) map.addLayer(pmtilesLayer);
-                }
-              }
-            }
+        if (typeof VisibilityController !== 'undefined' && typeof LayerStateHelper !== 'undefined') {
+          const allowed = VisibilityController.shouldLayerBeVisible({
+            fullLayerId,
+            scaleRange,
+            zoom: currentZoom,
+            layerStateHelper: LayerStateHelper
+          });
+
+          if (!allowed) {
+            if (map.hasLayer(pmtilesLayer)) map.removeLayer(pmtilesLayer);
+          } else if (!map.hasLayer(pmtilesLayer)) {
+            map.addLayer(pmtilesLayer);
           }
         }
       };
@@ -489,44 +344,25 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
     // Register with global map click handler for popups if config exists
     const popupConfig = layerConfig.ui?.popup;
     if (popupConfig) {
-      if (!window.pmtilesLayersWithConfigs) {
-        window.pmtilesLayersWithConfigs = new Map();
-      }
       console.log(`[Map] Registering PMTiles layer ${fullLayerId} for popups`);
-      window.pmtilesLayersWithConfigs.set(fullLayerId, {
-        layer: pmtilesLayer,
-        config: layerConfig,
-        popupConfig: popupConfig
-      });
+      registerPmtilesPopupLayer(fullLayerId, pmtilesLayer, layerConfig, popupConfig);
     }
 
     // Store layer reference
-    window[`layer_${fullLayerId.replace(/\./g, '_')}`] = pmtilesLayer;
-    loadedLayersMap.set(fullLayerId, pmtilesLayer);
+    registerLoadedLayer(fullLayerId, pmtilesLayer);
 
     // Initial addition to map if enabled (and in range)
-    if (typeof OTEFDataContext !== 'undefined') {
-      const layerGroups = OTEFDataContext.getLayerGroups();
-      if (layerGroups) {
-        const [groupId, layerId] = fullLayerId.split('.');
-        const group = layerGroups.find(g => g.id === groupId);
-        if (group) {
-          const layerStateObj = group.layers.find(l => l.id === layerId);
-          if (layerStateObj && layerStateObj.enabled) {
-             const currentZoom = map.getZoom();
-             const getZoomFromScale = (scale) => scale ? Math.log2(591657550 / scale) : null;
-             const minZ = scaleRange ? getZoomFromScale(scaleRange.minScale) : null;
-             const maxZ = scaleRange ? getZoomFromScale(scaleRange.maxScale) : null;
+    if (typeof VisibilityController !== 'undefined' && typeof LayerStateHelper !== 'undefined') {
+      const currentZoom = map.getZoom();
+      const allowed = VisibilityController.shouldLayerBeVisible({
+        fullLayerId,
+        scaleRange,
+        zoom: currentZoom,
+        layerStateHelper: LayerStateHelper
+      });
 
-             let inRange = true;
-             if (minZ !== null && currentZoom < minZ) inRange = false;
-             if (maxZ !== null && currentZoom > maxZ) inRange = false;
-
-             if (inRange) {
-                map.addLayer(pmtilesLayer);
-             }
-          }
-        }
+      if (allowed) {
+        map.addLayer(pmtilesLayer);
       }
     }
   } catch (error) {
@@ -540,13 +376,13 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
  * @param {boolean} visible - Whether layer should be visible
  */
 function updateLayerVisibilityFromRegistry(fullLayerId, visible) {
-  const layer = loadedLayersMap.get(fullLayerId);
+  const layer = getLoadedLayer(fullLayerId);
   if (!layer) {
     // Layer may not be loaded yet - this is normal during initial load
     return;
   }
 
-  if (visible) {
+      if (visible) {
     if (!map.hasLayer(layer)) {
       // Check scale/zoom constraints before adding
       if (!layer.options) layer.options = {}; // Ensure options exist
@@ -563,24 +399,33 @@ function updateLayerVisibilityFromRegistry(fullLayerId, visible) {
       // Let's retrieve the config from the registry again to be safe.
       let inRange = true;
       if (typeof layerRegistry !== 'undefined') {
-          const config = layerRegistry.getLayerConfig(fullLayerId);
+        const config = layerRegistry.getLayerConfig(fullLayerId);
           if (config && config.style && config.style.scaleRange) {
-              const currentZoom = map.getZoom();
-              const getZoomFromScale = (scale) => scale ? Math.log2(591657550 / scale) : null;
-              const minZ = getZoomFromScale(config.style.scaleRange.minScale);
-              const maxZ = getZoomFromScale(config.style.scaleRange.maxScale);
-
-              if (minZ !== null && currentZoom < minZ) inRange = false;
-              if (maxZ !== null && currentZoom > maxZ) inRange = false;
-
-              if (!inRange) {
-                  console.log(`[Map] Skipping addLayer for ${fullLayerId} (Zoom ${currentZoom.toFixed(1)} out of range [${minZ?.toFixed(1)||'-'}, ${maxZ?.toFixed(1)||'-'}])`);
+            const currentZoom = map.getZoom();
+            const convertScaleToZoom = (scale) => {
+              if (!scale) return null;
+              if (typeof VisibilityUtils !== 'undefined' && typeof VisibilityUtils.scaleToZoom === 'function') {
+                return VisibilityUtils.scaleToZoom(scale);
               }
+              return Math.log2(591657550 / scale);
+            };
+
+            const minZ = convertScaleToZoom(config.style.scaleRange.minScale);
+            const maxZ = convertScaleToZoom(config.style.scaleRange.maxScale);
+
+            if (minZ !== null && currentZoom < minZ) inRange = false;
+            if (maxZ !== null && currentZoom > maxZ) inRange = false;
+
+            if (!inRange && typeof MapProjectionConfig !== 'undefined' && MapProjectionConfig.ENABLE_MAP_VISIBILITY_DEBUG) {
+              console.log(
+                `[Map] Skipping addLayer for ${fullLayerId} (Zoom ${currentZoom.toFixed(1)} out of range [${minZ?.toFixed(1) || '-'}, ${maxZ?.toFixed(1) || '-'}])`
+              );
+            }
           }
       }
 
       if (inRange) {
-          map.addLayer(layer);
+        map.addLayer(layer);
       }
     }
   } else {

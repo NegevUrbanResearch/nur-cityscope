@@ -261,7 +261,7 @@
     loadedLayers[layerName] = {
       originalGeojson: geojson,
       styleFunction: styleFunction,
-      geometryType: geometryType
+      geometryType: geometryType,
     };
 
     // Add layer to Canvas renderer
@@ -269,19 +269,25 @@
       canvasRenderer.setLayer(layerName, geojson, styleFunction, geometryType);
       canvasRenderer.updatePosition(displayBounds, modelBounds);
 
-      // Registry layers: individual layer.enabled is the source of truth
+      // Registry layers: individual layer.enabled is the source of truth.
+      // Reuse shared LayerStateHelper so projection and map agree on visibility.
       let shouldBeVisible = false;
-      if (typeof OTEFDataContext !== "undefined") {
+      if (typeof LayerStateHelper !== "undefined" && typeof LayerStateHelper.getLayerState === "function") {
+        const state = LayerStateHelper.getLayerState(layerName);
+        shouldBeVisible = !!(state && state.enabled);
+      } else if (typeof OTEFDataContext !== "undefined") {
+        // Fallback to legacy direct lookup if helper is not available
         const layerGroups = OTEFDataContext.getLayerGroups();
         if (layerGroups) {
           const [groupId, layerId] = layerName.split(".");
           const group = layerGroups.find((g) => g.id === groupId);
-          if (group) {
-            const layerStateObj = group.layers.find((l) => l.id === layerId);
-            shouldBeVisible = layerStateObj ? layerStateObj.enabled : false;
+          if (group && Array.isArray(group.layers)) {
+            const layerStateObj = group.layers.find((l) => l && l.id === layerId);
+            shouldBeVisible = !!(layerStateObj && layerStateObj.enabled);
           }
         }
       }
+
       canvasRenderer.setLayerVisibility(layerName, shouldBeVisible);
     }
   }

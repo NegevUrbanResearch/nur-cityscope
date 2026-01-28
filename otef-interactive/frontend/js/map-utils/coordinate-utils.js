@@ -161,4 +161,8 @@ const CoordUtils = {
     }
 };
 
+// Export for Node/CommonJS consumers (tests, tooling)
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = CoordUtils;
+}
 

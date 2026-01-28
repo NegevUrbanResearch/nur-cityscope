@@ -124,7 +124,10 @@ function itmToDisplayPixels(x, y) {
 
 function isFullExtent(minX, minY, maxX, maxY) {
   if (!modelBounds) return false;
-  const tol = 10;
+  const tol =
+    (typeof MapProjectionConfig !== "undefined" &&
+      MapProjectionConfig.PROJECTION_FULL_EXTENT_TOLERANCE) ||
+    10;
   return (
     Math.abs(minX - modelBounds.west) < tol &&
     Math.abs(minY - modelBounds.south) < tol &&
@@ -154,7 +157,10 @@ function getOrCreateHighlightBox() {
 // Smoothing state
 let targetHighlight = { x: 0, y: 0, w: 0, h: 0 };
 let currentHighlight = { x: 0, y: 0, w: 0, h: 0 };
-const LERP_FACTOR = 0.15; // Lower = smoother/slower, Higher = snappier
+const LERP_FACTOR =
+  (typeof MapProjectionConfig !== "undefined" &&
+    MapProjectionConfig.PROJECTION_LERP_FACTOR) ||
+  0.15; // Lower = smoother/slower, Higher = snappier
 
 function startSmoothingLoop(box) {
   const step = () => {
@@ -259,8 +265,12 @@ function handleResize() {
 }
 
 window.addEventListener("resize", () => {
+  const debounceMs =
+    (typeof MapProjectionConfig !== "undefined" &&
+      MapProjectionConfig.PROJECTION_RESIZE_DEBOUNCE_MS) ||
+    200;
   clearTimeout(resizeTimeout);
-  resizeTimeout = setTimeout(handleResize, 200); // Debounce 200ms
+  resizeTimeout = setTimeout(handleResize, debounceMs); // Debounce
 });
 
 // Keyboard shortcuts

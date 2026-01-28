@@ -124,5 +124,59 @@ function applyLayerGroupsState(layerGroups) {
     }
   }
 
+  // After processing the incoming state, reconcile *all* loaded layers against the
+  // centralized visibility rules (zoom + OTEFDataContext). This ensures that even
+  // if the incoming layerGroups payload is a partial/delta update, the final
+  // visible set on the map matches the current global state.
+  try {
+    if (
+      typeof loadedLayersMap !== 'undefined' &&
+      typeof VisibilityController !== 'undefined' &&
+      typeof LayerStateHelper !== 'undefined' &&
+      typeof updateLayerVisibilityFromRegistry === 'function'
+    ) {
+      const currentZoom = typeof map !== 'undefined' && typeof map.getZoom === 'function'
+        ? map.getZoom()
+        : null;
+
+      if (currentZoom !== null) {
+        for (const fullLayerId of loadedLayersMap.keys()) {
+          let scaleRange = null;
+          if (typeof layerRegistry !== 'undefined') {
+            const cfg = layerRegistry.getLayerConfig(fullLayerId);
+            if (cfg && cfg.style && cfg.style.scaleRange) {
+              scaleRange = cfg.style.scaleRange;
+            }
+          }
+
+          const state = LayerStateHelper.getLayerState(fullLayerId);
+
+          const allowed = VisibilityController.shouldLayerBeVisible({
+            fullLayerId,
+            scaleRange,
+            zoom: currentZoom,
+            layerStateHelper: LayerStateHelper
+          });
+
+          // Debug logging for sticky-visibility investigation
+          // Focus on land_use pack where we observed layers remaining visible.
+          if (fullLayerId.startsWith('land_use.')) {
+            console.log('[GIS Debug] reconcile layer', {
+              fullLayerId,
+              zoom: currentZoom,
+              scaleRange,
+              layerState: state,
+              allowed
+            });
+          }
+
+          updateLayerVisibilityFromRegistry(fullLayerId, allowed);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[GIS Map] Failed to reconcile loaded layers after state update:', err);
+  }
+
   updateMapLegend();
 }
