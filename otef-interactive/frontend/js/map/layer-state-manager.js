@@ -85,12 +85,13 @@ function applyLayerGroupsState(layerGroups) {
 
   // Process each group - individual layer.enabled is the source of truth for visibility
   for (const group of layerGroups) {
-    // Skip projector_base group - these are projector-only layers
-    if (group.id === 'projector_base') {
-      continue;
-    }
-
     for (const layer of group.layers || []) {
+      // Usually we skip projector_base group (projector-only layers),
+      // but we want Tkuma_Area_LIne to render on GIS.
+      if (group.id === 'projector_base' && layer.id !== 'Tkuma_Area_LIne') {
+        continue;
+      }
+
       const fullLayerId = `${group.id}.${layer.id}`;
 
       if (layer.enabled) {

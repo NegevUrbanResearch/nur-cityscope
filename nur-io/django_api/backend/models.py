@@ -286,9 +286,11 @@ class OTEFViewportState(models.Model):
     DEFAULT_LAYERS = {
         "roads": True,
         "parcels": False,
-        "model": True,  # Legacy model overlay enabled by default
+        "model": False,  # Legacy model overlay disabled by default
         "majorRoads": False,
         "smallRoads": False,
+        "projector_base.SEA": True,
+        "projector_base.רקע_שחור": True,
     }
 
     # Default viewport (EPSG:2039 ITM coordinates for Otef area)

@@ -90,11 +90,12 @@ async function loadLayerGroups() {
   // Load all layers from all groups, excluding projector_base (projector-only layers)
   const loadPromises = [];
   for (const group of groups) {
-    // Skip projector_base group - these are projector-only layers
-    if (group.id === 'projector_base') {
-      continue;
-    }
+    // Usually we skip projector_base group (projector-only layers),
+    // but we want Tkuma_Area_LIne to render on GIS.
     for (const layer of group.layers || []) {
+      if (group.id === 'projector_base' && layer.id !== 'Tkuma_Area_LIne') {
+        continue;
+      }
       const fullLayerId = `${group.id}.${layer.id}`;
       loadPromises.push(loadLayerFromRegistry(fullLayerId));
     }

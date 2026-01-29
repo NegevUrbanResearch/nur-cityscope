@@ -133,12 +133,13 @@ async function buildLegendModel() {
   }
 
   for (const group of layerGroups) {
-    // Skip projector-only layers in the GIS legend
-    if (group.id === 'projector_base') continue;
-
     const packLayers = [];
     for (const layer of group.layers || []) {
       if (!layer.enabled) continue;
+
+      // Skip projector-only layers in the GIS legend, except Tkuma_Area_LIne
+      if (group.id === 'projector_base' && layer.id !== 'Tkuma_Area_LIne') continue;
+
       const fullId = `${group.id}.${layer.id}`;
       const config = registry ? registry.getLayerConfig(fullId) : null;
       if (!config) continue;

@@ -101,18 +101,27 @@ class Command(BaseCommand):
                     pack_manifest = json.load(f)
 
                 # Create or update LayerGroup
+                # projector_base is the new default base for the projector
+                group_enabled = (pack_id == 'projector_base')
+
                 group, group_created = LayerGroup.objects.get_or_create(
                     table=table,
                     group_id=pack_id,
                     defaults={
-                        'enabled': False  # Default all groups to disabled
+                        'enabled': group_enabled
                     }
                 )
 
                 if group_created:
                     self.stdout.write(
-                        self.style.SUCCESS(f'✓ Created layer group: {pack_id}')
+                        self.style.SUCCESS(f'✓ Created layer group: {pack_id} (enabled={group_enabled})')
                     )
+                else:
+                    # Update enabled state for existing group if it's projector_base
+                    if group_enabled and not group.enabled:
+                        group.enabled = True
+                        group.save()
+                        self.stdout.write(self.style.SUCCESS(f'✓ Enabled layer group: {pack_id}'))
 
                 # Process layers in this pack
                 layers = pack_manifest.get('layers', [])
@@ -124,19 +133,30 @@ class Command(BaseCommand):
                     # Full layer ID format: "group_id.layer_id"
                     full_layer_id = f"{pack_id}.{layer_id}"
 
+                    # Default specific layers to enabled
+                    layer_enabled = False
+                    if full_layer_id in ['projector_base.SEA', 'projector_base.רקע_שחור']:
+                        layer_enabled = True
+
                     # Create or update LayerState
                     layer_state, layer_created = LayerState.objects.get_or_create(
                         table=table,
                         layer_id=full_layer_id,
                         defaults={
-                            'enabled': False  # Default all layers to disabled
+                            'enabled': layer_enabled
                         }
                     )
 
                     if layer_created:
                         self.stdout.write(
-                            self.style.SUCCESS(f'  ✓ Created layer state: {full_layer_id}')
+                            self.style.SUCCESS(f'  ✓ Created layer state: {full_layer_id} (enabled={layer_enabled})')
                         )
+                    else:
+                        # Update enabled state for existing important layers
+                        if layer_enabled and not layer_state.enabled:
+                            layer_state.enabled = True
+                            layer_state.save()
+                            self.stdout.write(self.style.SUCCESS(f'  ✓ Enabled layer state: {full_layer_id}'))
 
             self.stdout.write(
                 self.style.SUCCESS(f'✓ Seeded {len(packs)} layer group(s)')
