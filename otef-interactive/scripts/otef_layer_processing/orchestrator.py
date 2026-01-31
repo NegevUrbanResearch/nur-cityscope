@@ -101,8 +101,10 @@ class ProcessingOrchestrator:
         for d in source_layers.iterdir():
             if d.is_dir() and not d.name.startswith("."):
                 gis_dir = d / "gis" if (d / "gis").exists() else d
+                images_dir = d / "images"
                 geo_files = list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
-                if geo_files:
+                image_files = list(images_dir.glob("*.png")) + list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.jpeg")) if images_dir.exists() else []
+                if geo_files or image_files:
                     packs.append(d)
         return sorted(packs)
 
@@ -114,6 +116,7 @@ class ProcessingOrchestrator:
 
         # 1. Collect all layer tasks
         all_layer_tasks = []
+        all_image_tasks = []
         pack_manifests = {} # pack_id -> PackManifest (partial)
         styles_map = {} # pack_id -> styles_dict
 
@@ -122,6 +125,7 @@ class ProcessingOrchestrator:
         for pack_dir in packs:
             pack_id = pack_dir.name
             gis_dir = pack_dir / "gis" if (pack_dir / "gis").exists() else pack_dir
+            images_dir = pack_dir / "images"
             styles_dir = pack_dir / "styles"
 
             # Prepare output dir
@@ -129,6 +133,7 @@ class ProcessingOrchestrator:
             pack_output.mkdir(parents=True, exist_ok=True)
 
             geo_files = list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
+            image_files = list(images_dir.glob("*.png")) + list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.jpeg")) if images_dir.exists() else []
 
             # Initialize containers
             pack_manifests[pack_id] = {"id": pack_id, "name": pack_id.title().replace("_", " "), "layers": []}
@@ -142,12 +147,20 @@ class ProcessingOrchestrator:
                     "pack_output": pack_output
                 }
                 all_layer_tasks.append(task)
+            
+            for image_file in image_files:
+                task = {
+                    "pack_id": pack_id,
+                    "image_file": image_file,
+                    "pack_output": pack_output
+                }
+                all_image_tasks.append(task)
 
-        if not all_layer_tasks:
+        if not all_layer_tasks and not all_image_tasks:
             logger.warning("No layers found in packs.")
             return
 
-        logger.info(f"Buffered {len(all_layer_tasks)} layers. Starting global parallel processing...")
+        logger.info(f"Buffered {len(all_layer_tasks)} layers and {len(all_image_tasks)} images. Starting global parallel processing...")
 
         # 2. Process all layers in a global pool
         processed_layers = []
@@ -156,14 +169,19 @@ class ProcessingOrchestrator:
             # Pass log level to workers
             log_level = logger.getEffectiveLevel()
 
-            # Submit all tasks
+            # Submit all tasks (GeoJSON layers)
             futures = {
                 executor.submit(self.process_single_layer, task, log_level): task
                 for task in all_layer_tasks
             }
+            
+            # Submit image tasks (no parallel processing needed, but keep consistent structure)
+            for image_task in all_image_tasks:
+                futures[executor.submit(self.process_single_image, image_task, log_level)] = image_task
 
             # Main Progress Bar
-            with tqdm(total=len(all_layer_tasks), desc="Total Layers", unit="lyr") as pbar:
+            total_tasks = len(all_layer_tasks) + len(all_image_tasks)
+            with tqdm(total=total_tasks, desc="Total Layers", unit="lyr") as pbar:
                 for future in as_completed(futures):
                     try:
                         result = future.result()
@@ -300,3 +318,60 @@ class ProcessingOrchestrator:
         root_manifest = {"packs": sorted(pack_ids)}
         with open(self.output_dir / "layers-manifest.json", "w", encoding="utf-8") as f:
             json.dump(root_manifest, f, indent=2)
+
+    def process_single_image(self, task: Dict, log_level: int) -> Optional[Any]:
+        """
+        Process a single image file (copy to output directory).
+        Returns: (LayerEntry, StyleConfig or None, cache_key, cache_value)
+        """
+        # Configure logging for worker process
+        logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
+
+        pack_id = task["pack_id"]
+        image_file = task["image_file"]
+        pack_output = task["pack_output"]
+
+        # Use model_base for model.png so manifest matches backend/frontend expectations
+        layer_id = "model_base" if image_file.stem == "model" else image_file.stem
+        name = "Model base" if image_file.stem == "model" else image_file.stem.replace("_", " ").title()
+        filename = image_file.name
+        cache_key = f"{pack_id}/{filename}"
+        file_hash = compute_file_hash(image_file)
+
+        needed = self.no_cache or self.cache.get(cache_key, {}).get("hash") != file_hash
+
+        output_file = pack_output / filename
+
+        if needed:
+            try:
+                # Simply copy the image file to the output directory
+                shutil.copy2(image_file, output_file)
+                logger.info(f"Copied image: {layer_id} -> {output_file}")
+            except Exception as e:
+                logger.error(f"Error copying image {layer_id}: {e}")
+                return None
+
+        # Create LayerEntry for image
+        entry = LayerEntry.create_image_layer(
+            layer_id=layer_id,
+            name=name,
+            filename=filename
+        )
+
+        # Create default style for image type
+        style_config = {
+            "type": "image",
+            "renderer": "image",
+            "defaultStyle": {
+                "opacity": 1.0
+            },
+            "fullSymbolLayers": [],
+            "labels": None,
+            "scaleRange": None
+        }
+
+        return entry, style_config, cache_key, {
+            "hash": file_hash,
+            "geometry_type": "image",
+            "style": style_config
+        }

@@ -25,6 +25,17 @@ class LayerEntry:
         if self.ui_popup:
             d["ui"] = {"popup": self.ui_popup}
         return d
+    
+    @classmethod
+    def create_image_layer(cls, layer_id: str, name: str, filename: str) -> "LayerEntry":
+        """Create a LayerEntry for an image file"""
+        return cls(
+            id=layer_id,
+            name=name,
+            file=filename,
+            format="image",
+            geometry_type="image"
+        )
 
 @dataclass
 class PackManifest:

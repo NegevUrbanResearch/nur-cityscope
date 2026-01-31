@@ -137,6 +137,9 @@ class Command(BaseCommand):
                     layer_enabled = False
                     if full_layer_id in ['projector_base.SEA', 'projector_base.רקע_שחור']:
                         layer_enabled = True
+                    # model_base defaults to disabled
+                    if full_layer_id == 'projector_base.model_base':
+                        layer_enabled = False
 
                     # Create or update LayerState
                     layer_state, layer_created = LayerState.objects.get_or_create(

@@ -7,9 +7,6 @@
   let canvasRenderer = null;
 
   const loadedLayers = {};
-  const layerState = {
-    model: false,
-  };
 
   function configure(deps) {
     getModelBounds = deps?.getModelBounds || null;
@@ -64,6 +61,13 @@
       if (layerRegistry._initialized) {
         await loadProjectionLayerGroups();
 
+        // Set model image src from registry (avoids hardcoded path / 404)
+        const modelImageUrl = layerRegistry.getLayerDataUrl("projector_base.model_base");
+        const img = document.getElementById("displayedImage");
+        if (img && modelImageUrl) {
+          img.src = modelImageUrl;
+        }
+
         // Now that layerRegistry is initialized, sync with current state from OTEFDataContext
         // This handles the case where OTEFDataContext loaded state before layerRegistry was ready
         if (typeof OTEFDataContext !== "undefined") {
@@ -76,12 +80,11 @@
       }
     }
 
-    layerState.model = false;
-
-    // Set model image visibility to match default state
-    const img = document.getElementById("displayedImage");
-    if (img) {
-      img.style.opacity = layerState.model ? "1" : "0";
+    // Initialize model base image visibility from layerGroups state
+    if (typeof OTEFDataContext !== "undefined") {
+      const layerGroups = OTEFDataContext.getLayerGroups();
+      const modelBaseState = getLayerStateFromGroups(layerGroups, 'projector_base', 'model_base');
+      updateModelImageVisibility(modelBaseState?.enabled || false);
     }
   }
 
@@ -125,6 +128,13 @@
     const layerConfig = layerRegistry.getLayerConfig(fullLayerId);
     if (!layerConfig) {
       console.warn(`[Projection] Layer config not found: ${fullLayerId}`);
+      return;
+    }
+
+    // Handle image layers differently (they don't have GeoJSON data)
+    if (layerConfig.format === 'image') {
+      console.log(`[Projection] Skipping image layer ${fullLayerId} (rendered via <img> element)`);
+      loadedLayers[fullLayerId] = { type: 'image' };
       return;
     }
 
@@ -226,6 +236,12 @@
       for (const layer of group.layers || []) {
         const fullLayerId = `${group.id}.${layer.id}`;
 
+        // Handle model_base image layer specially
+        if (fullLayerId === 'projector_base.model_base') {
+          updateModelImageVisibility(layer.enabled);
+          continue;
+        }
+
         if (layer.enabled) {
           // Layer should be visible - load if needed, then show
           if (!loadedLayers[fullLayerId]) {
@@ -293,33 +309,22 @@
   }
 
   /**
-   * Sync layers from state object (shared by API fetch and notifications).
-   * Only model base image visibility is driven by legacy layers; all vector layers use registry.
+   * Helper to get layer state from layerGroups structure
    */
-  function syncLayersFromState(layers) {
-    if (layers.model === undefined || layers.model === layerState.model) return;
-    layerState.model = layers.model;
-    const img = document.getElementById("displayedImage");
-    if (img) {
-      img.style.opacity = layers.model ? "1" : "0";
-    }
+  function getLayerStateFromGroups(layerGroups, groupId, layerId) {
+    if (!Array.isArray(layerGroups)) return null;
+    const group = layerGroups.find(g => g.id === groupId);
+    if (!group || !Array.isArray(group.layers)) return null;
+    return group.layers.find(l => l.id === layerId);
   }
 
   /**
-   * Handle layer update from WebSocket.
-   * Only model base image visibility is driven by legacy layers.
+   * Update model base image visibility
    */
-  function handleLayerUpdate(msg) {
-    if (!validateLayerUpdate(msg)) {
-      console.warn("[Projection] Invalid layer update message:", msg);
-      return;
-    }
-    const layers = msg.layers;
-    if (layers.model === undefined || layers.model === layerState.model) return;
-    layerState.model = layers.model;
+  function updateModelImageVisibility(visible) {
     const img = document.getElementById("displayedImage");
     if (img) {
-      img.style.opacity = layers.model ? "1" : "0";
+      img.style.opacity = visible ? "1" : "0";
     }
   }
 
@@ -334,9 +339,7 @@
   window.ProjectionLayerManager = {
     configure,
     initializeLayers,
-    syncLayersFromState,
     syncLayerGroupsFromState,
-    handleLayerUpdate,
     handleResize
   };
 })();

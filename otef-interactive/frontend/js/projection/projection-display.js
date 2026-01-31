@@ -38,11 +38,6 @@ fetch("data/model-bounds.json")
           }
         }
 
-        const initialLayers = OTEFDataContext.getLayers();
-        if (initialLayers && window.ProjectionLayerManager) {
-          window.ProjectionLayerManager.syncLayersFromState(initialLayers);
-        }
-
         // Store unsubscribe functions for cleanup
         if (!window._otefUnsubscribeFunctions) {
           window._otefUnsubscribeFunctions = [];
@@ -63,14 +58,6 @@ fetch("data/model-bounds.json")
         if (initialLayerGroups && window.ProjectionLayerManager) {
           window.ProjectionLayerManager.syncLayerGroupsFromState(initialLayerGroups);
         }
-
-        window._otefUnsubscribeFunctions.push(
-          OTEFDataContext.subscribe('layers', (layers) => {
-            if (layers && window.ProjectionLayerManager) {
-              window.ProjectionLayerManager.syncLayersFromState(layers);
-            }
-          })
-        );
 
         window._otefUnsubscribeFunctions.push(
           OTEFDataContext.subscribe('layerGroups', (layerGroups) => {

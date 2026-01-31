@@ -43,10 +43,9 @@ class LayerSheetController {
     this.setupEventListeners();
     this.render();
 
-    // Subscribe to layer group changes and legacy layers (for model base)
+    // Subscribe to layer group changes
     if (typeof OTEFDataContext !== 'undefined') {
       OTEFDataContext.subscribe('layerGroups', () => this.render());
-      OTEFDataContext.subscribe('layers', () => this.render()); // For model base state
     }
   }
 
@@ -131,17 +130,6 @@ class LayerSheetController {
   async toggleGroupEnabled(groupId, enabled) {
     if (typeof OTEFDataContext === 'undefined') return;
     try {
-      if (groupId === '_legacy') {
-        // Legacy group only has virtual "Model base"; sync group toggle to layers.model
-        await OTEFDataContext.toggleLayer('model', enabled);
-        return;
-      }
-
-      // Sync model base state when toggling projector_base group
-      if (groupId === 'projector_base') {
-        await OTEFDataContext.toggleLayer('model', enabled);
-      }
-
       const result = await OTEFDataContext.toggleGroup(groupId, enabled);
       if (!result || !result.ok) {
         console.error(`[LayerSheet] Failed to toggle group ${groupId}:`, result?.error);
@@ -153,17 +141,7 @@ class LayerSheetController {
 
   async toggleLayer(layerId, enabled) {
     if (typeof OTEFDataContext !== 'undefined') {
-      // Special handling for model base - route to legacy layers.model
-      // Handle both legacy ID and new group-prefixed ID
-      if (
-        layerId === '_legacy.model_base' ||
-        layerId === 'model_base' ||
-        layerId === 'projector_base.model_base'
-      ) {
-        await OTEFDataContext.toggleLayer('model', enabled);
-      } else {
-        await OTEFDataContext.toggleLayer(layerId, enabled);
-      }
+      await OTEFDataContext.toggleLayer(layerId, enabled);
     }
   }
 
@@ -218,44 +196,6 @@ class LayerSheetController {
       layerCountEl.textContent = `${totalEnabled} active`;
     }
 
-    // Handle projector_base group: set default enabled state for sea and רקע_שחור (but not model_base)
-    const projectorBaseGroupIndex = groups.findIndex(g => g.id === 'projector_base');
-    if (projectorBaseGroupIndex !== -1) {
-      const projectorBaseGroup = groups[projectorBaseGroupIndex];
-      const legacyLayers = typeof OTEFDataContext !== 'undefined' ? OTEFDataContext.getLayers() : null;
-      const modelEnabled = legacyLayers && legacyLayers.model === true;
-
-      // Add model_base as a virtual layer to projector_base group (moved from _legacy)
-      const modelBaseLayer = {
-        id: 'model_base',
-        name: 'Model base',
-        enabled: modelEnabled,
-        virtual: true
-      };
-
-      // Set default enabled state: sea and רקע_שחור should be on by default, model_base should be off
-      projectorBaseGroup.layers = (projectorBaseGroup.layers || []).map(layer => {
-        // Enable sea and רקע_שחור by default if not already set
-        if ((layer.id === 'sea' || layer.id === 'רקע_שחור')) {
-           // If enabled is undefined (initial load), default to true.
-           // If it has a value, keep it.
-           if (layer.enabled === undefined) {
-             return { ...layer, enabled: true };
-           }
-        }
-        return layer;
-      });
-
-      // Add model_base to the group (but keep it disabled by default)
-      projectorBaseGroup.layers = [modelBaseLayer, ...projectorBaseGroup.layers];
-
-      // Group is enabled if any non-model_base layer is enabled
-      const nonModelLayers = projectorBaseGroup.layers.filter(l => l.id !== 'model_base');
-      projectorBaseGroup.enabled = nonModelLayers.some(l => l.enabled);
-
-      groups[projectorBaseGroupIndex] = projectorBaseGroup;
-    }
-
     // Render groups
     if (groups.length === 0) {
       content.innerHTML = '<div class="sheet-empty">No layer groups available</div>';
@@ -291,12 +231,10 @@ class LayerSheetController {
           <div class="group-layers ${isExpanded ? 'expanded' : ''}">
             ${(group.layers || []).map(layer => {
               const fullLayerId = `${group.id}.${layer.id}`;
-              // For virtual layers (like model base), use simplified preview or skip
-              const isVirtual = layer.virtual === true;
-              const style = isVirtual ? null : this.getLayerStylePreview(layer);
+              const style = this.getLayerStylePreview(layer);
               return `
                 <label class="layer-item" onclick="event.stopPropagation()">
-                  ${isVirtual ? '<div class="layer-preview" style="background-color: #4a90e2; opacity: 0.8; border-color: #2a5a8a;"></div>' : `<div class="layer-preview" style="background-color: ${style.fillColor}; opacity: ${style.fillOpacity}; border-color: ${style.strokeColor};"></div>`}
+                  <div class="layer-preview" style="background-color: ${style.fillColor}; opacity: ${style.fillOpacity}; border-color: ${style.strokeColor};"></div>
                   <input
                     type="checkbox"
                     ${layer.enabled ? 'checked' : ''}
@@ -314,6 +252,15 @@ class LayerSheetController {
   }
 
   getLayerStylePreview(layer) {
+    // Handle image layers with a special preview style
+    if (layer.format === 'image' || layer.geometryType === 'image') {
+      return {
+        fillColor: '#4a90e2',
+        fillOpacity: 0.8,
+        strokeColor: '#2a5a8a'
+      };
+    }
+
     // Get style preview from registry if available
     if (typeof layerRegistry !== 'undefined') {
       const fullId = `${layer.groupId || ''}.${layer.id}`;

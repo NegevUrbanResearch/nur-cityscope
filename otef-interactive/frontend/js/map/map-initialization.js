@@ -64,14 +64,6 @@ const basemaps = {
 // Add basemap control
 L.control.layers(basemaps, null, { position: "topleft" }).addTo(map);
 
-// Layer references (will be set by layer loaders)
-let modelOverlay;
-
-// Layer state tracking (model only; vector layers use registry)
-let layerState = {
-  model: false,
-};
-
 // Flag and timer to prevent echo when applying remote state
 window.isApplyingRemoteState = false;
 window.syncLockTimer = null;
@@ -102,28 +94,12 @@ function initializeMap(bounds) {
 
   map.fitBounds(wgs84Bounds);
 
-  // Add model image overlay (hidden by default) with custom pane for z-ordering
-  modelOverlay = L.imageOverlay("data/model-transparent.png", wgs84Bounds, {
-    opacity: 0.7,
-    interactive: false,
-    className: "model-overlay",
-    pane: 'vectorOverlay',  // Ensure overlay renders above basemaps
-  }); // Don't add to map on init
-
-  window.modelLayer = modelOverlay;
-  layerState.model = false;
-  updateMapLegend(); // Update legend
-
   // Initialize shared OTEFDataContext and subscribe to state
   if (typeof OTEFDataContext !== 'undefined') {
     OTEFDataContext.init('otef').then(() => {
       const initialViewport = OTEFDataContext.getViewport();
       if (initialViewport) {
         applyViewportFromAPI(initialViewport);
-      }
-      const initialLayers = OTEFDataContext.getLayers();
-      if (initialLayers) {
-        applyLayerState(initialLayers);
       }
       const initialConnection = OTEFDataContext.isConnected();
       updateConnectionStatus(!!initialConnection);
@@ -145,14 +121,6 @@ function initializeMap(bounds) {
       if (initialLayerGroups) {
         applyLayerGroupsState(initialLayerGroups);
       }
-
-      window._otefUnsubscribeFunctions.push(
-        OTEFDataContext.subscribe('layers', (layers) => {
-          if (layers) {
-            applyLayerState(layers);
-          }
-        })
-      );
 
       window._otefUnsubscribeFunctions.push(
         OTEFDataContext.subscribe('layerGroups', (layerGroups) => {

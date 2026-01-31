@@ -62,8 +62,7 @@ otef-interactive/
 │   └── model/          # Source model files
 └── frontend/data/      # Static files served to browser
     ├── model-bounds.json
-    ├── model.png
-    └── model-transparent.png
+    └── model.png
 ```
 
 **Summary:**

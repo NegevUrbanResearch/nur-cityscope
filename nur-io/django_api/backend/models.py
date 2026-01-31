@@ -286,7 +286,6 @@ class OTEFViewportState(models.Model):
     DEFAULT_LAYERS = {
         "roads": True,
         "parcels": False,
-        "model": False,  # Legacy model overlay disabled by default
         "majorRoads": False,
         "smallRoads": False,
         "projector_base.SEA": True,

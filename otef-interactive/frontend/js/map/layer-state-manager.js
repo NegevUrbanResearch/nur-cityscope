@@ -1,45 +1,24 @@
 /**
  * Layer visibility state management for the Leaflet GIS map.
- * Depends on global `map`, `layerState`, `modelOverlay`.
- * Legacy: model base only; vector layers use registry.
+ * Vector layers use registry and layer groups.
  */
 
 /**
  * Apply layer state from API/notification.
- * Only model base image is driven by legacy layers; vector layers use registry.
+ * Legacy function - no longer used, all layers managed via layerGroups.
  */
 function applyLayerState(layers) {
-  if (layers.model === undefined || layers.model === layerState.model) return;
-  if (modelOverlay) {
-    if (layers.model) {
-      map.addLayer(modelOverlay);
-    } else {
-      map.removeLayer(modelOverlay);
-    }
-  }
-  layerState.model = layers.model;
-  updateMapLegend();
+  // No-op: Legacy layers state is no longer used
+  console.warn('[Map] applyLayerState called with legacy layers state, ignoring');
 }
 
 /**
  * Handle layer update from remote controller.
- * GIS map is receive-only, so all updates come from remote.
- * Only model base image is driven by legacy layers.
+ * Legacy function - no longer used, all layers managed via layerGroups.
  */
 function handleLayerUpdate(msg) {
-  if (!validateLayerUpdate(msg)) {
-    console.warn("[GIS Map] Invalid layer update message:", msg);
-    return;
-  }
-  const layers = msg.layers;
-  if (layers.model === undefined || layers.model === layerState.model) return;
-  if (layers.model) {
-    map.addLayer(modelOverlay);
-  } else {
-    map.removeLayer(modelOverlay);
-  }
-  layerState.model = layers.model;
-  updateMapLegend();
+  // No-op: Legacy layers updates are no longer used
+  console.warn('[Map] handleLayerUpdate called with legacy layers message, ignoring');
 }
 
 /**
