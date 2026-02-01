@@ -1,6 +1,16 @@
 // OTEF API Client - RESTful state management
 // Single source of truth for OTEF interactive state
 
+// Use global logger (loaded via script tag)
+function getLogger() {
+  return (typeof window !== 'undefined' && window.logger) || {
+    debug: () => {},
+    info: () => {},
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+  };
+}
+
 const OTEF_API = {
   baseUrl: '/api/otef_viewport/by-table',
   defaultTable: 'otef',
@@ -17,10 +27,9 @@ const OTEF_API = {
         throw new Error(`Failed to fetch state: ${response.status}`);
       }
       const data = await response.json();
-      console.log('[OTEF API] State fetched:', data);
       return data;
     } catch (error) {
-      console.error('[OTEF API] Error fetching state:', error);
+      getLogger().error('[OTEF API] Error fetching state:', error);
       throw error;
     }
   },
@@ -42,10 +51,9 @@ const OTEF_API = {
         throw new Error(`Failed to update state: ${response.status}`);
       }
       const data = await response.json();
-      console.log('[OTEF API] State updated:', updates);
       return data;
     } catch (error) {
-      console.error('[OTEF API] Error updating state:', error);
+      getLogger().error('[OTEF API] Error updating state:', error);
       throw error;
     }
   },
@@ -67,27 +75,35 @@ const OTEF_API = {
         throw new Error(`Failed to execute command: ${response.status}`);
       }
       const data = await response.json();
-      console.log('[OTEF API] Command executed:', command.action);
       return data;
     } catch (error) {
-      console.error('[OTEF API] Error executing command:', error);
+      getLogger().error('[OTEF API] Error executing command:', error);
       throw error;
     }
   },
 
   /**
-   * Update layers visibility
+   * Update layers visibility (legacy flat structure)
    * @param {string} tableName - Table name
-   * @param {Object} layers - Layer states {roads: bool, parcels: bool, ...}
+   * @param {Object} layers - Layer states { model: bool } (legacy); vectors use layer groups
    */
   async updateLayers(tableName = this.defaultTable, layers) {
     return this.updateState(tableName, { layers });
   },
 
   /**
+   * Update layer groups (new hierarchical structure)
+   * @param {string} tableName - Table name
+   * @param {Array} layerGroups - Layer groups [{id, enabled, layers: [{id, enabled}]}]
+   */
+  async updateLayerGroups(tableName = this.defaultTable, layerGroups) {
+    return this.updateState(tableName, { layerGroups });
+  },
+
+  /**
    * Update animation state
    * @param {string} tableName - Table name
-   * @param {Object} animations - Animation states {parcels: bool, ...}
+   * @param {Object} animations - Animation states { [layerId: string]: bool }
    */
   async updateAnimations(tableName = this.defaultTable, animations) {
     return this.updateState(tableName, { animations });
@@ -152,10 +168,9 @@ const OTEF_API = {
       }
 
       const data = await response.json();
-      console.log('[OTEF API] Bounds saved:', data);
       return data;
     } catch (error) {
-      console.error('[OTEF API] Error saving bounds:', error);
+      getLogger().error('[OTEF API] Error saving bounds:', error);
       throw error;
     }
   }

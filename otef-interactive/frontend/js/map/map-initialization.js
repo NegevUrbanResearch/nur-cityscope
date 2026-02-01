@@ -21,6 +21,17 @@ const map = L.map("map", {
   maxBoundsViscosity: 1.0, // Prevent dragging outside bounds
 });
 
+// Create custom panes for vector overlays to ensure they render in the correct order:
+// Polygon < Line < Point
+map.createPane('overlayPolygon');
+map.getPane('overlayPolygon').style.zIndex = 440;
+
+map.createPane('overlayLine');
+map.getPane('overlayLine').style.zIndex = 450;
+
+map.createPane('overlayPoint');
+map.getPane('overlayPoint').style.zIndex = 460;
+
 // Add OpenStreetMap basemap
 const osmLayer = L.tileLayer(
   "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -53,18 +64,6 @@ const basemaps = {
 // Add basemap control
 L.control.layers(basemaps, null, { position: "topleft" }).addTo(map);
 
-// Layer references (will be set by layer loaders)
-let parcelsLayer, roadsLayer, modelOverlay, majorRoadsLayer, smallRoadsLayer;
-
-// Layer state tracking
-let layerState = {
-  roads: false, // Start false, let API enable it
-  parcels: false,
-  model: false,
-  majorRoads: false,
-  smallRoads: false,
-};
-
 // Flag and timer to prevent echo when applying remote state
 window.isApplyingRemoteState = false;
 window.syncLockTimer = null;
@@ -75,7 +74,6 @@ window.syncLockTimer = null;
  */
 function initializeMap(bounds) {
   modelBounds = bounds;
-  console.log("Model bounds loaded (EPSG:2039):", bounds);
 
   // Transform bounds to WGS84
   const [swLat, swLon] = CoordUtils.transformItmToWgs84(bounds.west, bounds.south);
@@ -86,11 +84,6 @@ function initializeMap(bounds) {
     L.latLng(neLat, neLon)
   );
 
-  console.log("Model bounds in WGS84:", {
-    sw: [swLat, swLon],
-    ne: [neLat, neLon],
-  });
-
   // Restrict map to model bounds only
   map.setMaxBounds(wgs84Bounds);
 
@@ -99,24 +92,7 @@ function initializeMap(bounds) {
   const minZoomForBounds = map.getBoundsZoom(wgs84Bounds, false);
   map.setMinZoom(minZoomForBounds);
 
-  console.log(`Minimum zoom set to ${minZoomForBounds} to fit geotif bounds`);
-
   map.fitBounds(wgs84Bounds);
-
-  console.log("Map bounds restricted to model area");
-
-  // Add model image overlay (hidden by default)
-  modelOverlay = L.imageOverlay("data/model-transparent.png", wgs84Bounds, {
-    opacity: 0.7,
-    interactive: false,
-    className: "model-overlay",
-  }); // Don't add to map on init
-
-  window.modelLayer = modelOverlay;
-  layerState.model = false;
-  updateMapLegend(); // Update legend
-
-  console.log("Map initialized with WGS84 basemap!");
 
   // Initialize shared OTEFDataContext and subscribe to state
   if (typeof OTEFDataContext !== 'undefined') {
@@ -124,10 +100,6 @@ function initializeMap(bounds) {
       const initialViewport = OTEFDataContext.getViewport();
       if (initialViewport) {
         applyViewportFromAPI(initialViewport);
-      }
-      const initialLayers = OTEFDataContext.getLayers();
-      if (initialLayers) {
-        applyLayerState(initialLayers);
       }
       const initialConnection = OTEFDataContext.isConnected();
       updateConnectionStatus(!!initialConnection);
@@ -145,10 +117,15 @@ function initializeMap(bounds) {
         })
       );
 
+      const initialLayerGroups = OTEFDataContext.getLayerGroups();
+      if (initialLayerGroups) {
+        applyLayerGroupsState(initialLayerGroups);
+      }
+
       window._otefUnsubscribeFunctions.push(
-        OTEFDataContext.subscribe('layers', (layers) => {
-          if (layers) {
-            applyLayerState(layers);
+        OTEFDataContext.subscribe('layerGroups', (layerGroups) => {
+          if (layerGroups) {
+            applyLayerGroupsState(layerGroups);
           }
         })
       );
@@ -188,32 +165,81 @@ window.addEventListener("beforeunload", () => {
 });
 
 // Map click handler
-map.on("click", (e) => {
+map.on("click", async (e) => {
   const { lat, lng } = e.latlng;
-  const [x, y] = proj4("EPSG:4326", "EPSG:2039", [lng, lat]);
 
-  showFeatureInfo({
-    type: "Point",
-    coordinates: [lng, lat],
-    properties: {
-      Latitude: lat.toFixed(6),
-      Longitude: lng.toFixed(6),
-      "ITM X": Math.round(x),
-      "ITM Y": Math.round(y),
-      Zoom: map.getZoom(),
-    },
-  });
+  // First, check if we can find a PMTiles feature with popup config
+  if (typeof window.pmtilesLayersWithConfigs !== 'undefined' && window.pmtilesLayersWithConfigs.size > 0) {
+    // Check each PMTiles layer that has a popup config
+    for (const [fullLayerId, layerInfo] of window.pmtilesLayersWithConfigs.entries()) {
+      // Only check if layer is visible on map
+      if (!map.hasLayer(layerInfo.layer)) {
+        continue;
+      }
+
+      try {
+        // Protomaps-leaflet has queryTileFeaturesDebug method for basic feature querying
+        const wrapped = map.wrapLatLng(e.latlng);
+
+        // Check if the query method exists
+        if (typeof layerInfo.layer.queryTileFeaturesDebug !== 'function') {
+          continue;
+        }
+
+        // Query features at the clicked location
+        const queryResult = layerInfo.layer.queryTileFeaturesDebug(wrapped.lng, wrapped.lat);
+
+        // Convert result to array - queryTileFeaturesDebug returns a Map, not an array
+        // Map structure: Map { layerName => [features] }
+        let features = [];
+        if (queryResult instanceof Map) {
+          for (const [layerName, layerFeatures] of queryResult) {
+            if (Array.isArray(layerFeatures)) {
+              features = features.concat(layerFeatures);
+            }
+          }
+        } else if (Array.isArray(queryResult)) {
+          features = queryResult;
+        }
+
+        if (features.length > 0) {
+          // Found a feature - use the first one
+          const wrappedFeature = features[0];
+
+          // Protomaps-leaflet wraps features: { feature: {...}, layerName: 'layer' }
+          // The actual feature with props is inside .feature
+          const feature = wrappedFeature.feature || wrappedFeature;
+
+          // Get properties from the unwrapped feature
+          const featureProps = feature.props || feature.properties || {};
+
+          // Normalize feature to GeoJSON-like shape
+          const normalizedFeature = {
+            type: "Feature",
+            geometry: feature.geometry || feature.geom || { type: "Polygon" },
+            properties: featureProps
+          };
+
+          // Get layer display name
+          const layerDisplayName = layerInfo.config?.name || fullLayerId.split('.').pop();
+
+          // Render and show popup
+          if (typeof renderPopupContent === 'function') {
+            const content = renderPopupContent(normalizedFeature, layerInfo.popupConfig, layerDisplayName);
+            L.popup()
+              .setLatLng(e.latlng)
+              .setContent(content)
+              .openOn(map);
+            return; // Stop here, don't show coordinate popup
+          }
+        }
+      } catch (error) {
+        // If query fails, continue to next layer or fall back
+        console.warn(`[Map] Error querying PMTiles layer ${fullLayerId}:`, error);
+      }
+    }
+  }
 });
-
-function showFeatureInfo(feature) {
-  const panel = document.getElementById("featureInfo");
-  const props = Object.entries(feature.properties)
-    .map(([key, value]) => `<p><strong>${key}:</strong> ${value}</p>`)
-    .join("");
-  panel.innerHTML = "<h4>Feature Info</h4>" + props;
-  panel.classList.remove("hidden");
-  setTimeout(() => panel.classList.add("hidden"), 7000);
-}
 
 /**
  * Update connection status UI

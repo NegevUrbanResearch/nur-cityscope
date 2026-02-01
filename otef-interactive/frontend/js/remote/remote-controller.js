@@ -10,14 +10,7 @@ let currentState = {
     zoom: 15,
   },
   layers: {
-    roads: true,
-    parcels: false,
     model: false,
-    majorRoads: false,
-    smallRoads: false,
-  },
-  animations: {
-    parcels: false,
   },
   isConnected: false,
 };
@@ -45,7 +38,11 @@ if (document.readyState === "loading") {
 }
 
 async function initialize() {
-  console.log("[Remote] Initializing with OTEFDataContext...");
+
+  // Initialize layer registry if available
+  if (typeof layerRegistry !== 'undefined') {
+    await layerRegistry.init();
+  }
 
   // Initialize shared DataContext (single WS + API state)
   await OTEFDataContext.init(TABLE_NAME);
@@ -69,14 +66,6 @@ async function initialize() {
   );
 
   unsubscribeFunctions.push(
-    OTEFDataContext.subscribe('animations', (animations) => {
-      if (!animations) return;
-      currentState.animations = animations;
-      updateAnimationButtonState();
-    })
-  );
-
-  unsubscribeFunctions.push(
     OTEFDataContext.subscribe('connection', (isConnected) => {
       currentState.isConnected = !!isConnected;
       updateConnectionStatus(isConnected ? "connected" : "disconnected");
@@ -87,13 +76,10 @@ async function initialize() {
   initializePanControls();
   initializeZoomControls();
   initializeLayerControls();
-  initializeAnimationControls();
   initializeJoystick();
 
   // Initial UI render with whatever state DataContext has
   updateUI();
-
-  console.log("[Remote] Initialized");
 }
 
 /**
@@ -224,7 +210,6 @@ async function sendZoomCommand(zoom) {
 
   try {
     await OTEFDataContext.zoom(zoom);
-    console.log("[Remote] Zoom command sent via DataContext:", zoom);
   } catch (error) {
     console.error("[Remote] Zoom command failed:", error);
   }
@@ -247,11 +232,7 @@ function updateZoomUI(zoom) {
  */
 function initializeLayerControls() {
   const toggles = {
-    toggleRoads: "roads",
-    toggleParcels: "parcels",
     toggleModel: "model",
-    toggleMajorRoads: "majorRoads",
-    toggleSmallRoads: "smallRoads",
   };
 
   Object.entries(toggles).forEach(([id, layerName]) => {
@@ -270,7 +251,6 @@ function initializeLayerControls() {
         if (!result || !result.ok) {
           throw result && result.error ? result.error : new Error("Layer update failed");
         }
-        console.log("[Remote] Layers updated via DataContext");
       } catch (error) {
         console.error("[Remote] Layer update failed:", error);
         // Revert on error
@@ -278,75 +258,8 @@ function initializeLayerControls() {
         currentState.layers[layerName] = !currentState.layers[layerName];
       }
 
-      // Update animation button state for parcels
-      if (layerName === 'parcels') {
-        updateAnimationButtonState();
-
-        // If parcels layer is turned off, also disable animation
-        if (!e.target.checked && currentState.animations.parcels) {
-          await sendAnimationToggle('parcels', false);
-        }
-      }
     });
   });
-}
-
-/**
- * Initialize animation controls
- */
-function initializeAnimationControls() {
-  const animateBtn = document.getElementById('animateParcels');
-  if (!animateBtn) return;
-
-  animateBtn.addEventListener('click', async () => {
-    if (!currentState.isConnected) return;
-    if (!currentState.layers.parcels) return;  // Parcels must be enabled
-
-    // Toggle animation state
-    const newState = !currentState.animations.parcels;
-    await sendAnimationToggle('parcels', newState);
-  });
-
-  // Initial state
-  updateAnimationButtonState();
-}
-
-/**
- * Update animation button enabled/disabled state
- */
-function updateAnimationButtonState() {
-  const animateBtn = document.getElementById('animateParcels');
-  if (!animateBtn) return;
-
-  const parcelsEnabled = currentState.layers.parcels;
-  animateBtn.disabled = !parcelsEnabled || !currentState.isConnected;
-
-  // Update active state
-  if (currentState.animations.parcels && parcelsEnabled) {
-    animateBtn.classList.add('active');
-  } else {
-    animateBtn.classList.remove('active');
-  }
-}
-
-/**
- * Send animation toggle via API
- */
-async function sendAnimationToggle(layerId, enabled) {
-  if (!currentState.isConnected) {
-    console.warn("[Remote] Cannot send animation toggle: not connected");
-    return;
-  }
-
-  try {
-    const result = await OTEFDataContext.toggleAnimation(layerId, enabled);
-    if (!result || !result.ok) {
-      throw result && result.error ? result.error : new Error("Animation toggle failed");
-    }
-    console.log(`[Remote] Animation toggle sent via DataContext: ${layerId} = ${enabled}`);
-  } catch (error) {
-    console.error("[Remote] Animation toggle failed:", error);
-  }
 }
 
 /**
@@ -372,8 +285,6 @@ function initializeJoystick() {
   joystickManager.on("start", handleJoystickStart);
   joystickManager.on("move", handleJoystickMove);
   joystickManager.on("end", handleJoystickEnd);
-
-  console.log("[Remote] Joystick initialized");
 }
 
 function handleJoystickStart(evt, data) {
@@ -388,13 +299,10 @@ function handleJoystickStart(evt, data) {
   if (navigator.vibrate) {
     navigator.vibrate(20);
   }
-
-  console.log("[Remote] Joystick activated");
 }
 
 function handleJoystickMove(evt, data) {
   if (!currentState.isConnected || activeControl !== "joystick") return;
-  console.log('[Remote] Joystick Move:', data.force.toFixed(2), data.angle.radian.toFixed(2));
 
   const force = Math.min(data.force, 1.5);
   if (force < 0.15) {
@@ -442,8 +350,6 @@ function handleJoystickEnd(evt, data) {
 
   // Send explicit stop command
   OTEFDataContext.sendVelocity(0, 0);
-
-  console.log("[Remote] Joystick released");
 }
 
 
@@ -465,11 +371,7 @@ function enableDPad() {
 
 function updateLayerCheckboxes() {
   const toggles = {
-    toggleRoads: "roads",
-    toggleParcels: "parcels",
     toggleModel: "model",
-    toggleMajorRoads: "majorRoads",
-    toggleSmallRoads: "smallRoads",
   };
 
   Object.entries(toggles).forEach(([id, layerName]) => {
@@ -489,9 +391,6 @@ function updateUI() {
 
   // Update layer checkboxes
   updateLayerCheckboxes();
-
-  // Update animation button state
-  updateAnimationButtonState();
 
   // Disable controls if not connected
   const controls = document.querySelectorAll(

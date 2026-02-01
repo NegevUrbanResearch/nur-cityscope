@@ -1,199 +1,162 @@
 /**
  * Layer visibility state management for the Leaflet GIS map.
- * Depends on global `map`, `layerState`, `parcelsLayer`, `roadsLayer`,
- * `modelOverlay`, `majorRoadsLayer`, `smallRoadsLayer`, and the async
- * loader helpers defined in `leaflet-control-with-basemap.js`.
+ * Vector layers use registry and layer groups.
  */
 
 /**
  * Apply layer state from API/notification.
+ * Legacy function - no longer used, all layers managed via layerGroups.
  */
 function applyLayerState(layers) {
-  let hasChanges = false;
-
-  // Update roads layer
-  if (layers.roads !== undefined && layers.roads !== layerState.roads) {
-    if (roadsLayer) {
-      if (layers.roads) {
-        map.addLayer(roadsLayer);
-      } else {
-        map.removeLayer(roadsLayer);
-      }
-    }
-    layerState.roads = layers.roads;
-    hasChanges = true;
-  }
-
-  // Update parcels layer
-  if (layers.parcels !== undefined && layers.parcels !== layerState.parcels) {
-    if (parcelsLayer) {
-      if (layers.parcels) {
-        map.addLayer(parcelsLayer);
-      } else {
-        map.removeLayer(parcelsLayer);
-      }
-    }
-    layerState.parcels = layers.parcels;
-    hasChanges = true;
-  }
-
-  // Update model layer
-  if (layers.model !== undefined && layers.model !== layerState.model) {
-    if (modelOverlay) {
-      if (layers.model) {
-        map.addLayer(modelOverlay);
-      } else {
-        map.removeLayer(modelOverlay);
-      }
-    }
-    layerState.model = layers.model;
-    hasChanges = true;
-  }
-
-  // Update majorRoads layer
-  if (layers.majorRoads !== undefined && layers.majorRoads !== layerState.majorRoads) {
-    if (layers.majorRoads && !majorRoadsLayer) {
-      loadMajorRoadsFromGeoJSON().then(() => {
-        if (majorRoadsLayer && layers.majorRoads) {
-          map.addLayer(majorRoadsLayer);
-          updateMapLegend();
-        }
-      });
-    } else if (majorRoadsLayer) {
-      if (layers.majorRoads) {
-        map.addLayer(majorRoadsLayer);
-      } else {
-        map.removeLayer(majorRoadsLayer);
-      }
-    }
-    layerState.majorRoads = layers.majorRoads;
-    hasChanges = true;
-  }
-
-  // Update smallRoads layer
-  if (layers.smallRoads !== undefined && layers.smallRoads !== layerState.smallRoads) {
-    if (layers.smallRoads && !smallRoadsLayer) {
-      loadSmallRoadsFromGeoJSON().then(() => {
-        if (smallRoadsLayer && layers.smallRoads) {
-          map.addLayer(smallRoadsLayer);
-          updateMapLegend();
-        }
-      });
-    } else if (smallRoadsLayer) {
-      if (layers.smallRoads) {
-        map.addLayer(smallRoadsLayer);
-      } else {
-        map.removeLayer(smallRoadsLayer);
-      }
-    }
-    layerState.smallRoads = layers.smallRoads;
-    hasChanges = true;
-  }
-
-  if (hasChanges) {
-    updateMapLegend();
-    console.log("[GIS Map] Layer state applied:", layerState);
-  }
+  // No-op: Legacy layers state is no longer used
+  console.warn('[Map] applyLayerState called with legacy layers state, ignoring');
 }
 
 /**
  * Handle layer update from remote controller.
- * GIS map is receive-only, so all updates come from remote.
+ * Legacy function - no longer used, all layers managed via layerGroups.
  */
 function handleLayerUpdate(msg) {
-  if (!validateLayerUpdate(msg)) {
-    console.warn("[GIS Map] Invalid layer update message:", msg);
-    return;
-  }
-
-  const layers = msg.layers;
-
-  // Check if there are any actual changes
-  const hasChanges =
-    (layers.roads !== undefined && layers.roads !== layerState.roads) ||
-    (layers.parcels !== undefined && layers.parcels !== layerState.parcels) ||
-    (layers.model !== undefined && layers.model !== layerState.model) ||
-    (layers.majorRoads !== undefined && layers.majorRoads !== layerState.majorRoads) ||
-    (layers.smallRoads !== undefined && layers.smallRoads !== layerState.smallRoads);
-
-  if (!hasChanges) {
-    console.log("[GIS Map] Layer update matches current state, ignoring");
-    return;
-  }
-
-  console.log("[GIS Map] Processing layer update from remote:", layers);
-
-  // Update layer visibility (GIS map is receive-only, no broadcasting)
-  if (layers.roads !== undefined && layers.roads !== layerState.roads) {
-    if (layers.roads) {
-      map.addLayer(roadsLayer);
-    } else {
-      map.removeLayer(roadsLayer);
-    }
-    layerState.roads = layers.roads;
-  }
-
-  if (layers.parcels !== undefined && layers.parcels !== layerState.parcels) {
-    if (layers.parcels) {
-      map.addLayer(parcelsLayer);
-    } else {
-      map.removeLayer(parcelsLayer);
-    }
-    layerState.parcels = layers.parcels;
-  }
-
-  if (layers.model !== undefined && layers.model !== layerState.model) {
-    if (layers.model) {
-      map.addLayer(modelOverlay);
-    } else {
-      map.removeLayer(modelOverlay);
-    }
-    layerState.model = layers.model;
-  }
-
-  // Update majorRoads layer
-  if (layers.majorRoads !== undefined && layers.majorRoads !== layerState.majorRoads) {
-    if (layers.majorRoads && !majorRoadsLayer) {
-      // Lazy load if needed
-      loadMajorRoadsFromGeoJSON().then(() => {
-        if (majorRoadsLayer && layers.majorRoads) {
-          map.addLayer(majorRoadsLayer);
-          updateMapLegend();
-        }
-      });
-    } else if (majorRoadsLayer) {
-      if (layers.majorRoads) {
-        map.addLayer(majorRoadsLayer);
-      } else {
-        map.removeLayer(majorRoadsLayer);
-      }
-    }
-    layerState.majorRoads = layers.majorRoads;
-  }
-
-  // Update smallRoads layer
-  if (layers.smallRoads !== undefined && layers.smallRoads !== layerState.smallRoads) {
-    if (layers.smallRoads && !smallRoadsLayer) {
-      // Lazy load if needed
-      loadSmallRoadsFromGeoJSON().then(() => {
-        if (smallRoadsLayer && layers.smallRoads) {
-          map.addLayer(smallRoadsLayer);
-          updateMapLegend();
-        }
-      });
-    } else if (smallRoadsLayer) {
-      if (layers.smallRoads) {
-        map.addLayer(smallRoadsLayer);
-      } else {
-        map.removeLayer(smallRoadsLayer);
-      }
-    }
-    layerState.smallRoads = layers.smallRoads;
-  }
-
-  // Update legend to show only active layers
-  updateMapLegend();
-
-  // GIS map is receive-only - no broadcasting needed
+  // No-op: Legacy layers updates are no longer used
+  console.warn('[Map] handleLayerUpdate called with legacy layers message, ignoring');
 }
 
+/**
+ * Apply layer groups state from API/notification.
+ * Handles the new hierarchical layer groups structure.
+ *
+ * Note: group.enabled acts as a "toggle all" shortcut, not a gate.
+ * Individual layers can be shown/hidden regardless of group.enabled state.
+ * When group.enabled changes, it sets all layers in the group to that state.
+ */
+let pendingLayerGroupsState = null;
+let layerRegistryInitPromise = null;
+
+function applyLayerGroupsState(layerGroups) {
+  if (!layerGroups || !Array.isArray(layerGroups)) {
+    console.warn("[GIS Map] Invalid layer groups state");
+    return;
+  }
+
+  if (typeof layerRegistry === "undefined") {
+    return;
+  }
+
+  if (!layerRegistry._initialized) {
+    pendingLayerGroupsState = layerGroups;
+    if (!layerRegistryInitPromise) {
+      layerRegistryInitPromise = layerRegistry
+        .init()
+        .then(() => {
+          const pending = pendingLayerGroupsState;
+          pendingLayerGroupsState = null;
+          layerRegistryInitPromise = null;
+          if (pending) {
+            applyLayerGroupsState(pending);
+          }
+        })
+        .catch(() => {
+          layerRegistryInitPromise = null;
+        });
+    }
+    return;
+  }
+
+  // Process each group - individual layer.enabled is the source of truth for visibility
+  for (const group of layerGroups) {
+    for (const layer of group.layers || []) {
+      // Usually we skip projector_base group (projector-only layers),
+      // but we want Tkuma_Area_LIne to render on GIS.
+      if (group.id === 'projector_base' && layer.id !== 'Tkuma_Area_LIne') {
+        continue;
+      }
+
+      const fullLayerId = `${group.id}.${layer.id}`;
+
+      if (layer.enabled) {
+        // Layer should be visible - load if needed, then show
+        if (typeof loadLayerFromRegistry === 'function') {
+          // Check if layer is already loaded - if so, just set visibility directly
+          if (typeof loadedLayersMap !== 'undefined' && loadedLayersMap.has(fullLayerId)) {
+            if (typeof updateLayerVisibilityFromRegistry === 'function') {
+              updateLayerVisibilityFromRegistry(fullLayerId, true);
+            }
+          } else {
+            // Layer not loaded yet, load it first
+            loadLayerFromRegistry(fullLayerId)
+              .then(() => {
+                if (typeof updateLayerVisibilityFromRegistry === 'function') {
+                  updateLayerVisibilityFromRegistry(fullLayerId, true);
+                }
+                updateMapLegend();
+              })
+              .catch((err) => {
+                console.error(`[GIS Map] Failed to load layer ${fullLayerId}:`, err);
+              });
+          }
+        }
+      } else {
+        // Layer is disabled, hide it
+        if (typeof updateLayerVisibilityFromRegistry === 'function') {
+          updateLayerVisibilityFromRegistry(fullLayerId, false);
+        }
+      }
+    }
+  }
+
+  // After processing the incoming state, reconcile *all* loaded layers against the
+  // centralized visibility rules (zoom + OTEFDataContext). This ensures that even
+  // if the incoming layerGroups payload is a partial/delta update, the final
+  // visible set on the map matches the current global state.
+  try {
+    if (
+      typeof loadedLayersMap !== 'undefined' &&
+      typeof VisibilityController !== 'undefined' &&
+      typeof LayerStateHelper !== 'undefined' &&
+      typeof updateLayerVisibilityFromRegistry === 'function'
+    ) {
+      const currentZoom = typeof map !== 'undefined' && typeof map.getZoom === 'function'
+        ? map.getZoom()
+        : null;
+
+      if (currentZoom !== null) {
+        for (const fullLayerId of loadedLayersMap.keys()) {
+          let scaleRange = null;
+          if (typeof layerRegistry !== 'undefined') {
+            const cfg = layerRegistry.getLayerConfig(fullLayerId);
+            if (cfg && cfg.style && cfg.style.scaleRange) {
+              scaleRange = cfg.style.scaleRange;
+            }
+          }
+
+          const state = LayerStateHelper.getLayerState(fullLayerId);
+
+          const allowed = VisibilityController.shouldLayerBeVisible({
+            fullLayerId,
+            scaleRange,
+            zoom: currentZoom,
+            layerStateHelper: LayerStateHelper
+          });
+
+          // Debug logging for sticky-visibility investigation
+          // Focus on land_use pack where we observed layers remaining visible.
+          if (fullLayerId.startsWith('land_use.')) {
+            console.log('[GIS Debug] reconcile layer', {
+              fullLayerId,
+              zoom: currentZoom,
+              scaleRange,
+              layerState: state,
+              allowed
+            });
+          }
+
+          updateLayerVisibilityFromRegistry(fullLayerId, allowed);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[GIS Map] Failed to reconcile loaded layers after state update:', err);
+  }
+
+  updateMapLegend();
+}

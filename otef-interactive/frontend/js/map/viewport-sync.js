@@ -36,12 +36,6 @@ function applyViewportFromAPI(viewport) {
   // Only update if significantly different (threshold to avoid echo)
   // Increased thresholds to reduce unnecessary updates, but still animate for smoothness
   if (centerDiff > 0.0005 || zoomDiff > 0.5) {
-    console.log(
-      `[GIS Map] Applying viewport: center=${centerLat.toFixed(4)},${centerLng.toFixed(
-        4
-      )} zoom=${zoom}`
-    );
-
     // Set flag to prevent feedback loop (don't broadcast this change back)
     window.isApplyingRemoteState = true;
     map.setView([centerLat, centerLng], zoom, { animate: true, duration: 0.25 });

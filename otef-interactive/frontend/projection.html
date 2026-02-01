@@ -10,30 +10,38 @@
         padding: 0;
         box-sizing: border-box;
       }
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
       body {
         overflow: hidden;
         background: #000;
       }
       #displayContainer {
         width: 100%;
-        height: 100vh;
+        height: 100%;
         position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: center;
       }
       #displayedImage {
-        max-width: 100%;
-        max-height: 100%;
-        object-fit: contain;
-      }
-      #layersOverlay {
         position: absolute;
-        pointer-events: none;
-        z-index: 5;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: fill;
       }
       /* Ensure crisp rendering for all canvas elements (projector output) */
       canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 5;
         image-rendering: crisp-edges;
         image-rendering: -webkit-optimize-contrast;
       }
@@ -142,7 +150,7 @@
     <div id="displayContainer">
       <img
         id="displayedImage"
-        src="data/model.png"
+        src=""
         alt="OTEF Model"
         style="opacity: 0"
       />
@@ -155,7 +163,6 @@
     <div id="instructions" class="hidden">
       <h3>OTEF Projection Display</h3>
       <p><strong>Keyboard Shortcuts:</strong></p>
-      <p><strong>D</strong> - Toggle debug overlay</p>
       <p><strong>H</strong> - Toggle this help</p>
       <p><strong>F</strong> - Toggle fullscreen</p>
       <p><strong>B</strong> - Toggle bounds editor</p>
@@ -171,18 +178,34 @@
       <button id="boundsCancelBtn" class="secondary">Cancel</button>
     </div>
 
+    <!-- Proj4 for coordinate transformations -->
+    <script src="https://unpkg.com/proj4@2.9.0/dist/proj4.js"></script>
+    <script>
+      // Define EPSG:2039 (Israel ITM) projection for WGS84 <-> ITM transformations
+      proj4.defs(
+        "EPSG:2039",
+        "+proj=tmerc +lat_0=31.73439361111111 +lon_0=35.20451694444445 +k=1.0000067 +x_0=219529.584 +y_0=626907.39 +ellps=GRS80 +towgs84=-24.0024,-17.1032,-17.8444,0.33077,-1.85269,1.66969,5.4248 +units=m +no_defs"
+      );
+    </script>
+    <script src="js/shared/logger.js"></script>
+    <script src="js/shared/map-projection-config.js"></script>
     <script src="js/map-utils/coordinate-utils.js"></script>
-    <script src="js/map-utils/vector-styling.js"></script>
-    <script src="js/map-utils/layer-loader.js"></script>
     <script src="js/projection/layer-renderer-canvas.js"></script>
-    <script src="js/projection/parcel-animator.js"></script>
-    <script src="js/map-utils/debug-overlay.js"></script>
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
     <script src="js/shared/api-client.js"></script>
+    <script src="js/shared/otef-data-context/index.js"></script>
+    <script src="js/shared/otef-data-context/OTEFDataContext-actions.js"></script>
+    <script src="js/shared/otef-data-context/OTEFDataContext-bounds.js"></script>
+    <script src="js/shared/otef-data-context/OTEFDataContext-websocket.js"></script>
     <script src="js/shared/OTEFDataContext.js"></script>
+    <script src="js/shared/layer-registry.js"></script>
+    <script src="js/shared/layer-state-helper.js"></script>
     <script src="js/shared/table-switcher.js"></script>
     <script src="js/shared/table-switcher-popup.js"></script>
+    <script src="js/map-utils/style-applicator.js"></script>
+    <script src="js/projection/projection-layer-manager.js"></script>
+    <script src="js/projection/projection-bounds-editor.js"></script>
     <script src="js/projection/projection-display.js"></script>
     <script>
       // Initialize table switcher

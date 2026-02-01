@@ -38,19 +38,27 @@
     <!-- Cartographic Legend (bottom right, shows only active layers) -->
     <div id="mapLegend" class="map-legend"></div>
 
-    <!-- Feature info popup (shown on tap) -->
-    <div id="featureInfo" class="panel hidden"></div>
-
+    <script src="js/shared/logger.js"></script>
+    <script src="js/shared/map-projection-config.js"></script>
+    <script src="js/shared/html-utils.js"></script>
     <script src="js/map-utils/coordinate-utils.js"></script>
-    <script src="js/map-utils/vector-styling.js"></script>
-    <script src="js/map-utils/layer-loader.js"></script>
-    <script src="js/map-utils/debug-overlay.js"></script>
+    <script src="js/map-utils/popup-renderer.js"></script>
+    <script src="js/map-utils/layer-factory.js"></script>
+    <script src="js/map-utils/visibility-utils.js"></script>
+    <script src="js/map-utils/visibility-controller.js"></script>
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
     <script src="js/shared/api-client.js"></script>
+    <script src="js/shared/otef-data-context/index.js"></script>
+    <script src="js/shared/otef-data-context/OTEFDataContext-actions.js"></script>
+    <script src="js/shared/otef-data-context/OTEFDataContext-bounds.js"></script>
+    <script src="js/shared/otef-data-context/OTEFDataContext-websocket.js"></script>
     <script src="js/shared/OTEFDataContext.js"></script>
+    <script src="js/shared/layer-registry.js"></script>
+    <script src="js/shared/layer-state-helper.js"></script>
     <script src="js/shared/table-switcher.js"></script>
     <script src="js/shared/table-switcher-popup.js"></script>
+    <script src="js/map-utils/style-applicator.js"></script>
     <script src="js/map/map-initialization.js"></script>
     <script src="js/map/leaflet-control-with-basemap.js"></script>
     <script src="js/map/layer-state-manager.js"></script>

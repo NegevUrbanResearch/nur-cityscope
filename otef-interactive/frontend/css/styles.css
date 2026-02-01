@@ -204,6 +204,51 @@ body {
     letter-spacing: 0.3px;
 }
 
+.map-legend-layer {
+    margin-top: 10px;
+}
+
+.map-legend-layer:first-child {
+    margin-top: 0;
+}
+
+.map-legend-layer-title {
+    font-weight: 600;
+    font-size: 11px;
+    color: #444;
+    margin-bottom: 6px;
+    letter-spacing: 0.2px;
+}
+
+.map-legend-symbol--polygon {
+    width: 24px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.map-legend-symbol--line {
+    width: 24px;
+    height: 4px;
+    border-radius: 0;
+    border: none;
+}
+
+.map-legend-symbol--point {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.map-legend-symbol--none {
+    width: 24px;
+    height: 16px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+}
+
 .map-legend-subitem {
     display: flex;
     align-items: center;
@@ -245,16 +290,99 @@ body {
     25%, 75% { opacity: 0.3; }
 }
 
-#featureInfo {
-    bottom: 10px;
-    top: auto;
-    left: 10px;
-    right: auto;
+/* Leaflet popup styles for layer feature popups */
+.leaflet-popup-content-wrapper {
+    border-radius: 8px;
+    padding: 0;
 }
 
-#featureInfo p {
-    margin: 5px 0;
+.leaflet-popup-content {
+    margin: 0;
+    padding: 12px 16px;
+    min-width: 200px;
+    max-width: 400px;
     font-size: 14px;
+    line-height: 1.5;
+}
+
+.popup-content {
+    direction: rtl;
+    text-align: right;
+}
+
+.popup-category {
+    font-size: 12px;
+    font-weight: 500;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.popup-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+}
+
+/* Add spacing and border when there are fields below the title */
+.popup-title + .popup-fields {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 2px solid #e0e0e0;
+}
+
+.popup-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.popup-field {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 4px 0;
+}
+
+.popup-label {
+    font-weight: 600;
+    color: #555;
+    min-width: 120px;
+    flex-shrink: 0;
+}
+
+.popup-value {
+    color: #333;
+    flex: 1;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* Empty state */
+.popup-content p {
+    margin: 0;
+    color: #888;
+    font-style: italic;
+}
+
+/* Mobile optimization for popups */
+@media (max-width: 768px) {
+    .leaflet-popup-content {
+        min-width: 180px;
+        max-width: calc(100vw - 40px);
+        padding: 10px 12px;
+        font-size: 13px;
+    }
+    
+    .popup-label {
+        min-width: 100px;
+        font-size: 13px;
+    }
 }
 
 /* Mobile optimization */

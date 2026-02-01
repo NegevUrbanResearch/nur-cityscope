@@ -81,67 +81,52 @@ if (Test-Path $logoSource) {
     }
 }
 
-# Setup OTEF Interactive module - PMTiles generation
-$pmtilesFile = "$SCRIPT_DIR\otef-interactive\frontend\data\parcels.pmtiles"
-if (-not (Test-Path $pmtilesFile)) {
-    Write-Host "Setting up OTEF PMTiles generation environment..." -ForegroundColor Cyan
-
-    $pythonCmd = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $pythonCmd) {
-        $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
-    }
+# Setup OTEF Interactive - process layer packs (process_layers.py)
+$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+if (-not $pythonCmd) {
+    $pythonCmd = Get-Command python3 -ErrorAction SilentlyContinue
+}
 
     if ($pythonCmd) {
-        # Create venv and install dependencies
-        $venvPath = "$SCRIPT_DIR\otef-interactive\scripts\.venv"
-        if (-not (Test-Path $venvPath)) {
-            Write-Host "Creating Python virtual environment for tile generation..." -ForegroundColor Gray
-            & $pythonCmd.Name -m venv "$venvPath"
-        }
+    $venvPath = "$SCRIPT_DIR\otef-interactive\scripts\.venv"
+    if (-not (Test-Path $venvPath)) {
+        Write-Host "Creating Python virtual environment for layer processing..." -ForegroundColor Gray
+        & $pythonCmd.Name -m venv "$venvPath"
+    }
 
-        # Install dependencies
-        Write-Host "Installing tile generation dependencies..." -ForegroundColor Gray
-        & "$venvPath\Scripts\pip" install pyproj pmtiles -q
+    # Ensure dependencies are installed
+    Write-Host "Ensuring dependencies are installed..." -ForegroundColor Gray
+    & "$venvPath\Scripts\python" -m pip install -q -r "$SCRIPT_DIR\otef-interactive\scripts\requirements.txt"
 
-        # Check if Docker is running for tile generation
-        $dockerRunning = docker info 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "Generating PMTiles for parcels layer..." -ForegroundColor Cyan
-            & "$venvPath\Scripts\python" "$SCRIPT_DIR\otef-interactive\scripts\generate-pmtiles.py"
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "Warning: PMTiles generation failed. Parcels will load slower via GeoJSON." -ForegroundColor Yellow
+    # Fetch source layers if needed
+    Write-Host "Fetching source layers if needed..." -ForegroundColor Cyan
+    & "$venvPath\Scripts\python" "$SCRIPT_DIR\otef-interactive\scripts\fetch_data.py" --output "$SCRIPT_DIR\otef-interactive\public\source"
+
+    $dockerRunning = docker info 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $manifestPath = "$SCRIPT_DIR\otef-interactive\public\processed\layers\layers-manifest.json"
+        $shouldProcess = $true
+        if (Test-Path $manifestPath) {
+            $manifestTime = (Get-Item $manifestPath).LastWriteTime
+            $sourceDir = "$SCRIPT_DIR\otef-interactive\public\source\layers"
+            $newerFiles = Get-ChildItem -Path $sourceDir -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -gt $manifestTime }
+            if ($null -eq $newerFiles -or $newerFiles.Count -eq 0) {
+                Write-Host "Layer packs already processed (manifest up to date), skipping..." -ForegroundColor Gray
+                $shouldProcess = $false
             }
-        } else {
-            Write-Host "Warning: Docker not running, skipping PMTiles generation" -ForegroundColor Yellow
+        }
+        if ($shouldProcess) {
+            Write-Host "Processing layer packs (process_layers.py)..." -ForegroundColor Cyan
+            & "$venvPath\Scripts\python" "$SCRIPT_DIR\otef-interactive\scripts\process_layers.py" `
+                --source "$SCRIPT_DIR\otef-interactive\public\source\layers" `
+                --output "$SCRIPT_DIR\otef-interactive\public\processed\layers"
         }
     } else {
-        Write-Host "Warning: Python not found, skipping PMTiles generation" -ForegroundColor Yellow
+        Write-Host "Warning: Docker not running, skipping layer pack processing" -ForegroundColor Yellow
     }
-}
-
-# Copy simplified layers to Django API public directory (where import command expects them)
-Write-Host "Copying OTEF simplified layers to Django API directory..." -ForegroundColor Cyan
-New-Item -ItemType Directory -Force -Path "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers" | Out-Null
-$migrashimSource = "$SCRIPT_DIR\otef-interactive\public\import\layers\migrashim_simplified.json"
-$roadsSource = "$SCRIPT_DIR\otef-interactive\public\import\layers\small_roads_simplified.json"
-$majorRoadsSource = "$SCRIPT_DIR\otef-interactive\public\source\layers\road-big.geojson"
-$smallRoadsSource = "$SCRIPT_DIR\otef-interactive\public\source\layers\Small-road-limited.geojson"
-$migrashimDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\migrashim_simplified.json"
-$roadsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\small_roads_simplified.json"
-$majorRoadsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\road-big.geojson"
-$smallRoadsDest = "$SCRIPT_DIR\nur-io\django_api\public\processed\otef\layers\Small-road-limited.geojson"
-
-if (Test-Path $migrashimSource) {
-    Copy-Item -Path $migrashimSource -Destination $migrashimDest -Force
-}
-if (Test-Path $roadsSource) {
-    Copy-Item -Path $roadsSource -Destination $roadsDest -Force
-}
-if (Test-Path $majorRoadsSource) {
-    Copy-Item -Path $majorRoadsSource -Destination $majorRoadsDest -Force
-}
-if (Test-Path $smallRoadsSource) {
-    Copy-Item -Path $smallRoadsSource -Destination $smallRoadsDest -Force
+} else {
+    Write-Host "Warning: Python not found, skipping layer pack processing" -ForegroundColor Yellow
 }
 
 # Copy model-bounds.json if it doesn't exist in Django API directory

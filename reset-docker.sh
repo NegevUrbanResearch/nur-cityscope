@@ -23,36 +23,49 @@ echo ""
 echo "✅ Reset complete!"
 echo ""
 
-# Regenerate PMTiles (before starting containers)
-echo "5️⃣  Setting up OTEF PMTiles..."
+# Process layer packs (before starting containers)
+echo "5️⃣  Setting up OTEF layer packs..."
 
-# Only generate PMTiles if they don't already exist
-if [ ! -f "otef-interactive/frontend/data/parcels.pmtiles" ]; then
-    # Create venv if it doesn't exist
-    VENV_PATH="otef-interactive/scripts/.venv"
-    if [ ! -d "$VENV_PATH" ]; then
-        echo "   Creating Python virtual environment..."
-        python3 -m venv "$VENV_PATH"
+VENV_PATH="otef-interactive/scripts/.venv"
+if [ ! -d "$VENV_PATH" ]; then
+    echo "   Creating Python virtual environment..."
+    python3 -m venv "$VENV_PATH"
+fi
+
+# Ensure dependencies are installed
+echo "   Ensuring dependencies are installed..."
+"$VENV_PATH/bin/python" -m pip install -q -r "otef-interactive/scripts/requirements.txt"
+
+# Fetch source layers if needed
+echo "   Fetching source layers if needed..."
+"$VENV_PATH/bin/python" "otef-interactive/scripts/fetch_data.py" --output "otef-interactive/public/source"
+
+
+if docker info >/dev/null 2>&1; then
+    MANIFEST_PATH="otef-interactive/public/processed/layers/layers-manifest.json"
+    # Only process if manifest doesn't exist or is older than source files
+    SHOULD_PROCESS=true
+    if [ -f "$MANIFEST_PATH" ]; then
+        MANIFEST_TIME=$(stat -f "%m" "$MANIFEST_PATH" 2>/dev/null || stat -c "%Y" "$MANIFEST_PATH" 2>/dev/null || echo "0")
+        SOURCE_DIR="otef-interactive/public/source/layers"
+        # Check if any source files are newer than manifest
+        if [ -d "$SOURCE_DIR" ]; then
+            NEWER_FILES=$(find "$SOURCE_DIR" -type f -newer "$MANIFEST_PATH" 2>/dev/null | wc -l)
+            if [ "$NEWER_FILES" -eq 0 ]; then
+                echo "   Layer packs already processed (manifest up to date), skipping..."
+                SHOULD_PROCESS=false
+            fi
+        fi
     fi
 
-    # Install dependencies
-    echo "   Ensuring tile generation dependencies..."
-    "$VENV_PATH/bin/pip" install pyproj pmtiles -q
-
-    # Check if Docker is running for tile generation
-    if docker info >/dev/null 2>&1; then
-        echo "   Generating PMTiles for parcels layer..."
-        "$VENV_PATH/bin/python" "otef-interactive/scripts/generate-pmtiles.py"
-        if [ $? -ne 0 ]; then
-            echo "   Warning: PMTiles generation failed. Parcels will load slower via GeoJSON."
-        else
-            echo "   PMTiles generated successfully."
-        fi
-    else
-        echo "   Warning: Docker not running, skipping PMTiles generation"
+    if [ "$SHOULD_PROCESS" = true ]; then
+        echo "   Processing layer packs (process_layers.py)..."
+        "$VENV_PATH/bin/python" "otef-interactive/scripts/process_layers.py" \
+            --source "otef-interactive/public/source/layers" \
+            --output "otef-interactive/public/processed/layers"
     fi
 else
-    echo "   PMTiles already exist, skipping generation"
+    echo "   Warning: Docker not running, skipping layer pack processing"
 fi
 
 echo "6️⃣  Rebuilding and starting containers..."

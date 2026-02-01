@@ -42,44 +42,47 @@ sleep 10
 echo "Ensuring logo is accessible in nginx container..."
 docker cp "$SCRIPT_DIR/nur-front/frontend/public/Nur-Logo_3x-_1_.svg" nginx-front:/usr/share/nginx/html/media/
 
-# Setup OTEF Interactive module - PMTiles generation
-if [ ! -f "$SCRIPT_DIR/otef-interactive/frontend/data/parcels.pmtiles" ]; then
-    echo "Setting up OTEF PMTiles generation environment..."
+# Setup OTEF Interactive - process layer packs (process_layers.py)
+VENV_PATH="$SCRIPT_DIR/otef-interactive/scripts/.venv"
+if [ ! -d "$VENV_PATH" ]; then
+    echo "Creating Python virtual environment for layer processing..."
+    python3 -m venv "$VENV_PATH"
+fi
 
-    # Create venv if not exists
-    VENV_PATH="$SCRIPT_DIR/otef-interactive/scripts/.venv"
-    if [ ! -d "$VENV_PATH" ]; then
-        echo "Creating Python virtual environment for tile generation..."
-        python3 -m venv "$VENV_PATH"
+# Ensure dependencies are installed
+echo "Ensuring dependencies are installed..."
+"$VENV_PATH/bin/python" -m pip install -q -r "$SCRIPT_DIR/otef-interactive/scripts/requirements.txt"
+
+# Fetch source layers if needed
+echo "Fetching source layers if needed..."
+"$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/fetch_data.py" --output "$SCRIPT_DIR/otef-interactive/public/source"
+
+
+if docker info >/dev/null 2>&1; then
+    MANIFEST_PATH="$SCRIPT_DIR/otef-interactive/public/processed/layers/layers-manifest.json"
+    # Only process if manifest doesn't exist or is older than source files
+    SHOULD_PROCESS=true
+    if [ -f "$MANIFEST_PATH" ]; then
+        MANIFEST_TIME=$(stat -f "%m" "$MANIFEST_PATH" 2>/dev/null || stat -c "%Y" "$MANIFEST_PATH" 2>/dev/null || echo "0")
+        SOURCE_DIR="$SCRIPT_DIR/otef-interactive/public/source/layers"
+        # Check if any source files are newer than manifest
+        if [ -d "$SOURCE_DIR" ]; then
+            NEWER_FILES=$(find "$SOURCE_DIR" -type f -newer "$MANIFEST_PATH" 2>/dev/null | wc -l)
+            if [ "$NEWER_FILES" -eq 0 ]; then
+                echo "Layer packs already processed (manifest up to date), skipping..."
+                SHOULD_PROCESS=false
+            fi
+        fi
     fi
 
-    # Install dependencies
-    echo "Installing tile generation dependencies..."
-    "$VENV_PATH/bin/pip" install pyproj pmtiles -q
-
-    # Check if Docker is running for tile generation
-    if docker info >/dev/null 2>&1; then
-        echo "Generating PMTiles for parcels layer..."
-        "$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/generate-pmtiles.py"
-    else
-        echo "Warning: Docker not running, skipping PMTiles generation"
+    if [ "$SHOULD_PROCESS" = true ]; then
+        echo "Processing layer packs (process_layers.py)..."
+        "$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/process_layers.py" \
+            --source "$SCRIPT_DIR/otef-interactive/public/source/layers" \
+            --output "$SCRIPT_DIR/otef-interactive/public/processed/layers"
     fi
-fi
-
-# Copy simplified layers to Django API public directory (where import command expects them)
-echo "Copying OTEF simplified layers to Django API directory..."
-mkdir -p "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/layers"
-if [ -f "$SCRIPT_DIR/otef-interactive/public/import/layers/migrashim_simplified.json" ]; then
-    cp "$SCRIPT_DIR/otef-interactive/public/import/layers/migrashim_simplified.json" "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/layers/"
-fi
-if [ -f "$SCRIPT_DIR/otef-interactive/public/import/layers/small_roads_simplified.json" ]; then
-    cp "$SCRIPT_DIR/otef-interactive/public/import/layers/small_roads_simplified.json" "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/layers/"
-fi
-if [ -f "$SCRIPT_DIR/otef-interactive/public/source/layers/road-big.geojson" ]; then
-    cp "$SCRIPT_DIR/otef-interactive/public/source/layers/road-big.geojson" "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/layers/"
-fi
-if [ -f "$SCRIPT_DIR/otef-interactive/public/source/layers/Small-road-limited.geojson" ]; then
-    cp "$SCRIPT_DIR/otef-interactive/public/source/layers/Small-road-limited.geojson" "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/layers/"
+else
+    echo "Warning: Docker not running, skipping layer pack processing"
 fi
 
 # Copy model-bounds.json if it doesn't exist in Django API directory

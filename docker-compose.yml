@@ -11,6 +11,7 @@ services:
       - nur-api_data:/app/data
       - media_files:/app/media # Share media files with nginx
       - ./otef-interactive/frontend/data:/app/otef-interactive/frontend/data # Mount model images
+      - ./otef-interactive/public:/app/public # Mount public directory for serving processed layer files
     depends_on:
       db:
         condition: service_healthy

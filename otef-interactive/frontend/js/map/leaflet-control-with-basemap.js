@@ -1,242 +1,439 @@
+console.log(`[Map] Initializing leaflet-control-with-basemap.js (v1.2-fixed-scale-rendering)`);
+
 /**
  * Leaflet-specific layer loaders for the GIS map.
- * These functions handle the Leaflet rendering side (creating L.geoJSON layers, PMTiles setup)
- * while delegating data fetching to the shared layer-loader.js helpers.
- * 
+ * Uses LayerRegistry and StyleApplicator only. Legacy road layers removed.
+ *
  * Depends on:
- * - map, layerState, parcelsLayer, roadsLayer, majorRoadsLayer, smallRoadsLayer (from map-initialization.js)
+ * - map, layerState, modelOverlay (from map-initialization.js)
  * - CoordUtils.transformGeojsonToWgs84 (from coordinate-utils.js)
- * - getRoadStyle, getMajorRoadStyle, getSmallRoadStyle, getLandUseColor (from vector-styling.js)
- * - loadAllLayerConfigs, loadGeojsonFromConfig (from layer-loader.js)
+ * - layerRegistry (from layer-registry.js)
+ * - StyleApplicator (from style-applicator.js)
  */
 
+// Store loaded layers by full layer ID (e.g., "map_3_future.mimushim")
+const loadedLayersMap = new Map();
+const missingLayerConfigs = new Set();
+
+// Store PMTiles layers with their configs for feature picking (global for map click handler)
+window.pmtilesLayersWithConfigs = window.pmtilesLayersWithConfigs || new Map();
+const pmtilesLayersWithConfigs = window.pmtilesLayersWithConfigs;
+
 /**
- * Load all GeoJSON layers in parallel using shared loader helpers.
+ * Helper: register a loaded layer with both internal map and window debug handle.
+ * @param {string} fullLayerId
+ * @param {Object} layerInstance
+ */
+function registerLoadedLayer(fullLayerId, layerInstance) {
+  if (!fullLayerId || !layerInstance) return;
+  const key = `layer_${fullLayerId.replace(/\./g, '_')}`;
+  window[key] = layerInstance;
+  loadedLayersMap.set(fullLayerId, layerInstance);
+}
+
+/**
+ * Helper: get a loaded layer instance by id.
+ * @param {string} fullLayerId
+ * @returns {Object|null}
+ */
+function getLoadedLayer(fullLayerId) {
+  return loadedLayersMap.get(fullLayerId) || null;
+}
+
+/**
+ * Helper: register a PMTiles layer for popup handling.
+ * Keeps the public window.pmtilesLayersWithConfigs API intact.
+ * @param {string} fullLayerId
+ * @param {Object} layerInstance
+ * @param {Object} layerConfig
+ * @param {Object} popupConfig
+ */
+function registerPmtilesPopupLayer(fullLayerId, layerInstance, layerConfig, popupConfig) {
+  if (!fullLayerId || !layerInstance || !popupConfig) return;
+  if (!window.pmtilesLayersWithConfigs) {
+    window.pmtilesLayersWithConfigs = new Map();
+  }
+  window.pmtilesLayersWithConfigs.set(fullLayerId, {
+    layer: layerInstance,
+    config: layerConfig,
+    popupConfig
+  });
+}
+
+/**
+ * Load all layers from the layer registry (layer groups only).
  */
 async function loadGeoJSONLayers() {
-  console.log("Loading layers...");
-
-  const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-
+  if (typeof layerRegistry === 'undefined') return;
   try {
-    // Use shared helper to fetch all layer configs
-    const layers = await loadAllLayerConfigs(tableName);
-
-    // Start all layer downloads in parallel
-    // We pass the layer config object to the loader functions so they don't need to fetch it again
-    await Promise.all([
-      loadParcelsFromPMTiles(layers.find(l => l.name === 'parcels')),
-      loadRoadsFromGeoJSON(layers.find(l => l.name === 'roads')),
-      loadMajorRoadsFromGeoJSON(layers.find(l => l.name === 'majorRoads')),
-      loadSmallRoadsFromGeoJSON(layers.find(l => l.name === 'smallRoads'))
-    ]);
-
+    await layerRegistry.init();
+    if (layerRegistry._initialized) {
+      await loadLayerGroups();
+    }
     updateMapLegend();
-    console.log("All layers loaded successfully");
-
   } catch (error) {
-    console.error("Critical error during layer loading:", error);
+    console.error("[Map] Critical error during layer loading:", error);
   }
 }
 
 /**
- * Load parcels layer from PMTiles (vector tiles for performance)
+ * Load all layers from the new layer groups system.
  */
-async function loadParcelsFromPMTiles(layerConfig) {
-  console.log("Loading parcels from PMTiles...");
+async function loadLayerGroups() {
+  if (!layerRegistry || !layerRegistry._initialized) {
+    console.warn("[Map] Layer registry not initialized");
+    return;
+  }
 
-  try {
-    // Create paint rules for protomaps-leaflet
-    // Each rule colors parcels based on TARGUMYEUD or KVUZ_TRG property
-    const paintRules = [
-      {
-        dataLayer: "parcels",
-        symbolizer: new protomapsL.PolygonSymbolizer({
-          fill: (zoom, feature) => {
-            const landUse = feature.props?.TARGUMYEUD || feature.props?.KVUZ_TRG || '';
-            // Delegate to shared land-use color helper from vector-styling.js
-            if (typeof getLandUseColor === 'function') {
-              return getLandUseColor(landUse);
-            }
-            // Very conservative fallback if helper is unavailable for some reason
-            return '#E0E0E0';
-          },
-          stroke: "#333333",
-          width: 0.5,
-          opacity: 0.5,  // Transparency to see map beneath
-        })
+  const groups = layerRegistry.getGroups();
+
+  // Load all layers from all groups, excluding projector_base (projector-only layers)
+  const loadPromises = [];
+  for (const group of groups) {
+    // Usually we skip projector_base group (projector-only layers),
+    // but we want Tkuma_Area_LIne to render on GIS.
+    for (const layer of group.layers || []) {
+      if (group.id === 'projector_base' && layer.id !== 'Tkuma_Area_LIne') {
+        continue;
       }
-    ];
+      const fullLayerId = `${group.id}.${layer.id}`;
+      loadPromises.push(loadLayerFromRegistry(fullLayerId));
+    }
+  }
 
-    // Create vector tile layer from local PMTiles file
-    parcelsLayer = protomapsL.leafletLayer({
-      url: 'data/parcels.pmtiles',
-      paintRules: paintRules,
-      labelRules: [],
-      minZoom: 9,
-      minDataZoom: 9,
-      maxDataZoom: 18,
-      attribution: 'OTEF Parcels',
-    });
+  await Promise.all(loadPromises);
+}
 
-    window.parcelsLayer = parcelsLayer;
+/**
+ * Load a single layer from the layer registry.
+ * @param {string} fullLayerId - Full layer ID (e.g., "map_3_future.mimushim")
+ */
+async function loadLayerFromRegistry(fullLayerId) {
+  if (loadedLayersMap.has(fullLayerId)) {
+    // Skip already loaded layers silently
+    return;
+  }
 
-    // Check state - if enabled, add to map immediately
-    if (layerState.parcels) {
-      map.addLayer(parcelsLayer);
+  if (!layerRegistry || !layerRegistry._initialized) {
+    return;
+  }
+
+  const layerConfig = layerRegistry.getLayerConfig(fullLayerId);
+  if (!layerConfig) {
+    if (!missingLayerConfigs.has(fullLayerId)) {
+      missingLayerConfigs.add(fullLayerId);
+      console.warn(`[Map] Layer config not found: ${fullLayerId}`);
+    }
+    return;
+  }
+
+  try {
+    // Prefer PMTiles for GIS if available, fallback to GeoJSON
+    const pmtilesUrl = layerRegistry.getLayerPMTilesUrl(fullLayerId);
+    const geojsonUrl = layerRegistry.getLayerDataUrl(fullLayerId);
+
+    console.log(`[Map] Loading layer ${fullLayerId}: pmtiles=${pmtilesUrl}, geojson=${geojsonUrl}`);
+
+    if (fullLayerId.includes('שבילי_אופניים')) {
+      console.log(`[Map Debug] Layer Config for ${fullLayerId}:`, JSON.stringify(layerConfig, null, 2));
     }
 
-    console.log("Parcels layer ready (PMTiles)");
+    if (pmtilesUrl) {
+      // Use PMTiles for better performance in GIS
+      console.log(`[Map] Using PMTiles for ${fullLayerId}`);
+      await loadPMTilesLayer(fullLayerId, layerConfig, pmtilesUrl);
+    } else if (geojsonUrl) {
+      // Fallback to GeoJSON
+      await loadGeoJSONLayer(fullLayerId, layerConfig, geojsonUrl);
+    } else {
+      console.warn(`[Map] No data URL for layer: ${fullLayerId}`);
+      return;
+    }
+
+    // Layer is stored in loadedLayersMap by loadPMTilesLayer or loadGeoJSONLayer
+    // Don't set it to true here - wait for the actual layer object
   } catch (error) {
-    console.error("Error loading parcels from PMTiles:", error);
-    // Fallback: parcels layer unavailable
-    parcelsLayer = null;
+    console.error(`[Map] Error loading layer ${fullLayerId}:`, error);
   }
 }
 
 /**
- * Load roads layer from GeoJSON (small layer, simple approach)
- * Uses shared layer-loader.js helpers for data fetching.
+ * Load a GeoJSON layer from the registry.
  */
-async function loadRoadsFromGeoJSON(layerConfig) {
-  // If config not provided (legacy call), fetch it using shared helper
-  if (!layerConfig) {
-    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-    try {
-      layerConfig = await loadLayerConfig(tableName, 'roads');
-    } catch(e) { 
-      console.warn("Failed to fetch legacy layer config", e); 
-    }
-  }
-
-  if (!layerConfig) {
-    console.warn("Roads layer configuration not found");
-    return;
-  }
-
-  console.log("Loading roads from GeoJSON...");
-
+async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
   try {
-    // Use shared helper to resolve config to GeoJSON
-    const geojson = await loadGeojsonFromConfig(layerConfig);
-
-    console.log(`Roads: ${geojson.features?.length || 0} features, transforming...`);
-    
-    // Transform from EPSG:2039 to WGS84 using shared coordinate utils
-    const transformed = CoordUtils.transformGeojsonToWgs84(geojson);
-
-    roadsLayer = L.geoJSON(transformed, {
-      // Use shared road styling from vector-styling.js (single source of truth)
-      style: getRoadStyle,
-    });
-
-    window.roadsLayer = roadsLayer;
-
-    // Check state - if enabled, add to map immediately
-    if (layerState.roads) {
-      map.addLayer(roadsLayer);
+    const response = await fetch(dataUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load layer data: ${response.status}`);
     }
 
-    console.log("Roads layer ready (GeoJSON)");
+    let geojson = await response.json();
+
+    // Check CRS and transform to WGS84 if needed
+    // Processed layers should already be in WGS84, but handle edge cases
+    const crs = geojson.crs?.properties?.name || '';
+    if (crs.includes('2039') || crs.includes('ITM')) {
+      // Transform from EPSG:2039 (ITM) to WGS84
+      geojson = CoordUtils.transformGeojsonToWgs84(geojson);
+    } else if (crs.includes('3857') || crs.includes('Web Mercator')) {
+      // Transform from EPSG:3857 (Web Mercator) to WGS84
+      geojson = CoordUtils.transformGeojsonFrom3857ToWgs84(geojson);
+    }
+    // If already WGS84 or no CRS (assume WGS84), no transformation needed
+
+    // Create Leaflet layer (style + popups) via LayerFactory
+    const leafletLayer = typeof LayerFactory !== 'undefined'
+      ? LayerFactory.createGeoJsonLayer({
+          fullLayerId,
+          layerConfig,
+          geojson,
+          map
+        })
+      : null;
+
+    if (!leafletLayer) {
+      console.warn(`[Map] Failed to create GeoJSON layer for ${fullLayerId}`);
+      return;
+    }
+
+    // Apply minScale/maxScale visibility based on zoom level
+    const scaleRange = layerConfig.style?.scaleRange;
+    if (scaleRange) {
+      const minScale = scaleRange.minScale;
+      const maxScale = scaleRange.maxScale;
+
+      // Prefer shared visibility-utils conversion when available
+      const convertScaleToZoom = (scale) => {
+        if (!scale) return null;
+        if (typeof VisibilityUtils !== 'undefined' && typeof VisibilityUtils.scaleToZoom === 'function') {
+          return VisibilityUtils.scaleToZoom(scale);
+        }
+        // Fallback to legacy inline formula (kept for safety)
+        return Math.log2(591657550 / scale);
+      };
+
+      const minZoom = convertScaleToZoom(minScale);
+      const maxZoom = convertScaleToZoom(maxScale);
+
+      if (typeof MapProjectionConfig !== 'undefined' && MapProjectionConfig.ENABLE_MAP_VISIBILITY_DEBUG) {
+        console.log(
+          `[Map] Scale range for ${fullLayerId}: scale[${minScale || '-'}, ${maxScale || '-'}] -> zoom[${minZoom?.toFixed(1) || '-'}, ${maxZoom?.toFixed(1) || '-'}]`
+        );
+      }
+
+      try {
+        if (leafletLayer.setZIndex) leafletLayer.setZIndex(1000);
+      } catch (e) { }
+
+      // Also handle visibility on zoom change using visibility controller
+      const updateLayerVisibility = () => {
+        const currentZoom = map.getZoom();
+
+        if (typeof VisibilityController !== 'undefined' && typeof LayerStateHelper !== 'undefined') {
+          const allowed = VisibilityController.shouldLayerBeVisible({
+            fullLayerId,
+            scaleRange,
+            zoom: currentZoom,
+            layerStateHelper: LayerStateHelper
+          });
+
+          if (!allowed) {
+            if (map.hasLayer(leafletLayer)) {
+              console.log(`[Map] Hiding ${fullLayerId} at zoom ${currentZoom.toFixed(1)} (range ${minZoom?.toFixed(1)||'-'} to ${maxZoom?.toFixed(1)||'-'})`);
+              map.removeLayer(leafletLayer);
+            }
+          } else if (!map.hasLayer(leafletLayer)) {
+            console.log(`[Map] Showing ${fullLayerId} at zoom ${currentZoom.toFixed(1)}`);
+            map.addLayer(leafletLayer);
+          }
+        }
+      };
+
+      map.on('zoomend', updateLayerVisibility);
+      updateLayerVisibility(); // Initial check
+    } else {
+      // No scale restrictions - use normal visibility logic
+      if (typeof LayerStateHelper !== 'undefined') {
+        const state = LayerStateHelper.getLayerState(fullLayerId);
+        if (state && state.enabled) {
+          map.addLayer(leafletLayer);
+        }
+      }
+    }
+
+    // Store layer reference
+    registerLoadedLayer(fullLayerId, leafletLayer);
+
+    // Initial addition to map if enabled and in range
+    if (typeof VisibilityController !== 'undefined' && typeof LayerStateHelper !== 'undefined') {
+      const currentZoom = map.getZoom();
+      const allowed = VisibilityController.shouldLayerBeVisible({
+        fullLayerId,
+        scaleRange,
+        zoom: currentZoom,
+        layerStateHelper: LayerStateHelper
+      });
+
+      if (typeof MapProjectionConfig !== 'undefined' && MapProjectionConfig.ENABLE_MAP_VISIBILITY_DEBUG) {
+        const minZ = scaleRange && scaleRange.minScale ? convertScaleToZoom(scaleRange.minScale) : null;
+        const maxZ = scaleRange && scaleRange.maxScale ? convertScaleToZoom(scaleRange.maxScale) : null;
+        console.log(
+          `[Map] Visibility Check ${fullLayerId}: Zoom=${currentZoom.toFixed(2)}, Range=[${minZ?.toFixed(2) || '-'}, ${maxZ?.toFixed(2) || '-'}], Visible=${allowed}`
+        );
+      }
+
+      if (allowed) {
+        map.addLayer(leafletLayer);
+      }
+    }
   } catch (error) {
-    console.error("Error loading roads:", error);
+    console.error(`[Map] Error loading GeoJSON layer ${fullLayerId}:`, error);
+    throw error;
   }
 }
 
 /**
- * Load major roads layer from GeoJSON file (road-big.geojson)
- * Data is in EPSG:2039, needs transformation
- * Uses shared layer-loader.js helpers for data fetching.
+ * Load a PMTiles layer from the registry.
  */
-async function loadMajorRoadsFromGeoJSON(layerConfig) {
-  // If config not provided (legacy call), fetch it using shared helper
-  if (!layerConfig) {
-    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-    try {
-      layerConfig = await loadLayerConfig(tableName, 'majorRoads');
-    } catch(e) { 
-      console.warn("Failed to fetch legacy layer config", e); 
-    }
-  }
-
-  if (!layerConfig) {
-    console.warn("Major roads layer configuration not found");
-    return;
-  }
-
-  console.log("Loading major roads from GeoJSON...");
-
+async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
   try {
-    // Use shared helper to resolve config to GeoJSON
-    const geojson = await loadGeojsonFromConfig(layerConfig);
 
-    console.log(`Major roads: ${geojson.features?.length || 0} features, transforming...`);
+    // Create vector tile layer from PMTiles file with custom pane for z-ordering
+    const pmtilesLayer = typeof LayerFactory !== 'undefined'
+      ? LayerFactory.createPmtilesLayer({
+          fullLayerId,
+          layerConfig,
+          dataUrl
+        })
+      : null;
 
-    // Transform from EPSG:2039 to WGS84 using shared coordinate utils
-    const transformed = CoordUtils.transformGeojsonToWgs84(geojson);
-
-    majorRoadsLayer = L.geoJSON(transformed, {
-      // Use shared major road styling from vector-styling.js
-      style: getMajorRoadStyle,
-    });
-
-    window.majorRoadsLayer = majorRoadsLayer;
-
-    // Check state - if enabled, add to map immediately
-    if (layerState.majorRoads) {
-      map.addLayer(majorRoadsLayer);
+    if (!pmtilesLayer) {
+      console.warn(`[Map] Failed to create PMTiles layer for ${fullLayerId}`);
+      return;
     }
 
-    console.log("Major roads layer ready (GeoJSON)");
+    // Apply scale ranges if present
+    const scaleRange = layerConfig.style?.scaleRange;
+    if (scaleRange) {
+      const getZoomFromScale = (scale) => scale ? Math.log2(591657550 / scale) : null;
+      const minZoom = getZoomFromScale(scaleRange.minScale);
+      const maxZoom = getZoomFromScale(scaleRange.maxScale);
+
+      const updatePmtilesVisibility = () => {
+        const currentZoom = map.getZoom();
+
+        if (typeof VisibilityController !== 'undefined' && typeof LayerStateHelper !== 'undefined') {
+          const allowed = VisibilityController.shouldLayerBeVisible({
+            fullLayerId,
+            scaleRange,
+            zoom: currentZoom,
+            layerStateHelper: LayerStateHelper
+          });
+
+          if (!allowed) {
+            if (map.hasLayer(pmtilesLayer)) map.removeLayer(pmtilesLayer);
+          } else if (!map.hasLayer(pmtilesLayer)) {
+            map.addLayer(pmtilesLayer);
+          }
+        }
+      };
+
+      map.on('zoomend', updatePmtilesVisibility);
+      // Initial check will be handled by the context listener or below
+    }
+
+    // Register with global map click handler for popups if config exists
+    const popupConfig = layerConfig.ui?.popup;
+    if (popupConfig) {
+      console.log(`[Map] Registering PMTiles layer ${fullLayerId} for popups`);
+      registerPmtilesPopupLayer(fullLayerId, pmtilesLayer, layerConfig, popupConfig);
+    }
+
+    // Store layer reference
+    registerLoadedLayer(fullLayerId, pmtilesLayer);
+
+    // Initial addition to map if enabled (and in range)
+    if (typeof VisibilityController !== 'undefined' && typeof LayerStateHelper !== 'undefined') {
+      const currentZoom = map.getZoom();
+      const allowed = VisibilityController.shouldLayerBeVisible({
+        fullLayerId,
+        scaleRange,
+        zoom: currentZoom,
+        layerStateHelper: LayerStateHelper
+      });
+
+      if (allowed) {
+        map.addLayer(pmtilesLayer);
+      }
+    }
   } catch (error) {
-    console.error("Error loading major roads:", error);
+    console.error(`[Map] Error loading PMTiles layer ${fullLayerId}:`, error);
   }
 }
 
 /**
- * Load small roads layer from GeoJSON file (Small-road-limited.geojson)
- * Data is already in WGS84, no transformation needed
- * Uses shared layer-loader.js helpers for data fetching.
+ * Update layer visibility for a layer from the registry.
+ * @param {string} fullLayerId - Full layer ID
+ * @param {boolean} visible - Whether layer should be visible
  */
-async function loadSmallRoadsFromGeoJSON(layerConfig) {
-  // If config not provided (legacy call), fetch it using shared helper
-  if (!layerConfig) {
-    const tableName = window.tableSwitcher?.getCurrentTable() || 'otef';
-    try {
-      layerConfig = await loadLayerConfig(tableName, 'smallRoads');
-    } catch(e) { 
-      console.warn("Failed to fetch legacy layer config", e); 
-    }
-  }
-
-  if (!layerConfig) {
-    console.warn("Small roads layer configuration not found");
+function updateLayerVisibilityFromRegistry(fullLayerId, visible) {
+  const layer = getLoadedLayer(fullLayerId);
+  if (!layer) {
+    // Layer may not be loaded yet - this is normal during initial load
     return;
   }
 
-  console.log("Loading small roads from GeoJSON...");
+      if (visible) {
+    if (!map.hasLayer(layer)) {
+      // Check scale/zoom constraints before adding
+      if (!layer.options) layer.options = {}; // Ensure options exist
 
-  try {
-    // Use shared helper to resolve config to GeoJSON
-    const geojson = await loadGeojsonFromConfig(layerConfig);
+      // We need access to the config to check scaleRange.
+      // The layer object itself doesn't easily expose the original config unless we stored it.
+      // But we can check if the layer has zIndex of 1000 (which we set for scaled layers)
+      // or try to find it in loaded configs.
 
-    console.log(`Small roads: ${geojson.features?.length || 0} features`);
+      // Better approach: Re-evaluate the scale check logic here.
+      // We stored the layer in loadedLayersMap. Check if we can get the config.
+      // NOTE: loadedLayersMap only stores the Leaflet layer instance.
 
-    // Already in WGS84, no transformation needed
-    smallRoadsLayer = L.geoJSON(geojson, {
-      // Use shared small road styling from vector-styling.js
-      style: getSmallRoadStyle,
-    });
+      // Let's retrieve the config from the registry again to be safe.
+      let inRange = true;
+      if (typeof layerRegistry !== 'undefined') {
+        const config = layerRegistry.getLayerConfig(fullLayerId);
+          if (config && config.style && config.style.scaleRange) {
+            const currentZoom = map.getZoom();
+            const convertScaleToZoom = (scale) => {
+              if (!scale) return null;
+              if (typeof VisibilityUtils !== 'undefined' && typeof VisibilityUtils.scaleToZoom === 'function') {
+                return VisibilityUtils.scaleToZoom(scale);
+              }
+              return Math.log2(591657550 / scale);
+            };
 
-    window.smallRoadsLayer = smallRoadsLayer;
+            const minZ = convertScaleToZoom(config.style.scaleRange.minScale);
+            const maxZ = convertScaleToZoom(config.style.scaleRange.maxScale);
 
-    // Check state - if enabled, add to map immediately
-    if (layerState.smallRoads) {
-      map.addLayer(smallRoadsLayer);
+            if (minZ !== null && currentZoom < minZ) inRange = false;
+            if (maxZ !== null && currentZoom > maxZ) inRange = false;
+
+            if (!inRange && typeof MapProjectionConfig !== 'undefined' && MapProjectionConfig.ENABLE_MAP_VISIBILITY_DEBUG) {
+              console.log(
+                `[Map] Skipping addLayer for ${fullLayerId} (Zoom ${currentZoom.toFixed(1)} out of range [${minZ?.toFixed(1) || '-'}, ${maxZ?.toFixed(1) || '-'}])`
+              );
+            }
+          }
+      }
+
+      if (inRange) {
+        map.addLayer(layer);
+      }
     }
-
-    console.log("Small roads layer ready (GeoJSON)");
-  } catch (error) {
-    console.error("Error loading small roads:", error);
+  } else {
+    if (map.hasLayer(layer)) {
+      map.removeLayer(layer);
+    }
   }
 }
+
+

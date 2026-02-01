@@ -133,3 +133,20 @@ calculations/export/*
 otef-interactive/frontend/data/*.mbtiles
 otef-interactive/playground
 nur-io/django_api/backend/migrations/
+
+# OTEF source files (ignored, but folder structure preserved with .gitkeep)
+# Ignore all files in source directory, but allow .gitkeep files and popup-config.json
+otef-interactive/public/source/**/*
+!otef-interactive/public/source/
+!otef-interactive/public/source/**/
+!otef-interactive/public/source/.gitkeep
+!otef-interactive/public/source/**/.gitkeep
+!otef-interactive/public/source/popup-config.json
+
+# Processed layers (Heavy files, share via GitHub Releases)
+otef-interactive/public/processed/**/*
+!otef-interactive/public/processed/
+!otef-interactive/public/processed/**/
+!otef-interactive/public/processed/.gitkeep
+!otef-interactive/public/processed/**/.gitkeep
+otef-interactive/public/*.zip

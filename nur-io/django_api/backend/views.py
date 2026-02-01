@@ -21,6 +21,8 @@ from .models import (
     GISLayer,
     OTEFModelConfig,
     OTEFViewportState,
+    LayerGroup,
+    LayerState,
 )
 
 from .serializers import (
@@ -34,6 +36,8 @@ from .serializers import (
     GISLayerSerializer,
     OTEFModelConfigSerializer,
     OTEFViewportStateSerializer,
+    LayerGroupSerializer,
+    LayerStateSerializer,
 )
 
 
@@ -266,7 +270,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'table': table_name,
                     }
                 }
-            elif field == 'layers':
+            elif field == 'layers' or field == 'layerGroups':
                 message = {
                     'type': 'broadcast_message',
                     'message': {
@@ -341,6 +345,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 state.layers = request.data['layers']
                 changed_fields.append('layers')
 
+            # Handle new layerGroups structure
+            if 'layerGroups' in request.data:
+                self._update_layer_groups(table, request.data['layerGroups'])
+                changed_fields.append('layerGroups')
+
             if 'animations' in request.data:
                 state.animations = request.data['animations']
                 changed_fields.append('animations')
@@ -357,19 +366,81 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             # Broadcast notifications for each changed field
             self._broadcast_state_change(table_name, changed_fields)
 
-        # Return state with defaults applied
+        # Return state with defaults applied (for both GET and PATCH)
         response_data = {
             'id': state.id,
             'table': table.id,
             'table_name': table_name,
             'viewport': state.get_viewport_with_defaults(),
-            'layers': state.get_layers_with_defaults(),
+            'layers': state.get_layers_with_defaults(),  # Keep for backward compatibility
+            'layerGroups': self._get_layer_groups(table),
             'animations': state.get_animations_with_defaults(),
             'bounds_polygon': state.get_bounds_polygon(),
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
         return Response(response_data)
+
+    def _update_layer_groups(self, table, layer_groups_data):
+        """Update layer groups and layer states from request data."""
+        for group_data in layer_groups_data:
+            group_id = group_data.get('id')
+            if not group_id:
+                continue
+
+            # Get or create group
+            group, _ = LayerGroup.objects.get_or_create(
+                table=table,
+                group_id=group_id,
+                defaults={'enabled': group_data.get('enabled', False)}
+            )
+            group.enabled = group_data.get('enabled', False)
+            group.save()
+
+            # Update layer states
+            layers = group_data.get('layers', [])
+            for layer_data in layers:
+                layer_id = layer_data.get('id')
+                if not layer_id:
+                    continue
+
+                full_layer_id = f"{group_id}.{layer_id}"
+                layer_state, _ = LayerState.objects.get_or_create(
+                    table=table,
+                    layer_id=full_layer_id,
+                    defaults={'enabled': layer_data.get('enabled', False)}
+                )
+                layer_state.enabled = layer_data.get('enabled', False)
+                layer_state.save()
+
+    def _get_layer_groups(self, table):
+        """Get hierarchical layer groups structure for a table."""
+        groups = LayerGroup.objects.filter(table=table).order_by('group_id')
+        result = []
+
+        for group in groups:
+            # Get all layer states for this group
+            layer_states = LayerState.objects.filter(
+                table=table,
+                layer_id__startswith=f"{group.group_id}."
+            ).order_by('layer_id')
+
+            layers = []
+            for layer_state in layer_states:
+                # Extract layer_id from full layer_id (remove group_id prefix)
+                layer_id = layer_state.layer_id.replace(f"{group.group_id}.", "", 1)
+                layers.append({
+                    'id': layer_id,
+                    'enabled': layer_state.enabled
+                })
+
+            result.append({
+                'id': group.group_id,
+                'enabled': group.enabled,
+                'layers': layers
+            })
+
+        return result
 
     @action(detail=False, methods=['post'], url_path='by-table/(?P<table_name>[^/.]+)/command')
     def command(self, request, table_name=None):
@@ -393,6 +464,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         )
 
         action = request.data.get('action')
+
+        # Support base_viewport to prevent snapback during rapid movements
+        base_viewport = request.data.get('base_viewport')
+        if base_viewport:
+            state.viewport = base_viewport
 
         if action == 'pan':
             direction = request.data.get('direction', 'north')
