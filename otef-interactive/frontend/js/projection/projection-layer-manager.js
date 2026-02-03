@@ -5,6 +5,7 @@
   let getModelBounds = null;
   let getDisplayedImageBounds = null;
   let canvasRenderer = null;
+  let wmtsRenderer = null;
 
   const loadedLayers = {};
 
@@ -26,6 +27,12 @@
   function updateLayerVisibility(layerId, visible) {
     if (canvasRenderer) {
       canvasRenderer.setLayerVisibility(layerId, visible);
+    }
+  }
+
+  function updateWmtsVisibility(visible) {
+    if (wmtsRenderer) {
+      wmtsRenderer.setVisible(visible);
     }
   }
 
@@ -51,6 +58,19 @@
     } catch (error) {
       console.error("[Projection] Failed to create Canvas renderer:", error);
       return;
+    }
+
+    // Create WMTS layer renderer (satellite imagery etc.)
+    try {
+      if (typeof WmtsLayerRenderer !== "undefined") {
+        wmtsRenderer = new WmtsLayerRenderer("displayContainer");
+        const displayBounds = getDisplayBoundsSafe();
+        if (displayBounds) {
+          wmtsRenderer.updatePosition(displayBounds, modelBounds);
+        }
+      }
+    } catch (error) {
+      console.warn("[Projection] WMTS renderer not available:", error);
     }
 
     // Initialize layer registry if available
@@ -132,9 +152,27 @@
     }
 
     // Handle image layers differently (they don't have GeoJSON data)
-    if (layerConfig.format === 'image') {
-      console.log(`[Projection] Skipping image layer ${fullLayerId} (rendered via <img> element)`);
-      loadedLayers[fullLayerId] = { type: 'image' };
+    if (layerConfig.format === "image") {
+      console.log(
+        `[Projection] Skipping image layer ${fullLayerId} (rendered via <img> element)`
+      );
+      loadedLayers[fullLayerId] = { type: "image" };
+      return;
+    }
+
+    // Handle WMTS layers (tile imagery)
+    if (layerConfig.format === "wmts") {
+      if (wmtsRenderer && layerConfig.wmts) {
+        wmtsRenderer.setLayer(fullLayerId, layerConfig);
+        wmtsRenderer.setVisible(true);
+        const displayBounds = getDisplayBoundsSafe();
+        const modelBounds = getModelBoundsSafe();
+        if (displayBounds && modelBounds) {
+          wmtsRenderer.updatePosition(displayBounds, modelBounds);
+        }
+        loadedLayers[fullLayerId] = { type: "wmts" };
+        console.log(`[Projection] WMTS layer loaded: ${fullLayerId}`);
+      }
       return;
     }
 
@@ -164,10 +202,10 @@
       let isWgs84 = false;
 
       if (firstCoord) {
-          // If x < 1000 and y < 1000, it's definitely not ITM (ITM is usually ~200,000 / ~600,000)
-          if (Math.abs(firstCoord[0]) < 1000 && Math.abs(firstCoord[1]) < 1000) {
-              isWgs84 = true;
-          }
+        // If x < 1000 and y < 1000, it's definitely not ITM (ITM is usually ~200,000 / ~600,000)
+        if (Math.abs(firstCoord[0]) < 1000 && Math.abs(firstCoord[1]) < 1000) {
+          isWgs84 = true;
+        }
       }
 
       if (crs.includes("4326") || crs.includes("WGS") || isWgs84) {
@@ -239,6 +277,22 @@
         // Handle model_base image layer specially
         if (fullLayerId === 'projector_base.model_base') {
           updateModelImageVisibility(layer.enabled);
+          continue;
+        }
+
+        // Handle WMTS layer (satellite_imagery)
+        if (fullLayerId === "projector_base.satellite_imagery") {
+          updateWmtsVisibility(layer.enabled);
+          if (layer.enabled && !loadedLayers[fullLayerId]) {
+            loadProjectionLayerFromRegistry(fullLayerId)
+              .then(() => {})
+              .catch((err) => {
+                console.error(
+                  `[Projection] Failed to load WMTS layer ${fullLayerId}:`,
+                  err
+                );
+              });
+          }
           continue;
         }
 
@@ -333,6 +387,9 @@
     const modelBounds = getModelBoundsSafe();
     if (canvasRenderer && displayBounds && modelBounds) {
       canvasRenderer.updatePosition(displayBounds, modelBounds);
+    }
+    if (wmtsRenderer && displayBounds && modelBounds) {
+      wmtsRenderer.updatePosition(displayBounds, modelBounds);
     }
   }
 

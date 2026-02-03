@@ -1,4 +1,3 @@
-
 import os
 import hashlib
 import json
@@ -16,6 +15,7 @@ from .tiling import generate_pmtiles_smart
 
 logger = logging.getLogger(__name__)
 
+
 class TqdmLoggingHandler(logging.Handler):
     def emit(self, record):
         try:
@@ -25,6 +25,7 @@ class TqdmLoggingHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
+
 def setup_logging(level=logging.INFO):
     # Remove existing handlers
     main_logger = logging.getLogger()
@@ -32,12 +33,30 @@ def setup_logging(level=logging.INFO):
         main_logger.removeHandler(handler)
 
     handler = TqdmLoggingHandler()
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
+    formatter = logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
+    )
     handler.setFormatter(formatter)
     main_logger.addHandler(handler)
     main_logger.setLevel(level)
 
+
 CACHE_FILE = ".layer-cache.json"
+
+# Default WMTS layer for projector_base (created by layer processing, no source file needed)
+DEFAULT_PROJECTOR_BASE_WMTS_LAYERS = [
+    {
+        "id": "satellite_imagery",
+        "name": "Satellite Imagery",
+        "format": "wmts",
+        "wmts": {
+            "urlTemplate": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/13192/{z}/{y}/{x}",
+            "zoom": 12,
+            "attribution": "Esri, Maxar, Earthstar Geographics",
+        },
+    }
+]
+
 
 def compute_file_hash(path: Path) -> str:
     hash_sha256 = hashlib.sha256()
@@ -46,8 +65,15 @@ def compute_file_hash(path: Path) -> str:
             hash_sha256.update(chunk)
     return hash_sha256.hexdigest()
 
+
 class ProcessingOrchestrator:
-    def __init__(self, source_dir: Path, output_dir: Path, no_cache: bool = False, max_workers: int = 4):
+    def __init__(
+        self,
+        source_dir: Path,
+        output_dir: Path,
+        no_cache: bool = False,
+        max_workers: int = 4,
+    ):
         self.source_dir = source_dir
         self.output_dir = output_dir
         self.no_cache = no_cache
@@ -76,8 +102,8 @@ class ProcessingOrchestrator:
         # We want to find ".../public/source/popup-config.json"
 
         candidates = [
-            self.source_dir / "popup-config.json",          # If source is root
-            self.source_dir.parent / "popup-config.json",   # If source is layers/
+            self.source_dir / "popup-config.json",  # If source is root
+            self.source_dir.parent / "popup-config.json",  # If source is layers/
         ]
 
         for path in candidates:
@@ -89,21 +115,31 @@ class ProcessingOrchestrator:
                 except Exception as e:
                     logger.warning(f"Could not load popup config from {path}: {e}")
 
-        logger.warning(f"popup-config.json not found in candidates: {[str(p) for p in candidates]}")
+        logger.warning(
+            f"popup-config.json not found in candidates: {[str(p) for p in candidates]}"
+        )
         return {}
 
     def scan_packs(self) -> List[Path]:
         packs = []
         source_layers = self.source_dir / "source" / "layers"
         if not source_layers.exists():
-            source_layers = self.source_dir # Fallback
+            source_layers = self.source_dir  # Fallback
 
         for d in source_layers.iterdir():
             if d.is_dir() and not d.name.startswith("."):
                 gis_dir = d / "gis" if (d / "gis").exists() else d
                 images_dir = d / "images"
-                geo_files = list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
-                image_files = list(images_dir.glob("*.png")) + list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.jpeg")) if images_dir.exists() else []
+                geo_files = list(gis_dir.glob("*.json")) + list(
+                    gis_dir.glob("*.geojson")
+                )
+                image_files = (
+                    list(images_dir.glob("*.png"))
+                    + list(images_dir.glob("*.jpg"))
+                    + list(images_dir.glob("*.jpeg"))
+                    if images_dir.exists()
+                    else []
+                )
                 if geo_files or image_files:
                     packs.append(d)
         return sorted(packs)
@@ -117,8 +153,8 @@ class ProcessingOrchestrator:
         # 1. Collect all layer tasks
         all_layer_tasks = []
         all_image_tasks = []
-        pack_manifests = {} # pack_id -> PackManifest (partial)
-        styles_map = {} # pack_id -> styles_dict
+        pack_manifests = {}  # pack_id -> PackManifest (partial)
+        styles_map = {}  # pack_id -> styles_dict
 
         logger.info(f"Scanning {len(packs)} packs for layers...")
 
@@ -133,10 +169,20 @@ class ProcessingOrchestrator:
             pack_output.mkdir(parents=True, exist_ok=True)
 
             geo_files = list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
-            image_files = list(images_dir.glob("*.png")) + list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.jpeg")) if images_dir.exists() else []
+            image_files = (
+                list(images_dir.glob("*.png"))
+                + list(images_dir.glob("*.jpg"))
+                + list(images_dir.glob("*.jpeg"))
+                if images_dir.exists()
+                else []
+            )
 
             # Initialize containers
-            pack_manifests[pack_id] = {"id": pack_id, "name": pack_id.title().replace("_", " "), "layers": []}
+            pack_manifests[pack_id] = {
+                "id": pack_id,
+                "name": pack_id.title().replace("_", " "),
+                "layers": [],
+            }
             styles_map[pack_id] = {}
 
             for geo_file in geo_files:
@@ -144,7 +190,7 @@ class ProcessingOrchestrator:
                     "pack_id": pack_id,
                     "geo_file": geo_file,
                     "styles_dir": styles_dir,
-                    "pack_output": pack_output
+                    "pack_output": pack_output,
                 }
                 all_layer_tasks.append(task)
 
@@ -152,7 +198,7 @@ class ProcessingOrchestrator:
                 task = {
                     "pack_id": pack_id,
                     "image_file": image_file,
-                    "pack_output": pack_output
+                    "pack_output": pack_output,
                 }
                 all_image_tasks.append(task)
 
@@ -160,7 +206,9 @@ class ProcessingOrchestrator:
             logger.warning("No layers found in packs.")
             return
 
-        logger.info(f"Buffered {len(all_layer_tasks)} layers and {len(all_image_tasks)} images. Starting global parallel processing...")
+        logger.info(
+            f"Buffered {len(all_layer_tasks)} layers and {len(all_image_tasks)} images. Starting global parallel processing..."
+        )
 
         # 2. Process all layers in a global pool
         processed_layers = []
@@ -177,7 +225,9 @@ class ProcessingOrchestrator:
 
             # Submit image tasks (no parallel processing needed, but keep consistent structure)
             for image_task in all_image_tasks:
-                futures[executor.submit(self.process_single_image, image_task, log_level)] = image_task
+                futures[
+                    executor.submit(self.process_single_image, image_task, log_level)
+                ] = image_task
 
             # Main Progress Bar
             total_tasks = len(all_layer_tasks) + len(all_image_tasks)
@@ -188,7 +238,7 @@ class ProcessingOrchestrator:
                         if result:
                             # result is (layer_entry, style_entry_or_None, cache_key, cache_value)
                             layer_entry, style_entry, cache_key, cache_val = result
-                            pack_id = cache_key.split('/')[0]
+                            pack_id = cache_key.split("/")[0]
 
                             # Update local cache in main process
                             self.cache[cache_key] = cache_val
@@ -207,10 +257,14 @@ class ProcessingOrchestrator:
                     pbar.update(1)
 
         # 3. Write Manifests
+        source_layers = self.source_dir / "source" / "layers"
+        if not source_layers.exists():
+            source_layers = self.source_dir
+
         processed_pack_ids = []
         for pack_id, manifest_data in pack_manifests.items():
             if not manifest_data["layers"]:
-                 continue
+                continue
 
             processed_pack_ids.append(pack_id)
             pack_output = self.output_dir / pack_id
@@ -218,9 +272,48 @@ class ProcessingOrchestrator:
             # Sort layers by ID for consistency
             manifest_data["layers"].sort(key=lambda x: x.id)
 
-            manifest = PackManifest(**manifest_data)
+            layers_list = [entry.to_dict() for entry in manifest_data["layers"]]
+
+            # Inject default WMTS layer for projector_base (no source file needed)
+            if pack_id == "projector_base":
+                layers_list.extend(DEFAULT_PROJECTOR_BASE_WMTS_LAYERS)
+                logger.info(
+                    f"Injected {len(DEFAULT_PROJECTOR_BASE_WMTS_LAYERS)} default WMTS layer(s) for projector_base"
+                )
+            else:
+                # Other packs: merge WMTS from wmts.config.json if present
+                pack_dir = source_layers / pack_id
+                wmts_path = pack_dir / "wmts.config.json"
+                if wmts_path.exists():
+                    try:
+                        with open(wmts_path, "r", encoding="utf-8") as f:
+                            wmts_layers = json.load(f)
+                        if isinstance(wmts_layers, list):
+                            layers_list.extend(wmts_layers)
+                        logger.info(
+                            f"Merged {len(wmts_layers) if isinstance(wmts_layers, list) else 0} WMTS layer(s) from {wmts_path.name}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Could not load WMTS config {wmts_path}: {e}")
+
+            # Render order: model_base first, then satellite_imagery, then others
+            def _layer_sort_key(layer):
+                lid = layer.get("id", "")
+                if lid == "model_base":
+                    return (0, lid)
+                if lid == "satellite_imagery":
+                    return (1, lid)
+                return (2, lid)
+
+            layers_list.sort(key=_layer_sort_key)
+
+            manifest_dict = {
+                "id": manifest_data["id"],
+                "name": manifest_data["name"],
+                "layers": layers_list,
+            }
             with open(pack_output / "manifest.json", "w", encoding="utf-8") as f:
-                json.dump(manifest.to_dict(), f, indent=2)
+                json.dump(manifest_dict, f, indent=2)
 
             with open(pack_output / "styles.json", "w", encoding="utf-8") as f:
                 json.dump(styles_map[pack_id], f, indent=2)
@@ -235,7 +328,9 @@ class ProcessingOrchestrator:
         Returns: (LayerEntry, StyleConfig or None, cache_key, cache_value)
         """
         # Configure logging for worker process
-        logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
+        logging.basicConfig(
+            level=log_level, format="%(asctime)s - %(levelname)s - %(message)s"
+        )
 
         pack_id = task["pack_id"]
         geo_file = task["geo_file"]
@@ -292,6 +387,7 @@ class ProcessingOrchestrator:
             except Exception as e:
                 logger.error(f"Error processing {layer_id}: {e}")
                 import traceback
+
                 traceback.print_exc()
                 return None
         else:
@@ -305,14 +401,15 @@ class ProcessingOrchestrator:
             file=f"{layer_id}.geojson",
             geometry_type=geom_type,
             pmtiles_file=f"{layer_id}.pmtiles" if pmtiles_file.exists() else None,
-            ui_popup=self._get_popup_config_for_layer(pack_id, layer_id)
+            ui_popup=self._get_popup_config_for_layer(pack_id, layer_id),
         )
 
-        return entry, style_config, cache_key, {
-            "hash": file_hash,
-            "geometry_type": geom_type,
-            "style": style_config
-        }
+        return (
+            entry,
+            style_config,
+            cache_key,
+            {"hash": file_hash, "geometry_type": geom_type, "style": style_config},
+        )
 
     def generate_root_manifest(self, pack_ids: List[str]):
         root_manifest = {"packs": sorted(pack_ids)}
@@ -325,7 +422,9 @@ class ProcessingOrchestrator:
         Returns: (LayerEntry, StyleConfig or None, cache_key, cache_value)
         """
         # Configure logging for worker process
-        logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
+        logging.basicConfig(
+            level=log_level, format="%(asctime)s - %(levelname)s - %(message)s"
+        )
 
         pack_id = task["pack_id"]
         image_file = task["image_file"]
@@ -333,7 +432,11 @@ class ProcessingOrchestrator:
 
         # Use model_base for model.png so manifest matches backend/frontend expectations
         layer_id = "model_base" if image_file.stem == "model" else image_file.stem
-        name = "Model base" if image_file.stem == "model" else image_file.stem.replace("_", " ").title()
+        name = (
+            "Model base"
+            if image_file.stem == "model"
+            else image_file.stem.replace("_", " ").title()
+        )
         filename = image_file.name
         cache_key = f"{pack_id}/{filename}"
         file_hash = compute_file_hash(image_file)
@@ -353,30 +456,29 @@ class ProcessingOrchestrator:
 
         # Create LayerEntry for image
         entry = LayerEntry.create_image_layer(
-            layer_id=layer_id,
-            name=name,
-            filename=filename
+            layer_id=layer_id, name=name, filename=filename
         )
 
         # Create default style for image type
         style_config = {
             "type": "image",
             "renderer": "image",
-            "defaultStyle": {
-                "opacity": 1.0
-            },
+            "defaultStyle": {"opacity": 1.0},
             "fullSymbolLayers": [],
             "labels": None,
-            "scaleRange": None
+            "scaleRange": None,
         }
 
-        return entry, style_config, cache_key, {
-            "hash": file_hash,
-            "geometry_type": "image",
-            "style": style_config
-        }
+        return (
+            entry,
+            style_config,
+            cache_key,
+            {"hash": file_hash, "geometry_type": "image", "style": style_config},
+        )
 
-    def _get_popup_config_for_layer(self, pack_id: str, layer_id: str) -> Optional[Dict]:
+    def _get_popup_config_for_layer(
+        self, pack_id: str, layer_id: str
+    ) -> Optional[Dict]:
         """
         Get popup config for a layer, trying exact match then fuzzy match.
         """
@@ -424,7 +526,7 @@ class ProcessingOrchestrator:
             styles_dir = pack_dir / "styles"
 
             pack_output = self.output_dir / pack_id
-            pack_output.mkdir(parents=True, exist_ok=True) # Ensure it exists
+            pack_output.mkdir(parents=True, exist_ok=True)  # Ensure it exists
 
             # Load existing manifest to preserve data if needed
             existing_layers = {}
@@ -458,46 +560,62 @@ class ProcessingOrchestrator:
                         geom_type = style_obj.geometry_type
 
                 if geom_type == "unknown":
-                     # Try to guess from existing processed file or manifest
-                     processed_geo = pack_output / f"{layer_id}.geojson"
-                     if processed_geo.exists():
-                         geom_type = get_geometry_type(processed_geo)
-                     elif layer_id in existing_layers:
-                         geom_type = existing_layers[layer_id].get("geometryType", "unknown")
+                    # Try to guess from existing processed file or manifest
+                    processed_geo = pack_output / f"{layer_id}.geojson"
+                    if processed_geo.exists():
+                        geom_type = get_geometry_type(processed_geo)
+                    elif layer_id in existing_layers:
+                        geom_type = existing_layers[layer_id].get(
+                            "geometryType", "unknown"
+                        )
 
                 # Popup
                 layer_popup = self._get_popup_config_for_layer(pack_id, layer_id)
                 # Fallback to existing manifest if not found in new config (optional, but safe)
                 if not layer_popup and layer_id in existing_layers:
-                     layer_popup = existing_layers[layer_id].get("ui", {}).get("popup")
+                    layer_popup = existing_layers[layer_id].get("ui", {}).get("popup")
 
                 entry = LayerEntry(
                     id=layer_id,
-                    name=layer_id, # Or format it nicely
+                    name=layer_id,  # Or format it nicely
                     file=f"{layer_id}.geojson",
                     geometry_type=geom_type,
-                    pmtiles_file=f"{layer_id}.pmtiles" if (pack_output / f"{layer_id}.pmtiles").exists() else None,
-                    ui_popup=layer_popup
+                    pmtiles_file=(
+                        f"{layer_id}.pmtiles"
+                        if (pack_output / f"{layer_id}.pmtiles").exists()
+                        else None
+                    ),
+                    ui_popup=layer_popup,
                 )
                 new_layers.append(entry)
                 if style_config:
                     new_styles[layer_id] = style_config
 
             # --- Process Image Layers ---
-            image_files = list(images_dir.glob("*.png")) + list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.jpeg")) if images_dir.exists() else []
+            image_files = (
+                list(images_dir.glob("*.png"))
+                + list(images_dir.glob("*.jpg"))
+                + list(images_dir.glob("*.jpeg"))
+                if images_dir.exists()
+                else []
+            )
             for image_file in image_files:
                 # Logic must match process_single_image
-                layer_id = "model_base" if image_file.stem == "model" else image_file.stem
-                name = "Model base" if image_file.stem == "model" else image_file.stem.replace("_", " ").title()
+                layer_id = (
+                    "model_base" if image_file.stem == "model" else image_file.stem
+                )
+                name = (
+                    "Model base"
+                    if image_file.stem == "model"
+                    else image_file.stem.replace("_", " ").title()
+                )
                 filename = image_file.name
 
                 # Image layers don't have popups usually, but check anyway
                 layer_popup = self._get_popup_config_for_layer(pack_id, layer_id)
 
                 entry = LayerEntry.create_image_layer(
-                    layer_id=layer_id,
-                    name=name,
-                    filename=filename
+                    layer_id=layer_id, name=name, filename=filename
                 )
 
                 # Default Image Style
@@ -507,17 +625,20 @@ class ProcessingOrchestrator:
                     "defaultStyle": {"opacity": 1.0},
                     "fullSymbolLayers": [],
                     "labels": None,
-                    "scaleRange": None
+                    "scaleRange": None,
                 }
 
                 new_layers.append(entry)
                 new_styles[layer_id] = style_config
 
-
             # Write changes
             if new_layers:
                 new_layers.sort(key=lambda x: x.id)
-                manifest = PackManifest(id=pack_id, name=pack_id.title().replace("_", " "), layers=new_layers)
+                manifest = PackManifest(
+                    id=pack_id,
+                    name=pack_id.title().replace("_", " "),
+                    layers=new_layers,
+                )
 
                 with open(pack_output / "manifest.json", "w", encoding="utf-8") as f:
                     json.dump(manifest.to_dict(), f, indent=2)
@@ -539,4 +660,3 @@ class ProcessingOrchestrator:
 
         self.generate_root_manifest(processed_pack_ids)
         logger.info("Metadata update complete.")
-

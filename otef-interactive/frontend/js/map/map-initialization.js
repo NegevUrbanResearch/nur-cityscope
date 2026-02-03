@@ -42,13 +42,14 @@ const osmLayer = L.tileLayer(
   }
 ).addTo(map);
 
-// Alternative basemaps (can be switched)
+// Alternative basemaps (can be switched).
+// Satellite uses same Esri World Imagery source as projector (wayback).
 const basemaps = {
   OpenStreetMap: osmLayer,
   Satellite: L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/13192/{z}/{y}/{x}",
     {
-      attribution: "Tiles &copy; Esri",
+      attribution: "Esri, Maxar, Earthstar Geographics",
       maxZoom: 19,
     }
   ),

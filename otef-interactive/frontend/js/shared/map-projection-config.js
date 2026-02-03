@@ -19,6 +19,17 @@ const MapProjectionConfig = {
 
   // Tolerance in ITM units when checking if a bbox matches full model extent
   PROJECTION_FULL_EXTENT_TOLERANCE: 10,
+
+  // WMTS layer for projector (LOD tuning without reprocess).
+  // Default satellite_imagery is injected by layer processing (orchestrator).
+  // Override zoom here for quick LOD tuning; set to null to use processing default (12).
+  WMTS_PROJECTOR: {
+    // Override zoom from manifest (for quick LOD tuning). Set to null to use manifest value.
+    // e.g. 11 for ~65m/px, 12 for ~32m/px, 13 for ~16m/px at 32N
+    zoomOverride: null,
+    // Optional: override URL (leave null to use manifest)
+    urlOverride: null,
+  },
 };
 
 // Browser global
@@ -30,4 +41,5 @@ if (typeof window !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = MapProjectionConfig;
 }
+
 

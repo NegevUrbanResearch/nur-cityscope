@@ -32,8 +32,19 @@
         width: 100%;
         height: 100%;
         object-fit: fill;
+        z-index: 1;
       }
       /* Ensure crisp rendering for all canvas elements (projector output) */
+      /* Order: רקע_שחור only (5), SI (6), all other vectors (7) */
+      #layersCanvasBottom {
+        z-index: 5;
+      }
+      #wmtsCanvas {
+        z-index: 6;
+      }
+      #layersCanvas {
+        z-index: 7;
+      }
       canvas {
         position: absolute;
         top: 0;
@@ -148,12 +159,7 @@
   </head>
   <body>
     <div id="displayContainer">
-      <img
-        id="displayedImage"
-        src=""
-        alt="OTEF Model"
-        style="opacity: 0"
-      />
+      <img id="displayedImage" src="" alt="OTEF Model" style="opacity: 0" />
       <canvas id="layersCanvas"></canvas>
       <div id="highlightOverlay"></div>
       <svg id="boundsEditorOverlay"></svg>
@@ -191,6 +197,7 @@
     <script src="js/shared/map-projection-config.js"></script>
     <script src="js/map-utils/coordinate-utils.js"></script>
     <script src="js/projection/layer-renderer-canvas.js"></script>
+    <script src="js/projection/wmts-layer-renderer.js"></script>
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
     <script src="js/shared/api-client.js"></script>

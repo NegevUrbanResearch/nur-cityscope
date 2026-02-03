@@ -198,17 +198,30 @@ class LayerRegistry {
 
   /**
    * Get the URL for a layer's data file (GeoJSON).
+   * WMTS layers have no file; returns null.
    * @param {string} layerId - Full layer ID
    * @returns {string|null} URL to layer data file
    */
   getLayerDataUrl(layerId) {
     const config = this.getLayerConfig(layerId);
-    if (!config) {
+    if (!config || config.format === "wmts" || !config.file) {
       return null;
     }
 
     const basePath = `/otef-interactive/public/processed/layers/${config.groupId}`;
     return `${basePath}/${config.file}`;
+  }
+
+  /**
+   * Get WMTS config for a layer (urlTemplate, zoom, attribution).
+   * @param {string} layerId - Full layer ID
+   * @returns {Object|null} layer.wmts or null for non-WMTS layers
+   */
+  getLayerWmtsConfig(layerId) {
+    const config = this.getLayerConfig(layerId);
+    return config && config.format === "wmts" && config.wmts
+      ? config.wmts
+      : null;
   }
 
   /**

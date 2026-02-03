@@ -13,7 +13,9 @@ class CanvasLayerRenderer {
 
     this.canvas = null;
     this.ctx = null;
-    this.layers = {};  // { layerId: { geojson, styleFunction, visible, geometryType } }
+    this.canvasBottom = null;
+    this.ctxBottom = null;
+    this.layers = {}; // { layerId: { geojson, styleFunction, visible, geometryType, belowWmts } }
     this.modelBounds = null;
     this.displayBounds = null;
     this.dpr = 1;  // Device pixel ratio for high-DPI rendering
@@ -23,24 +25,32 @@ class CanvasLayerRenderer {
   }
 
   _createCanvas() {
-    // Remove existing canvas if present
-    const existing = this.container.querySelector('#layersCanvas');
-    if (existing) existing.remove();
+    const highlightOverlay = this.container.querySelector("#highlightOverlay");
+    ["#layersCanvas", "#layersCanvasBottom"].forEach((sel) => {
+      const existing = this.container.querySelector(sel);
+      if (existing) existing.remove();
+    });
 
-    // Create canvas element with crisp rendering for projector output
-    this.canvas = document.createElement('canvas');
-    this.canvas.id = 'layersCanvas';
-    this.canvas.style.cssText = 'position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; image-rendering: crisp-edges; image-rendering: -webkit-optimize-contrast;';
+    const style =
+      "position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; image-rendering: crisp-edges; image-rendering: -webkit-optimize-contrast;";
 
-    // Insert before highlight overlay
-    const highlightOverlay = this.container.querySelector('#highlightOverlay');
+    this.canvasBottom = document.createElement("canvas");
+    this.canvasBottom.id = "layersCanvasBottom";
+    this.canvasBottom.style.cssText = style + " z-index: 5;";
+    this.ctxBottom = this.canvasBottom.getContext("2d");
+
+    this.canvas = document.createElement("canvas");
+    this.canvas.id = "layersCanvas";
+    this.canvas.style.cssText = style + " z-index: 7;";
+    this.ctx = this.canvas.getContext("2d");
+
     if (highlightOverlay) {
+      this.container.insertBefore(this.canvasBottom, highlightOverlay);
       this.container.insertBefore(this.canvas, highlightOverlay);
     } else {
+      this.container.appendChild(this.canvasBottom);
       this.container.appendChild(this.canvas);
     }
-
-    this.ctx = this.canvas.getContext('2d');
   }
 
   /**
@@ -54,25 +64,23 @@ class CanvasLayerRenderer {
     this.displayBounds = displayBounds;
     this.modelBounds = modelBounds;
 
-    // Use devicePixelRatio for high-DPI rendering
     this.dpr = window.devicePixelRatio || 1;
     const canvasWidth = Math.round(displayBounds.width * this.dpr);
     const canvasHeight = Math.round(displayBounds.height * this.dpr);
 
-    // Position canvas over the full frame (CSS size)
-    this.canvas.style.left = displayBounds.offsetX + 'px';
-    this.canvas.style.top = displayBounds.offsetY + 'px';
-    this.canvas.style.width = displayBounds.width + 'px';
-    this.canvas.style.height = displayBounds.height + 'px';
+    const posStyle = `left: ${displayBounds.offsetX}px; top: ${displayBounds.offsetY}px; width: ${displayBounds.width}px; height: ${displayBounds.height}px;`;
+    [this.canvasBottom, this.canvas].forEach((el) => {
+      el.style.left = displayBounds.offsetX + "px";
+      el.style.top = displayBounds.offsetY + "px";
+      el.style.width = displayBounds.width + "px";
+      el.style.height = displayBounds.height + "px";
+      el.width = canvasWidth;
+      el.height = canvasHeight;
+    });
 
-    // Set canvas internal resolution (scaled for high-DPI)
-    this.canvas.width = canvasWidth;
-    this.canvas.height = canvasHeight;
-
-    // Scale context so drawing operations use CSS pixel coordinates
+    this.ctxBottom.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
-    // Re-render all visible layers (use scheduled render to avoid blocking)
     this._scheduleRender();
   }
 
@@ -80,11 +88,13 @@ class CanvasLayerRenderer {
    * Add/update a layer
    */
   setLayer(layerId, geojson, styleFunction, geometryType) {
+    const belowWmts = layerId.includes("רקע_שחור");
     this.layers[layerId] = {
       geojson: geojson,
       styleFunction: styleFunction,
       visible: false,
-      geometryType: geometryType || 'polygon'
+      geometryType: geometryType || "polygon",
+      belowWmts: belowWmts,
     };
   }
 
@@ -114,59 +124,63 @@ class CanvasLayerRenderer {
   /**
    * Render all visible layers to canvas
    */
+  _layerSortKey([id, layer]) {
+    const isBlackBg = id.includes("רקע_שחור");
+    const isSea = id.includes("sea");
+    const isBase = id.startsWith("projector_base.");
+    const typeRank = { polygon: 0, line: 1, point: 2 };
+    const geomRank = typeRank[layer.geometryType] ?? 0;
+    return [isBlackBg ? 0 : 1, isSea ? 0 : 1, isBase ? 0 : 1, geomRank, id];
+  }
+
   render() {
-    if (!this.ctx || !this.displayBounds || !this.modelBounds) return;
+    if (
+      !this.ctx ||
+      !this.ctxBottom ||
+      !this.displayBounds ||
+      !this.modelBounds
+    )
+      return;
 
     const startTime = performance.now();
 
-    // Clear canvas
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-
-    // Render each visible layer
-    // Base layers (projector_base group) should be rendered first (lowest z-index)
-    // Detailed order:
-    // 1. רקע_שחור (Black Background) - Absolute bottom
-    // 2. sea - Above background
-    // 3. Other projector_base layers
-    // 4. All other layers
     const layerEntries = Object.entries(this.layers);
-    layerEntries.sort(([idA, layerA], [idB, layerB]) => {
-      // Helper to check if layer is specific ID (handling full ID with group prefix)
-      const isBlackBgA = idA.includes('רקע_שחור');
-      const isSeaA = idA.includes('sea');
-      const isBlackBgB = idB.includes('רקע_שחור');
-      const isSeaB = idB.includes('sea');
+    const below = layerEntries.filter(
+      ([, l]) => l.belowWmts && l.visible && l.geojson?.features
+    );
+    const above = layerEntries.filter(
+      ([, l]) => !l.belowWmts && l.visible && l.geojson?.features
+    );
 
-      // 1. Black background is absolute bottom
-      if (isBlackBgA && !isBlackBgB) return -1;
-      if (!isBlackBgA && isBlackBgB) return 1;
-
-      // 2. Sea is above black background
-      if (isSeaA && !isSeaB) return -1;
-      if (!isSeaA && isSeaB) return 1;
-
-      // 3. Other projector_base layers are above background and sea
-      const isBaseA = idA.startsWith('projector_base.');
-      const isBaseB = idB.startsWith('projector_base.');
-      if (isBaseA && !isBaseB) return -1;
-      if (!isBaseA && isBaseB) return 1;
-
-      // 4. Geometry-based sorting: Polygon < Line < Point
-      const typeRank = { 'polygon': 0, 'line': 1, 'point': 2 };
-      const rankA = typeRank[layerA.geometryType] ?? 0;
-      const rankB = typeRank[layerB.geometryType] ?? 0;
-
-      if (rankA !== rankB) {
-        return rankA - rankB;
+    this.ctxBottom.clearRect(
+      0,
+      0,
+      this.canvasBottom.width,
+      this.canvasBottom.height
+    );
+    below.sort((a, b) => {
+      const ka = this._layerSortKey(a);
+      const kb = this._layerSortKey(b);
+      for (let i = 0; i < ka.length; i++) {
+        if (ka[i] !== kb[i]) return ka[i] < kb[i] ? -1 : 1;
       }
-
-      return 0; // Maintain insertion order within same rank
+      return 0;
     });
+    for (const [, layer] of below) {
+      this._renderLayer(layer.geojson, layer.styleFunction, this.ctxBottom);
+    }
 
-    for (const [layerId, layer] of layerEntries) {
-      if (!layer.visible || !layer.geojson?.features) continue;
-
-      this._renderLayer(layer.geojson, layer.styleFunction);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    above.sort((a, b) => {
+      const ka = this._layerSortKey(a);
+      const kb = this._layerSortKey(b);
+      for (let i = 0; i < ka.length; i++) {
+        if (ka[i] !== kb[i]) return ka[i] < kb[i] ? -1 : 1;
+      }
+      return 0;
+    });
+    for (const [, layer] of above) {
+      this._renderLayer(layer.geojson, layer.styleFunction, this.ctx);
     }
 
     const elapsed = performance.now() - startTime;
@@ -179,13 +193,18 @@ class CanvasLayerRenderer {
    * Render a single layer
    * Optimized to reduce canvas operations for large feature sets
    */
-  _renderLayer(geojson, styleFunction) {
-    const ctx = this.ctx;
+  _renderLayer(geojson, styleFunction, ctx) {
+    const targetCtx = ctx || this.ctx;
+    const prevCtx = this.ctx;
+    this.ctx = targetCtx;
+
     const features = geojson.features || [];
 
-    if (features.length === 0) return;
+    if (features.length === 0) {
+      this.ctx = prevCtx;
+      return;
+    }
 
-    // Batch style calculations to reduce function calls
     for (const feature of features) {
       if (!feature.geometry) continue;
 
@@ -200,6 +219,8 @@ class CanvasLayerRenderer {
       // Draw the geometry
       this._drawGeometry(ctx, feature.geometry, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius, style);
     }
+
+    this.ctx = prevCtx;
   }
 
   /**
