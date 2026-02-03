@@ -85,7 +85,7 @@ class ProcessingOrchestrator:
                 try:
                     with open(path, "r", encoding="utf-8") as f:
                         logger.info(f"Loaded popup config from {path}")
-                        return json.load(f).get("layers", {})
+                        return json.load(f)
                 except Exception as e:
                     logger.warning(f"Could not load popup config from {path}: {e}")
 
@@ -147,7 +147,7 @@ class ProcessingOrchestrator:
                     "pack_output": pack_output
                 }
                 all_layer_tasks.append(task)
-            
+
             for image_file in image_files:
                 task = {
                     "pack_id": pack_id,
@@ -174,7 +174,7 @@ class ProcessingOrchestrator:
                 executor.submit(self.process_single_layer, task, log_level): task
                 for task in all_layer_tasks
             }
-            
+
             # Submit image tasks (no parallel processing needed, but keep consistent structure)
             for image_task in all_image_tasks:
                 futures[executor.submit(self.process_single_image, image_task, log_level)] = image_task
@@ -305,7 +305,7 @@ class ProcessingOrchestrator:
             file=f"{layer_id}.geojson",
             geometry_type=geom_type,
             pmtiles_file=f"{layer_id}.pmtiles" if pmtiles_file.exists() else None,
-            ui_popup=self.popup_config.get(pack_id, {}).get(layer_id)
+            ui_popup=self._get_popup_config_for_layer(pack_id, layer_id)
         )
 
         return entry, style_config, cache_key, {
@@ -375,3 +375,168 @@ class ProcessingOrchestrator:
             "geometry_type": "image",
             "style": style_config
         }
+
+    def _get_popup_config_for_layer(self, pack_id: str, layer_id: str) -> Optional[Dict]:
+        """
+        Get popup config for a layer, trying exact match then fuzzy match.
+        """
+        config_root = self.popup_config.get(pack_id, {})
+        pack_layers = config_root.get("layers", {})
+
+        # 1. Exact match
+        if layer_id in pack_layers:
+            return pack_layers[layer_id]
+
+        # Strip all separators to handle variations like:
+        # "name-type" vs "name_-_type" vs "name _type"
+        def clean(s):
+            return s.replace("_", "").replace("-", "").replace(" ", "").lower()
+
+        target = clean(layer_id)
+
+        for key, config in pack_layers.items():
+            candidate = clean(key)
+            if candidate == target:
+                return config
+
+        return None
+
+    def update_metadata_only(self):
+        """
+        Updates styles.json and manifest.json for all layers without touching geojson/pmtiles.
+        Uses existing processed files or source files to determine metadata.
+        """
+        packs = self.scan_packs()
+        if not packs:
+            logger.warning("No layer packs found to process.")
+            return
+
+        processed_pack_ids = []
+
+        logger.info(f"Updating metadata for {len(packs)} packs...")
+
+        for pack_dir in packs:
+            pack_id = pack_dir.name
+            processed_pack_ids.append(pack_id)
+
+            gis_dir = pack_dir / "gis" if (pack_dir / "gis").exists() else pack_dir
+            images_dir = pack_dir / "images"
+            styles_dir = pack_dir / "styles"
+
+            pack_output = self.output_dir / pack_id
+            pack_output.mkdir(parents=True, exist_ok=True) # Ensure it exists
+
+            # Load existing manifest to preserve data if needed
+            existing_layers = {}
+            manifest_path = pack_output / "manifest.json"
+            if manifest_path.exists():
+                try:
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        for l in data.get("layers", []):
+                            existing_layers[l["id"]] = l
+                except Exception:
+                    pass
+
+            new_layers = []
+            new_styles = {}
+
+            # --- Process Geo Layers ---
+            geo_files = list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
+            for geo_file in geo_files:
+                layer_id = geo_file.stem
+
+                # styles
+                lyrx_file, _ = find_lyrx_file(geo_file, styles_dir)
+                style_config = None
+                geom_type = "unknown"
+
+                if lyrx_file:
+                    style_obj = parse_lyrx_style(lyrx_file)
+                    if style_obj:
+                        style_config = style_obj.to_dict()
+                        geom_type = style_obj.geometry_type
+
+                if geom_type == "unknown":
+                     # Try to guess from existing processed file or manifest
+                     processed_geo = pack_output / f"{layer_id}.geojson"
+                     if processed_geo.exists():
+                         geom_type = get_geometry_type(processed_geo)
+                     elif layer_id in existing_layers:
+                         geom_type = existing_layers[layer_id].get("geometryType", "unknown")
+
+                # Popup
+                layer_popup = self._get_popup_config_for_layer(pack_id, layer_id)
+                # Fallback to existing manifest if not found in new config (optional, but safe)
+                if not layer_popup and layer_id in existing_layers:
+                     layer_popup = existing_layers[layer_id].get("ui", {}).get("popup")
+
+                entry = LayerEntry(
+                    id=layer_id,
+                    name=layer_id, # Or format it nicely
+                    file=f"{layer_id}.geojson",
+                    geometry_type=geom_type,
+                    pmtiles_file=f"{layer_id}.pmtiles" if (pack_output / f"{layer_id}.pmtiles").exists() else None,
+                    ui_popup=layer_popup
+                )
+                new_layers.append(entry)
+                if style_config:
+                    new_styles[layer_id] = style_config
+
+            # --- Process Image Layers ---
+            image_files = list(images_dir.glob("*.png")) + list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.jpeg")) if images_dir.exists() else []
+            for image_file in image_files:
+                # Logic must match process_single_image
+                layer_id = "model_base" if image_file.stem == "model" else image_file.stem
+                name = "Model base" if image_file.stem == "model" else image_file.stem.replace("_", " ").title()
+                filename = image_file.name
+
+                # Image layers don't have popups usually, but check anyway
+                layer_popup = self._get_popup_config_for_layer(pack_id, layer_id)
+
+                entry = LayerEntry.create_image_layer(
+                    layer_id=layer_id,
+                    name=name,
+                    filename=filename
+                )
+
+                # Default Image Style
+                style_config = {
+                    "type": "image",
+                    "renderer": "image",
+                    "defaultStyle": {"opacity": 1.0},
+                    "fullSymbolLayers": [],
+                    "labels": None,
+                    "scaleRange": None
+                }
+
+                new_layers.append(entry)
+                new_styles[layer_id] = style_config
+
+
+            # Write changes
+            if new_layers:
+                new_layers.sort(key=lambda x: x.id)
+                manifest = PackManifest(id=pack_id, name=pack_id.title().replace("_", " "), layers=new_layers)
+
+                with open(pack_output / "manifest.json", "w", encoding="utf-8") as f:
+                    json.dump(manifest.to_dict(), f, indent=2)
+
+                # Merge styles with existing
+                styles_path = pack_output / "styles.json"
+                current_styles = {}
+                if styles_path.exists():
+                    try:
+                        with open(styles_path, "r", encoding="utf-8") as f:
+                            current_styles = json.load(f)
+                    except:
+                        pass
+
+                current_styles.update(new_styles)
+
+                with open(styles_path, "w", encoding="utf-8") as f:
+                    json.dump(current_styles, f, indent=2)
+
+        self.generate_root_manifest(processed_pack_ids)
+        logger.info("Metadata update complete.")
+
