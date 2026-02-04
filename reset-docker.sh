@@ -15,9 +15,9 @@ docker volume rm nur-cityscope_postgres_data_core nur-cityscope_media_files nur-
 echo "3️⃣  Removing initialization flags..."
 rm -rf nur-io/django_api/data/db_initialized nur-io/django_api/data/assets_checksum 2>/dev/null || echo "   (Flags don't exist locally, that's okay)"
 
-# Prune Docker system (optional but recommended)
-echo "4️⃣  Pruning Docker system..."
-docker system prune -f
+# Prune unused Docker images only (keeps all containers, including unrelated ones like n8n)
+echo "4️⃣  Pruning unused Docker images (containers will be kept)..."
+docker image prune -f
 
 echo ""
 echo "✅ Reset complete!"

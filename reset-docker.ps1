@@ -34,9 +34,9 @@ if (Test-Path $checksumFile) {
 }
 Write-Host "   (Flags removed if they existed)" -ForegroundColor Gray
 
-# Prune Docker system (optional but recommended)
-Write-Host "4. Pruning Docker system..." -ForegroundColor Cyan
-docker system prune -f
+# Prune unused Docker images only (keeps all containers, including unrelated ones like n8n)
+Write-Host "4. Pruning unused Docker images (containers will be kept)..." -ForegroundColor Cyan
+docker image prune -f
 
 Write-Host ""
 Write-Host "Reset complete!" -ForegroundColor Green
