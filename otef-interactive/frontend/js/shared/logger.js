@@ -20,12 +20,17 @@ const logger = {
   },
 };
 
+function getLogger() {
+  return (typeof window !== "undefined" && window.logger) || logger;
+}
+
 // Make available globally for script tag loading
 if (typeof window !== "undefined") {
   window.logger = logger;
+  window.getLogger = getLogger;
 }
 
 // Export for use in other modules
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = logger;
+  module.exports = { logger, getLogger };
 }

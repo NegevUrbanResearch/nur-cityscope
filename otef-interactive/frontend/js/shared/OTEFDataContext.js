@@ -31,8 +31,7 @@ class OTEFDataContextClass {
 
     // Cached state
     this._viewport = null; // { bbox, corners?, zoom }
-    this._layers = null; // { model } - legacy; vector layers use layer groups
-    this._layerGroups = null; // [{ id, enabled, layers: [{ id, enabled }] }] - new hierarchical structure
+    this._layerGroups = null; // [{ id, enabled, layers: [{ id, enabled }] }] - hierarchical structure
     this._animations = null;
     this._bounds = null; // bounds_polygon from backend
     this._isConnected = false;
@@ -40,8 +39,7 @@ class OTEFDataContextClass {
     // Subscriptions: key -> Set<callback>
     this._subscribers = {
       viewport: new Set(),
-      layers: new Set(),
-      layerGroups: new Set(), // New subscription for hierarchical layers
+      layerGroups: new Set(),
       animations: new Set(),
       bounds: new Set(),
       connection: new Set(),
@@ -121,11 +119,6 @@ class OTEFDataContextClass {
     this._notify("viewport", this._viewport);
   }
 
-  _setLayers(layers) {
-    this._layers = layers;
-    this._notify("layers", this._layers);
-  }
-
   _setLayerGroups(layerGroups) {
     this._layerGroups = layerGroups;
     this._notify("layerGroups", this._layerGroups);
@@ -156,10 +149,6 @@ class OTEFDataContextClass {
   // Public API: getters
   getViewport() {
     return this._viewport;
-  }
-
-  getLayers() {
-    return this._layers;
   }
 
   getLayerGroups() {
@@ -416,9 +405,6 @@ class OTEFDataContextClass {
     switch (key) {
       case "viewport":
         current = this._viewport;
-        break;
-      case "layers":
-        current = this._layers;
         break;
       case "layerGroups":
         current = this._layerGroups;

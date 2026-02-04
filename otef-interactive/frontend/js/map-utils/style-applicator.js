@@ -82,24 +82,6 @@ class StyleApplicator {
         hatch: defaultStyle.hatch || null,
       };
 
-      if (
-        style.id &&
-        (style.id.includes("שבילי_אופניים") || style.id.includes("דרכי_עפר"))
-      ) {
-        console.log(
-          `[StyleApplicator] Simple Style for ${style.id} (scaled):`,
-          result,
-        );
-      }
-
-      // Broader check because style.id might be missing
-      if (
-        defaultStyle.strokeColor === "#898944" ||
-        defaultStyle.strokeColor === "#d76e89"
-      ) {
-        console.log(`[StyleApplicator] Simple Style (by color match):`, result);
-      }
-
       return result;
     };
   }
@@ -153,17 +135,6 @@ class StyleApplicator {
 
       // Look up style for this value
       const valueStyle = styleMap.get(fieldValue);
-
-      if (
-        fieldValue.includes("אופניים") ||
-        (style.id && style.id.includes("אופניים"))
-      ) {
-        console.log(`[StyleApplicator] UniqueValue lookup for ${fieldValue}:`, {
-          found: !!valueStyle,
-          style: valueStyle,
-          props: props,
-        });
-      }
 
       if (valueStyle) {
         const weightPx =

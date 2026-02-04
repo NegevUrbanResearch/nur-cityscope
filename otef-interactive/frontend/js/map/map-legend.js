@@ -104,7 +104,6 @@ async function buildLegendModel() {
 
   if (!ctx) return { packs };
 
-  const legacy = ctx.getLayers() || {};
   const layerGroups = ctx.getLayerGroups() || [];
 
   if (registry && !registry._initialized) {
@@ -115,13 +114,25 @@ async function buildLegendModel() {
     }
   }
 
+  // Model base entry derived from layerGroups (projector_base.model_base)
+  const modelBaseEnabled = (() => {
+    const projectorBase = layerGroups.find(
+      (g) => g && g.id === "projector_base",
+    );
+    if (!projectorBase || !Array.isArray(projectorBase.layers)) return false;
+    const modelLayer = projectorBase.layers.find(
+      (l) => l && l.id === "model_base",
+    );
+    return !!(modelLayer && modelLayer.enabled);
+  })();
+
   const legacyPack = {
     id: "_legacy",
     name: "Legacy",
     layers: [],
   };
 
-  if (legacy.model) {
+  if (modelBaseEnabled) {
     legacyPack.layers.push({
       id: "model",
       name: "Model Base",
@@ -145,9 +156,10 @@ async function buildLegendModel() {
     const packLayers = [];
     for (const layer of group.layers || []) {
       if (!layer.enabled) continue;
-
-      // Skip projector-only layers in the GIS legend, except Tkuma_Area_LIne
-      if (group.id === "projector_base" && layer.id !== "Tkuma_Area_LIne")
+      if (
+        typeof shouldShowLayerOnGisMap === "function" &&
+        !shouldShowLayerOnGisMap(group.id, layer.id)
+      )
         continue;
 
       const fullId = `${group.id}.${layer.id}`;
@@ -218,7 +230,9 @@ function renderLegend(model) {
 
   for (const pack of packs) {
     html += '<div class="map-legend-group">';
-    html += `<div class="map-legend-group-title" dir="auto">${escapeHtml(pack.name)}</div>`;
+    html += `<div class="map-legend-group-title" dir="auto">${escapeHtml(
+      pack.name,
+    )}</div>`;
 
     const layers = (pack.layers || []).slice();
     const typeOrder = { line: 0, point: 1, polygon: 2 };
@@ -232,7 +246,9 @@ function renderLegend(model) {
       html += '<div class="map-legend-layer">';
       const showLayerTitle = (layer.items || []).length > 1;
       if (showLayerTitle) {
-        html += `<div class="map-legend-layer-title" dir="auto">${escapeHtml(layer.name)}</div>`;
+        html += `<div class="map-legend-layer-title" dir="auto">${escapeHtml(
+          layer.name,
+        )}</div>`;
       }
 
       for (const item of layer.items) {
@@ -249,7 +265,9 @@ function renderLegend(model) {
           const border = item.stroke || "#000000";
           html += `<span class="${symbolClass}" style="background: ${bg}; border-color: ${border};" aria-hidden="true"></span>`;
         }
-        html += `<span class="map-legend-label" dir="auto">${escapeHtml(item.label)}</span>`;
+        html += `<span class="map-legend-label" dir="auto">${escapeHtml(
+          item.label,
+        )}</span>`;
         html += "</div>";
       }
 

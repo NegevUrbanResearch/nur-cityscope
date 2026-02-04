@@ -9,9 +9,6 @@ let currentState = {
     corners: null,
     zoom: 15,
   },
-  layers: {
-    model: false,
-  },
   isConnected: false,
 };
 
@@ -57,9 +54,7 @@ async function initialize() {
   );
 
   unsubscribeFunctions.push(
-    OTEFDataContext.subscribe("layers", (layers) => {
-      if (!layers) return;
-      currentState.layers = layers;
+    OTEFDataContext.subscribe("layerGroups", () => {
       updateUI();
     }),
   );
@@ -236,42 +231,44 @@ function updateZoomUI(zoom) {
   }
 }
 
+/** Full layer id for the single "model" toggle (projector base). */
+const MODEL_LAYER_FULL_ID = "projector_base.model_base";
+
 /**
- * Initialize layer controls
+ * Initialize layer controls (layerGroups only; model toggle uses full id).
  */
 function initializeLayerControls() {
-  const toggles = {
-    toggleModel: "model",
-  };
+  const checkbox = document.getElementById("toggleModel");
+  if (!checkbox) return;
 
-  Object.entries(toggles).forEach(([id, layerName]) => {
-    const checkbox = document.getElementById(id);
-    if (!checkbox) return;
+  checkbox.addEventListener("change", async (e) => {
+    if (!currentState.isConnected) {
+      const state =
+        typeof LayerStateHelper !== "undefined"
+          ? LayerStateHelper.getLayerState(MODEL_LAYER_FULL_ID)
+          : null;
+      e.target.checked = state ? !!state.enabled : false;
+      return;
+    }
 
-    checkbox.addEventListener("change", async (e) => {
-      if (!currentState.isConnected) {
-        // Revert checkbox if not connected
-        e.target.checked = currentState.layers[layerName];
-        return;
+    try {
+      const result = await OTEFDataContext.toggleLayer(
+        MODEL_LAYER_FULL_ID,
+        e.target.checked,
+      );
+      if (!result || !result.ok) {
+        throw result && result.error
+          ? result.error
+          : new Error("Layer update failed");
       }
-
-      try {
-        const result = await OTEFDataContext.toggleLayer(
-          layerName,
-          e.target.checked,
-        );
-        if (!result || !result.ok) {
-          throw result && result.error
-            ? result.error
-            : new Error("Layer update failed");
-        }
-      } catch (error) {
-        console.error("[Remote] Layer update failed:", error);
-        // Revert on error
-        e.target.checked = !e.target.checked;
-        currentState.layers[layerName] = !currentState.layers[layerName];
-      }
-    });
+    } catch (error) {
+      console.error("[Remote] Layer update failed:", error);
+      const state =
+        typeof LayerStateHelper !== "undefined"
+          ? LayerStateHelper.getLayerState(MODEL_LAYER_FULL_ID)
+          : null;
+      e.target.checked = state ? !!state.enabled : false;
+    }
   });
 }
 
@@ -382,16 +379,16 @@ function enableDPad() {
 }
 
 function updateLayerCheckboxes() {
-  const toggles = {
-    toggleModel: "model",
-  };
-
-  Object.entries(toggles).forEach(([id, layerName]) => {
-    const checkbox = document.getElementById(id);
-    if (checkbox && checkbox.checked !== currentState.layers[layerName]) {
-      checkbox.checked = currentState.layers[layerName];
-    }
-  });
+  const checkbox = document.getElementById("toggleModel");
+  if (!checkbox) return;
+  const state =
+    typeof LayerStateHelper !== "undefined"
+      ? LayerStateHelper.getLayerState(MODEL_LAYER_FULL_ID)
+      : null;
+  const enabled = state ? !!state.enabled : false;
+  if (checkbox.checked !== enabled) {
+    checkbox.checked = enabled;
+  }
 }
 
 /**

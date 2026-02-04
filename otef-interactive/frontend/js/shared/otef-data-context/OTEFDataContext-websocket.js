@@ -20,10 +20,6 @@
       ctx._viewport = state.viewport;
       if (notify) ctx._notify("viewport", ctx._viewport);
     }
-    if (state.layers) {
-      ctx._layers = state.layers;
-      if (notify) ctx._notify("layers", ctx._layers);
-    }
     if (state.layerGroups) {
       ctx._layerGroups = state.layerGroups;
       if (notify) ctx._notify("layerGroups", ctx._layerGroups);
@@ -102,9 +98,6 @@
     ctx._wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async () => {
       try {
         const state = await OTEF_API.getState(ctx._tableName);
-        if (state.layers) {
-          ctx._setLayers(state.layers);
-        }
         if (state.layerGroups) {
           ctx._setLayerGroups(state.layerGroups);
         }

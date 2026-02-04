@@ -1,7 +1,3 @@
-console.log(
-  `[Map] Initializing leaflet-control-with-basemap.js (v1.2-fixed-scale-rendering)`,
-);
-
 /**
  * Leaflet-specific layer loaders for the GIS map.
  * Uses LayerRegistry and StyleApplicator only. Legacy road layers removed.
@@ -94,13 +90,14 @@ async function loadLayerGroups() {
 
   const groups = layerRegistry.getGroups();
 
-  // Load all layers from all groups, excluding projector_base (projector-only layers)
+  // Load all layers from all groups (GIS-visible only; see gis-layer-filter.js)
   const loadPromises = [];
   for (const group of groups) {
-    // Usually we skip projector_base group (projector-only layers),
-    // but we want Tkuma_Area_LIne to render on GIS.
     for (const layer of group.layers || []) {
-      if (group.id === "projector_base" && layer.id !== "Tkuma_Area_LIne") {
+      if (
+        typeof shouldShowLayerOnGisMap === "function" &&
+        !shouldShowLayerOnGisMap(group.id, layer.id)
+      ) {
         continue;
       }
       const fullLayerId = `${group.id}.${layer.id}`;
@@ -139,20 +136,8 @@ async function loadLayerFromRegistry(fullLayerId) {
     const pmtilesUrl = layerRegistry.getLayerPMTilesUrl(fullLayerId);
     const geojsonUrl = layerRegistry.getLayerDataUrl(fullLayerId);
 
-    console.log(
-      `[Map] Loading layer ${fullLayerId}: pmtiles=${pmtilesUrl}, geojson=${geojsonUrl}`,
-    );
-
-    if (fullLayerId.includes("שבילי_אופניים")) {
-      console.log(
-        `[Map Debug] Layer Config for ${fullLayerId}:`,
-        JSON.stringify(layerConfig, null, 2),
-      );
-    }
-
     if (pmtilesUrl) {
       // Use PMTiles for better performance in GIS
-      console.log(`[Map] Using PMTiles for ${fullLayerId}`);
       await loadPMTilesLayer(fullLayerId, layerConfig, pmtilesUrl);
     } else if (geojsonUrl) {
       // Fallback to GeoJSON
@@ -236,7 +221,11 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
         MapProjectionConfig.ENABLE_MAP_VISIBILITY_DEBUG
       ) {
         console.log(
-          `[Map] Scale range for ${fullLayerId}: scale[${minScale || "-"}, ${maxScale || "-"}] -> zoom[${minZoom?.toFixed(1) || "-"}, ${maxZoom?.toFixed(1) || "-"}]`,
+          `[Map] Scale range for ${fullLayerId}: scale[${minScale || "-"}, ${
+            maxScale || "-"
+          }] -> zoom[${minZoom?.toFixed(1) || "-"}, ${
+            maxZoom?.toFixed(1) || "-"
+          }]`,
         );
       }
 
@@ -262,7 +251,11 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
           if (!allowed) {
             if (map.hasLayer(leafletLayer)) {
               console.log(
-                `[Map] Hiding ${fullLayerId} at zoom ${currentZoom.toFixed(1)} (range ${minZoom?.toFixed(1) || "-"} to ${maxZoom?.toFixed(1) || "-"})`,
+                `[Map] Hiding ${fullLayerId} at zoom ${currentZoom.toFixed(
+                  1,
+                )} (range ${minZoom?.toFixed(1) || "-"} to ${
+                  maxZoom?.toFixed(1) || "-"
+                })`,
               );
               map.removeLayer(leafletLayer);
             }
@@ -316,7 +309,11 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
             ? convertScaleToZoom(scaleRange.maxScale)
             : null;
         console.log(
-          `[Map] Visibility Check ${fullLayerId}: Zoom=${currentZoom.toFixed(2)}, Range=[${minZ?.toFixed(2) || "-"}, ${maxZ?.toFixed(2) || "-"}], Visible=${allowed}`,
+          `[Map] Visibility Check ${fullLayerId}: Zoom=${currentZoom.toFixed(
+            2,
+          )}, Range=[${minZ?.toFixed(2) || "-"}, ${
+            maxZ?.toFixed(2) || "-"
+          }], Visible=${allowed}`,
         );
       }
 
@@ -476,7 +473,11 @@ function updateLayerVisibilityFromRegistry(fullLayerId, visible) {
             MapProjectionConfig.ENABLE_MAP_VISIBILITY_DEBUG
           ) {
             console.log(
-              `[Map] Skipping addLayer for ${fullLayerId} (Zoom ${currentZoom.toFixed(1)} out of range [${minZ?.toFixed(1) || "-"}, ${maxZ?.toFixed(1) || "-"}])`,
+              `[Map] Skipping addLayer for ${fullLayerId} (Zoom ${currentZoom.toFixed(
+                1,
+              )} out of range [${minZ?.toFixed(1) || "-"}, ${
+                maxZ?.toFixed(1) || "-"
+              }])`,
             );
           }
         }
@@ -491,4 +492,19 @@ function updateLayerVisibilityFromRegistry(fullLayerId, visible) {
       map.removeLayer(layer);
     }
   }
+}
+
+/**
+ * Expose loader API for map bootstrap. map-initialization builds mapDeps from this
+ * so layer-state-manager can receive explicit deps instead of relying on globals.
+ * @returns {{ loadLayerFromRegistry: function, updateLayerVisibilityFromRegistry: function, loadedLayersMap: Map }}
+ */
+if (typeof window !== "undefined") {
+  window.getMapLayerLoaderAPI = function getMapLayerLoaderAPI() {
+    return {
+      loadLayerFromRegistry,
+      updateLayerVisibilityFromRegistry,
+      loadedLayersMap,
+    };
+  };
 }

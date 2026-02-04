@@ -1,0 +1,2 @@
+# Format-only commits to ignore for git blame (see .cursor/rules/git-hygiene.mdc)
+da8dbba3ab8f98ff30c84db3300b69c5540b09e4 # Format (prettier)

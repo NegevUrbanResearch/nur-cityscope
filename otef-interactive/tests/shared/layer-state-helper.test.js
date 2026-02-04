@@ -1,6 +1,52 @@
 const {
   resolveLayerState,
+  parseFullLayerId,
+  getLayerIdOnly,
 } = require("../../frontend/js/shared/layer-state-helper");
+
+describe("layer-state-helper: parseFullLayerId", () => {
+  test("returns null for invalid or missing dot", () => {
+    expect(parseFullLayerId(null)).toBeNull();
+    expect(parseFullLayerId(undefined)).toBeNull();
+    expect(parseFullLayerId("")).toBeNull();
+    expect(parseFullLayerId("noDot")).toBeNull();
+    expect(parseFullLayerId("onlyGroup")).toBeNull();
+  });
+
+  test("returns { groupId, layerId } for two-part fullLayerId", () => {
+    const result = parseFullLayerId("projector_base.model_base");
+    expect(result).not.toBeNull();
+    expect(result).toEqual({
+      groupId: "projector_base",
+      layerId: "model_base",
+    });
+  });
+
+  test("supports layer ids that contain dots (first-dot split)", () => {
+    const result = parseFullLayerId("map_3.layer.with.dots");
+    expect(result).not.toBeNull();
+    expect(result).toEqual({ groupId: "map_3", layerId: "layer.with.dots" });
+  });
+
+  test("returns null when groupId or layerId segment is empty", () => {
+    expect(parseFullLayerId(".onlyLayer")).toBeNull();
+    expect(parseFullLayerId("onlyGroup.")).toBeNull();
+    expect(parseFullLayerId(".")).toBeNull();
+  });
+});
+
+describe("layer-state-helper: getLayerIdOnly", () => {
+  test("returns null when parseFullLayerId returns null", () => {
+    expect(getLayerIdOnly(null)).toBeNull();
+    expect(getLayerIdOnly("")).toBeNull();
+    expect(getLayerIdOnly("noDot")).toBeNull();
+  });
+
+  test("returns layerId (everything after first dot)", () => {
+    expect(getLayerIdOnly("projector_base.model_base")).toBe("model_base");
+    expect(getLayerIdOnly("map_3.layer.with.dots")).toBe("layer.with.dots");
+  });
+});
 
 describe("layer-state-helper: resolveLayerState", () => {
   function makeCtx(groups) {

@@ -261,41 +261,10 @@
       return { ok: false, error: "Missing layerId" };
     }
 
-    // Legacy: model base only
-    const legacyLayerIds = ["model"];
-    if (legacyLayerIds.includes(layerId)) {
-      const previous = ctx._layers || {};
-      const next = Object.assign({}, previous, { [layerId]: !!enabled });
-      ctx._setLayers(next);
-
-      try {
-        await OTEF_API.updateLayers(ctx._tableName, next);
-        return { ok: true };
-      } catch (err) {
-        getLogger().error("[OTEFDataContext] Failed to update layers:", err);
-        ctx._setLayers(previous);
-        return { ok: false, error: err };
-      }
-    }
-
-    // Try new hierarchical structure for registry layers
-    if (ctx._layerGroups) {
-      return toggleLayerInGroups(ctx, layerId, enabled);
-    }
-
-    // Fallback to legacy flat structure for unknown layers
-    const previous = ctx._layers || {};
-    const next = Object.assign({}, previous, { [layerId]: !!enabled });
-    ctx._setLayers(next);
-
-    try {
-      await OTEF_API.updateLayers(ctx._tableName, next);
-      return { ok: true };
-    } catch (err) {
-      getLogger().error("[OTEFDataContext] Failed to update layers:", err);
-      ctx._setLayers(previous);
-      return { ok: false, error: err };
-    }
+    // Backward compatibility: remote "model" toggle maps to projector_base.model_base
+    const fullLayerId =
+      layerId === "model" ? "projector_base.model_base" : layerId;
+    return toggleLayerInGroups(ctx, fullLayerId, enabled);
   }
 
   async function toggleLayerInGroups(ctx, layerId, enabled) {

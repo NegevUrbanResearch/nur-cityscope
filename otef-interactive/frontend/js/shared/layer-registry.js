@@ -151,14 +151,21 @@ class LayerRegistry {
       return null;
     }
 
-    // Parse layerId: "group_id.layer_id"
-    const parts = layerId.split(".");
-    if (parts.length < 2) {
-      return null;
+    let groupId, layerIdOnly;
+    const parsed =
+      typeof LayerStateHelper !== "undefined" &&
+      typeof LayerStateHelper.parseFullLayerId === "function"
+        ? LayerStateHelper.parseFullLayerId(layerId)
+        : null;
+    if (parsed) {
+      groupId = parsed.groupId;
+      layerIdOnly = parsed.layerId;
+    } else {
+      const parts = layerId.split(".");
+      if (parts.length < 2) return null;
+      groupId = parts[0];
+      layerIdOnly = parts.slice(1).join(".");
     }
-
-    const groupId = parts[0];
-    const layerIdOnly = parts.slice(1).join(".");
 
     const manifest = this._packManifests.get(groupId);
     if (!manifest) {
@@ -174,19 +181,6 @@ class LayerRegistry {
     // Get style
     const styles = this._packStyles.get(groupId);
     const style = styles ? styles[layerIdOnly] : null;
-
-    if (layerId.includes("שבילי_אופניים") || layerId.includes("דרכי_עפר")) {
-      console.log(
-        `[LayerRegistry] Layer ${layerId}: Style key="${layerIdOnly}", found=${!!style}`,
-        style,
-      );
-      if (!style && styles) {
-        console.log(
-          `[LayerRegistry] Available style keys in pack ${groupId}:`,
-          Object.keys(styles),
-        );
-      }
-    }
 
     return {
       ...layer,

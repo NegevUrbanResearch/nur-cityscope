@@ -202,7 +202,9 @@
 
       let geojson = await response.json();
       console.log(
-        `[Projection] Loaded layer ${fullLayerId}, features: ${geojson.features?.length || 0}`,
+        `[Projection] Loaded layer ${fullLayerId}, features: ${
+          geojson.features?.length || 0
+        }`,
       );
 
       // Check CRS and transform from WGS84 to ITM if needed
@@ -380,13 +382,20 @@
         // Fallback to legacy direct lookup if helper is not available
         const layerGroups = OTEFDataContext.getLayerGroups();
         if (layerGroups) {
-          const [groupId, layerId] = layerName.split(".");
-          const group = layerGroups.find((g) => g.id === groupId);
-          if (group && Array.isArray(group.layers)) {
-            const layerStateObj = group.layers.find(
-              (l) => l && l.id === layerId,
-            );
-            shouldBeVisible = !!(layerStateObj && layerStateObj.enabled);
+          const parsed =
+            typeof LayerStateHelper !== "undefined" &&
+            typeof LayerStateHelper.parseFullLayerId === "function"
+              ? LayerStateHelper.parseFullLayerId(layerName)
+              : null;
+          if (parsed) {
+            const { groupId, layerId } = parsed;
+            const group = layerGroups.find((g) => g.id === groupId);
+            if (group && Array.isArray(group.layers)) {
+              const layerStateObj = group.layers.find(
+                (l) => l && l.id === layerId,
+              );
+              shouldBeVisible = !!(layerStateObj && layerStateObj.enabled);
+            }
           }
         }
       }

@@ -111,6 +111,23 @@ function initializeMap(bounds) {
       const initialConnection = OTEFDataContext.isConnected();
       updateConnectionStatus(!!initialConnection);
 
+      // Build map deps for layer-state-manager (explicit deps, testable without globals)
+      const loaderAPI =
+        typeof getMapLayerLoaderAPI === "function"
+          ? getMapLayerLoaderAPI()
+          : {};
+      const mapDeps = {
+        map,
+        layerRegistry:
+          typeof layerRegistry !== "undefined" ? layerRegistry : null,
+        loadLayerFromRegistry: loaderAPI.loadLayerFromRegistry || null,
+        updateLayerVisibilityFromRegistry:
+          loaderAPI.updateLayerVisibilityFromRegistry || null,
+        loadedLayersMap: loaderAPI.loadedLayersMap || null,
+        updateMapLegend:
+          typeof updateMapLegend === "function" ? updateMapLegend : () => {},
+      };
+
       // Store unsubscribe functions for cleanup
       if (!window._otefUnsubscribeFunctions) {
         window._otefUnsubscribeFunctions = [];
@@ -126,13 +143,13 @@ function initializeMap(bounds) {
 
       const initialLayerGroups = OTEFDataContext.getLayerGroups();
       if (initialLayerGroups) {
-        applyLayerGroupsState(initialLayerGroups);
+        applyLayerGroupsState(initialLayerGroups, mapDeps);
       }
 
       window._otefUnsubscribeFunctions.push(
         OTEFDataContext.subscribe("layerGroups", (layerGroups) => {
           if (layerGroups) {
-            applyLayerGroupsState(layerGroups);
+            applyLayerGroupsState(layerGroups, mapDeps);
           }
         }),
       );
@@ -238,7 +255,11 @@ map.on("click", async (e) => {
 
           // Get layer display name
           const layerDisplayName =
-            layerInfo.config?.name || fullLayerId.split(".").pop();
+            layerInfo.config?.name ||
+            (typeof LayerStateHelper !== "undefined" &&
+            typeof LayerStateHelper.getLayerIdOnly === "function"
+              ? LayerStateHelper.getLayerIdOnly(fullLayerId)
+              : fullLayerId.split(".").pop());
 
           // Render and show popup
           if (typeof renderPopupContent === "function") {

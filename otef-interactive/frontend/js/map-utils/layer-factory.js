@@ -73,7 +73,12 @@ function createGeoJsonLayer(options) {
 
   const styleFunction = StyleApplicatorRef.getLeafletStyle(layerConfig);
   const popupConfig = layerConfig.ui?.popup;
-  const layerDisplayName = layerConfig.name || fullLayerId.split(".").pop();
+  const layerDisplayName =
+    layerConfig.name ||
+    (typeof LayerStateHelper !== "undefined" &&
+    typeof LayerStateHelper.getLayerIdOnly === "function"
+      ? LayerStateHelper.getLayerIdOnly(fullLayerId)
+      : fullLayerId.split(".").pop());
 
   // Determine pane based on geometry type
   let layerPane = "overlayPolygon"; // Default
