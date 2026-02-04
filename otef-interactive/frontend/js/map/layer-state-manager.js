@@ -9,7 +9,9 @@
  */
 function applyLayerState(layers) {
   // No-op: Legacy layers state is no longer used
-  console.warn('[Map] applyLayerState called with legacy layers state, ignoring');
+  console.warn(
+    "[Map] applyLayerState called with legacy layers state, ignoring",
+  );
 }
 
 /**
@@ -18,7 +20,9 @@ function applyLayerState(layers) {
  */
 function handleLayerUpdate(msg) {
   // No-op: Legacy layers updates are no longer used
-  console.warn('[Map] handleLayerUpdate called with legacy layers message, ignoring');
+  console.warn(
+    "[Map] handleLayerUpdate called with legacy layers message, ignoring",
+  );
 }
 
 /**
@@ -67,7 +71,7 @@ function applyLayerGroupsState(layerGroups) {
     for (const layer of group.layers || []) {
       // Usually we skip projector_base group (projector-only layers),
       // but we want Tkuma_Area_LIne to render on GIS.
-      if (group.id === 'projector_base' && layer.id !== 'Tkuma_Area_LIne') {
+      if (group.id === "projector_base" && layer.id !== "Tkuma_Area_LIne") {
         continue;
       }
 
@@ -75,29 +79,35 @@ function applyLayerGroupsState(layerGroups) {
 
       if (layer.enabled) {
         // Layer should be visible - load if needed, then show
-        if (typeof loadLayerFromRegistry === 'function') {
+        if (typeof loadLayerFromRegistry === "function") {
           // Check if layer is already loaded - if so, just set visibility directly
-          if (typeof loadedLayersMap !== 'undefined' && loadedLayersMap.has(fullLayerId)) {
-            if (typeof updateLayerVisibilityFromRegistry === 'function') {
+          if (
+            typeof loadedLayersMap !== "undefined" &&
+            loadedLayersMap.has(fullLayerId)
+          ) {
+            if (typeof updateLayerVisibilityFromRegistry === "function") {
               updateLayerVisibilityFromRegistry(fullLayerId, true);
             }
           } else {
             // Layer not loaded yet, load it first
             loadLayerFromRegistry(fullLayerId)
               .then(() => {
-                if (typeof updateLayerVisibilityFromRegistry === 'function') {
+                if (typeof updateLayerVisibilityFromRegistry === "function") {
                   updateLayerVisibilityFromRegistry(fullLayerId, true);
                 }
                 updateMapLegend();
               })
               .catch((err) => {
-                console.error(`[GIS Map] Failed to load layer ${fullLayerId}:`, err);
+                console.error(
+                  `[GIS Map] Failed to load layer ${fullLayerId}:`,
+                  err,
+                );
               });
           }
         }
       } else {
         // Layer is disabled, hide it
-        if (typeof updateLayerVisibilityFromRegistry === 'function') {
+        if (typeof updateLayerVisibilityFromRegistry === "function") {
           updateLayerVisibilityFromRegistry(fullLayerId, false);
         }
       }
@@ -110,19 +120,20 @@ function applyLayerGroupsState(layerGroups) {
   // visible set on the map matches the current global state.
   try {
     if (
-      typeof loadedLayersMap !== 'undefined' &&
-      typeof VisibilityController !== 'undefined' &&
-      typeof LayerStateHelper !== 'undefined' &&
-      typeof updateLayerVisibilityFromRegistry === 'function'
+      typeof loadedLayersMap !== "undefined" &&
+      typeof VisibilityController !== "undefined" &&
+      typeof LayerStateHelper !== "undefined" &&
+      typeof updateLayerVisibilityFromRegistry === "function"
     ) {
-      const currentZoom = typeof map !== 'undefined' && typeof map.getZoom === 'function'
-        ? map.getZoom()
-        : null;
+      const currentZoom =
+        typeof map !== "undefined" && typeof map.getZoom === "function"
+          ? map.getZoom()
+          : null;
 
       if (currentZoom !== null) {
         for (const fullLayerId of loadedLayersMap.keys()) {
           let scaleRange = null;
-          if (typeof layerRegistry !== 'undefined') {
+          if (typeof layerRegistry !== "undefined") {
             const cfg = layerRegistry.getLayerConfig(fullLayerId);
             if (cfg && cfg.style && cfg.style.scaleRange) {
               scaleRange = cfg.style.scaleRange;
@@ -135,18 +146,18 @@ function applyLayerGroupsState(layerGroups) {
             fullLayerId,
             scaleRange,
             zoom: currentZoom,
-            layerStateHelper: LayerStateHelper
+            layerStateHelper: LayerStateHelper,
           });
 
           // Debug logging for sticky-visibility investigation
           // Focus on land_use pack where we observed layers remaining visible.
-          if (fullLayerId.startsWith('land_use.')) {
-            console.log('[GIS Debug] reconcile layer', {
+          if (fullLayerId.startsWith("land_use.")) {
+            console.log("[GIS Debug] reconcile layer", {
               fullLayerId,
               zoom: currentZoom,
               scaleRange,
               layerState: state,
-              allowed
+              allowed,
             });
           }
 
@@ -155,7 +166,10 @@ function applyLayerGroupsState(layerGroups) {
       }
     }
   } catch (err) {
-    console.warn('[GIS Map] Failed to reconcile loaded layers after state update:', err);
+    console.warn(
+      "[GIS Map] Failed to reconcile loaded layers after state update:",
+      err,
+    );
   }
 
   updateMapLegend();

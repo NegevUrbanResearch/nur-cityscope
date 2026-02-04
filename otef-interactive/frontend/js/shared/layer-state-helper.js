@@ -10,7 +10,7 @@
  * @returns {{group: Object, layer: Object, enabled: boolean}|null}
  */
 function resolveLayerState(ctx, fullLayerId) {
-  if (!ctx || typeof ctx.getLayerGroups !== 'function' || !fullLayerId) {
+  if (!ctx || typeof ctx.getLayerGroups !== "function" || !fullLayerId) {
     return null;
   }
 
@@ -19,7 +19,7 @@ function resolveLayerState(ctx, fullLayerId) {
     return null;
   }
 
-  const parts = fullLayerId.split('.');
+  const parts = fullLayerId.split(".");
   if (parts.length !== 2) return null;
   const [groupId, layerId] = parts;
 
@@ -43,7 +43,7 @@ function resolveLayerState(ctx, fullLayerId) {
   return {
     group,
     layer,
-    enabled: groupEnabled && layerEnabled
+    enabled: groupEnabled && layerEnabled,
   };
 }
 
@@ -54,25 +54,24 @@ function resolveLayerState(ctx, fullLayerId) {
  * @returns {{group: Object, layer: Object, enabled: boolean}|null}
  */
 function getLayerState(fullLayerId) {
-  if (typeof OTEFDataContext === 'undefined') {
+  if (typeof OTEFDataContext === "undefined") {
     return null;
   }
   return resolveLayerState(OTEFDataContext, fullLayerId);
 }
 
 // Expose globals for browser consumers
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.LayerStateHelper = {
     resolveLayerState,
-    getLayerState
+    getLayerState,
   };
 }
 
 // Export for Node/CommonJS consumers (tests, tooling)
-if (typeof module !== 'undefined' && module.exports) {
+if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     resolveLayerState,
-    getLayerState
+    getLayerState,
   };
 }
-

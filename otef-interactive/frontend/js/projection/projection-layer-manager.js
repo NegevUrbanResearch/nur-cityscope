@@ -82,7 +82,9 @@
         await loadProjectionLayerGroups();
 
         // Set model image src from registry (avoids hardcoded path / 404)
-        const modelImageUrl = layerRegistry.getLayerDataUrl("projector_base.model_base");
+        const modelImageUrl = layerRegistry.getLayerDataUrl(
+          "projector_base.model_base",
+        );
         const img = document.getElementById("displayedImage");
         if (img && modelImageUrl) {
           img.src = modelImageUrl;
@@ -103,7 +105,11 @@
     // Initialize model base image visibility from layerGroups state
     if (typeof OTEFDataContext !== "undefined") {
       const layerGroups = OTEFDataContext.getLayerGroups();
-      const modelBaseState = getLayerStateFromGroups(layerGroups, 'projector_base', 'model_base');
+      const modelBaseState = getLayerStateFromGroups(
+        layerGroups,
+        "projector_base",
+        "model_base",
+      );
       updateModelImageVisibility(modelBaseState?.enabled || false);
     }
   }
@@ -154,7 +160,7 @@
     // Handle image layers differently (they don't have GeoJSON data)
     if (layerConfig.format === "image") {
       console.log(
-        `[Projection] Skipping image layer ${fullLayerId} (rendered via <img> element)`
+        `[Projection] Skipping image layer ${fullLayerId} (rendered via <img> element)`,
       );
       loadedLayers[fullLayerId] = { type: "image" };
       return;
@@ -180,18 +186,24 @@
       // Projection always uses GeoJSON (PMTiles not supported in Canvas renderer)
       const dataUrl = layerRegistry.getLayerDataUrl(fullLayerId);
       if (!dataUrl) {
-        console.warn(`[Projection] No GeoJSON data URL for layer: ${fullLayerId}`);
+        console.warn(
+          `[Projection] No GeoJSON data URL for layer: ${fullLayerId}`,
+        );
         return;
       }
 
-      console.log(`[Projection] Fetching layer data: ${fullLayerId} from ${dataUrl}`);
+      console.log(
+        `[Projection] Fetching layer data: ${fullLayerId} from ${dataUrl}`,
+      );
       const response = await fetch(dataUrl);
       if (!response.ok) {
         throw new Error(`Failed to load layer data: ${response.status}`);
       }
 
       let geojson = await response.json();
-      console.log(`[Projection] Loaded layer ${fullLayerId}, features: ${geojson.features?.length || 0}`);
+      console.log(
+        `[Projection] Loaded layer ${fullLayerId}, features: ${geojson.features?.length || 0}`,
+      );
 
       // Check CRS and transform from WGS84 to ITM if needed
       // Projection canvas expects ITM coordinates to match model bounds
@@ -209,25 +221,33 @@
       }
 
       if (crs.includes("4326") || crs.includes("WGS") || isWgs84) {
-        if (isWgs84) console.log(`[Projection] Detected WGS84 coordinates for ${fullLayerId}, transforming to ITM...`);
+        if (isWgs84)
+          console.log(
+            `[Projection] Detected WGS84 coordinates for ${fullLayerId}, transforming to ITM...`,
+          );
         geojson = CoordUtils.transformGeojsonToItm(geojson);
       } else if (!crs || crs === "") {
-         // Fallback logic preserved but enhanced above
-         // If we are here, isWgs84 is false, meaning coordinates are likely large (ITM)
-         console.log(`[Projection] Detected existing ITM-like coordinates for ${fullLayerId}`);
+        // Fallback logic preserved but enhanced above
+        // If we are here, isWgs84 is false, meaning coordinates are likely large (ITM)
+        console.log(
+          `[Projection] Detected existing ITM-like coordinates for ${fullLayerId}`,
+        );
       }
 
       // Get canvas style function from StyleApplicator
       const canvasStyleFunction = StyleApplicator.getCanvasStyle(layerConfig);
 
       // Render layer using Canvas renderer
-      await renderLayerFromGeojson(geojson, fullLayerId, canvasStyleFunction, layerConfig.geometryType);
+      await renderLayerFromGeojson(
+        geojson,
+        fullLayerId,
+        canvasStyleFunction,
+        layerConfig.geometryType,
+      );
     } catch (error) {
       console.error(`[Projection] Error loading layer ${fullLayerId}:`, error);
     }
   }
-
-
 
   /**
    * Extract the first coordinate from a GeoJSON to detect CRS
@@ -275,7 +295,7 @@
         const fullLayerId = `${group.id}.${layer.id}`;
 
         // Handle model_base image layer specially
-        if (fullLayerId === 'projector_base.model_base') {
+        if (fullLayerId === "projector_base.model_base") {
           updateModelImageVisibility(layer.enabled);
           continue;
         }
@@ -289,7 +309,7 @@
               .catch((err) => {
                 console.error(
                   `[Projection] Failed to load WMTS layer ${fullLayerId}:`,
-                  err
+                  err,
                 );
               });
           }
@@ -304,7 +324,10 @@
                 updateLayerVisibility(fullLayerId, true);
               })
               .catch((err) => {
-                console.error(`[Projection] Failed to load layer ${fullLayerId}:`, err);
+                console.error(
+                  `[Projection] Failed to load layer ${fullLayerId}:`,
+                  err,
+                );
               });
           } else {
             updateLayerVisibility(fullLayerId, true);
@@ -320,7 +343,12 @@
   /**
    * Helper function to render a layer from GeoJSON using Canvas
    */
-  async function renderLayerFromGeojson(geojson, layerName, styleFunction, geometryType) {
+  async function renderLayerFromGeojson(
+    geojson,
+    layerName,
+    styleFunction,
+    geometryType,
+  ) {
     const displayBounds = getDisplayBoundsSafe();
     const modelBounds = getModelBoundsSafe();
     if (!displayBounds || !modelBounds) {
@@ -342,7 +370,10 @@
       // Registry layers: individual layer.enabled is the source of truth.
       // Reuse shared LayerStateHelper so projection and map agree on visibility.
       let shouldBeVisible = false;
-      if (typeof LayerStateHelper !== "undefined" && typeof LayerStateHelper.getLayerState === "function") {
+      if (
+        typeof LayerStateHelper !== "undefined" &&
+        typeof LayerStateHelper.getLayerState === "function"
+      ) {
         const state = LayerStateHelper.getLayerState(layerName);
         shouldBeVisible = !!(state && state.enabled);
       } else if (typeof OTEFDataContext !== "undefined") {
@@ -352,7 +383,9 @@
           const [groupId, layerId] = layerName.split(".");
           const group = layerGroups.find((g) => g.id === groupId);
           if (group && Array.isArray(group.layers)) {
-            const layerStateObj = group.layers.find((l) => l && l.id === layerId);
+            const layerStateObj = group.layers.find(
+              (l) => l && l.id === layerId,
+            );
             shouldBeVisible = !!(layerStateObj && layerStateObj.enabled);
           }
         }
@@ -367,9 +400,9 @@
    */
   function getLayerStateFromGroups(layerGroups, groupId, layerId) {
     if (!Array.isArray(layerGroups)) return null;
-    const group = layerGroups.find(g => g.id === groupId);
+    const group = layerGroups.find((g) => g.id === groupId);
     if (!group || !Array.isArray(group.layers)) return null;
-    return group.layers.find(l => l.id === layerId);
+    return group.layers.find((l) => l.id === layerId);
   }
 
   /**
@@ -397,6 +430,6 @@
     configure,
     initializeLayers,
     syncLayerGroupsFromState,
-    handleResize
+    handleResize,
   };
 })();

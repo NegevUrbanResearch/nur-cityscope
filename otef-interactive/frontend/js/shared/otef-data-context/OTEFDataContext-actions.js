@@ -3,14 +3,16 @@
 
 (function () {
   const internals = window.OTEFDataContextInternals || {};
-  const getLogger = internals.getLogger || function () {
-    return {
-      debug: () => {},
-      info: () => {},
-      warn: console.warn.bind(console),
-      error: console.error.bind(console),
+  const getLogger =
+    internals.getLogger ||
+    function () {
+      return {
+        debug: () => {},
+        info: () => {},
+        warn: console.warn.bind(console),
+        error: console.error.bind(console),
+      };
     };
-  };
 
   async function pan(ctx, direction, delta = 0.15) {
     if (!ctx._tableName || !ctx._isConnected) return;
@@ -18,7 +20,11 @@
 
     const currentViewport = ctx._viewport;
     let candidateViewport = null;
-    if (currentViewport && currentViewport.bbox && currentViewport.bbox.length === 4) {
+    if (
+      currentViewport &&
+      currentViewport.bbox &&
+      currentViewport.bbox.length === 4
+    ) {
       candidateViewport = computePanViewport(currentViewport, direction, delta);
     }
 
@@ -49,7 +55,8 @@
   }
 
   function sendVelocity(ctx, vx, vy) {
-    if (!ctx._tableName || !ctx._wsClient || !ctx._wsClient.getConnected()) return;
+    if (!ctx._tableName || !ctx._wsClient || !ctx._wsClient.getConnected())
+      return;
 
     const wasMoving =
       ctx._velocity && (ctx._velocity.vx !== 0 || ctx._velocity.vy !== 0);
@@ -80,7 +87,10 @@
     ctx._velocityLoopActive = true;
 
     const step = () => {
-      if (!ctx._velocity || (ctx._velocity.vx === 0 && ctx._velocity.vy === 0)) {
+      if (
+        !ctx._velocity ||
+        (ctx._velocity.vx === 0 && ctx._velocity.vy === 0)
+      ) {
         ctx._velocityLoopActive = false;
         return;
       }
@@ -106,13 +116,17 @@
         } else {
           // 2. Try moving ONLY on X axis (slide along North/South bounds)
           const xOnlyBbox = [minX + dx, minY, maxX + dx, maxY];
-          if (ctx._isViewportInsideBounds({ ...ctx._viewport, bbox: xOnlyBbox })) {
+          if (
+            ctx._isViewportInsideBounds({ ...ctx._viewport, bbox: xOnlyBbox })
+          ) {
             finalDy = 0;
             canMove = true;
           } else {
             // 3. Try moving ONLY on Y axis (slide along East/West bounds)
             const yOnlyBbox = [minX, minY + dy, maxX, maxY + dy];
-            if (ctx._isViewportInsideBounds({ ...ctx._viewport, bbox: yOnlyBbox })) {
+            if (
+              ctx._isViewportInsideBounds({ ...ctx._viewport, bbox: yOnlyBbox })
+            ) {
               finalDx = 0;
               canMove = true;
             }
@@ -160,7 +174,11 @@
 
     const currentViewport = ctx._viewport;
     let candidateViewport = null;
-    if (currentViewport && currentViewport.bbox && currentViewport.bbox.length === 4) {
+    if (
+      currentViewport &&
+      currentViewport.bbox &&
+      currentViewport.bbox.length === 4
+    ) {
       candidateViewport = computeZoomViewport(currentViewport, clampedZoom);
     }
 
@@ -187,7 +205,12 @@
   }
 
   function updateViewportFromUI(ctx, viewport, source = "gis") {
-    if (!ctx._tableName || !viewport || !viewport.bbox || viewport.bbox.length !== 4) {
+    if (
+      !ctx._tableName ||
+      !viewport ||
+      !viewport.bbox ||
+      viewport.bbox.length !== 4
+    ) {
       return false;
     }
 
@@ -210,7 +233,11 @@
 
     // Delegate actual write/debounce behavior to API client
     try {
-      const payload = { ...viewport, sourceId: ctx._clientId, timestamp: Date.now() };
+      const payload = {
+        ...viewport,
+        sourceId: ctx._clientId,
+        timestamp: Date.now(),
+      };
       if (typeof OTEF_API.updateViewportDebounced === "function") {
         OTEF_API.updateViewportDebounced(ctx._tableName, payload);
       } else {
@@ -218,7 +245,10 @@
       }
       return { accepted: true };
     } catch (err) {
-      getLogger().error("[OTEFDataContext] Failed to send viewport update:", err);
+      getLogger().error(
+        "[OTEFDataContext] Failed to send viewport update:",
+        err,
+      );
     } finally {
       ctx._currentInteractionSource = null;
     }
@@ -287,7 +317,10 @@
       await OTEF_API.updateLayerGroups(ctx._tableName, next);
       return { ok: true };
     } catch (err) {
-      getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
+      getLogger().error(
+        "[OTEFDataContext] Failed to update layer groups:",
+        err,
+      );
       ctx._setLayerGroups(previous);
       return { ok: false, error: err };
     }
@@ -306,7 +339,10 @@
     const next = previous.map((group) => {
       if (group.id === groupId) {
         // Toggle all layers in the group
-        const layers = group.layers.map((layer) => ({ ...layer, enabled: !!enabled }));
+        const layers = group.layers.map((layer) => ({
+          ...layer,
+          enabled: !!enabled,
+        }));
         return { ...group, enabled: !!enabled, layers };
       }
       return group;
@@ -318,7 +354,10 @@
       await OTEF_API.updateLayerGroups(ctx._tableName, next);
       return { ok: true };
     } catch (err) {
-      getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
+      getLogger().error(
+        "[OTEFDataContext] Failed to update layer groups:",
+        err,
+      );
       ctx._setLayerGroups(previous);
       return { ok: false, error: err };
     }

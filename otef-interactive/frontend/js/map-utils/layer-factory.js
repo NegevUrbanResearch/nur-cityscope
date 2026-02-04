@@ -14,16 +14,16 @@ let protomapsLRef;
 // does not matter. This is important because layer-factory.js is loaded
 // before style-applicator.js in index.html.
 function ensureBrowserRefs() {
-  if (typeof StyleApplicator !== 'undefined' && !StyleApplicatorRef) {
+  if (typeof StyleApplicator !== "undefined" && !StyleApplicatorRef) {
     StyleApplicatorRef = StyleApplicator;
   }
-  if (typeof renderPopupContent === 'function' && !renderPopupContentRef) {
+  if (typeof renderPopupContent === "function" && !renderPopupContentRef) {
     renderPopupContentRef = renderPopupContent;
   }
-  if (typeof L !== 'undefined' && !LRef) {
+  if (typeof L !== "undefined" && !LRef) {
     LRef = L;
   }
-  if (typeof protomapsL !== 'undefined' && !protomapsLRef) {
+  if (typeof protomapsL !== "undefined" && !protomapsLRef) {
     protomapsLRef = protomapsL;
   }
 }
@@ -34,14 +34,18 @@ ensureBrowserRefs();
 // Then try CommonJS requires (Node/tests)
 try {
   // eslint-disable-next-line global-require
-  const StyleApplicatorModule = require('./style-applicator');
+  const StyleApplicatorModule = require("./style-applicator");
   StyleApplicatorRef = StyleApplicatorRef || StyleApplicatorModule;
 } catch (_) {}
 
 try {
   // eslint-disable-next-line global-require
-  const popupRendererModule = require('./popup-renderer');
-  if (!renderPopupContentRef && popupRendererModule && typeof popupRendererModule.renderPopupContent === 'function') {
+  const popupRendererModule = require("./popup-renderer");
+  if (
+    !renderPopupContentRef &&
+    popupRendererModule &&
+    typeof popupRendererModule.renderPopupContent === "function"
+  ) {
     renderPopupContentRef = popupRendererModule.renderPopupContent;
   }
 } catch (_) {}
@@ -69,15 +73,15 @@ function createGeoJsonLayer(options) {
 
   const styleFunction = StyleApplicatorRef.getLeafletStyle(layerConfig);
   const popupConfig = layerConfig.ui?.popup;
-  const layerDisplayName = layerConfig.name || fullLayerId.split('.').pop();
+  const layerDisplayName = layerConfig.name || fullLayerId.split(".").pop();
 
   // Determine pane based on geometry type
-  let layerPane = 'overlayPolygon'; // Default
-  if (layerConfig.geometryType === 'line') layerPane = 'overlayLine';
-  if (layerConfig.geometryType === 'point') layerPane = 'overlayPoint';
+  let layerPane = "overlayPolygon"; // Default
+  if (layerConfig.geometryType === "line") layerPane = "overlayLine";
+  if (layerConfig.geometryType === "point") layerPane = "overlayPoint";
 
   let leafletLayer;
-  if (layerConfig.geometryType === 'point') {
+  if (layerConfig.geometryType === "point") {
     // Use style function for EACH point feature
     leafletLayer = LRef.geoJSON(geojson, {
       pane: layerPane,
@@ -87,35 +91,37 @@ function createGeoJsonLayer(options) {
         // Targeted normalization for oversized heritage markers only.
         // Other point layers keep their configured radius.
         const isHeritageMarker =
-          fullLayerId === 'future_development.מורשת-קיים' ||
-          fullLayerId === 'future_development.מורשת-מוצע' ||
-          fullLayerId === 'future_development.מורשת_קיים' ||
-          fullLayerId === 'future_development.מורשת_מוצע';
+          fullLayerId === "future_development.מורשת-קיים" ||
+          fullLayerId === "future_development.מורשת-מוצע" ||
+          fullLayerId === "future_development.מורשת_קיים" ||
+          fullLayerId === "future_development.מורשת_מוצע";
 
-        const baseRadius = typeof style.radius === 'number' ? style.radius : 5;
+        const baseRadius = typeof style.radius === "number" ? style.radius : 5;
         const radius = isHeritageMarker ? Math.min(baseRadius, 6) : baseRadius;
 
         return LRef.circleMarker(latlng, {
           ...style,
           radius,
-          color: style.strokeColor || style.color || '#000000',
+          color: style.strokeColor || style.color || "#000000",
           weight: style.strokeWidth || style.weight || 1,
-          fillColor: style.fillColor || '#808080',
-          fillOpacity: style.fillOpacity !== undefined ? style.fillOpacity : 0.7,
-          pane: layerPane
+          fillColor: style.fillColor || "#808080",
+          fillOpacity:
+            style.fillOpacity !== undefined ? style.fillOpacity : 0.7,
+          pane: layerPane,
         });
       },
       onEachFeature: (feature, layer) => {
-        if (popupConfig && typeof renderPopupContentRef === 'function' && map) {
-          layer.on('click', (e) => {
-            const content = renderPopupContentRef(feature, popupConfig, layerDisplayName);
-            LRef.popup()
-              .setLatLng(e.latlng)
-              .setContent(content)
-              .openOn(map);
+        if (popupConfig && typeof renderPopupContentRef === "function" && map) {
+          layer.on("click", (e) => {
+            const content = renderPopupContentRef(
+              feature,
+              popupConfig,
+              layerDisplayName,
+            );
+            LRef.popup().setLatLng(e.latlng).setContent(content).openOn(map);
           });
         }
-      }
+      },
     });
   } else {
     // Use style function for polygons and lines
@@ -123,16 +129,17 @@ function createGeoJsonLayer(options) {
       pane: layerPane,
       style: styleFunction,
       onEachFeature: (feature, layer) => {
-        if (popupConfig && typeof renderPopupContentRef === 'function' && map) {
-          layer.on('click', (e) => {
-            const content = renderPopupContentRef(feature, popupConfig, layerDisplayName);
-            LRef.popup()
-              .setLatLng(e.latlng)
-              .setContent(content)
-              .openOn(map);
+        if (popupConfig && typeof renderPopupContentRef === "function" && map) {
+          layer.on("click", (e) => {
+            const content = renderPopupContentRef(
+              feature,
+              popupConfig,
+              layerDisplayName,
+            );
+            LRef.popup().setLatLng(e.latlng).setContent(content).openOn(map);
           });
         }
-      }
+      },
     });
   }
 
@@ -159,20 +166,20 @@ function createPmtilesLayer(options) {
   }
 
   const styleFunction = StyleApplicatorRef.getLeafletStyle(layerConfig);
-  const dataLayerName = 'layer';
+  const dataLayerName = "layer";
 
   const paintRules = [];
-  if (layerConfig.geometryType === 'polygon') {
+  if (layerConfig.geometryType === "polygon") {
     paintRules.push({
       dataLayer: dataLayerName,
       symbolizer: new protomapsLRef.PolygonSymbolizer({
         fill: (zoom, feature) => {
           const style = styleFunction(feature);
-          return style.fillColor || '#808080';
+          return style.fillColor || "#808080";
         },
         color: (zoom, feature) => {
           const style = styleFunction(feature);
-          return style.color || '#000000';
+          return style.color || "#000000";
         },
         width: (zoom, feature) => {
           const style = styleFunction(feature);
@@ -181,19 +188,19 @@ function createPmtilesLayer(options) {
         opacity: (zoom, feature) => {
           const style = styleFunction(feature);
           return style.fillOpacity !== undefined ? style.fillOpacity : 0.7;
-        }
-      })
+        },
+      }),
     });
     paintRules.push({
-      dataLayer: '*',
+      dataLayer: "*",
       symbolizer: new protomapsLRef.PolygonSymbolizer({
         fill: (zoom, feature) => {
           const style = styleFunction(feature);
-          return style.fillColor || '#808080';
+          return style.fillColor || "#808080";
         },
         color: (zoom, feature) => {
           const style = styleFunction(feature);
-          return style.color || '#000000';
+          return style.color || "#000000";
         },
         width: (zoom, feature) => {
           const style = styleFunction(feature);
@@ -202,16 +209,16 @@ function createPmtilesLayer(options) {
         opacity: (zoom, feature) => {
           const style = styleFunction(feature);
           return style.fillOpacity !== undefined ? style.fillOpacity : 0.7;
-        }
-      })
+        },
+      }),
     });
-  } else if (layerConfig.geometryType === 'line') {
+  } else if (layerConfig.geometryType === "line") {
     paintRules.push({
       dataLayer: dataLayerName,
       symbolizer: new protomapsLRef.LineSymbolizer({
         color: (zoom, feature) => {
           const style = styleFunction(feature);
-          return style.color || '#000000';
+          return style.color || "#000000";
         },
         width: (zoom, feature) => {
           const style = styleFunction(feature);
@@ -220,15 +227,15 @@ function createPmtilesLayer(options) {
         opacity: (zoom, feature) => {
           const style = styleFunction(feature);
           return style.opacity !== undefined ? style.opacity : 1.0;
-        }
-      })
+        },
+      }),
     });
     paintRules.push({
-      dataLayer: '*',
+      dataLayer: "*",
       symbolizer: new protomapsLRef.LineSymbolizer({
         color: (zoom, feature) => {
           const style = styleFunction(feature);
-          return style.color || '#000000';
+          return style.color || "#000000";
         },
         width: (zoom, feature) => {
           const style = styleFunction(feature);
@@ -237,14 +244,14 @@ function createPmtilesLayer(options) {
         opacity: (zoom, feature) => {
           const style = styleFunction(feature);
           return style.opacity !== undefined ? style.opacity : 1.0;
-        }
-      })
+        },
+      }),
     });
   }
 
-  let layerPane = 'overlayPolygon'; // Default
-  if (layerConfig.geometryType === 'line') layerPane = 'overlayLine';
-  if (layerConfig.geometryType === 'point') layerPane = 'overlayPoint';
+  let layerPane = "overlayPolygon"; // Default
+  if (layerConfig.geometryType === "line") layerPane = "overlayLine";
+  if (layerConfig.geometryType === "point") layerPane = "overlayPoint";
 
   const pmtilesLayer = protomapsLRef.leafletLayer({
     url: dataUrl,
@@ -254,25 +261,24 @@ function createPmtilesLayer(options) {
     minDataZoom: 9,
     maxDataZoom: 18,
     attribution: layerConfig.name || fullLayerId,
-    pane: layerPane
+    pane: layerPane,
   });
 
   return pmtilesLayer;
 }
 
 // Attach to window for browser consumers
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.LayerFactory = {
     createGeoJsonLayer,
-    createPmtilesLayer
+    createPmtilesLayer,
   };
 }
 
 // Export for Node/CommonJS consumers (tests, tooling)
-if (typeof module !== 'undefined' && module.exports) {
+if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     createGeoJsonLayer,
-    createPmtilesLayer
+    createPmtilesLayer,
   };
 }
-

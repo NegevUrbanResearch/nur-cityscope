@@ -2,14 +2,16 @@
 
 (function () {
   const internals = window.OTEFDataContextInternals || {};
-  const getLogger = internals.getLogger || function () {
-    return {
-      debug: () => {},
-      info: () => {},
-      warn: console.warn.bind(console),
-      error: console.error.bind(console),
+  const getLogger =
+    internals.getLogger ||
+    function () {
+      return {
+        debug: () => {},
+        info: () => {},
+        warn: console.warn.bind(console),
+        error: console.error.bind(console),
+      };
     };
-  };
 
   function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
     if (!state || typeof state !== "object") return;
@@ -84,7 +86,7 @@
       } catch (err) {
         getLogger().error(
           "[OTEFDataContext] Failed to refresh viewport after VIEWPORT_CHANGED:",
-          err
+          err,
         );
       }
     });
@@ -109,7 +111,7 @@
       } catch (err) {
         getLogger().error(
           "[OTEFDataContext] Failed to refresh layers after LAYERS_CHANGED:",
-          err
+          err,
         );
       }
     });
@@ -129,7 +131,7 @@
       } catch (err) {
         getLogger().error(
           "[OTEFDataContext] Failed to refresh animations after ANIMATION_CHANGED:",
-          err
+          err,
         );
       }
     });
@@ -144,7 +146,7 @@
       } catch (err) {
         getLogger().error(
           "[OTEFDataContext] Failed to refresh bounds after BOUNDS_CHANGED:",
-          err
+          err,
         );
       }
     });

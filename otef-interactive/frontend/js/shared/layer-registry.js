@@ -39,11 +39,14 @@ class LayerRegistry {
   async _doInit() {
     try {
       // Load root manifest
-      const manifestPath = '/otef-interactive/public/processed/layers/layers-manifest.json';
+      const manifestPath =
+        "/otef-interactive/public/processed/layers/layers-manifest.json";
       const response = await fetch(manifestPath);
 
       if (!response.ok) {
-        console.warn('[LayerRegistry] Root manifest not found, using empty registry');
+        console.warn(
+          "[LayerRegistry] Root manifest not found, using empty registry",
+        );
         this._manifest = { packs: [] };
         this._initialized = true;
         return;
@@ -61,7 +64,7 @@ class LayerRegistry {
 
       this._initialized = true;
     } catch (error) {
-      console.error('[LayerRegistry] Failed to initialize:', error);
+      console.error("[LayerRegistry] Failed to initialize:", error);
       this._manifest = { packs: [] };
       this._initialized = true;
     } finally {
@@ -100,7 +103,7 @@ class LayerRegistry {
    */
   getGroups() {
     if (!this._initialized) {
-      console.warn('[LayerRegistry] Not initialized, call init() first');
+      console.warn("[LayerRegistry] Not initialized, call init() first");
       return [];
     }
 
@@ -111,7 +114,7 @@ class LayerRegistry {
         groups.push({
           id: packId,
           name: manifest.name || packId,
-          layers: manifest.layers || []
+          layers: manifest.layers || [],
         });
       }
     }
@@ -125,7 +128,7 @@ class LayerRegistry {
    */
   getLayersInGroup(groupId) {
     if (!this._initialized) {
-      console.warn('[LayerRegistry] Not initialized, call init() first');
+      console.warn("[LayerRegistry] Not initialized, call init() first");
       return [];
     }
 
@@ -144,18 +147,18 @@ class LayerRegistry {
    */
   getLayerConfig(layerId) {
     if (!this._initialized) {
-      console.warn('[LayerRegistry] Not initialized, call init() first');
+      console.warn("[LayerRegistry] Not initialized, call init() first");
       return null;
     }
 
     // Parse layerId: "group_id.layer_id"
-    const parts = layerId.split('.');
+    const parts = layerId.split(".");
     if (parts.length < 2) {
       return null;
     }
 
     const groupId = parts[0];
-    const layerIdOnly = parts.slice(1).join('.');
+    const layerIdOnly = parts.slice(1).join(".");
 
     const manifest = this._packManifests.get(groupId);
     if (!manifest) {
@@ -163,7 +166,7 @@ class LayerRegistry {
     }
 
     // Find layer in manifest
-    const layer = manifest.layers.find(l => l.id === layerIdOnly);
+    const layer = manifest.layers.find((l) => l.id === layerIdOnly);
     if (!layer) {
       return null;
     }
@@ -172,10 +175,16 @@ class LayerRegistry {
     const styles = this._packStyles.get(groupId);
     const style = styles ? styles[layerIdOnly] : null;
 
-    if (layerId.includes('שבילי_אופניים') || layerId.includes('דרכי_עפר')) {
-      console.log(`[LayerRegistry] Layer ${layerId}: Style key="${layerIdOnly}", found=${!!style}`, style);
+    if (layerId.includes("שבילי_אופניים") || layerId.includes("דרכי_עפר")) {
+      console.log(
+        `[LayerRegistry] Layer ${layerId}: Style key="${layerIdOnly}", found=${!!style}`,
+        style,
+      );
       if (!style && styles) {
-          console.log(`[LayerRegistry] Available style keys in pack ${groupId}:`, Object.keys(styles));
+        console.log(
+          `[LayerRegistry] Available style keys in pack ${groupId}:`,
+          Object.keys(styles),
+        );
       }
     }
 
@@ -183,16 +192,16 @@ class LayerRegistry {
       ...layer,
       style: style || {
         type: layer.geometryType,
-        renderer: 'simple',
+        renderer: "simple",
         defaultStyle: {
-          fillColor: '#808080',
+          fillColor: "#808080",
           fillOpacity: 0.7,
-          strokeColor: '#000000',
-          strokeWidth: 1.0
-        }
+          strokeColor: "#000000",
+          strokeWidth: 1.0,
+        },
       },
       fullId: layerId,
-      groupId: groupId
+      groupId: groupId,
     };
   }
 
@@ -268,6 +277,6 @@ class LayerRegistry {
 const layerRegistry = new LayerRegistry();
 
 // Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
+if (typeof module !== "undefined" && module.exports) {
   module.exports = layerRegistry;
 }

@@ -5,31 +5,31 @@
  * Hebrew labels used where available.
  */
 
-const DEFAULT_LAND_USE_SCHEME = { fill: '#E0E0E0', stroke: '#B0B0B0' };
+const DEFAULT_LAND_USE_SCHEME = { fill: "#E0E0E0", stroke: "#B0B0B0" };
 
 // escapeHtml is provided by html-utils.js (loaded via script tag)
 
 function shapeForGeometry(geometryType) {
-  const t = (geometryType || '').toLowerCase();
-  if (t === 'point') return 'point';
-  if (t === 'line' || t === 'polyline') return 'line';
-  if (t === 'polygon' || t === 'multipolygon') return 'polygon';
-  return 'polygon';
+  const t = (geometryType || "").toLowerCase();
+  if (t === "point") return "point";
+  if (t === "line" || t === "polyline") return "line";
+  if (t === "polygon" || t === "multipolygon") return "polygon";
+  return "polygon";
 }
 
 function itemsFromSimple(config) {
   const style = config.style?.defaultStyle || {};
-  const fill = style.fillColor || '#808080';
-  const stroke = style.strokeColor || '#000000';
-  const geometryType = config.geometryType || 'polygon';
+  const fill = style.fillColor || "#808080";
+  const stroke = style.strokeColor || "#000000";
+  const geometryType = config.geometryType || "polygon";
   const shape = shapeForGeometry(geometryType);
   return [
     {
-      label: config.name || config.id || '',
+      label: config.name || config.id || "",
       fill,
       stroke,
-      shape
-    }
+      shape,
+    },
   ];
 }
 
@@ -37,15 +37,20 @@ function itemsFromUniqueValue(config) {
   const uv = config.style?.uniqueValues || {};
   const classes = uv.classes || [];
   const defaultStyle = config.style?.defaultStyle || {};
-  const geometryType = config.geometryType || 'polygon';
+  const geometryType = config.geometryType || "polygon";
   const shape = shapeForGeometry(geometryType);
   return classes.map((c) => {
     const s = c.style || defaultStyle;
     return {
-      label: c.label != null ? String(c.label) : (c.value != null ? String(c.value) : ''),
-      fill: s.fillColor || defaultStyle.fillColor || '#808080',
-      stroke: s.strokeColor || defaultStyle.strokeColor || '#000000',
-      shape
+      label:
+        c.label != null
+          ? String(c.label)
+          : c.value != null
+            ? String(c.value)
+            : "",
+      fill: s.fillColor || defaultStyle.fillColor || "#808080",
+      stroke: s.strokeColor || defaultStyle.strokeColor || "#000000",
+      shape,
     };
   });
 }
@@ -59,7 +64,7 @@ async function distinctLandUseFromGeoJSON(url, field, fallback) {
     const set = new Set();
     for (const f of features) {
       const p = f.properties || {};
-      const v = p[field] || p[fallback] || '';
+      const v = p[field] || p[fallback] || "";
       if (v) set.add(String(v).trim());
     }
     return Array.from(set);
@@ -69,11 +74,10 @@ async function distinctLandUseFromGeoJSON(url, field, fallback) {
 }
 
 function itemsFromLandUse(config, distinctValues) {
-  const geometryType = config.geometryType || 'polygon';
+  const geometryType = config.geometryType || "polygon";
   const shape = shapeForGeometry(geometryType);
-  const useKeys = distinctValues && distinctValues.length > 0
-    ? distinctValues
-    : [];
+  const useKeys =
+    distinctValues && distinctValues.length > 0 ? distinctValues : [];
   const fill = DEFAULT_LAND_USE_SCHEME.fill;
   const stroke = DEFAULT_LAND_USE_SCHEME.stroke;
   const items = [];
@@ -84,10 +88,10 @@ function itemsFromLandUse(config, distinctValues) {
   }
   if (items.length === 0) {
     items.push({
-      label: '\u05D0\u05D7\u05E8',
+      label: "\u05D0\u05D7\u05E8",
       fill,
       stroke,
-      shape
+      shape,
     });
   }
   return items;
@@ -95,8 +99,8 @@ function itemsFromLandUse(config, distinctValues) {
 
 async function buildLegendModel() {
   const packs = [];
-  const ctx = typeof OTEFDataContext !== 'undefined' ? OTEFDataContext : null;
-  const registry = typeof layerRegistry !== 'undefined' ? layerRegistry : null;
+  const ctx = typeof OTEFDataContext !== "undefined" ? OTEFDataContext : null;
+  const registry = typeof layerRegistry !== "undefined" ? layerRegistry : null;
 
   if (!ctx) return { packs };
 
@@ -107,24 +111,29 @@ async function buildLegendModel() {
     try {
       await registry.init();
     } catch (e) {
-      console.warn('[MapLegend] Registry init failed:', e);
+      console.warn("[MapLegend] Registry init failed:", e);
     }
   }
 
   const legacyPack = {
-    id: '_legacy',
-    name: 'Legacy',
-    layers: []
+    id: "_legacy",
+    name: "Legacy",
+    layers: [],
   };
 
   if (legacy.model) {
     legacyPack.layers.push({
-      id: 'model',
-      name: 'Model Base',
-      geometryType: 'none',
+      id: "model",
+      name: "Model Base",
+      geometryType: "none",
       items: [
-        { label: 'Physical 3D model overlay', fill: null, stroke: null, shape: 'none' }
-      ]
+        {
+          label: "Physical 3D model overlay",
+          fill: null,
+          stroke: null,
+          shape: "none",
+        },
+      ],
     });
   }
 
@@ -138,26 +147,27 @@ async function buildLegendModel() {
       if (!layer.enabled) continue;
 
       // Skip projector-only layers in the GIS legend, except Tkuma_Area_LIne
-      if (group.id === 'projector_base' && layer.id !== 'Tkuma_Area_LIne') continue;
+      if (group.id === "projector_base" && layer.id !== "Tkuma_Area_LIne")
+        continue;
 
       const fullId = `${group.id}.${layer.id}`;
       const config = registry ? registry.getLayerConfig(fullId) : null;
       if (!config) continue;
 
       const style = config.style || {};
-      const renderer = style.renderer || 'simple';
-      const geometryType = config.geometryType || 'polygon';
+      const renderer = style.renderer || "simple";
+      const geometryType = config.geometryType || "polygon";
       let items = [];
 
-      if (renderer === 'simple') {
+      if (renderer === "simple") {
         items = itemsFromSimple(config);
-      } else if (renderer === 'uniqueValue') {
+      } else if (renderer === "uniqueValue") {
         items = itemsFromUniqueValue(config);
-      } else if (renderer === 'landUse') {
-        const field = style.landUseField || 'TARGUMYEUD';
-        const fallback = style.landUseFieldFallback || 'KVUZ_TRG';
+      } else if (renderer === "landUse") {
+        const field = style.landUseField || "TARGUMYEUD";
+        const fallback = style.landUseFieldFallback || "KVUZ_TRG";
         const url = registry?.getLayerDataUrl(fullId) || null;
-        const canScanGeojson = url && config.format === 'geojson';
+        const canScanGeojson = url && config.format === "geojson";
         const distinct = canScanGeojson
           ? await distinctLandUseFromGeoJSON(url, field, fallback)
           : [];
@@ -172,19 +182,20 @@ async function buildLegendModel() {
         id: layer.id,
         name: config.name || layer.id,
         geometryType,
-        items
+        items,
       });
     }
 
     if (packLayers.length === 0) continue;
 
-    const packName = (typeof registry !== 'undefined' && registry._initialized)
-      ? (registry.getGroups().find((g) => g.id === group.id)?.name || group.id)
-      : group.id;
+    const packName =
+      typeof registry !== "undefined" && registry._initialized
+        ? registry.getGroups().find((g) => g.id === group.id)?.name || group.id
+        : group.id;
     packs.push({
       id: group.id,
       name: (packName || group.id).trim() || group.id,
-      layers: packLayers
+      layers: packLayers,
     });
   }
 
@@ -192,17 +203,17 @@ async function buildLegendModel() {
 }
 
 function renderLegend(model) {
-  const legend = document.getElementById('mapLegend');
+  const legend = document.getElementById("mapLegend");
   if (!legend) return;
 
   const packs = model.packs || [];
   if (packs.length === 0) {
-    legend.innerHTML = '';
-    legend.classList.remove('map-legend-has-content');
+    legend.innerHTML = "";
+    legend.classList.remove("map-legend-has-content");
     return;
   }
 
-  legend.classList.add('map-legend-has-content');
+  legend.classList.add("map-legend-has-content");
   let html = '<div class="map-legend-title has-groups">Legend</div>';
 
   for (const pack of packs) {
@@ -212,8 +223,8 @@ function renderLegend(model) {
     const layers = (pack.layers || []).slice();
     const typeOrder = { line: 0, point: 1, polygon: 2 };
     layers.sort((a, b) => {
-      const aKey = typeOrder[(a.geometryType || '').toLowerCase()] ?? 3;
-      const bKey = typeOrder[(b.geometryType || '').toLowerCase()] ?? 3;
+      const aKey = typeOrder[(a.geometryType || "").toLowerCase()] ?? 3;
+      const bKey = typeOrder[(b.geometryType || "").toLowerCase()] ?? 3;
       return aKey - bKey;
     });
 
@@ -226,26 +237,26 @@ function renderLegend(model) {
 
       for (const item of layer.items) {
         html += '<div class="map-legend-item">';
-        const shape = item.shape || 'polygon';
+        const shape = item.shape || "polygon";
         const symbolClass = `map-legend-symbol map-legend-symbol--${shape}`;
-        if (shape === 'none' || item.fill == null) {
+        if (shape === "none" || item.fill == null) {
           html += `<span class="${symbolClass}" style="background: transparent; border: none;" aria-hidden="true"></span>`;
-        } else if (shape === 'line') {
-          const stroke = item.stroke || item.fill || '#000000';
+        } else if (shape === "line") {
+          const stroke = item.stroke || item.fill || "#000000";
           html += `<span class="${symbolClass}" style="background: ${stroke}; border: none;" aria-hidden="true"></span>`;
         } else {
-          const bg = item.fill || '#808080';
-          const border = item.stroke || '#000000';
+          const bg = item.fill || "#808080";
+          const border = item.stroke || "#000000";
           html += `<span class="${symbolClass}" style="background: ${bg}; border-color: ${border};" aria-hidden="true"></span>`;
         }
         html += `<span class="map-legend-label" dir="auto">${escapeHtml(item.label)}</span>`;
-        html += '</div>';
+        html += "</div>";
       }
 
-      html += '</div>';
+      html += "</div>";
     }
 
-    html += '</div>';
+    html += "</div>";
   }
 
   legend.innerHTML = html;
@@ -260,11 +271,11 @@ async function updateMapLegend() {
     const model = await buildLegendModel();
     renderLegend(model);
   } catch (e) {
-    console.warn('[MapLegend] updateMapLegend failed:', e);
-    const el = document.getElementById('mapLegend');
+    console.warn("[MapLegend] updateMapLegend failed:", e);
+    const el = document.getElementById("mapLegend");
     if (el) {
-      el.innerHTML = '';
-      el.classList.remove('map-legend-has-content');
+      el.innerHTML = "";
+      el.classList.remove("map-legend-has-content");
     }
   }
 }

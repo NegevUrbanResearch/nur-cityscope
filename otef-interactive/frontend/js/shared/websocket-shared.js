@@ -3,12 +3,14 @@
 
 // Use global logger (loaded via script tag)
 function getLogger() {
-  return (typeof window !== 'undefined' && window.logger) || {
-    debug: () => {},
-    info: () => {},
-    warn: console.warn.bind(console),
-    error: console.error.bind(console),
-  };
+  return (
+    (typeof window !== "undefined" && window.logger) || {
+      debug: () => {},
+      info: () => {},
+      warn: console.warn.bind(console),
+      error: console.error.bind(console),
+    }
+  );
 }
 
 class OTEFWebSocketClient {
@@ -74,7 +76,7 @@ class OTEFWebSocketClient {
           getLogger().error(
             "[OTEF WS] Failed to parse message:",
             error,
-            event.data
+            event.data,
           );
         }
       };
@@ -122,7 +124,7 @@ class OTEFWebSocketClient {
 
     const delay = Math.min(
       this.reconnectDelay * Math.pow(2, this.reconnectAttempts),
-      this.maxReconnectDelay
+      this.maxReconnectDelay,
     );
 
     this.reconnectAttempts++;

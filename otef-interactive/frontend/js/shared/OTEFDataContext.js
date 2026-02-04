@@ -4,20 +4,25 @@
 
 // Use global logger (loaded via script tag)
 function getLogger() {
-  const internals = (typeof window !== 'undefined' && window.OTEFDataContextInternals) || {};
-  if (typeof internals.getLogger === 'function') {
+  const internals =
+    (typeof window !== "undefined" && window.OTEFDataContextInternals) || {};
+  if (typeof internals.getLogger === "function") {
     return internals.getLogger();
   }
-  return (typeof window !== 'undefined' && window.logger) || {
-    debug: () => {},
-    info: () => {},
-    warn: console.warn.bind(console),
-    error: console.error.bind(console),
-  };
+  return (
+    (typeof window !== "undefined" && window.logger) || {
+      debug: () => {},
+      info: () => {},
+      warn: console.warn.bind(console),
+      error: console.error.bind(console),
+    }
+  );
 }
 
 function getInternals() {
-  return (typeof window !== 'undefined' && window.OTEFDataContextInternals) || {};
+  return (
+    (typeof window !== "undefined" && window.OTEFDataContextInternals) || {}
+  );
 }
 
 class OTEFDataContextClass {
@@ -25,11 +30,11 @@ class OTEFDataContextClass {
     this._tableName = null;
 
     // Cached state
-    this._viewport = null;    // { bbox, corners?, zoom }
-    this._layers = null;      // { model } - legacy; vector layers use layer groups
+    this._viewport = null; // { bbox, corners?, zoom }
+    this._layers = null; // { model } - legacy; vector layers use layer groups
     this._layerGroups = null; // [{ id, enabled, layers: [{ id, enabled }] }] - new hierarchical structure
     this._animations = null;
-    this._bounds = null;      // bounds_polygon from backend
+    this._bounds = null; // bounds_polygon from backend
     this._isConnected = false;
 
     // Subscriptions: key -> Set<callback>
@@ -58,7 +63,7 @@ class OTEFDataContextClass {
    * Initialize the DataContext for a given table.
    * Safe to call multiple times; subsequent calls will await the first.
    */
-  async init(tableName = 'otef') {
+  async init(tableName = "otef") {
     if (this._initialized && this._tableName === tableName) {
       return;
     }
@@ -89,8 +94,8 @@ class OTEFDataContextClass {
 
   _setupWebSocket() {
     const { websocket } = getInternals();
-    if (!websocket || typeof websocket.setupWebSocket !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing websocket helpers');
+    if (!websocket || typeof websocket.setupWebSocket !== "function") {
+      getLogger().error("[OTEFDataContext] Missing websocket helpers");
       return;
     }
     websocket.setupWebSocket(this);
@@ -98,8 +103,8 @@ class OTEFDataContextClass {
 
   _applyStateFromApi(state, { notify } = { notify: true }) {
     const { websocket } = getInternals();
-    if (!websocket || typeof websocket.applyStateFromApi !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing websocket helpers');
+    if (!websocket || typeof websocket.applyStateFromApi !== "function") {
+      getLogger().error("[OTEFDataContext] Missing websocket helpers");
       return;
     }
     websocket.applyStateFromApi(this, state, { notify });
@@ -108,32 +113,32 @@ class OTEFDataContextClass {
   _setConnection(isConnected) {
     if (this._isConnected === isConnected) return;
     this._isConnected = isConnected;
-    this._notify('connection', this._isConnected);
+    this._notify("connection", this._isConnected);
   }
 
   _setViewport(viewport) {
     this._viewport = viewport;
-    this._notify('viewport', this._viewport);
+    this._notify("viewport", this._viewport);
   }
 
   _setLayers(layers) {
     this._layers = layers;
-    this._notify('layers', this._layers);
+    this._notify("layers", this._layers);
   }
 
   _setLayerGroups(layerGroups) {
     this._layerGroups = layerGroups;
-    this._notify('layerGroups', this._layerGroups);
+    this._notify("layerGroups", this._layerGroups);
   }
 
   _setAnimations(animations) {
     this._animations = animations;
-    this._notify('animations', this._animations);
+    this._notify("animations", this._animations);
   }
 
   _setBounds(bounds) {
     this._bounds = bounds;
-    this._notify('bounds', this._bounds);
+    this._notify("bounds", this._bounds);
   }
 
   _notify(key, value) {
@@ -183,9 +188,9 @@ class OTEFDataContextClass {
    */
   async saveBounds(polygon) {
     const { bounds } = getInternals();
-    if (!bounds || typeof bounds.saveBounds !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing bounds helpers');
-      return { ok: false, error: 'Missing bounds helpers' };
+    if (!bounds || typeof bounds.saveBounds !== "function") {
+      getLogger().error("[OTEFDataContext] Missing bounds helpers");
+      return { ok: false, error: "Missing bounds helpers" };
     }
     return bounds.saveBounds(this, polygon);
   }
@@ -199,8 +204,8 @@ class OTEFDataContextClass {
    */
   async pan(direction, delta = 0.15) {
     const { actions } = getInternals();
-    if (!actions || typeof actions.pan !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing action helpers');
+    if (!actions || typeof actions.pan !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
       return;
     }
     return actions.pan(this, direction, delta);
@@ -214,8 +219,8 @@ class OTEFDataContextClass {
    */
   sendVelocity(vx, vy) {
     const { actions } = getInternals();
-    if (!actions || typeof actions.sendVelocity !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing action helpers');
+    if (!actions || typeof actions.sendVelocity !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
       return;
     }
     return actions.sendVelocity(this, vx, vy);
@@ -223,8 +228,8 @@ class OTEFDataContextClass {
 
   _startVelocityLoop() {
     const { actions } = getInternals();
-    if (!actions || typeof actions.startVelocityLoop !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing action helpers');
+    if (!actions || typeof actions.startVelocityLoop !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
       return;
     }
     return actions.startVelocityLoop(this);
@@ -238,8 +243,8 @@ class OTEFDataContextClass {
    */
   async zoom(newZoom) {
     const { actions } = getInternals();
-    if (!actions || typeof actions.zoom !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing action helpers');
+    if (!actions || typeof actions.zoom !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
       return;
     }
     return actions.zoom(this, newZoom);
@@ -253,10 +258,10 @@ class OTEFDataContextClass {
    * @param {Object} viewport - { bbox: [minX,minY,maxX,maxY], corners?, zoom? }
    * @param {string} [source] - Optional interaction source label, e.g. 'gis'
    */
-  updateViewportFromUI(viewport, source = 'gis') {
+  updateViewportFromUI(viewport, source = "gis") {
     const { actions } = getInternals();
-    if (!actions || typeof actions.updateViewportFromUI !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing action helpers');
+    if (!actions || typeof actions.updateViewportFromUI !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
       return false;
     }
     return actions.updateViewportFromUI(this, viewport, source);
@@ -271,9 +276,9 @@ class OTEFDataContextClass {
    */
   async toggleLayer(layerId, enabled) {
     const { actions } = getInternals();
-    if (!actions || typeof actions.toggleLayer !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing action helpers');
-      return { ok: false, error: 'Missing action helpers' };
+    if (!actions || typeof actions.toggleLayer !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
+      return { ok: false, error: "Missing action helpers" };
     }
     return actions.toggleLayer(this, layerId, enabled);
   }
@@ -283,9 +288,9 @@ class OTEFDataContextClass {
    */
   async _toggleLayerInGroups(layerId, enabled) {
     const { actions } = getInternals();
-    if (!actions || typeof actions.toggleLayerInGroups !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing action helpers');
-      return { ok: false, error: 'Missing action helpers' };
+    if (!actions || typeof actions.toggleLayerInGroups !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
+      return { ok: false, error: "Missing action helpers" };
     }
     return actions.toggleLayerInGroups(this, layerId, enabled);
   }
@@ -298,9 +303,9 @@ class OTEFDataContextClass {
    */
   async toggleGroup(groupId, enabled) {
     const { actions } = getInternals();
-    if (!actions || typeof actions.toggleGroup !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing action helpers');
-      return { ok: false, error: 'Missing action helpers' };
+    if (!actions || typeof actions.toggleGroup !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
+      return { ok: false, error: "Missing action helpers" };
     }
     return actions.toggleGroup(this, groupId, enabled);
   }
@@ -313,9 +318,9 @@ class OTEFDataContextClass {
    */
   async toggleAnimation(layerId, enabled) {
     const { actions } = getInternals();
-    if (!actions || typeof actions.toggleAnimation !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing action helpers');
-      return { ok: false, error: 'Missing action helpers' };
+    if (!actions || typeof actions.toggleAnimation !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
+      return { ok: false, error: "Missing action helpers" };
     }
     return actions.toggleAnimation(this, layerId, enabled);
   }
@@ -330,8 +335,8 @@ class OTEFDataContextClass {
    */
   _computePanViewport(viewport, direction, delta) {
     const { actions } = getInternals();
-    if (!actions || typeof actions.computePanViewport !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing action helpers');
+    if (!actions || typeof actions.computePanViewport !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
       return viewport;
     }
     return actions.computePanViewport(viewport, direction, delta);
@@ -346,8 +351,8 @@ class OTEFDataContextClass {
    */
   _computeZoomViewport(viewport, newZoom) {
     const { actions } = getInternals();
-    if (!actions || typeof actions.computeZoomViewport !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing action helpers');
+    if (!actions || typeof actions.computeZoomViewport !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
       return viewport;
     }
     return actions.computeZoomViewport(viewport, newZoom);
@@ -369,8 +374,8 @@ class OTEFDataContextClass {
    */
   _isViewportInsideBounds(viewport) {
     const { bounds } = getInternals();
-    if (!bounds || typeof bounds.isViewportInsideBounds !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing bounds helpers');
+    if (!bounds || typeof bounds.isViewportInsideBounds !== "function") {
+      getLogger().error("[OTEFDataContext] Missing bounds helpers");
       return true;
     }
     return bounds.isViewportInsideBounds(this, viewport);
@@ -386,8 +391,8 @@ class OTEFDataContextClass {
    */
   _pointInPolygon(point, polygon) {
     const { bounds } = getInternals();
-    if (!bounds || typeof bounds.pointInPolygon !== 'function') {
-      getLogger().error('[OTEFDataContext] Missing bounds helpers');
+    if (!bounds || typeof bounds.pointInPolygon !== "function") {
+      getLogger().error("[OTEFDataContext] Missing bounds helpers");
       return false;
     }
     return bounds.pointInPolygon(point, polygon);
@@ -400,7 +405,7 @@ class OTEFDataContextClass {
   subscribe(key, callback) {
     const subs = this._subscribers[key];
     if (!subs) {
-      getLogger().warn('[OTEFDataContext] Unknown subscription key:', key);
+      getLogger().warn("[OTEFDataContext] Unknown subscription key:", key);
       return () => {};
     }
 
@@ -409,22 +414,22 @@ class OTEFDataContextClass {
     // Replay current value
     let current = null;
     switch (key) {
-      case 'viewport':
+      case "viewport":
         current = this._viewport;
         break;
-      case 'layers':
+      case "layers":
         current = this._layers;
         break;
-      case 'layerGroups':
+      case "layerGroups":
         current = this._layerGroups;
         break;
-      case 'animations':
+      case "animations":
         current = this._animations;
         break;
-      case 'bounds':
+      case "bounds":
         current = this._bounds;
         break;
-      case 'connection':
+      case "connection":
         current = this._isConnected;
         break;
     }
@@ -432,7 +437,11 @@ class OTEFDataContextClass {
       try {
         callback(current);
       } catch (err) {
-        getLogger().error('[OTEFDataContext] Error in initial callback for', key, err);
+        getLogger().error(
+          "[OTEFDataContext] Error in initial callback for",
+          key,
+          err,
+        );
       }
     }
 
@@ -453,6 +462,6 @@ class OTEFDataContextClass {
 const OTEFDataContext = new OTEFDataContextClass();
 
 // Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
+if (typeof module !== "undefined" && module.exports) {
   module.exports = OTEFDataContext;
 }
