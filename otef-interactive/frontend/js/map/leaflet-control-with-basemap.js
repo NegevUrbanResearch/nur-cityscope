@@ -140,7 +140,13 @@ async function loadLayerFromRegistry(fullLayerId) {
       // Use PMTiles for better performance in GIS
       await loadPMTilesLayer(fullLayerId, layerConfig, pmtilesUrl);
     } else if (geojsonUrl) {
-      // Fallback to GeoJSON
+      if (
+        layerConfig.style?.complexity === "advanced"
+      ) {
+        console.warn(
+          `[Map] Advanced layer ${fullLayerId} has no PMTiles; using simple GeoJSON styling.`,
+        );
+      }
       await loadGeoJSONLayer(fullLayerId, layerConfig, geojsonUrl);
     } else {
       console.warn(`[Map] No data URL for layer: ${fullLayerId}`);

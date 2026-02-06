@@ -9,6 +9,7 @@ let StyleApplicatorRef;
 let renderPopupContentRef;
 let LRef;
 let protomapsLRef;
+let AdvancedPmtilesLayerRef;
 
 // Helper to (re)initialize browser globals lazily, so that script load order
 // does not matter. This is important because layer-factory.js is loaded
@@ -23,6 +24,16 @@ function ensureBrowserRefs() {
   if (typeof L !== "undefined" && !LRef) {
     LRef = L;
   }
+  if (typeof AdvancedPmtilesLayer !== "undefined" && !AdvancedPmtilesLayerRef) {
+    if (
+      AdvancedPmtilesLayer &&
+      typeof AdvancedPmtilesLayer.createAdvancedPmtilesLayer === "function"
+    ) {
+      AdvancedPmtilesLayerRef =
+        AdvancedPmtilesLayerRef ||
+        AdvancedPmtilesLayer.createAdvancedPmtilesLayer;
+    }
+  }
   if (typeof protomapsL !== "undefined" && !protomapsLRef) {
     protomapsLRef = protomapsL;
   }
@@ -36,6 +47,19 @@ try {
   // eslint-disable-next-line global-require
   const StyleApplicatorModule = require("./style-applicator");
   StyleApplicatorRef = StyleApplicatorRef || StyleApplicatorModule;
+} catch (_) {}
+
+try {
+  // eslint-disable-next-line global-require
+  const AdvancedPmtilesLayerModule = require("./advanced-pmtiles-layer");
+  if (
+    AdvancedPmtilesLayerModule &&
+    AdvancedPmtilesLayerModule.createAdvancedPmtilesLayer
+  ) {
+    AdvancedPmtilesLayerRef =
+      AdvancedPmtilesLayerRef ||
+      AdvancedPmtilesLayerModule.createAdvancedPmtilesLayer;
+  }
 } catch (_) {}
 
 try {
@@ -129,7 +153,8 @@ function createGeoJsonLayer(options) {
       },
     });
   } else {
-    // Use style function for polygons and lines
+    // Use traditional style function for polygons and lines (including advanced
+    // layers that have no PMTiles; they render with simple styling as fallback).
     leafletLayer = LRef.geoJSON(geojson, {
       pane: layerPane,
       style: styleFunction,
@@ -171,9 +196,27 @@ function createPmtilesLayer(options) {
   }
 
   const styleFunction = StyleApplicatorRef.getLeafletStyle(layerConfig);
-  const dataLayerName = "layer";
 
+  let layerPane = "overlayPolygon"; // Default
+  if (layerConfig.geometryType === "line") layerPane = "overlayLine";
+  if (layerConfig.geometryType === "point") layerPane = "overlayPoint";
+
+  const isAdvancedPmtiles =
+    layerConfig.style &&
+    layerConfig.style.complexity === "advanced" &&
+    AdvancedPmtilesLayerRef;
+
+  if (isAdvancedPmtiles) {
+    return AdvancedPmtilesLayerRef({
+      fullLayerId,
+      layerConfig,
+      dataUrl,
+    });
+  }
+
+  const dataLayerName = "layer";
   const paintRules = [];
+
   if (layerConfig.geometryType === "polygon") {
     paintRules.push({
       dataLayer: dataLayerName,
@@ -253,10 +296,6 @@ function createPmtilesLayer(options) {
       }),
     });
   }
-
-  let layerPane = "overlayPolygon"; // Default
-  if (layerConfig.geometryType === "line") layerPane = "overlayLine";
-  if (layerConfig.geometryType === "point") layerPane = "overlayPoint";
 
   const pmtilesLayer = protomapsLRef.leafletLayer({
     url: dataUrl,

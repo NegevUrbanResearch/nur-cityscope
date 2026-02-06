@@ -236,14 +236,11 @@
         );
       }
 
-      // Get canvas style function from StyleApplicator
-      const canvasStyleFunction = StyleApplicator.getCanvasStyle(layerConfig);
-
       // Render layer using Canvas renderer
       await renderLayerFromGeojson(
         geojson,
         fullLayerId,
-        canvasStyleFunction,
+        layerConfig,
         layerConfig.geometryType,
       );
     } catch (error) {
@@ -348,7 +345,7 @@
   async function renderLayerFromGeojson(
     geojson,
     layerName,
-    styleFunction,
+    layerConfig,
     geometryType,
   ) {
     const displayBounds = getDisplayBoundsSafe();
@@ -360,13 +357,20 @@
     // Store for Canvas renderer (raw ITM coordinates, Canvas does transformation)
     loadedLayers[layerName] = {
       originalGeojson: geojson,
-      styleFunction: styleFunction,
+      styleFunction: StyleApplicator.getCanvasStyle(layerConfig),
+      styleConfig: layerConfig,
       geometryType: geometryType,
     };
 
     // Add layer to Canvas renderer
     if (canvasRenderer) {
-      canvasRenderer.setLayer(layerName, geojson, styleFunction, geometryType);
+      canvasRenderer.setLayer(
+        layerName,
+        geojson,
+        loadedLayers[layerName].styleFunction,
+        geometryType,
+        loadedLayers[layerName].styleConfig,
+      );
       canvasRenderer.updatePosition(displayBounds, modelBounds);
 
       // Registry layers: individual layer.enabled is the source of truth.

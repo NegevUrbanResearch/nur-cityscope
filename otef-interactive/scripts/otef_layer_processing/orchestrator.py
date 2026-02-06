@@ -378,11 +378,20 @@ class ProcessingOrchestrator:
                     geom_type = get_geometry_type(wgs84_file)
 
                 # 3. Tiling
-                # Lower threshold to 15MB to catch complex geometries
+                # Use PMTiles for large or advanced layers so GIS can use
+                # tile-aware rendering (especially for advanced styles).
                 is_large = geo_file.stat().st_size > 15 * 1024 * 1024
-                if is_large:
-                    # tqmd.write(f"Tiling {layer_id}...")
-                    generate_pmtiles_smart(wgs84_file, pmtiles_file, high_fidelity=True)
+                is_advanced = bool(
+                    style_config
+                    and isinstance(style_config, dict)
+                    and style_config.get("complexity") == "advanced"
+                )
+                if is_large or is_advanced:
+                    generate_pmtiles_smart(
+                        wgs84_file,
+                        pmtiles_file,
+                        high_fidelity=True,
+                    )
 
             except Exception as e:
                 logger.error(f"Error processing {layer_id}: {e}")
@@ -640,8 +649,14 @@ class ProcessingOrchestrator:
                     layers=new_layers,
                 )
 
+                # Start from manifest dict and inject default WMTS layer for projector_base,
+                # mirroring the behavior in process_all().
+                manifest_dict = manifest.to_dict()
+                if pack_id == "projector_base":
+                    manifest_dict["layers"].extend(DEFAULT_PROJECTOR_BASE_WMTS_LAYERS)
+
                 with open(pack_output / "manifest.json", "w", encoding="utf-8") as f:
-                    json.dump(manifest.to_dict(), f, indent=2)
+                    json.dump(manifest_dict, f, indent=2)
 
                 # Merge styles with existing
                 styles_path = pack_output / "styles.json"
