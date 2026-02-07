@@ -208,7 +208,15 @@ Responsibilities:
 
 The parser is **not aware of** GIS vs Projection. It only encodes style semantics.
 
-### 3.2 Shared JS Style Engine
+### 3.2 Rendering pipeline (advanced PMTiles)
+
+On the GIS advanced path, protomaps-leaflet invokes the symbolizer once per feature: `draw(ctx, geom, z, feature)`. The symbolizer resolves style to a symbol IR, emits drawing commands, and draws using the tile canvas. Tile origin (and viewport) are computed once per tile and passed to every feature draw so that hatched fills stay seamless at tile edges. Hatch patterns are aligned using viewContext.tileOrigin; any pattern cache must key by the same tileOrigin used when drawing.
+
+### 3.3 Style resolution (advanced path)
+
+The single place that resolves (feature, styleConfig, renderer) to a symbol IR is `AdvancedStyleEngine._resolveStyleSymbol`. For **uniqueValue** renderers, a Map from class value to symbol IR is built once per styleConfig and used for O(1) lookup; simple and defaultStyle resolution are unchanged. StyleApplicator remains the authority for Leaflet style functions (simple/GeoJSON path); the advanced path uses only the engine for symbol IR.
+
+### 3.4 Shared JS Style Engine
 
 This is a **renderer-agnostic core** used by both GIS and Projection for advanced layers.
 
@@ -242,7 +250,7 @@ This is a **renderer-agnostic core** used by both GIS and Projection for advance
 - Know about Leaflet/Protomaps or Projection directly.
 - Draw on any canvas; that is delegated to frontend adapters.
 
-### 3.3 Projection Renderer (Canvas Frontend)
+### 3.5 Projection Renderer (Canvas Frontend)
 
 **Inputs**:
 
@@ -265,7 +273,7 @@ This is a **renderer-agnostic core** used by both GIS and Projection for advance
 - No zoom; single fixed scale.
 - Can tolerate more per-frame work than GIS but must avoid long-blocking full re-renders.
 
-### 3.4 GIS Advanced Renderer (Tile-Aware Frontend)
+### 3.6 GIS Advanced Renderer (Tile-Aware Frontend)
 
 For layers with `complexity: "advanced"`.
 
@@ -296,7 +304,7 @@ For layers with `complexity: "advanced"`.
   - Existing PMTiles + simple styling for `complexity: "simple"` layers.
   - GeoJSON layers (including advanced layers without PMTiles) using the standard Leaflet/GeoJSON path with simple styling only.
 
-### 3.5 GIS Simple Path (Existing)
+### 3.7 GIS Simple Path (Existing)
 
 For layers with `complexity: "simple"`:
 

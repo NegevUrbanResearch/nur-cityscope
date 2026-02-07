@@ -1,30 +1,25 @@
 /**
  * AdvancedStyleDrawing
  *
- * Shared canvas drawing adapter for AdvancedStyleEngine commands.
+ * Canvas only. Draws commands using viewContext (must include tileOrigin for
+ * seamless hatch). No style resolution or tile lifecycle.
  *
  * Responsibilities:
- *  - Given a CanvasRenderingContext2D, a viewContext, and a single drawing
- *    command ({ type, geometry, symbol }), perform the actual canvas calls.
- *  - Handle:
- *      - Hatch fills (per-context hatch source canvas so no canvas is used as
- *        pattern source in more than one context; avoids cross-context issues)
- *      - Multi-stroke lines (correct ordering for halos vs main stroke)
- *      - Marker drawing and marker-line placement
- *
- * The adapter is renderer-agnostic. Callers must provide a viewContext with:
- *  - coordToPixel: (coord: [x, y]) => { x, y } in canvas pixels
- *  - pixelRatio: number (device pixel ratio)
- *  - viewportWidth, viewportHeight: canvas CSS pixel dimensions
+ *  - Given a CanvasRenderingContext2D, a viewContext, and drawing commands,
+ *    perform the actual canvas calls.
+ *  - Hatch patterns are aligned using viewContext.tileOrigin so that pattern
+ *    phase is consistent across tiles. Any cache for patterns must key by the
+ *    same tileOrigin used when drawing.
  */
 class AdvancedStyleDrawing {
+  static _HATCH_PATTERN_CACHE_MAX = 100;
+
   constructor() {
-    // Global cache for hatch source canvases (not patterns, as patterns need per-call transform).
-    // Key: color|separation|width
-    // Value: HTMLCanvasElement
     if (!AdvancedStyleDrawing._hatchSourceCache) {
       AdvancedStyleDrawing._hatchSourceCache = new Map();
     }
+    // Per-instance pattern cache: key = hatchKey|originKey, value = Map<ctx, CanvasPattern>
+    this._hatchPatternCache = new Map();
   }
 
   /**
@@ -617,74 +612,50 @@ class AdvancedStyleDrawing {
     return canvas;
   }
 
+  /**
+   * Hatch patterns are aligned using viewContext.tileOrigin so that pattern
+   * phase is consistent across tiles. Cache is keyed by (hatch params, tileOrigin).
+   */
   _getHatchPattern(hatch, ctx, viewContext) {
     if (!hatch) return null;
+
+    const origin = viewContext.tileOrigin || { x: 0, y: 0 };
+    const hatchKey = `${hatch.color || "#000000"}|${Math.max(1, hatch.separation || 10)}|${hatch.width || 1}|${hatch.rotation || 0}`;
+    const originKey = `${origin.x}_${origin.y}`;
+    const cacheKey = `${hatchKey}|${originKey}`;
+
+    let byCtx = this._hatchPatternCache.get(cacheKey);
+    if (byCtx) {
+      const cached = byCtx.get(ctx);
+      if (cached) return cached;
+    } else {
+      byCtx = new Map();
+      this._hatchPatternCache.set(cacheKey, byCtx);
+      if (this._hatchPatternCache.size > AdvancedStyleDrawing._HATCH_PATTERN_CACHE_MAX) {
+        const firstKey = this._hatchPatternCache.keys().next().value;
+        this._hatchPatternCache.delete(firstKey);
+      }
+    }
 
     const sourceCanvas = this._getHatchSourceCanvas(hatch);
     if (!sourceCanvas) return null;
 
-    // Create unique pattern object for this call (reusing source canvas)
     const pattern = ctx.createPattern(sourceCanvas, "repeat");
     if (!pattern) return null;
 
-    // Calculate Transform Matrix for global alignment
-    // We need to:
-    // 1. Translate pattern origin to align with Global (0,0)
-    //    Current drawing is happening in Tile Local space (0,0 is top-left of tile).
-    //    Tile starts at Global (tileOrigin.x, tileOrigin.y).
-    //    So Local (0,0) = Global (tileOrigin.x, tileOrigin.y).
-    //    We want Pattern (0,0) to align with Global (0,0).
-    //    So we shift Pattern by (-tileOrigin.x, -tileOrigin.y).
-    // 2. Rotate pattern properties.
-
     const rotation = hatch.rotation || 0;
-    const origin = viewContext.tileOrigin || { x: 0, y: 0 };
-
     try {
       const matrix = new DOMMatrix();
-
-      // Order of operations:
-      // We want to map User Space (P) to Pattern Space (P_pat).
-      // We want P_pat to represent the Rotated World Coordinate.
-      // P_world_aligned = P_user - Origin (Shift to align with World 0,0)
-      // P_pat = Rotate(P_world_aligned)
-      // P_pat = Rotate * (P_user - Origin)
-      // P_pat = Rotate * Translate(-Origin) * P_user
-      //
-      // DOMMatrix operations (post-multiply):
-      // m.rotate(r) -> M = R
-      // m.translate(t) -> M = R * T
-      //
-      // So we must Rotate FIRST, then Translate in the chain.
-
-      // Order of operations for Pattern Alignment (Global Phase):
-      // We want to map Local Coordinate 'p' to a Global Pattern coordinate 'p_pat'.
-      // 1. Map Local to Global (unrotated): p_global = p + origin.
-      // 2. Rotate the Global Coordinate around (0,0): p_pat = R * p_global.
-      // Matrix M = R * T(+origin).
-      // Since translateSelf post-multiplies: M = I * R * T.
-
-      // Correct Order: Translate to Global Origin (negative offset), THEN Rotate.
-      // We want M = T(-Origin) * R
-      // Since translateSelf/rotateSelf post-multiplies: M = I * T * R
-
-      // Reverted to original order: Rotate, then Translate (Relative to Origin)
-      // We want P_pattern = R * (P_local + Origin)
-      // M = R * T(+Origin)
       matrix.rotateSelf(rotation);
       matrix.translateSelf(origin.x, origin.y);
-
-      // DEBUG: Trace pattern matrix
-      // console.log(`[Hatch] Key: ${viewContext.tileKey || 'N/A'} Origin: ${origin.x},${origin.y} Rot: ${rotation} Matrix: ${matrix.toString()}`);
-
       if (pattern.setTransform) {
         pattern.setTransform(matrix);
       }
     } catch (e) {
-      // DOMMatrix or setTransform might not be supported in older environments/tests
-      // Fallback: no alignment
+      // DOMMatrix or setTransform may be unsupported in some environments
     }
 
+    byCtx.set(ctx, pattern);
     return pattern;
   }
 }

@@ -1,19 +1,38 @@
 /**
  * AdvancedStyleEngine
  *
- * Renderer-agnostic core that converts:
- *   - features (geometry + properties)
- *   - style IR (advancedSymbol / advancedSymbol per class)
- * into abstract drawing commands:
- *   - drawPolygon, drawLine, drawMarker, drawMarkerLine
+ * Resolver-agnostic. Resolves (feature, styleConfig, renderer) to symbol IR;
+ * emits drawing commands from geometry + symbol. No canvas or tile awareness.
  *
- * This initial implementation is intentionally minimal and focused on:
- *   - solid fills & strokes
- *   - hatch fills
- *   - basic marker lines (placement by interval, no collision yet)
+ * Converts features (geometry + properties) and style IR into abstract drawing
+ * commands: drawPolygon, drawLine, drawMarker, drawMarkerLine.
  */
 
 class AdvancedStyleEngine {
+  /** @type {WeakMap<Object, Map<string, Object>>} */
+  static _uniqueValueSymbolMapCache = new WeakMap();
+
+  static _getUniqueValueSymbolMap(styleConfig) {
+    if (AdvancedStyleEngine._uniqueValueSymbolMapCache.has(styleConfig)) {
+      return AdvancedStyleEngine._uniqueValueSymbolMapCache.get(styleConfig);
+    }
+    const classes = styleConfig.uniqueValues?.classes || [];
+    const map = new Map();
+    for (const c of classes) {
+      const key = String(
+        c.value !== undefined && c.value !== null ? c.value : "",
+      );
+      let symbol = null;
+      if (c.advancedSymbol && c.advancedSymbol.symbolLayers) {
+        symbol = c.advancedSymbol;
+      } else if (c.style) {
+        symbol = this._symbolFromSimpleStyle(c.style);
+      }
+      if (symbol) map.set(key, symbol);
+    }
+    AdvancedStyleEngine._uniqueValueSymbolMapCache.set(styleConfig, map);
+    return map;
+  }
   /**
    * Compute drawing commands for a set of features.
    *
@@ -52,15 +71,14 @@ class AdvancedStyleEngine {
    * For now we prefer advancedSymbol when present, and fall back to simple defaultStyle.
    */
   static _resolveStyleSymbol(feature, styleConfig, renderer) {
-    // Unique value renderer: pick class style/advancedSymbol
+    // Unique value renderer: O(1) lookup via pre-built Map from class value to symbol IR
     if (renderer === "uniqueValue" && styleConfig.uniqueValues) {
       const field = styleConfig.uniqueValues.field;
-      const classes = styleConfig.uniqueValues.classes || [];
       const props = (feature && (feature.properties || feature.props)) || {};
 
       let val = props[field];
-      if (val === undefined) {
-        const lowerField = field && field.toLowerCase();
+      if (val === undefined && field) {
+        const lowerField = field.toLowerCase();
         const key = Object.keys(props).find(
           (k) => k.toLowerCase() === lowerField,
         );
@@ -68,15 +86,10 @@ class AdvancedStyleEngine {
       }
 
       const fieldValue = String(val !== undefined && val !== null ? val : "");
-      const cls = classes.find((c) => String(c.value) === fieldValue);
-      if (cls && cls.advancedSymbol && cls.advancedSymbol.symbolLayers) {
-        return cls.advancedSymbol;
-      }
-      // Fallback: build a trivial symbol from simple style dict
-      if (cls && cls.style) {
-        return this._symbolFromSimpleStyle(cls.style);
-      }
-      // Fallback to layer default
+      const symbolMap = this._getUniqueValueSymbolMap(styleConfig);
+      const symbol = symbolMap.get(fieldValue);
+      if (symbol) return symbol;
+      // Fallback to layer default below
     }
 
     // Simple renderer: use layer-level advancedSymbol when available

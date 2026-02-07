@@ -366,13 +366,10 @@ class ProcessingOrchestrator:
                     logger.error(f"Transformation failed for {layer_id}, skipping.")
                     return None
 
-                # 2. Parse Style
-                lyrx_file, _ = find_lyrx_file(geo_file, styles_dir)
-                if lyrx_file:
-                    style_obj = parse_lyrx_style(lyrx_file)
-                    if style_obj:
-                        style_config = style_obj.to_dict()
-                        geom_type = style_obj.geometry_type
+                # 2. Parse Style (same path as update_metadata_only for consistent advanced styles)
+                style_config, geom_type = self._resolve_style_for_geo_file(
+                    geo_file, styles_dir
+                )
 
                 if geom_type == "unknown":
                     geom_type = get_geometry_type(wgs84_file)
@@ -485,6 +482,24 @@ class ProcessingOrchestrator:
             {"hash": file_hash, "geometry_type": "image", "style": style_config},
         )
 
+    def _resolve_style_for_geo_file(
+        self, geo_file: Path, styles_dir: Path
+    ) -> tuple[Optional[Dict], str]:
+        """
+        Resolve style config (including advanced symbol IR) and geometry type from
+        source .lyrx. Shared by process_single_layer and update_metadata_only so
+        metadata is always built the same way.
+        """
+        lyrx_file, _ = find_lyrx_file(geo_file, styles_dir)
+        style_config = None
+        geom_type = "unknown"
+        if lyrx_file:
+            style_obj = parse_lyrx_style(lyrx_file)
+            if style_obj:
+                style_config = style_obj.to_dict()
+                geom_type = style_obj.geometry_type
+        return (style_config, geom_type)
+
     def _get_popup_config_for_layer(
         self, pack_id: str, layer_id: str
     ) -> Optional[Dict]:
@@ -557,16 +572,10 @@ class ProcessingOrchestrator:
             for geo_file in geo_files:
                 layer_id = geo_file.stem
 
-                # styles
-                lyrx_file, _ = find_lyrx_file(geo_file, styles_dir)
-                style_config = None
-                geom_type = "unknown"
-
-                if lyrx_file:
-                    style_obj = parse_lyrx_style(lyrx_file)
-                    if style_obj:
-                        style_config = style_obj.to_dict()
-                        geom_type = style_obj.geometry_type
+                # Styles (same resolution as process_single_layer for advanced/complexity)
+                style_config, geom_type = self._resolve_style_for_geo_file(
+                    geo_file, styles_dir
+                )
 
                 if geom_type == "unknown":
                     # Try to guess from existing processed file or manifest

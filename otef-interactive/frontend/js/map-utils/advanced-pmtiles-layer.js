@@ -1,3 +1,10 @@
+/**
+ * Advanced PMTiles layer: owns the protomaps-leaflet contract and tile lifecycle.
+ * Computes tile context (origin, viewport) once per tile and passes it to style
+ * resolution and drawing. Does not implement style logic; delegates to
+ * AdvancedStyleEngine for symbol resolution and command emission, and
+ * AdvancedStyleDrawing for canvas.
+ */
 (function () {
   let protomapsLRefLocal;
   let AdvancedStyleEngineRefLocal;
@@ -168,36 +175,36 @@
 
       // Try to get actual rendered size via BoundingClientRect (most accurate for transforms)
       if (canvas.getBoundingClientRect) {
-          const rect = canvas.getBoundingClientRect();
-          if (rect.width > 0) {
-             // BCR is in viewport pixels. If there is a global map scale (e.g. browser zoom),
-             // this might be affected. But usually relative to neighbors it's consistent.
-             // However, `getPosition` is in local container pixels.
-             // If container is scaled, this is tricky.
-             // Let's rely on style.transform scale check first if possible.
-          }
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width > 0) {
+          // BCR is in viewport pixels. If there is a global map scale (e.g. browser zoom),
+          // this might be affected. But usually relative to neighbors it's consistent.
+          // However, `getPosition` is in local container pixels.
+          // If container is scaled, this is tricky.
+          // Let's rely on style.transform scale check first if possible.
+        }
       }
 
       // Check explicit CSS size
       if (canvas.style.width) {
-          physicalSize = parseInt(canvas.style.width, 10) || logicalSize;
+        physicalSize = parseInt(canvas.style.width, 10) || logicalSize;
       } else if (canvas.offsetWidth > 0) {
-          physicalSize = canvas.offsetWidth;
+        physicalSize = canvas.offsetWidth;
       }
 
       // Check for inline scale transform which Leaflet sometimes uses for zoom animations or grid scaling
       if (canvas.style.transform) {
-         const scaleMatch = canvas.style.transform.match(/scale\(([^)]+)\)/);
-         if (scaleMatch) {
-             // e.g. scale(2) or scale(0.5)
-             const s = parseFloat(scaleMatch[1]);
-             if (!isNaN(s) && s > 0) {
-                 physicalSize *= s;
-             }
-         }
+        const scaleMatch = canvas.style.transform.match(/scale\(([^)]+)\)/);
+        if (scaleMatch) {
+          // e.g. scale(2) or scale(0.5)
+          const s = parseFloat(scaleMatch[1]);
+          if (!isNaN(s) && s > 0) {
+            physicalSize *= s;
+          }
+        }
       }
 
-      const renderScale = (physicalSize > 0) ? (logicalSize / physicalSize) : 1;
+      const renderScale = physicalSize > 0 ? logicalSize / physicalSize : 1;
 
       // 3. Determine Physical Origin (CSS/Mosaic Position)
       let rawX = null;
@@ -206,9 +213,9 @@
 
       // Check parent if canvas is wrapper
       if (!tileEl.style || (!tileEl.style.transform && !tileEl.style.left)) {
-          if (tileEl.parentNode && tileEl.parentNode.style) {
-              tileEl = tileEl.parentNode;
-          }
+        if (tileEl.parentNode && tileEl.parentNode.style) {
+          tileEl = tileEl.parentNode;
+        }
       }
 
       // Strategy A: Key Parsing (PRIMARY for Stable Global Alignment)
@@ -219,18 +226,24 @@
       if (key && typeof key === "string") {
         const parts = key.split(":");
         if (parts.length >= 3) {
-            const kx = parseInt(parts[0], 10);
-            const ky = parseInt(parts[1], 10);
-            // const kz = parseInt(parts[2], 10); // unused for now
-            if (!isNaN(kx) && !isNaN(ky)) {
-                // 64px per key unit so that consecutive 256px tiles (key step 4) get origin step 256.
-                const keyToPixel = 64;
-                return {
-                    debug: { source: 'key', logicalSize, physicalSize, renderScale, rawX: kx * keyToPixel },
-                    x: kx * keyToPixel,
-                    y: ky * keyToPixel
-                };
-            }
+          const kx = parseInt(parts[0], 10);
+          const ky = parseInt(parts[1], 10);
+          // const kz = parseInt(parts[2], 10); // unused for now
+          if (!isNaN(kx) && !isNaN(ky)) {
+            // 64px per key unit so that consecutive 256px tiles (key step 4) get origin step 256.
+            const keyToPixel = 64;
+            return {
+              debug: {
+                source: "key",
+                logicalSize,
+                physicalSize,
+                renderScale,
+                rawX: kx * keyToPixel,
+              },
+              x: kx * keyToPixel,
+              y: ky * keyToPixel,
+            };
+          }
         }
       }
 
@@ -243,44 +256,67 @@
             rawX = pos.x;
             rawY = pos.y;
           }
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+          /* ignore */
+        }
       }
 
       // Strategy C: Manual CSS Parse
       if (rawX === null) {
         const style = tileEl.style;
         if (style) {
-            if (style.transform) {
-              const match = style.transform.match(/translate(?:3d)?\((-?[\d.]+)px,\s*(-?[\d.]+)px/);
-              if (match) {
-                rawX = parseFloat(match[1]);
-                rawY = parseFloat(match[2]);
-              }
-            } else if (style.left || style.top) {
-               rawX = parseFloat(style.left || "0");
-               rawY = parseFloat(style.top || "0");
+          if (style.transform) {
+            const match = style.transform.match(
+              /translate(?:3d)?\((-?[\d.]+)px,\s*(-?[\d.]+)px/,
+            );
+            if (match) {
+              rawX = parseFloat(match[1]);
+              rawY = parseFloat(match[2]);
             }
+          } else if (style.left || style.top) {
+            rawX = parseFloat(style.left || "0");
+            rawY = parseFloat(style.top || "0");
+          }
         }
       }
 
-      // Strategy D: Leaflet Internal
+      // Strategy D: Leaflet Internal (_tilePoint is in tile coordinates)
       if (rawX === null) {
-          const tilePoint = canvas._coords || canvas._tilePoint || (canvas.parentNode ? (canvas.parentNode._coords || canvas.parentNode._tilePoint) : null);
-          if (tilePoint) {
-             rawX = tilePoint.x * logicalSize; // Approximate
-             // This path is shaky, prefer key.
-          }
+        const tilePoint =
+          canvas._coords ||
+          canvas._tilePoint ||
+          (canvas.parentNode
+            ? canvas.parentNode._coords || canvas.parentNode._tilePoint
+            : null);
+        if (
+          tilePoint != null &&
+          typeof tilePoint.x === "number" &&
+          typeof tilePoint.y === "number"
+        ) {
+          rawX = tilePoint.x * logicalSize;
+          rawY = tilePoint.y * logicalSize;
+        }
       }
 
       if (rawX !== null && rawY !== null) {
-          return {
-              debug: { source: 'dom', logicalSize, physicalSize, renderScale, rawX },
-              x: rawX * renderScale,
-              y: rawY * renderScale
-          };
+        return {
+          debug: {
+            source: "dom",
+            logicalSize,
+            physicalSize,
+            renderScale,
+            rawX,
+          },
+          x: rawX * renderScale,
+          y: rawY * renderScale,
+        };
       }
 
-      return { debug: { logicalSize, physicalSize, renderScale, rawX }, x: 0, y: 0 };
+      return {
+        debug: { logicalSize, physicalSize, renderScale, rawX },
+        x: 0,
+        y: 0,
+      };
     }
 
     class AdvancedPmtilesSymbolizer {
@@ -290,6 +326,8 @@
         this._rendererType = rendererType;
         this._engine = AdvancedStyleEngineRefLocal;
         this._drawer = new AdvancedStyleDrawingRefLocal();
+        /** @type {WeakMap<HTMLCanvasElement, { lastZ: number, tileOrigin: {x: number, y: number}, viewportWidth: number, viewportHeight: number }>} */
+        this._tileContextCache = new WeakMap();
       }
 
       /**
@@ -299,6 +337,24 @@
        */
       draw(ctx, geom, z, feature) {
         if (!ctx || !geom || !feature) return;
+
+        const zoom = typeof z === "number" ? z : 0;
+        let entry = this._tileContextCache.get(ctx.canvas);
+        if (!entry || entry.lastZ !== zoom) {
+          const tileOrigin = getTileOrigin(ctx);
+          const viewportWidth =
+            ctx.canvas && ctx.canvas.width ? ctx.canvas.width : 256;
+          const viewportHeight =
+            ctx.canvas && ctx.canvas.height ? ctx.canvas.height : 256;
+          entry = {
+            lastZ: zoom,
+            tileOrigin,
+            viewportWidth,
+            viewportHeight,
+          };
+          this._tileContextCache.set(ctx.canvas, entry);
+        }
+        const tileContext = entry;
 
         // Protomaps may expose props as .props, .properties, or .tags; merge so
         // uniqueValue resolution finds the correct field.
@@ -357,7 +413,7 @@
         this._engine._emitCommandsForGeometry(commands, geometry, symbol);
         if (!commands.length) return;
 
-        // protomaps-leaflet passes geom already in tile canvas CSS pixels; do not scale.
+        // Tile origin and viewport come from tile context (cached per canvas).
         const coordToPixel = (coord) => {
           if (coord == null) return { x: 0, y: 0 };
           const x = Number(coord[0] ?? coord.x ?? 0);
@@ -365,73 +421,20 @@
           return { x, y };
         };
 
-        const viewportWidth =
-          ctx.canvas && ctx.canvas.width ? ctx.canvas.width : 256;
-        const viewportHeight =
-          ctx.canvas && ctx.canvas.height ? ctx.canvas.height : 256;
-
-        // Calculate tile origin for seamless pattern alignment
-        // We use viewportWidth as the grid size hint (usually 256).
-        // If ctx is scaled (Retina), viewportWidth might be 512, but CSS size 256?
-        // AdvancedPmtilesLayer calculates viewportWidth from ctx.canvas.width.
-        // If HighDPI, canvas.width is 512.
-        // But getTileOrigin reads CSS pixels (256).
-        // So we should pass the CSS size.
-        // viewContext.pixelRatio is currently hardcoded to 1 in this file (line 274).
-        // Let's use 256 as a safe default if viewportWidth is crazy, but usually viewportWidth/pixelRatio?
-
-        // Actually, for Protomaps, if the canvas is 512, it's usually representing a 512 tile OR a 256 tile at 2x.
-        // But the DOM position is always in CSS pixels.
-        // Standard Leaflet tiles are 256x256 CSS pixels.
-        // So snapping to 256 is the safest bet for Leaflet.
-        // If tileSize is 512, 512 is a multiple of 256.
-        // So sticking with 256 default is fine, BUT explicit is better.
-        // Let's rely on standard Leaflet tile size 256.
-
-        // Calculate tile origin for seamless pattern alignment
-
-
-
-        const tileOrigin = getTileOrigin(ctx);
-
         const viewContext = {
           coordToPixel,
           pixelRatio: 1,
-          viewportWidth,
-          viewportHeight,
-          tileOrigin,
+          viewportWidth: tileContext.viewportWidth,
+          viewportHeight: tileContext.viewportHeight,
+          tileOrigin: tileContext.tileOrigin,
         };
 
         this._drawer.drawCommands(ctx, commands, viewContext);
-
-        // --- VISUAL DEBUG START ---
-        // Draw tile info directly on the map to verify alignment logic
-        if (false) { // Toggle to true to enable
-           ctx.save();
-           ctx.globalAlpha = 1;
-           ctx.lineWidth = 2;
-           ctx.strokeStyle = '#FF00FF'; // Magenta border
-           ctx.strokeRect(0, 0, viewportWidth, viewportHeight);
-
-           ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-           ctx.fillRect(0, 0, 220, 60);
-
-           ctx.fillStyle = '#000000';
-           ctx.font = '12px sans-serif';
-           const key = ctx.canvas.key || (ctx.canvas.dataset ? ctx.canvas.dataset.key : 'no-key');
-           const origin = viewContext.tileOrigin;
-
-           ctx.fillText(`Key: ${key}`, 5, 15);
-           const d = origin.debug || {};
-           ctx.fillText(`Src: ${d.source || '?'} L: ${d.logicalSize} P: ${d.physicalSize ? d.physicalSize.toFixed(0) : '?'}`, 5, 30);
-           ctx.fillText(`RawX: ${d.rawX != null ? d.rawX.toFixed(0) : 'N/A'} -> OrigX: ${origin.x.toFixed(0)}`, 5, 45);
-           ctx.fillText(`OriginY: ${origin.y.toFixed(1)}`, 5, 60);
-           ctx.restore();
-        }
-        // --- VISUAL DEBUG END ---
       }
     }
 
+    // Single rule for the configured data layer; wildcard rule removed to avoid per-feature double draw.
+    // If tiles use a different layer name, set dataLayerName from layerConfig or default to "layer".
     const dataLayerName = "layer";
     const paintRules = [];
 
@@ -441,19 +444,10 @@
         dataLayer: dataLayerName,
         symbolizer,
       });
-      // Fallback wildcard for any stray layers in the tiles
-      paintRules.push({
-        dataLayer: "*",
-        symbolizer,
-      });
     } else if (layerConfig.geometryType === "line") {
       const symbolizer = new AdvancedPmtilesSymbolizer("line");
       paintRules.push({
         dataLayer: dataLayerName,
-        symbolizer,
-      });
-      paintRules.push({
-        dataLayer: "*",
         symbolizer,
       });
     } else {
@@ -464,9 +458,6 @@
     let layerPane = "overlayPolygon";
     if (layerConfig.geometryType === "line") layerPane = "overlayLine";
     if (layerConfig.geometryType === "point") layerPane = "overlayPoint";
-
-    // Debugging: Log the URL being used
-    console.log(`[AdvancedPmtilesLayer] Creating layer '${fullLayerId}' with URL:`, dataUrl);
 
     const pmtilesLayer = protomapsLRefLocal.leafletLayer({
       url: dataUrl,
@@ -495,4 +486,3 @@
     };
   }
 })();
-

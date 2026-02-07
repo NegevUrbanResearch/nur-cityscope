@@ -1,55 +1,39 @@
-import logging
+"""
+Re-create manifest.json and styles.json for all layer packs without touching
+geodata or tiles. This script is a thin shell around the same CLI used by
+process_layers.py, with --metadata-only so metadata (including advanced styles)
+is built by the same code path as full processing.
+"""
 import sys
 from pathlib import Path
 
-# Add current directory to path so the package can be imported
-sys.path.append(str(Path(__file__).parent))
+# Add scripts directory so otef_layer_processing can be imported
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from otef_layer_processing.orchestrator import ProcessingOrchestrator
+# Invoke the same CLI as process_layers with fixed paths and --metadata-only
+base_dir = Path(__file__).resolve().parent.parent
+source = base_dir / "public" / "source" / "layers"
+output = base_dir / "public" / "processed" / "layers"
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+if not source.exists():
+    source = Path("otef-interactive/public/source/layers")
+    output = Path("otef-interactive/public/processed/layers")
 
-def main():
-    # Paths are relative to the scripts directory where this is run
-    # Adjust as needed based on where you run it from
-    base_dir = Path(__file__).parent.parent
-    source = base_dir / "public" / "source" / "layers"
-    output = base_dir / "public" / "processed" / "layers"
+if not source.exists():
+    print(f"Error: Source directory not found: {source}", file=sys.stderr)
+    sys.exit(1)
 
-    if not source.exists():
-         # Try fallback if running from root
-        source = Path("otef-interactive/public/source/layers")
-        output = Path("otef-interactive/public/processed/layers")
+sys.argv = [
+    "reprocess_metadata.py",
+    "--source",
+    str(source),
+    "--output",
+    str(output),
+    "--metadata-only",
+    "--no-cache",
+]
 
-    if not source.exists():
-        logger.error(f"Source directory not found: {source.absolute()}")
-        sys.exit(1)
-
-    logger.info(f"Using source: {source}")
-    logger.info(f"Using output: {output}")
-
-    # Initialize orchestrator
-    # We pass source_dir as the parent of 'layers' if possible to help it find popup-config
-    # But orchestrator.scan_packs expects to find a 'source/layers' or direct layers dir.
-    # Let's point it to the valid root.
-
-    # The Orchestrator expects "source_dir" to contain "source/layers" OR be the layers dir itself.
-    # But it looks for popup-config in source_dir or source_dir.parent.
-
-    # If we pass `public/source/layers` as source_dir:
-    # - scan_packs: looks for subdirs (correct)
-    # - load_popup_config: looks in `public/source/layers/popup-config.json` (no) or `public/source/popup-config.json` (YES)
-
-    orchestrator = ProcessingOrchestrator(
-        source_dir=source,
-        output_dir=output,
-        no_cache=True, # Metadata update should be fast enough to not need cache, and we want fresh config
-        max_workers=4
-    )
-
-    orchestrator.update_metadata_only()
+from otef_layer_processing.cli import main
 
 if __name__ == "__main__":
     main()

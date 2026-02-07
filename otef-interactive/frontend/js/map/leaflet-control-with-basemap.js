@@ -390,7 +390,9 @@ async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
     // Register with global map click handler for popups if config exists
     const popupConfig = layerConfig.ui?.popup;
     if (popupConfig) {
-      console.log(`[Map] Registering PMTiles layer ${fullLayerId} for popups`);
+      if (typeof window !== "undefined" && window.DEBUG_PMTILES_POPUPS) {
+        console.log(`[Map] Registering PMTiles layer ${fullLayerId} for popups`);
+      }
       registerPmtilesPopupLayer(
         fullLayerId,
         pmtilesLayer,

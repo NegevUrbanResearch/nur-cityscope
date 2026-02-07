@@ -192,6 +192,29 @@ cp attractions.lyrx otef-interactive/public/source/layers/tourism/styles/
 # Edit: otef-interactive/public/processed/layers/tourism/manifest.json
 ```
 
+## Troubleshooting
+
+### `net::ERR_CACHE_OPERATION_NOT_SUPPORTED` / `TypeError: Failed to fetch` on PMTiles
+
+When loading a PMTiles layer (e.g. `land_use.שטח_לדרכים`), the browser may show:
+
+- **Failed to load resource: net::ERR_CACHE_OPERATION_NOT_SUPPORTED**
+- **TypeError: Failed to fetch** (from PMTiles `FetchSource.getBytes`)
+
+This is usually due to **browser cache and range requests**:
+
+1. **DevTools "Disable cache"** – With Network → "Disable cache" checked, some browsers reject cache operations used by PMTiles range requests. Try unchecking it and reloading.
+2. **Serving and range support** – Ensure the dev server serves the `.pmtiles` file and supports HTTP range requests (many static servers do). The URL must be same-origin or CORS-enabled.
+3. **Known limitation** – Browsers often do not cache range requests well; see [PMTiles #272](https://github.com/protomaps/PMTiles/issues/272). If the file is valid and the URL loads in a new tab, the app should still work once cache is not forced off.
+
+### Favicon 404
+
+A `favicon.ico:1 Failed to load resource: 404` message is harmless. Add a `favicon.ico` in the app root or ignore it.
+
+### Console: "Registering PMTiles layer X for popups"
+
+These logs are disabled by default. To show them during debugging, set in the console: `window.DEBUG_PMTILES_POPUPS = true` before layers load, then refresh.
+
 ## Related Files
 
 - `scripts/process_layers.py` - Main processing script
