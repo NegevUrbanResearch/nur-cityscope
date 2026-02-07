@@ -43,19 +43,8 @@ def setup_logging(level=logging.INFO):
 
 CACHE_FILE = ".layer-cache.json"
 
-# Default WMTS layer for projector_base (created by layer processing, no source file needed)
-DEFAULT_PROJECTOR_BASE_WMTS_LAYERS = [
-    {
-        "id": "satellite_imagery",
-        "name": "Satellite Imagery",
-        "format": "wmts",
-        "wmts": {
-            "urlTemplate": "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/13192/{z}/{y}/{x}",
-            "zoom": 12,
-            "attribution": "Esri, Maxar, Earthstar Geographics",
-        },
-    }
-]
+# Stem of gis files matching this pattern are copied to processed for masking only (not added as layers).
+MASK_ASSET_STEM_SUFFIX = "_boundary"
 
 
 def compute_file_hash(path: Path) -> str:
@@ -153,6 +142,7 @@ class ProcessingOrchestrator:
         # 1. Collect all layer tasks
         all_layer_tasks = []
         all_image_tasks = []
+        boundary_assets = []  # (pack_id, geo_file, pack_output) for *_boundary.geojson
         pack_manifests = {}  # pack_id -> PackManifest (partial)
         styles_map = {}  # pack_id -> styles_dict
 
@@ -168,7 +158,11 @@ class ProcessingOrchestrator:
             pack_output = self.output_dir / pack_id
             pack_output.mkdir(parents=True, exist_ok=True)
 
-            geo_files = list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
+            geo_files = [
+                f
+                for f in list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
+                if not f.name.endswith(".wmts.json")
+            ]
             image_files = (
                 list(images_dir.glob("*.png"))
                 + list(images_dir.glob("*.jpg"))
@@ -185,7 +179,14 @@ class ProcessingOrchestrator:
             }
             styles_map[pack_id] = {}
 
+            # Boundary assets: copy/transform to processed but do not add as layers.
+            # WMTS layers are discovered from gis/*.wmts.json when writing manifests (not GeoJSON).
             for geo_file in geo_files:
+                if geo_file.name.endswith(".wmts.json"):
+                    continue
+                if geo_file.stem.endswith(MASK_ASSET_STEM_SUFFIX):
+                    boundary_assets.append((pack_id, geo_file, pack_output))
+                    continue
                 task = {
                     "pack_id": pack_id,
                     "geo_file": geo_file,
@@ -202,7 +203,16 @@ class ProcessingOrchestrator:
                 }
                 all_image_tasks.append(task)
 
-        if not all_layer_tasks and not all_image_tasks:
+        has_wmts_only = any(
+            (p / "gis").exists() and list((p / "gis").glob("*.wmts.json"))
+            for p in packs
+        )
+        if (
+            not all_layer_tasks
+            and not all_image_tasks
+            and not boundary_assets
+            and not has_wmts_only
+        ):
             logger.warning("No layers found in packs.")
             return
 
@@ -256,6 +266,15 @@ class ProcessingOrchestrator:
 
                     pbar.update(1)
 
+        # Copy boundary assets (transform to WGS84, write to processed; not added as layers)
+        for pack_id, geo_file, pack_output in boundary_assets:
+            out_path = pack_output / f"{geo_file.stem}.geojson"
+            try:
+                if transform_to_wgs84(geo_file, out_path):
+                    logger.info(f"Boundary asset: {pack_id}/{geo_file.name} -> {out_path.name}")
+            except Exception as e:
+                logger.warning(f"Boundary asset failed {pack_id}/{geo_file.name}: {e}")
+
         # 3. Write Manifests
         source_layers = self.source_dir / "source" / "layers"
         if not source_layers.exists():
@@ -263,38 +282,40 @@ class ProcessingOrchestrator:
 
         processed_pack_ids = []
         for pack_id, manifest_data in pack_manifests.items():
+            pack_output = self.output_dir / pack_id
+            pack_dir = source_layers / pack_id
+            gis_dir = pack_dir / "gis" if (pack_dir / "gis").exists() else pack_dir
+
+            # Discover WMTS layers from gis/*.wmts.json
+            for wmts_path in sorted(gis_dir.glob("*.wmts.json")):
+                try:
+                    with open(wmts_path, "r", encoding="utf-8") as f:
+                        wmts_data = json.load(f)
+                    layer_id = wmts_data.get("id", wmts_path.stem)
+                    name = wmts_data.get("name", layer_id.replace("_", " ").title())
+                    wmts_config = wmts_data.get("wmts")
+                    mask_config = wmts_data.get("mask")
+                    if wmts_config:
+                        entry = LayerEntry.create_wmts_layer(
+                            layer_id=layer_id,
+                            name=name,
+                            wmts_config=wmts_config,
+                            mask=mask_config,
+                        )
+                        manifest_data["layers"].append(entry)
+                        logger.info(f"WMTS layer from {wmts_path.name}: {pack_id}.{layer_id}")
+                except Exception as e:
+                    logger.warning(f"Could not load WMTS {wmts_path}: {e}")
+
             if not manifest_data["layers"]:
                 continue
 
             processed_pack_ids.append(pack_id)
-            pack_output = self.output_dir / pack_id
 
             # Sort layers by ID for consistency
             manifest_data["layers"].sort(key=lambda x: x.id)
 
             layers_list = [entry.to_dict() for entry in manifest_data["layers"]]
-
-            # Inject default WMTS layer for projector_base (no source file needed)
-            if pack_id == "projector_base":
-                layers_list.extend(DEFAULT_PROJECTOR_BASE_WMTS_LAYERS)
-                logger.info(
-                    f"Injected {len(DEFAULT_PROJECTOR_BASE_WMTS_LAYERS)} default WMTS layer(s) for projector_base"
-                )
-            else:
-                # Other packs: merge WMTS from wmts.config.json if present
-                pack_dir = source_layers / pack_id
-                wmts_path = pack_dir / "wmts.config.json"
-                if wmts_path.exists():
-                    try:
-                        with open(wmts_path, "r", encoding="utf-8") as f:
-                            wmts_layers = json.load(f)
-                        if isinstance(wmts_layers, list):
-                            layers_list.extend(wmts_layers)
-                        logger.info(
-                            f"Merged {len(wmts_layers) if isinstance(wmts_layers, list) else 0} WMTS layer(s) from {wmts_path.name}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Could not load WMTS config {wmts_path}: {e}")
 
             # Render order: model_base first, then satellite_imagery, then others
             def _layer_sort_key(layer):
@@ -377,13 +398,21 @@ class ProcessingOrchestrator:
                 # 3. Tiling
                 # Use PMTiles for large or advanced layers so GIS can use
                 # tile-aware rendering (especially for advanced styles).
+                # Skip PMTiles for label-only layers (they render as text from GeoJSON;
+                # source may have null geometries which tippecanoe rejects).
+                is_label_layer = bool(
+                    style_config
+                    and isinstance(style_config, dict)
+                    and style_config.get("labels")
+                    and str(geom_type).lower() == "point"
+                )
                 is_large = geo_file.stat().st_size > 15 * 1024 * 1024
                 is_advanced = bool(
                     style_config
                     and isinstance(style_config, dict)
                     and style_config.get("complexity") == "advanced"
                 )
-                if is_large or is_advanced:
+                if (is_large or is_advanced) and not is_label_layer:
                     generate_pmtiles_smart(
                         wgs84_file,
                         pmtiles_file,

@@ -15,7 +15,9 @@ class CanvasLayerRenderer {
     this.ctx = null;
     this.canvasBottom = null;
     this.ctxBottom = null;
-    this.layers = {}; // { layerId: { geojson, styleFunction, visible, geometryType, belowWmts } }
+    this.labelsCanvas = null;
+    this.ctxLabels = null;
+    this.layers = {}; // { layerId: { geojson, styleFunction, visible, geometryType, belowWmts, isLabelLayer } }
     this.modelBounds = null;
     this.displayBounds = null;
     this.dpr = 1;  // Device pixel ratio for high-DPI rendering
@@ -27,7 +29,7 @@ class CanvasLayerRenderer {
 
   _createCanvas() {
     const highlightOverlay = this.container.querySelector("#highlightOverlay");
-    ["#layersCanvas", "#layersCanvasBottom"].forEach((sel) => {
+    ["#labelsCanvas", "#layersCanvas", "#layersCanvasBottom"].forEach((sel) => {
       const existing = this.container.querySelector(sel);
       if (existing) existing.remove();
     });
@@ -45,12 +47,19 @@ class CanvasLayerRenderer {
     this.canvas.style.cssText = style + " z-index: 7;";
     this.ctx = this.canvas.getContext("2d");
 
+    this.labelsCanvas = document.createElement("canvas");
+    this.labelsCanvas.id = "labelsCanvas";
+    this.labelsCanvas.style.cssText = style + " z-index: 8;";
+    this.ctxLabels = this.labelsCanvas.getContext("2d");
+
     if (highlightOverlay) {
       this.container.insertBefore(this.canvasBottom, highlightOverlay);
       this.container.insertBefore(this.canvas, highlightOverlay);
+      this.container.insertBefore(this.labelsCanvas, highlightOverlay);
     } else {
       this.container.appendChild(this.canvasBottom);
       this.container.appendChild(this.canvas);
+      this.container.appendChild(this.labelsCanvas);
     }
   }
 
@@ -70,7 +79,7 @@ class CanvasLayerRenderer {
     const canvasHeight = Math.round(displayBounds.height * this.dpr);
 
     const posStyle = `left: ${displayBounds.offsetX}px; top: ${displayBounds.offsetY}px; width: ${displayBounds.width}px; height: ${displayBounds.height}px;`;
-    [this.canvasBottom, this.canvas].forEach((el) => {
+    [this.canvasBottom, this.canvas, this.labelsCanvas].forEach((el) => {
       el.style.left = displayBounds.offsetX + "px";
       el.style.top = displayBounds.offsetY + "px";
       el.style.width = displayBounds.width + "px";
@@ -81,6 +90,7 @@ class CanvasLayerRenderer {
 
     this.ctxBottom.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.ctxLabels.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
     this._scheduleRender();
   }
@@ -90,6 +100,13 @@ class CanvasLayerRenderer {
    */
   setLayer(layerId, geojson, styleFunction, geometryType, styleConfig) {
     const belowWmts = layerId.includes("רקע_שחור");
+    const style = styleConfig && styleConfig.style;
+    const hasLabels = style && style.labels;
+    // Only the "names" layer is label-only; other point layers render as markers
+    const isLabelLayer =
+      (geometryType === "point" || geometryType === "Point") &&
+      (layerId.endsWith(".names") || layerId === "names") &&
+      !!hasLabels;
     this.layers[layerId] = {
       geojson: geojson,
       styleFunction: styleFunction,
@@ -97,6 +114,7 @@ class CanvasLayerRenderer {
       visible: false,
       geometryType: geometryType || "polygon",
       belowWmts: belowWmts,
+      isLabelLayer: !!isLabelLayer,
     };
   }
 
@@ -153,6 +171,8 @@ class CanvasLayerRenderer {
     const above = layerEntries.filter(
       ([, l]) => !l.belowWmts && l.visible && l.geojson?.features
     );
+    const labelLayers = above.filter(([, l]) => l.isLabelLayer && l.geojson?.features);
+    const aboveNonLabel = above.filter(([, l]) => !l.isLabelLayer);
 
     this.ctxBottom.clearRect(
       0,
@@ -160,6 +180,18 @@ class CanvasLayerRenderer {
       this.canvasBottom.width,
       this.canvasBottom.height
     );
+    // When black-background layer is visible, fill bottom canvas with black first
+    // so it shows even if the polygon extent doesn't match the viewport
+    const hasBlackBg = below.some(([id]) => id.includes("רקע_שחור"));
+    if (hasBlackBg) {
+      this.ctxBottom.fillStyle = "#000000";
+      this.ctxBottom.fillRect(
+        0,
+        0,
+        this.canvasBottom.width,
+        this.canvasBottom.height
+      );
+    }
     below.sort((a, b) => {
       const ka = this._layerSortKey(a);
       const kb = this._layerSortKey(b);
@@ -173,7 +205,7 @@ class CanvasLayerRenderer {
     }
 
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    above.sort((a, b) => {
+    aboveNonLabel.sort((a, b) => {
       const ka = this._layerSortKey(a);
       const kb = this._layerSortKey(b);
       for (let i = 0; i < ka.length; i++) {
@@ -181,8 +213,18 @@ class CanvasLayerRenderer {
       }
       return 0;
     });
-    for (const [, layer] of above) {
+    for (const [, layer] of aboveNonLabel) {
       this._renderLayer(layer.geojson, layer.styleFunction, this.ctx, layer.styleConfig);
+    }
+
+    this.ctxLabels.clearRect(
+      0,
+      0,
+      this.labelsCanvas.width,
+      this.labelsCanvas.height
+    );
+    for (const [, layer] of labelLayers) {
+      this._renderLabelLayer(layer.geojson, layer.styleConfig, this.ctxLabels);
     }
 
     const elapsed = performance.now() - startTime;
@@ -262,6 +304,82 @@ class CanvasLayerRenderer {
     }
 
     this.ctx = prevCtx;
+  }
+
+  /**
+   * Render a label-only layer (point features with style.labels).
+   * Draws text at each point; always on top (labels canvas).
+   */
+  _renderLabelLayer(geojson, styleConfig, ctx) {
+    const labels = styleConfig?.style?.labels;
+    if (!labels || !ctx || !this.displayBounds || !this.modelBounds) return;
+
+    const features = geojson.features || [];
+    const field = labels.field || "name";
+    const fontFamily = labels.font || "Arial, sans-serif";
+    const sizePt = typeof labels.size === "number" ? labels.size : 10;
+    const sizePx = Math.max(8, (sizePt * 96) / 72);
+    const color = labels.color || "#000000";
+    const opacity = labels.colorOpacity != null ? labels.colorOpacity : 1;
+    const haloSize = typeof labels.haloSize === "number" ? labels.haloSize : 0;
+    const haloColor = labels.haloColor || "#ffffff";
+    const dir = labels.textDirection === "RTL" ? "rtl" : "ltr";
+    const fontWeight = labels.fontWeight || "normal";
+    const fontStyle = labels.fontStyle || "normal";
+
+    const alignMap = {
+      Left: "left",
+      Center: "center",
+      Right: "right",
+    };
+    const baselineMap = {
+      Top: "top",
+      Middle: "middle",
+      Center: "middle",
+      Baseline: "alphabetic",
+      Bottom: "bottom",
+    };
+    const textAlign = alignMap[labels.horizontalAlignment] || "center";
+    const textBaseline = baselineMap[labels.verticalAlignment] || "middle";
+
+    ctx.font = `${fontStyle} ${fontWeight} ${sizePx}px ${fontFamily}`;
+    ctx.textAlign = textAlign;
+    ctx.textBaseline = textBaseline;
+    ctx.direction = dir;
+
+    for (const feature of features) {
+      const geom = feature.geometry;
+      if (!geom || !geom.coordinates) continue;
+
+      const props = feature.properties || feature.props || {};
+      let text = props[field];
+      if (text == null) text = "";
+      text = String(text).trim();
+      if (!text) continue;
+
+      let x, y;
+      if (geom.type === "Point") {
+        const p = this._coordToPixel(geom.coordinates);
+        x = p.x;
+        y = p.y;
+      } else if (geom.type === "MultiPoint" && geom.coordinates.length > 0) {
+        const first = this._coordToPixel(geom.coordinates[0]);
+        x = first.x;
+        y = first.y;
+      } else {
+        continue;
+      }
+
+      if (haloSize > 0) {
+        ctx.strokeStyle = haloColor;
+        ctx.lineWidth = haloSize * 2;
+        ctx.strokeText(text, x, y);
+      }
+      ctx.globalAlpha = opacity;
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, y);
+      ctx.globalAlpha = 1;
+    }
   }
 
   /**

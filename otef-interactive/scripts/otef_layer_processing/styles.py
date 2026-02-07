@@ -521,11 +521,54 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
     if label_classes:
         label_class = label_classes[0]
         text_symbol = label_class.get("textSymbol", {}).get("symbol", {})
+        # Expression can be '$feature["cityname"]' or '$feature.cityname'
+        expression = label_class.get("expression", "")
+        field = (
+            expression.replace("$feature.", "")
+            .replace('$feature["', "")
+            .replace('"]', "")
+            .replace('"', "")
+            .strip()
+        ) or "name"
+        # Text fill color from CIMPolygonSymbol -> symbolLayers[0].color (CIMRGBColor)
+        color_hex = None
+        color_opacity = 1.0
+        fill_symbol = text_symbol.get("symbol", {})
+        symbol_layers = fill_symbol.get("symbolLayers", [])
+        if symbol_layers:
+            color_obj = symbol_layers[0].get("color", {})
+            values = color_obj.get("values", [])
+            if len(values) >= 3:
+                r, g, b = int(values[0]), int(values[1]), int(values[2])
+                color_hex = f"#{r:02x}{g:02x}{b:02x}"
+                if len(values) >= 4:
+                    # ArcGIS often uses 0-100 for alpha
+                    a = values[3]
+                    color_opacity = (a / 100.0) if a <= 100 else (a / 255.0)
+        # size: ArcGIS CIM "height" is in points
         label_config = {
-            "field": label_class.get("expression", "").replace("$feature.", ""),
+            "field": field,
             "font": text_symbol.get("fontFamilyName", "Arial"),
             "size": text_symbol.get("height", 10),
+            "color": color_hex or "#000000",
+            "colorOpacity": color_opacity,
+            "haloSize": text_symbol.get("haloSize", 0),
+            "haloColor": text_symbol.get("haloColor"),  # optional, not always present
+            "horizontalAlignment": text_symbol.get("horizontalAlignment", "Center"),
+            "verticalAlignment": text_symbol.get("verticalAlignment", "Baseline"),
+            "textDirection": text_symbol.get("textDirection", "LTR"),
+            "fontStyleName": text_symbol.get("fontStyleName", "Regular"),
         }
+        # Map fontStyleName to CSS-friendly fontWeight/fontStyle for frontend
+        style_name = (label_config.get("fontStyleName") or "Regular").lower()
+        if "bold" in style_name:
+            label_config["fontWeight"] = "bold"
+        else:
+            label_config["fontWeight"] = "normal"
+        if "italic" in style_name:
+            label_config["fontStyle"] = "italic"
+        else:
+            label_config["fontStyle"] = "normal"
 
     min_scale = layer_def.get("minScale") or layer_def.get("minimumScale")
     max_scale = layer_def.get("maxScale") or layer_def.get("maximumScale")

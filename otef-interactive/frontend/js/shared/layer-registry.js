@@ -228,6 +228,31 @@ class LayerRegistry {
   }
 
   /**
+   * Get mask config for a layer (type, file, packId, exclude).
+   * Used by WMTS renderer to clip by boundary.
+   * @param {string} layerId - Full layer ID
+   * @returns {Object|null} layer.mask or null
+   */
+  getLayerMaskConfig(layerId) {
+    const config = this.getLayerConfig(layerId);
+    return config && config.mask ? config.mask : null;
+  }
+
+  /**
+   * Get URL for a mask asset file (e.g. boundary GeoJSON).
+   * @param {string} layerId - Full layer ID (used to resolve pack when mask.packId absent)
+   * @param {Object} mask - mask config with file and optional packId
+   * @returns {string|null} URL to fetch the mask GeoJSON
+   */
+  getLayerMaskAssetUrl(layerId, mask) {
+    if (!mask || !mask.file) return null;
+    const packId = mask.packId || (layerId && layerId.split(".")[0]) || null;
+    if (!packId) return null;
+    const base = `/otef-interactive/public/processed/layers/${packId}`;
+    return `${base}/${mask.file}`;
+  }
+
+  /**
    * Get the URL for a layer's PMTiles file (if available).
    * @param {string} layerId - Full layer ID
    * @returns {string|null} URL to PMTiles file, or null if not available

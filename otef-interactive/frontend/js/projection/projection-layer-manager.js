@@ -30,9 +30,9 @@
     }
   }
 
-  function updateWmtsVisibility(visible) {
+  function updateWmtsVisibility(fullLayerId, visible) {
     if (wmtsRenderer) {
-      wmtsRenderer.setVisible(visible);
+      wmtsRenderer.setVisible(fullLayerId, visible);
     }
   }
 
@@ -169,8 +169,43 @@
     // Handle WMTS layers (tile imagery)
     if (layerConfig.format === "wmts") {
       if (wmtsRenderer && layerConfig.wmts) {
-        wmtsRenderer.setLayer(fullLayerId, layerConfig);
-        wmtsRenderer.setVisible(true);
+        let maskGeometry = null;
+        const maskConfig =
+          typeof layerRegistry.getLayerMaskConfig === "function"
+            ? layerRegistry.getLayerMaskConfig(fullLayerId)
+            : layerConfig.mask;
+        if (maskConfig && typeof layerRegistry.getLayerMaskAssetUrl === "function") {
+          const maskUrl = layerRegistry.getLayerMaskAssetUrl(
+            fullLayerId,
+            maskConfig,
+          );
+          if (maskUrl) {
+            try {
+              const maskRes = await fetch(maskUrl);
+              if (maskRes.ok) {
+                let maskGeojson = await maskRes.json();
+                const firstCoord = getFirstCoordinate(maskGeojson);
+                const isWgs84 =
+                  firstCoord &&
+                  Math.abs(firstCoord[0]) < 1000 &&
+                  Math.abs(firstCoord[1]) < 1000;
+                if (
+                  (maskGeojson.crs && maskGeojson.crs.properties?.name?.includes("4326")) ||
+                  isWgs84
+                ) {
+                  maskGeojson = CoordUtils.transformGeojsonToItm(maskGeojson);
+                }
+                maskGeometry = maskGeojson;
+              }
+            } catch (e) {
+              console.warn(
+                `[Projection] Failed to load mask for ${fullLayerId}:`,
+                e,
+              );
+            }
+          }
+        }
+        wmtsRenderer.setLayer(fullLayerId, layerConfig, maskGeometry);
         const displayBounds = getDisplayBoundsSafe();
         const modelBounds = getModelBoundsSafe();
         if (displayBounds && modelBounds) {
@@ -299,18 +334,25 @@
           continue;
         }
 
-        // Handle WMTS layer (satellite_imagery)
-        if (fullLayerId === "projector_base.satellite_imagery") {
-          updateWmtsVisibility(layer.enabled);
+        // Handle WMTS layers (any pack)
+        const layerConfig =
+          typeof layerRegistry !== "undefined"
+            ? layerRegistry.getLayerConfig(fullLayerId)
+            : null;
+        if (layerConfig && layerConfig.format === "wmts") {
           if (layer.enabled && !loadedLayers[fullLayerId]) {
             loadProjectionLayerFromRegistry(fullLayerId)
-              .then(() => {})
+              .then(() => {
+                updateWmtsVisibility(fullLayerId, true);
+              })
               .catch((err) => {
                 console.error(
                   `[Projection] Failed to load WMTS layer ${fullLayerId}:`,
                   err,
                 );
               });
+          } else {
+            updateWmtsVisibility(fullLayerId, layer.enabled);
           }
           continue;
         }

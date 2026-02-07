@@ -109,49 +109,127 @@ function createGeoJsonLayer(options) {
   if (layerConfig.geometryType === "line") layerPane = "overlayLine";
   if (layerConfig.geometryType === "point") layerPane = "overlayPoint";
 
+  const labelsConfig = layerConfig.style?.labels;
+  const layerIdOnly = fullLayerId.split(".").pop();
+  const isLabelLayer =
+    layerConfig.geometryType === "point" &&
+    (layerIdOnly === "names" || fullLayerId.endsWith(".names")) &&
+    labelsConfig &&
+    typeof labelsConfig.field === "string";
+
   let leafletLayer;
   if (layerConfig.geometryType === "point") {
-    // Use style function for EACH point feature
-    leafletLayer = LRef.geoJSON(geojson, {
-      pane: layerPane,
-      pointToLayer: (feature, latlng) => {
-        const style = styleFunction(feature);
+    if (isLabelLayer) {
+      const field = labelsConfig.field;
+      const font = labelsConfig.font || "Arial, sans-serif";
+      const sizePt = typeof labelsConfig.size === "number" ? labelsConfig.size : 10;
+      const sizePx = Math.max(8, (sizePt * 96) / 72);
+      const color = labelsConfig.color || "#000000";
+      const opacity = labelsConfig.colorOpacity != null ? labelsConfig.colorOpacity : 1;
+      const dir = labelsConfig.textDirection === "RTL" ? "rtl" : "ltr";
+      const fontWeight = labelsConfig.fontWeight || "normal";
+      const fontStyle = labelsConfig.fontStyle || "normal";
 
-        // Targeted normalization for oversized heritage markers only.
-        // Other point layers keep their configured radius.
-        const isHeritageMarker =
-          fullLayerId === "future_development.מורשת-קיים" ||
-          fullLayerId === "future_development.מורשת-מוצע" ||
-          fullLayerId === "future_development.מורשת_קיים" ||
-          fullLayerId === "future_development.מורשת_מוצע";
-
-        const baseRadius = typeof style.radius === "number" ? style.radius : 5;
-        const radius = isHeritageMarker ? Math.min(baseRadius, 6) : baseRadius;
-
-        return LRef.circleMarker(latlng, {
-          ...style,
-          radius,
-          color: style.strokeColor || style.color || "#000000",
-          weight: style.strokeWidth || style.weight || 1,
-          fillColor: style.fillColor || "#808080",
-          fillOpacity:
-            style.fillOpacity !== undefined ? style.fillOpacity : 0.7,
-          pane: layerPane,
-        });
-      },
-      onEachFeature: (feature, layer) => {
-        if (popupConfig && typeof renderPopupContentRef === "function" && map) {
-          layer.on("click", (e) => {
-            const content = renderPopupContentRef(
-              feature,
-              popupConfig,
-              layerDisplayName,
-            );
-            LRef.popup().setLatLng(e.latlng).setContent(content).openOn(map);
+      leafletLayer = LRef.geoJSON(geojson, {
+        pane: layerPane,
+        pointToLayer: (feature, latlng) => {
+          const props = feature.properties || {};
+          let text = props[field];
+          if (text == null) text = "";
+          text = String(text).trim();
+          const escaped = text
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+          const styleStr =
+            "font-family:" +
+            font +
+            ";font-size:" +
+            sizePx +
+            "px;color:" +
+            color +
+            ";opacity:" +
+            opacity +
+            ";font-weight:" +
+            fontWeight +
+            ";font-style:" +
+            fontStyle +
+            ";white-space:nowrap;pointer-events:none;";
+          const html =
+            '<span style="' +
+            styleStr +
+            '" dir="' +
+            dir +
+            '">' +
+            escaped +
+            "</span>";
+          return LRef.marker(latlng, {
+            icon: LRef.divIcon({
+              html: html,
+              className: "label-layer-icon",
+              iconSize: null,
+              iconAnchor: [0, 0],
+            }),
+            pane: layerPane,
           });
-        }
-      },
-    });
+        },
+        onEachFeature: (feature, layer) => {
+          if (popupConfig && typeof renderPopupContentRef === "function" && map) {
+            layer.on("click", (e) => {
+              const content = renderPopupContentRef(
+                feature,
+                popupConfig,
+                layerDisplayName,
+              );
+              LRef.popup().setLatLng(e.latlng).setContent(content).openOn(map);
+            });
+          }
+        },
+      });
+    } else {
+      // Use style function for EACH point feature (circle markers)
+      leafletLayer = LRef.geoJSON(geojson, {
+        pane: layerPane,
+        pointToLayer: (feature, latlng) => {
+          const style = styleFunction(feature);
+
+          // Targeted normalization for oversized heritage markers only.
+          // Other point layers keep their configured radius.
+          const isHeritageMarker =
+            fullLayerId === "future_development.מורשת-קיים" ||
+            fullLayerId === "future_development.מורשת-מוצע" ||
+            fullLayerId === "future_development.מורשת_קיים" ||
+            fullLayerId === "future_development.מורשת_מוצע";
+
+          const baseRadius = typeof style.radius === "number" ? style.radius : 5;
+          const radius = isHeritageMarker ? Math.min(baseRadius, 6) : baseRadius;
+
+          return LRef.circleMarker(latlng, {
+            ...style,
+            radius,
+            color: style.strokeColor || style.color || "#000000",
+            weight: style.strokeWidth || style.weight || 1,
+            fillColor: style.fillColor || "#808080",
+            fillOpacity:
+              style.fillOpacity !== undefined ? style.fillOpacity : 0.7,
+            pane: layerPane,
+          });
+        },
+        onEachFeature: (feature, layer) => {
+          if (popupConfig && typeof renderPopupContentRef === "function" && map) {
+            layer.on("click", (e) => {
+              const content = renderPopupContentRef(
+                feature,
+                popupConfig,
+                layerDisplayName,
+              );
+              LRef.popup().setLatLng(e.latlng).setContent(content).openOn(map);
+            });
+          }
+        },
+      });
+    }
   } else {
     // Use traditional style function for polygons and lines (including advanced
     // layers that have no PMTiles; they render with simple styling as fallback).

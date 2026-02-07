@@ -36,7 +36,7 @@
         z-index: 1;
       }
       /* Ensure crisp rendering for all canvas elements (projector output) */
-      /* Order: רקע_שחור only (5), SI (6), all other vectors (7) */
+      /* Order: below WMTS (5), WMTS (6), vectors (7), labels (8) */
       #layersCanvasBottom {
         z-index: 5;
       }
@@ -45,6 +45,9 @@
       }
       #layersCanvas {
         z-index: 7;
+      }
+      #labelsCanvas {
+        z-index: 8;
       }
       canvas {
         position: absolute;

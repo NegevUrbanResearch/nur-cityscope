@@ -48,6 +48,60 @@
     };
   }
 
+  /**
+   * Transform ITM coordinate to display pixel.
+   */
+  function itmToPixelCoord(x, y, modelBounds, displayBounds) {
+    const pctX = (x - modelBounds.west) / (modelBounds.east - modelBounds.west);
+    const pctY =
+      (modelBounds.north - y) / (modelBounds.north - modelBounds.south);
+    return {
+      x: pctX * displayBounds.width,
+      y: pctY * displayBounds.height,
+    };
+  }
+
+  /**
+   * Extract rings from GeoJSON geometry (ITM coords) and draw path in pixel space.
+   */
+  function buildMaskPath(ctx, geojson, modelBounds, displayBounds) {
+    if (!geojson || !modelBounds || !displayBounds) return;
+    const features = geojson.features || [];
+    for (let i = 0; i < features.length; i++) {
+      const geom = features[i].geometry;
+      if (!geom || !geom.coordinates) continue;
+      const coords = geom.coordinates;
+      if (geom.type === "Polygon") {
+        for (let r = 0; r < coords.length; r++) {
+          const ring = coords[r];
+          if (!ring || ring.length < 3) continue;
+          const first = itmToPixelCoord(ring[0][0], ring[0][1], modelBounds, displayBounds);
+          ctx.moveTo(first.x, first.y);
+          for (let j = 1; j < ring.length; j++) {
+            const p = itmToPixelCoord(ring[j][0], ring[j][1], modelBounds, displayBounds);
+            ctx.lineTo(p.x, p.y);
+          }
+          ctx.closePath();
+        }
+      } else if (geom.type === "MultiPolygon") {
+        for (let p = 0; p < coords.length; p++) {
+          const polygon = coords[p];
+          for (let r = 0; r < polygon.length; r++) {
+            const ring = polygon[r];
+            if (!ring || ring.length < 3) continue;
+            const first = itmToPixelCoord(ring[0][0], ring[0][1], modelBounds, displayBounds);
+            ctx.moveTo(first.x, first.y);
+            for (let j = 1; j < ring.length; j++) {
+              const pt = itmToPixelCoord(ring[j][0], ring[j][1], modelBounds, displayBounds);
+              ctx.lineTo(pt.x, pt.y);
+            }
+            ctx.closePath();
+          }
+        }
+      }
+    }
+  }
+
   class WmtsLayerRenderer {
     constructor(containerId) {
       this.container = document.getElementById(containerId);
@@ -60,9 +114,7 @@
       this.displayBounds = null;
       this.dpr = 1;
       this._cache = new Map();
-      this._layerId = null;
-      this._config = null;
-      this._visible = false;
+      this._layers = new Map();
       this._renderScheduled = false;
       this._createCanvas();
     }
@@ -91,14 +143,32 @@
       this.ctx = this.canvas.getContext("2d");
     }
 
-    setLayer(fullLayerId, layerConfig) {
-      this._layerId = fullLayerId;
-      this._config = layerConfig;
+    setLayer(fullLayerId, layerConfig, maskGeometry) {
+      const config = layerConfig && layerConfig.wmts ? layerConfig : null;
+      const mask = layerConfig && layerConfig.mask ? layerConfig.mask : null;
+      const exclude = mask && mask.exclude === true;
+      let entry = this._layers.get(fullLayerId);
+      if (!entry) {
+        entry = { visible: false };
+        this._layers.set(fullLayerId, entry);
+      }
+      entry.config = config;
+      entry.layerConfig = layerConfig;
+      entry.maskGeometry = maskGeometry || null;
+      entry.maskExclude = exclude;
+      entry.visible = entry.visible;
     }
 
-    setVisible(visible) {
-      if (this._visible === visible) return;
-      this._visible = visible;
+    setVisible(fullLayerId, visible) {
+      const entry = this._layers.get(fullLayerId);
+      if (!entry) return;
+      if (entry.visible === visible) return;
+      entry.visible = visible;
+      this._scheduleRender();
+    }
+
+    removeLayer(fullLayerId) {
+      this._layers.delete(fullLayerId);
       this._scheduleRender();
     }
 
@@ -131,7 +201,7 @@
       });
     }
 
-    _getZoom() {
+    _getZoom(layerConfig) {
       const cfg =
         typeof MapProjectionConfig !== "undefined" &&
         MapProjectionConfig.WMTS_PROJECTOR
@@ -140,17 +210,17 @@
       if (cfg.zoomOverride != null && cfg.zoomOverride !== undefined) {
         return cfg.zoomOverride;
       }
-      return this._config?.wmts?.zoom ?? 12;
+      return layerConfig?.wmts?.zoom ?? 12;
     }
 
-    _getUrlTemplate() {
+    _getUrlTemplate(layerConfig) {
       const cfg =
         typeof MapProjectionConfig !== "undefined" &&
         MapProjectionConfig.WMTS_PROJECTOR
           ? MapProjectionConfig.WMTS_PROJECTOR
           : {};
       if (cfg.urlOverride) return cfg.urlOverride;
-      return this._config?.wmts?.urlTemplate ?? "";
+      return layerConfig?.wmts?.urlTemplate ?? "";
     }
 
     render() {
@@ -161,79 +231,126 @@
         this.displayBounds.width,
         this.displayBounds.height
       );
-      if (!this._visible || !this._config?.wmts) return;
 
-      const zoom = this._getZoom();
-      const urlTemplate = this._getUrlTemplate();
-      if (!urlTemplate) return;
-
-      const west = this.modelBounds.west;
-      const east = this.modelBounds.east;
-      const south = this.modelBounds.south;
-      const north = this.modelBounds.north;
-
-      const [lat1, lon1] = CoordUtils.transformItmToWgs84(west, north);
-      const [lat2, lon2] = CoordUtils.transformItmToWgs84(east, south);
-      const t0 = lonLatToTileXY(lon1, lat1, zoom);
-      const t1 = lonLatToTileXY(lon2, lat2, zoom);
-      const minTx = Math.min(t0.x, t1.x);
-      const maxTx = Math.max(t0.x, t1.x);
-      const minTy = Math.min(t0.y, t1.y);
-      const maxTy = Math.max(t0.y, t1.y);
-
-      const self = this;
       const displayBounds = this.displayBounds;
       const modelBounds = this.modelBounds;
-      const drawTile = function (tx, ty) {
-        const cacheKey = `${zoom}/${ty}/${tx}`;
-        const img = self._cache.get(cacheKey);
-        if (img) {
-          self._drawTileImage(img, zoom, tx, ty, modelBounds, displayBounds);
-          return;
-        }
-        const url = urlTemplate
-          .replace("{z}", String(zoom))
-          .replace("{y}", String(ty))
-          .replace("{x}", String(tx));
-        fetch(url)
-          .then(function (r) {
-            if (!r.ok) return null;
-            return r.blob();
-          })
-          .then(function (blob) {
-            if (!blob) return;
-            const objectUrl = URL.createObjectURL(blob);
-            const image = new Image();
-            image.crossOrigin = "anonymous";
-            image.onload = function () {
-              self._cache.set(cacheKey, image);
-              self._drawTileImage(
-                image,
-                zoom,
-                tx,
-                ty,
-                self.modelBounds,
-                self.displayBounds
-              );
-              URL.revokeObjectURL(objectUrl);
-            };
-            image.onerror = function () {
-              URL.revokeObjectURL(objectUrl);
-            };
-            image.src = objectUrl;
-          })
-          .catch(function () {});
-      };
 
-      for (let ty = minTy; ty <= maxTy; ty++) {
-        for (let tx = minTx; tx <= maxTx; tx++) {
-          drawTile(tx, ty);
+      this._layers.forEach((entry, fullLayerId) => {
+        if (!entry.visible || !entry.config) return;
+        const layerConfig = entry.layerConfig || { wmts: entry.config };
+        const zoom = this._getZoom(layerConfig);
+        const urlTemplate = this._getUrlTemplate(layerConfig);
+        if (!urlTemplate) return;
+
+        const west = modelBounds.west;
+        const east = modelBounds.east;
+        const south = modelBounds.south;
+        const north = modelBounds.north;
+
+        const [lat1, lon1] = CoordUtils.transformItmToWgs84(west, north);
+        const [lat2, lon2] = CoordUtils.transformItmToWgs84(east, south);
+        const t0 = lonLatToTileXY(lon1, lat1, zoom);
+        const t1 = lonLatToTileXY(lon2, lat2, zoom);
+        const minTx = Math.min(t0.x, t1.x);
+        const maxTx = Math.max(t0.x, t1.x);
+        const minTy = Math.min(t0.y, t1.y);
+        const maxTy = Math.max(t0.y, t1.y);
+
+        const cachePrefix = fullLayerId + "/";
+        const self = this;
+
+        const maskGeometry = entry.maskGeometry;
+        const maskExclude = entry.maskExclude;
+        const hasMask =
+          maskGeometry &&
+          maskGeometry.features &&
+          maskGeometry.features.length > 0;
+
+        const drawTile = function (tx, ty) {
+          const cacheKey = cachePrefix + zoom + "/" + ty + "/" + tx;
+          const img = self._cache.get(cacheKey);
+          if (img) {
+            self._drawTileImage(
+              img,
+              zoom,
+              tx,
+              ty,
+              modelBounds,
+              displayBounds,
+              hasMask ? maskGeometry : null,
+              maskExclude
+            );
+            return;
+          }
+          const url = urlTemplate
+            .replace("{z}", String(zoom))
+            .replace("{y}", String(ty))
+            .replace("{x}", String(tx));
+          fetch(url)
+            .then(function (r) {
+              if (!r.ok) return null;
+              return r.blob();
+            })
+            .then(function (blob) {
+              if (!blob) return;
+              const objectUrl = URL.createObjectURL(blob);
+              const image = new Image();
+              image.crossOrigin = "anonymous";
+              image.onload = function () {
+                self._cache.set(cacheKey, image);
+                self._drawTileImage(
+                  image,
+                  zoom,
+                  tx,
+                  ty,
+                  self.modelBounds,
+                  self.displayBounds,
+                  hasMask ? maskGeometry : null,
+                  maskExclude
+                );
+                URL.revokeObjectURL(objectUrl);
+              };
+              image.onerror = function () {
+                URL.revokeObjectURL(objectUrl);
+              };
+              image.src = objectUrl;
+            })
+            .catch(function () {});
+        };
+
+        for (let ty = minTy; ty <= maxTy; ty++) {
+          for (let tx = minTx; tx <= maxTx; tx++) {
+            drawTile(tx, ty);
+          }
         }
-      }
+      });
     }
 
-    _drawTileImage(img, zoom, tx, ty, modelBounds, displayBounds) {
+    _drawTileImage(
+      img,
+      zoom,
+      tx,
+      ty,
+      modelBounds,
+      displayBounds,
+      maskGeometry,
+      maskExclude
+    ) {
       if (!modelBounds || !displayBounds || !this.ctx) return;
+
+      this.ctx.save();
+
+      if (maskGeometry && maskGeometry.features && maskGeometry.features.length > 0) {
+        this.ctx.beginPath();
+        if (maskExclude) {
+          this.ctx.rect(0, 0, displayBounds.width, displayBounds.height);
+          buildMaskPath(this.ctx, maskGeometry, modelBounds, displayBounds);
+          this.ctx.clip("evenodd");
+        } else {
+          buildMaskPath(this.ctx, maskGeometry, modelBounds, displayBounds);
+          this.ctx.clip();
+        }
+      }
 
       const bounds = tileBoundsWebMercator(zoom, tx, ty);
       const corners = [
@@ -260,7 +377,6 @@
       const e = P0.x;
       const f = P0.y;
 
-      this.ctx.save();
       this.ctx.setTransform(a, b, c, d, e, f);
       this.ctx.drawImage(
         img,
