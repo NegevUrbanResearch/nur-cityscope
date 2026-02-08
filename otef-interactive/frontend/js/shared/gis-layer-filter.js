@@ -11,6 +11,20 @@
  * @returns {boolean} - true if the layer should be shown on the GIS map
  */
 function shouldShowLayerOnGisMap(groupId, layerId) {
+  if (typeof layerRegistry !== "undefined" && layerRegistry.getLayerConfig) {
+    const config = layerRegistry.getLayerConfig(`${groupId}.${layerId}`);
+    if (config) {
+      // WMTS / raster layers are projection-only; never show on GIS map or legend
+      if (config.format === "wmts" || config.geometryType === "raster") {
+        return false;
+      }
+      if (config.ui && config.ui.hideInLegend) {
+        return false;
+      }
+    }
+  }
+
+  // Legacy fallback: projector_base is projector-only except Tkuma_Area_LIne
   if (groupId === "projector_base" && layerId !== "Tkuma_Area_LIne") {
     return false;
   }
@@ -31,7 +45,7 @@ function filterGroupsForGisMap(layerGroups) {
   return layerGroups.map((group) => ({
     ...group,
     layers: (group.layers || []).filter((layer) =>
-      shouldShowLayerOnGisMap(group.id, layer.id)
+      shouldShowLayerOnGisMap(group.id, layer.id),
     ),
   }));
 }

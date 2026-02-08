@@ -295,6 +295,46 @@
     }
   }
 
+  /**
+   * Set enabled state for multiple layers in one update (one API call).
+   * Used by the layer sheet when toggling a consolidated row (e.g. October 7th).
+   *
+   * @param {Object} ctx - OTEFDataContext instance
+   * @param {string[]} fullLayerIds - Full layer ids (e.g. ["october_7th.layer1", "october_7th.layer2"])
+   * @param {boolean} enabled
+   */
+  async function setLayersEnabled(ctx, fullLayerIds, enabled) {
+    if (!ctx._tableName || !Array.isArray(fullLayerIds) || fullLayerIds.length === 0) {
+      return { ok: true };
+    }
+    const idSet = new Set(fullLayerIds);
+    const previous = JSON.parse(JSON.stringify(ctx._layerGroups || []));
+    const next = previous.map((group) => {
+      const layers = group.layers.map((layer) => {
+        const fullId = `${group.id}.${layer.id}`;
+        if (idSet.has(fullId)) {
+          return { ...layer, enabled: !!enabled };
+        }
+        return layer;
+      });
+      return { ...group, layers };
+    });
+
+    ctx._setLayerGroups(next);
+
+    try {
+      await OTEF_API.updateLayerGroups(ctx._tableName, next);
+      return { ok: true };
+    } catch (err) {
+      getLogger().error(
+        "[OTEFDataContext] Failed to update layer groups:",
+        err,
+      );
+      ctx._setLayerGroups(previous);
+      return { ok: false, error: err };
+    }
+  }
+
   async function toggleGroup(ctx, groupId, enabled) {
     if (!ctx._tableName || !groupId) {
       return { ok: false, error: "Missing groupId" };
@@ -443,6 +483,7 @@
     updateViewportFromUI,
     toggleLayer,
     toggleLayerInGroups,
+    setLayersEnabled,
     toggleGroup,
     toggleAnimation,
     computePanViewport,

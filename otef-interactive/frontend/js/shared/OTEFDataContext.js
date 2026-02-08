@@ -273,6 +273,22 @@ class OTEFDataContextClass {
   }
 
   /**
+   * Set enabled state for multiple layers in one update (one API call).
+   * Use when toggling a consolidated row (e.g. October 7th) so all sub-layers update in a single request.
+   *
+   * @param {string[]} fullLayerIds - Full layer ids (e.g. ["october_7th.layer1", "october_7th.layer2"])
+   * @param {boolean} enabled
+   */
+  async setLayersEnabled(fullLayerIds, enabled) {
+    const { actions } = getInternals();
+    if (!actions || typeof actions.setLayersEnabled !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
+      return { ok: false, error: "Missing action helpers" };
+    }
+    return actions.setLayersEnabled(this, fullLayerIds, enabled);
+  }
+
+  /**
    * Toggle a layer within the hierarchical groups structure.
    */
   async _toggleLayerInGroups(layerId, enabled) {

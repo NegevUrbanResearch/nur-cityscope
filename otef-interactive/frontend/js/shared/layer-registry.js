@@ -212,7 +212,8 @@ class LayerRegistry {
     }
 
     const basePath = `/otef-interactive/public/processed/layers/${config.groupId}`;
-    return `${basePath}/${config.file}`;
+    const encodedFile = encodeURIComponent(config.file);
+    return `${basePath}/${encodedFile}`;
   }
 
   /**
@@ -264,7 +265,9 @@ class LayerRegistry {
     }
 
     const basePath = `/otef-interactive/public/processed/layers/${config.groupId}`;
-    return `${basePath}/${config.pmtilesFile}`;
+    // Percent-encode filename so paths with non-ASCII (e.g. Hebrew) work with all servers
+    const encodedFile = encodeURIComponent(config.pmtilesFile);
+    return `${basePath}/${encodedFile}`;
   }
 
   /**
