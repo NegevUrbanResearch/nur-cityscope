@@ -128,6 +128,7 @@ class AdvancedStyleDrawing {
     let radius = 5;
     let hatch = null;
     let dashArray = null;
+    let strokeApplied = false;
 
     for (const layer of symbolLayers) {
       if (layer.type === "fill") {
@@ -146,19 +147,38 @@ class AdvancedStyleDrawing {
           };
         }
       } else if (layer.type === "stroke") {
-        strokeColor = layer.color || strokeColor;
-        strokeOpacity =
-          layer.opacity !== undefined ? layer.opacity : strokeOpacity;
-        lineWidth = layer.width !== undefined ? layer.width : lineWidth;
-        if (layer.dash && Array.isArray(layer.dash.array)) {
-          dashArray = layer.dash.array.slice();
+        const opacity =
+          layer.opacity !== undefined ? layer.opacity : 1.0;
+        const width = layer.width !== undefined ? layer.width : 1;
+        const visible = opacity > 0 && width > 0;
+        if (visible && !strokeApplied) {
+          strokeColor = layer.color || strokeColor;
+          strokeOpacity = opacity;
+          lineWidth = width;
+          strokeApplied = true;
+          if (layer.dash && Array.isArray(layer.dash.array)) {
+            dashArray = layer.dash.array.slice();
+          }
+        } else if (!strokeApplied) {
+          strokeColor = layer.color || strokeColor;
+          strokeOpacity = opacity;
+          lineWidth = width;
+          if (layer.dash && Array.isArray(layer.dash.array)) {
+            dashArray = layer.dash.array.slice();
+          }
         }
       } else if (layer.type === "markerPoint") {
-        radius =
+        // marker.size from styles.json is diameter (px); use half for circle radius
+        const sizePx =
           layer.marker && typeof layer.marker.size === "number"
             ? layer.marker.size
-            : radius;
+            : radius * 2;
+        radius = sizePx / 2;
       }
+    }
+    if (!strokeApplied && (baseFillColor || hatch)) {
+      strokeOpacity = 1.0;
+      lineWidth = lineWidth > 0 ? lineWidth : 1;
     }
 
     const fillColor = baseFillColor || "#808080";
@@ -190,6 +210,8 @@ class AdvancedStyleDrawing {
     let strokeOpacity = 1.0;
     let lineWidth = 1;
     let radius = 5;
+    let markerStrokeFromPoint = null;
+    let strokeApplied = false;
 
     for (const layer of symbolLayers) {
       if (layer.type === "fill") {
@@ -198,19 +220,44 @@ class AdvancedStyleDrawing {
           fillOpacity = layer.opacity;
         }
       } else if (layer.type === "stroke") {
-        strokeColor = layer.color || strokeColor;
-        if (layer.opacity !== undefined) {
-          strokeOpacity = layer.opacity;
+        const opacity =
+          layer.opacity !== undefined ? layer.opacity : 1.0;
+        const width = layer.width !== undefined ? layer.width : 1;
+        const visible = opacity > 0 && width > 0;
+        if (visible && !strokeApplied) {
+          strokeColor = layer.color || strokeColor;
+          strokeOpacity = opacity;
+          lineWidth = width;
+          strokeApplied = true;
+        } else if (!strokeApplied) {
+          strokeColor = layer.color || strokeColor;
+          strokeOpacity = opacity;
+          lineWidth = width;
         }
-        if (layer.width !== undefined) {
-          lineWidth = layer.width;
-        }
-      } else if (layer.type === "markerPoint") {
-        radius =
-          layer.marker && typeof layer.marker.size === "number"
+      } else if (layer.type === "markerPoint" && layer.marker) {
+        const sizePx =
+          typeof layer.marker.size === "number"
             ? layer.marker.size
-            : radius;
+            : radius * 2;
+        radius = sizePx / 2;
+        if (
+          layer.marker.strokeColor != null ||
+          (typeof layer.marker.strokeWidth === "number" && layer.marker.strokeWidth > 0)
+        ) {
+          markerStrokeFromPoint = {
+            color: layer.marker.strokeColor || "#000000",
+            width:
+              typeof layer.marker.strokeWidth === "number" && layer.marker.strokeWidth > 0
+                ? layer.marker.strokeWidth
+                : 1,
+          };
+        }
       }
+    }
+    if (markerStrokeFromPoint) {
+      strokeColor = markerStrokeFromPoint.color;
+      lineWidth = markerStrokeFromPoint.width;
+      strokeOpacity = 1.0;
     }
 
     const styleForDraw = { hatch: null, dashArray: null };

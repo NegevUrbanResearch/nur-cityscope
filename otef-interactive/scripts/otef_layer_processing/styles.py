@@ -476,6 +476,74 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
     return {"symbolLayers": symbol_layers_ir}
 
 
+def _ensure_advanced_stroke_for_polygons(style: StyleConfig) -> None:
+    """
+    For polygon layers, ensure advanced_symbol has a visible stroke that matches
+    the simplified default_style when the CIM strokes are effectively invisible.
+
+    This keeps projector outlines consistent with GIS, while still allowing
+    fully transparent strokes when both CIM and default_style agree on "no stroke".
+    """
+    if not style or style.geometry_type != "polygon":
+        return
+
+    advanced = style.advanced_symbol
+    default_style = style.default_style or {}
+
+    if not isinstance(advanced, dict):
+        return
+
+    symbol_layers = advanced.get("symbolLayers")
+    if not isinstance(symbol_layers, list) or not symbol_layers:
+        return
+
+    stroke_layers = [
+        (idx, layer)
+        for idx, layer in enumerate(symbol_layers)
+        if isinstance(layer, dict) and layer.get("type") == "stroke"
+    ]
+    if not stroke_layers and not default_style:
+        return
+
+    # Check if we already have a visible stroke (opacity > 0 and width > 0)
+    has_visible_stroke = any(
+        (layer.get("opacity", 1.0) > 0.0) and (layer.get("width", 1.0) > 0.0)
+        for _, layer in stroke_layers
+    )
+    if has_visible_stroke:
+        return
+
+    stroke_color = default_style.get("strokeColor")
+    stroke_width = default_style.get("strokeWidth")
+    if not stroke_color or stroke_width is None or stroke_width <= 0:
+        # Default style does not declare a meaningful stroke; respect that.
+        return
+
+    dash_array = default_style.get("dashArray")
+    new_stroke = {
+        "type": "stroke",
+        "color": stroke_color,
+        "width": stroke_width,
+        "opacity": 1.0,
+        "dash": {"array": dash_array} if dash_array else None,
+    }
+
+    if stroke_layers:
+        # We only had invisible strokes; replace the first one with a visible
+        # outline that matches the simplified default style.
+        first_idx, _ = stroke_layers[0]
+        symbol_layers[first_idx] = new_stroke
+    else:
+        # No stroke layers at all: insert a stroke before the first fill so
+        # drawing order remains outline-under-fill.
+        insert_idx = 0
+        for i, layer in enumerate(symbol_layers):
+            if isinstance(layer, dict) and layer.get("type") == "fill":
+                insert_idx = i
+                break
+        symbol_layers.insert(insert_idx, new_stroke)
+
+
 def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
     try:
         with open(lyrx_path, "r", encoding="utf-8") as f:
@@ -645,6 +713,10 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
         style.full_symbol_layers = all_layers
         style.default_style = extract_simplified_style(all_layers)
         style.advanced_symbol = _build_advanced_symbol_from_layers(all_layers) or None
+
+    # For polygon layers, align advanced_symbol strokes with the simplified
+    # default_style when CIM-only information would otherwise drop the outline.
+    _ensure_advanced_stroke_for_polygons(style)
 
     if not style.default_style:
         # Absolute fallback

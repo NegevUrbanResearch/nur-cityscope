@@ -318,7 +318,17 @@ class CanvasLayerRenderer {
     const field = labels.field || "name";
     const fontFamily = labels.font || "Arial, sans-serif";
     const sizePt = typeof labels.size === "number" ? labels.size : 10;
-    const sizePx = Math.max(8, (sizePt * 96) / 72);
+    // Convert ArcGIS point size to CSS pixels, then apply optional projector-wide scale factor.
+    let sizePx = (sizePt * 96) / 72;
+    let labelScale = 1;
+    if (
+      typeof MapProjectionConfig !== "undefined" &&
+      MapProjectionConfig &&
+      typeof MapProjectionConfig.LABEL_SIZE_SCALE === "number"
+    ) {
+      labelScale = MapProjectionConfig.LABEL_SIZE_SCALE;
+    }
+    sizePx = Math.max(8, sizePx * labelScale);
     const color = labels.color || "#000000";
     const opacity = labels.colorOpacity != null ? labels.colorOpacity : 1;
     const haloSize = typeof labels.haloSize === "number" ? labels.haloSize : 0;

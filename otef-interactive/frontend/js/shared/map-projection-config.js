@@ -10,6 +10,12 @@ const MapProjectionConfig = {
   ENABLE_MAP_VISIBILITY_DEBUG: false,
   ENABLE_PROJECTION_DEBUG: false,
 
+  // Global scale factor for label font sizes on the projector (canvas renderer only).
+  // 1.0  -> use sizes exported from styles.json as-is
+  // <1.0 -> shrink labels relative to exported sizes (e.g. 0.35 for ~1/3 size)
+  // >1.0 -> enlarge labels (generally not recommended)
+  LABEL_SIZE_SCALE: 0.25,
+
   // Projection highlight smoothing (LERP factor)
   // Lower = smoother/slower, Higher = snappier
   PROJECTION_LERP_FACTOR: 0.15,

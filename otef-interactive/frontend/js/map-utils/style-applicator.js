@@ -49,7 +49,8 @@ class StyleApplicator {
       fillOpacity:
         defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
       color: defaultStyle.strokeColor || "#333333",
-      weight: (defaultStyle.strokeWidth || 0.5) * this.PT_TO_PX,
+      // strokeWidth in styles.json is already in CSS pixels
+      weight: defaultStyle.strokeWidth || 0.5,
       opacity:
         defaultStyle.strokeOpacity !== undefined
           ? defaultStyle.strokeOpacity
@@ -73,7 +74,8 @@ class StyleApplicator {
             ? defaultStyle.fillOpacity
             : 0.7,
         color: defaultStyle.strokeColor || "#000000",
-        weight: (defaultStyle.strokeWidth || 1.0) * this.PT_TO_PX,
+        // strokeWidth in styles.json is already in CSS pixels
+        weight: defaultStyle.strokeWidth || 1.0,
         opacity:
           defaultStyle.strokeOpacity !== undefined
             ? defaultStyle.strokeOpacity
@@ -138,14 +140,14 @@ class StyleApplicator {
 
       if (valueStyle) {
         const weightPx =
-          (valueStyle.strokeWidth !== undefined
+          valueStyle.strokeWidth !== undefined
             ? valueStyle.strokeWidth
             : defaultStyle.strokeWidth !== undefined
               ? defaultStyle.strokeWidth
-              : 1.0) * this.PT_TO_PX;
+              : 1.0;
 
-        const rawRadiusPx =
-          (valueStyle.radius || defaultStyle.radius || 5) * this.PT_TO_PX;
+        // radius values from styles.json are already in CSS pixels
+        const rawRadiusPx = valueStyle.radius || defaultStyle.radius || 5;
         const radiusPx = clampRadiusIfNeeded(rawRadiusPx);
 
         return {
@@ -174,7 +176,7 @@ class StyleApplicator {
 
       // Fallback to default style
       const fallbackRadiusPx = clampRadiusIfNeeded(
-        (defaultStyle.radius || 5) * this.PT_TO_PX,
+        defaultStyle.radius || 5,
       );
 
       return {
@@ -184,7 +186,7 @@ class StyleApplicator {
             ? defaultStyle.fillOpacity
             : 0.7,
         color: defaultStyle.strokeColor || "#000000",
-        weight: (defaultStyle.strokeWidth || 1.0) * this.PT_TO_PX,
+        weight: defaultStyle.strokeWidth || 1.0,
         opacity:
           defaultStyle.strokeOpacity !== undefined
             ? defaultStyle.strokeOpacity
@@ -230,12 +232,13 @@ class StyleApplicator {
     const defaultStyle = style.defaultStyle || {};
 
     return {
-      radius: (defaultStyle.radius || 5) * this.PT_TO_PX,
+      // radius and strokeWidth in styles.json are already in CSS pixels
+      radius: defaultStyle.radius || 5,
       fillColor: defaultStyle.fillColor || "#808080",
       fillOpacity:
         defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
       color: defaultStyle.strokeColor || "#000000",
-      weight: (defaultStyle.strokeWidth || 1.0) * this.PT_TO_PX,
+      weight: defaultStyle.strokeWidth || 1.0,
       opacity:
         defaultStyle.strokeOpacity !== undefined
           ? defaultStyle.strokeOpacity
