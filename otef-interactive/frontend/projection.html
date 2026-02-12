@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -10,7 +10,8 @@
         padding: 0;
         box-sizing: border-box;
       }
-      html, body {
+      html,
+      body {
         width: 100%;
         height: 100%;
         margin: 0;
@@ -32,8 +33,22 @@
         width: 100%;
         height: 100%;
         object-fit: fill;
+        z-index: 1;
       }
       /* Ensure crisp rendering for all canvas elements (projector output) */
+      /* Order: below WMTS (5), WMTS (6), vectors (7), labels (8) */
+      #layersCanvasBottom {
+        z-index: 5;
+      }
+      #wmtsCanvas {
+        z-index: 6;
+      }
+      #layersCanvas {
+        z-index: 7;
+      }
+      #labelsCanvas {
+        z-index: 8;
+      }
       canvas {
         position: absolute;
         top: 0;
@@ -57,7 +72,8 @@
         position: absolute;
         border: 3px solid rgba(0, 255, 255, 0.9);
         background: rgba(0, 255, 255, 0.15);
-        box-shadow: 0 0 30px rgba(0, 255, 255, 0.8),
+        box-shadow:
+          0 0 30px rgba(0, 255, 255, 0.8),
           inset 0 0 30px rgba(0, 255, 255, 0.4);
         pointer-events: none;
         /* transition removed to favor 60fps LERP smoothing */
@@ -148,17 +164,11 @@
   </head>
   <body>
     <div id="displayContainer">
-      <img
-        id="displayedImage"
-        src=""
-        alt="OTEF Model"
-        style="opacity: 0"
-      />
+      <img id="displayedImage" src="" alt="OTEF Model" style="opacity: 0" />
       <canvas id="layersCanvas"></canvas>
       <div id="highlightOverlay"></div>
       <svg id="boundsEditorOverlay"></svg>
     </div>
-
 
     <div id="instructions" class="hidden">
       <h3>OTEF Projection Display</h3>
@@ -172,7 +182,10 @@
     </div>
 
     <div id="boundsToolbar">
-      <span>Bounds edit mode (click edges to add, double-click vertices to remove, drag to move)</span>
+      <span
+        >Bounds edit mode (click edges to add, double-click vertices to remove,
+        drag to move)</span
+      >
       <button id="boundsApplyBtn">Apply</button>
       <button id="boundsResetBtn" class="secondary">Reset to Rect</button>
       <button id="boundsCancelBtn" class="secondary">Cancel</button>
@@ -184,13 +197,16 @@
       // Define EPSG:2039 (Israel ITM) projection for WGS84 <-> ITM transformations
       proj4.defs(
         "EPSG:2039",
-        "+proj=tmerc +lat_0=31.73439361111111 +lon_0=35.20451694444445 +k=1.0000067 +x_0=219529.584 +y_0=626907.39 +ellps=GRS80 +towgs84=-24.0024,-17.1032,-17.8444,0.33077,-1.85269,1.66969,5.4248 +units=m +no_defs"
+        "+proj=tmerc +lat_0=31.73439361111111 +lon_0=35.20451694444445 +k=1.0000067 +x_0=219529.584 +y_0=626907.39 +ellps=GRS80 +towgs84=-24.0024,-17.1032,-17.8444,0.33077,-1.85269,1.66969,5.4248 +units=m +no_defs",
       );
     </script>
     <script src="js/shared/logger.js"></script>
     <script src="js/shared/map-projection-config.js"></script>
     <script src="js/map-utils/coordinate-utils.js"></script>
+    <script src="js/map-utils/advanced-style-engine.js"></script>
+    <script src="js/map-utils/advanced-style-drawing.js"></script>
     <script src="js/projection/layer-renderer-canvas.js"></script>
+    <script src="js/projection/wmts-layer-renderer.js"></script>
     <script src="js/shared/message-protocol.js"></script>
     <script src="js/shared/websocket-shared.js"></script>
     <script src="js/shared/api-client.js"></script>
@@ -210,20 +226,20 @@
     <script>
       // Initialize table switcher
       const tableSwitcher = new TableSwitcher({
-        defaultTable: 'otef',
+        defaultTable: "otef",
         onTableChange: (tableName) => {
-          if (tableName !== 'otef') {
+          if (tableName !== "otef") {
             // Redirect to unified projection page for other tables
             window.location.href = `/projection/?table=${tableName}`;
           }
-        }
+        },
       });
 
       // Make tableSwitcher globally available for layer loading
       window.tableSwitcher = tableSwitcher;
 
       // Only show OTEF interface if table is 'otef'
-      if (tableSwitcher.getCurrentTable() !== 'otef') {
+      if (tableSwitcher.getCurrentTable() !== "otef") {
         window.location.href = `/projection/?table=${tableSwitcher.getCurrentTable()}`;
       } else {
         // Initialize keyboard-driven table switcher popup

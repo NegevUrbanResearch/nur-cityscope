@@ -1,6 +1,6 @@
 # Layer Parser Report
 
-Generated from: `otef-interactive\public\source`
+Generated from: `..\public\source\layers`
 
 ---
 
@@ -20,16 +20,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\future_development\styles\אנדרטאות_ומוקדי_הנצחה.lyrx`
+  - Path: `future_development\styles\אנדרטאות_ומוקדי_הנצחה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #a83800
-  - Stroke: #000000 (width: 0.7)
+  - Stroke: #000000 (width: 0.9333333333333332)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#a83800, stroke=#000000, strokeWidth=0.9333333333333332)
+  - Layer 2: type=stroke, color=#000000, width=0.9333333333333332, opacity=1.00
+  - Layer 3: type=fill, fillType=solid, color=#a83800, opacity=1.00
 **Labels:**
   - Field: `Name`
   - Font: Tahoma
@@ -52,16 +57,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\future_development\styles\הקו_הורוד.lyrx`
+  - Path: `future_development\styles\הקו_הורוד.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #ff7f7f (width: 1)
+  - Stroke: #ff7f7f (width: 1.3333333333333333)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#ff7f7f, width=1.3333333333333333, opacity=1.00
 **Labels:**
   - Field: `RefName`
   - Font: Tahoma
@@ -84,16 +92,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\future_development\styles\מוזיאונים_מרכזי_מבקרים_ומוקדי_תרבות.lyrx`
+  - Path: `future_development\styles\מוזיאונים_מרכזי_מבקרים_ומוקדי_תרבות.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #a8a800
-  - Stroke: #000000 (width: 0.7)
+  - Stroke: #000000 (width: 0.9333333333333332)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#a8a800, stroke=#000000, strokeWidth=0.9333333333333332)
+  - Layer 2: type=stroke, color=#000000, width=0.9333333333333332, opacity=1.00
+  - Layer 3: type=fill, fillType=solid, color=#a8a800, opacity=1.00
 **Labels:**
   - Field: `Name`
   - Font: Tahoma
@@ -116,16 +129,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\future_development\styles\מוקדי_מורשת.lyrx`
+  - Path: `future_development\styles\מוקדי_מורשת.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #00a884
-  - Stroke: #000000 (width: 0.7)
+  - Stroke: #000000 (width: 0.9333333333333332)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#00a884, stroke=#000000, strokeWidth=0.9333333333333332)
+  - Layer 2: type=stroke, color=#000000, width=0.9333333333333332, opacity=1.00
+  - Layer 3: type=fill, fillType=solid, color=#00a884, opacity=1.00
 **Labels:**
   - Field: `Name`
   - Font: Tahoma
@@ -148,16 +166,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\future_development\styles\מוקדים_ארכאולוגיים.lyrx`
+  - Path: `future_development\styles\מוקדים_ארכאולוגיים.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #737300
-  - Stroke: #000000 (width: 0.7)
+  - Stroke: #000000 (width: 0.9333333333333332)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#737300, stroke=#000000, strokeWidth=0.9333333333333332)
+  - Layer 2: type=stroke, color=#000000, width=0.9333333333333332, opacity=1.00
+  - Layer 3: type=fill, fillType=solid, color=#737300, opacity=1.00
 **Labels:**
   - Field: `Name`
   - Font: Tahoma
@@ -180,7 +203,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\future_development\styles\מורשת-מוצע.lyrx`
+  - Path: `future_development\styles\מורשת-מוצע.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -189,54 +212,104 @@ Generated from: `otef-interactive\public\source`
 **Classes:** 10
   1. **ארכיון מקומי** (value: `ארכיון מקומי`)
      - Fill: #894465
-     - Stroke: #ffffff (width: 1)
+     - Stroke: #ffffff (width: 1.3333333333333333)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#894465, stroke=#ffffff, strokeWidth=1.3333333333333333)
+       - Layer 2: type=stroke, color=#ffffff, width=1.3333333333333333, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#894465, opacity=1.00
   2. **ארכיון מקומי‎** (value: `ארכיון מקומי‎`)
      - Fill: #894465
-     - Stroke: #ffffff (width: 1)
+     - Stroke: #ffffff (width: 1.3333333333333333)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#894465, stroke=#ffffff, strokeWidth=1.3333333333333333)
+       - Layer 2: type=stroke, color=#ffffff, width=1.3333333333333333, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#894465, opacity=1.00
   3. **בית עלמין** (value: `בית עלמין`)
      - Fill: #894465
-     - Stroke: #ffffff (width: 1)
+     - Stroke: #ffffff (width: 1.3333333333333333)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#894465, stroke=#ffffff, strokeWidth=1.3333333333333333)
+       - Layer 2: type=stroke, color=#ffffff, width=1.3333333333333333, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#894465, opacity=1.00
   4. **בתי עדות או שרידי מבנים לשימור** (value: `בתי עדות או שרידי מבנים לשימור`)
      - Fill: #ffaa00
-     - Stroke: #ffffff (width: 1)
+     - Stroke: #ffffff (width: 1.3333333333333333)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#ffaa00, stroke=#ffffff, strokeWidth=1.3333333333333333)
+       - Layer 2: type=stroke, color=#ffffff, width=1.3333333333333333, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#ffaa00, opacity=1.00
   5. **גל עד מרכזי למורשת והנצחה** (value: `גל עד מרכזי למורשת והנצחה`)
      - Fill: #f5f57a
-     - Stroke: #ffffff (width: 1)
+     - Stroke: #ffffff (width: 1.3333333333333333)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#f5f57a, stroke=#ffffff, strokeWidth=1.3333333333333333)
+       - Layer 2: type=stroke, color=#ffffff, width=1.3333333333333333, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#f5f57a, opacity=1.00
   6. **יוזמות לאחר ה-7 באוקטובר** (value: `יוזמות לאחר ה-7 באוקטובר`)
      - Fill: #9ed7c2
-     - Stroke: #ffffff (width: 1)
+     - Stroke: #ffffff (width: 1.3333333333333333)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#9ed7c2, stroke=#ffffff, strokeWidth=1.3333333333333333)
+       - Layer 2: type=stroke, color=#ffffff, width=1.3333333333333333, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#9ed7c2, opacity=1.00
   7. **לקהל הרחב** (value: `לקהל הרחב`)
      - Fill: #9ed7c2
-     - Stroke: #ffffff (width: 1)
+     - Stroke: #ffffff (width: 1.3333333333333333)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#9ed7c2, stroke=#ffffff, strokeWidth=1.3333333333333333)
+       - Layer 2: type=stroke, color=#ffffff, width=1.3333333333333333, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#9ed7c2, opacity=1.00
   8. **מוקד מורשת והנצחה** (value: `מוקד מורשת והנצחה`)
      - Fill: #004c73
-     - Stroke: #ffffff (width: 1)
+     - Stroke: #ffffff (width: 1.3333333333333333)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#004c73, stroke=#ffffff, strokeWidth=1.3333333333333333)
+       - Layer 2: type=stroke, color=#ffffff, width=1.3333333333333333, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#004c73, opacity=1.00
   9. **פרויקט זמני ** (value: `פרויקט זמני `)
      - Fill: #64557e
-     - Stroke: #ffffff (width: 1)
+     - Stroke: #ffffff (width: 1.3333333333333333)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#64557e, stroke=#ffffff, strokeWidth=1.3333333333333333)
+       - Layer 2: type=stroke, color=#ffffff, width=1.3333333333333333, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#64557e, opacity=1.00
   10. **תכנון נופי למורשת והנצחה** (value: `תכנון נופי למורשת והנצחה`)
      - Fill: #326129
-     - Stroke: #ffffff (width: 1)
+     - Stroke: #ffffff (width: 1.3333333333333333)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#326129, stroke=#ffffff, strokeWidth=1.3333333333333333)
+       - Layer 2: type=stroke, color=#ffffff, width=1.3333333333333333, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#326129, opacity=1.00
 **Labels:**
   - Field: `[Name]`
   - Font: Tahoma
@@ -261,7 +334,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\future_development\styles\מורשת-קיים.lyrx`
+  - Path: `future_development\styles\מורשת-קיים.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -270,54 +343,104 @@ Generated from: `otef-interactive\public\source`
 **Classes:** 10
   1. **ארכיון מקומי** (value: `ארכיון מקומי`)
      - Fill: #894465
-     - Stroke: #000000 (width: 0)
+     - Stroke: #000000 (width: 0.0)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#894465, stroke=#000000, strokeWidth=0.0)
+       - Layer 2: type=stroke, color=#000000, width=0.0, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#894465, opacity=1.00
   2. **ארכיון מקומי‎** (value: `ארכיון מקומי‎`)
      - Fill: #894465
-     - Stroke: #000000 (width: 0)
+     - Stroke: #000000 (width: 0.0)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#894465, stroke=#000000, strokeWidth=0.0)
+       - Layer 2: type=stroke, color=#000000, width=0.0, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#894465, opacity=1.00
   3. **בית עלמין** (value: `בית עלמין`)
      - Fill: #894465
-     - Stroke: #000000 (width: 0)
+     - Stroke: #000000 (width: 0.0)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#894465, stroke=#000000, strokeWidth=0.0)
+       - Layer 2: type=stroke, color=#000000, width=0.0, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#894465, opacity=1.00
   4. **בתי עדות או שרידי מבנים לשימור** (value: `בתי עדות או שרידי מבנים לשימור`)
      - Fill: #ffaa00
-     - Stroke: #1a1a1a (width: 0.75)
+     - Stroke: #1a1a1a (width: 1.0)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#ffaa00, stroke=#1a1a1a, strokeWidth=1.0)
+       - Layer 2: type=stroke, color=#1a1a1a, width=1.0, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#ffaa00, opacity=1.00
   5. **גל עד מרכזי למורשת והנצחה** (value: `גל עד מרכזי למורשת והנצחה`)
      - Fill: #f5f57a
-     - Stroke: #000000 (width: 0)
+     - Stroke: #000000 (width: 0.0)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#f5f57a, stroke=#000000, strokeWidth=0.0)
+       - Layer 2: type=stroke, color=#000000, width=0.0, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#f5f57a, opacity=1.00
   6. **יוזמות לאחר ה-7 באוקטובר** (value: `יוזמות לאחר ה-7 באוקטובר`)
      - Fill: #9ed7c2
-     - Stroke: #1a1a1a (width: 0.75)
+     - Stroke: #1a1a1a (width: 1.0)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#9ed7c2, stroke=#1a1a1a, strokeWidth=1.0)
+       - Layer 2: type=stroke, color=#1a1a1a, width=1.0, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#9ed7c2, opacity=1.00
   7. **לקהל הרחב** (value: `לקהל הרחב`)
      - Fill: #9ed7c2
-     - Stroke: #1a1a1a (width: 0.75)
+     - Stroke: #1a1a1a (width: 1.0)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#9ed7c2, stroke=#1a1a1a, strokeWidth=1.0)
+       - Layer 2: type=stroke, color=#1a1a1a, width=1.0, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#9ed7c2, opacity=1.00
   8. **מוקד מורשת והנצחה** (value: `מוקד מורשת והנצחה`)
      - Fill: #004c73
-     - Stroke: #000000 (width: 0)
+     - Stroke: #000000 (width: 0.0)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#004c73, stroke=#000000, strokeWidth=0.0)
+       - Layer 2: type=stroke, color=#000000, width=0.0, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#004c73, opacity=1.00
   9. **פרויקט זמני ** (value: `פרויקט זמני `)
      - Fill: #64557e
-     - Stroke: #000000 (width: 0)
+     - Stroke: #000000 (width: 0.0)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#64557e, stroke=#000000, strokeWidth=0.0)
+       - Layer 2: type=stroke, color=#000000, width=0.0, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#64557e, opacity=1.00
   10. **תכנון נופי למורשת והנצחה** (value: `תכנון נופי למורשת והנצחה`)
      - Fill: #326129
-     - Stroke: #000000 (width: 0)
+     - Stroke: #000000 (width: 0.0)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+     - Advanced Symbol IR:
+       - Layers: 3
+       - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#326129, stroke=#000000, strokeWidth=0.0)
+       - Layer 2: type=stroke, color=#000000, width=0.0, opacity=1.00
+       - Layer 3: type=fill, fillType=solid, color=#326129, opacity=1.00
 **Labels:**
   - Field: `[Name]`
   - Font: Tahoma
@@ -342,7 +465,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: **Yes** (recommended)
 
 **Style File:**
-  - Path: `layers\future_development\styles\מימושים.lyrx`
+  - Path: `future_development\styles\מימושים.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -351,14 +474,22 @@ Generated from: `otef-interactive\public\source`
 **Classes:** 2
   1. **לא מומש** (value: `0`)
      - Fill: #d76e89
-     - Stroke: #6e6e6e (width: 0.4)
+     - Stroke: #6e6e6e (width: 0.5333333333333333)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#6e6e6e, width=0.5333333333333333, opacity=0.00
+       - Layer 2: type=fill, fillType=solid, color=#d76e89, opacity=1.00
   2. **מומש** (value: `1`)
      - Fill: #76b5c5
-     - Stroke: #cccccc (width: 0.4)
+     - Stroke: #cccccc (width: 0.5333333333333333)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#cccccc, width=0.5333333333333333, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#76b5c5, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -383,7 +514,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\future_development\styles\מתחמי_דיור.lyrx`
+  - Path: `future_development\styles\מתחמי_דיור.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -392,24 +523,40 @@ Generated from: `otef-interactive\public\source`
 **Classes:** 4
   1. **יוזמות וכוונות תכנון** (value: `0`)
      - Fill: #000000 (opacity: 0.00)
-     - Stroke: #e60000 (width: 2)
+     - Stroke: #e60000 (width: 2.6666666666666665)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#e60000, width=2.6666666666666665, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#000000, opacity=0.00
   2. **קדם תכנון** (value: `1`)
      - Fill: #000000 (opacity: 0.00)
-     - Stroke: #e69800 (width: 2)
+     - Stroke: #e69800 (width: 2.6666666666666665)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#e69800, width=2.6666666666666665, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#000000, opacity=0.00
   3. **בתהליך** (value: `2`)
      - Fill: #000000 (opacity: 0.00)
-     - Stroke: #6699cd (width: 2)
+     - Stroke: #6699cd (width: 2.6666666666666665)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#6699cd, width=2.6666666666666665, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#000000, opacity=0.00
   4. **מאושר** (value: `3`)
      - Fill: #000000 (opacity: 0.00)
-     - Stroke: #005ce6 (width: 2)
+     - Stroke: #005ce6 (width: 2.6666666666666665)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#005ce6, width=2.6666666666666665, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#000000, opacity=0.00
 **Labels:**
   - Field: `POLYGON_NAME`
   - Font: Tahoma
@@ -434,7 +581,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\future_development\styles\232_ציר.lyrx`
+  - Path: `future_development\styles\232_ציר.lyrx`
   - Match method: `token_sorted` (fallback match)
 
 **Parsed Style Configuration:**
@@ -442,9 +589,12 @@ Generated from: `otef-interactive\public\source`
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #873e23 (width: 1)
+  - Stroke: #873e23 (width: 1.3333333333333333)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#873e23, width=1.3333333333333333, opacity=1.00
 **Labels:**
   - Field: `NAME`
   - Font: Tahoma
@@ -471,16 +621,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\greens\styles\גן_לאומי.lyrx`
+  - Path: `greens\styles\גן_לאומי.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #89b161
-  - Stroke: #333333 (width: 0)
+  - Stroke: #333333 (width: 0.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#333333, width=0.0, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#89b161, opacity=1.00
 **Labels:**
   - Field: `NAME`
   - Font: Tahoma
@@ -503,7 +657,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: **Yes** (recommended)
 
 **Style File:**
-  - Path: `layers\greens\styles\חקלאות.lyrx`
+  - Path: `greens\styles\חקלאות.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -513,6 +667,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#873e23, opacity=1.00
 **Labels:**
   - Field: `YeshuvName`
   - Font: Tahoma
@@ -535,7 +692,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\greens\styles\יער_טבעי.lyrx`
+  - Path: `greens\styles\יער_טבעי.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -545,6 +702,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#50a63e, opacity=1.00
 **Labels:**
   - Field: `NAME`
   - Font: Tahoma
@@ -567,7 +727,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\greens\styles\יער_פארק.lyrx`
+  - Path: `greens\styles\יער_פארק.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -577,6 +737,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#7ec05a, opacity=1.00
 **Labels:**
   - Field: `NAME`
   - Font: Tahoma
@@ -599,7 +762,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\greens\styles\יערות_קקל.lyrx`
+  - Path: `greens\styles\יערות_קקל.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -609,6 +772,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidFill: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#7e9b5a, opacity=1.00
 **Labels:**
   - Field: `NAME`
   - Font: Tahoma
@@ -631,16 +797,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: **Yes** (recommended)
 
 **Style File:**
-  - Path: `layers\greens\styles\מישורי_הצפה.lyrx`
+  - Path: `greens\styles\מישורי_הצפה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #abdbe3
-  - Stroke: #000000 (width: 0.4)
+  - Stroke: #000000 (width: 0.5333333333333333)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#000000, width=0.5333333333333333, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#abdbe3, opacity=1.00
 **Labels:**
   - Field: `Id`
   - Font: Tahoma
@@ -663,16 +833,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\greens\styles\מסדרונות_אקולוגיים.lyrx`
+  - Path: `greens\styles\מסדרונות_אקולוגיים.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #d6ba76 (opacity: 0.55)
-  - Stroke: #6e6e6e (width: 0.7)
+  - Stroke: #6e6e6e (width: 0.9333333333333332)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#6e6e6e, width=0.9333333333333332, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#d6ba76, opacity=0.55
 **Labels:**
   - Field: `StatusRTG`
   - Font: Tahoma
@@ -695,7 +869,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\greens\styles\נחלים.lyrx`
+  - Path: `greens\styles\נחלים.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -704,24 +878,36 @@ Generated from: `otef-interactive\public\source`
 **Classes:** 4
   1. ** ** (value: ` `)
      - Fill: #808080
-     - Stroke: #4d1964 (width: 1)
+     - Stroke: #4d1964 (width: 1.3333333333333333)
      - Symbol layers: 1
        - Types: CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 1
+       - Layer 1: type=stroke, color=#4d1964, width=1.3333333333333333, opacity=0.00
   2. **<Null>** (value: `<Null>`)
      - Fill: #808080
-     - Stroke: #063970 (width: 2)
+     - Stroke: #063970 (width: 2.6666666666666665)
      - Symbol layers: 1
        - Types: CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 1
+       - Layer 1: type=stroke, color=#063970, width=2.6666666666666665, opacity=1.00
   3. **משני** (value: `משני`)
      - Fill: #808080
-     - Stroke: #063970 (width: 1)
+     - Stroke: #063970 (width: 1.3333333333333333)
      - Symbol layers: 1
        - Types: CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 1
+       - Layer 1: type=stroke, color=#063970, width=1.3333333333333333, opacity=1.00
   4. **ראשי** (value: `ראשי`)
      - Fill: #808080
-     - Stroke: #063970 (width: 2)
+     - Stroke: #063970 (width: 2.6666666666666665)
      - Symbol layers: 1
        - Types: CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 1
+       - Layer 1: type=stroke, color=#063970, width=2.6666666666666665, opacity=1.00
 **Labels:**
   - Field: `$feature["NAME"]`
   - Font: Arial
@@ -746,16 +932,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\greens\styles\צוואר_בקבוק.lyrx`
+  - Path: `greens\styles\צוואר_בקבוק.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #d63624 (opacity: 0.55)
-  - Stroke: #6e6e6e (width: 0.7)
+  - Stroke: #6e6e6e (width: 0.9333333333333332)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#6e6e6e, width=0.9333333333333332, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#d63624, opacity=0.55
 **Labels:**
   - Field: `StatusRTG`
   - Font: Tahoma
@@ -778,16 +968,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\greens\styles\שמורות_טבע.lyrx`
+  - Path: `greens\styles\שמורות_טבע.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #4b6736
-  - Stroke: #333333 (width: 0)
+  - Stroke: #333333 (width: 0.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#333333, width=0.0, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#4b6736, opacity=1.00
 **Labels:**
   - Field: `NAME`
   - Font: Tahoma
@@ -814,10 +1008,11 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\אחסנה.lyrx`
+  - Path: `land_use\styles\אחסנה.lyrx`
 
 **Parsed Style Configuration:**
 
+**Complexity:** `advanced`
 **Renderer Type:** Unique Value (attribute-based styling)
 **Field:** `mavat_code`
 **Classes:** 1
@@ -826,6 +1021,11 @@ Generated from: `otef-interactive\public\source`
      - Stroke: #000000 (width: 1.0)
      - Symbol layers: 3
        - Types: CIMSolidFill: 1, CIMSolidStroke: 2
+       **CIM Complexity (parsing gaps):**
+       - **Multiple strokes** (e.g. dashed + casing) – parser currently keeps first only
+     - Advanced Symbol IR:
+       - Layers: 1
+       - Layer 1: type=fill, fillType=solid, color=#cc66cc, opacity=1.00
 **Labels:**
   - Field: `LABEL`
   - Font: Tahoma
@@ -850,16 +1050,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\בית_עלמין.lyrx`
+  - Path: `land_use\styles\בית_עלמין.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #ffffff
-  - Stroke: #333333 (width: 0.75)
+  - Stroke: #333333 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#333333, width=1.0, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#ffffff, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -882,19 +1086,28 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\חניון.lyrx`
+  - Path: `land_use\styles\חניון.lyrx`
 
 **Parsed Style Configuration:**
 
+**Complexity:** `advanced`
 **Renderer Type:** Unique Value (attribute-based styling)
 **Field:** `mavat_code`
 **Classes:** 1
   1. **חניון** (value: `870`)
      - Fill: #e8171c
-     - Stroke: #003fff (width: 0.28)
+     - Stroke: #003fff (width: 0.37333333333333335)
      - Symbol layers: 4
        - Types: CIMHatchFill: 2, CIMSolidFill: 1, CIMSolidStroke: 1
        - Hatch: #848484 (rot: -45, sep: 11.3386)
+       **CIM Complexity (parsing gaps):**
+       - **Multiple hatches** (e.g. cross-hatch) – parser currently keeps first only
+     - Advanced Symbol IR:
+       - Layers: 4
+       - Layer 1: type=stroke, color=#003fff, width=0.37333333333333335, opacity=1.00
+       - Layer 2: type=fill, fillType=hatch, color=#848484, opacity=1.00, hatch(color=#848484, rot=-45, sep=11.3386, width=1.3333333333333333)
+       - Layer 3: type=fill, fillType=hatch, color=#848484, opacity=1.00, hatch(color=#848484, rot=45, sep=11.3386, width=1.3333333333333333)
+       - Layer 4: type=fill, fillType=solid, color=#e8171c, opacity=1.00
 **Labels:**
   - Field: `LABEL`
   - Font: Tahoma
@@ -919,7 +1132,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\חקלאות_מרעה_ותעשייה.lyrx`
+  - Path: `land_use\styles\חקלאות_מרעה_ותעשייה.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -929,6 +1142,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMHatchFill: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=hatch, color=#6ca04f, opacity=1.00, hatch(color=#6ca04f, rot=45, sep=6, width=5.333333333333333)
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -951,7 +1167,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\כרייה_וחציבה.lyrx`
+  - Path: `land_use\styles\כרייה_וחציבה.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -960,9 +1176,13 @@ Generated from: `otef-interactive\public\source`
 **Classes:** 1
   1. **כריה וחציבה** (value: `12`)
      - Fill: #7f7fff
-     - Stroke: #990000 (width: 2)
+     - Stroke: #990000 (width: 2.6666666666666665)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#990000, width=2.6666666666666665, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#7f7fff, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -987,7 +1207,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: **Yes** (recommended)
 
 **Style File:**
-  - Path: `layers\land_use\styles\מגורים.lyrx`
+  - Path: `land_use\styles\מגורים.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -997,6 +1217,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#ffdf7f, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1019,7 +1242,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\מוסדות_ציבוריים.lyrx`
+  - Path: `land_use\styles\מוסדות_ציבוריים.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1029,6 +1252,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#cc9966, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1051,7 +1277,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\מסחר_ומשרדים.lyrx`
+  - Path: `land_use\styles\מסחר_ומשרדים.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1061,6 +1287,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#f68c28, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1083,7 +1312,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\מעורב_עם_מגורים.lyrx`
+  - Path: `land_use\styles\מעורב_עם_מגורים.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1093,6 +1322,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMHatchFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=hatch, color=#ffdf7f, opacity=1.00, hatch(color=#ffdf7f, rot=45, sep=5.25, width=1.3333333333333333)
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1115,7 +1347,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\מעורב_עם_מסחר.lyrx`
+  - Path: `land_use\styles\מעורב_עם_מסחר.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1125,6 +1357,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMHatchFill: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=hatch, color=#f68c28, opacity=1.00, hatch(color=#f68c28, rot=45, sep=6, width=5.333333333333333)
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1147,7 +1382,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\מתקני_הנדסה.lyrx`
+  - Path: `land_use\styles\מתקני_הנדסה.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1156,9 +1391,13 @@ Generated from: `otef-interactive\public\source`
 **Classes:** 1
   1. **מתקני הנדסה** (value: `10`)
      - Fill: #cc66cc
-     - Stroke: #003fff (width: 0.28346399999999994)
+     - Stroke: #003fff (width: 0.3779519999999999)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#003fff, width=0.3779519999999999, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#cc66cc, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1183,7 +1422,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\ספורט.lyrx`
+  - Path: `land_use\styles\ספורט.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1192,9 +1431,13 @@ Generated from: `otef-interactive\public\source`
 **Classes:** 1
   1. **ספורט** (value: `15`)
      - Fill: #bfff00
-     - Stroke: #992600 (width: 2)
+     - Stroke: #992600 (width: 2.6666666666666665)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#992600, width=2.6666666666666665, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#bfff00, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1219,7 +1462,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: **Yes** (recommended)
 
 **Style File:**
-  - Path: `layers\land_use\styles\שטח_לדרכים.lyrx`
+  - Path: `land_use\styles\שטח_לדרכים.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1229,6 +1472,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#ff003f, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1251,7 +1497,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\שטחי_אש .lyrx`
+  - Path: `land_use\styles\שטחי_אש .lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1261,6 +1507,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#f6c028, opacity=1.00
 **Labels:**
   - Field: `FZ_NAME`
   - Font: Tahoma
@@ -1283,16 +1532,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: **Yes** (recommended)
 
 **Style File:**
-  - Path: `layers\land_use\styles\שטחים_פתוחים.lyrx`
+  - Path: `land_use\styles\שטחים_פתוחים.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #bfff00
-  - Stroke: #003fff (width: 0.28346399999999994)
+  - Stroke: #003fff (width: 0.3779519999999999)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#003fff, width=0.3779519999999999, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#bfff00, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1315,7 +1568,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\תחבורה.lyrx`
+  - Path: `land_use\styles\תחבורה.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1324,9 +1577,13 @@ Generated from: `otef-interactive\public\source`
 **Classes:** 1
   1. **תחבורה** (value: `13`)
      - Fill: #ff003f
-     - Stroke: #990099 (width: 1)
+     - Stroke: #990099 (width: 1.3333333333333333)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#990099, width=1.3333333333333333, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#ff003f, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1351,16 +1608,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\תיירות_ונופש.lyrx`
+  - Path: `land_use\styles\תיירות_ונופש.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #ff7f9f
-  - Stroke: #7fff7f (width: 2)
+  - Stroke: #7fff7f (width: 2.6666666666666665)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#7fff7f, width=2.6666666666666665, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#ff7f9f, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1383,7 +1644,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\תעסוקה.lyrx`
+  - Path: `land_use\styles\תעסוקה.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1393,6 +1654,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMHatchFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=hatch, color=#7f007f, opacity=1.00, hatch(color=#7f007f, rot=45, sep=5.25, width=1.3333333333333333)
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1415,16 +1679,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\land_use\styles\תעשייה_ומלאכה.lyrx`
+  - Path: `land_use\styles\תעשייה_ומלאכה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #cc66cc
-  - Stroke: #5b5b5b (width: 0.5)
+  - Stroke: #5b5b5b (width: 0.6666666666666666)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#5b5b5b, width=0.6666666666666666, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#cc66cc, opacity=1.00
 **Labels:**
   - Field: `MIGRASH`
   - Font: Tahoma
@@ -1451,16 +1719,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\במה.lyrx`
+  - Path: `muniplicity_transport\styles\במה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #5c8944 (width: 1)
+  - Stroke: #5c8944 (width: 1.3333333333333333)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#5c8944, width=1.3333333333333333, opacity=1.00
 **Labels:**
   - Field: `Name`
   - Font: Tahoma
@@ -1483,7 +1754,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\דרכי_עפר.lyrx`
+  - Path: `muniplicity_transport\styles\דרכי_עפר.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1493,6 +1764,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidFill: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#895a44, opacity=1.00
 **Labels:**
   - Field: `OBJECTID`
   - Font: Tahoma
@@ -1518,16 +1792,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\דרכים_אזוריות.lyrx`
+  - Path: `muniplicity_transport\styles\דרכים_אזוריות.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #873e23 (width: 1)
+  - Stroke: #873e23 (width: 1.3333333333333333)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#873e23, width=1.3333333333333333, opacity=1.00
 **Labels:**
   - Field: `NAME`
   - Font: Tahoma
@@ -1550,16 +1827,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\דרכים_ארציות.lyrx`
+  - Path: `muniplicity_transport\styles\דרכים_ארציות.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #873e23 (width: 2)
+  - Stroke: #873e23 (width: 2.6666666666666665)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#873e23, width=2.6666666666666665, opacity=1.00
 **Labels:**
   - Field: `NAME`
   - Font: Tahoma
@@ -1582,16 +1862,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\דרכים_מקומיות.lyrx`
+  - Path: `muniplicity_transport\styles\דרכים_מקומיות.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #873e23 (width: 0.5)
+  - Stroke: #873e23 (width: 0.6666666666666666)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#873e23, width=0.6666666666666666, opacity=1.00
 **Labels:**
   - Field: `RefName`
   - Font: Tahoma
@@ -1614,7 +1897,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\מועצות_אזוריות.lyrx`
+  - Path: `muniplicity_transport\styles\מועצות_אזוריות.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -1623,34 +1906,58 @@ Generated from: `otef-interactive\public\source`
 **Classes:** 6
   1. **אשכול** (value: `אשכול`)
      - Fill: #b30000 (opacity: 0.65)
-     - Stroke: #6e6e6e (width: 0.7)
+     - Stroke: #6e6e6e (width: 0.9333333333333332)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#6e6e6e, width=0.9333333333333332, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#b30000, opacity=0.65
   2. **אשקלון** (value: `אשקלון`)
      - Fill: #e34a33 (opacity: 0.70)
-     - Stroke: #6e6e6e (width: 0.7)
+     - Stroke: #6e6e6e (width: 0.9333333333333332)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#6e6e6e, width=0.9333333333333332, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#e34a33, opacity=0.70
   3. **חוף אשקלון** (value: `חוף אשקלון`)
      - Fill: #fc8d59 (opacity: 0.70)
-     - Stroke: #6e6e6e (width: 0.7)
+     - Stroke: #6e6e6e (width: 0.9333333333333332)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#6e6e6e, width=0.9333333333333332, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#fc8d59, opacity=0.70
   4. **שדות נגב** (value: `שדות נגב`)
      - Fill: #f2b84b (opacity: 0.70)
-     - Stroke: #6e6e6e (width: 0.7)
+     - Stroke: #6e6e6e (width: 0.9333333333333332)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#6e6e6e, width=0.9333333333333332, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#f2b84b, opacity=0.70
   5. **שדרות** (value: `שדרות`)
      - Fill: #fdcc8a (opacity: 0.70)
-     - Stroke: #6e6e6e (width: 0.7)
+     - Stroke: #6e6e6e (width: 0.9333333333333332)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#6e6e6e, width=0.9333333333333332, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#fdcc8a, opacity=0.70
   6. **שער הנגב** (value: `שער הנגב`)
      - Fill: #ffebaf (opacity: 0.65)
-     - Stroke: #6e6e6e (width: 0.7)
+     - Stroke: #6e6e6e (width: 0.9333333333333332)
      - Symbol layers: 2
        - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+     - Advanced Symbol IR:
+       - Layers: 2
+       - Layer 1: type=stroke, color=#6e6e6e, width=0.9333333333333332, opacity=1.00
+       - Layer 2: type=fill, fillType=solid, color=#ffebaf, opacity=0.65
 **Labels:**
   - Field: `Muni_Heb`
   - Font: Tahoma
@@ -1675,16 +1982,25 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\מסלולי_רכבת.lyrx`
+  - Path: `muniplicity_transport\styles\מסלולי_רכבת.lyrx`
 
 **Parsed Style Configuration:**
 
+**Complexity:** `advanced`
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #895a44 (width: 4)
+  - Stroke: #895a44 (width: 5.333333333333333)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidStroke: 2, CIMVectorMarker: 1
+**CIM Complexity (parsing gaps):**
+  - **Multiple strokes** (e.g. dashed + casing) – parser currently keeps first only
+  - **Marker along line** (e.g. train ticks) – not parsed or drawn
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerLine, marker(shape=circle, size=5.333333333333333, fill=None, stroke=#895a44, strokeWidth=5.333333333333333), placement(mode=CIMMarkerPlacementAlongLineSameSize, interval=0.0, offsetAlong=0.0), orientation(alignToLine=True)
+  - Layer 2: type=stroke, color=#895a44, width=5.333333333333333, opacity=1.00
+  - Layer 3: type=stroke, color=#895a44, width=1.0666666666666667, opacity=1.00
 **Labels:**
   - Field: `RefName`
   - Font: Tahoma
@@ -1707,16 +2023,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\מרכז_תחבורה_מתוכנן.lyrx`
+  - Path: `muniplicity_transport\styles\מרכז_תחבורה_מתוכנן.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #e07473
-  - Stroke: #6e6e6e (width: 0)
+  - Stroke: #6e6e6e (width: 0.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#6e6e6e, width=0.0, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#e07473, opacity=1.00
 **Labels:**
   - Field: `Id`
   - Font: Tahoma
@@ -1739,16 +2059,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\מרכז_תחבורה_קיים.lyrx`
+  - Path: `muniplicity_transport\styles\מרכז_תחבורה_קיים.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #e69973
-  - Stroke: #6e6e6e (width: 0.7)
+  - Stroke: #6e6e6e (width: 0.9333333333333332)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#6e6e6e, width=0.9333333333333332, opacity=0.00
+  - Layer 2: type=fill, fillType=solid, color=#e69973, opacity=1.00
 **Labels:**
   - Field: `Id`
   - Font: Tahoma
@@ -1771,16 +2095,23 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\סינגלים.lyrx`
+  - Path: `muniplicity_transport\styles\סינגלים.lyrx`
 
 **Parsed Style Configuration:**
 
+**Complexity:** `advanced`
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #abdbe3 (width: 0.7647058823529412)
+  - Stroke: #abdbe3 (width: 1.0196078431372548)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidStroke: 2
+**CIM Complexity (parsing gaps):**
+  - **Multiple strokes** (e.g. dashed + casing) – parser currently keeps first only
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#abdbe3, width=1.0196078431372548, opacity=1.00, dash=[1.4705882352941178, 1.4705882352941178]
+  - Layer 2: type=stroke, color=#704589, width=1.3333333333333333, opacity=1.00
 **Labels:**
   - Field: `Name`
   - Font: Tahoma
@@ -1803,16 +2134,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\סעד.lyrx`
+  - Path: `muniplicity_transport\styles\סעד.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #0c6ffd (width: 1)
+  - Stroke: #0c6ffd (width: 1.3333333333333333)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#0c6ffd, width=1.3333333333333333, opacity=1.00
 **Labels:**
   - Field: `Name`
   - Font: Tahoma
@@ -1835,16 +2169,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\שביל_הנגב_המערבי.lyrx`
+  - Path: `muniplicity_transport\styles\שביל_הנגב_המערבי.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #036466 (width: 1)
+  - Stroke: #036466 (width: 1.3333333333333333)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#036466, width=1.3333333333333333, opacity=1.00
 **Labels:**
   - Field: `Name`
   - Font: Tahoma
@@ -1867,16 +2204,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: **Yes** (recommended)
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\שבילי_אופניים.lyrx`
+  - Path: `muniplicity_transport\styles\שבילי_אופניים.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #898944 (width: 1)
+  - Stroke: #898944 (width: 1.3333333333333333)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#898944, width=1.3333333333333333, opacity=1.00
 **Labels:**
   - Field: `SHVIL_NAME`
   - Font: Tahoma
@@ -1899,16 +2239,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\שבילי_אופניים_שקמה.lyrx`
+  - Path: `muniplicity_transport\styles\שבילי_אופניים_שקמה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #d76e89 (width: 1)
+  - Stroke: #d76e89 (width: 1.3333333333333333)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#d76e89, width=1.3333333333333333, opacity=1.00
 **Labels:**
   - Field: `SHVIL_NAME`
   - Font: Tahoma
@@ -1931,16 +2274,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\שבילים.lyrx`
+  - Path: `muniplicity_transport\styles\שבילים.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #704588 (width: 1)
+  - Stroke: #704588 (width: 1.3333333333333333)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#704588, width=1.3333333333333333, opacity=1.00
 **Labels:**
   - Field: `Name`
   - Font: Tahoma
@@ -1963,16 +2309,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\muniplicity_transport\styles\תחנות_רכבת.lyrx`
+  - Path: `muniplicity_transport\styles\תחנות_רכבת.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #e07473
-  - Stroke: #d95f18 (width: 0.6)
+  - Stroke: #d95f18 (width: 0.7999999999999999)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=10.666666666666666, fill=#e07473, stroke=#d95f18, strokeWidth=0.7999999999999999)
+  - Layer 2: type=stroke, color=#d95f18, width=0.7999999999999999, opacity=1.00
+  - Layer 3: type=fill, fillType=solid, color=#e07473, opacity=1.00
 **Labels:**
   - Field: `NAME`
   - Font: Tahoma
@@ -1999,7 +2350,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\אזור_הרס-אזור.lyrx`
+  - Path: `october_7th\styles\אזור_הרס-אזור.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -2009,6 +2360,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#8d7300, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2031,16 +2385,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\אזור_הרס-נקודה.lyrx`
+  - Path: `october_7th\styles\אזור_הרס-נקודה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #8d7300
-  - Stroke: #e1e1e1 (width: 0.75)
+  - Stroke: #e1e1e1 (width: 1.0)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#8d7300, stroke=#e1e1e1, strokeWidth=1.0)
+  - Layer 2: type=stroke, color=#e1e1e1, width=1.0, opacity=0.00
+  - Layer 3: type=fill, fillType=solid, color=#8d7300, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2063,16 +2422,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\אירוע_נקודתי-רציחה_חטיפה-אזור.lyrx`
+  - Path: `october_7th\styles\אירוע_נקודתי-רציחה_חטיפה-אזור.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #a80000
-  - Stroke: #cccccc (width: 0.75)
+  - Stroke: #cccccc (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#cccccc, width=1.0, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#a80000, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2095,16 +2458,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\אירוע_נקודתי-רציחה_חטיפה.lyrx`
+  - Path: `october_7th\styles\אירוע_נקודתי-רציחה_חטיפה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #a80000
-  - Stroke: #cccccc (width: 0)
+  - Stroke: #cccccc (width: 0.0)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=16.0, fill=#a80000, stroke=#cccccc, strokeWidth=0.0)
+  - Layer 2: type=stroke, color=#cccccc, width=0.0, opacity=0.00
+  - Layer 3: type=fill, fillType=solid, color=#a80000, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2127,16 +2495,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\ביזה-אזור.lyrx`
+  - Path: `october_7th\styles\ביזה-אזור.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #063970
-  - Stroke: #333333 (width: 0.75)
+  - Stroke: #333333 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#333333, width=1.0, opacity=0.00
+  - Layer 2: type=fill, fillType=solid, color=#063970, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2159,16 +2531,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\ביזה-נקודה.lyrx`
+  - Path: `october_7th\styles\ביזה-נקודה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #063970
-  - Stroke: #1a1a1a (width: 0.75)
+  - Stroke: #1a1a1a (width: 1.0)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#063970, stroke=#1a1a1a, strokeWidth=1.0)
+  - Layer 2: type=stroke, color=#1a1a1a, width=1.0, opacity=0.00
+  - Layer 3: type=fill, fillType=solid, color=#063970, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2191,16 +2568,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\חדירה_לישוב-אזור.lyrx`
+  - Path: `october_7th\styles\חדירה_לישוב-אזור.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #f68c28
-  - Stroke: #333333 (width: 0.75)
+  - Stroke: #333333 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#333333, width=1.0, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#f68c28, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2223,16 +2604,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\חדירה_לישוב-נקודה.lyrx`
+  - Path: `october_7th\styles\חדירה_לישוב-נקודה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #f68c28
-  - Stroke: #1a1a1a (width: 0.75)
+  - Stroke: #1a1a1a (width: 1.0)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#f68c28, stroke=#1a1a1a, strokeWidth=1.0)
+  - Layer 2: type=stroke, color=#1a1a1a, width=1.0, opacity=0.00
+  - Layer 3: type=fill, fillType=solid, color=#f68c28, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2255,16 +2641,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\חדירה_לישוב-ציר.lyrx`
+  - Path: `october_7th\styles\חדירה_לישוב-ציר.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #f68c28 (width: 1.5)
+  - Stroke: #f68c28 (width: 2.0)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#f68c28, width=2.0, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2287,16 +2676,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\מאבק_וגבורה-אזור.lyrx`
+  - Path: `october_7th\styles\מאבק_וגבורה-אזור.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #c31f4f
-  - Stroke: #333333 (width: 0.75)
+  - Stroke: #333333 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#333333, width=1.0, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#c31f4f, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2319,16 +2712,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\מאבק_וגבורה-נקודה.lyrx`
+  - Path: `october_7th\styles\מאבק_וגבורה-נקודה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #c31f4f
-  - Stroke: #1a1a1a (width: 0.75)
+  - Stroke: #1a1a1a (width: 1.0)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#c31f4f, stroke=#1a1a1a, strokeWidth=1.0)
+  - Layer 2: type=stroke, color=#1a1a1a, width=1.0, opacity=0.00
+  - Layer 3: type=fill, fillType=solid, color=#c31f4f, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2351,16 +2749,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\מאבק_וגבורה-ציר.lyrx`
+  - Path: `october_7th\styles\מאבק_וגבורה-ציר.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #c31f4f (width: 1.5)
+  - Stroke: #c31f4f (width: 2.0)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#c31f4f, width=2.0, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2383,16 +2784,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\מוקד_מאבק_וגבורה-אזור.lyrx`
+  - Path: `october_7th\styles\מוקד_מאבק_וגבורה-אזור.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #732600
-  - Stroke: #333333 (width: 0.75)
+  - Stroke: #333333 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#333333, width=1.0, opacity=0.00
+  - Layer 2: type=fill, fillType=solid, color=#732600, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2415,16 +2820,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\מוקד_מאבק_וגבורה-נקודה.lyrx`
+  - Path: `october_7th\styles\מוקד_מאבק_וגבורה-נקודה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #732600
-  - Stroke: #1a1a1a (width: 0.75)
+  - Stroke: #1a1a1a (width: 1.0)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#732600, stroke=#1a1a1a, strokeWidth=1.0)
+  - Layer 2: type=stroke, color=#1a1a1a, width=1.0, opacity=0.00
+  - Layer 3: type=fill, fillType=solid, color=#732600, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2447,16 +2857,19 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\מוקד_מאבק_וגבורה-ציר.lyrx`
+  - Path: `october_7th\styles\מוקד_מאבק_וגבורה-ציר.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #808080
-  - Stroke: #732600 (width: 1.5)
+  - Stroke: #732600 (width: 2.0)
 **Full Symbol Stack:** 1 layer(s)
   - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#732600, width=2.0, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2479,16 +2892,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\מרחב_לחימה.lyrx`
+  - Path: `october_7th\styles\מרחב_לחימה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #e60000
-  - Stroke: #333333 (width: 0.75)
+  - Stroke: #333333 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#333333, width=1.0, opacity=0.00
+  - Layer 2: type=fill, fillType=solid, color=#e60000, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2511,16 +2928,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\פגיעה_נקודתית-אזור.lyrx`
+  - Path: `october_7th\styles\פגיעה_נקודתית-אזור.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #a8a800
-  - Stroke: #333333 (width: 0.75)
+  - Stroke: #333333 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#333333, width=1.0, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#a8a800, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2543,16 +2964,21 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\פגיעה_נקודתית-נקודה.lyrx`
+  - Path: `october_7th\styles\פגיעה_נקודתית-נקודה.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #e6e600
-  - Stroke: #cccccc (width: 0.75)
+  - Stroke: #cccccc (width: 1.0)
 **Full Symbol Stack:** 3 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1, CIMVectorMarker: 1
+**Advanced Symbol IR:**
+  - Layers: 3
+  - Layer 1: type=markerPoint, marker(shape=circle, size=8.0, fill=#e6e600, stroke=#cccccc, strokeWidth=1.0)
+  - Layer 2: type=stroke, color=#cccccc, width=1.0, opacity=0.00
+  - Layer 3: type=fill, fillType=solid, color=#e6e600, opacity=1.00
 **Labels:**
   - Field: `Site_name`
   - Font: Tahoma
@@ -2575,7 +3001,7 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\october_7th\styles\שטחים_פתוחים_פגועים.lyrx`
+  - Path: `october_7th\styles\שטחים_פתוחים_פגועים.lyrx`
 
 **Parsed Style Configuration:**
 
@@ -2585,6 +3011,9 @@ Generated from: `otef-interactive\public\source`
   - Stroke: #000000 (width: 1.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=fill, fillType=solid, color=#a87000, opacity=1.00
 **Labels:**
   - Field: `RefName`
   - Font: Tahoma
@@ -2597,7 +3026,7 @@ Generated from: `otef-interactive\public\source`
 
 ## Layer Group: `projector_base`
 
-**Total Layers:** 2
+**Total Layers:** 3
 
 ### Layer: `SEA`
 
@@ -2611,16 +3040,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\projector_base\styles\SEA.lyrx`
+  - Path: `projector_base\styles\SEA.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #abdbe3
-  - Stroke: #6e6e6e (width: 0)
+  - Stroke: #6e6e6e (width: 0.0)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#6e6e6e, width=0.0, opacity=1.00
+  - Layer 2: type=fill, fillType=solid, color=#abdbe3, opacity=1.00
 **Labels:**
   - Field: `Id`
   - Font: Tahoma
@@ -2628,6 +3061,41 @@ Generated from: `otef-interactive\public\source`
 
 **Parser Validation:**
   - ✓ Geometry type matches: `polygon`
+
+---
+
+### Layer: `Tkuma_Area_LIne`
+
+**Full ID:** `projector_base.tkuma_area_line`
+**File:** `Tkuma_Area_LIne.geojson`
+
+**File Information:**
+  - Size: 0.05 MB
+  - Features: 1
+  - Geometry Type: `line`
+  - PMTiles Conversion: No
+
+**Style File:**
+  - Path: `projector_base\styles\Tkuma_Area_LIne.lyrx`
+
+**Parsed Style Configuration:**
+
+**Renderer Type:** Simple (single style for all features)
+**Default Style:**
+  - Fill: #808080
+  - Stroke: #ff0000 (width: 1.3333333333333333)
+**Full Symbol Stack:** 1 layer(s)
+  - Types: CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 1
+  - Layer 1: type=stroke, color=#ff0000, width=1.3333333333333333, opacity=1.00, dash=[4, 4]
+**Labels:**
+  - Field: `LEFT_FID`
+  - Font: Tahoma
+  - Size: 10pt
+
+**Parser Validation:**
+  - ✓ Geometry type matches: `line`
 
 ---
 
@@ -2643,16 +3111,20 @@ Generated from: `otef-interactive\public\source`
   - PMTiles Conversion: No
 
 **Style File:**
-  - Path: `layers\projector_base\styles\רקע_שחור.lyrx`
+  - Path: `projector_base\styles\רקע_שחור.lyrx`
 
 **Parsed Style Configuration:**
 
 **Renderer Type:** Simple (single style for all features)
 **Default Style:**
   - Fill: #000000
-  - Stroke: #6e6e6e (width: 0.7)
+  - Stroke: #6e6e6e (width: 0.9333333333333332)
 **Full Symbol Stack:** 2 layer(s)
   - Types: CIMSolidFill: 1, CIMSolidStroke: 1
+**Advanced Symbol IR:**
+  - Layers: 2
+  - Layer 1: type=stroke, color=#6e6e6e, width=0.9333333333333332, opacity=0.00
+  - Layer 2: type=fill, fillType=solid, color=#000000, opacity=1.00
 **Labels:**
   - Field: `Shape_Length`
   - Font: Tahoma

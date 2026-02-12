@@ -1,15 +1,6 @@
 // OTEF Shared WebSocket Client
 // Provides connection management, auto-reconnect, and message handling
-
-// Use global logger (loaded via script tag)
-function getLogger() {
-  return (typeof window !== 'undefined' && window.logger) || {
-    debug: () => {},
-    info: () => {},
-    warn: console.warn.bind(console),
-    error: console.error.bind(console),
-  };
-}
+// Logger: use window.(window.getLogger && window.getLogger()) (from logger.js)
 
 class OTEFWebSocketClient {
   constructor(url, options = {}) {
@@ -71,10 +62,10 @@ class OTEFWebSocketClient {
           const msg = JSON.parse(event.data);
           this.handleMessage(msg);
         } catch (error) {
-          getLogger().error(
+          (window.getLogger && window.getLogger()).error(
             "[OTEF WS] Failed to parse message:",
             error,
-            event.data
+            event.data,
           );
         }
       };
@@ -92,7 +83,10 @@ class OTEFWebSocketClient {
       };
 
       this.ws.onerror = (error) => {
-        getLogger().error("[OTEF WS] Error:", error);
+        (window.getLogger && window.getLogger()).error(
+          "[OTEF WS] Error:",
+          error,
+        );
         this.isConnected = false;
 
         if (this.onErrorCallback) {
@@ -102,7 +96,10 @@ class OTEFWebSocketClient {
         this.emit("error", error);
       };
     } catch (error) {
-      getLogger().error("[OTEF WS] Connection error:", error);
+      (window.getLogger && window.getLogger()).error(
+        "[OTEF WS] Connection error:",
+        error,
+      );
       this.isConnecting = false;
       this.scheduleReconnect();
     }
@@ -122,7 +119,7 @@ class OTEFWebSocketClient {
 
     const delay = Math.min(
       this.reconnectDelay * Math.pow(2, this.reconnectAttempts),
-      this.maxReconnectDelay
+      this.maxReconnectDelay,
     );
 
     this.reconnectAttempts++;
@@ -161,7 +158,9 @@ class OTEFWebSocketClient {
       !this.ws ||
       this.ws.readyState !== WebSocket.OPEN
     ) {
-      getLogger().warn("[OTEF WS] Cannot send message: not connected");
+      (window.getLogger && window.getLogger()).warn(
+        "[OTEF WS] Cannot send message: not connected",
+      );
       return false;
     }
 
@@ -170,7 +169,10 @@ class OTEFWebSocketClient {
       this.ws.send(json);
       return true;
     } catch (error) {
-      getLogger().error("[OTEF WS] Failed to send message:", error);
+      (window.getLogger && window.getLogger()).error(
+        "[OTEF WS] Failed to send message:",
+        error,
+      );
       return false;
     }
   }
@@ -229,7 +231,10 @@ class OTEFWebSocketClient {
       try {
         callback(...args);
       } catch (error) {
-        getLogger().error(`[OTEF WS] Error in listener for ${event}:`, error);
+        (window.getLogger && window.getLogger()).error(
+          `[OTEF WS] Error in listener for ${event}:`,
+          error,
+        );
       }
     });
   }

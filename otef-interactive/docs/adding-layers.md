@@ -136,16 +136,66 @@ Add a `ui.popup` section to each layer that needs popups:
 - `fields`: Array of `{ label, key }` pairs to display
 - `hideEmpty`: Skip fields with null/empty values (default: true)
 
+## WMTS Layers (Satellite Imagery)
+
+You can add WMTS (tile) layers by placing one or more `.wmts.json` files in the pack's `gis/` folder. Each file defines a single WMTS layer (e.g. satellite imagery).
+
+**File name:** `satellite_imagery.wmts.json` (or any `*.wmts.json`). The layer `id` in the JSON is used in the manifest.
+
+**JSON shape:**
+
+```json
+{
+  "id": "satellite_imagery",
+  "name": "Satellite Imagery",
+  "format": "wmts",
+  "wmts": {
+    "urlTemplate": "https://example.com/tiles/{z}/{y}/{x}",
+    "zoom": 12,
+    "attribution": "Source attribution text"
+  },
+  "mask": {
+    "type": "geojson",
+    "file": "boundary.geojson",
+    "packId": "other_pack",
+    "exclude": false
+  }
+}
+```
+
+- `mask` is optional. If present, the frontend clips WMTS drawing to the boundary (or excludes it when `"exclude": true`). `file` is the asset filename; `packId` is the pack that contains it (defaults to the current pack).
+- WMTS layers are discovered automatically; no injection or separate config file is needed.
+
+## Mask Assets (Boundary Files)
+
+Any GeoJSON file in `gis/` whose **filename stem ends with `_boundary`** (e.g. `gaza_boundary.geojson`) is treated as a **mask asset** only:
+
+- It is **transformed** to WGS84 and **copied** to `processed/<pack_id>/<stem>.geojson`.
+- It is **not** added as a visible layer in the manifest.
+- It is referenced by WMTS `mask.file` (e.g. `"file": "gaza_boundary.geojson"`) so the frontend can load it for clipping.
+
+Replace the file with your real boundary when ready; no code changes required.
+
+## Label Layers (Text-Only Points)
+
+Point layers that have **label classes** in their `.lyrx` (e.g. a CIM layer with `labelClasses` and a text expression like `$feature["cityname"]`) are processed so that `styles.json` includes a full `labels` object (field, font, size, color, halo, alignment, textDirection, etc.).
+
+- On the **GIS map** and **projection display**, these layers render as **text labels** at each point (no circle marker), using the parsed style.
+- Label layers are drawn **on top** of other vector layers on the projector (dedicated labels canvas).
+
+If a point layer has both a symbol and `style.labels`, the frontend treats it as a label layer and draws only the text (labels-only convention).
+
 ## What the Processor Does
 
 The `process_layers.py` script:
 
 1. **Discovers** all layer group folders in `source/layers/`
-2. **Transforms** coordinates from EPSG:2039 to WGS84
-3. **Parses** `.lyrx` files for styling information
-4. **Converts** large files (>10MB or >10,000 features) to PMTiles for better performance
-5. **Generates** `manifest.json` and `styles.json` for each group
-6. **Caches** processed files to skip unchanged layers on subsequent runs
+2. **Transforms** coordinates from EPSG:2039 to WGS84 (and copies `*_boundary.geojson` assets without adding them as layers)
+3. **Parses** `.lyrx` files for styling information (including full label style for label layers)
+4. **Discovers** WMTS layers from `gis/*.wmts.json` and adds them to the manifest
+5. **Converts** large files (>10MB or >10,000 features) to PMTiles for better performance
+6. **Generates** `manifest.json` and `styles.json` for each group
+7. **Caches** processed files to skip unchanged layers on subsequent runs
 
 ### PMTiles Conversion
 
@@ -191,6 +241,29 @@ cp attractions.lyrx otef-interactive/public/source/layers/tourism/styles/
 # 5. Edit manifest to add popups
 # Edit: otef-interactive/public/processed/layers/tourism/manifest.json
 ```
+
+## Troubleshooting
+
+### `net::ERR_CACHE_OPERATION_NOT_SUPPORTED` / `TypeError: Failed to fetch` on PMTiles
+
+When loading a PMTiles layer (e.g. `land_use.שטח_לדרכים`), the browser may show:
+
+- **Failed to load resource: net::ERR_CACHE_OPERATION_NOT_SUPPORTED**
+- **TypeError: Failed to fetch** (from PMTiles `FetchSource.getBytes`)
+
+This is usually due to **browser cache and range requests**:
+
+1. **DevTools "Disable cache"** – With Network → "Disable cache" checked, some browsers reject cache operations used by PMTiles range requests. Try unchecking it and reloading.
+2. **Serving and range support** – Ensure the dev server serves the `.pmtiles` file and supports HTTP range requests (many static servers do). The URL must be same-origin or CORS-enabled.
+3. **Known limitation** – Browsers often do not cache range requests well; see [PMTiles #272](https://github.com/protomaps/PMTiles/issues/272). If the file is valid and the URL loads in a new tab, the app should still work once cache is not forced off.
+
+### Favicon 404
+
+A `favicon.ico:1 Failed to load resource: 404` message is harmless. Add a `favicon.ico` in the app root or ignore it.
+
+### Console: "Registering PMTiles layer X for popups"
+
+These logs are disabled by default. To show them during debugging, set in the console: `window.DEBUG_PMTILES_POPUPS = true` before layers load, then refresh.
 
 ## Related Files
 

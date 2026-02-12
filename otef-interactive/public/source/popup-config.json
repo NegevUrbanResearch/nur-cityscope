@@ -1,309 +1,440 @@
 {
-  "future_development": {
+  "projector_base": {
     "layers": {
-      "מורשת_מוצע": {
-        "titleField": "Name",
-        "fields": [
-          { "label": "Name", "key": "Name" },
-          { "label": "type", "key": "type" },
-          { "label": "Status", "key": "Status" },
-          { "label": "PopupInfo", "key": "PopupInfo" }
-        ],
+      "רקע_שחור": {
+        "fields": [],
         "hideEmpty": true
       },
-      "מורשת_קיים": {
-        "titleField": "Name",
-        "fields": [
-          { "label": "Name", "key": "Name" },
-          { "label": "type", "key": "type" },
-          { "label": "Status", "key": "Status" },
-          { "label": "PopupInfo", "key": "PopupInfo" }
-        ],
-        "hideEmpty": true
-      },
-      "מוקדי_מורשת": {
-        "titleField": "Name",
-        "fields": [
-          { "label": "Name", "key": "Name" }
-        ],
-        "hideEmpty": true
-      },
-      "מוזיאונים_מרכזי_מבקרים_ומוקדי_תרבות": {
-        "titleField": "Name",
-        "fields": [
-          { "label": "Name", "key": "Name" }
-        ],
-        "hideEmpty": true
-      },
-      "אנדרטאות_ומוקדי_הנצחה": {
-        "titleField": "Name",
-        "fields": [
-          { "label": "Name", "key": "Name" }
-        ],
-        "hideEmpty": true
-      },
-      "מוקדים_ארכאולוגיים": {
-        "titleField": "Name",
-        "fields": [
-          { "label": "Name", "key": "Name" }
-        ],
-        "hideEmpty": true
-      },
-      "מתחמי_דיור": {
-        "titleField": "PLAN_NAME",
-        "fields": [
-          { "label": "מספר תכנית", "key": "PLAN_NB" },
-          { "label": "שם תכנית", "key": "PLAN_NAME" },
-          { "label": "סוג מתחם", "key": "PLANING_TYPE" },
-          { "label": "סטטוס", "key": "PLAN_STATUS" },
-          { "label": "תוספת יח\"ד", "key": "FLAT_NUMBER" },
-          { "label": "תכנית עבודה", "key": "YEARLY_WORK_PLAN" },
-          { "label": "חדש / התחדשות", "key": "PLANING_TYPE" },
-          { "label": "שם יישוב", "key": "SETTLE_NAME" },
-          { "label": "מרחב תכנון", "key": "PLANING_AREA" }
-        ],
-        "hideEmpty": true
-      },
-      "מימושים": {
-        "fields": [
-          { "label": "תכנית", "key": "TOCHNIT" },
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" },
-          { "label": "תרגום יעוד", "key": "TARGUMYEUD" },
-          { "label": "מימוש", "key": "mimush" }
-        ],
+      "SEA": {
+        "fields": [],
         "hideEmpty": true
       }
     }
   },
   "muniplicity_transport": {
     "layers": {
-      "שבילי_אופניים_שקמה": {
-        "titleField": "SHVIL_NAME",
-        "fields": [
-          { "label": "SHVIL_NAME", "key": "SHVIL_NAME" }
-        ],
+      "שבילים": {
+        "fields": [],
         "hideEmpty": true
+      },
+      "שבילי_אופניים_שקמה": {
+        "fields": [
+          {
+            "label": "SHVIL_NAME",
+            "key": "SHVIL_NAME"
+          }
+        ],
+        "hideEmpty": true,
+        "titleField": "SHVIL_NAME"
       },
       "שביל_הנגב_המערבי": {
-        "titleField": "Name",
         "fields": [
-          { "label": "Name", "key": "Name" }
+          {
+            "label": "Name",
+            "key": "Name"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Name"
       },
       "סעד": {
-        "titleField": "Name",
         "fields": [
-          { "label": "Name", "key": "Name" }
+          {
+            "label": "Name",
+            "key": "Name"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Name"
       },
       "סינגלים": {
-        "titleField": "Name",
         "fields": [
-          { "label": "Name", "key": "Name" }
+          {
+            "label": "Name",
+            "key": "Name"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Name"
       },
       "במה": {
-        "titleField": "Name",
         "fields": [
-          { "label": "Name", "key": "Name" }
+          {
+            "label": "Name",
+            "key": "Name"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Name"
       },
       "שבילי_אופניים": {
         "fields": [
-          { "label": "SHVIL_NAME", "key": "SHVIL_NAME" },
-          { "label": "STATUS", "key": "STATUS" }
+          {
+            "label": "SHVIL_NAME",
+            "key": "SHVIL_NAME"
+          },
+          {
+            "label": "STATUS",
+            "key": "STATUS"
+          }
         ],
         "hideEmpty": true
       },
       "מסלולי_רכבת": {
-        "titleField": "Layer",
         "fields": [
-          { "label": "Layer", "key": "Layer" }
+          {
+            "label": "Layer",
+            "key": "Layer"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Layer"
       },
       "תחנות_רכבת": {
         "fields": [
-          { "label": "Name", "key": "Name" },
-          { "label": "STATUS", "key": "STATUS" }
+          {
+            "label": "Name",
+            "key": "Name"
+          },
+          {
+            "label": "STATUS",
+            "key": "STATUS"
+          }
         ],
+        "hideEmpty": true
+      },
+      "מרכז_תחבורה_קיים": {
+        "fields": [],
+        "hideEmpty": true
+      },
+      "מרכז_תחבורה_מתוכנן": {
+        "fields": [],
         "hideEmpty": true
       },
       "דרכים_אזוריות": {
-        "titleField": "Name",
         "fields": [
-          { "label": "Name", "key": "Name" }
+          {
+            "label": "Name",
+            "key": "Name"
+          }
         ],
+        "hideEmpty": true,
+        "titleField": "Name"
+      },
+      "דרכים_מקומיות": {
+        "fields": [],
         "hideEmpty": true
       },
       "דרכים_ארציות": {
-        "titleField": "Name",
         "fields": [
-          { "label": "Name", "key": "Name" }
+          {
+            "label": "Name",
+            "key": "Name"
+          }
         ],
+        "hideEmpty": true,
+        "titleField": "Name"
+      },
+      "דרכי_עפר": {
+        "fields": [],
         "hideEmpty": true
       },
       "מועצות_אזוריות": {
-        "titleField": "Muni_Heb",
         "fields": [
-          { "label": "Muni_Heb", "key": "Muni_Heb" }
+          {
+            "label": "Muni_Heb",
+            "key": "Muni_Heb"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Muni_Heb"
       }
     }
   },
   "land_use": {
     "layers": {
       "ספורט": {
-        "titleField": "KVUZ_TRG",
         "fields": [
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" }
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "KVUZ_TRG"
       },
       "בית_עלמין": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "STATION_DESC", "key": "STATION_DESC" },
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "STATION_DESC",
+            "key": "STATION_DESC"
+          },
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          }
         ],
         "hideEmpty": true
       },
       "תחבורה": {
-        "titleField": "KVUZ_TRG",
         "fields": [
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" }
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "KVUZ_TRG"
       },
-      "כרייה_וחציבה": {
-        "titleField": "KVUZ_TRG",
+      "כריה_וחציבה": {
         "fields": [
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" }
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "KVUZ_TRG"
       },
       "מתקני_הנדסה": {
-        "titleField": "KVUZ_TRG",
         "fields": [
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" }
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "KVUZ_TRG"
       },
       "שטח_לדרכים": {
-        "titleField": "KVUZ_TRG",
         "fields": [
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" }
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "KVUZ_TRG"
       },
       "אחסנה": {
-        "titleField": "KVUZ_TRG",
         "fields": [
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" }
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "KVUZ_TRG"
       },
       "חניון": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "STATION_DESC", "key": "STATION_DESC" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "STATION_DESC",
+            "key": "STATION_DESC"
+          }
         ],
         "hideEmpty": true
       },
       "שטחי_אש": {
-        "titleField": "FZ_NAME",
         "fields": [
-          { "label": "FZ_NAME", "key": "FZ_NAME" }
+          {
+            "label": "FZ_NAME",
+            "key": "FZ_NAME"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "FZ_NAME"
       },
       "חקלאות_מרעה_ותעשייה": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "STATION_DESC", "key": "STATION_DESC" },
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" },
-          { "label": "PL_NAME", "key": "PL_NAME" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "STATION_DESC",
+            "key": "STATION_DESC"
+          },
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          },
+          {
+            "label": "PL_NAME",
+            "key": "PL_NAME"
+          }
         ],
         "hideEmpty": true
       },
       "שטחים_פתוחים": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "STATION_DESC", "key": "STATION_DESC" },
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" },
-          { "label": "PL_NAME", "key": "PL_NAME" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "STATION_DESC",
+            "key": "STATION_DESC"
+          },
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          },
+          {
+            "label": "PL_NAME",
+            "key": "PL_NAME"
+          }
         ],
         "hideEmpty": true
       },
-      "מוסדות_ציבוריים": {
+      "מוסדות_ציבור": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "STATION_DESC", "key": "STATION_DESC" },
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" },
-          { "label": "PL_NAME", "key": "PL_NAME" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "STATION_DESC",
+            "key": "STATION_DESC"
+          },
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          },
+          {
+            "label": "PL_NAME",
+            "key": "PL_NAME"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "MAVAT_NAME"
       },
       "תיירות_ונופש": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "STATION_DESC", "key": "STATION_DESC" },
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "STATION_DESC",
+            "key": "STATION_DESC"
+          },
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          }
         ],
         "hideEmpty": true
       },
       "תעשייה_ומלאכה": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "STATION_DESC", "key": "STATION_DESC" },
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" },
-          { "label": "PL_NAME", "key": "PL_NAME" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "STATION_DESC",
+            "key": "STATION_DESC"
+          },
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          },
+          {
+            "label": "PL_NAME",
+            "key": "PL_NAME"
+          }
         ],
         "hideEmpty": true
       },
       "מסחר_ומשרדים": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "STATION_DESC", "key": "STATION_DESC" },
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" },
-          { "label": "PL_NAME", "key": "PL_NAME" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "STATION_DESC",
+            "key": "STATION_DESC"
+          },
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          },
+          {
+            "label": "PL_NAME",
+            "key": "PL_NAME"
+          }
         ],
         "hideEmpty": true
       },
       "תעסוקה": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "STATION_DESC", "key": "STATION_DESC" },
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" },
-          { "label": "PL_NAME", "key": "PL_NAME" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "STATION_DESC",
+            "key": "STATION_DESC"
+          },
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          },
+          {
+            "label": "PL_NAME",
+            "key": "PL_NAME"
+          }
         ],
         "hideEmpty": true
       },
       "מעורב_עם_מסחר": {
-        "titleField": "KVUZ_TRG",
         "fields": [
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" }
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "KVUZ_TRG"
       },
       "מעורב_עם_מגורים": {
-        "titleField": "KVUZ_TRG",
         "fields": [
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" }
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "KVUZ_TRG"
       },
       "מגורים": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "STATION_DESC", "key": "STATION_DESC" },
-          { "label": "KVUZ_TRG", "key": "KVUZ_TRG" },
-          { "label": "PL_NAME", "key": "PL_NAME" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "STATION_DESC",
+            "key": "STATION_DESC"
+          },
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          },
+          {
+            "label": "PL_NAME",
+            "key": "PL_NAME"
+          }
         ],
         "hideEmpty": true
       }
@@ -312,293 +443,796 @@
   "greens": {
     "layers": {
       "נחלים": {
-        "titleField": "NAME",
         "fields": [
-          { "label": "NAME", "key": "NAME" }
+          {
+            "label": "NAME",
+            "key": "NAME"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "NAME"
       },
       "מישורי_הצפה": {
-        "titleField": "סוג_פ",
         "fields": [
-          { "label": "סוג_פ", "key": "סוג_פ" }
+          {
+            "label": "סוג_פ",
+            "key": "סוג_פ"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "סוג_פ"
       },
       "שמורות_טבע": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "NAME", "key": "NAME" },
-          { "label": "STATUS", "key": "STATUS" },
-          { "label": "STATION_DESC", "key": "STATION_DESC" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "NAME",
+            "key": "NAME"
+          },
+          {
+            "label": "STATUS",
+            "key": "STATUS"
+          },
+          {
+            "label": "STATION_DESC",
+            "key": "STATION_DESC"
+          }
         ],
         "hideEmpty": true
       },
       "יער_פארק": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "NAME", "key": "NAME" },
-          { "label": "STATUS", "key": "STATUS" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "NAME",
+            "key": "NAME"
+          },
+          {
+            "label": "STATUS",
+            "key": "STATUS"
+          }
         ],
         "hideEmpty": true
       },
       "יער_טבעי": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "NAME", "key": "NAME" },
-          { "label": "STATUS", "key": "STATUS" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "NAME",
+            "key": "NAME"
+          },
+          {
+            "label": "STATUS",
+            "key": "STATUS"
+          }
         ],
         "hideEmpty": true
       },
       "גן_לאומי": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "NAME", "key": "NAME" },
-          { "label": "STATUS", "key": "STATUS" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "NAME",
+            "key": "NAME"
+          },
+          {
+            "label": "STATUS",
+            "key": "STATUS"
+          }
         ],
         "hideEmpty": true
       },
       "יערות_קקל": {
         "fields": [
-          { "label": "MAVAT_NAME", "key": "MAVAT_NAME" },
-          { "label": "NAME", "key": "NAME" },
-          { "label": "STATUS", "key": "STATUS" }
+          {
+            "label": "MAVAT_NAME",
+            "key": "MAVAT_NAME"
+          },
+          {
+            "label": "NAME",
+            "key": "NAME"
+          },
+          {
+            "label": "STATUS",
+            "key": "STATUS"
+          }
         ],
         "hideEmpty": true
       },
       "חקלאות": {
         "fields": [
-          { "label": "שם ישוב", "key": "שם ישוב" },
-          { "label": "שם גידול", "key": "שם גידול" },
-          { "label": "דונם", "key": "דונם" },
-          { "label": "סוג כיסוי", "key": "סוג כיסוי" }
+          {
+            "label": "שם ישוב",
+            "key": "שם ישוב"
+          },
+          {
+            "label": "שם גידול",
+            "key": "שם גידול"
+          },
+          {
+            "label": "דונם",
+            "key": "דונם"
+          },
+          {
+            "label": "סוג כיסוי",
+            "key": "סוג כיסוי"
+          }
         ],
         "hideEmpty": true
       },
       "מסדרונות_אקולוגיים": {
-        "titleField": "SymRTG",
         "fields": [
-          { "label": "SymRTG", "key": "SymRTG" }
+          {
+            "label": "SymRTG",
+            "key": "SymRTG"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "SymRTG"
       },
       "צוואר_בקבוק": {
-        "titleField": "SymRTG",
         "fields": [
-          { "label": "SymRTG", "key": "SymRTG" }
+          {
+            "label": "SymRTG",
+            "key": "SymRTG"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "SymRTG"
       }
     }
   },
   "october_7th": {
     "layers": {
-      "אזור_הרס_נקודה": {
-        "titleField": "Site_name",
+      "אזור_הרס-נקודה": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "אזור_הרס_אזור": {
-        "titleField": "Site_name",
+      "אזור_הרס-אזור": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
       "מרחב_לחימה": {
-        "titleField": "Site_name",
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "אירוע_נקודתי_רציחה_חטיפה": {
-        "titleField": "Site_name",
+      "אירוע_נקודתי-רציחה_חטיפה": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "אירוע_נקודתי_רציחה_חטיפה_אזור": {
-        "titleField": "Site_name",
+      "אירוע_נקודתי-רציחה_חטיפה-אזור": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "פגיעה_נקודתית_נקודה": {
-        "titleField": "Site_name",
+      "פגיעה_נקודתית-נקודה": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "פגיעה_נקודתית_אזור": {
-        "titleField": "Site_name",
+      "פגיעה_נקודתית-אזור": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "חדירה_לישוב_אזור": {
-        "titleField": "Site_name",
+      "חדירה_לישוב-אזור": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "חדירה_לישוב_ציר": {
-        "titleField": "Site_name",
+      "חדירה_לישוב-ציר": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "חדירה_לישוב_נקודה": {
-        "titleField": "Site_name",
+      "חדירה_לישוב-נקודה": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "מאבק_וגבורה_אזור": {
-        "titleField": "Site_name",
+      "מאבק_וגבורה-אזור": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "מאבק_וגבורה_נקודה": {
-        "titleField": "Site_name",
+      "מאבק_וגבורה-נקודה": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "מאבק_וגבורה_ציר": {
-        "titleField": "Site_name",
+      "מאבק_וגבורה-ציר": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "מוקד_מאבק_וגבורה_אזור": {
-        "titleField": "Site_name",
+      "מוקד_מאבק_וגבורה-אזור": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "מוקד_מאבק_וגבורה_נקודה": {
-        "titleField": "Site_name",
+      "מוקד_מאבק_וגבורה-נקודה": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "מוקד_מאבק_וגבורה_ציר": {
-        "titleField": "Site_name",
+      "מוקד_מאבק_וגבורה-ציר": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "ביזה_נקודה": {
-        "titleField": "Site_name",
+      "ביזה-נקודה": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
-      "ביזה_אזור": {
-        "titleField": "Site_name",
+      "ביזה-אזור": {
         "fields": [
-          { "label": "Site_name", "key": "Site_name" },
-          { "label": "Setl_Name", "key": "Setl_Name" },
-          { "label": "General_De", "key": "General_De" },
-          { "label": "Site_Type", "key": "Site_Type" },
-          { "label": "Oct7_Sit_1", "key": "Oct7_Sit_1" }
+          {
+            "label": "Site_name",
+            "key": "Site_name"
+          },
+          {
+            "label": "Setl_Name",
+            "key": "Setl_Name"
+          },
+          {
+            "label": "General_De",
+            "key": "General_De"
+          },
+          {
+            "label": "Site_Type",
+            "key": "Site_Type"
+          },
+          {
+            "label": "Oct7_desc",
+            "key": "Oct7_desc"
+          }
         ],
-        "hideEmpty": true
+        "hideEmpty": true,
+        "titleField": "Site_name"
       },
       "שטחים_פתוחים_פגועים": {
-        "titleField": "Layer",
         "fields": [
-          { "label": "Layer", "key": "Layer" }
+          {
+            "label": "Layer",
+            "key": "Layer"
+          }
+        ],
+        "hideEmpty": true,
+        "titleField": "Layer"
+      }
+    }
+  },
+  "future_development": {
+    "layers": {
+      "מורשת-מוצע": {
+        "fields": [
+          {
+            "label": "Name",
+            "key": "Name"
+          },
+          {
+            "label": "type",
+            "key": "type"
+          },
+          {
+            "label": "Status",
+            "key": "Status"
+          },
+          {
+            "label": "PopupInfo",
+            "key": "PopupInfo"
+          }
+        ],
+        "hideEmpty": true,
+        "titleField": "Name"
+      },
+      "מורשת-קיים": {
+        "fields": [
+          {
+            "label": "Name",
+            "key": "Name"
+          },
+          {
+            "label": "type",
+            "key": "type"
+          },
+          {
+            "label": "Status",
+            "key": "Status"
+          },
+          {
+            "label": "PopupInfo",
+            "key": "PopupInfo"
+          }
+        ],
+        "hideEmpty": true,
+        "titleField": "Name"
+      },
+      "ציר_232": {
+        "fields": [],
+        "hideEmpty": true
+      },
+      "הקו_הורוד": {
+        "fields": [],
+        "hideEmpty": true
+      },
+      "מוקדי_מורשת": {
+        "fields": [
+          {
+            "label": "Name",
+            "key": "Name"
+          }
+        ],
+        "hideEmpty": true,
+        "titleField": "Name"
+      },
+      "מוזיאונים_מרכזי_מבקרים_ומוקדי_תרבות": {
+        "fields": [
+          {
+            "label": "Name",
+            "key": "Name"
+          }
+        ],
+        "hideEmpty": true,
+        "titleField": "Name"
+      },
+      "אנדרטאות_ומוקדי_הנצחה": {
+        "fields": [
+          {
+            "label": "Name",
+            "key": "Name"
+          }
+        ],
+        "hideEmpty": true,
+        "titleField": "Name"
+      },
+      "מוקדים_ארכאולוגיים": {
+        "fields": [
+          {
+            "label": "Name",
+            "key": "Name"
+          }
+        ],
+        "hideEmpty": true,
+        "titleField": "Name"
+      },
+      "מתחמי_דיור": {
+        "fields": [
+          {
+            "label": "מספר תכנית",
+            "key": "PLAN_NB"
+          },
+          {
+            "label": "שם תכנית",
+            "key": "PLAN_NAME"
+          },
+          {
+            "label": "סוג מתחם",
+            "key": "PLANING_TYPE"
+          },
+          {
+            "label": "סטטוס",
+            "key": "PLAN_STATUS"
+          },
+          {
+            "label": "תוספת יח\"ד",
+            "key": "FLAT_NUMBER"
+          },
+          {
+            "label": "תכנית עבודה",
+            "key": "YEARLY_WORK_PLAN"
+          },
+          {
+            "label": "חדש / התחדשות",
+            "key": "PLANING_TYPE"
+          },
+          {
+            "label": "שם יישוב",
+            "key": "SETTLE_NAME"
+          },
+          {
+            "label": "מרחב תכנון",
+            "key": "PLANING_AREA"
+          }
+        ],
+        "hideEmpty": true,
+        "titleField": "PLAN_NAME"
+      },
+      "מימושים": {
+        "fields": [
+          {
+            "label": "תכנית",
+            "key": "TOCHNIT"
+          },
+          {
+            "label": "KVUZ_TRG",
+            "key": "KVUZ_TRG"
+          },
+          {
+            "label": "תרגום יעוד",
+            "key": "TARGUMYEUD"
+          },
+          {
+            "label": "מימוש",
+            "key": "mimush"
+          }
         ],
         "hideEmpty": true
       }
     }
   }
 }
-

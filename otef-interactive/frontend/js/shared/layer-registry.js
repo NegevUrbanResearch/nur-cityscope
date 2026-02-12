@@ -39,11 +39,14 @@ class LayerRegistry {
   async _doInit() {
     try {
       // Load root manifest
-      const manifestPath = '/otef-interactive/public/processed/layers/layers-manifest.json';
+      const manifestPath =
+        "/otef-interactive/public/processed/layers/layers-manifest.json";
       const response = await fetch(manifestPath);
 
       if (!response.ok) {
-        console.warn('[LayerRegistry] Root manifest not found, using empty registry');
+        console.warn(
+          "[LayerRegistry] Root manifest not found, using empty registry",
+        );
         this._manifest = { packs: [] };
         this._initialized = true;
         return;
@@ -61,7 +64,7 @@ class LayerRegistry {
 
       this._initialized = true;
     } catch (error) {
-      console.error('[LayerRegistry] Failed to initialize:', error);
+      console.error("[LayerRegistry] Failed to initialize:", error);
       this._manifest = { packs: [] };
       this._initialized = true;
     } finally {
@@ -100,7 +103,7 @@ class LayerRegistry {
    */
   getGroups() {
     if (!this._initialized) {
-      console.warn('[LayerRegistry] Not initialized, call init() first');
+      console.warn("[LayerRegistry] Not initialized, call init() first");
       return [];
     }
 
@@ -111,7 +114,7 @@ class LayerRegistry {
         groups.push({
           id: packId,
           name: manifest.name || packId,
-          layers: manifest.layers || []
+          layers: manifest.layers || [],
         });
       }
     }
@@ -125,7 +128,7 @@ class LayerRegistry {
    */
   getLayersInGroup(groupId) {
     if (!this._initialized) {
-      console.warn('[LayerRegistry] Not initialized, call init() first');
+      console.warn("[LayerRegistry] Not initialized, call init() first");
       return [];
     }
 
@@ -144,18 +147,25 @@ class LayerRegistry {
    */
   getLayerConfig(layerId) {
     if (!this._initialized) {
-      console.warn('[LayerRegistry] Not initialized, call init() first');
+      console.warn("[LayerRegistry] Not initialized, call init() first");
       return null;
     }
 
-    // Parse layerId: "group_id.layer_id"
-    const parts = layerId.split('.');
-    if (parts.length < 2) {
-      return null;
+    let groupId, layerIdOnly;
+    const parsed =
+      typeof LayerStateHelper !== "undefined" &&
+      typeof LayerStateHelper.parseFullLayerId === "function"
+        ? LayerStateHelper.parseFullLayerId(layerId)
+        : null;
+    if (parsed) {
+      groupId = parsed.groupId;
+      layerIdOnly = parsed.layerId;
+    } else {
+      const parts = layerId.split(".");
+      if (parts.length < 2) return null;
+      groupId = parts[0];
+      layerIdOnly = parts.slice(1).join(".");
     }
-
-    const groupId = parts[0];
-    const layerIdOnly = parts.slice(1).join('.');
 
     const manifest = this._packManifests.get(groupId);
     if (!manifest) {
@@ -163,7 +173,7 @@ class LayerRegistry {
     }
 
     // Find layer in manifest
-    const layer = manifest.layers.find(l => l.id === layerIdOnly);
+    const layer = manifest.layers.find((l) => l.id === layerIdOnly);
     if (!layer) {
       return null;
     }
@@ -172,43 +182,75 @@ class LayerRegistry {
     const styles = this._packStyles.get(groupId);
     const style = styles ? styles[layerIdOnly] : null;
 
-    if (layerId.includes('שבילי_אופניים') || layerId.includes('דרכי_עפר')) {
-      console.log(`[LayerRegistry] Layer ${layerId}: Style key="${layerIdOnly}", found=${!!style}`, style);
-      if (!style && styles) {
-          console.log(`[LayerRegistry] Available style keys in pack ${groupId}:`, Object.keys(styles));
-      }
-    }
-
     return {
       ...layer,
       style: style || {
         type: layer.geometryType,
-        renderer: 'simple',
+        renderer: "simple",
         defaultStyle: {
-          fillColor: '#808080',
+          fillColor: "#808080",
           fillOpacity: 0.7,
-          strokeColor: '#000000',
-          strokeWidth: 1.0
-        }
+          strokeColor: "#000000",
+          strokeWidth: 1.0,
+        },
       },
       fullId: layerId,
-      groupId: groupId
+      groupId: groupId,
     };
   }
 
   /**
    * Get the URL for a layer's data file (GeoJSON).
+   * WMTS layers have no file; returns null.
    * @param {string} layerId - Full layer ID
    * @returns {string|null} URL to layer data file
    */
   getLayerDataUrl(layerId) {
     const config = this.getLayerConfig(layerId);
-    if (!config) {
+    if (!config || config.format === "wmts" || !config.file) {
       return null;
     }
 
     const basePath = `/otef-interactive/public/processed/layers/${config.groupId}`;
-    return `${basePath}/${config.file}`;
+    const encodedFile = encodeURIComponent(config.file);
+    return `${basePath}/${encodedFile}`;
+  }
+
+  /**
+   * Get WMTS config for a layer (urlTemplate, zoom, attribution).
+   * @param {string} layerId - Full layer ID
+   * @returns {Object|null} layer.wmts or null for non-WMTS layers
+   */
+  getLayerWmtsConfig(layerId) {
+    const config = this.getLayerConfig(layerId);
+    return config && config.format === "wmts" && config.wmts
+      ? config.wmts
+      : null;
+  }
+
+  /**
+   * Get mask config for a layer (type, file, packId, exclude).
+   * Used by WMTS renderer to clip by boundary.
+   * @param {string} layerId - Full layer ID
+   * @returns {Object|null} layer.mask or null
+   */
+  getLayerMaskConfig(layerId) {
+    const config = this.getLayerConfig(layerId);
+    return config && config.mask ? config.mask : null;
+  }
+
+  /**
+   * Get URL for a mask asset file (e.g. boundary GeoJSON).
+   * @param {string} layerId - Full layer ID (used to resolve pack when mask.packId absent)
+   * @param {Object} mask - mask config with file and optional packId
+   * @returns {string|null} URL to fetch the mask GeoJSON
+   */
+  getLayerMaskAssetUrl(layerId, mask) {
+    if (!mask || !mask.file) return null;
+    const packId = mask.packId || (layerId && layerId.split(".")[0]) || null;
+    if (!packId) return null;
+    const base = `/otef-interactive/public/processed/layers/${packId}`;
+    return `${base}/${mask.file}`;
   }
 
   /**
@@ -223,7 +265,9 @@ class LayerRegistry {
     }
 
     const basePath = `/otef-interactive/public/processed/layers/${config.groupId}`;
-    return `${basePath}/${config.pmtilesFile}`;
+    // Percent-encode filename so paths with non-ASCII (e.g. Hebrew) work with all servers
+    const encodedFile = encodeURIComponent(config.pmtilesFile);
+    return `${basePath}/${encodedFile}`;
   }
 
   /**
@@ -255,6 +299,6 @@ class LayerRegistry {
 const layerRegistry = new LayerRegistry();
 
 // Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
+if (typeof module !== "undefined" && module.exports) {
   module.exports = layerRegistry;
 }

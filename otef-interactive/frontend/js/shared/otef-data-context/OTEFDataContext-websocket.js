@@ -2,14 +2,16 @@
 
 (function () {
   const internals = window.OTEFDataContextInternals || {};
-  const getLogger = internals.getLogger || function () {
-    return {
-      debug: () => {},
-      info: () => {},
-      warn: console.warn.bind(console),
-      error: console.error.bind(console),
+  const getLogger =
+    internals.getLogger ||
+    function () {
+      return {
+        debug: () => {},
+        info: () => {},
+        warn: console.warn.bind(console),
+        error: console.error.bind(console),
+      };
     };
-  };
 
   function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
     if (!state || typeof state !== "object") return;
@@ -17,10 +19,6 @@
     if (state.viewport) {
       ctx._viewport = state.viewport;
       if (notify) ctx._notify("viewport", ctx._viewport);
-    }
-    if (state.layers) {
-      ctx._layers = state.layers;
-      if (notify) ctx._notify("layers", ctx._layers);
     }
     if (state.layerGroups) {
       ctx._layerGroups = state.layerGroups;
@@ -84,7 +82,7 @@
       } catch (err) {
         getLogger().error(
           "[OTEFDataContext] Failed to refresh viewport after VIEWPORT_CHANGED:",
-          err
+          err,
         );
       }
     });
@@ -100,16 +98,13 @@
     ctx._wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async () => {
       try {
         const state = await OTEF_API.getState(ctx._tableName);
-        if (state.layers) {
-          ctx._setLayers(state.layers);
-        }
         if (state.layerGroups) {
           ctx._setLayerGroups(state.layerGroups);
         }
       } catch (err) {
         getLogger().error(
           "[OTEFDataContext] Failed to refresh layers after LAYERS_CHANGED:",
-          err
+          err,
         );
       }
     });
@@ -129,7 +124,7 @@
       } catch (err) {
         getLogger().error(
           "[OTEFDataContext] Failed to refresh animations after ANIMATION_CHANGED:",
-          err
+          err,
         );
       }
     });
@@ -144,7 +139,7 @@
       } catch (err) {
         getLogger().error(
           "[OTEFDataContext] Failed to refresh bounds after BOUNDS_CHANGED:",
-          err
+          err,
         );
       }
     });

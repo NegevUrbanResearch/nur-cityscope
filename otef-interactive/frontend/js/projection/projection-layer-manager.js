@@ -5,6 +5,7 @@
   let getModelBounds = null;
   let getDisplayedImageBounds = null;
   let canvasRenderer = null;
+  let wmtsRenderer = null;
 
   const loadedLayers = {};
 
@@ -26,6 +27,12 @@
   function updateLayerVisibility(layerId, visible) {
     if (canvasRenderer) {
       canvasRenderer.setLayerVisibility(layerId, visible);
+    }
+  }
+
+  function updateWmtsVisibility(fullLayerId, visible) {
+    if (wmtsRenderer) {
+      wmtsRenderer.setVisible(fullLayerId, visible);
     }
   }
 
@@ -53,6 +60,19 @@
       return;
     }
 
+    // Create WMTS layer renderer (satellite imagery etc.)
+    try {
+      if (typeof WmtsLayerRenderer !== "undefined") {
+        wmtsRenderer = new WmtsLayerRenderer("displayContainer");
+        const displayBounds = getDisplayBoundsSafe();
+        if (displayBounds) {
+          wmtsRenderer.updatePosition(displayBounds, modelBounds);
+        }
+      }
+    } catch (error) {
+      console.warn("[Projection] WMTS renderer not available:", error);
+    }
+
     // Initialize layer registry if available
     if (typeof layerRegistry !== "undefined") {
       await layerRegistry.init();
@@ -62,7 +82,9 @@
         await loadProjectionLayerGroups();
 
         // Set model image src from registry (avoids hardcoded path / 404)
-        const modelImageUrl = layerRegistry.getLayerDataUrl("projector_base.model_base");
+        const modelImageUrl = layerRegistry.getLayerDataUrl(
+          "projector_base.model_base",
+        );
         const img = document.getElementById("displayedImage");
         if (img && modelImageUrl) {
           img.src = modelImageUrl;
@@ -83,7 +105,11 @@
     // Initialize model base image visibility from layerGroups state
     if (typeof OTEFDataContext !== "undefined") {
       const layerGroups = OTEFDataContext.getLayerGroups();
-      const modelBaseState = getLayerStateFromGroups(layerGroups, 'projector_base', 'model_base');
+      const modelBaseState = getLayerStateFromGroups(
+        layerGroups,
+        "projector_base",
+        "model_base",
+      );
       updateModelImageVisibility(modelBaseState?.enabled || false);
     }
   }
@@ -132,9 +158,62 @@
     }
 
     // Handle image layers differently (they don't have GeoJSON data)
-    if (layerConfig.format === 'image') {
-      console.log(`[Projection] Skipping image layer ${fullLayerId} (rendered via <img> element)`);
-      loadedLayers[fullLayerId] = { type: 'image' };
+    if (layerConfig.format === "image") {
+      console.log(
+        `[Projection] Skipping image layer ${fullLayerId} (rendered via <img> element)`,
+      );
+      loadedLayers[fullLayerId] = { type: "image" };
+      return;
+    }
+
+    // Handle WMTS layers (tile imagery)
+    if (layerConfig.format === "wmts") {
+      if (wmtsRenderer && layerConfig.wmts) {
+        let maskGeometry = null;
+        const maskConfig =
+          typeof layerRegistry.getLayerMaskConfig === "function"
+            ? layerRegistry.getLayerMaskConfig(fullLayerId)
+            : layerConfig.mask;
+        if (maskConfig && typeof layerRegistry.getLayerMaskAssetUrl === "function") {
+          const maskUrl = layerRegistry.getLayerMaskAssetUrl(
+            fullLayerId,
+            maskConfig,
+          );
+          if (maskUrl) {
+            try {
+              const maskRes = await fetch(maskUrl);
+              if (maskRes.ok) {
+                let maskGeojson = await maskRes.json();
+                const firstCoord = getFirstCoordinate(maskGeojson);
+                const isWgs84 =
+                  firstCoord &&
+                  Math.abs(firstCoord[0]) < 1000 &&
+                  Math.abs(firstCoord[1]) < 1000;
+                if (
+                  (maskGeojson.crs && maskGeojson.crs.properties?.name?.includes("4326")) ||
+                  isWgs84
+                ) {
+                  maskGeojson = CoordUtils.transformGeojsonToItm(maskGeojson);
+                }
+                maskGeometry = maskGeojson;
+              }
+            } catch (e) {
+              console.warn(
+                `[Projection] Failed to load mask for ${fullLayerId}:`,
+                e,
+              );
+            }
+          }
+        }
+        wmtsRenderer.setLayer(fullLayerId, layerConfig, maskGeometry);
+        const displayBounds = getDisplayBoundsSafe();
+        const modelBounds = getModelBoundsSafe();
+        if (displayBounds && modelBounds) {
+          wmtsRenderer.updatePosition(displayBounds, modelBounds);
+        }
+        loadedLayers[fullLayerId] = { type: "wmts" };
+        console.log(`[Projection] WMTS layer loaded: ${fullLayerId}`);
+      }
       return;
     }
 
@@ -142,18 +221,26 @@
       // Projection always uses GeoJSON (PMTiles not supported in Canvas renderer)
       const dataUrl = layerRegistry.getLayerDataUrl(fullLayerId);
       if (!dataUrl) {
-        console.warn(`[Projection] No GeoJSON data URL for layer: ${fullLayerId}`);
+        console.warn(
+          `[Projection] No GeoJSON data URL for layer: ${fullLayerId}`,
+        );
         return;
       }
 
-      console.log(`[Projection] Fetching layer data: ${fullLayerId} from ${dataUrl}`);
+      console.log(
+        `[Projection] Fetching layer data: ${fullLayerId} from ${dataUrl}`,
+      );
       const response = await fetch(dataUrl);
       if (!response.ok) {
         throw new Error(`Failed to load layer data: ${response.status}`);
       }
 
       let geojson = await response.json();
-      console.log(`[Projection] Loaded layer ${fullLayerId}, features: ${geojson.features?.length || 0}`);
+      console.log(
+        `[Projection] Loaded layer ${fullLayerId}, features: ${
+          geojson.features?.length || 0
+        }`,
+      );
 
       // Check CRS and transform from WGS84 to ITM if needed
       // Projection canvas expects ITM coordinates to match model bounds
@@ -164,32 +251,37 @@
       let isWgs84 = false;
 
       if (firstCoord) {
-          // If x < 1000 and y < 1000, it's definitely not ITM (ITM is usually ~200,000 / ~600,000)
-          if (Math.abs(firstCoord[0]) < 1000 && Math.abs(firstCoord[1]) < 1000) {
-              isWgs84 = true;
-          }
+        // If x < 1000 and y < 1000, it's definitely not ITM (ITM is usually ~200,000 / ~600,000)
+        if (Math.abs(firstCoord[0]) < 1000 && Math.abs(firstCoord[1]) < 1000) {
+          isWgs84 = true;
+        }
       }
 
       if (crs.includes("4326") || crs.includes("WGS") || isWgs84) {
-        if (isWgs84) console.log(`[Projection] Detected WGS84 coordinates for ${fullLayerId}, transforming to ITM...`);
+        if (isWgs84)
+          console.log(
+            `[Projection] Detected WGS84 coordinates for ${fullLayerId}, transforming to ITM...`,
+          );
         geojson = CoordUtils.transformGeojsonToItm(geojson);
       } else if (!crs || crs === "") {
-         // Fallback logic preserved but enhanced above
-         // If we are here, isWgs84 is false, meaning coordinates are likely large (ITM)
-         console.log(`[Projection] Detected existing ITM-like coordinates for ${fullLayerId}`);
+        // Fallback logic preserved but enhanced above
+        // If we are here, isWgs84 is false, meaning coordinates are likely large (ITM)
+        console.log(
+          `[Projection] Detected existing ITM-like coordinates for ${fullLayerId}`,
+        );
       }
 
-      // Get canvas style function from StyleApplicator
-      const canvasStyleFunction = StyleApplicator.getCanvasStyle(layerConfig);
-
       // Render layer using Canvas renderer
-      await renderLayerFromGeojson(geojson, fullLayerId, canvasStyleFunction, layerConfig.geometryType);
+      await renderLayerFromGeojson(
+        geojson,
+        fullLayerId,
+        layerConfig,
+        layerConfig.geometryType,
+      );
     } catch (error) {
       console.error(`[Projection] Error loading layer ${fullLayerId}:`, error);
     }
   }
-
-
 
   /**
    * Extract the first coordinate from a GeoJSON to detect CRS
@@ -237,8 +329,31 @@
         const fullLayerId = `${group.id}.${layer.id}`;
 
         // Handle model_base image layer specially
-        if (fullLayerId === 'projector_base.model_base') {
+        if (fullLayerId === "projector_base.model_base") {
           updateModelImageVisibility(layer.enabled);
+          continue;
+        }
+
+        // Handle WMTS layers (any pack)
+        const layerConfig =
+          typeof layerRegistry !== "undefined"
+            ? layerRegistry.getLayerConfig(fullLayerId)
+            : null;
+        if (layerConfig && layerConfig.format === "wmts") {
+          if (layer.enabled && !loadedLayers[fullLayerId]) {
+            loadProjectionLayerFromRegistry(fullLayerId)
+              .then(() => {
+                updateWmtsVisibility(fullLayerId, true);
+              })
+              .catch((err) => {
+                console.error(
+                  `[Projection] Failed to load WMTS layer ${fullLayerId}:`,
+                  err,
+                );
+              });
+          } else {
+            updateWmtsVisibility(fullLayerId, layer.enabled);
+          }
           continue;
         }
 
@@ -250,7 +365,10 @@
                 updateLayerVisibility(fullLayerId, true);
               })
               .catch((err) => {
-                console.error(`[Projection] Failed to load layer ${fullLayerId}:`, err);
+                console.error(
+                  `[Projection] Failed to load layer ${fullLayerId}:`,
+                  err,
+                );
               });
           } else {
             updateLayerVisibility(fullLayerId, true);
@@ -266,7 +384,12 @@
   /**
    * Helper function to render a layer from GeoJSON using Canvas
    */
-  async function renderLayerFromGeojson(geojson, layerName, styleFunction, geometryType) {
+  async function renderLayerFromGeojson(
+    geojson,
+    layerName,
+    layerConfig,
+    geometryType,
+  ) {
     const displayBounds = getDisplayBoundsSafe();
     const modelBounds = getModelBoundsSafe();
     if (!displayBounds || !modelBounds) {
@@ -276,30 +399,49 @@
     // Store for Canvas renderer (raw ITM coordinates, Canvas does transformation)
     loadedLayers[layerName] = {
       originalGeojson: geojson,
-      styleFunction: styleFunction,
+      styleFunction: StyleApplicator.getCanvasStyle(layerConfig),
+      styleConfig: layerConfig,
       geometryType: geometryType,
     };
 
     // Add layer to Canvas renderer
     if (canvasRenderer) {
-      canvasRenderer.setLayer(layerName, geojson, styleFunction, geometryType);
+      canvasRenderer.setLayer(
+        layerName,
+        geojson,
+        loadedLayers[layerName].styleFunction,
+        geometryType,
+        loadedLayers[layerName].styleConfig,
+      );
       canvasRenderer.updatePosition(displayBounds, modelBounds);
 
       // Registry layers: individual layer.enabled is the source of truth.
       // Reuse shared LayerStateHelper so projection and map agree on visibility.
       let shouldBeVisible = false;
-      if (typeof LayerStateHelper !== "undefined" && typeof LayerStateHelper.getLayerState === "function") {
+      if (
+        typeof LayerStateHelper !== "undefined" &&
+        typeof LayerStateHelper.getLayerState === "function"
+      ) {
         const state = LayerStateHelper.getLayerState(layerName);
         shouldBeVisible = !!(state && state.enabled);
       } else if (typeof OTEFDataContext !== "undefined") {
         // Fallback to legacy direct lookup if helper is not available
         const layerGroups = OTEFDataContext.getLayerGroups();
         if (layerGroups) {
-          const [groupId, layerId] = layerName.split(".");
-          const group = layerGroups.find((g) => g.id === groupId);
-          if (group && Array.isArray(group.layers)) {
-            const layerStateObj = group.layers.find((l) => l && l.id === layerId);
-            shouldBeVisible = !!(layerStateObj && layerStateObj.enabled);
+          const parsed =
+            typeof LayerStateHelper !== "undefined" &&
+            typeof LayerStateHelper.parseFullLayerId === "function"
+              ? LayerStateHelper.parseFullLayerId(layerName)
+              : null;
+          if (parsed) {
+            const { groupId, layerId } = parsed;
+            const group = layerGroups.find((g) => g.id === groupId);
+            if (group && Array.isArray(group.layers)) {
+              const layerStateObj = group.layers.find(
+                (l) => l && l.id === layerId,
+              );
+              shouldBeVisible = !!(layerStateObj && layerStateObj.enabled);
+            }
           }
         }
       }
@@ -313,9 +455,9 @@
    */
   function getLayerStateFromGroups(layerGroups, groupId, layerId) {
     if (!Array.isArray(layerGroups)) return null;
-    const group = layerGroups.find(g => g.id === groupId);
+    const group = layerGroups.find((g) => g.id === groupId);
     if (!group || !Array.isArray(group.layers)) return null;
-    return group.layers.find(l => l.id === layerId);
+    return group.layers.find((l) => l.id === layerId);
   }
 
   /**
@@ -334,12 +476,15 @@
     if (canvasRenderer && displayBounds && modelBounds) {
       canvasRenderer.updatePosition(displayBounds, modelBounds);
     }
+    if (wmtsRenderer && displayBounds && modelBounds) {
+      wmtsRenderer.updatePosition(displayBounds, modelBounds);
+    }
   }
 
   window.ProjectionLayerManager = {
     configure,
     initializeLayers,
     syncLayerGroupsFromState,
-    handleResize
+    handleResize,
   };
 })();

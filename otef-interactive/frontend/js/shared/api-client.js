@@ -1,19 +1,10 @@
 // OTEF API Client - RESTful state management
 // Single source of truth for OTEF interactive state
-
-// Use global logger (loaded via script tag)
-function getLogger() {
-  return (typeof window !== 'undefined' && window.logger) || {
-    debug: () => {},
-    info: () => {},
-    warn: console.warn.bind(console),
-    error: console.error.bind(console),
-  };
-}
+// Logger: use window.getLogger() (from logger.js)
 
 const OTEF_API = {
-  baseUrl: '/api/otef_viewport/by-table',
-  defaultTable: 'otef',
+  baseUrl: "/api/otef_viewport/by-table",
+  defaultTable: "otef",
 
   /**
    * Get current state from database
@@ -29,7 +20,10 @@ const OTEF_API = {
       const data = await response.json();
       return data;
     } catch (error) {
-      getLogger().error('[OTEF API] Error fetching state:', error);
+      (window.getLogger && window.getLogger()).error(
+        "[OTEF API] Error fetching state:",
+        error,
+      );
       throw error;
     }
   },
@@ -43,9 +37,9 @@ const OTEF_API = {
   async updateState(tableName = this.defaultTable, updates) {
     try {
       const response = await fetch(`${this.baseUrl}/${tableName}/`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
       });
       if (!response.ok) {
         throw new Error(`Failed to update state: ${response.status}`);
@@ -53,7 +47,10 @@ const OTEF_API = {
       const data = await response.json();
       return data;
     } catch (error) {
-      getLogger().error('[OTEF API] Error updating state:', error);
+      (window.getLogger && window.getLogger()).error(
+        "[OTEF API] Error updating state:",
+        error,
+      );
       throw error;
     }
   },
@@ -67,9 +64,9 @@ const OTEF_API = {
   async executeCommand(tableName = this.defaultTable, command) {
     try {
       const response = await fetch(`${this.baseUrl}/${tableName}/command/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(command)
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(command),
       });
       if (!response.ok) {
         throw new Error(`Failed to execute command: ${response.status}`);
@@ -77,22 +74,16 @@ const OTEF_API = {
       const data = await response.json();
       return data;
     } catch (error) {
-      getLogger().error('[OTEF API] Error executing command:', error);
+      (window.getLogger && window.getLogger()).error(
+        "[OTEF API] Error executing command:",
+        error,
+      );
       throw error;
     }
   },
 
   /**
-   * Update layers visibility (legacy flat structure)
-   * @param {string} tableName - Table name
-   * @param {Object} layers - Layer states { model: bool } (legacy); vectors use layer groups
-   */
-  async updateLayers(tableName = this.defaultTable, layers) {
-    return this.updateState(tableName, { layers });
-  },
-
-  /**
-   * Update layer groups (new hierarchical structure)
+   * Update layer groups (hierarchical structure)
    * @param {string} tableName - Table name
    * @param {Array} layerGroups - Layer groups [{id, enabled, layers: [{id, enabled}]}]
    */
@@ -118,9 +109,8 @@ const OTEF_API = {
     return this.updateState(tableName, { viewport });
   },
 
-  // Debounce timers
+  // Debounce timer for viewport
   _viewportDebounce: null,
-  _layersDebounce: null,
 
   /**
    * Debounced viewport update (500ms) - use for continuous updates like map movement
@@ -136,18 +126,6 @@ const OTEF_API = {
   },
 
   /**
-   * Debounced layers update (100ms) - use for rapid toggle prevention
-   * @param {string} tableName - Table name
-   * @param {Object} layers - Layer states
-   */
-  updateLayersDebounced(tableName = this.defaultTable, layers) {
-    clearTimeout(this._layersDebounce);
-    this._layersDebounce = setTimeout(() => {
-      this.updateLayers(tableName, layers);
-    }, 100);
-  },
-
-  /**
    * Save bounds polygon (hard-wall navigation limits) for a given table.
    * This calls a dedicated backend endpoint that updates both DB state and
    * the Git-tracked model-bounds.json snapshot on disk.
@@ -157,10 +135,10 @@ const OTEF_API = {
    */
   async saveBounds(tableName = this.defaultTable, polygon) {
     try {
-      const response = await fetch('/api/otef/bounds/apply/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ table: tableName, polygon })
+      const response = await fetch("/api/otef/bounds/apply/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: tableName, polygon }),
       });
 
       if (!response.ok) {
@@ -170,13 +148,16 @@ const OTEF_API = {
       const data = await response.json();
       return data;
     } catch (error) {
-      getLogger().error('[OTEF API] Error saving bounds:', error);
+      (window.getLogger && window.getLogger()).error(
+        "[OTEF API] Error saving bounds:",
+        error,
+      );
       throw error;
     }
-  }
+  },
 };
 
 // Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
+if (typeof module !== "undefined" && module.exports) {
   module.exports = OTEF_API;
 }

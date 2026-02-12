@@ -7,7 +7,7 @@
 // Define EPSG:2039 projection for transformation
 proj4.defs(
   "EPSG:2039",
-  "+proj=tmerc +lat_0=31.73439361111111 +lon_0=35.20451694444445 +k=1.0000067 +x_0=219529.584 +y_0=626907.39 +ellps=GRS80 +towgs84=-24.0024,-17.1032,-17.8444,0.33077,-1.85269,1.66969,5.4248 +units=m +no_defs"
+  "+proj=tmerc +lat_0=31.73439361111111 +lon_0=35.20451694444445 +k=1.0000067 +x_0=219529.584 +y_0=626907.39 +ellps=GRS80 +towgs84=-24.0024,-17.1032,-17.8444,0.33077,-1.85269,1.66969,5.4248 +units=m +no_defs",
 );
 
 // Model bounds (in EPSG:2039) - will be set by initializeMap()
@@ -23,14 +23,14 @@ const map = L.map("map", {
 
 // Create custom panes for vector overlays to ensure they render in the correct order:
 // Polygon < Line < Point
-map.createPane('overlayPolygon');
-map.getPane('overlayPolygon').style.zIndex = 440;
+map.createPane("overlayPolygon");
+map.getPane("overlayPolygon").style.zIndex = 440;
 
-map.createPane('overlayLine');
-map.getPane('overlayLine').style.zIndex = 450;
+map.createPane("overlayLine");
+map.getPane("overlayLine").style.zIndex = 450;
 
-map.createPane('overlayPoint');
-map.getPane('overlayPoint').style.zIndex = 460;
+map.createPane("overlayPoint");
+map.getPane("overlayPoint").style.zIndex = 460;
 
 // Add OpenStreetMap basemap
 const osmLayer = L.tileLayer(
@@ -39,25 +39,26 @@ const osmLayer = L.tileLayer(
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxZoom: 19,
-  }
+  },
 ).addTo(map);
 
-// Alternative basemaps (can be switched)
+// Alternative basemaps (can be switched).
+// Satellite uses same Esri World Imagery source as projector (wayback).
 const basemaps = {
   OpenStreetMap: osmLayer,
   Satellite: L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    "https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/13192/{z}/{y}/{x}",
     {
-      attribution: "Tiles &copy; Esri",
+      attribution: "Esri, Maxar, Earthstar Geographics",
       maxZoom: 19,
-    }
+    },
   ),
   Light: L.tileLayer(
     "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
     {
       attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
       maxZoom: 19,
-    }
+    },
   ),
 };
 
@@ -76,12 +77,18 @@ function initializeMap(bounds) {
   modelBounds = bounds;
 
   // Transform bounds to WGS84
-  const [swLat, swLon] = CoordUtils.transformItmToWgs84(bounds.west, bounds.south);
-  const [neLat, neLon] = CoordUtils.transformItmToWgs84(bounds.east, bounds.north);
+  const [swLat, swLon] = CoordUtils.transformItmToWgs84(
+    bounds.west,
+    bounds.south,
+  );
+  const [neLat, neLon] = CoordUtils.transformItmToWgs84(
+    bounds.east,
+    bounds.north,
+  );
 
   const wgs84Bounds = L.latLngBounds(
     L.latLng(swLat, swLon),
-    L.latLng(neLat, neLon)
+    L.latLng(neLat, neLon),
   );
 
   // Restrict map to model bounds only
@@ -95,8 +102,8 @@ function initializeMap(bounds) {
   map.fitBounds(wgs84Bounds);
 
   // Initialize shared OTEFDataContext and subscribe to state
-  if (typeof OTEFDataContext !== 'undefined') {
-    OTEFDataContext.init('otef').then(() => {
+  if (typeof OTEFDataContext !== "undefined") {
+    OTEFDataContext.init("otef").then(() => {
       const initialViewport = OTEFDataContext.getViewport();
       if (initialViewport) {
         applyViewportFromAPI(initialViewport);
@@ -104,36 +111,53 @@ function initializeMap(bounds) {
       const initialConnection = OTEFDataContext.isConnected();
       updateConnectionStatus(!!initialConnection);
 
+      // Build map deps for layer-state-manager (explicit deps, testable without globals)
+      const loaderAPI =
+        typeof getMapLayerLoaderAPI === "function"
+          ? getMapLayerLoaderAPI()
+          : {};
+      const mapDeps = {
+        map,
+        layerRegistry:
+          typeof layerRegistry !== "undefined" ? layerRegistry : null,
+        loadLayerFromRegistry: loaderAPI.loadLayerFromRegistry || null,
+        updateLayerVisibilityFromRegistry:
+          loaderAPI.updateLayerVisibilityFromRegistry || null,
+        loadedLayersMap: loaderAPI.loadedLayersMap || null,
+        updateMapLegend:
+          typeof updateMapLegend === "function" ? updateMapLegend : () => {},
+      };
+
       // Store unsubscribe functions for cleanup
       if (!window._otefUnsubscribeFunctions) {
         window._otefUnsubscribeFunctions = [];
       }
 
       window._otefUnsubscribeFunctions.push(
-        OTEFDataContext.subscribe('viewport', (viewport) => {
+        OTEFDataContext.subscribe("viewport", (viewport) => {
           if (viewport) {
             applyViewportFromAPI(viewport);
           }
-        })
+        }),
       );
 
       const initialLayerGroups = OTEFDataContext.getLayerGroups();
       if (initialLayerGroups) {
-        applyLayerGroupsState(initialLayerGroups);
+        applyLayerGroupsState(initialLayerGroups, mapDeps);
       }
 
       window._otefUnsubscribeFunctions.push(
-        OTEFDataContext.subscribe('layerGroups', (layerGroups) => {
+        OTEFDataContext.subscribe("layerGroups", (layerGroups) => {
           if (layerGroups) {
-            applyLayerGroupsState(layerGroups);
+            applyLayerGroupsState(layerGroups, mapDeps);
           }
-        })
+        }),
       );
 
       window._otefUnsubscribeFunctions.push(
-        OTEFDataContext.subscribe('connection', (connected) => {
+        OTEFDataContext.subscribe("connection", (connected) => {
           updateConnectionStatus(!!connected);
-        })
+        }),
       );
     });
   }
@@ -155,8 +179,8 @@ fetch("data/model-bounds.json")
 // Cleanup subscriptions on page unload
 window.addEventListener("beforeunload", () => {
   if (window._otefUnsubscribeFunctions) {
-    window._otefUnsubscribeFunctions.forEach(unsubscribe => {
-      if (typeof unsubscribe === 'function') {
+    window._otefUnsubscribeFunctions.forEach((unsubscribe) => {
+      if (typeof unsubscribe === "function") {
         unsubscribe();
       }
     });
@@ -169,9 +193,15 @@ map.on("click", async (e) => {
   const { lat, lng } = e.latlng;
 
   // First, check if we can find a PMTiles feature with popup config
-  if (typeof window.pmtilesLayersWithConfigs !== 'undefined' && window.pmtilesLayersWithConfigs.size > 0) {
+  if (
+    typeof window.pmtilesLayersWithConfigs !== "undefined" &&
+    window.pmtilesLayersWithConfigs.size > 0
+  ) {
     // Check each PMTiles layer that has a popup config
-    for (const [fullLayerId, layerInfo] of window.pmtilesLayersWithConfigs.entries()) {
+    for (const [
+      fullLayerId,
+      layerInfo,
+    ] of window.pmtilesLayersWithConfigs.entries()) {
       // Only check if layer is visible on map
       if (!map.hasLayer(layerInfo.layer)) {
         continue;
@@ -182,12 +212,15 @@ map.on("click", async (e) => {
         const wrapped = map.wrapLatLng(e.latlng);
 
         // Check if the query method exists
-        if (typeof layerInfo.layer.queryTileFeaturesDebug !== 'function') {
+        if (typeof layerInfo.layer.queryTileFeaturesDebug !== "function") {
           continue;
         }
 
         // Query features at the clicked location
-        const queryResult = layerInfo.layer.queryTileFeaturesDebug(wrapped.lng, wrapped.lat);
+        const queryResult = layerInfo.layer.queryTileFeaturesDebug(
+          wrapped.lng,
+          wrapped.lat,
+        );
 
         // Convert result to array - queryTileFeaturesDebug returns a Map, not an array
         // Map structure: Map { layerName => [features] }
@@ -217,25 +250,34 @@ map.on("click", async (e) => {
           const normalizedFeature = {
             type: "Feature",
             geometry: feature.geometry || feature.geom || { type: "Polygon" },
-            properties: featureProps
+            properties: featureProps,
           };
 
           // Get layer display name
-          const layerDisplayName = layerInfo.config?.name || fullLayerId.split('.').pop();
+          const layerDisplayName =
+            layerInfo.config?.name ||
+            (typeof LayerStateHelper !== "undefined" &&
+            typeof LayerStateHelper.getLayerIdOnly === "function"
+              ? LayerStateHelper.getLayerIdOnly(fullLayerId)
+              : fullLayerId.split(".").pop());
 
           // Render and show popup
-          if (typeof renderPopupContent === 'function') {
-            const content = renderPopupContent(normalizedFeature, layerInfo.popupConfig, layerDisplayName);
-            L.popup()
-              .setLatLng(e.latlng)
-              .setContent(content)
-              .openOn(map);
+          if (typeof renderPopupContent === "function") {
+            const content = renderPopupContent(
+              normalizedFeature,
+              layerInfo.popupConfig,
+              layerDisplayName,
+            );
+            L.popup().setLatLng(e.latlng).setContent(content).openOn(map);
             return; // Stop here, don't show coordinate popup
           }
         }
       } catch (error) {
         // If query fails, continue to next layer or fall back
-        console.warn(`[Map] Error querying PMTiles layer ${fullLayerId}:`, error);
+        console.warn(
+          `[Map] Error querying PMTiles layer ${fullLayerId}:`,
+          error,
+        );
       }
     }
   }

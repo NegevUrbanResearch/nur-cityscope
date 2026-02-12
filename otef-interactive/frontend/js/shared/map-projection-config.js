@@ -10,6 +10,12 @@ const MapProjectionConfig = {
   ENABLE_MAP_VISIBILITY_DEBUG: false,
   ENABLE_PROJECTION_DEBUG: false,
 
+  // Global scale factor for label font sizes on the projector (canvas renderer only).
+  // 1.0  -> use sizes exported from styles.json as-is
+  // <1.0 -> shrink labels relative to exported sizes (e.g. 0.35 for ~1/3 size)
+  // >1.0 -> enlarge labels (generally not recommended)
+  LABEL_SIZE_SCALE: 0.25,
+
   // Projection highlight smoothing (LERP factor)
   // Lower = smoother/slower, Higher = snappier
   PROJECTION_LERP_FACTOR: 0.15,
@@ -19,15 +25,22 @@ const MapProjectionConfig = {
 
   // Tolerance in ITM units when checking if a bbox matches full model extent
   PROJECTION_FULL_EXTENT_TOLERANCE: 10,
+
+  // WMTS layer for projector (LOD / scale tuning for physical model).
+  // Override zoom here to try different resolutions in the lab; set to null to use manifest default (12).
+  // Approx ground resolution at 32N: 11 ~65m/px, 12 ~32m/px, 13 ~16m/px, 14 ~8m/px, 15 ~4m/px.
+  WMTS_PROJECTOR: {
+    zoomOverride: null, // e.g. 14 or 15 for sharper imagery on 4K at 1:40k scale
+    urlOverride: null,
+  },
 };
 
 // Browser global
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.MapProjectionConfig = MapProjectionConfig;
 }
 
 // Export for Node/CommonJS consumers (tests, tooling)
-if (typeof module !== 'undefined' && module.exports) {
+if (typeof module !== "undefined" && module.exports) {
   module.exports = MapProjectionConfig;
 }
-

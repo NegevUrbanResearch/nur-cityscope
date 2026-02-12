@@ -30,7 +30,8 @@ function applyViewportFromAPI(viewport) {
   const currentZoom = map.getZoom();
 
   const centerDiff =
-    Math.abs(currentCenter.lat - centerLat) + Math.abs(currentCenter.lng - centerLng);
+    Math.abs(currentCenter.lat - centerLat) +
+    Math.abs(currentCenter.lng - centerLng);
   const zoomDiff = Math.abs(currentZoom - zoom);
 
   // Only update if significantly different (threshold to avoid echo)
@@ -38,7 +39,10 @@ function applyViewportFromAPI(viewport) {
   if (centerDiff > 0.0005 || zoomDiff > 0.5) {
     // Set flag to prevent feedback loop (don't broadcast this change back)
     window.isApplyingRemoteState = true;
-    map.setView([centerLat, centerLng], zoom, { animate: true, duration: 0.25 });
+    map.setView([centerLat, centerLng], zoom, {
+      animate: true,
+      duration: 0.25,
+    });
 
     // Mark synchronization as active to ignore ensuing moveend events
     if (window.syncLockTimer) clearTimeout(window.syncLockTimer);
@@ -88,7 +92,7 @@ function sendViewportUpdate() {
   // so the GIS map cannot visually move/zoom beyond the hard-wall polygon.
   // We ignore 'interaction_guard' rejections to prevent infinite snapback loops
   // during active remote movement.
-  if (result && result.accepted === false && result.reason === 'bounds') {
+  if (result && result.accepted === false && result.reason === "bounds") {
     const latestViewport = OTEFDataContext.getViewport();
     if (latestViewport) {
       applyViewportFromAPI(latestViewport);
@@ -99,4 +103,3 @@ function sendViewportUpdate() {
 // Attach listeners to map movement and zoom
 map.on("moveend", sendViewportUpdate);
 map.on("zoomend", sendViewportUpdate); // Ensure zoom changes are synced
-

@@ -3,6 +3,41 @@
 // into its group + layer objects and enabled flag.
 
 /**
+ * Parse fullLayerId into groupId and layerId using "first dot" split.
+ * Supports layer ids that contain dots (e.g. "map_3.layer.with.dots").
+ *
+ * @param {string} fullLayerId - e.g. "map_3_future.mimushim" or "map_3.layer.with.dots"
+ * @returns {{ groupId: string, layerId: string }|null} null if no dot or empty segment
+ */
+function parseFullLayerId(fullLayerId) {
+  if (fullLayerId == null || typeof fullLayerId !== "string") {
+    return null;
+  }
+  const dotIndex = fullLayerId.indexOf(".");
+  if (dotIndex < 0) {
+    return null;
+  }
+  const groupId = fullLayerId.slice(0, dotIndex).trim();
+  const layerId = fullLayerId.slice(dotIndex + 1).trim();
+  if (groupId === "" || layerId === "") {
+    return null;
+  }
+  return { groupId, layerId };
+}
+
+/**
+ * Get the layer id part only (everything after the first dot).
+ * For display names when fullLayerId is "groupId.layerId".
+ *
+ * @param {string} fullLayerId - e.g. "map_3_future.mimushim"
+ * @returns {string|null} layerId or null if unparseable
+ */
+function getLayerIdOnly(fullLayerId) {
+  const parsed = parseFullLayerId(fullLayerId);
+  return parsed ? parsed.layerId : null;
+}
+
+/**
  * Resolve a full layer id like "groupId.layerId" against the given context.
  *
  * @param {Object} ctx - OTEFDataContext or compatible object with getLayerGroups()
@@ -10,18 +45,20 @@
  * @returns {{group: Object, layer: Object, enabled: boolean}|null}
  */
 function resolveLayerState(ctx, fullLayerId) {
-  if (!ctx || typeof ctx.getLayerGroups !== 'function' || !fullLayerId) {
+  if (!ctx || typeof ctx.getLayerGroups !== "function" || !fullLayerId) {
     return null;
   }
+
+  const parsed = parseFullLayerId(fullLayerId);
+  if (!parsed) {
+    return null;
+  }
+  const { groupId, layerId } = parsed;
 
   const layerGroups = ctx.getLayerGroups();
   if (!Array.isArray(layerGroups) || layerGroups.length === 0) {
     return null;
   }
-
-  const parts = fullLayerId.split('.');
-  if (parts.length !== 2) return null;
-  const [groupId, layerId] = parts;
 
   const group = layerGroups.find((g) => g && g.id === groupId);
   if (!group || !Array.isArray(group.layers)) {
@@ -43,7 +80,7 @@ function resolveLayerState(ctx, fullLayerId) {
   return {
     group,
     layer,
-    enabled: groupEnabled && layerEnabled
+    enabled: groupEnabled && layerEnabled,
   };
 }
 
@@ -54,25 +91,28 @@ function resolveLayerState(ctx, fullLayerId) {
  * @returns {{group: Object, layer: Object, enabled: boolean}|null}
  */
 function getLayerState(fullLayerId) {
-  if (typeof OTEFDataContext === 'undefined') {
+  if (typeof OTEFDataContext === "undefined") {
     return null;
   }
   return resolveLayerState(OTEFDataContext, fullLayerId);
 }
 
 // Expose globals for browser consumers
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.LayerStateHelper = {
+    parseFullLayerId,
+    getLayerIdOnly,
     resolveLayerState,
-    getLayerState
+    getLayerState,
   };
 }
 
 // Export for Node/CommonJS consumers (tests, tooling)
-if (typeof module !== 'undefined' && module.exports) {
+if (typeof module !== "undefined" && module.exports) {
   module.exports = {
+    parseFullLayerId,
+    getLayerIdOnly,
     resolveLayerState,
-    getLayerState
+    getLayerState,
   };
 }
-

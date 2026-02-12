@@ -9,9 +9,6 @@ let currentState = {
     corners: null,
     zoom: 15,
   },
-  layers: {
-    model: false,
-  },
   isConnected: false,
 };
 
@@ -25,7 +22,7 @@ let zoomThrottleTimer = null;
 const ZOOM_THROTTLE_MS = 100;
 
 // Table name for this controller
-const TABLE_NAME = 'otef';
+const TABLE_NAME = "otef";
 
 // Store unsubscribe functions for cleanup
 let unsubscribeFunctions = [];
@@ -38,9 +35,8 @@ if (document.readyState === "loading") {
 }
 
 async function initialize() {
-
   // Initialize layer registry if available
-  if (typeof layerRegistry !== 'undefined') {
+  if (typeof layerRegistry !== "undefined") {
     await layerRegistry.init();
   }
 
@@ -49,27 +45,25 @@ async function initialize() {
 
   // Wire DataContext subscriptions to local UI state
   unsubscribeFunctions.push(
-    OTEFDataContext.subscribe('viewport', (viewport) => {
+    OTEFDataContext.subscribe("viewport", (viewport) => {
       if (!viewport) return;
       currentState.viewport = viewport;
       updateZoomUI(viewport.zoom);
       updateUI();
-    })
+    }),
   );
 
   unsubscribeFunctions.push(
-    OTEFDataContext.subscribe('layers', (layers) => {
-      if (!layers) return;
-      currentState.layers = layers;
+    OTEFDataContext.subscribe("layerGroups", () => {
       updateUI();
-    })
+    }),
   );
 
   unsubscribeFunctions.push(
-    OTEFDataContext.subscribe('connection', (isConnected) => {
+    OTEFDataContext.subscribe("connection", (isConnected) => {
       currentState.isConnected = !!isConnected;
       updateConnectionStatus(isConnected ? "connected" : "disconnected");
-    })
+    }),
   );
 
   // Initialize UI controls
@@ -94,8 +88,16 @@ function updateConnectionStatus(status) {
 
   const statusConfig = {
     connected: { class: "connected", text: "Connected", showWarning: false },
-    disconnected: { class: "disconnected", text: "Disconnected", showWarning: true },
-    connecting: { class: "connecting", text: "Connecting...", showWarning: false },
+    disconnected: {
+      class: "disconnected",
+      text: "Disconnected",
+      showWarning: true,
+    },
+    connecting: {
+      class: "connecting",
+      text: "Connecting...",
+      showWarning: false,
+    },
     error: { class: "disconnected", text: "Error", showWarning: true },
   };
 
@@ -105,7 +107,7 @@ function updateConnectionStatus(status) {
   indicator.classList.add(config.class);
   text.textContent = config.text;
 
-  currentState.isConnected = (status === "connected");
+  currentState.isConnected = status === "connected";
 
   if (warning) {
     warning.classList.toggle("hidden", !config.showWarning);
@@ -141,7 +143,10 @@ function initializePanControls() {
       const height = viewport.bbox[3] - viewport.bbox[1];
       const speed = 0.5; // 50% of viewport per second
 
-      OTEFDataContext.sendVelocity(vector.vx * width * speed, vector.vy * height * speed);
+      OTEFDataContext.sendVelocity(
+        vector.vx * width * speed,
+        vector.vy * height * speed,
+      );
       if (navigator.vibrate) navigator.vibrate(20);
     };
 
@@ -160,7 +165,6 @@ function initializePanControls() {
     button.addEventListener("mouseleave", endHandler);
   });
 }
-
 
 /**
  * Initialize zoom controls
@@ -227,38 +231,44 @@ function updateZoomUI(zoom) {
   }
 }
 
+/** Full layer id for the single "model" toggle (projector base). */
+const MODEL_LAYER_FULL_ID = "projector_base.model_base";
+
 /**
- * Initialize layer controls
+ * Initialize layer controls (layerGroups only; model toggle uses full id).
  */
 function initializeLayerControls() {
-  const toggles = {
-    toggleModel: "model",
-  };
+  const checkbox = document.getElementById("toggleModel");
+  if (!checkbox) return;
 
-  Object.entries(toggles).forEach(([id, layerName]) => {
-    const checkbox = document.getElementById(id);
-    if (!checkbox) return;
+  checkbox.addEventListener("change", async (e) => {
+    if (!currentState.isConnected) {
+      const state =
+        typeof LayerStateHelper !== "undefined"
+          ? LayerStateHelper.getLayerState(MODEL_LAYER_FULL_ID)
+          : null;
+      e.target.checked = state ? !!state.enabled : false;
+      return;
+    }
 
-    checkbox.addEventListener("change", async (e) => {
-      if (!currentState.isConnected) {
-        // Revert checkbox if not connected
-        e.target.checked = currentState.layers[layerName];
-        return;
+    try {
+      const result = await OTEFDataContext.toggleLayer(
+        MODEL_LAYER_FULL_ID,
+        e.target.checked,
+      );
+      if (!result || !result.ok) {
+        throw result && result.error
+          ? result.error
+          : new Error("Layer update failed");
       }
-
-      try {
-        const result = await OTEFDataContext.toggleLayer(layerName, e.target.checked);
-        if (!result || !result.ok) {
-          throw result && result.error ? result.error : new Error("Layer update failed");
-        }
-      } catch (error) {
-        console.error("[Remote] Layer update failed:", error);
-        // Revert on error
-        e.target.checked = !e.target.checked;
-        currentState.layers[layerName] = !currentState.layers[layerName];
-      }
-
-    });
+    } catch (error) {
+      console.error("[Remote] Layer update failed:", error);
+      const state =
+        typeof LayerStateHelper !== "undefined"
+          ? LayerStateHelper.getLayerState(MODEL_LAYER_FULL_ID)
+          : null;
+      e.target.checked = state ? !!state.enabled : false;
+    }
   });
 }
 
@@ -352,7 +362,6 @@ function handleJoystickEnd(evt, data) {
   OTEFDataContext.sendVelocity(0, 0);
 }
 
-
 function disableDPad() {
   const buttons = document.querySelectorAll(".dpad-button");
   buttons.forEach((btn) => {
@@ -370,16 +379,16 @@ function enableDPad() {
 }
 
 function updateLayerCheckboxes() {
-  const toggles = {
-    toggleModel: "model",
-  };
-
-  Object.entries(toggles).forEach(([id, layerName]) => {
-    const checkbox = document.getElementById(id);
-    if (checkbox && checkbox.checked !== currentState.layers[layerName]) {
-      checkbox.checked = currentState.layers[layerName];
-    }
-  });
+  const checkbox = document.getElementById("toggleModel");
+  if (!checkbox) return;
+  const state =
+    typeof LayerStateHelper !== "undefined"
+      ? LayerStateHelper.getLayerState(MODEL_LAYER_FULL_ID)
+      : null;
+  const enabled = state ? !!state.enabled : false;
+  if (checkbox.checked !== enabled) {
+    checkbox.checked = enabled;
+  }
 }
 
 /**
@@ -394,7 +403,7 @@ function updateUI() {
 
   // Disable controls if not connected
   const controls = document.querySelectorAll(
-    ".dpad-button, .zoom-button, .zoom-slider, .layer-toggle, .layer-toggle-with-action"
+    ".dpad-button, .zoom-button, .zoom-slider, .layer-toggle, .layer-toggle-with-action",
   );
   controls.forEach((control) => {
     if (currentState.isConnected) {
@@ -410,8 +419,8 @@ function updateUI() {
 // Cleanup on page unload
 window.addEventListener("beforeunload", () => {
   // Unsubscribe from all DataContext subscriptions
-  unsubscribeFunctions.forEach(unsubscribe => {
-    if (typeof unsubscribe === 'function') {
+  unsubscribeFunctions.forEach((unsubscribe) => {
+    if (typeof unsubscribe === "function") {
       unsubscribe();
     }
   });

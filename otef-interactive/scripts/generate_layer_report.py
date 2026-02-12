@@ -31,14 +31,17 @@ except ImportError as e:
     print(f"Error: Could not import modularize package: {e}")
     sys.exit(1)
 
+
 # Helper functions that were in process_layers.py
 def normalize_layer_id(layer_name: str) -> str:
     return layer_name.lower().replace(" ", "_").replace("-", "_")
+
 
 def get_file_size_mb(path: Path) -> float:
     if path.exists():
         return path.stat().st_size / (1024 * 1024)
     return 0.0
+
 
 def count_features(geojson_path: Path) -> int:
     try:
@@ -48,17 +51,22 @@ def count_features(geojson_path: Path) -> int:
     except Exception:
         return 0
 
+
 def should_convert_to_pmtiles(geojson_path: Path, layer_id: str = None) -> bool:
     # Match logic in orchestrator: 15MB threshold
     return get_file_size_mb(geojson_path) > 15
 
+
 PMTILES_SKIP_LAYER_IDS = set()
+
 
 def scan_layer_packs(source_dir: Path) -> List[Path]:
     """Discover layer pack directories in source/layers/ or root."""
     packs = []
     # Check if we are pointing to the base source dir or the layers subfolder
-    source_layers = source_dir / "layers" if (source_dir / "layers").exists() else source_dir
+    source_layers = (
+        source_dir / "layers" if (source_dir / "layers").exists() else source_dir
+    )
 
     if not source_layers.exists():
         return packs
@@ -79,9 +87,71 @@ def format_color(color_hex: str, opacity: float = None) -> str:
     return color_hex
 
 
+def analyze_cim_complexity(symbol_layers: List[Dict]) -> Dict:
+    """
+    Analyze flattened CIM symbol layers and flag constructs we don't fully support.
+    Returns dict with: multipleHatches, multipleStrokes, markerAlongLine, unsupportedTypes.
+    """
+    if not symbol_layers:
+        return {
+            "multipleHatches": False,
+            "multipleStrokes": False,
+            "markerAlongLine": False,
+            "unsupportedTypes": [],
+        }
+    hatch_count = sum(1 for L in symbol_layers if L.get("type") == "CIMHatchFill")
+    stroke_count = sum(1 for L in symbol_layers if L.get("type") == "CIMSolidStroke")
+    marker_along = any(
+        L.get("type") == "CIMVectorMarker" and L.get("markerPlacement")
+        for L in symbol_layers
+    )
+    supported = {"CIMSolidFill", "CIMSolidStroke", "CIMHatchFill", "CIMVectorMarker"}
+    unsupported = [
+        L.get("type")
+        for L in symbol_layers
+        if L.get("type") and L.get("type") not in supported
+    ]
+    unsupported = list(dict.fromkeys(unsupported))  # unique, preserve order
+    return {
+        "multipleHatches": hatch_count > 1,
+        "multipleStrokes": stroke_count > 1,
+        "markerAlongLine": marker_along,
+        "unsupportedTypes": unsupported,
+    }
+
+
+def format_cim_complexity(complexity: Dict) -> str:
+    """Format CIM complexity flags for report."""
+    lines = []
+    if complexity.get("multipleHatches"):
+        lines.append(
+            "  - **Multiple hatches** (e.g. cross-hatch) – parser currently keeps first only"
+        )
+    if complexity.get("multipleStrokes"):
+        lines.append(
+            "  - **Multiple strokes** (e.g. dashed + casing) – parser currently keeps first only"
+        )
+    if complexity.get("markerAlongLine"):
+        lines.append(
+            "  - **Marker along line** (e.g. train ticks) – not parsed or drawn"
+        )
+    if complexity.get("unsupportedTypes"):
+        lines.append(
+            f"  - **Unsupported layer types:** {', '.join(complexity['unsupportedTypes'])}"
+        )
+    if not lines:
+        return "  - No known CIM complexity flags"
+    return "\n".join(lines)
+
+
 def format_style_config(style: Dict) -> str:
     """Format style configuration for display."""
     lines = []
+
+    # Complexity / advanced flag (if present)
+    complexity = style.get("complexity")
+    if complexity:
+        lines.append(f"**Complexity:** `{complexity}`")
 
     if style.get("renderer") == "simple":
         lines.append("**Renderer Type:** Simple (single style for all features)")
@@ -97,7 +167,7 @@ def format_style_config(style: Dict) -> str:
                     f"  - Stroke: {format_color(default['strokeColor'], default.get('strokeOpacity', 1.0))} (width: {default.get('strokeWidth', 1.0)})"
                 )
 
-        # Show full symbol stack summary
+        # Show full symbol stack summary and CIM complexity flags
         full_layers = style.get("fullSymbolLayers", [])
         if full_layers:
             lines.append(f"**Full Symbol Stack:** {len(full_layers)} layer(s)")
@@ -110,6 +180,74 @@ def format_style_config(style: Dict) -> str:
                     [f"{k}: {v}" for k, v in sorted(layer_types.items())]
                 )
                 lines.append(f"  - Types: {type_summary}")
+            cim_complexity = analyze_cim_complexity(full_layers)
+            if any(
+                [
+                    cim_complexity["multipleHatches"],
+                    cim_complexity["multipleStrokes"],
+                    cim_complexity["markerAlongLine"],
+                    cim_complexity["unsupportedTypes"],
+                ]
+            ):
+                lines.append("**CIM Complexity (parsing gaps):**")
+                lines.append(format_cim_complexity(cim_complexity))
+
+        # Advanced symbol IR summary (if present)
+        adv = style.get("advancedSymbol") or style.get("advanced_symbol")
+        if adv and adv.get("symbolLayers"):
+            layers = adv["symbolLayers"]
+            lines.append("**Advanced Symbol IR:**")
+            lines.append(f"  - Layers: {len(layers)}")
+            for idx, sl in enumerate(layers, 1):
+                ltype = sl.get("type", "unknown")
+                summary_parts = [f"type={ltype}"]
+                if ltype == "fill":
+                    ft = sl.get("fillType")
+                    if ft:
+                        summary_parts.append(f"fillType={ft}")
+                    if sl.get("color"):
+                        summary_parts.append(f"color={sl['color']}")
+                    if sl.get("opacity") is not None:
+                        summary_parts.append(f"opacity={sl['opacity']:.2f}")
+                    hatch = sl.get("hatch")
+                    if hatch:
+                        summary_parts.append(
+                            f"hatch(color={hatch.get('color')}, rot={hatch.get('rotation')}, sep={hatch.get('separation')}, width={hatch.get('width')})"
+                        )
+                elif ltype == "stroke":
+                    if sl.get("color"):
+                        summary_parts.append(f"color={sl['color']}")
+                    if sl.get("width") is not None:
+                        summary_parts.append(f"width={sl['width']}")
+                    if sl.get("opacity") is not None:
+                        summary_parts.append(f"opacity={sl['opacity']:.2f}")
+                    dash = sl.get("dash")
+                    if dash and isinstance(dash.get("array"), list):
+                        summary_parts.append(f"dash={dash['array']}")
+                elif ltype == "markerLine":
+                    marker = sl.get("marker", {})
+                    placement = sl.get("placement", {})
+                    orient = sl.get("orientation", {})
+                    if marker:
+                        summary_parts.append(
+                            f"marker(shape={marker.get('shape')}, size={marker.get('size')}, fill={marker.get('fillColor')}, stroke={marker.get('strokeColor')}, strokeWidth={marker.get('strokeWidth')})"
+                        )
+                    if placement:
+                        summary_parts.append(
+                            f"placement(mode={placement.get('mode')}, interval={placement.get('interval')}, offsetAlong={placement.get('offsetAlong')})"
+                        )
+                    if orient:
+                        summary_parts.append(
+                            f"orientation(alignToLine={orient.get('alignToLine')})"
+                        )
+                elif ltype == "markerPoint":
+                    marker = sl.get("marker", {})
+                    if marker:
+                        summary_parts.append(
+                            f"marker(shape={marker.get('shape')}, size={marker.get('size')}, fill={marker.get('fillColor')}, stroke={marker.get('strokeColor')}, strokeWidth={marker.get('strokeWidth')})"
+                        )
+
+                lines.append(f"  - Layer {idx}: " + ", ".join(summary_parts))
 
     elif style.get("renderer") == "uniqueValue":
         lines.append("**Renderer Type:** Unique Value (attribute-based styling)")
@@ -165,7 +303,84 @@ def format_style_config(style: Dict) -> str:
                     lines.append(f"       - Dash pattern: {cls_style['dashArray']}")
                 if cls_style.get("hatch"):
                     h = cls_style["hatch"]
-                    lines.append(f"       - Hatch: {h['color']} (rot: {h['rotation']}, sep: {h['separation']})")
+                    lines.append(
+                        f"       - Hatch: {h['color']} (rot: {h['rotation']}, sep: {h['separation']})"
+                    )
+
+                # CIM complexity flags for this class
+                cim_complexity = analyze_cim_complexity(full_layers)
+                if any(
+                    [
+                        cim_complexity["multipleHatches"],
+                        cim_complexity["multipleStrokes"],
+                        cim_complexity["markerAlongLine"],
+                        cim_complexity["unsupportedTypes"],
+                    ]
+                ):
+                    lines.append("       **CIM Complexity (parsing gaps):**")
+                    for line in (
+                        format_cim_complexity(cim_complexity).strip().split("\n")
+                    ):
+                        lines.append("       " + line)
+
+            # Advanced symbol IR per class (if present)
+            adv_cls = cls.get("advancedSymbol") or cls.get("advanced_symbol")
+            if adv_cls and adv_cls.get("symbolLayers"):
+                layers = adv_cls["symbolLayers"]
+                lines.append("     - Advanced Symbol IR:")
+                lines.append(f"       - Layers: {len(layers)}")
+                for idx, sl in enumerate(layers, 1):
+                    ltype = sl.get("type", "unknown")
+                    summary_parts = [f"type={ltype}"]
+                    if ltype == "fill":
+                        ft = sl.get("fillType")
+                        if ft:
+                            summary_parts.append(f"fillType={ft}")
+                        if sl.get("color"):
+                            summary_parts.append(f"color={sl['color']}")
+                        if sl.get("opacity") is not None:
+                            summary_parts.append(f"opacity={sl['opacity']:.2f}")
+                        hatch = sl.get("hatch")
+                        if hatch:
+                            summary_parts.append(
+                                f"hatch(color={hatch.get('color')}, rot={hatch.get('rotation')}, sep={hatch.get('separation')}, width={hatch.get('width')})"
+                            )
+                    elif ltype == "stroke":
+                        if sl.get("color"):
+                            summary_parts.append(f"color={sl['color']}")
+                        if sl.get("width") is not None:
+                            summary_parts.append(f"width={sl['width']}")
+                        if sl.get("opacity") is not None:
+                            summary_parts.append(f"opacity={sl['opacity']:.2f}")
+                        dash = sl.get("dash")
+                        if dash and isinstance(dash.get("array"), list):
+                            summary_parts.append(f"dash={dash['array']}")
+                    elif ltype == "markerLine":
+                        marker = sl.get("marker", {})
+                        placement = sl.get("placement", {})
+                        orient = sl.get("orientation", {})
+                        if marker:
+                            summary_parts.append(
+                                f"marker(shape={marker.get('shape')}, size={marker.get('size')}, fill={marker.get('fillColor')}, stroke={marker.get('strokeColor')}, strokeWidth={marker.get('strokeWidth')})"
+                            )
+                        if placement:
+                            summary_parts.append(
+                                f"placement(mode={placement.get('mode')}, interval={placement.get('interval')}, offsetAlong={placement.get('offsetAlong')})"
+                            )
+                        if orient:
+                            summary_parts.append(
+                                f"orientation(alignToLine={orient.get('alignToLine')})"
+                            )
+                    elif ltype == "markerPoint":
+                        marker = sl.get("marker", {})
+                        if marker:
+                            summary_parts.append(
+                                f"marker(shape={marker.get('shape')}, size={marker.get('size')}, fill={marker.get('fillColor')}, stroke={marker.get('strokeColor')}, strokeWidth={marker.get('strokeWidth')})"
+                            )
+
+                    lines.append(
+                        "       - Layer " + str(idx) + ": " + ", ".join(summary_parts)
+                    )
 
     # Labels
     labels = style.get("labels")

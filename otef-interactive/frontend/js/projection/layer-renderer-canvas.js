@@ -13,34 +13,54 @@ class CanvasLayerRenderer {
 
     this.canvas = null;
     this.ctx = null;
-    this.layers = {};  // { layerId: { geojson, styleFunction, visible, geometryType } }
+    this.canvasBottom = null;
+    this.ctxBottom = null;
+    this.labelsCanvas = null;
+    this.ctxLabels = null;
+    this.layers = {}; // { layerId: { geojson, styleFunction, visible, geometryType, belowWmts, isLabelLayer } }
     this.modelBounds = null;
     this.displayBounds = null;
     this.dpr = 1;  // Device pixel ratio for high-DPI rendering
     this._patterns = {}; // Cache for hatch patterns
+    this._advancedDrawer = null; // Shared AdvancedStyleDrawing instance
 
     this._createCanvas();
   }
 
   _createCanvas() {
-    // Remove existing canvas if present
-    const existing = this.container.querySelector('#layersCanvas');
-    if (existing) existing.remove();
+    const highlightOverlay = this.container.querySelector("#highlightOverlay");
+    ["#labelsCanvas", "#layersCanvas", "#layersCanvasBottom"].forEach((sel) => {
+      const existing = this.container.querySelector(sel);
+      if (existing) existing.remove();
+    });
 
-    // Create canvas element with crisp rendering for projector output
-    this.canvas = document.createElement('canvas');
-    this.canvas.id = 'layersCanvas';
-    this.canvas.style.cssText = 'position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; image-rendering: crisp-edges; image-rendering: -webkit-optimize-contrast;';
+    const style =
+      "position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; image-rendering: crisp-edges; image-rendering: -webkit-optimize-contrast;";
 
-    // Insert before highlight overlay
-    const highlightOverlay = this.container.querySelector('#highlightOverlay');
+    this.canvasBottom = document.createElement("canvas");
+    this.canvasBottom.id = "layersCanvasBottom";
+    this.canvasBottom.style.cssText = style + " z-index: 5;";
+    this.ctxBottom = this.canvasBottom.getContext("2d");
+
+    this.canvas = document.createElement("canvas");
+    this.canvas.id = "layersCanvas";
+    this.canvas.style.cssText = style + " z-index: 7;";
+    this.ctx = this.canvas.getContext("2d");
+
+    this.labelsCanvas = document.createElement("canvas");
+    this.labelsCanvas.id = "labelsCanvas";
+    this.labelsCanvas.style.cssText = style + " z-index: 8;";
+    this.ctxLabels = this.labelsCanvas.getContext("2d");
+
     if (highlightOverlay) {
+      this.container.insertBefore(this.canvasBottom, highlightOverlay);
       this.container.insertBefore(this.canvas, highlightOverlay);
+      this.container.insertBefore(this.labelsCanvas, highlightOverlay);
     } else {
+      this.container.appendChild(this.canvasBottom);
       this.container.appendChild(this.canvas);
+      this.container.appendChild(this.labelsCanvas);
     }
-
-    this.ctx = this.canvas.getContext('2d');
   }
 
   /**
@@ -54,37 +74,47 @@ class CanvasLayerRenderer {
     this.displayBounds = displayBounds;
     this.modelBounds = modelBounds;
 
-    // Use devicePixelRatio for high-DPI rendering
     this.dpr = window.devicePixelRatio || 1;
     const canvasWidth = Math.round(displayBounds.width * this.dpr);
     const canvasHeight = Math.round(displayBounds.height * this.dpr);
 
-    // Position canvas over the full frame (CSS size)
-    this.canvas.style.left = displayBounds.offsetX + 'px';
-    this.canvas.style.top = displayBounds.offsetY + 'px';
-    this.canvas.style.width = displayBounds.width + 'px';
-    this.canvas.style.height = displayBounds.height + 'px';
+    const posStyle = `left: ${displayBounds.offsetX}px; top: ${displayBounds.offsetY}px; width: ${displayBounds.width}px; height: ${displayBounds.height}px;`;
+    [this.canvasBottom, this.canvas, this.labelsCanvas].forEach((el) => {
+      el.style.left = displayBounds.offsetX + "px";
+      el.style.top = displayBounds.offsetY + "px";
+      el.style.width = displayBounds.width + "px";
+      el.style.height = displayBounds.height + "px";
+      el.width = canvasWidth;
+      el.height = canvasHeight;
+    });
 
-    // Set canvas internal resolution (scaled for high-DPI)
-    this.canvas.width = canvasWidth;
-    this.canvas.height = canvasHeight;
-
-    // Scale context so drawing operations use CSS pixel coordinates
+    this.ctxBottom.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    this.ctxLabels.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
-    // Re-render all visible layers (use scheduled render to avoid blocking)
     this._scheduleRender();
   }
 
   /**
    * Add/update a layer
    */
-  setLayer(layerId, geojson, styleFunction, geometryType) {
+  setLayer(layerId, geojson, styleFunction, geometryType, styleConfig) {
+    const belowWmts = layerId.includes("רקע_שחור");
+    const style = styleConfig && styleConfig.style;
+    const hasLabels = style && style.labels;
+    // Only the "names" layer is label-only; other point layers render as markers
+    const isLabelLayer =
+      (geometryType === "point" || geometryType === "Point") &&
+      (layerId.endsWith(".names") || layerId === "names") &&
+      !!hasLabels;
     this.layers[layerId] = {
       geojson: geojson,
       styleFunction: styleFunction,
+      styleConfig: styleConfig || null,
       visible: false,
-      geometryType: geometryType || 'polygon'
+      geometryType: geometryType || "polygon",
+      belowWmts: belowWmts,
+      isLabelLayer: !!isLabelLayer,
     };
   }
 
@@ -114,59 +144,87 @@ class CanvasLayerRenderer {
   /**
    * Render all visible layers to canvas
    */
+  _layerSortKey([id, layer]) {
+    const isBlackBg = id.includes("רקע_שחור");
+    const isSea = id.includes("sea");
+    const isBase = id.startsWith("projector_base.");
+    const typeRank = { polygon: 0, line: 1, point: 2 };
+    const geomRank = typeRank[layer.geometryType] ?? 0;
+    return [isBlackBg ? 0 : 1, isSea ? 0 : 1, isBase ? 0 : 1, geomRank, id];
+  }
+
   render() {
-    if (!this.ctx || !this.displayBounds || !this.modelBounds) return;
+    if (
+      !this.ctx ||
+      !this.ctxBottom ||
+      !this.displayBounds ||
+      !this.modelBounds
+    )
+      return;
 
     const startTime = performance.now();
 
-    // Clear canvas
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-
-    // Render each visible layer
-    // Base layers (projector_base group) should be rendered first (lowest z-index)
-    // Detailed order:
-    // 1. רקע_שחור (Black Background) - Absolute bottom
-    // 2. sea - Above background
-    // 3. Other projector_base layers
-    // 4. All other layers
     const layerEntries = Object.entries(this.layers);
-    layerEntries.sort(([idA, layerA], [idB, layerB]) => {
-      // Helper to check if layer is specific ID (handling full ID with group prefix)
-      const isBlackBgA = idA.includes('רקע_שחור');
-      const isSeaA = idA.includes('sea');
-      const isBlackBgB = idB.includes('רקע_שחור');
-      const isSeaB = idB.includes('sea');
+    const below = layerEntries.filter(
+      ([, l]) => l.belowWmts && l.visible && l.geojson?.features
+    );
+    const above = layerEntries.filter(
+      ([, l]) => !l.belowWmts && l.visible && l.geojson?.features
+    );
+    const labelLayers = above.filter(([, l]) => l.isLabelLayer && l.geojson?.features);
+    const aboveNonLabel = above.filter(([, l]) => !l.isLabelLayer);
 
-      // 1. Black background is absolute bottom
-      if (isBlackBgA && !isBlackBgB) return -1;
-      if (!isBlackBgA && isBlackBgB) return 1;
-
-      // 2. Sea is above black background
-      if (isSeaA && !isSeaB) return -1;
-      if (!isSeaA && isSeaB) return 1;
-
-      // 3. Other projector_base layers are above background and sea
-      const isBaseA = idA.startsWith('projector_base.');
-      const isBaseB = idB.startsWith('projector_base.');
-      if (isBaseA && !isBaseB) return -1;
-      if (!isBaseA && isBaseB) return 1;
-
-      // 4. Geometry-based sorting: Polygon < Line < Point
-      const typeRank = { 'polygon': 0, 'line': 1, 'point': 2 };
-      const rankA = typeRank[layerA.geometryType] ?? 0;
-      const rankB = typeRank[layerB.geometryType] ?? 0;
-
-      if (rankA !== rankB) {
-        return rankA - rankB;
+    this.ctxBottom.clearRect(
+      0,
+      0,
+      this.canvasBottom.width,
+      this.canvasBottom.height
+    );
+    // When black-background layer is visible, fill bottom canvas with black first
+    // so it shows even if the polygon extent doesn't match the viewport
+    const hasBlackBg = below.some(([id]) => id.includes("רקע_שחור"));
+    if (hasBlackBg) {
+      this.ctxBottom.fillStyle = "#000000";
+      this.ctxBottom.fillRect(
+        0,
+        0,
+        this.canvasBottom.width,
+        this.canvasBottom.height
+      );
+    }
+    below.sort((a, b) => {
+      const ka = this._layerSortKey(a);
+      const kb = this._layerSortKey(b);
+      for (let i = 0; i < ka.length; i++) {
+        if (ka[i] !== kb[i]) return ka[i] < kb[i] ? -1 : 1;
       }
-
-      return 0; // Maintain insertion order within same rank
+      return 0;
     });
+    for (const [, layer] of below) {
+      this._renderLayer(layer.geojson, layer.styleFunction, this.ctxBottom, layer.styleConfig);
+    }
 
-    for (const [layerId, layer] of layerEntries) {
-      if (!layer.visible || !layer.geojson?.features) continue;
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    aboveNonLabel.sort((a, b) => {
+      const ka = this._layerSortKey(a);
+      const kb = this._layerSortKey(b);
+      for (let i = 0; i < ka.length; i++) {
+        if (ka[i] !== kb[i]) return ka[i] < kb[i] ? -1 : 1;
+      }
+      return 0;
+    });
+    for (const [, layer] of aboveNonLabel) {
+      this._renderLayer(layer.geojson, layer.styleFunction, this.ctx, layer.styleConfig);
+    }
 
-      this._renderLayer(layer.geojson, layer.styleFunction);
+    this.ctxLabels.clearRect(
+      0,
+      0,
+      this.labelsCanvas.width,
+      this.labelsCanvas.height
+    );
+    for (const [, layer] of labelLayers) {
+      this._renderLabelLayer(layer.geojson, layer.styleConfig, this.ctxLabels);
     }
 
     const elapsed = performance.now() - startTime;
@@ -179,13 +237,57 @@ class CanvasLayerRenderer {
    * Render a single layer
    * Optimized to reduce canvas operations for large feature sets
    */
-  _renderLayer(geojson, styleFunction) {
-    const ctx = this.ctx;
+  _renderLayer(geojson, styleFunction, ctx, styleConfig) {
+    const targetCtx = ctx || this.ctx;
+    const prevCtx = this.ctx;
+    this.ctx = targetCtx;
+
     const features = geojson.features || [];
 
-    if (features.length === 0) return;
+    if (features.length === 0) {
+      this.ctx = prevCtx;
+      return;
+    }
 
-    // Batch style calculations to reduce function calls
+    const style = styleConfig && styleConfig.style;
+    const hasAdvancedSymbol =
+      style &&
+      (style.advancedSymbol?.symbolLayers?.length > 0 ||
+        (style.uniqueValues?.classes || []).some(
+          (c) => c.advancedSymbol?.symbolLayers?.length > 0,
+        ));
+    const isAdvanced =
+      hasAdvancedSymbol &&
+      typeof AdvancedStyleEngine !== "undefined" &&
+      typeof AdvancedStyleDrawing !== "undefined";
+
+    if (isAdvanced) {
+      // Use shared advanced style engine to compute drawing commands, then
+      // delegate actual drawing to AdvancedStyleDrawing, including multi-stroke
+      // lines, hatch fills, and marker-along-line.
+      const commands = AdvancedStyleEngine.computeCommands(
+        features,
+        style,
+        {},
+      );
+
+      if (!this._advancedDrawer) {
+        this._advancedDrawer = new AdvancedStyleDrawing();
+      }
+
+      const viewContext = {
+        coordToPixel: (coord) => this._coordToPixel(coord),
+        pixelRatio: this.dpr || window.devicePixelRatio || 1,
+        viewportWidth: this.displayBounds ? this.displayBounds.width : this.canvas.width,
+        viewportHeight: this.displayBounds ? this.displayBounds.height : this.canvas.height,
+      };
+
+      this._advancedDrawer.drawCommands(targetCtx, commands, viewContext);
+
+      this.ctx = prevCtx;
+      return;
+    }
+
     for (const feature of features) {
       if (!feature.geometry) continue;
 
@@ -199,6 +301,94 @@ class CanvasLayerRenderer {
 
       // Draw the geometry
       this._drawGeometry(ctx, feature.geometry, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius, style);
+    }
+
+    this.ctx = prevCtx;
+  }
+
+  /**
+   * Render a label-only layer (point features with style.labels).
+   * Draws text at each point; always on top (labels canvas).
+   */
+  _renderLabelLayer(geojson, styleConfig, ctx) {
+    const labels = styleConfig?.style?.labels;
+    if (!labels || !ctx || !this.displayBounds || !this.modelBounds) return;
+
+    const features = geojson.features || [];
+    const field = labels.field || "name";
+    const fontFamily = labels.font || "Arial, sans-serif";
+    const sizePt = typeof labels.size === "number" ? labels.size : 10;
+    // Convert ArcGIS point size to CSS pixels, then apply optional projector-wide scale factor.
+    let sizePx = (sizePt * 96) / 72;
+    let labelScale = 1;
+    if (
+      typeof MapProjectionConfig !== "undefined" &&
+      MapProjectionConfig &&
+      typeof MapProjectionConfig.LABEL_SIZE_SCALE === "number"
+    ) {
+      labelScale = MapProjectionConfig.LABEL_SIZE_SCALE;
+    }
+    sizePx = Math.max(8, sizePx * labelScale);
+    const color = labels.color || "#000000";
+    const opacity = labels.colorOpacity != null ? labels.colorOpacity : 1;
+    const haloSize = typeof labels.haloSize === "number" ? labels.haloSize : 0;
+    const haloColor = labels.haloColor || "#ffffff";
+    const dir = labels.textDirection === "RTL" ? "rtl" : "ltr";
+    const fontWeight = labels.fontWeight || "normal";
+    const fontStyle = labels.fontStyle || "normal";
+
+    const alignMap = {
+      Left: "left",
+      Center: "center",
+      Right: "right",
+    };
+    const baselineMap = {
+      Top: "top",
+      Middle: "middle",
+      Center: "middle",
+      Baseline: "alphabetic",
+      Bottom: "bottom",
+    };
+    const textAlign = alignMap[labels.horizontalAlignment] || "center";
+    const textBaseline = baselineMap[labels.verticalAlignment] || "middle";
+
+    ctx.font = `${fontStyle} ${fontWeight} ${sizePx}px ${fontFamily}`;
+    ctx.textAlign = textAlign;
+    ctx.textBaseline = textBaseline;
+    ctx.direction = dir;
+
+    for (const feature of features) {
+      const geom = feature.geometry;
+      if (!geom || !geom.coordinates) continue;
+
+      const props = feature.properties || feature.props || {};
+      let text = props[field];
+      if (text == null) text = "";
+      text = String(text).trim();
+      if (!text) continue;
+
+      let x, y;
+      if (geom.type === "Point") {
+        const p = this._coordToPixel(geom.coordinates);
+        x = p.x;
+        y = p.y;
+      } else if (geom.type === "MultiPoint" && geom.coordinates.length > 0) {
+        const first = this._coordToPixel(geom.coordinates[0]);
+        x = first.x;
+        y = first.y;
+      } else {
+        continue;
+      }
+
+      if (haloSize > 0) {
+        ctx.strokeStyle = haloColor;
+        ctx.lineWidth = haloSize * 2;
+        ctx.strokeText(text, x, y);
+      }
+      ctx.globalAlpha = opacity;
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, y);
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -255,22 +445,24 @@ class CanvasLayerRenderer {
       ctx.closePath();
     }
 
-    // Fill
-    if (fillOpacity > 0) {
-      ctx.globalAlpha = fillOpacity;
+    // Fill (solid background and/or hatch)
+    const hasHatch = style && style.hatch;
+    if (fillOpacity > 0 || hasHatch) {
+      // Draw solid background first if we have one
+      if (fillOpacity > 0) {
+        ctx.globalAlpha = fillOpacity;
+        ctx.fillStyle = fillColor;
+        ctx.fill('evenodd');
+      }
 
-      // Draw solid background first
-      ctx.fillStyle = fillColor;
-      ctx.fill('evenodd');
-
-      // Draw hatch on top if defined
-      if (style && style.hatch) {
-        const hKey = `${style.hatch.color}_${style.hatch.rotation}_${style.hatch.separation}_${style.hatch.width || 1}`;
-        if (!this._patterns[hKey]) {
-          this._patterns[hKey] = this._createHatchPattern(style.hatch);
-        }
-        if (this._patterns[hKey]) {
-          ctx.fillStyle = this._patterns[hKey];
+      // Draw hatch on top if defined (even for pure-hatch symbols with no solid fill).
+      // We use a cached, viewport-sized pattern per hatch style so that we only pay
+      // the cost of drawing hatch lines once per style instead of once per feature.
+      if (hasHatch) {
+        ctx.globalAlpha = 1;
+        const pattern = this._getHatchPattern(style.hatch);
+        if (pattern) {
+          ctx.fillStyle = pattern;
           ctx.fill('evenodd');
         }
       }
@@ -324,6 +516,113 @@ class CanvasLayerRenderer {
     ctx.stroke();
     ctx.setLineDash([]); // Reset
     ctx.globalAlpha = 1;
+  }
+
+  /**
+   * Draw markers along a line based on markerLine symbol layer
+   */
+  _drawMarkerLine(ctx, geometry, markerLayer) {
+    if (!geometry || !geometry.type || !geometry.coordinates) return;
+
+    const type = geometry.type;
+    const allLines =
+      type === "LineString"
+        ? [geometry.coordinates]
+        : type === "MultiLineString"
+          ? geometry.coordinates
+          : [];
+
+    if (!allLines.length) return;
+
+    const marker = markerLayer.marker || {};
+    const size =
+      typeof marker.size === "number" && marker.size > 0 ? marker.size : 5;
+    const fillColor = marker.fillColor || marker.strokeColor || "#000000";
+    const strokeColor = marker.strokeColor || fillColor || "#000000";
+    const strokeWidth =
+      typeof marker.strokeWidth === "number" && marker.strokeWidth > 0
+        ? marker.strokeWidth
+        : 1;
+    const shape = marker.shape || "circle";
+
+    const placement = markerLayer.placement || {};
+    const interval =
+      typeof placement.interval === "number" && placement.interval > 0
+        ? placement.interval
+        : 30; // sensible default in pixels
+    const offsetAlong =
+      typeof placement.offsetAlong === "number" && placement.offsetAlong > 0
+        ? placement.offsetAlong
+        : 0;
+
+    const orientation = markerLayer.orientation || {};
+    const alignToLine = !!orientation.alignToLine;
+
+    const radius = size / 2;
+
+    for (const line of allLines) {
+      if (!Array.isArray(line) || line.length < 2) continue;
+
+      // Convert to pixel coords
+      const pts = line.map((c) => this._coordToPixel(c));
+
+      // Compute cumulative distances along the polyline in pixels
+      const segLengths = [];
+      let total = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const dx = pts[i + 1].x - pts[i].x;
+        const dy = pts[i + 1].y - pts[i].y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        segLengths.push(len);
+        total += len;
+      }
+      if (total <= 0) continue;
+
+      let d = offsetAlong;
+      while (d <= total) {
+        // Find segment for distance d
+        let acc = 0;
+        let segIndex = 0;
+        while (segIndex < segLengths.length && acc + segLengths[segIndex] < d) {
+          acc += segLengths[segIndex];
+          segIndex++;
+        }
+        if (segIndex >= segLengths.length) break;
+
+        const segLen = segLengths[segIndex];
+        const t = segLen > 0 ? (d - acc) / segLen : 0;
+
+        const p0 = pts[segIndex];
+        const p1 = pts[segIndex + 1];
+        const mx = p0.x + (p1.x - p0.x) * t;
+        const my = p0.y + (p1.y - p0.y) * t;
+        const angle = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+
+        ctx.save();
+        ctx.translate(mx, my);
+        if (alignToLine) {
+          ctx.rotate(angle);
+        }
+        ctx.beginPath();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = fillColor;
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = strokeWidth;
+
+        if (shape === "square") {
+          const side = size;
+          ctx.rect(-side / 2, -side / 2, side, side);
+        } else {
+          ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        }
+
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+
+        d += interval;
+      }
+    }
   }
 
   /**
@@ -384,47 +683,71 @@ class CanvasLayerRenderer {
       const lineWidth = hatch.width || 1;
       const color = hatch.color || '#000000';
 
-      // ArcGIS rotation is often arithmetic (CCW from East) but sometimes geographic (CW from North).
-      // Based on visual observation: 45 degrees in lyrx shows as / in ArcGIS Pro,
-      // which is CCW from East. In Canvas, positive rotate() is CW.
-      // So to get CCW, we use negative angle.
-      const angle = (rotation * Math.PI) / 180;
-
-      // Create a pattern canvas large enough to cover the separation comfortably
-      // We use a square that is a multiple of separation to ensure seamless tiling
-      const size = Math.round(separation * 5); // Larger size for better precision
-      if (size <= 0) return null;
+      const dpr = this.dpr || window.devicePixelRatio || 1;
+      const width =
+        (this.displayBounds ? this.displayBounds.width : this.canvas.width) *
+        dpr;
+      const height =
+        (this.displayBounds ? this.displayBounds.height : this.canvas.height) *
+        dpr;
+      if (width <= 0 || height <= 0) return null;
 
       const pCanvas = document.createElement('canvas');
-      pCanvas.width = size;
-      pCanvas.height = size;
+      pCanvas.width = width;
+      pCanvas.height = height;
       const pCtx = pCanvas.getContext('2d');
+      if (!pCtx) return null;
 
       pCtx.strokeStyle = color;
       pCtx.lineWidth = lineWidth;
 
-      // Draw multiple lines to ensure seamless repetition
-      // We rotate the context and draw horizontal lines
+      const angle = (rotation * Math.PI) / 180;
+      const diag = Math.sqrt(width * width + height * height);
+
       pCtx.save();
-      pCtx.translate(size / 2, size / 2);
-      pCtx.rotate(-angle); // Negative because Canvas rotate is CW
+      pCtx.translate(width / 2, height / 2);
+      // ArcGIS rotation is CCW from East; Canvas positive rotation is CW,
+      // so we negate the angle to match the visual direction.
+      pCtx.rotate(-angle);
 
-      const lineOffset = separation;
-      const limit = Math.ceil(size * 1.5 / lineOffset);
-
-      for (let i = -limit; i <= limit; i++) {
+      for (let y = -diag; y <= diag; y += separation) {
         pCtx.beginPath();
-        pCtx.moveTo(-size * 2, i * lineOffset);
-        pCtx.lineTo(size * 2, i * lineOffset);
+        pCtx.moveTo(-diag, y);
+        pCtx.lineTo(diag, y);
         pCtx.stroke();
       }
       pCtx.restore();
 
-      return this.ctx.createPattern(pCanvas, 'repeat');
+      // Single viewport-sized tile; no repetition needed.
+      return this.ctx.createPattern(pCanvas, 'no-repeat');
     } catch (e) {
       console.warn('Failed to create hatch pattern', e);
       return null;
     }
+  }
+
+  /**
+   * Get (or create) a cached hatch pattern for a given hatch style.
+   * The pattern is sized to the current viewport so that lines appear continuous
+   * and we only pay the line-drawing cost once per style.
+   */
+  _getHatchPattern(hatch) {
+    if (!hatch) return null;
+    const key = [
+      hatch.color || '#000000',
+      hatch.rotation || 0,
+      hatch.separation || 10,
+      hatch.width || 1,
+      this.displayBounds ? this.displayBounds.width : this.canvas.width,
+      this.displayBounds ? this.displayBounds.height : this.canvas.height,
+      this.dpr || window.devicePixelRatio || 1,
+    ].join('|');
+
+    if (!this._patterns[key]) {
+      this._patterns[key] = this._createHatchPattern(hatch);
+    }
+
+    return this._patterns[key];
   }
 }
 

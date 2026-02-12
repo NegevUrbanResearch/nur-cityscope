@@ -3,14 +3,16 @@
 
 (function () {
   const internals = window.OTEFDataContextInternals || {};
-  const getLogger = internals.getLogger || function () {
-    return {
-      debug: () => {},
-      info: () => {},
-      warn: console.warn.bind(console),
-      error: console.error.bind(console),
+  const getLogger =
+    internals.getLogger ||
+    function () {
+      return {
+        debug: () => {},
+        info: () => {},
+        warn: console.warn.bind(console),
+        error: console.error.bind(console),
+      };
     };
-  };
 
   async function pan(ctx, direction, delta = 0.15) {
     if (!ctx._tableName || !ctx._isConnected) return;
@@ -18,7 +20,11 @@
 
     const currentViewport = ctx._viewport;
     let candidateViewport = null;
-    if (currentViewport && currentViewport.bbox && currentViewport.bbox.length === 4) {
+    if (
+      currentViewport &&
+      currentViewport.bbox &&
+      currentViewport.bbox.length === 4
+    ) {
       candidateViewport = computePanViewport(currentViewport, direction, delta);
     }
 
@@ -49,7 +55,8 @@
   }
 
   function sendVelocity(ctx, vx, vy) {
-    if (!ctx._tableName || !ctx._wsClient || !ctx._wsClient.getConnected()) return;
+    if (!ctx._tableName || !ctx._wsClient || !ctx._wsClient.getConnected())
+      return;
 
     const wasMoving =
       ctx._velocity && (ctx._velocity.vx !== 0 || ctx._velocity.vy !== 0);
@@ -80,7 +87,10 @@
     ctx._velocityLoopActive = true;
 
     const step = () => {
-      if (!ctx._velocity || (ctx._velocity.vx === 0 && ctx._velocity.vy === 0)) {
+      if (
+        !ctx._velocity ||
+        (ctx._velocity.vx === 0 && ctx._velocity.vy === 0)
+      ) {
         ctx._velocityLoopActive = false;
         return;
       }
@@ -106,13 +116,17 @@
         } else {
           // 2. Try moving ONLY on X axis (slide along North/South bounds)
           const xOnlyBbox = [minX + dx, minY, maxX + dx, maxY];
-          if (ctx._isViewportInsideBounds({ ...ctx._viewport, bbox: xOnlyBbox })) {
+          if (
+            ctx._isViewportInsideBounds({ ...ctx._viewport, bbox: xOnlyBbox })
+          ) {
             finalDy = 0;
             canMove = true;
           } else {
             // 3. Try moving ONLY on Y axis (slide along East/West bounds)
             const yOnlyBbox = [minX, minY + dy, maxX, maxY + dy];
-            if (ctx._isViewportInsideBounds({ ...ctx._viewport, bbox: yOnlyBbox })) {
+            if (
+              ctx._isViewportInsideBounds({ ...ctx._viewport, bbox: yOnlyBbox })
+            ) {
               finalDx = 0;
               canMove = true;
             }
@@ -160,7 +174,11 @@
 
     const currentViewport = ctx._viewport;
     let candidateViewport = null;
-    if (currentViewport && currentViewport.bbox && currentViewport.bbox.length === 4) {
+    if (
+      currentViewport &&
+      currentViewport.bbox &&
+      currentViewport.bbox.length === 4
+    ) {
       candidateViewport = computeZoomViewport(currentViewport, clampedZoom);
     }
 
@@ -187,7 +205,12 @@
   }
 
   function updateViewportFromUI(ctx, viewport, source = "gis") {
-    if (!ctx._tableName || !viewport || !viewport.bbox || viewport.bbox.length !== 4) {
+    if (
+      !ctx._tableName ||
+      !viewport ||
+      !viewport.bbox ||
+      viewport.bbox.length !== 4
+    ) {
       return false;
     }
 
@@ -210,7 +233,11 @@
 
     // Delegate actual write/debounce behavior to API client
     try {
-      const payload = { ...viewport, sourceId: ctx._clientId, timestamp: Date.now() };
+      const payload = {
+        ...viewport,
+        sourceId: ctx._clientId,
+        timestamp: Date.now(),
+      };
       if (typeof OTEF_API.updateViewportDebounced === "function") {
         OTEF_API.updateViewportDebounced(ctx._tableName, payload);
       } else {
@@ -218,7 +245,10 @@
       }
       return { accepted: true };
     } catch (err) {
-      getLogger().error("[OTEFDataContext] Failed to send viewport update:", err);
+      getLogger().error(
+        "[OTEFDataContext] Failed to send viewport update:",
+        err,
+      );
     } finally {
       ctx._currentInteractionSource = null;
     }
@@ -231,41 +261,10 @@
       return { ok: false, error: "Missing layerId" };
     }
 
-    // Legacy: model base only
-    const legacyLayerIds = ["model"];
-    if (legacyLayerIds.includes(layerId)) {
-      const previous = ctx._layers || {};
-      const next = Object.assign({}, previous, { [layerId]: !!enabled });
-      ctx._setLayers(next);
-
-      try {
-        await OTEF_API.updateLayers(ctx._tableName, next);
-        return { ok: true };
-      } catch (err) {
-        getLogger().error("[OTEFDataContext] Failed to update layers:", err);
-        ctx._setLayers(previous);
-        return { ok: false, error: err };
-      }
-    }
-
-    // Try new hierarchical structure for registry layers
-    if (ctx._layerGroups) {
-      return toggleLayerInGroups(ctx, layerId, enabled);
-    }
-
-    // Fallback to legacy flat structure for unknown layers
-    const previous = ctx._layers || {};
-    const next = Object.assign({}, previous, { [layerId]: !!enabled });
-    ctx._setLayers(next);
-
-    try {
-      await OTEF_API.updateLayers(ctx._tableName, next);
-      return { ok: true };
-    } catch (err) {
-      getLogger().error("[OTEFDataContext] Failed to update layers:", err);
-      ctx._setLayers(previous);
-      return { ok: false, error: err };
-    }
+    // Backward compatibility: remote "model" toggle maps to projector_base.model_base
+    const fullLayerId =
+      layerId === "model" ? "projector_base.model_base" : layerId;
+    return toggleLayerInGroups(ctx, fullLayerId, enabled);
   }
 
   async function toggleLayerInGroups(ctx, layerId, enabled) {
@@ -287,7 +286,50 @@
       await OTEF_API.updateLayerGroups(ctx._tableName, next);
       return { ok: true };
     } catch (err) {
-      getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
+      getLogger().error(
+        "[OTEFDataContext] Failed to update layer groups:",
+        err,
+      );
+      ctx._setLayerGroups(previous);
+      return { ok: false, error: err };
+    }
+  }
+
+  /**
+   * Set enabled state for multiple layers in one update (one API call).
+   * Used by the layer sheet when toggling a consolidated row (e.g. October 7th).
+   *
+   * @param {Object} ctx - OTEFDataContext instance
+   * @param {string[]} fullLayerIds - Full layer ids (e.g. ["october_7th.layer1", "october_7th.layer2"])
+   * @param {boolean} enabled
+   */
+  async function setLayersEnabled(ctx, fullLayerIds, enabled) {
+    if (!ctx._tableName || !Array.isArray(fullLayerIds) || fullLayerIds.length === 0) {
+      return { ok: true };
+    }
+    const idSet = new Set(fullLayerIds);
+    const previous = JSON.parse(JSON.stringify(ctx._layerGroups || []));
+    const next = previous.map((group) => {
+      const layers = group.layers.map((layer) => {
+        const fullId = `${group.id}.${layer.id}`;
+        if (idSet.has(fullId)) {
+          return { ...layer, enabled: !!enabled };
+        }
+        return layer;
+      });
+      return { ...group, layers };
+    });
+
+    ctx._setLayerGroups(next);
+
+    try {
+      await OTEF_API.updateLayerGroups(ctx._tableName, next);
+      return { ok: true };
+    } catch (err) {
+      getLogger().error(
+        "[OTEFDataContext] Failed to update layer groups:",
+        err,
+      );
       ctx._setLayerGroups(previous);
       return { ok: false, error: err };
     }
@@ -306,7 +348,10 @@
     const next = previous.map((group) => {
       if (group.id === groupId) {
         // Toggle all layers in the group
-        const layers = group.layers.map((layer) => ({ ...layer, enabled: !!enabled }));
+        const layers = group.layers.map((layer) => ({
+          ...layer,
+          enabled: !!enabled,
+        }));
         return { ...group, enabled: !!enabled, layers };
       }
       return group;
@@ -318,7 +363,10 @@
       await OTEF_API.updateLayerGroups(ctx._tableName, next);
       return { ok: true };
     } catch (err) {
-      getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
+      getLogger().error(
+        "[OTEFDataContext] Failed to update layer groups:",
+        err,
+      );
       ctx._setLayerGroups(previous);
       return { ok: false, error: err };
     }
@@ -435,6 +483,7 @@
     updateViewportFromUI,
     toggleLayer,
     toggleLayerInGroups,
+    setLayersEnabled,
     toggleGroup,
     toggleAnimation,
     computePanViewport,

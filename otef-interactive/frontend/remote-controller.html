@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -25,7 +25,7 @@
         </div>
       </div>
       <!-- Table Switcher -->
-      <div id="table-switcher" style="padding: 0 16px 8px 16px;"></div>
+      <div id="table-switcher" style="padding: 0 16px 8px 16px"></div>
     </header>
 
     <!-- Main content area -->
@@ -142,7 +142,7 @@
       </section>
 
       <!-- Layer Controls Section - Legacy (kept for backward compatibility) -->
-      <section class="control-section" id="layersSection" style="display: none;">
+      <section class="control-section" id="layersSection" style="display: none">
         <h2 class="section-title">Layers</h2>
         <div class="layer-controls">
           <!-- Legacy layer toggles hidden but kept for compatibility -->
@@ -195,23 +195,25 @@
     <script src="js/shared/otef-data-context/OTEFDataContext-websocket.js"></script>
     <script src="js/shared/OTEFDataContext.js"></script>
     <script src="js/shared/layer-registry.js"></script>
+    <script src="js/shared/layer-name-utils.js"></script>
+    <script src="js/shared/layer-state-helper.js"></script>
     <script src="js/shared/table-switcher.js"></script>
     <script src="js/remote/remote-controller.js"></script>
     <script src="js/remote/layer-sheet-controller.js"></script>
     <script>
       // Initialize table switcher
       const tableSwitcher = new TableSwitcher({
-        defaultTable: 'otef',
+        defaultTable: "otef",
         onTableChange: (tableName) => {
-          if (tableName !== 'otef') {
+          if (tableName !== "otef") {
             // Redirect to unified remote-controller page for other tables
             window.location.href = `/remote-controller/?table=${tableName}`;
           }
-        }
+        },
       });
 
       // Only show OTEF interface if table is 'otef'
-      if (tableSwitcher.getCurrentTable() !== 'otef') {
+      if (tableSwitcher.getCurrentTable() !== "otef") {
         window.location.href = `/remote-controller/?table=${tableSwitcher.getCurrentTable()}`;
       } else {
         tableSwitcher.createSwitcherUI();

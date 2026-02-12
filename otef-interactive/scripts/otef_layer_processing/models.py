@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
+
 @dataclass
 class LayerEntry:
     id: str
@@ -11,12 +12,14 @@ class LayerEntry:
     geometry_type: str = "unknown"
     pmtiles_file: Optional[str] = None
     ui_popup: Optional[Dict] = None
+    wmts: Optional[Dict] = None
+    mask: Optional[Dict] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
             "id": self.id,
             "name": self.name,
-            "file": self.file,
+            "file": self.file if self.wmts is None else "",
             "format": self.format,
             "geometryType": self.geometry_type,
         }
@@ -24,18 +27,40 @@ class LayerEntry:
             d["pmtilesFile"] = self.pmtiles_file
         if self.ui_popup:
             d["ui"] = {"popup": self.ui_popup}
+        if self.wmts is not None:
+            d["wmts"] = self.wmts
+        if self.mask is not None:
+            d["mask"] = self.mask
         return d
-    
+
     @classmethod
-    def create_image_layer(cls, layer_id: str, name: str, filename: str) -> "LayerEntry":
+    def create_image_layer(
+        cls, layer_id: str, name: str, filename: str
+    ) -> "LayerEntry":
         """Create a LayerEntry for an image file"""
+        return cls(
+            id=layer_id, name=name, file=filename, format="image", geometry_type="image"
+        )
+
+    @classmethod
+    def create_wmts_layer(
+        cls,
+        layer_id: str,
+        name: str,
+        wmts_config: Dict[str, Any],
+        mask: Optional[Dict] = None,
+    ) -> "LayerEntry":
+        """Create a LayerEntry for a WMTS layer (from .wmts.json file)."""
         return cls(
             id=layer_id,
             name=name,
-            file=filename,
-            format="image",
-            geometry_type="image"
+            file="",
+            format="wmts",
+            geometry_type="raster",
+            wmts=wmts_config,
+            mask=mask,
         )
+
 
 @dataclass
 class PackManifest:
@@ -47,8 +72,9 @@ class PackManifest:
         return {
             "id": self.id,
             "name": self.name,
-            "layers": [l.to_dict() for l in self.layers]
+            "layers": [l.to_dict() for l in self.layers],
         }
+
 
 @dataclass
 class StyleConfig:
@@ -59,6 +85,9 @@ class StyleConfig:
     labels: Optional[Dict] = None
     scale_range: Optional[Dict] = None
     unique_values: Optional[Dict] = None
+    # Styling complexity and advanced symbol IR (optional, used for advanced rendering paths)
+    complexity: str = "simple"  # "simple" | "advanced"
+    advanced_symbol: Optional[Dict] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -71,4 +100,9 @@ class StyleConfig:
         }
         if self.unique_values:
             d["uniqueValues"] = self.unique_values
+        # Only include advanced fields when present to avoid bloating simple styles
+        if self.complexity and self.complexity != "simple":
+            d["complexity"] = self.complexity
+        if self.advanced_symbol:
+            d["advancedSymbol"] = self.advanced_symbol
         return d
