@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>OTEF Curation</title>
+    <link rel="stylesheet" href="css/remote-styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <style>
+      .curation-layout {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+      }
+      .curation-main {
+        flex: 1;
+        overflow: auto;
+        padding: var(--spacing-unit);
+      }
+      .curation-section {
+        margin-bottom: var(--spacing-unit);
+      }
+      .curation-section h2 {
+        font-size: 14px;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .curation-select {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        font-size: 16px;
+      }
+      #curationMap {
+        height: 220px;
+        width: 100%;
+        border-radius: var(--border-radius);
+        border: 1px solid var(--border-color);
+      }
+      .curation-features {
+        max-height: 180px;
+        overflow-y: auto;
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
+        background: var(--bg-tertiary);
+      }
+      .curation-feature-row {
+        display: flex;
+        align-items: center;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border-color);
+        gap: 10px;
+      }
+      .curation-feature-row:last-child {
+        border-bottom: none;
+      }
+      .curation-feature-row label {
+        flex: 1;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .curation-name-input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        font-size: 16px;
+      }
+      .curation-publish-btn {
+        width: 100%;
+        padding: 14px;
+        margin-top: 12px;
+        border: none;
+        border-radius: var(--border-radius);
+        background: var(--accent-primary);
+        color: var(--bg-primary);
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .curation-publish-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .curation-status {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin-top: 8px;
+      }
+      .curation-status.error {
+        color: var(--error-color);
+      }
+      .curation-status.success {
+        color: var(--success-color);
+      }
+      .curation-refresh-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      .curation-refresh-row label {
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="curation-layout">
+      <header class="remote-header">
+        <div class="header-content">
+          <h1 class="remote-title">Curation</h1>
+          <button
+            type="button"
+            id="curationRefresh"
+            class="curation-publish-btn"
+            style="max-width: 120px; margin-top: 0;"
+          >
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <main class="curation-main">
+        <section class="curation-section">
+          <div class="curation-refresh-row">
+            <span></span>
+            <label>
+              <input type="checkbox" id="curationPolling" />
+              Auto-refresh every 30s
+            </label>
+          </div>
+          <h2>Project</h2>
+          <select id="curationProject" class="curation-select" aria-label="Select project">
+            <option value="">— Select project —</option>
+          </select>
+        </section>
+
+        <section class="curation-section">
+          <h2>Submission</h2>
+          <select id="curationSubmission" class="curation-select" aria-label="Select submission" disabled>
+            <option value="">— Select submission —</option>
+          </select>
+        </section>
+
+        <section class="curation-section">
+          <h2>Preview</h2>
+          <div id="curationMap"></div>
+        </section>
+
+        <section class="curation-section">
+          <h2>Features (toggle to include)</h2>
+          <div id="curationFeatures" class="curation-features">
+            <div class="curation-status">Select a submission to list features.</div>
+          </div>
+        </section>
+
+        <section class="curation-section">
+          <h2>Layer name</h2>
+          <input
+            type="text"
+            id="curationLayerName"
+            class="curation-name-input"
+            placeholder="e.g. My curated layer"
+            aria-label="Layer name"
+          />
+          <button type="button" id="curationPublish" class="curation-publish-btn" disabled>
+            Publish as OTEF layer
+          </button>
+          <div id="curationStatus" class="curation-status"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/proj4@2.9.0/dist/proj4.js"></script>
+    <script src="js/shared/logger.js"></script>
+    <script src="js/map-utils/coordinate-utils.js"></script>
+    <script src="js/curation/curation.js"></script>
+  </body>
+</html>
