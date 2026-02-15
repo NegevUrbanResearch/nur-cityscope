@@ -233,41 +233,54 @@ class LayerSheetController {
     const content = this.sheet.querySelector(".sheet-content");
     if (!content) return;
 
-    // Get layer groups from registry and data context
     let groups = [];
-    let layerStates = {};
-
-    if (typeof layerRegistry !== "undefined" && layerRegistry._initialized) {
+    if (
+      typeof LayerStateHelper !== "undefined" &&
+      typeof LayerStateHelper.getEffectiveLayerGroups === "function"
+    ) {
+      groups = LayerStateHelper.getEffectiveLayerGroups();
+    } else if (typeof layerRegistry !== "undefined" && layerRegistry._initialized) {
       groups = layerRegistry.getGroups();
-    }
-
-    if (typeof OTEFDataContext !== "undefined") {
-      const contextGroups = OTEFDataContext.getLayerGroups();
-      if (contextGroups) {
-        // Merge registry groups with state from context
-        const stateMap = new Map();
-        for (const group of contextGroups) {
-          stateMap.set(group.id, group);
-        }
-
-        groups = groups.map((group) => {
-          const state = stateMap.get(group.id);
-          if (state) {
-            const layers = group.layers.map((layer) => {
-              const layerState = state.layers.find((l) => l.id === layer.id);
-              return {
-                ...layer,
-                enabled: layerState ? layerState.enabled : false,
-              };
-            });
-            const enabled =
-              group.id === "_legacy"
-                ? state.enabled
-                : layers.length > 0 && layers.every((l) => l.enabled);
-            return { ...group, enabled, layers };
+      if (typeof OTEFDataContext !== "undefined") {
+        const contextGroups = OTEFDataContext.getLayerGroups();
+        if (contextGroups && contextGroups.length > 0) {
+          const stateMap = new Map();
+          for (const group of contextGroups) {
+            stateMap.set(group.id, group);
           }
-          return group;
-        });
+          groups = groups.map((group) => {
+            const state = stateMap.get(group.id);
+            if (state) {
+              const layers = group.layers.map((layer) => {
+                const layerState = state.layers?.find((l) => l.id === layer.id);
+                return {
+                  ...layer,
+                  name: layerState?.displayName ?? layer.name,
+                  enabled: layerState ? layerState.enabled : false,
+                };
+              });
+              const enabled =
+                group.id === "_legacy"
+                  ? state.enabled
+                  : layers.length > 0 && layers.every((l) => l.enabled);
+              return { ...group, enabled, layers };
+            }
+            return group;
+          });
+          for (const cg of contextGroups) {
+            if (groups.some((g) => g.id === cg.id)) continue;
+            groups.push({
+              id: cg.id,
+              name: cg.id === "curated" ? "Curated" : cg.id,
+              enabled: cg.enabled,
+              layers: (cg.layers || []).map((l) => ({
+                id: l.id,
+                name: l.displayName || l.id,
+                enabled: l.enabled,
+              })),
+            });
+          }
+        }
       }
     }
 

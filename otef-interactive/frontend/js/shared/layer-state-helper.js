@@ -97,6 +97,95 @@ function getLayerState(fullLayerId) {
   return resolveLayerState(OTEFDataContext, fullLayerId);
 }
 
+/**
+ * Effective layer groups: registry groups merged with API/context state.
+ * When context has no state for a group, applies defaults so projection/map/remote show and load registry layers.
+ *
+ * @returns {Array<{id: string, name?: string, enabled: boolean, layers: Array<{id: string, name?: string, enabled: boolean}>}>}
+ */
+function getEffectiveLayerGroups() {
+  const contextGroups =
+    typeof OTEFDataContext !== "undefined"
+      ? OTEFDataContext.getLayerGroups()
+      : null;
+  const contextMap = new Map();
+  if (Array.isArray(contextGroups)) {
+    for (const g of contextGroups) {
+      contextMap.set(g.id, g);
+    }
+  }
+
+  let groups = [];
+  if (
+    typeof layerRegistry !== "undefined" &&
+    layerRegistry._initialized
+  ) {
+    const registryGroups = layerRegistry.getGroups();
+    for (const reg of registryGroups) {
+      const state = contextMap.get(reg.id);
+      if (state) {
+        const layers = (reg.layers || []).map((layer) => {
+          const layerState = state.layers?.find((l) => l.id === layer.id);
+          return {
+            ...layer,
+            name: layerState?.displayName ?? layer.name ?? layer.id,
+            enabled: layerState ? !!layerState.enabled : defaultLayerEnabled(reg.id, layer.id),
+          };
+        });
+        const enabled =
+          state.id === "_legacy"
+            ? !!state.enabled
+            : layers.length > 0 && layers.every((l) => l.enabled);
+        groups.push({
+          id: reg.id,
+          name: reg.name ?? reg.id,
+          enabled: !!state.enabled,
+          layers,
+        });
+      } else {
+        const layers = (reg.layers || []).map((layer) => ({
+          ...layer,
+          name: layer.name ?? layer.id,
+          enabled: defaultLayerEnabled(reg.id, layer.id),
+        }));
+        const defaultGroupEnabled = defaultGroupEnabledFor(reg.id, layers);
+        groups.push({
+          id: reg.id,
+          name: reg.name ?? reg.id,
+          enabled: defaultGroupEnabled,
+          layers,
+        });
+      }
+    }
+  }
+
+  for (const cg of contextGroups || []) {
+    if (groups.some((g) => g.id === cg.id)) continue;
+    groups.push({
+      id: cg.id,
+      name: cg.id === "curated" ? "Curated" : cg.id,
+      enabled: !!cg.enabled,
+      layers: (cg.layers || []).map((l) => ({
+        id: l.id,
+        name: l.displayName || l.id,
+        enabled: !!l.enabled,
+      })),
+    });
+  }
+
+  return groups;
+}
+
+function defaultGroupEnabledFor(groupId, layers) {
+  if (groupId === "projector_base") return true;
+  return layers.length > 0 && layers.every((l) => defaultLayerEnabled(groupId, l.id));
+}
+
+function defaultLayerEnabled(groupId, layerId) {
+  if (groupId === "projector_base" && layerId === "model_base") return true;
+  return false;
+}
+
 // Expose globals for browser consumers
 if (typeof window !== "undefined") {
   window.LayerStateHelper = {
@@ -104,6 +193,7 @@ if (typeof window !== "undefined") {
     getLayerIdOnly,
     resolveLayerState,
     getLayerState,
+    getEffectiveLayerGroups,
   };
 }
 
@@ -114,5 +204,6 @@ if (typeof module !== "undefined" && module.exports) {
     getLayerIdOnly,
     resolveLayerState,
     getLayerState,
+    getEffectiveLayerGroups,
   };
 }

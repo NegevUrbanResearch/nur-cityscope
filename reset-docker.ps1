@@ -97,6 +97,19 @@ Write-Host "6. Rebuilding and starting containers..." -ForegroundColor Cyan
 $env:COMPOSE_BAKE = "true"
 docker-compose up --build -d
 
+# Wait for API and seed database (migrate, create_data, import_otef_data)
+Write-Host "7. Waiting for API and seeding database..." -ForegroundColor Cyan
+Start-Sleep -Seconds 15
+Write-Host "   Running migrations..." -ForegroundColor Gray
+docker exec nur-api python manage.py migrate
+Write-Host "   Creating data structure (states, indicator data, images)..." -ForegroundColor Gray
+docker exec nur-api python manage.py create_data
+Write-Host "   Importing OTEF data (layer groups, model bounds)..." -ForegroundColor Gray
+docker exec nur-api python manage.py import_otef_data
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "   (OTEF import skipped if files not present)" -ForegroundColor Gray
+}
+
 Write-Host ""
 Write-Host "All done! Containers are running in the background." -ForegroundColor Green
 Write-Host ""

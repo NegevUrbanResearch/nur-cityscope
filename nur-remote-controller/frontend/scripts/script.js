@@ -393,13 +393,13 @@ class PresentationRemote {
     
     async fetchInitialState() {
         try {
-            const response = await this.apiGet('/api/actions/get_global_variables/');
+            const response = await this.apiGet(`/api/actions/get_global_variables/?table=${this.currentTable}`);
             
             if (response) {
                 this.connected = true;
                 this.updateConnectionStatus(true);
                 
-                const presState = await this.apiGet('/api/actions/get_presentation_state/');
+                const presState = await this.apiGet(`/api/actions/get_presentation_state/?table=${this.currentTable}`);
                 if (presState) {
                     // If backend is actively playing, sync with it
                     // Otherwise, default to paused to avoid interfering with dashboard users
@@ -441,7 +441,7 @@ class PresentationRemote {
         }
 
         try {
-            const presState = await this.apiGet('/api/actions/get_presentation_state/');
+            const presState = await this.apiGet(`/api/actions/get_presentation_state/?table=${this.currentTable}`);
             
             if (presState) {
                 this.connected = true;
@@ -485,7 +485,7 @@ class PresentationRemote {
             }
             
             // Always update the current display info for visibility
-            const globalState = await this.apiGet('/api/actions/get_global_variables/');
+            const globalState = await this.apiGet(`/api/actions/get_global_variables/?table=${this.currentTable}`);
             if (globalState) {
                 this.updateCurrentDisplay(globalState);
             }

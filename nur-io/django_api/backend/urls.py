@@ -3,6 +3,12 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework import routers
 from . import views
+from .supabase_proxy import (
+    SupabaseProjectsView,
+    SupabaseProjectSubmissionsView,
+    SupabaseSubmissionFeaturesView,
+    CuratedLayerPublishView,
+)
 from .views import (
     TableViewSet,
     DashboardFeedStateViewSet,
@@ -68,6 +74,23 @@ urlpatterns = [
     path("upload_image/", ImageUploadView.as_view(), name="upload_image"),
     # Bounds apply endpoint for OTEF interactive
     path("otef/bounds/apply/", OTEFBoundsApplyView.as_view(), name="otef_bounds_apply"),
+    # Supabase proxy (backend-only; no Supabase client on frontend)
+    path("supabase/projects/", SupabaseProjectsView.as_view(), name="supabase_projects"),
+    path(
+        "supabase/projects/<uuid:project_id>/submissions/",
+        SupabaseProjectSubmissionsView.as_view(),
+        name="supabase_project_submissions",
+    ),
+    path(
+        "supabase/submissions/<uuid:submission_id>/features/",
+        SupabaseSubmissionFeaturesView.as_view(),
+        name="supabase_submission_features",
+    ),
+    path(
+        "supabase/curated/publish/",
+        CuratedLayerPublishView.as_view(),
+        name="supabase_curated_publish",
+    ),
     # For serving map files directly
     path("maps/<path:path>", serve_map_file, name="serve_map_file"),
 ]

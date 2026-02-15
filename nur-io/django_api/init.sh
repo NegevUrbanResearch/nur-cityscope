@@ -86,12 +86,16 @@ python manage.py import_otef_data || echo "Note: OTEF data files not found or al
 # should already exist in /app/public/processed/layers/ before container starts.
 
 # Setup media directories and copy files from public/processed
-mkdir -p /app/media/indicators
+mkdir -p /app/media/indicators/processed
 if [ -d "/app/public/processed" ]; then
-    echo "Copying processed files to media directory..."
-    cp -rf /app/public/processed /app/media/indicators/
-    chmod -R 755 /app/media/indicators
-    echo "✓ Copied files from public/processed to media/indicators/processed"
+    echo "Copying processed files from public (OTEF) to media..."
+    cp -rf /app/public/processed/* /app/media/indicators/processed/ 2>/dev/null || true
+fi
+if [ -d "/app/public_idistrict/processed" ]; then
+    echo "Copying idistrict mobility and climate to media..."
+    [ -d "/app/public_idistrict/processed/mobility" ] && cp -rf /app/public_idistrict/processed/mobility /app/media/indicators/processed/
+    [ -d "/app/public_idistrict/processed/climate" ] && cp -rf /app/public_idistrict/processed/climate /app/media/indicators/processed/
+    echo "✓ Idistrict data copied to media/indicators/processed"
 fi
 chmod -R 755 /app/media
 

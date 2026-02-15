@@ -208,10 +208,12 @@ const Dashboard = ({ openCharts}) => {
           }
         }
         } catch (err) {
-        // Check if it's a 404 and we have retries left
         const is404 = err.response?.status === 404;
-        
-        if (is404 && retryCount < maxRetries) {
+        const code = err.response?.data?.code;
+        const serverError = err.response?.data?.error;
+        const permanent404 = code === "table_not_found" || code === "indicator_not_found";
+
+        if (is404 && !permanent404 && retryCount < maxRetries) {
           const delay = baseDelay * Math.pow(2, retryCount);
           console.log(`Dashboard - 404 error, retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries})`);
           setTimeout(() => fetchMapData(retryCount + 1), delay);
@@ -220,14 +222,16 @@ const Dashboard = ({ openCharts}) => {
 
         console.error("Error fetching map data:", err);
 
-        // For 404 errors, show a user-friendly message about missing data
         if (is404) {
+          const message =
+            serverError ||
+            `No data available for ${currentIndicator} in the selected table. Please select a different table or indicator.`;
           setMapData({
             url: null,
             type: null,
             loading: false,
             error: true,
-            errorMessage: `No data available for ${currentIndicator} in the selected table. Please select a different table or indicator.`,
+            errorMessage: message,
           });
           setShowLoadingMessage(false);
           return;

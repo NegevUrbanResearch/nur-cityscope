@@ -71,6 +71,15 @@ fi
 echo "6️⃣  Rebuilding and starting containers..."
 COMPOSE_BAKE=true docker-compose up --build -d
 
+echo "7️⃣  Waiting for API and seeding database..."
+sleep 15
+echo "   Running migrations..."
+docker exec nur-api python manage.py migrate
+echo "   Creating data structure (states, indicator data, images)..."
+docker exec nur-api python manage.py create_data
+echo "   Importing OTEF data (layer groups, model bounds)..."
+docker exec nur-api python manage.py import_otef_data || echo "   (OTEF import skipped if files not present)"
+
 echo ""
 echo "✅ All done! Containers are running in the background."
 echo ""
@@ -112,7 +121,9 @@ echo "- Dashboard: http://localhost/dashboard/"
 echo "- Projection: http://localhost/projection/"
 echo "- Remote Controller: http://localhost/remote/"
 echo "- OTEF Interactive: http://localhost/otef-interactive/"
+echo "- OTEF Remote: http://localhost/otef-interactive/remote-controller.html"
 echo "- OTEF Projection: http://localhost/otef-interactive/projection.html"
+echo "- OTEF Curation: http://localhost/otef-interactive/curation.html"
 echo "- Admin Interface: http://localhost:9900/admin"
 
 if [ -n "$LOCAL_IP" ]; then
@@ -122,7 +133,9 @@ if [ -n "$LOCAL_IP" ]; then
     echo "- Projection: http://$LOCAL_IP/projection/"
     echo "- Remote Controller: http://$LOCAL_IP/remote/"
     echo "- OTEF Interactive: http://$LOCAL_IP/otef-interactive/"
+    echo "- OTEF Remote: http://$LOCAL_IP/otef-interactive/remote-controller.html"
     echo "- OTEF Projection: http://$LOCAL_IP/otef-interactive/projection.html"
+    echo "- OTEF Curation: http://$LOCAL_IP/otef-interactive/curation.html"
     echo "- Admin Interface: http://$LOCAL_IP:9900/admin"
 else
     echo ""

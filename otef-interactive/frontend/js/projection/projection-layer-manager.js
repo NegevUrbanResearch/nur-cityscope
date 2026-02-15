@@ -90,12 +90,14 @@
           img.src = modelImageUrl;
         }
 
-        // Now that layerRegistry is initialized, sync with current state from OTEFDataContext
-        // This handles the case where OTEFDataContext loaded state before layerRegistry was ready
-        if (typeof OTEFDataContext !== "undefined") {
+        if (typeof LayerStateHelper !== "undefined" && typeof LayerStateHelper.getEffectiveLayerGroups === "function") {
+          const effective = LayerStateHelper.getEffectiveLayerGroups();
+          if (effective.length > 0) {
+            syncLayerGroupsFromState(effective);
+          }
+        } else if (typeof OTEFDataContext !== "undefined") {
           const currentLayerGroups = OTEFDataContext.getLayerGroups();
-          if (currentLayerGroups) {
-            // Sync layer groups after registry init
+          if (currentLayerGroups && currentLayerGroups.length > 0) {
             syncLayerGroupsFromState(currentLayerGroups);
           }
         }
@@ -116,6 +118,7 @@
 
   /**
    * Load all layers from the new layer groups system for projection display.
+   * Uses effective layer groups (registry + context with defaults) so layers load when API has no state.
    */
   async function loadProjectionLayerGroups() {
     if (!layerRegistry || !layerRegistry._initialized) {
@@ -124,11 +127,13 @@
     }
 
     const layerGroups =
-      typeof OTEFDataContext !== "undefined"
-        ? OTEFDataContext.getLayerGroups()
-        : null;
+      typeof LayerStateHelper !== "undefined" &&
+      typeof LayerStateHelper.getEffectiveLayerGroups === "function"
+        ? LayerStateHelper.getEffectiveLayerGroups()
+        : typeof OTEFDataContext !== "undefined"
+          ? OTEFDataContext.getLayerGroups()
+          : null;
     if (!Array.isArray(layerGroups) || layerGroups.length === 0) {
-      // Defer heavy registry loads until layer groups state is available
       return;
     }
 
@@ -143,6 +148,68 @@
   }
 
   /**
+   * Load a curated layer from the API for projection. GeoJSON from API is in ITM.
+   */
+  async function loadProjectionCuratedLayerFromAPI(fullLayerId) {
+    if (loadedLayers[fullLayerId]) return;
+    const parts = fullLayerId.split(".");
+    if (parts[0] !== "curated" || parts.length < 2) return;
+    const layerId = parts.slice(1).join(".");
+
+    let response;
+    try {
+      response = await fetch("/api/actions/get_otef_layers/?table=otef");
+      if (!response.ok) throw new Error(response.status);
+    } catch (e) {
+      console.warn("[Projection] Failed to fetch OTEF layers for curated:", e);
+      return;
+    }
+
+    const list = await response.json();
+    const layerData = Array.isArray(list)
+      ? list.find((l) => String(l.id) === String(layerId))
+      : null;
+    if (!layerData || layerData.layer_type !== "geojson") return;
+
+    let geojson = layerData.geojson;
+    if (!geojson && layerData.url) {
+      const r = await fetch(layerData.url);
+      if (!r.ok) throw new Error(r.status);
+      geojson = await r.json();
+    }
+    if (!geojson || !geojson.features) return;
+
+    const firstCoord = getFirstCoordinate(geojson);
+    const looksLikeWgs84 =
+      firstCoord &&
+      Math.abs(firstCoord[0]) < 1000 &&
+      Math.abs(firstCoord[1]) < 1000;
+    if (looksLikeWgs84) {
+      geojson = CoordUtils.transformGeojsonToItm(geojson);
+    }
+
+    const layerConfig = {
+      style: {
+        type: "simple",
+        defaultStyle: {
+          fillColor: "#00d4ff",
+          fillOpacity: 0.4,
+          strokeColor: "#00a8cc",
+          strokeWidth: 2,
+        },
+      },
+    };
+    const geometryType =
+      geojson.features[0]?.geometry?.type || "Polygon";
+    await renderLayerFromGeojson(
+      geojson,
+      fullLayerId,
+      layerConfig,
+      geometryType,
+    );
+  }
+
+  /**
    * Load a single layer from the layer registry for projection display.
    * @param {string} fullLayerId - Full layer ID (e.g., "map_3_future.mimushim")
    */
@@ -151,8 +218,15 @@
       return;
     }
 
-    const layerConfig = layerRegistry.getLayerConfig(fullLayerId);
+    const layerConfig =
+      layerRegistry && layerRegistry._initialized
+        ? layerRegistry.getLayerConfig(fullLayerId)
+        : null;
     if (!layerConfig) {
+      if (fullLayerId.startsWith("curated.")) {
+        await loadProjectionCuratedLayerFromAPI(fullLayerId);
+        return;
+      }
       console.warn(`[Projection] Layer config not found: ${fullLayerId}`);
       return;
     }
@@ -184,15 +258,13 @@
               const maskRes = await fetch(maskUrl);
               if (maskRes.ok) {
                 let maskGeojson = await maskRes.json();
-                const firstCoord = getFirstCoordinate(maskGeojson);
-                const isWgs84 =
-                  firstCoord &&
-                  Math.abs(firstCoord[0]) < 1000 &&
-                  Math.abs(firstCoord[1]) < 1000;
-                if (
-                  (maskGeojson.crs && maskGeojson.crs.properties?.name?.includes("4326")) ||
-                  isWgs84
-                ) {
+                const mcrs = (maskGeojson.crs?.properties?.name || "").toUpperCase();
+                const mFirst = getFirstCoordinate(maskGeojson);
+                const maskLooksWgs84 =
+                  mFirst &&
+                  Math.abs(mFirst[0]) < 1000 &&
+                  Math.abs(mFirst[1]) < 1000;
+                if (mcrs.includes("4326") || mcrs.includes("WGS") || maskLooksWgs84) {
                   maskGeojson = CoordUtils.transformGeojsonToItm(maskGeojson);
                 }
                 maskGeometry = maskGeojson;
@@ -242,33 +314,38 @@
         }`,
       );
 
-      // Check CRS and transform from WGS84 to ITM if needed
-      // Projection canvas expects ITM coordinates to match model bounds
-      const crs = geojson.crs?.properties?.name || "";
-
-      // Heuristic: Check if coordinates look like WGS84 (small values) vs ITM (large values)
+      // Normalize to ITM for projection: canvas expects ITM to match model bounds.
+      // GeoJSON from processed layers is WGS84 [lon, lat]; from API/source may be ITM or WGS84.
+      const crs = (geojson.crs?.properties?.name || "").toUpperCase();
       const firstCoord = getFirstCoordinate(geojson);
-      let isWgs84 = false;
+      const looksLikeWgs84 =
+        firstCoord &&
+        Math.abs(firstCoord[0]) < 1000 &&
+        Math.abs(firstCoord[1]) < 1000;
+      const looksLikeItm =
+        firstCoord &&
+        Math.abs(firstCoord[0]) >= 1000 &&
+        Math.abs(firstCoord[1]) >= 1000;
 
-      if (firstCoord) {
-        // If x < 1000 and y < 1000, it's definitely not ITM (ITM is usually ~200,000 / ~600,000)
-        if (Math.abs(firstCoord[0]) < 1000 && Math.abs(firstCoord[1]) < 1000) {
-          isWgs84 = true;
+      const crsSaysWgs84 = crs.includes("4326") || crs.includes("WGS");
+      const crsSaysItm = crs.includes("2039") || crs.includes("ITM");
+
+      let shouldTransformToItm = false;
+      if (looksLikeItm && crsSaysItm) {
+        shouldTransformToItm = false;
+      } else if (looksLikeWgs84 || crsSaysWgs84) {
+        if (looksLikeItm) {
+          // Metadata says WGS84 but coords look ITM: trust coords, skip transform
+          shouldTransformToItm = false;
+        } else {
+          shouldTransformToItm = true;
         }
+      } else if (!crs || crs === "") {
+        shouldTransformToItm = looksLikeWgs84;
       }
 
-      if (crs.includes("4326") || crs.includes("WGS") || isWgs84) {
-        if (isWgs84)
-          console.log(
-            `[Projection] Detected WGS84 coordinates for ${fullLayerId}, transforming to ITM...`,
-          );
+      if (shouldTransformToItm) {
         geojson = CoordUtils.transformGeojsonToItm(geojson);
-      } else if (!crs || crs === "") {
-        // Fallback logic preserved but enhanced above
-        // If we are here, isWgs84 is false, meaning coordinates are likely large (ITM)
-        console.log(
-          `[Projection] Detected existing ITM-like coordinates for ${fullLayerId}`,
-        );
       }
 
       // Render layer using Canvas renderer

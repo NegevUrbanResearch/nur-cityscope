@@ -19,10 +19,12 @@ const TableSwitcherPopup = () => {
   }, [availableTables, currentTable, changeTable]);
 
   const handleKeyDown = useCallback((event) => {
+    const target = event.target;
+    const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
     if (event.key.toLowerCase() === 'z' && event.shiftKey) {
       event.preventDefault();
       setIsOpen(prev => !prev);
-    } else if (event.key.toLowerCase() === 't' && !event.shiftKey) {
+    } else if (event.key.toLowerCase() === 't' && !event.shiftKey && !isInput) {
       event.preventDefault();
       switchToNextTable();
     } else if (isOpen && event.key === 'Escape') {

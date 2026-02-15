@@ -414,12 +414,13 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 layer_state.save()
 
     def _get_layer_groups(self, table):
-        """Get hierarchical layer groups structure for a table."""
+        """Get hierarchical layer groups structure for a table.
+        When no LayerGroup rows exist, builds a single 'curated' group from GISLayer so layers appear in the remote.
+        """
         groups = LayerGroup.objects.filter(table=table).order_by('group_id')
         result = []
 
         for group in groups:
-            # Get all layer states for this group
             layer_states = LayerState.objects.filter(
                 table=table,
                 layer_id__startswith=f"{group.group_id}."
@@ -427,18 +428,37 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
             layers = []
             for layer_state in layer_states:
-                # Extract layer_id from full layer_id (remove group_id prefix)
                 layer_id = layer_state.layer_id.replace(f"{group.group_id}.", "", 1)
-                layers.append({
-                    'id': layer_id,
-                    'enabled': layer_state.enabled
-                })
+                layer_item = {'id': layer_id, 'enabled': layer_state.enabled}
+                if group.group_id == 'curated':
+                    try:
+                        gis_layer = GISLayer.objects.filter(
+                            table=table, id=int(layer_id)
+                        ).first()
+                        if gis_layer:
+                            layer_item['displayName'] = gis_layer.display_name or gis_layer.name
+                    except (ValueError, TypeError):
+                        pass
+                layers.append(layer_item)
 
             result.append({
                 'id': group.group_id,
                 'enabled': group.enabled,
                 'layers': layers
             })
+
+        if not result:
+            gis_layers = GISLayer.objects.filter(table=table, is_active=True).order_by('order')
+            if gis_layers.exists():
+                curated_layers = [
+                    {
+                        'id': str(layer.id),
+                        'enabled': True,
+                        'displayName': layer.display_name or layer.name,
+                    }
+                    for layer in gis_layers
+                ]
+                result = [{'id': 'curated', 'enabled': True, 'layers': curated_layers}]
 
         return result
 
@@ -1328,7 +1348,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
         table = Table.objects.filter(name=table_name).first()
         if not table:
             response = JsonResponse(
-                {"error": f"Table '{table_name}' not found"},
+                {"error": f"Table '{table_name}' not found", "code": "table_not_found"},
                 status=404
             )
             self._add_no_cache_headers(response)
@@ -1351,8 +1371,12 @@ class CustomActionsViewSet(viewsets.ViewSet):
 
             if not indicator.exists() or not indicator.first():
                 response = JsonResponse(
-                    {"error": f"Indicator with ID {effective_indicator_id} not found in table '{table_name}'"},
-                    status=404
+                    {
+                        "error": f"Indicator with ID {effective_indicator_id} not found in table '{table_name}'",
+                        "code": "indicator_not_found",
+                        "indicator_id": effective_indicator_id,
+                    },
+                    status=404,
                 )
                 self._add_no_cache_headers(response)
                 return response
@@ -1362,7 +1386,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
         # Check if UGC should be excluded (for dashboard use)
         if exclude_ugc and indicator_obj.is_user_generated:
             response = JsonResponse(
-                {"error": "UGC indicators not available on dashboard", "is_ugc": True},
+                {"error": "UGC indicators not available on dashboard", "code": "ugc_excluded", "is_ugc": True},
                 status=404
             )
             self._add_no_cache_headers(response)
@@ -1459,7 +1483,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                     f"   Using first available state for image lookup: {state.state_values}"
                 )
             else:
-                response = JsonResponse({"error": "No states found"}, status=404)
+                response = JsonResponse({"error": "No states found", "code": "no_states"}, status=404)
                 self._add_no_cache_headers(response)
                 return response
 
@@ -1469,7 +1493,6 @@ class CustomActionsViewSet(viewsets.ViewSet):
         )
 
         if not indicator_data.exists() or not indicator_data.first():
-            # Try to find any indicator data for this indicator
             indicator_data = IndicatorData.objects.filter(indicator=indicator_obj)
             if indicator_data.exists():
                 print(
@@ -1478,7 +1501,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             else:
                 print(f"No indicator data found for {indicator_obj.name}")
                 response = JsonResponse(
-                    {"error": "No indicator data found"}, status=404
+                    {"error": "No indicator data found", "code": "no_indicator_data"}, status=404
                 )
                 self._add_no_cache_headers(response)
                 return response
@@ -1517,10 +1540,10 @@ class CustomActionsViewSet(viewsets.ViewSet):
             except (AttributeError, ValueError) as e:
                 print(f"Error with image data: {e}")
 
-        # If no static image is found, return an error
         response = JsonResponse(
             {
                 "error": "No static image found for this indicator and state",
+                "code": "no_image",
                 "indicator": indicator_obj.name,
                 "state": (
                     state_obj.state_values
@@ -1800,8 +1823,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             data.append(layer_data)
 
         response = JsonResponse(data, safe=False)
-        # Enable caching for layer list (1 day) - significantly speeds up subsequent loads
-        response["Cache-Control"] = "public, max-age=86400"
+        response["Cache-Control"] = "public, max-age=60"
         return response
 
 

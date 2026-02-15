@@ -68,6 +68,21 @@ body {
   letter-spacing: 2px;
 }
 
+.curation-link {
+  padding: 8px 12px;
+  border-radius: var(--border-radius);
+  background: var(--bg-tertiary);
+  color: var(--accent-primary);
+  font-size: 14px;
+  text-decoration: none;
+  border: 1px solid var(--border-color);
+}
+
+.curation-link:hover {
+  background: var(--bg-secondary);
+  border-color: var(--accent-primary);
+}
+
 /* Table Switcher */
 .table-switcher {
   margin-top: 8px;

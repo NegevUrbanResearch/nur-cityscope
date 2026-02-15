@@ -54,15 +54,22 @@ fetch("data/model-bounds.json")
           })
         );
 
-        const initialLayerGroups = OTEFDataContext.getLayerGroups();
-        if (initialLayerGroups && window.ProjectionLayerManager) {
+        const initialLayerGroups =
+          typeof LayerStateHelper !== "undefined" && typeof LayerStateHelper.getEffectiveLayerGroups === "function"
+            ? LayerStateHelper.getEffectiveLayerGroups()
+            : OTEFDataContext.getLayerGroups();
+        if (initialLayerGroups && initialLayerGroups.length > 0 && window.ProjectionLayerManager) {
           window.ProjectionLayerManager.syncLayerGroupsFromState(initialLayerGroups);
         }
 
         window._otefUnsubscribeFunctions.push(
-          OTEFDataContext.subscribe('layerGroups', (layerGroups) => {
-            if (layerGroups && window.ProjectionLayerManager) {
-              window.ProjectionLayerManager.syncLayerGroupsFromState(layerGroups);
+          OTEFDataContext.subscribe('layerGroups', () => {
+            const effective =
+              typeof LayerStateHelper !== "undefined" && typeof LayerStateHelper.getEffectiveLayerGroups === "function"
+                ? LayerStateHelper.getEffectiveLayerGroups()
+                : OTEFDataContext.getLayerGroups();
+            if (effective && effective.length > 0 && window.ProjectionLayerManager) {
+              window.ProjectionLayerManager.syncLayerGroupsFromState(effective);
             }
           })
         );

@@ -150,3 +150,5 @@ otef-interactive/public/processed/**/*
 !otef-interactive/public/processed/.gitkeep
 !otef-interactive/public/processed/**/.gitkeep
 otef-interactive/public/*.zip
+
+nur-colab-map

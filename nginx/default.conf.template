@@ -197,13 +197,14 @@ server {
 
     # --- Reverse Proxy for Django API ---
     location /api/ {
-        proxy_pass http://nur-api:${API_PORT}/api/;  # Updated service name
+        proxy_pass http://nur-api:${API_PORT}/api/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # Allow POST methods
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

@@ -101,9 +101,14 @@ function initializeMap(bounds) {
 
   map.fitBounds(wgs84Bounds);
 
-  // Initialize shared OTEFDataContext and subscribe to state
   if (typeof OTEFDataContext !== "undefined") {
-    OTEFDataContext.init("otef").then(() => {
+    const registryReady =
+      typeof layerRegistry !== "undefined" && layerRegistry.init
+        ? layerRegistry.init()
+        : Promise.resolve();
+    OTEFDataContext.init("otef")
+      .then(() => registryReady)
+      .then(() => {
       const initialViewport = OTEFDataContext.getViewport();
       if (initialViewport) {
         applyViewportFromAPI(initialViewport);
@@ -111,7 +116,6 @@ function initializeMap(bounds) {
       const initialConnection = OTEFDataContext.isConnected();
       updateConnectionStatus(!!initialConnection);
 
-      // Build map deps for layer-state-manager (explicit deps, testable without globals)
       const loaderAPI =
         typeof getMapLayerLoaderAPI === "function"
           ? getMapLayerLoaderAPI()
@@ -128,7 +132,6 @@ function initializeMap(bounds) {
           typeof updateMapLegend === "function" ? updateMapLegend : () => {},
       };
 
-      // Store unsubscribe functions for cleanup
       if (!window._otefUnsubscribeFunctions) {
         window._otefUnsubscribeFunctions = [];
       }
@@ -141,15 +144,24 @@ function initializeMap(bounds) {
         }),
       );
 
-      const initialLayerGroups = OTEFDataContext.getLayerGroups();
-      if (initialLayerGroups) {
+      const initialLayerGroups =
+        typeof LayerStateHelper !== "undefined" &&
+        typeof LayerStateHelper.getEffectiveLayerGroups === "function"
+          ? LayerStateHelper.getEffectiveLayerGroups()
+          : OTEFDataContext.getLayerGroups();
+      if (initialLayerGroups && initialLayerGroups.length > 0) {
         applyLayerGroupsState(initialLayerGroups, mapDeps);
       }
 
       window._otefUnsubscribeFunctions.push(
-        OTEFDataContext.subscribe("layerGroups", (layerGroups) => {
-          if (layerGroups) {
-            applyLayerGroupsState(layerGroups, mapDeps);
+        OTEFDataContext.subscribe("layerGroups", () => {
+          const effective =
+            typeof LayerStateHelper !== "undefined" &&
+            typeof LayerStateHelper.getEffectiveLayerGroups === "function"
+              ? LayerStateHelper.getEffectiveLayerGroups()
+              : OTEFDataContext.getLayerGroups();
+          if (effective && effective.length > 0) {
+            applyLayerGroupsState(effective, mapDeps);
           }
         }),
       );
@@ -159,7 +171,7 @@ function initializeMap(bounds) {
           updateConnectionStatus(!!connected);
         }),
       );
-    });
+      });
   }
 
   // Load GeoJSON layers (independent of shared state)

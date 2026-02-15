@@ -92,13 +92,15 @@ if [ ! -f "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/model-bounds.json
     cp "$SCRIPT_DIR/otef-interactive/frontend/data/model-bounds.json" "$SCRIPT_DIR/nur-io/django_api/public/processed/otef/"
 fi
 
-# Run migrations
+# Run migrations and seed database (tables, indicators, states, indicator data)
 echo "Running database migrations..."
 docker exec nur-api python manage.py migrate
 
-# Create data (loads real data from public/)
-echo "Creating data structure..."
+echo "Creating data structure (states, indicator data, images from public/processed)..."
 docker exec nur-api python manage.py create_data
+
+echo "Importing OTEF data (layer groups, model bounds)..."
+docker exec nur-api python manage.py import_otef_data || echo "   (OTEF import skipped if files not present)"
 
 echo "✅ All services have been successfully configured and data has been loaded."
 echo ""

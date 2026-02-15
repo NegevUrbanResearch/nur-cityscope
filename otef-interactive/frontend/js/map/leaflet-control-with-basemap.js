@@ -109,6 +109,69 @@ async function loadLayerGroups() {
 }
 
 /**
+ * Load a curated layer from the API (get_otef_layers). GeoJSON is stored in ITM; transform to WGS84 for Leaflet.
+ * @param {string} fullLayerId - e.g. "curated.5"
+ */
+async function loadCuratedLayerFromAPI(fullLayerId) {
+  if (loadedLayersMap.has(fullLayerId)) return;
+  const parts = fullLayerId.split(".");
+  if (parts[0] !== "curated" || parts.length < 2) return;
+  const layerId = parts.slice(1).join(".");
+
+  let response;
+  try {
+    response = await fetch("/api/actions/get_otef_layers/?table=otef");
+    if (!response.ok) throw new Error(response.status);
+  } catch (e) {
+    console.warn("[Map] Failed to fetch OTEF layers for curated:", e);
+    return;
+  }
+
+  const list = await response.json();
+  const layerData = Array.isArray(list)
+    ? list.find((l) => String(l.id) === String(layerId))
+    : null;
+  if (!layerData || layerData.layer_type !== "geojson") return;
+
+  let geojson = layerData.geojson;
+  if (!geojson && layerData.url) {
+    const r = await fetch(layerData.url);
+    if (!r.ok) throw new Error(r.status);
+    geojson = await r.json();
+  }
+  if (!geojson || !geojson.features) return;
+
+  const crs = geojson.crs?.properties?.name || "";
+  if (crs.includes("2039") || crs.includes("ITM")) {
+    geojson = CoordUtils.transformGeojsonToWgs84(geojson);
+  }
+
+  const layerConfig = {
+    style: {
+      type: "simple",
+      defaultStyle: {
+        fillColor: "#00d4ff",
+        fillOpacity: 0.4,
+        strokeColor: "#00a8cc",
+        strokeWidth: 2,
+      },
+    },
+  };
+  const leafletLayer =
+    typeof LayerFactory !== "undefined"
+      ? LayerFactory.createGeoJsonLayer({
+          fullLayerId,
+          layerConfig,
+          geojson,
+          map,
+        })
+      : null;
+  if (!leafletLayer) return;
+  leafletLayer.addTo(map);
+  registerLoadedLayer(fullLayerId, leafletLayer);
+}
+
+/**
  * Load a single layer from the layer registry.
  * @param {string} fullLayerId - Full layer ID (e.g., "map_3_future.mimushim")
  */
@@ -119,11 +182,18 @@ async function loadLayerFromRegistry(fullLayerId) {
   }
 
   if (!layerRegistry || !layerRegistry._initialized) {
+    if (fullLayerId.startsWith("curated.")) {
+      await loadCuratedLayerFromAPI(fullLayerId);
+    }
     return;
   }
 
   const layerConfig = layerRegistry.getLayerConfig(fullLayerId);
   if (!layerConfig) {
+    if (fullLayerId.startsWith("curated.")) {
+      await loadCuratedLayerFromAPI(fullLayerId);
+      return;
+    }
     if (!missingLayerConfigs.has(fullLayerId)) {
       missingLayerConfigs.add(fullLayerId);
       console.warn(`[Map] Layer config not found: ${fullLayerId}`);

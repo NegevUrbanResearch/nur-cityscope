@@ -8,13 +8,48 @@ from backend.models import (
     DashboardFeedState,
     LayerConfig,
 )
+from backend.climate_scenarios import CLIMATE_SCENARIO_MAPPING
 from django.conf import settings
 import os
 import json
 
 
+def _processed_root():
+    """Root for processed data: prefer public_idistrict (Docker mount) then public."""
+    base = getattr(settings, "BASE_DIR", os.getcwd())
+    base = os.path.abspath(str(base))
+    for sub in ("public_idistrict", "public"):
+        path = os.path.join(base, sub, "processed")
+        if os.path.isdir(path):
+            return path
+    return os.path.join(base, "public", "processed")
+
+
 class Command(BaseCommand):
     help = "Creates data structure and loads real data from public/processed/"
+
+    def _ensure_states_exist(self):
+        """Create minimal State rows if none exist so IndicatorData/IndicatorImage can be linked."""
+        if not State.objects.filter(scenario_type="general").exists():
+            self.stdout.write(self.style.SUCCESS("[INFO] Seeding general (mobility) states..."))
+            for scenario, label in [("present", "Present"), ("survey", "Survey")]:
+                State.objects.create(
+                    scenario_type="general",
+                    state_values={"scenario": scenario, "label": label},
+                )
+                self.stdout.write(f"  Created state: {label}")
+
+        if not State.objects.filter(scenario_type="utci").exists():
+            self.stdout.write(self.style.SUCCESS("[INFO] Seeding climate states..."))
+            for scenario_key in CLIMATE_SCENARIO_MAPPING:
+                display_name = CLIMATE_SCENARIO_MAPPING[scenario_key]["display_name"]
+                for stype in ("utci", "plan"):
+                    State.objects.get_or_create(
+                        scenario_type=stype,
+                        scenario_name=scenario_key,
+                        defaults={"state_values": {"scenario": scenario_key, "label": display_name}},
+                    )
+            self.stdout.write(f"  Created {len(CLIMATE_SCENARIO_MAPPING) * 2} climate states")
 
     def handle(self, *args, **options):
         self.stdout.write(
@@ -28,6 +63,8 @@ class Command(BaseCommand):
                 self.style.ERROR("[ERROR] idistrict table not found! Run migrations first.")
             )
             return
+
+        self._ensure_states_exist()
 
         # Get indicators from idistrict table
         mobility = Indicator.objects.filter(table=idistrict_table, category="mobility").first()
@@ -57,8 +94,10 @@ class Command(BaseCommand):
             if created:
                 self.stdout.write(f"  [OK] Created IndicatorData: Mobility - {label}")
 
-            # Load image
             image_path = self._find_mobility_image(scenario)
+            map_path = self._find_mobility_map(scenario)
+            if not image_path and map_path:
+                image_path = map_path
             if image_path:
                 img, img_created = IndicatorImage.objects.get_or_create(
                     indicatorData=ind_data, defaults={"image": image_path}
@@ -66,14 +105,12 @@ class Command(BaseCommand):
                 if img_created or img.image != image_path:
                     img.image = image_path
                     img.save()
-                self.stdout.write(f"    [IMG] Image: {image_path}")
+                self.stdout.write(f"    [IMG] {image_path}")
             else:
                 self.stdout.write(
-                    self.style.WARNING(f"    [WARN] No image found for {scenario}")
+                    self.style.WARNING(f"    [WARN] No image or map found for {scenario}")
                 )
 
-            # Load HTML map if exists
-            map_path = self._find_mobility_map(scenario)
             if map_path:
                 LayerConfig.objects.update_or_create(
                     indicatorData=ind_data,
@@ -133,10 +170,8 @@ class Command(BaseCommand):
         )
 
     def _find_mobility_image(self, scenario):
-        """Find mobility image/video in public/processed/mobility/{scenario}/image/"""
-        base_path = os.path.join(
-            settings.BASE_DIR, "public", "processed", "mobility", scenario, "image"
-        )
+        """Find mobility image/video in processed/mobility/{scenario}/image/"""
+        base_path = os.path.join(_processed_root(), "mobility", scenario, "image")
 
         if os.path.exists(base_path):
             # First try to find video files (preferred)
@@ -151,10 +186,8 @@ class Command(BaseCommand):
         return None
 
     def _find_mobility_map(self, scenario):
-        """Find mobility HTML map in public/processed/mobility/{scenario}/map/"""
-        base_path = os.path.join(
-            settings.BASE_DIR, "public", "processed", "mobility", scenario, "map"
-        )
+        """Find mobility HTML map in processed/mobility/{scenario}/map/"""
+        base_path = os.path.join(_processed_root(), "mobility", scenario, "map")
 
         if os.path.exists(base_path):
             for filename in os.listdir(base_path):
@@ -163,11 +196,8 @@ class Command(BaseCommand):
         return None
 
     def _find_climate_image(self, scenario_name, scenario_type):
-        """Find climate image in public/processed/climate/{type}/"""
-        # Directory is now just 'utci' or 'plan' instead of 'utci-scenarios'
-        base_path = os.path.join(
-            settings.BASE_DIR, "public", "processed", "climate", scenario_type
-        )
+        """Find climate image in processed/climate/{type}/"""
+        base_path = os.path.join(_processed_root(), "climate", scenario_type)
 
         if not os.path.exists(base_path):
             return None
