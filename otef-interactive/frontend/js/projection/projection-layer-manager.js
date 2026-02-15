@@ -24,6 +24,16 @@
       : null;
   }
 
+  function updateAllRendererPositions(displayBounds, modelBounds) {
+    if (!displayBounds || !modelBounds) return;
+    if (canvasRenderer) {
+      canvasRenderer.updatePosition(displayBounds, modelBounds);
+    }
+    if (wmtsRenderer) {
+      wmtsRenderer.updatePosition(displayBounds, modelBounds);
+    }
+  }
+
   function updateLayerVisibility(layerId, visible) {
     if (canvasRenderer) {
       canvasRenderer.setLayerVisibility(layerId, visible);
@@ -53,20 +63,19 @@
       // Update canvas position now
       const displayBounds = getDisplayBoundsSafe();
       if (displayBounds) {
-        canvasRenderer.updatePosition(displayBounds, modelBounds);
+        updateAllRendererPositions(displayBounds, modelBounds);
       }
     } catch (error) {
       console.error("[Projection] Failed to create Canvas renderer:", error);
       return;
     }
 
-    // Create WMTS layer renderer (satellite imagery etc.)
     try {
       if (typeof WmtsLayerRenderer !== "undefined") {
         wmtsRenderer = new WmtsLayerRenderer("displayContainer");
         const displayBounds = getDisplayBoundsSafe();
         if (displayBounds) {
-          wmtsRenderer.updatePosition(displayBounds, modelBounds);
+          updateAllRendererPositions(displayBounds, modelBounds);
         }
       }
     } catch (error) {
@@ -281,7 +290,7 @@
         const displayBounds = getDisplayBoundsSafe();
         const modelBounds = getModelBoundsSafe();
         if (displayBounds && modelBounds) {
-          wmtsRenderer.updatePosition(displayBounds, modelBounds);
+          updateAllRendererPositions(displayBounds, modelBounds);
         }
         loadedLayers[fullLayerId] = { type: "wmts" };
         console.log(`[Projection] WMTS layer loaded: ${fullLayerId}`);
@@ -490,7 +499,7 @@
         geometryType,
         loadedLayers[layerName].styleConfig,
       );
-      canvasRenderer.updatePosition(displayBounds, modelBounds);
+      updateAllRendererPositions(displayBounds, modelBounds);
 
       // Registry layers: individual layer.enabled is the source of truth.
       // Reuse shared LayerStateHelper so projection and map agree on visibility.
@@ -550,12 +559,7 @@
   function handleResize() {
     const displayBounds = getDisplayBoundsSafe();
     const modelBounds = getModelBoundsSafe();
-    if (canvasRenderer && displayBounds && modelBounds) {
-      canvasRenderer.updatePosition(displayBounds, modelBounds);
-    }
-    if (wmtsRenderer && displayBounds && modelBounds) {
-      wmtsRenderer.updatePosition(displayBounds, modelBounds);
-    }
+    updateAllRendererPositions(displayBounds, modelBounds);
   }
 
   window.ProjectionLayerManager = {

@@ -225,6 +225,9 @@
 
     render() {
       if (!this.ctx || !this.displayBounds || !this.modelBounds) return;
+
+      const dpr = this.dpr || 1;
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.ctx.clearRect(
         0,
         0,
@@ -377,7 +380,7 @@
       const e = P0.x;
       const f = P0.y;
 
-      this.ctx.setTransform(a, b, c, d, e, f);
+      this.ctx.transform(a, b, c, d, e, f);
       this.ctx.drawImage(
         img,
         0,
