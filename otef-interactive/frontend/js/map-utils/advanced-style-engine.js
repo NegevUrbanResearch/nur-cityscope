@@ -22,12 +22,8 @@ class AdvancedStyleEngine {
       const key = String(
         c.value !== undefined && c.value !== null ? c.value : "",
       );
-      let symbol = null;
-      if (c.advancedSymbol && c.advancedSymbol.symbolLayers) {
-        symbol = c.advancedSymbol;
-      } else if (c.style) {
-        symbol = this._symbolFromSimpleStyle(c.style);
-      }
+      const symbol =
+        c.symbol || (c.style ? this._symbolFromSimpleStyle(c.style) : null);
       if (symbol) map.set(key, symbol);
     }
     AdvancedStyleEngine._uniqueValueSymbolMapCache.set(styleConfig, map);
@@ -37,7 +33,7 @@ class AdvancedStyleEngine {
    * Compute drawing commands for a set of features.
    *
    * @param {Object[]} features - GeoJSON-like features { geometry, properties }
-   * @param {Object} styleConfig - Layer style from styles.json (includes renderer, defaultStyle, uniqueValues, advancedSymbol, etc.)
+   * @param {Object} styleConfig - Layer style from styles.json (renderer, defaultSymbol, uniqueValues with symbol)
    * @param {Object} viewContext - { scale, pixelRatio, ... } (currently unused, reserved for future refinement)
    * @returns {Object[]} commands - array of drawing commands
    */
@@ -68,7 +64,7 @@ class AdvancedStyleEngine {
 
   /**
    * Resolve the style symbol (IR) for a feature given the renderer type.
-   * For now we prefer advancedSymbol when present, and fall back to simple defaultStyle.
+   * Uses defaultSymbol/symbol only (new contract).
    */
   static _resolveStyleSymbol(feature, styleConfig, renderer) {
     // Unique value renderer: O(1) lookup via pre-built Map from class value to symbol IR
@@ -92,12 +88,17 @@ class AdvancedStyleEngine {
       // Fallback to layer default below
     }
 
-    // Simple renderer: use layer-level advancedSymbol when available
-    if (styleConfig.advancedSymbol && styleConfig.advancedSymbol.symbolLayers) {
-      return styleConfig.advancedSymbol;
+    // Simple renderer: defaultSymbol only (new contract)
+    const layerSymbol = styleConfig.defaultSymbol;
+    if (
+      layerSymbol &&
+      layerSymbol.symbolLayers &&
+      layerSymbol.symbolLayers.length
+    ) {
+      return layerSymbol;
     }
 
-    // Fallback to simple default style
+    // Fallback only for edge cases (e.g. image layer with defaultStyle)
     if (styleConfig.defaultStyle) {
       return this._symbolFromSimpleStyle(styleConfig.defaultStyle);
     }
@@ -107,7 +108,7 @@ class AdvancedStyleEngine {
 
   /**
    * Build a minimal symbol IR from a simple style dict.
-   * This lets the engine work even if advancedSymbol is not present.
+   * Used for defaultStyle fallback (e.g. image layer) and uniqueValue class.style.
    */
   static _symbolFromSimpleStyle(simpleStyle) {
     const layers = [];
@@ -139,6 +140,72 @@ class AdvancedStyleEngine {
     }
 
     return { symbolLayers: layers };
+  }
+
+  /**
+   * Convert symbol IR to Leaflet style props (for GeoJSON layers).
+   * Used so map GeoJSON uses the same resolution path as PMTiles/projector.
+   * @param {Object} symbol - { symbolLayers: [ { type, color, width?, opacity?, dash?, hatch? } ] }
+   * @returns {Object} Leaflet style: { fillColor, fillOpacity, color, weight, opacity, dashArray, hatch, radius }
+   */
+  static symbolIRToLeafletProps(symbol) {
+    const result = {
+      fillColor: "#808080",
+      fillOpacity: 0.7,
+      color: "#000000",
+      weight: 1.0,
+      opacity: 1.0,
+      dashArray: null,
+      hatch: null,
+      radius: 5,
+    };
+    if (!symbol || !symbol.symbolLayers || !Array.isArray(symbol.symbolLayers)) {
+      return result;
+    }
+    for (const layer of symbol.symbolLayers) {
+      if (!layer || !layer.type) continue;
+      if (layer.type === "fill") {
+        result.fillColor = layer.color || result.fillColor;
+        result.fillOpacity =
+          layer.opacity !== undefined ? layer.opacity : result.fillOpacity;
+        if (layer.hatch) result.hatch = layer.hatch;
+      }
+      if (layer.type === "stroke") {
+        result.color = layer.color || result.color;
+        result.weight = layer.width !== undefined ? layer.width : result.weight;
+        result.opacity =
+          layer.opacity !== undefined ? layer.opacity : result.opacity;
+        if (layer.dash && Array.isArray(layer.dash.array)) {
+          result.dashArray = layer.dash.array;
+        }
+      }
+      if (layer.type === "markerPoint" && layer.marker) {
+        const size = layer.marker.size;
+        if (typeof size === "number") result.radius = size / 2;
+        else if (Array.isArray(size) && size[0]) result.radius = size[0] / 2;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Return a Leaflet style function for the given layer config (one path: resolve to symbol IR then to Leaflet props).
+   * @param {Object} layerConfig - { style: { renderer, defaultSymbol, uniqueValues } }
+   * @returns {Function} (feature) => { fillColor, fillOpacity, color, weight, opacity, dashArray, hatch, radius }
+   */
+  static getLeafletStyleFunction(layerConfig) {
+    if (!layerConfig || !layerConfig.style) {
+      return () => this.symbolIRToLeafletProps(null);
+    }
+    const styleConfig = layerConfig.style;
+    const renderer = styleConfig.renderer || "simple";
+    return (feature) => {
+      const symbol = this._resolveStyleSymbol(feature, styleConfig, renderer);
+      const fallback = styleConfig.defaultStyle
+        ? this._symbolFromSimpleStyle(styleConfig.defaultStyle)
+        : null;
+      return this.symbolIRToLeafletProps(symbol || fallback);
+    };
   }
 
   /**

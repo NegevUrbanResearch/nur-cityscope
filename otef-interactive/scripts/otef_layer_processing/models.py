@@ -3,6 +3,36 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 
+def _simple_style_to_symbol_ir(simple_style: Dict[str, Any]) -> Dict[str, Any]:
+    """Build minimal symbol IR from a simple style dict (fillColor, strokeColor, etc.)."""
+    if not simple_style:
+        return {"symbolLayers": []}
+    layers: List[Dict[str, Any]] = []
+    if simple_style.get("fillColor"):
+        layers.append(
+            {
+                "type": "fill",
+                "fillType": "solid",
+                "color": simple_style["fillColor"],
+                "opacity": simple_style.get("fillOpacity", 1.0),
+            }
+        )
+    if simple_style.get("strokeColor") or simple_style.get("strokeWidth"):
+        dash = None
+        if simple_style.get("dashArray"):
+            dash = {"array": simple_style["dashArray"]}
+        layers.append(
+            {
+                "type": "stroke",
+                "color": simple_style.get("strokeColor", "#000000"),
+                "width": simple_style.get("strokeWidth", 1.0),
+                "opacity": simple_style.get("strokeOpacity", 1.0),
+                "dash": dash,
+            }
+        )
+    return {"symbolLayers": layers}
+
+
 @dataclass
 class LayerEntry:
     id: str
@@ -90,19 +120,33 @@ class StyleConfig:
     advanced_symbol: Optional[Dict] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        # Single source of truth for drawing: defaultSymbol only (no defaultStyle/advancedSymbol).
         d = {
             "type": self.geometry_type,
             "renderer": self.renderer,
-            "defaultStyle": self.default_style,
-            "fullSymbolLayers": self.full_symbol_layers,
             "labels": self.labels,
             "scaleRange": self.scale_range,
+            "defaultSymbol": self.advanced_symbol
+            or _simple_style_to_symbol_ir(self.default_style),
         }
         if self.unique_values:
-            d["uniqueValues"] = self.unique_values
-        # Only include advanced fields when present to avoid bloating simple styles
-        if self.complexity and self.complexity != "simple":
-            d["complexity"] = self.complexity
-        if self.advanced_symbol:
-            d["advancedSymbol"] = self.advanced_symbol
+            classes = self.unique_values.get("classes", [])
+            classes_out = []
+            for cls in classes:
+                # Per-class: only value, label, symbol (no style/advancedSymbol).
+                symbol = cls.get("advancedSymbol") or _simple_style_to_symbol_ir(
+                    cls.get("style", {})
+                )
+                classes_out.append(
+                    {
+                        "value": cls.get("value"),
+                        "label": cls.get("label", ""),
+                        "symbol": symbol,
+                    }
+                )
+            d["uniqueValues"] = {
+                **{k: v for k, v in self.unique_values.items() if k != "classes"},
+                "classes": classes_out,
+            }
+        # complexity omitted: one path makes it redundant; symbol types are in defaultSymbol
         return d

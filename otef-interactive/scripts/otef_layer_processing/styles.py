@@ -689,7 +689,6 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
                             "value": value,
                             "label": cls.get("label", ""),
                             "style": class_style,
-                            "fullSymbolLayers": all_layers,
                             "advancedSymbol": class_advanced_symbol or None,
                         }
                     )

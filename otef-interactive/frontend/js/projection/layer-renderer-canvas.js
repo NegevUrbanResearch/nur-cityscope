@@ -251,18 +251,12 @@ class CanvasLayerRenderer {
     }
 
     const style = styleConfig && styleConfig.style;
-    const hasAdvancedSymbol =
+    const canUseAdvanced =
       style &&
-      (style.advancedSymbol?.symbolLayers?.length > 0 ||
-        (style.uniqueValues?.classes || []).some(
-          (c) => c.advancedSymbol?.symbolLayers?.length > 0,
-        ));
-    const isAdvanced =
-      hasAdvancedSymbol &&
       typeof AdvancedStyleEngine !== "undefined" &&
       typeof AdvancedStyleDrawing !== "undefined";
 
-    if (isAdvanced) {
+    if (canUseAdvanced) {
       // Use shared advanced style engine to compute drawing commands, then
       // delegate actual drawing to AdvancedStyleDrawing, including multi-stroke
       // lines, hatch fills, and marker-along-line.

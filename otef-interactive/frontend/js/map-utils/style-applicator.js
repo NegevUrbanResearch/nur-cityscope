@@ -15,6 +15,40 @@ class StyleApplicator {
   // 1pt = 1/72 inch, 1px = 1/96 inch -> 96/72 = 1.333
   static PT_TO_PX = 96 / 72;
 
+  /** Convert symbol IR to Leaflet/canvas style bag (new contract). */
+  static _symbolIRToStyleBag(symbol) {
+    const result = {
+      fillColor: "#808080",
+      fillOpacity: 0.7,
+      color: "#000000",
+      weight: 1.0,
+      opacity: 1.0,
+      dashArray: null,
+      hatch: null,
+      radius: 5,
+    };
+    if (!symbol?.symbolLayers?.length) return result;
+    for (const layer of symbol.symbolLayers) {
+      if (!layer?.type) continue;
+      if (layer.type === "fill") {
+        result.fillColor = layer.color || result.fillColor;
+        result.fillOpacity = layer.opacity !== undefined ? layer.opacity : result.fillOpacity;
+        if (layer.hatch) result.hatch = layer.hatch;
+      }
+      if (layer.type === "stroke") {
+        result.color = layer.color || result.color;
+        result.weight = layer.width !== undefined ? layer.width : result.weight;
+        result.opacity = layer.opacity !== undefined ? layer.opacity : result.opacity;
+        if (layer.dash?.array) result.dashArray = layer.dash.array;
+      }
+      if (layer.type === "markerPoint" && layer.marker) {
+        const size = layer.marker.size;
+        result.radius = typeof size === "number" ? size / 2 : Array.isArray(size) && size[0] ? size[0] / 2 : 5;
+      }
+    }
+    return result;
+  }
+
   /**
    * Get Leaflet style function for a layer.
    * @param {Object} layerConfig - Layer config from registry (includes style)
@@ -42,21 +76,18 @@ class StyleApplicator {
    * Handles both GeoJSON features (properties) and PMTiles features (props).
    */
   static _getLandUseStyle(style) {
-    const defaultStyle = style.defaultStyle || {};
+    const bag = style.defaultSymbol
+      ? this._symbolIRToStyleBag(style.defaultSymbol)
+      : (style.defaultStyle || {});
 
     return () => ({
-      fillColor: defaultStyle.fillColor || "#E0E0E0",
-      fillOpacity:
-        defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
-      color: defaultStyle.strokeColor || "#333333",
-      // strokeWidth in styles.json is already in CSS pixels
-      weight: defaultStyle.strokeWidth || 0.5,
-      opacity:
-        defaultStyle.strokeOpacity !== undefined
-          ? defaultStyle.strokeOpacity
-          : 1.0,
-      dashArray: defaultStyle.dashArray || null,
-      hatch: defaultStyle.hatch || null,
+      fillColor: bag.fillColor || "#E0E0E0",
+      fillOpacity: bag.fillOpacity !== undefined ? bag.fillOpacity : 0.7,
+      color: bag.color || bag.strokeColor || "#333333",
+      weight: bag.weight || bag.strokeWidth || 0.5,
+      opacity: bag.opacity !== undefined ? bag.opacity : 1.0,
+      dashArray: bag.dashArray || null,
+      hatch: bag.hatch || null,
     });
   }
 
@@ -64,28 +95,19 @@ class StyleApplicator {
    * Get simple style function (single style for all features).
    */
   static _getSimpleStyle(style) {
-    const defaultStyle = style.defaultStyle || {};
+    const bag = style.defaultSymbol
+      ? this._symbolIRToStyleBag(style.defaultSymbol)
+      : (style.defaultStyle || {});
 
-    return (feature) => {
-      const result = {
-        fillColor: defaultStyle.fillColor || "#808080",
-        fillOpacity:
-          defaultStyle.fillOpacity !== undefined
-            ? defaultStyle.fillOpacity
-            : 0.7,
-        color: defaultStyle.strokeColor || "#000000",
-        // strokeWidth in styles.json is already in CSS pixels
-        weight: defaultStyle.strokeWidth || 1.0,
-        opacity:
-          defaultStyle.strokeOpacity !== undefined
-            ? defaultStyle.strokeOpacity
-            : 1.0,
-        dashArray: defaultStyle.dashArray || null,
-        hatch: defaultStyle.hatch || null,
-      };
-
-      return result;
-    };
+    return () => ({
+      fillColor: bag.fillColor || "#808080",
+      fillOpacity: bag.fillOpacity !== undefined ? bag.fillOpacity : 0.7,
+      color: bag.color || bag.strokeColor || "#000000",
+      weight: bag.weight || bag.strokeWidth || 1.0,
+      opacity: bag.opacity !== undefined ? bag.opacity : 1.0,
+      dashArray: bag.dashArray || null,
+      hatch: bag.hatch || null,
+    });
   }
 
   /**
@@ -95,12 +117,16 @@ class StyleApplicator {
     const uniqueValues = style.uniqueValues || {};
     const field = uniqueValues.field;
     const classes = uniqueValues.classes || [];
-    const defaultStyle = style.defaultStyle || {};
+    const defaultBag = style.defaultSymbol
+      ? this._symbolIRToStyleBag(style.defaultSymbol)
+      : (style.defaultStyle || {});
 
-    // Build lookup map for faster access
     const styleMap = new Map();
     for (const cls of classes) {
-      styleMap.set(String(cls.value), cls.style);
+      const bag = cls.symbol
+        ? this._symbolIRToStyleBag(cls.symbol)
+        : (cls.style || {});
+      styleMap.set(String(cls.value), bag);
     }
 
     // Helper: clamp marker radius for specific layers
@@ -140,59 +166,37 @@ class StyleApplicator {
 
       if (valueStyle) {
         const weightPx =
-          valueStyle.strokeWidth !== undefined
-            ? valueStyle.strokeWidth
-            : defaultStyle.strokeWidth !== undefined
-              ? defaultStyle.strokeWidth
-              : 1.0;
+          valueStyle.weight !== undefined
+            ? valueStyle.weight
+            : valueStyle.strokeWidth !== undefined
+              ? valueStyle.strokeWidth
+              : defaultBag.weight ?? defaultBag.strokeWidth ?? 1.0;
 
-        // radius values from styles.json are already in CSS pixels
-        const rawRadiusPx = valueStyle.radius || defaultStyle.radius || 5;
+        const rawRadiusPx = valueStyle.radius ?? defaultBag.radius ?? 5;
         const radiusPx = clampRadiusIfNeeded(rawRadiusPx);
 
         return {
-          fillColor:
-            valueStyle.fillColor || defaultStyle.fillColor || "#808080",
-          fillOpacity:
-            valueStyle.fillOpacity !== undefined
-              ? valueStyle.fillOpacity
-              : defaultStyle.fillOpacity !== undefined
-                ? defaultStyle.fillOpacity
-                : 0.7,
-          color:
-            valueStyle.strokeColor || defaultStyle.strokeColor || "#000000",
+          fillColor: valueStyle.fillColor ?? defaultBag.fillColor ?? "#808080",
+          fillOpacity: valueStyle.fillOpacity ?? defaultBag.fillOpacity ?? 0.7,
+          color: valueStyle.color ?? valueStyle.strokeColor ?? defaultBag.color ?? defaultBag.strokeColor ?? "#000000",
           weight: weightPx,
-          opacity:
-            valueStyle.strokeOpacity !== undefined
-              ? valueStyle.strokeOpacity
-              : defaultStyle.strokeOpacity !== undefined
-                ? defaultStyle.strokeOpacity
-                : 1.0,
-          dashArray: valueStyle.dashArray || defaultStyle.dashArray || null,
-          hatch: valueStyle.hatch || defaultStyle.hatch || null,
+          opacity: valueStyle.opacity ?? valueStyle.strokeOpacity ?? defaultBag.opacity ?? defaultBag.strokeOpacity ?? 1.0,
+          dashArray: valueStyle.dashArray ?? defaultBag.dashArray ?? null,
+          hatch: valueStyle.hatch ?? defaultBag.hatch ?? null,
           radius: radiusPx,
         };
       }
 
-      // Fallback to default style
-      const fallbackRadiusPx = clampRadiusIfNeeded(
-        defaultStyle.radius || 5,
-      );
+      const fallbackRadiusPx = clampRadiusIfNeeded(defaultBag.radius ?? 5);
 
       return {
-        fillColor: defaultStyle.fillColor || "#808080",
-        fillOpacity:
-          defaultStyle.fillOpacity !== undefined
-            ? defaultStyle.fillOpacity
-            : 0.7,
-        color: defaultStyle.strokeColor || "#000000",
-        weight: defaultStyle.strokeWidth || 1.0,
-        opacity:
-          defaultStyle.strokeOpacity !== undefined
-            ? defaultStyle.strokeOpacity
-            : 1.0,
-        dashArray: defaultStyle.dashArray || null,
-        hatch: defaultStyle.hatch || null,
+        fillColor: defaultBag.fillColor ?? "#808080",
+        fillOpacity: defaultBag.fillOpacity ?? 0.7,
+        color: defaultBag.color ?? defaultBag.strokeColor ?? "#000000",
+        weight: defaultBag.weight ?? defaultBag.strokeWidth ?? 1.0,
+        opacity: defaultBag.opacity ?? defaultBag.strokeOpacity ?? 1.0,
+        dashArray: defaultBag.dashArray ?? null,
+        hatch: defaultBag.hatch ?? null,
         radius: fallbackRadiusPx,
       };
     };
@@ -229,20 +233,17 @@ class StyleApplicator {
     }
 
     const style = layerConfig.style;
-    const defaultStyle = style.defaultStyle || {};
+    const bag = style.defaultSymbol
+      ? this._symbolIRToStyleBag(style.defaultSymbol)
+      : (style.defaultStyle || {});
 
     return {
-      // radius and strokeWidth in styles.json are already in CSS pixels
-      radius: defaultStyle.radius || 5,
-      fillColor: defaultStyle.fillColor || "#808080",
-      fillOpacity:
-        defaultStyle.fillOpacity !== undefined ? defaultStyle.fillOpacity : 0.7,
-      color: defaultStyle.strokeColor || "#000000",
-      weight: defaultStyle.strokeWidth || 1.0,
-      opacity:
-        defaultStyle.strokeOpacity !== undefined
-          ? defaultStyle.strokeOpacity
-          : 1.0,
+      radius: bag.radius ?? 5,
+      fillColor: bag.fillColor ?? "#808080",
+      fillOpacity: bag.fillOpacity !== undefined ? bag.fillOpacity : 0.7,
+      color: bag.color ?? bag.strokeColor ?? "#000000",
+      weight: bag.weight ?? bag.strokeWidth ?? 1.0,
+      opacity: bag.opacity !== undefined ? bag.opacity : 1.0,
     };
   }
 

@@ -47,6 +47,23 @@ CACHE_FILE = ".layer-cache.json"
 MASK_ASSET_STEM_SUFFIX = "_boundary"
 
 
+def _style_config_is_advanced(style_config: Optional[Dict]) -> bool:
+    """True if layer should use PMTiles for advanced rendering (legacy complexity or defaultSymbol hints)."""
+    if not style_config or not isinstance(style_config, dict):
+        return False
+    if style_config.get("complexity") == "advanced":
+        return True
+    layers = (style_config.get("defaultSymbol") or {}).get("symbolLayers") or []
+    if len(layers) > 1:
+        return True
+    for layer in layers:
+        if isinstance(layer, dict) and layer.get("type") in ("markerLine", "markerPoint"):
+            return True
+        if isinstance(layer, dict) and layer.get("hatch"):
+            return True
+    return False
+
+
 def compute_file_hash(path: Path) -> str:
     hash_sha256 = hashlib.sha256()
     with open(path, "rb") as f:
@@ -84,7 +101,7 @@ class ProcessingOrchestrator:
         if not self.no_cache:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             with open(self.cache_path, "w", encoding="utf-8") as f:
-                json.dump(self.cache, f, indent=2)
+                json.dump(self.cache, f, indent=2, ensure_ascii=False)
 
     def _load_popup_config(self) -> Dict:
         # source_dir is typically ".../public/source/layers" or just ".../public/source"
@@ -334,10 +351,10 @@ class ProcessingOrchestrator:
                 "layers": layers_list,
             }
             with open(pack_output / "manifest.json", "w", encoding="utf-8") as f:
-                json.dump(manifest_dict, f, indent=2)
+                json.dump(manifest_dict, f, indent=2, ensure_ascii=False)
 
             with open(pack_output / "styles.json", "w", encoding="utf-8") as f:
-                json.dump(styles_map[pack_id], f, indent=2)
+                json.dump(styles_map[pack_id], f, indent=2, ensure_ascii=False)
 
         self.generate_root_manifest(processed_pack_ids)
         self.save_cache()
@@ -407,11 +424,7 @@ class ProcessingOrchestrator:
                     and str(geom_type).lower() == "point"
                 )
                 is_large = geo_file.stat().st_size > 15 * 1024 * 1024
-                is_advanced = bool(
-                    style_config
-                    and isinstance(style_config, dict)
-                    and style_config.get("complexity") == "advanced"
-                )
+                is_advanced = _style_config_is_advanced(style_config)
                 if (is_large or is_advanced) and not is_label_layer:
                     generate_pmtiles_smart(
                         wgs84_file,
@@ -449,7 +462,7 @@ class ProcessingOrchestrator:
     def generate_root_manifest(self, pack_ids: List[str]):
         root_manifest = {"packs": sorted(pack_ids)}
         with open(self.output_dir / "layers-manifest.json", "w", encoding="utf-8") as f:
-            json.dump(root_manifest, f, indent=2)
+            json.dump(root_manifest, f, indent=2, ensure_ascii=False)
 
     def process_single_image(self, task: Dict, log_level: int) -> Optional[Any]:
         """
@@ -499,7 +512,6 @@ class ProcessingOrchestrator:
             "type": "image",
             "renderer": "image",
             "defaultStyle": {"opacity": 1.0},
-            "fullSymbolLayers": [],
             "labels": None,
             "scaleRange": None,
         }
@@ -597,7 +609,11 @@ class ProcessingOrchestrator:
             new_styles = {}
 
             # --- Process Geo Layers ---
-            geo_files = list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
+            geo_files = [
+                f
+                for f in list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
+                if not f.name.endswith(".wmts.json")
+            ]
             for geo_file in geo_files:
                 layer_id = geo_file.stem
 
@@ -670,13 +686,33 @@ class ProcessingOrchestrator:
                     "type": "image",
                     "renderer": "image",
                     "defaultStyle": {"opacity": 1.0},
-                    "fullSymbolLayers": [],
                     "labels": None,
                     "scaleRange": None,
                 }
 
                 new_layers.append(entry)
                 new_styles[layer_id] = style_config
+
+            # --- Discover WMTS layers from gis/*.wmts.json (mirror process_all) ---
+            for wmts_path in sorted(gis_dir.glob("*.wmts.json")):
+                try:
+                    with open(wmts_path, "r", encoding="utf-8") as f:
+                        wmts_data = json.load(f)
+                    layer_id = wmts_data.get("id", wmts_path.stem)
+                    name = wmts_data.get("name", layer_id.replace("_", " ").title())
+                    wmts_config = wmts_data.get("wmts")
+                    mask_config = wmts_data.get("mask")
+                    if wmts_config:
+                        entry = LayerEntry.create_wmts_layer(
+                            layer_id=layer_id,
+                            name=name,
+                            wmts_config=wmts_config,
+                            mask=mask_config,
+                        )
+                        new_layers.append(entry)
+                        logger.info(f"WMTS layer from {wmts_path.name}: {pack_id}.{layer_id}")
+                except Exception as e:
+                    logger.warning(f"Could not load WMTS {wmts_path}: {e}")
 
             # Write changes
             if new_layers:
@@ -686,15 +722,10 @@ class ProcessingOrchestrator:
                     name=pack_id.title().replace("_", " "),
                     layers=new_layers,
                 )
-
-                # Start from manifest dict and inject default WMTS layer for projector_base,
-                # mirroring the behavior in process_all().
                 manifest_dict = manifest.to_dict()
-                if pack_id == "projector_base":
-                    manifest_dict["layers"].extend(DEFAULT_PROJECTOR_BASE_WMTS_LAYERS)
 
                 with open(pack_output / "manifest.json", "w", encoding="utf-8") as f:
-                    json.dump(manifest_dict, f, indent=2)
+                    json.dump(manifest_dict, f, indent=2, ensure_ascii=False)
 
                 # Merge styles with existing
                 styles_path = pack_output / "styles.json"
@@ -709,7 +740,7 @@ class ProcessingOrchestrator:
                 current_styles.update(new_styles)
 
                 with open(styles_path, "w", encoding="utf-8") as f:
-                    json.dump(current_styles, f, indent=2)
+                    json.dump(current_styles, f, indent=2, ensure_ascii=False)
 
         self.generate_root_manifest(processed_pack_ids)
         logger.info("Metadata update complete.")

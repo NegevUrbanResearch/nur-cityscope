@@ -118,10 +118,12 @@ describe('layer-factory: createPmtilesLayer', () => {
     expect(layer.opts.pane).toBe('overlayLine');
   });
 
-  test('advanced PMTiles layer uses symbolizer with draw(ctx, geom, z, feature) and single paint rule', () => {
-    global.protomapsL = {
-      leafletLayer: jest.fn((opts) => ({ opts }))
+  test('PMTiles layer with style uses advanced path when AdvancedPmtilesLayerRef available', () => {
+    const fakeAdvancedLayer = { _advanced: true };
+    global.AdvancedPmtilesLayer = {
+      createAdvancedPmtilesLayer: jest.fn(() => fakeAdvancedLayer)
     };
+    global.protomapsL = { leafletLayer: jest.fn((opts) => ({ opts })) };
 
     const { createPmtilesLayer } = require('../../frontend/js/map-utils/layer-factory');
 
@@ -130,16 +132,13 @@ describe('layer-factory: createPmtilesLayer', () => {
       layerConfig: {
         geometryType: 'polygon',
         name: 'Land Use',
-        style: { complexity: 'advanced', defaultStyle: { fillColor: '#888' } }
+        style: { defaultSymbol: { symbolLayers: [{ type: 'fill', color: '#888' }] } }
       },
       dataUrl: 'https://example.com/landuse.pmtiles'
     });
 
-    expect(layer).not.toBeNull();
-    expect(layer.opts.paintRules).toBeDefined();
-    expect(layer.opts.paintRules.length).toBe(1);
-    expect(layer.opts.paintRules[0].dataLayer).toBe('layer');
-    expect(typeof layer.opts.paintRules[0].symbolizer.draw).toBe('function');
+    expect(layer).toBe(fakeAdvancedLayer);
+    expect(global.AdvancedPmtilesLayer.createAdvancedPmtilesLayer).toHaveBeenCalled();
   });
 });
 

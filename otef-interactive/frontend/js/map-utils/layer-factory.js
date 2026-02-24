@@ -6,6 +6,7 @@
 // and protomapsL. For Node/tests we fall back to require where available.
 
 let StyleApplicatorRef;
+let AdvancedStyleEngineRef;
 let renderPopupContentRef;
 let LRef;
 let protomapsLRef;
@@ -17,6 +18,9 @@ let AdvancedPmtilesLayerRef;
 function ensureBrowserRefs() {
   if (typeof StyleApplicator !== "undefined" && !StyleApplicatorRef) {
     StyleApplicatorRef = StyleApplicator;
+  }
+  if (typeof AdvancedStyleEngine !== "undefined" && !AdvancedStyleEngineRef) {
+    AdvancedStyleEngineRef = AdvancedStyleEngine;
   }
   if (typeof renderPopupContent === "function" && !renderPopupContentRef) {
     renderPopupContentRef = renderPopupContent;
@@ -47,6 +51,12 @@ try {
   // eslint-disable-next-line global-require
   const StyleApplicatorModule = require("./style-applicator");
   StyleApplicatorRef = StyleApplicatorRef || StyleApplicatorModule;
+} catch (_) {}
+
+try {
+  // eslint-disable-next-line global-require
+  const AdvancedStyleEngineModule = require("./advanced-style-engine");
+  AdvancedStyleEngineRef = AdvancedStyleEngineRef || AdvancedStyleEngineModule;
 } catch (_) {}
 
 try {
@@ -95,7 +105,11 @@ function createGeoJsonLayer(options) {
     return null;
   }
 
-  const styleFunction = StyleApplicatorRef.getLeafletStyle(layerConfig);
+  const styleFunction =
+    AdvancedStyleEngineRef &&
+    typeof AdvancedStyleEngineRef.getLeafletStyleFunction === "function"
+      ? AdvancedStyleEngineRef.getLeafletStyleFunction(layerConfig)
+      : StyleApplicatorRef.getLeafletStyle(layerConfig);
   const popupConfig = layerConfig.ui?.popup;
   const layerDisplayName =
     layerConfig.name ||
@@ -273,18 +287,8 @@ function createPmtilesLayer(options) {
     return null;
   }
 
-  const styleFunction = StyleApplicatorRef.getLeafletStyle(layerConfig);
-
-  let layerPane = "overlayPolygon"; // Default
-  if (layerConfig.geometryType === "line") layerPane = "overlayLine";
-  if (layerConfig.geometryType === "point") layerPane = "overlayPoint";
-
-  const isAdvancedPmtiles =
-    layerConfig.style &&
-    layerConfig.style.complexity === "advanced" &&
-    AdvancedPmtilesLayerRef;
-
-  if (isAdvancedPmtiles) {
+  // One path: use advanced PMTiles layer whenever available (engine handles simple styles via defaultStyle).
+  if (layerConfig.style && AdvancedPmtilesLayerRef) {
     return AdvancedPmtilesLayerRef({
       fullLayerId,
       layerConfig,
@@ -292,101 +296,8 @@ function createPmtilesLayer(options) {
     });
   }
 
-  const dataLayerName = "layer";
-  const paintRules = [];
-
-  if (layerConfig.geometryType === "polygon") {
-    paintRules.push({
-      dataLayer: dataLayerName,
-      symbolizer: new protomapsLRef.PolygonSymbolizer({
-        fill: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.fillColor || "#808080";
-        },
-        color: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.color || "#000000";
-        },
-        width: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.weight || 1.0;
-        },
-        opacity: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.fillOpacity !== undefined ? style.fillOpacity : 0.7;
-        },
-      }),
-    });
-    paintRules.push({
-      dataLayer: "*",
-      symbolizer: new protomapsLRef.PolygonSymbolizer({
-        fill: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.fillColor || "#808080";
-        },
-        color: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.color || "#000000";
-        },
-        width: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.weight || 1.0;
-        },
-        opacity: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.fillOpacity !== undefined ? style.fillOpacity : 0.7;
-        },
-      }),
-    });
-  } else if (layerConfig.geometryType === "line") {
-    paintRules.push({
-      dataLayer: dataLayerName,
-      symbolizer: new protomapsLRef.LineSymbolizer({
-        color: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.color || "#000000";
-        },
-        width: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.weight || 1.0;
-        },
-        opacity: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.opacity !== undefined ? style.opacity : 1.0;
-        },
-      }),
-    });
-    paintRules.push({
-      dataLayer: "*",
-      symbolizer: new protomapsLRef.LineSymbolizer({
-        color: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.color || "#000000";
-        },
-        width: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.weight || 1.0;
-        },
-        opacity: (zoom, feature) => {
-          const style = styleFunction(feature);
-          return style.opacity !== undefined ? style.opacity : 1.0;
-        },
-      }),
-    });
-  }
-
-  const pmtilesLayer = protomapsLRef.leafletLayer({
-    url: dataUrl,
-    paintRules,
-    labelRules: [],
-    minZoom: 9,
-    minDataZoom: 9,
-    maxDataZoom: 18,
-    attribution: layerConfig.name || fullLayerId,
-    pane: layerPane,
-  });
-
-  return pmtilesLayer;
+  // No advanced PMTiles layer available (e.g. script load order or missing dependency).
+  return null;
 }
 
 // Attach to window for browser consumers

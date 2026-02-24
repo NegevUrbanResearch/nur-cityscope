@@ -2,7 +2,7 @@ const AdvancedStyleEngine = require('../../frontend/js/map-utils/advanced-style-
 
 describe('AdvancedStyleEngine', () => {
   describe('_resolveStyleSymbol', () => {
-    test('uniqueValue: returns advancedSymbol for matching class value', () => {
+    test('uniqueValue: returns symbol for matching class value', () => {
       const styleConfig = {
         renderer: 'uniqueValue',
         uniqueValues: {
@@ -10,13 +10,13 @@ describe('AdvancedStyleEngine', () => {
           classes: [
             {
               value: 'R1',
-              advancedSymbol: {
+              symbol: {
                 symbolLayers: [{ type: 'fill', fillType: 'solid', color: '#f00' }]
               }
             },
             {
               value: 'C1',
-              advancedSymbol: {
+              symbol: {
                 symbolLayers: [{ type: 'fill', fillType: 'solid', color: '#0f0' }]
               }
             }
@@ -75,7 +75,7 @@ describe('AdvancedStyleEngine', () => {
         defaultStyle: { fillColor: '#888', strokeColor: '#000' },
         uniqueValues: {
           field: 'zone_code',
-          classes: [{ value: 'R1', advancedSymbol: { symbolLayers: [{ type: 'fill', color: '#f00' }] } }]
+          classes: [{ value: 'R1', symbol: { symbolLayers: [{ type: 'fill', color: '#f00' }] } }]
         }
       };
 
@@ -90,10 +90,10 @@ describe('AdvancedStyleEngine', () => {
       expect(symbol.symbolLayers.some((l) => l.type === 'fill' && l.color === '#888')).toBe(true);
     });
 
-    test('simple renderer: returns advancedSymbol when present', () => {
+    test('simple renderer: returns defaultSymbol when present', () => {
       const styleConfig = {
         renderer: 'simple',
-        advancedSymbol: {
+        defaultSymbol: {
           symbolLayers: [{ type: 'fill', fillType: 'solid', color: '#abc' }]
         }
       };
@@ -108,7 +108,7 @@ describe('AdvancedStyleEngine', () => {
       expect(symbol.symbolLayers[0].color).toBe('#abc');
     });
 
-    test('simple renderer: returns defaultStyle-derived symbol when no advancedSymbol', () => {
+    test('simple renderer: returns defaultStyle-derived symbol when no defaultSymbol', () => {
       const styleConfig = {
         renderer: 'simple',
         defaultStyle: { fillColor: '#111', strokeWidth: 2 }

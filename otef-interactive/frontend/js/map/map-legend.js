@@ -57,7 +57,7 @@ function getDashBackground(dashArray, color) {
 }
 
 /**
- * Build minimal symbol IR from a simple style (defaultStyle).
+ * Build minimal symbol IR from a simple style (e.g. defaultStyle for image layers).
  * Mirrors AdvancedStyleEngine._symbolFromSimpleStyle so legend uses the same IR contract.
  */
 function symbolFromSimpleStyle(simpleStyle) {
@@ -265,7 +265,11 @@ function symbolIRToLegendItems(symbol, label, geometryType) {
  */
 function itemsFromSimple(config) {
   const defaultStyle = config.style?.defaultStyle || {};
-  const symbol = symbolFromSimpleStyle(defaultStyle);
+  const layerSymbol = config.style?.defaultSymbol;
+  const symbol =
+    layerSymbol?.symbolLayers?.length > 0
+      ? layerSymbol
+      : symbolFromSimpleStyle(defaultStyle);
   const label = config.name || config.id || "";
   const geometryType = config.geometryType || "polygon";
   const { items } = symbolIRToLegendItems(symbol, label, geometryType);
@@ -281,12 +285,17 @@ function itemsFromSimple(config) {
 }
 
 /**
- * Items from uniqueValue: each class resolved to symbol IR (advancedSymbol or defaultStyle), then IR -> legend.
+ * Items from uniqueValue: each class resolved to symbol IR (symbol or defaultStyle), then IR -> legend.
  */
 function itemsFromUniqueValue(config) {
   const uv = config.style?.uniqueValues || {};
   const classes = uv.classes || [];
   const defaultStyle = config.style?.defaultStyle || {};
+  const layerDefaultSymbol =
+    config.style?.defaultSymbol ||
+    (config.style?.defaultStyle
+      ? symbolFromSimpleStyle(config.style.defaultStyle)
+      : null);
   const geometryType = config.geometryType || "polygon";
   const shape = shapeForGeometry(geometryType);
 
@@ -298,10 +307,13 @@ function itemsFromUniqueValue(config) {
         : c.value != null
           ? String(c.value)
           : "";
+    const classSymbol = c.symbol || (c.style ? null : layerDefaultSymbol);
     const symbol =
-      c.advancedSymbol && c.advancedSymbol.symbolLayers
-        ? c.advancedSymbol
-        : symbolFromSimpleStyle(c.style || defaultStyle);
+      classSymbol?.symbolLayers?.length > 0
+        ? classSymbol
+        : c.style
+          ? symbolFromSimpleStyle(c.style)
+          : layerDefaultSymbol || symbolFromSimpleStyle(defaultStyle);
     const { items } = symbolIRToLegendItems(symbol, classLabel, geometryType);
     if (items.length > 0) {
       for (const item of items) {
@@ -523,7 +535,7 @@ async function buildLegendModel() {
       let items = [];
       let singleRowMultiSymbol = false;
 
-      // All legend items derived from style IR (advancedSymbol or defaultStyle) for consistency with map/projection
+      // All legend items derived from style IR (defaultSymbol) for consistency with map/projection
       if (renderer === "uniqueValue") {
         items = itemsFromUniqueValue(config);
       } else if (renderer === "landUse") {
@@ -536,11 +548,11 @@ async function buildLegendModel() {
           : [];
         items = itemsFromLandUse(config, distinct);
       } else {
-        // Use advancedSymbol when present so line+marker and multi-stroke layers get single-row merge
+        // defaultSymbol only (new contract)
+        const layerSymbol = config.style?.defaultSymbol;
         const symbol =
-          config.style?.advancedSymbol &&
-          config.style.advancedSymbol.symbolLayers
-            ? config.style.advancedSymbol
+          layerSymbol?.symbolLayers?.length > 0
+            ? layerSymbol
             : symbolFromSimpleStyle(config.style?.defaultStyle || {});
         const label = config.name || layer.id;
         const result = symbolIRToLegendItems(symbol, label, geometryType);
@@ -548,13 +560,6 @@ async function buildLegendModel() {
         singleRowMultiSymbol = result.singleRowMultiSymbol;
         if (items.length === 0) {
           items = itemsFromSimple(config);
-        }
-        // Optional verification: for line layers that should show one row, enable debug to confirm style path
-        if (
-          group.id === "muniplicity_transport" &&
-          (layer.id === "\u05de\u05e1\u05dc\u05d5\u05dc\u05d9_\u05e8\u05db\u05d1\u05df" || layer.id === "\u05e1\u05d9\u05e0\u05d2\u05dc\u05d9\u05dd")
-        ) {
-          console.debug("[MapLegend]", layer.id, { renderer, hasAdvancedSymbol: !!config.style?.advancedSymbol?.symbolLayers, singleRowMultiSymbol: result.singleRowMultiSymbol });
         }
       }
 
