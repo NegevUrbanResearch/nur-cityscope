@@ -23,6 +23,7 @@ from .views import (
     OTEFViewportStateViewSet,
     ImageUploadView,
     serve_map_file,
+    pink_line_geojson,
     OTEFBoundsApplyView,
 )
 
@@ -91,6 +92,6 @@ urlpatterns = [
         CuratedLayerPublishView.as_view(),
         name="supabase_curated_publish",
     ),
-    # For serving map files directly
+    path("pink-line/", pink_line_geojson, name="pink_line_geojson"),
     path("maps/<path:path>", serve_map_file, name="serve_map_file"),
 ]

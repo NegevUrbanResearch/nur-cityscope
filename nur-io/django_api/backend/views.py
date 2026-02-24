@@ -1827,12 +1827,32 @@ class CustomActionsViewSet(viewsets.ViewSet):
         return response
 
 
-from django.http import FileResponse, HttpResponse
+from django.http import FileResponse, HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET
+import json
 import os
 from django.conf import settings
 from rest_framework.views import APIView
 from pathlib import Path
+
+_PINK_LINE_PATH = Path(__file__).resolve().parent / "data" / "pink_line" / "pink-line-wgs84.geojson"
+
+
+@require_GET
+def pink_line_geojson(request):
+    """Serve the base pink line GeoJSON (WGS84) for integrated route display."""
+    if not _PINK_LINE_PATH.exists():
+        return HttpResponse("Pink line data not found", status=404)
+    try:
+        with open(_PINK_LINE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        response = JsonResponse(data, safe=False)
+        response["Content-Type"] = "application/geo+json"
+        response["Cache-Control"] = "public, max-age=86400"
+        return response
+    except (json.JSONDecodeError, OSError):
+        return HttpResponse("Error reading pink line data", status=500)
 
 
 @csrf_exempt

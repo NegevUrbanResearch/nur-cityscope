@@ -13,6 +13,39 @@
 const loadedLayersMap = new Map();
 const missingLayerConfigs = new Set();
 
+let pinkLineBaseLayerInstance = null;
+const CURATED_LAYER_PALETTE = ["#00b4d8", "#2dc653", "#e9c46a", "#e76f51", "#9b59b6", "#1dd3b0"];
+function getCuratedLayerColor(fullLayerId) {
+  let h = 0;
+  for (let i = 0; i < fullLayerId.length; i++) h = (h << 5) - h + fullLayerId.charCodeAt(i);
+  const idx = Math.abs(h) % CURATED_LAYER_PALETTE.length;
+  return CURATED_LAYER_PALETTE[idx];
+}
+
+function formatNodeTooltip(properties) {
+  const p = properties || {};
+  const name = p.name || p.reason || p.description || "";
+  if (!name) return "Node";
+  return String(name).trim().slice(0, 80);
+}
+
+function formatNodePopup(properties) {
+  const p = properties || {};
+  const parts = [];
+  ["name", "reason", "description", "note"].forEach((k) => {
+    const v = p[k];
+    if (v != null && String(v).trim() !== "") parts.push(`<div class="popup-field"><span class="popup-label">${escapeHtml(k)}:</span> <span class="popup-value">${escapeHtml(String(v))}</span></div>`);
+  });
+  if (parts.length === 0) return "<div class=\"popup-content\">—</div>";
+  return '<div class="popup-content">' + parts.join("") + "</div>";
+}
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s;
+  return div.innerHTML;
+}
+
 // Store PMTiles layers with their configs for feature picking (global for map click handler)
 window.pmtilesLayersWithConfigs = window.pmtilesLayersWithConfigs || new Map();
 const pmtilesLayersWithConfigs = window.pmtilesLayersWithConfigs;
@@ -109,8 +142,42 @@ async function loadLayerGroups() {
 }
 
 /**
- * Load a curated layer from the API (get_otef_layers). GeoJSON is stored in ITM; transform to WGS84 for Leaflet.
- * @param {string} fullLayerId - e.g. "curated.5"
+ * Extract Point features (with properties) and [lat, lng] coords for route building.
+ */
+function extractPointFeaturesFromGeojson(geojson) {
+  const list = [];
+  if (!geojson || !geojson.features) return list;
+  for (const f of geojson.features) {
+    const geom = f.geometry;
+    if (!geom || geom.type !== "Point" || !geom.coordinates) continue;
+    const c = geom.coordinates;
+    list.push({ feature: f, latlng: [c[1], c[0]] });
+  }
+  return list;
+}
+
+async function ensurePinkLineBaseLayer() {
+  if (pinkLineBaseLayerInstance && map.hasLayer(pinkLineBaseLayerInstance)) return;
+  try {
+    const pinkRes = await fetch("/api/pink-line/");
+    if (!pinkRes.ok) return;
+    const pinkGeojson = await pinkRes.json();
+    if (typeof parseDefaultLinePaths !== "function") return;
+    const basePaths = parseDefaultLinePaths(pinkGeojson);
+    if (basePaths.length === 0) return;
+    const group = L.layerGroup();
+    const baseStyle = { color: "#ff69b4", weight: 5, opacity: 1 };
+    basePaths.forEach((path) => {
+      group.addLayer(L.polyline(path, baseStyle));
+    });
+    group.addTo(map);
+    pinkLineBaseLayerInstance = group;
+  } catch (_) {}
+}
+
+/**
+ * Load a curated layer. Each layer is one independent suggestion: base pink line (shared, distinct style)
+ * plus this layer's route in its own color. Nodes show name/metadata on hover (tooltip) and click (popup). No numbering.
  */
 async function loadCuratedLayerFromAPI(fullLayerId) {
   if (loadedLayersMap.has(fullLayerId)) return;
@@ -144,6 +211,72 @@ async function loadCuratedLayerFromAPI(fullLayerId) {
   const crs = geojson.crs?.properties?.name || "";
   if (crs.includes("2039") || crs.includes("ITM")) {
     geojson = CoordUtils.transformGeojsonToWgs84(geojson);
+  }
+
+  const pointItems = extractPointFeaturesFromGeojson(geojson);
+  const userPoints = pointItems.map((x) => x.latlng);
+  let pinkGeojson = null;
+  try {
+    const pinkRes = await fetch("/api/pink-line/");
+    if (pinkRes.ok) pinkGeojson = await pinkRes.json();
+  } catch (_) {}
+
+  const hasRouteUtils =
+    typeof parseDefaultLinePaths === "function" &&
+    typeof buildIntegratedRoute === "function";
+  const basePaths = pinkGeojson && hasRouteUtils ? parseDefaultLinePaths(pinkGeojson) : [];
+  const usePinkLineProjection =
+    basePaths.length > 0 && (userPoints.length > 0 || geojson.features.some((f) => f.geometry && (f.geometry.type === "LineString" || f.geometry.type === "MultiLineString")));
+
+  if (usePinkLineProjection && userPoints.length > 0) {
+    await ensurePinkLineBaseLayer();
+    const { dashed } = buildIntegratedRoute(basePaths, userPoints);
+    const layerColor = getCuratedLayerColor(fullLayerId);
+    const group = L.layerGroup();
+    const dashedStyle = { color: layerColor, weight: 5, opacity: 0.9, dashArray: "10, 10" };
+    dashed.forEach((pts) => {
+      group.addLayer(L.polyline(pts, dashedStyle));
+    });
+    pointItems.forEach(({ feature, latlng }) => {
+      const marker = L.marker(latlng, {
+        icon: L.divIcon({
+          className: "pink-line-node-marker",
+          html: `<div class="pink-line-node" style="background:${layerColor}"></div>`,
+          iconSize: [14, 14],
+          iconAnchor: [7, 7],
+        }),
+      });
+      const tip = formatNodeTooltip(feature.properties);
+      const popupContent = formatNodePopup(feature.properties);
+      marker.bindTooltip(tip, { permanent: false, direction: "top", className: "curated-node-tooltip" });
+      marker.bindPopup(popupContent, { className: "curated-node-popup" });
+      group.addLayer(marker);
+    });
+    group.addTo(map);
+    registerLoadedLayer(fullLayerId, group);
+    return;
+  }
+
+  if (usePinkLineProjection && basePaths.length > 0 && userPoints.length === 0) {
+    await ensurePinkLineBaseLayer();
+    const layerColor = getCuratedLayerColor(fullLayerId);
+    const group = L.layerGroup();
+    const lineFeatures = geojson.features.filter(
+      (f) => f.geometry && (f.geometry.type === "LineString" || f.geometry.type === "MultiLineString")
+    );
+    if (lineFeatures.length > 0) {
+      lineFeatures.forEach((f) => {
+        const coords = f.geometry.type === "LineString"
+          ? f.geometry.coordinates.map((c) => [c[1], c[0]])
+          : f.geometry.coordinates.flatMap((line) => line.map((c) => [c[1], c[0]]));
+        if (coords.length >= 2) {
+          group.addLayer(L.polyline(coords, { color: layerColor, weight: 4, opacity: 0.9, dashArray: "10, 10" }));
+        }
+      });
+    }
+    group.addTo(map);
+    registerLoadedLayer(fullLayerId, group);
+    return;
   }
 
   const layerConfig = {

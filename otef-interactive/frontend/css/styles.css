@@ -399,6 +399,30 @@ body {
   }
 }
 
+/* Pink line curated layer: node markers (no numbers), tooltip on hover */
+.pink-line-node-marker {
+  background: transparent;
+  border: none;
+}
+
+.pink-line-node {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: currentColor;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.curated-node-tooltip {
+  font-size: 13px;
+  padding: 6px 10px;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Mobile optimization */
 @media (max-width: 768px) {
   .panel {

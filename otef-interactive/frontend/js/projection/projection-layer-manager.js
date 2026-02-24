@@ -156,8 +156,61 @@
     }
   }
 
+  const PINK_LINE_BASE_LAYER_ID = "pink_line_base";
+  const CURATED_PROJECTION_PALETTE = ["#00b4d8", "#2dc653", "#e9c46a", "#e76f51", "#9b59b6", "#1dd3b0"];
+  function getCuratedLayerColorForProjection(fullLayerId) {
+    let h = 0;
+    for (let i = 0; i < fullLayerId.length; i++) h = (h << 5) - h + fullLayerId.charCodeAt(i);
+    return CURATED_PROJECTION_PALETTE[Math.abs(h) % CURATED_PROJECTION_PALETTE.length];
+  }
+
+  async function ensureProjectionPinkLineBaseLayer() {
+    if (loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
+    if (typeof parseDefaultLinePaths !== "function") return;
+    try {
+      const pinkRes = await fetch("/api/pink-line/");
+      if (!pinkRes.ok) return;
+      const pinkGeojson = await pinkRes.json();
+      const basePaths = parseDefaultLinePaths(pinkGeojson);
+      if (basePaths.length === 0) return;
+      const features = basePaths.map((path) => ({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: path.map(([lat, lng]) => [lng, lat]),
+        },
+        properties: {},
+      }));
+      const wgs84Geojson = { type: "FeatureCollection", features };
+      const itmGeojson = CoordUtils.transformGeojsonToItm(wgs84Geojson);
+      const layerConfig = {
+        style: {
+          type: "simple",
+          defaultStyle: { color: "#ff69b4", weight: 5, opacity: 1 },
+        },
+      };
+      const styleFunction = () => ({ color: "#ff69b4", weight: 5, opacity: 1 });
+      loadedLayers[PINK_LINE_BASE_LAYER_ID] = {
+        originalGeojson: itmGeojson,
+        styleFunction,
+        styleConfig: layerConfig,
+        geometryType: "line",
+      };
+      if (canvasRenderer) {
+        canvasRenderer.setLayer(
+          PINK_LINE_BASE_LAYER_ID,
+          itmGeojson,
+          styleFunction,
+          "line",
+          layerConfig,
+        );
+        canvasRenderer.setLayerVisibility(PINK_LINE_BASE_LAYER_ID, true);
+      }
+    } catch (_) {}
+  }
+
   /**
-   * Load a curated layer from the API for projection. GeoJSON from API is in ITM.
+   * Load a curated layer for projection. Original pink line shown in full (separate layer); curated only draws variations (dashed) + nodes.
    */
   async function loadProjectionCuratedLayerFromAPI(fullLayerId) {
     if (loadedLayers[fullLayerId]) return;
@@ -188,15 +241,93 @@
     }
     if (!geojson || !geojson.features) return;
 
+    let wgs84Geojson = geojson;
     const firstCoord = getFirstCoordinate(geojson);
     const looksLikeWgs84 =
       firstCoord &&
       Math.abs(firstCoord[0]) < 1000 &&
       Math.abs(firstCoord[1]) < 1000;
-    if (looksLikeWgs84) {
-      geojson = CoordUtils.transformGeojsonToItm(geojson);
+    if (!looksLikeWgs84 && firstCoord && Math.abs(firstCoord[0]) >= 1000) {
+      wgs84Geojson = CoordUtils.transformGeojsonToWgs84(geojson);
     }
 
+    const pointFeatures = (wgs84Geojson.features || []).filter(
+      (f) => f.geometry && f.geometry.type === "Point" && f.geometry.coordinates
+    );
+    const userPoints = pointFeatures.map((f) => {
+      const c = f.geometry.coordinates;
+      return [c[1], c[0]];
+    });
+
+    let builtGeojson = null;
+    if (
+      typeof parseDefaultLinePaths === "function" &&
+      typeof buildIntegratedRoute === "function" &&
+      userPoints.length > 0
+    ) {
+      let pinkGeojson = null;
+      try {
+        const pinkRes = await fetch("/api/pink-line/");
+        if (pinkRes.ok) pinkGeojson = await pinkRes.json();
+      } catch (_) {}
+      if (pinkGeojson) {
+        await ensureProjectionPinkLineBaseLayer();
+        const basePaths = parseDefaultLinePaths(pinkGeojson);
+        if (basePaths.length > 0) {
+          const { dashed } = buildIntegratedRoute(basePaths, userPoints);
+          const layerColor = getCuratedLayerColorForProjection(fullLayerId);
+          const features = [];
+          dashed.forEach((path) => {
+            const coords = path.map(([lat, lng]) => [lng, lat]);
+            features.push({
+              type: "Feature",
+              geometry: { type: "LineString", coordinates: coords },
+              properties: { _curatedStyle: { color: layerColor, weight: 5, opacity: 0.9, dashArray: [10, 10] } },
+            });
+          });
+          pointFeatures.forEach((f) => {
+            const c = f.geometry.coordinates;
+            features.push({
+              type: "Feature",
+              geometry: { type: "Point", coordinates: [c[0], c[1]] },
+              properties: {
+                _curatedStyle: {
+                  fillColor: layerColor,
+                  color: "#fff",
+                  weight: 1,
+                  fillOpacity: 0.9,
+                  opacity: 1,
+                  radius: 6,
+                },
+              },
+            });
+          });
+          builtGeojson = { type: "FeatureCollection", features };
+        }
+      }
+    }
+
+    if (builtGeojson) {
+      const itmGeojson = CoordUtils.transformGeojsonToItm(builtGeojson);
+      const layerColor = getCuratedLayerColorForProjection(fullLayerId);
+      const customStyleFunction = (feature) =>
+        feature.properties && feature.properties._curatedStyle
+          ? feature.properties._curatedStyle
+          : { color: layerColor, weight: 4, opacity: 0.85, fillColor: layerColor, fillOpacity: 0.8, radius: 5 };
+      const layerConfig = { style: { type: "simple" } };
+      await renderLayerFromGeojson(
+        itmGeojson,
+        fullLayerId,
+        layerConfig,
+        "line",
+        { customStyleFunction },
+      );
+      return;
+    }
+
+    const itmGeojson = looksLikeWgs84
+      ? CoordUtils.transformGeojsonToItm(geojson)
+      : geojson;
     const layerConfig = {
       style: {
         type: "simple",
@@ -208,14 +339,8 @@
         },
       },
     };
-    const geometryType =
-      geojson.features[0]?.geometry?.type || "Polygon";
-    await renderLayerFromGeojson(
-      geojson,
-      fullLayerId,
-      layerConfig,
-      geometryType,
-    );
+    const geometryType = itmGeojson.features[0]?.geometry?.type || "Polygon";
+    await renderLayerFromGeojson(itmGeojson, fullLayerId, layerConfig, geometryType);
   }
 
   /**
@@ -468,13 +593,15 @@
   }
 
   /**
-   * Helper function to render a layer from GeoJSON using Canvas
+   * Helper function to render a layer from GeoJSON using Canvas.
+   * @param {Object} [options.customStyleFunction] - Optional; if provided, used instead of StyleApplicator.getCanvasStyle(layerConfig).
    */
   async function renderLayerFromGeojson(
     geojson,
     layerName,
     layerConfig,
     geometryType,
+    options,
   ) {
     const displayBounds = getDisplayBoundsSafe();
     const modelBounds = getModelBoundsSafe();
@@ -482,15 +609,18 @@
       throw new Error("Display bounds not available");
     }
 
-    // Store for Canvas renderer (raw ITM coordinates, Canvas does transformation)
+    const styleFunction =
+      options && typeof options.customStyleFunction === "function"
+        ? options.customStyleFunction
+        : StyleApplicator.getCanvasStyle(layerConfig);
+
     loadedLayers[layerName] = {
       originalGeojson: geojson,
-      styleFunction: StyleApplicator.getCanvasStyle(layerConfig),
+      styleFunction,
       styleConfig: layerConfig,
       geometryType: geometryType,
     };
 
-    // Add layer to Canvas renderer
     if (canvasRenderer) {
       canvasRenderer.setLayer(
         layerName,

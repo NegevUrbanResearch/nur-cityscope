@@ -1,10 +1,14 @@
 /**
- * Curation page: list Supabase projects/submissions, Leaflet preview,
- * toggle features, name and publish as OTEF layer.
+ * Curation page: list Supabase projects/submissions, Leaflet preview with
+ * pink line (הקו_הורוד) base route, submission features as dashed lines and
+ * labeled points. Toggle features, name and publish as OTEF layer.
  * Uses API proxy only (no Supabase client on frontend).
  */
 
 (function () {
+  const LABEL_PROPERTY_KEYS = ["name", "reason", "description", "note"];
+  const META_SUBTITLE_KEYS = ["reason", "description", "note"];
+
   const API = {
     async projects() {
       const r = await fetch("/api/supabase/projects/");
@@ -61,6 +65,7 @@
   };
 
   let map = null;
+  let baseRouteLayer = null;
   let currentLayer = null;
   let currentFeatures = [];
   let featureEnabled = new Map();
@@ -73,13 +78,58 @@
   const publishBtn = () => el("curationPublish");
   const statusEl = () => el("curationStatus");
   const refreshBtn = () => el("curationRefresh");
-  const pollingCheckbox = () => el("curationPolling");
+  const SUBMISSION_NAMES_KEY = "curation_submission_names";
 
   function setStatus(msg, type) {
     const s = statusEl();
     if (!s) return;
     s.textContent = msg || "";
     s.className = "curation-status" + (type ? " " + type : "");
+  }
+
+  function getSubmissionNames() {
+    try {
+      const raw = localStorage.getItem(SUBMISSION_NAMES_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function setSubmissionName(submissionId, name) {
+    const names = getSubmissionNames();
+    if (name != null && String(name).trim() !== "") {
+      names[submissionId] = String(name).trim();
+    } else {
+      delete names[submissionId];
+    }
+    localStorage.setItem(SUBMISSION_NAMES_KEY, JSON.stringify(names));
+  }
+
+  function getSubmissionDisplayName(submissionId) {
+    const names = getSubmissionNames();
+    const custom = names[submissionId];
+    if (custom != null && String(custom).trim() !== "") return String(custom).trim();
+    const idStr = String(submissionId);
+    return idStr.slice(0, 8) + (idStr.length > 8 ? "…" : "");
+  }
+
+  function getLabelFromProps(properties) {
+    const p = properties || {};
+    for (const key of LABEL_PROPERTY_KEYS) {
+      const v = p[key];
+      if (v != null && String(v).trim() !== "") return String(v).trim();
+    }
+    return null;
+  }
+
+  function getSubtitleFromProps(properties) {
+    const p = properties || {};
+    for (const key of META_SUBTITLE_KEYS) {
+      const v = p[key];
+      if (v != null && String(v).trim() !== "") return String(v).trim();
+    }
+    return null;
   }
 
   function initMap() {
@@ -93,74 +143,24 @@
   }
 
   function clearPreview() {
+    if (baseRouteLayer && map) {
+      map.removeLayer(baseRouteLayer);
+      baseRouteLayer = null;
+    }
     if (currentLayer && map) {
       map.removeLayer(currentLayer);
       currentLayer = null;
     }
   }
 
-  function showPreview(geojson) {
-    if (!map) initMap();
-    clearPreview();
-    if (!geojson || !geojson.features || !geojson.features.length) return;
-    currentLayer = L.geoJSON(geojson, {
-      style: {
-        color: "#00d4ff",
-        weight: 2,
-        fillOpacity: 0.3,
-      },
-    }).addTo(map);
-    map.fitBounds(currentLayer.getBounds(), { padding: [20, 20] });
-  }
-
-  function renderFeatureList(features) {
-    currentFeatures = features || [];
-    featureEnabled.clear();
-    const container = featuresContainer();
-    if (!container) return;
-
-    if (!currentFeatures.length) {
-    container.innerHTML =
-      '<div class="curation-status">No features in this submission.</div>';
-    publishBtn().disabled = true;
-    return;
+  async function loadPinkLineGeojson() {
+    try {
+      const res = await fetch("/api/pink-line/");
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (_) {
+      return null;
     }
-
-    currentFeatures.forEach((f, i) => {
-    featureEnabled.set(i, true);
-    });
-
-    container.innerHTML = currentFeatures
-      .map((f, i) => {
-        const name =
-          f.properties?.name ||
-          f.properties?.description ||
-          f.id ||
-          `Feature ${i + 1}`;
-        const id = `curation-f-${i}`;
-        return `
-          <div class="curation-feature-row">
-            <input type="checkbox" id="${id}" data-index="${i}" checked />
-            <label for="${id}">${escapeHtml(String(name))}</label>
-          </div>`;
-      })
-      .join("");
-
-    container.querySelectorAll("input[data-index]").forEach((input) => {
-    input.addEventListener("change", () => {
-      const idx = parseInt(input.getAttribute("data-index"), 10);
-      featureEnabled.set(idx, input.checked);
-      updatePublishState();
-    });
-    });
-
-    publishBtn().disabled = !getSelectedGeojson().features.length;
-  }
-
-  function escapeHtml(s) {
-    const div = document.createElement("div");
-    div.textContent = s;
-    return div.innerHTML;
   }
 
   function getFirstCoordinate(geojson) {
@@ -172,6 +172,226 @@
       if (Array.isArray(coords) && typeof coords[0] === "number") return coords;
     }
     return null;
+  }
+
+  function getGeometryType(geometry) {
+    if (!geometry || !geometry.type) return null;
+    const t = geometry.type.toLowerCase();
+    if (t === "point" || t === "multipoint") return "point";
+    if (t === "linestring" || t === "multilinestring") return "line";
+    return "polygon";
+  }
+
+  async function showPreview(geojson) {
+    if (!map) initMap();
+    clearPreview();
+    const features = geojson?.features || [];
+    const bounds = [];
+
+    const pinkGeojson = await loadPinkLineGeojson();
+    if (pinkGeojson && pinkGeojson.features && pinkGeojson.features.length && map) {
+      baseRouteLayer = L.geoJSON(pinkGeojson, {
+        style: {
+          color: "#ff7f7f",
+          weight: 3,
+          opacity: 0.9,
+        },
+      }).addTo(map);
+      baseRouteLayer.eachLayer((l) => {
+        if (l.getBounds) bounds.push(l.getBounds());
+      });
+    }
+
+    if (!features.length) {
+      if (bounds.length) map.fitBounds(L.latLngBounds(bounds), { padding: [20, 20] });
+      return;
+    }
+
+    const pointFeatures = [];
+    const lineFeatures = [];
+    const otherFeatures = [];
+    features.forEach((f) => {
+      const geomType = getGeometryType(f.geometry);
+      if (geomType === "point") pointFeatures.push(f);
+      else if (geomType === "line") lineFeatures.push(f);
+      else otherFeatures.push(f);
+    });
+
+    currentLayer = L.layerGroup();
+
+    const pointLayer = L.geoJSON(
+      { type: "FeatureCollection", features: pointFeatures },
+      {
+        pointToLayer: (feature, latlng) => {
+          const label = getLabelFromProps(feature.properties);
+          return L.marker(latlng, {
+            icon: L.divIcon({
+              className: "leaflet-label-icon",
+              html: label
+                ? '<span class="curation-marker-label">' + escapeHtml(label) + "</span>"
+                : "<span class=\"curation-marker-label\">•</span>",
+              iconSize: null,
+              iconAnchor: [0, 0],
+            }),
+          });
+        },
+      }
+    );
+    pointLayer.eachLayer((l) => {
+      currentLayer.addLayer(l);
+      if (l.getBounds) bounds.push(l.getBounds());
+    });
+
+    const lineStyle = { color: "#00d4ff", weight: 2.5, dashArray: "8,6", opacity: 0.95 };
+    const lineLayer = L.geoJSON(
+      { type: "FeatureCollection", features: lineFeatures },
+      { style: lineStyle }
+    );
+    lineLayer.eachLayer((l) => {
+      currentLayer.addLayer(l);
+      if (l.getBounds) bounds.push(l.getBounds());
+    });
+
+    const otherStyle = { color: "#00d4ff", weight: 2, fillOpacity: 0.3 };
+    const otherLayer = L.geoJSON(
+      { type: "FeatureCollection", features: otherFeatures },
+      { style: otherStyle }
+    );
+    otherLayer.eachLayer((l) => {
+      currentLayer.addLayer(l);
+      if (l.getBounds) bounds.push(l.getBounds());
+    });
+
+    currentLayer.addTo(map);
+    if (bounds.length) {
+      const b = L.latLngBounds(bounds);
+      map.fitBounds(b, { padding: [24, 24], maxZoom: 16 });
+    }
+  }
+
+  function escapeHtml(s) {
+    const div = document.createElement("div");
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  function renderFeatureList(features) {
+    currentFeatures = features || [];
+    featureEnabled.clear();
+    const container = featuresContainer();
+    if (!container) return;
+
+    if (!currentFeatures.length) {
+      container.innerHTML =
+        '<div class="curation-status">No features in this submission.</div>';
+      publishBtn().disabled = true;
+      return;
+    }
+
+    currentFeatures.forEach((_, i) => {
+      featureEnabled.set(i, true);
+    });
+
+    container.innerHTML = currentFeatures
+      .map((f, i) => {
+        const props = f.properties || {};
+        const name =
+          props.name ||
+          props.description ||
+          props.reason ||
+          props.id ||
+          `Feature ${i + 1}`;
+        const subtitle = getSubtitleFromProps(props);
+        const id = `curation-f-${i}`;
+        const showSubtitle = subtitle && String(subtitle).trim() !== String(name).trim();
+        const subtitleHtml = showSubtitle
+          ? `<div class="curation-feature-meta">${escapeHtml(subtitle)}</div>`
+          : "";
+        return `
+          <div class="curation-feature-row">
+            <input type="checkbox" id="${id}" data-index="${i}" checked />
+            <div class="curation-feature-content">
+              <label for="${id}" class="curation-feature-title">${escapeHtml(String(name))}</label>
+              ${subtitleHtml}
+            </div>
+            <button type="button" class="curation-feature-edit" data-index="${i}" aria-label="Edit feature">Edit</button>
+          </div>`;
+      })
+      .join("");
+
+    container.querySelectorAll("input[data-index]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const idx = parseInt(input.getAttribute("data-index"), 10);
+        featureEnabled.set(idx, input.checked);
+        updatePublishState();
+      });
+    });
+
+    container.querySelectorAll(".curation-feature-edit").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = parseInt(btn.getAttribute("data-index"), 10);
+        openFeatureModal(idx);
+      });
+    });
+
+    publishBtn().disabled = !getSelectedGeojson().features.length;
+  }
+
+  function openSubmissionModal() {
+    const sid = submissionSelect().value;
+    if (!sid) return;
+    el("curationModalSubmissionId").value = sid;
+    el("curationModalSubmissionName").value = getSubmissionNames()[sid] || "";
+    el("curationModalSubmission").classList.add("open");
+    el("curationModalSubmission").setAttribute("aria-hidden", "false");
+  }
+
+  function closeSubmissionModal() {
+    el("curationModalSubmission").classList.remove("open");
+    el("curationModalSubmission").setAttribute("aria-hidden", "true");
+  }
+
+  function saveSubmissionModal() {
+    const sid = el("curationModalSubmissionId").value;
+    const name = (el("curationModalSubmissionName").value || "").trim();
+    setSubmissionName(sid, name);
+    const opts = submissionSelect().querySelectorAll("option");
+    opts.forEach((opt) => {
+      if (opt.value === sid) opt.textContent = getSubmissionDisplayName(sid);
+    });
+    closeSubmissionModal();
+  }
+
+  function openFeatureModal(featureIndex) {
+    const f = currentFeatures[featureIndex];
+    if (!f) return;
+    const p = f.properties || {};
+    el("curationModalFeatureName").value = p.name != null ? String(p.name) : "";
+    el("curationModalFeatureReason").value = p.reason != null ? String(p.reason) : "";
+    el("curationModalFeatureDescription").value = p.description != null ? String(p.description) : "";
+    el("curationModalFeatureNote").value = p.note != null ? String(p.note) : "";
+    el("curationModalFeature").setAttribute("data-feature-index", String(featureIndex));
+    el("curationModalFeature").classList.add("open");
+    el("curationModalFeature").setAttribute("aria-hidden", "false");
+  }
+
+  function closeFeatureModal() {
+    el("curationModalFeature").classList.remove("open");
+    el("curationModalFeature").setAttribute("aria-hidden", "true");
+  }
+
+  function saveFeatureModal() {
+    const idx = parseInt(el("curationModalFeature").getAttribute("data-feature-index"), 10);
+    const f = currentFeatures[idx];
+    if (!f) return;
+    f.properties = f.properties || {};
+    f.properties.name = (el("curationModalFeatureName").value || "").trim() || undefined;
+    f.properties.reason = (el("curationModalFeatureReason").value || "").trim() || undefined;
+    f.properties.description = (el("curationModalFeatureDescription").value || "").trim() || undefined;
+    f.properties.note = (el("curationModalFeatureNote").value || "").trim() || undefined;
+    renderFeatureList(currentFeatures);
+    showPreview({ type: "FeatureCollection", features: currentFeatures });
+    closeFeatureModal();
   }
 
   function getSelectedGeojson() {
@@ -199,10 +419,7 @@
       const current = select.value;
       select.innerHTML =
         '<option value="">— Select project —</option>' +
-        (Array.isArray(list)
-          ? list
-          : []
-        )
+        (Array.isArray(list) ? list : [])
           .map((p) => {
             const id = p.id ?? p.project_id ?? p;
             const name = p.name ?? p.display_name ?? String(id);
@@ -228,7 +445,7 @@
         const id = s.id ?? s.submission_id ?? s;
         const opt = document.createElement("option");
         opt.value = id;
-        opt.textContent = String(id).slice(0, 8) + (String(id).length > 8 ? "…" : "");
+        opt.textContent = getSubmissionDisplayName(id);
         subSelect.appendChild(opt);
       });
       subSelect.disabled = false;
@@ -252,7 +469,7 @@
     try {
       const geojson = await API.features(submissionId);
       const features = geojson.features || [];
-      showPreview(geojson);
+      await showPreview(geojson);
       renderFeatureList(features);
       setStatus("");
     } catch (e) {
@@ -343,6 +560,7 @@
   function init() {
     initMap();
     loadProjects();
+    startPolling();
 
     projectSelect().addEventListener("change", () => {
       const id = projectSelect().value;
@@ -360,9 +578,18 @@
     publishBtn().addEventListener("click", publish);
     refreshBtn().addEventListener("click", refresh);
 
-    pollingCheckbox().addEventListener("change", (e) => {
-      if (e.target.checked) startPolling();
-      else stopPolling();
+    el("curationEditSubmission").addEventListener("click", openSubmissionModal);
+
+    el("curationModalSubmissionCancel").addEventListener("click", closeSubmissionModal);
+    el("curationModalSubmissionSave").addEventListener("click", saveSubmissionModal);
+    el("curationModalSubmission").addEventListener("click", (e) => {
+      if (e.target === el("curationModalSubmission")) closeSubmissionModal();
+    });
+
+    el("curationModalFeatureCancel").addEventListener("click", closeFeatureModal);
+    el("curationModalFeatureSave").addEventListener("click", saveFeatureModal);
+    el("curationModalFeature").addEventListener("click", (e) => {
+      if (e.target === el("curationModalFeature")) closeFeatureModal();
     });
   }
 

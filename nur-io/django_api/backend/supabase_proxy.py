@@ -146,11 +146,11 @@ class SupabaseSubmissionFeaturesView(APIView):
                 feat = {"type": "Feature", "geometry": geom, "properties": {}}
             else:
                 feat = {"type": "Feature", "geometry": geom, "properties": {}}
-            feat.setdefault("properties", {})["id"] = row.get("id")
-            if "name" in row:
-                feat["properties"]["name"] = row["name"]
-            if "description" in row:
-                feat["properties"]["description"] = row["description"]
+            props = feat.setdefault("properties", {})
+            for key, value in row.items():
+                if key == "geom":
+                    continue
+                props[key] = value
             features.append(feat)
         return Response({"type": "FeatureCollection", "features": features})
 

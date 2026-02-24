@@ -20,21 +20,97 @@
         flex: 1;
         min-height: 0;
         overflow: hidden;
+        height: 100vh;
+        height: 100dvh;
       }
-      .curation-main {
-        flex: 1;
-        overflow: auto;
+      .curation-header {
+        flex-shrink: 0;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
         padding: var(--spacing-unit);
+      }
+      .curation-header .header-content {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+      .curation-header .header-content .remote-title {
+        justify-self: center;
+        grid-column: 2;
+      }
+      .curation-header .header-content #curationRefresh {
+        justify-self: end;
+      }
+      .curation-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .curation-map-wrap {
+        order: 0;
+        flex: 1;
+        min-height: 260px;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+      }
+      .curation-sidebar {
+        order: 1;
+        flex: 0 0 auto;
+        overflow-y: auto;
+        padding: var(--spacing-unit);
+        border-top: 1px solid var(--border-color);
+        max-height: 50vh;
+      }
+      @media (min-width: 900px) {
+        .curation-body {
+          flex-direction: row;
+        }
+        .curation-map-wrap {
+          order: 1;
+          min-height: 400px;
+        }
+        .curation-sidebar {
+          order: 0;
+          width: 360px;
+          max-height: none;
+          border-top: none;
+          border-right: 1px solid var(--border-color);
+        }
+      }
+      @media (min-width: 900px) {
+        .curation-map-wrap {
+          min-height: 400px;
+        }
+      }
+      #curationMap {
+        flex: 1;
+        min-height: 280px;
+        width: 100%;
+        border-radius: 0;
+      }
+      @media (min-width: 900px) {
+        #curationMap {
+          min-height: 400px;
+        }
       }
       .curation-section {
         margin-bottom: var(--spacing-unit);
       }
+      .curation-section:last-child {
+        margin-bottom: 0;
+      }
       .curation-section h2 {
-        font-size: 14px;
+        font-size: 11px;
+        font-weight: 600;
         color: var(--text-secondary);
-        margin-bottom: 8px;
+        margin-bottom: 6px;
         text-transform: uppercase;
-        letter-spacing: 1px;
+        letter-spacing: 0.05em;
       }
       .curation-select {
         width: 100%;
@@ -43,24 +119,27 @@
         border-radius: var(--border-radius);
         background: var(--bg-tertiary);
         color: var(--text-primary);
-        font-size: 16px;
+        font-size: 14px;
       }
-      #curationMap {
-        height: 220px;
-        width: 100%;
-        border-radius: var(--border-radius);
-        border: 1px solid var(--border-color);
+      .curation-select:focus {
+        outline: none;
+        border-color: var(--accent-primary);
       }
       .curation-features {
-        max-height: 180px;
+        max-height: 200px;
         overflow-y: auto;
         border: 1px solid var(--border-color);
         border-radius: var(--border-radius);
         background: var(--bg-tertiary);
       }
+      @media (min-width: 900px) {
+        .curation-features {
+          max-height: 240px;
+        }
+      }
       .curation-feature-row {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         padding: 10px 12px;
         border-bottom: 1px solid var(--border-color);
         gap: 10px;
@@ -68,10 +147,25 @@
       .curation-feature-row:last-child {
         border-bottom: none;
       }
-      .curation-feature-row label {
+      .curation-feature-row input[type="checkbox"] {
+        margin-top: 3px;
+        flex-shrink: 0;
+      }
+      .curation-feature-content {
         flex: 1;
+        min-width: 0;
+      }
+      .curation-feature-title {
         font-size: 14px;
+        font-weight: 500;
+        color: var(--text-primary);
         cursor: pointer;
+      }
+      .curation-feature-meta {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 2px;
+        line-height: 1.35;
       }
       .curation-name-input {
         width: 100%;
@@ -80,19 +174,26 @@
         border-radius: var(--border-radius);
         background: var(--bg-tertiary);
         color: var(--text-primary);
-        font-size: 16px;
+        font-size: 14px;
+      }
+      .curation-name-input:focus {
+        outline: none;
+        border-color: var(--accent-primary);
       }
       .curation-publish-btn {
         width: 100%;
-        padding: 14px;
-        margin-top: 12px;
+        padding: 12px 16px;
+        margin-top: 8px;
         border: none;
         border-radius: var(--border-radius);
         background: var(--accent-primary);
         color: var(--bg-primary);
-        font-size: 16px;
+        font-size: 14px;
         font-weight: 600;
         cursor: pointer;
+      }
+      .curation-publish-btn:hover:not(:disabled) {
+        filter: brightness(1.1);
       }
       .curation-publish-btn:disabled {
         opacity: 0.5;
@@ -109,83 +210,225 @@
       .curation-status.success {
         color: var(--success-color);
       }
-      .curation-refresh-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 8px;
-      }
-      .curation-refresh-row label {
+      .curation-header-btn {
+        padding: 8px 14px;
         font-size: 13px;
+        border-radius: var(--border-radius);
+        border: 1px solid var(--border-color);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        cursor: pointer;
+      }
+      .curation-header-btn:hover {
+        border-color: var(--accent-primary);
+        color: var(--accent-primary);
+      }
+      .curation-header-btn.back {
+        justify-self: start;
+      }
+      .curation-header-btn + .curation-header-btn {
+        margin-left: 8px;
+      }
+      a.curation-header-btn {
+        text-decoration: none;
+        display: inline-block;
+      }
+      .curation-modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.6);
+        z-index: 9998;
+        align-items: center;
+        justify-content: center;
+        padding: var(--spacing-unit);
+      }
+      .curation-modal-overlay.open {
+        display: flex;
+      }
+      .curation-modal {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
+        max-width: 400px;
+        width: 100%;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      }
+      .curation-modal h3 {
+        font-size: 16px;
+        padding: var(--spacing-unit);
+        border-bottom: 1px solid var(--border-color);
+        margin: 0;
+      }
+      .curation-modal .curation-modal-body {
+        padding: var(--spacing-unit);
+      }
+      .curation-modal .curation-modal-actions {
+        padding: var(--spacing-unit);
+        border-top: 1px solid var(--border-color);
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+      .curation-modal label {
+        display: block;
+        font-size: 12px;
         color: var(--text-secondary);
+        margin-bottom: 4px;
+      }
+      .curation-modal input[type="text"],
+      .curation-modal textarea {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        font-size: 14px;
+        margin-bottom: 12px;
+      }
+      .curation-modal textarea {
+        min-height: 80px;
+        resize: vertical;
+      }
+      .curation-feature-row .curation-feature-edit {
+        flex-shrink: 0;
+        padding: 6px 10px;
+        font-size: 12px;
+        border-radius: var(--border-radius);
+        border: 1px solid var(--border-color);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        cursor: pointer;
+      }
+      .curation-feature-row .curation-feature-edit:hover {
+        border-color: var(--accent-primary);
+        color: var(--accent-primary);
+      }
+      .curation-submission-edit-wrap {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 4px;
+      }
+      .curation-submission-edit-wrap select {
+        flex: 1;
+      }
+      .leaflet-label-icon {
+        background: transparent;
+        border: none;
+      }
+      .leaflet-label-icon .curation-marker-label {
+        background: rgba(10, 10, 15, 0.9);
+        color: var(--text-primary);
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 12px;
+        white-space: nowrap;
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        border: 1px solid var(--border-color);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
       }
     </style>
   </head>
   <body>
     <div class="curation-layout">
-      <header class="remote-header">
+      <header class="curation-header">
         <div class="header-content">
+          <a href="remote-controller.html" id="curationBack" class="curation-header-btn back" aria-label="Open controller">Controller</a>
           <h1 class="remote-title">Curation</h1>
-          <button
-            type="button"
-            id="curationRefresh"
-            class="curation-publish-btn"
-            style="max-width: 120px; margin-top: 0;"
-          >
+          <button type="button" id="curationRefresh" class="curation-header-btn">
             Refresh
           </button>
         </div>
       </header>
 
-      <main class="curation-main">
-        <section class="curation-section">
-          <div class="curation-refresh-row">
-            <span></span>
-            <label>
-              <input type="checkbox" id="curationPolling" />
-              Auto-refresh every 30s
-            </label>
-          </div>
-          <h2>Project</h2>
-          <select id="curationProject" class="curation-select" aria-label="Select project">
-            <option value="">— Select project —</option>
-          </select>
-        </section>
+      <div class="curation-body">
+        <aside class="curation-sidebar">
+          <section class="curation-section">
+            <h2>Project</h2>
+            <select id="curationProject" class="curation-select" aria-label="Select project">
+              <option value="">— Select project —</option>
+            </select>
+          </section>
 
-        <section class="curation-section">
-          <h2>Submission</h2>
-          <select id="curationSubmission" class="curation-select" aria-label="Select submission" disabled>
-            <option value="">— Select submission —</option>
-          </select>
-        </section>
+          <section class="curation-section">
+            <h2>Submission</h2>
+            <div class="curation-submission-edit-wrap">
+              <select id="curationSubmission" class="curation-select" aria-label="Select submission" disabled>
+                <option value="">— Select submission —</option>
+              </select>
+              <button type="button" id="curationEditSubmission" class="curation-header-btn" title="Edit submission name" aria-label="Edit submission name">Edit</button>
+            </div>
+          </section>
 
-        <section class="curation-section">
-          <h2>Preview</h2>
+          <section class="curation-section">
+            <h2>Features (toggle to include)</h2>
+            <div id="curationFeatures" class="curation-features">
+              <div class="curation-status">Select a submission to list features.</div>
+            </div>
+          </section>
+
+          <section class="curation-section">
+            <h2>Layer name</h2>
+            <input
+              type="text"
+              id="curationLayerName"
+              class="curation-name-input"
+              placeholder="e.g. My curated layer"
+              aria-label="Layer name"
+            />
+            <button type="button" id="curationPublish" class="curation-publish-btn" disabled>
+              Publish as OTEF layer
+            </button>
+            <div id="curationStatus" class="curation-status"></div>
+          </section>
+        </aside>
+
+        <div class="curation-map-wrap">
           <div id="curationMap"></div>
-        </section>
+        </div>
+      </div>
+    </div>
 
-        <section class="curation-section">
-          <h2>Features (toggle to include)</h2>
-          <div id="curationFeatures" class="curation-features">
-            <div class="curation-status">Select a submission to list features.</div>
-          </div>
-        </section>
+    <div id="curationModalSubmission" class="curation-modal-overlay" aria-hidden="true">
+      <div class="curation-modal" role="dialog" aria-labelledby="curationModalSubmissionTitle">
+        <h3 id="curationModalSubmissionTitle">Edit submission name</h3>
+        <div class="curation-modal-body">
+          <label for="curationModalSubmissionId">Submission ID</label>
+          <input type="text" id="curationModalSubmissionId" readonly />
+          <label for="curationModalSubmissionName">Display name</label>
+          <input type="text" id="curationModalSubmissionName" placeholder="Friendly name for this submission" />
+        </div>
+        <div class="curation-modal-actions">
+          <button type="button" id="curationModalSubmissionCancel" class="curation-header-btn">Cancel</button>
+          <button type="button" id="curationModalSubmissionSave" class="curation-publish-btn" style="margin-top: 0;">Save</button>
+        </div>
+      </div>
+    </div>
 
-        <section class="curation-section">
-          <h2>Layer name</h2>
-          <input
-            type="text"
-            id="curationLayerName"
-            class="curation-name-input"
-            placeholder="e.g. My curated layer"
-            aria-label="Layer name"
-          />
-          <button type="button" id="curationPublish" class="curation-publish-btn" disabled>
-            Publish as OTEF layer
-          </button>
-          <div id="curationStatus" class="curation-status"></div>
-        </section>
-      </main>
+    <div id="curationModalFeature" class="curation-modal-overlay" aria-hidden="true">
+      <div class="curation-modal" role="dialog" aria-labelledby="curationModalFeatureTitle">
+        <h3 id="curationModalFeatureTitle">Edit feature metadata</h3>
+        <div class="curation-modal-body">
+          <label for="curationModalFeatureName">Name</label>
+          <input type="text" id="curationModalFeatureName" />
+          <label for="curationModalFeatureReason">Reason</label>
+          <input type="text" id="curationModalFeatureReason" placeholder="Reason entered" />
+          <label for="curationModalFeatureDescription">Description</label>
+          <textarea id="curationModalFeatureDescription" placeholder="Description"></textarea>
+          <label for="curationModalFeatureNote">Note</label>
+          <textarea id="curationModalFeatureNote" placeholder="Note"></textarea>
+        </div>
+        <div class="curation-modal-actions">
+          <button type="button" id="curationModalFeatureCancel" class="curation-header-btn">Cancel</button>
+          <button type="button" id="curationModalFeatureSave" class="curation-publish-btn" style="margin-top: 0;">Save</button>
+        </div>
+      </div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
