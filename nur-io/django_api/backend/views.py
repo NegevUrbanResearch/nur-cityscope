@@ -1836,23 +1836,22 @@ from django.conf import settings
 from rest_framework.views import APIView
 from pathlib import Path
 
-_PINK_LINE_PATH = (
-    Path(settings.BASE_DIR)
-    / "public"
-    / "processed"
-    / "otef"
-    / "layers"
-    / "filled-pink-line.geojson"
-)
+_PINK_LINE_CANDIDATES = [
+    # Docker / production mount (see import_otef_data.py)
+    Path("/app/public/processed/otef/layers/filled-pink-line.geojson"),
+    # Docker / production mount for Django public data (mounted as /app/public_idistrict)
+    Path("/app/public_idistrict/processed/otef/layers/filled-pink-line.geojson"),
+]
 
 
 @require_GET
 def pink_line_geojson(request):
     """Serve the base filled-pink-line GeoJSON (WGS84) for integrated route display."""
-    if not _PINK_LINE_PATH.exists():
+    path = next((p for p in _PINK_LINE_CANDIDATES if p.exists()), None)
+    if not path:
         return HttpResponse("Pink line data not found", status=404)
     try:
-        with open(_PINK_LINE_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         response = JsonResponse(data, safe=False)
         response["Content-Type"] = "application/geo+json"
