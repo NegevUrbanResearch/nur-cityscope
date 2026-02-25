@@ -34,7 +34,14 @@ function formatNodePopup(properties) {
   const parts = [];
   ["name", "reason", "description", "note"].forEach((k) => {
     const v = p[k];
-    if (v != null && String(v).trim() !== "") parts.push(`<div class="popup-field"><span class="popup-label">${escapeHtml(k)}:</span> <span class="popup-value">${escapeHtml(String(v))}</span></div>`);
+    if (v != null && String(v).trim() !== "") {
+      let label = k;
+      if (k === "name") label = "שם";
+      else if (k === "description") label = "תיאור";
+      parts.push(
+        `<div class="popup-field"><span class="popup-label">${escapeHtml(label)}:</span> <span class="popup-value">${escapeHtml(String(v))}</span></div>`
+      );
+    }
   });
   if (parts.length === 0) return "<div class=\"popup-content\">—</div>";
   return '<div class="popup-content">' + parts.join("") + "</div>";
