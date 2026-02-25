@@ -1836,12 +1836,19 @@ from django.conf import settings
 from rest_framework.views import APIView
 from pathlib import Path
 
-_PINK_LINE_PATH = Path(__file__).resolve().parent / "data" / "pink_line" / "pink-line-wgs84.geojson"
+_PINK_LINE_PATH = (
+    Path(settings.BASE_DIR)
+    / "public"
+    / "processed"
+    / "otef"
+    / "layers"
+    / "filled-pink-line.geojson"
+)
 
 
 @require_GET
 def pink_line_geojson(request):
-    """Serve the base pink line GeoJSON (WGS84) for integrated route display."""
+    """Serve the base filled-pink-line GeoJSON (WGS84) for integrated route display."""
     if not _PINK_LINE_PATH.exists():
         return HttpResponse("Pink line data not found", status=404)
     try:
