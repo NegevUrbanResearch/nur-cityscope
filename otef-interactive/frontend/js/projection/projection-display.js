@@ -45,23 +45,6 @@ fetch("data/model-bounds.json")
           }
         }
 
-        // Initialize orientation from DataContext if available, else from model bounds
-        if (typeof OTEFDataContext.getViewerAngleDeg === "function") {
-          const angle = OTEFDataContext.getViewerAngleDeg();
-          if (typeof angle === "number" && !Number.isNaN(angle)) {
-            if (typeof window !== "undefined") {
-              window.currentOrientationDeg = angle;
-            }
-          }
-        } else if (
-          modelBounds &&
-          typeof modelBounds.viewer_angle_deg === "number"
-        ) {
-          if (typeof window !== "undefined") {
-            window.currentOrientationDeg = modelBounds.viewer_angle_deg;
-          }
-        }
-
         // Store unsubscribe functions for cleanup
         if (!window._otefUnsubscribeFunctions) {
           window._otefUnsubscribeFunctions = [];
@@ -77,19 +60,6 @@ fetch("data/model-bounds.json")
             }
           })
         );
-
-        // Subscribe to orientation updates so highlight rotation follows calibration
-        if (typeof OTEFDataContext.subscribe === "function") {
-          window._otefUnsubscribeFunctions.push(
-            OTEFDataContext.subscribe("orientation", (angle) => {
-              if (typeof angle === "number" && !Number.isNaN(angle)) {
-                if (typeof window !== "undefined") {
-                  window.currentOrientationDeg = angle;
-                }
-              }
-            }),
-          );
-        }
 
         const initialLayerGroups =
           typeof LayerStateHelper !== "undefined" && typeof LayerStateHelper.getEffectiveLayerGroups === "function"
@@ -178,6 +148,14 @@ function getOrCreateHighlightBox() {
     overlay.querySelector("svg")?.remove();
     overlay.appendChild(box);
 
+    // Direction marker: visible in rotation edit mode to make angle calibration
+    // obvious even when viewport shape is near-square.
+    const heading = document.createElement("div");
+    heading.className = "highlight-angle-indicator";
+    heading.style.cssText =
+      "position:absolute;left:50%;top:8%;width:3px;height:38%;background:rgba(255,200,0,0.95);box-shadow:0 0 10px rgba(255,200,0,0.8);transform:translateX(-50%);display:none;";
+    box.appendChild(heading);
+
     // Initialize smoothing loop
     startSmoothingLoop(box);
   }
@@ -187,9 +165,13 @@ function getOrCreateHighlightBox() {
 // Smoothing state
 let targetHighlight = { x: 0, y: 0, w: 0, h: 0 };
 let currentHighlight = { x: 0, y: 0, w: 0, h: 0 };
-// Expose orientation on window so the rotation editor can live-preview.
-if (typeof window !== "undefined" && typeof window.currentOrientationDeg === "undefined") {
-  window.currentOrientationDeg = 0;
+if (typeof window !== "undefined") {
+  if (typeof window.rotationEditModeActive === "undefined") {
+    window.rotationEditModeActive = false;
+  }
+  if (typeof window.rotationPreviewAngleDeg === "undefined") {
+    window.rotationPreviewAngleDeg = 0;
+  }
 }
 
 function getProjectorSmoothingConfig() {
@@ -227,7 +209,16 @@ function getLerpFactorForCurrentFrame(speedPx) {
   return typeof cfg.BASE_LERP === "number" ? cfg.BASE_LERP : 0.15;
 }
 
+function getHighlightAngleDeg(state) {
+  const isEditMode = !!(state && state.isEditMode);
+  const preview = state && state.previewAngleDeg;
+  if (!isEditMode) return 0;
+  if (typeof preview !== "number" || Number.isNaN(preview)) return 0;
+  return preview;
+}
+
 function startSmoothingLoop(box) {
+  const heading = box.querySelector(".highlight-angle-indicator");
   const step = () => {
     const dx = targetHighlight.x - currentHighlight.x;
     const dy = targetHighlight.y - currentHighlight.y;
@@ -253,11 +244,18 @@ function startSmoothingLoop(box) {
     box.style.width = currentHighlight.w + "px";
     box.style.height = currentHighlight.h + "px";
     box.style.transformOrigin = "center center";
-    const angle =
-      typeof window !== "undefined" && typeof window.currentOrientationDeg === "number"
-        ? window.currentOrientationDeg
-        : 0;
+    const angle = getHighlightAngleDeg({
+      isEditMode:
+        typeof window !== "undefined" && !!window.rotationEditModeActive,
+      previewAngleDeg:
+        typeof window !== "undefined" ? window.rotationPreviewAngleDeg : 0,
+    });
     box.style.transform = "rotate(" + angle + "deg)";
+    if (heading) {
+      const editModeActive =
+        typeof window !== "undefined" && !!window.rotationEditModeActive;
+      heading.style.display = editModeActive ? "block" : "none";
+    }
 
     requestAnimationFrame(step);
   };

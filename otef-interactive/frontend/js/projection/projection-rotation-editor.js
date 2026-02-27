@@ -77,19 +77,16 @@
     ];
   }
 
-  function setHighlightAngle(angle) {
-    if (typeof window !== "undefined" && typeof window.currentOrientationDeg !== "undefined") {
-      window.currentOrientationDeg = angle;
-    }
-  }
-
   function updateToolbarUI() {
     const valueEl = document.getElementById("rotationAngleValue");
     if (valueEl) {
       valueEl.textContent =
         String(Math.round(workingAngleDeg * 10) / 10) + "°";
     }
-    setHighlightAngle(workingAngleDeg);
+    if (typeof window !== "undefined") {
+      window.rotationEditModeActive = true;
+      window.rotationPreviewAngleDeg = workingAngleDeg;
+    }
   }
 
   function showCursorPopup(clientX, clientY, angle) {
@@ -157,6 +154,10 @@
     if (rotationEditMode) return;
     rotationEditMode = true;
     workingAngleDeg = getCurrentAngle();
+    if (typeof window !== "undefined") {
+      window.rotationEditModeActive = true;
+      window.rotationPreviewAngleDeg = workingAngleDeg;
+    }
 
     const root = document.body;
     root.classList.add("rotation-editor-active");
@@ -176,7 +177,7 @@
     }
     if (cancelBtn) {
       cancelBtn.onclick = () => {
-        exitRotationEditMode(true);
+        exitRotationEditMode();
       };
     }
 
@@ -188,7 +189,7 @@
     updateToolbarUI();
   }
 
-  function exitRotationEditMode(discardChanges) {
+  function exitRotationEditMode() {
     if (!rotationEditMode) return;
     rotationEditMode = false;
     onRotationMouseUp();
@@ -206,9 +207,9 @@
       toolbar.style.display = "none";
     }
 
-    if (discardChanges) {
-      const angle = getCurrentAngle();
-      setHighlightAngle(angle);
+    if (typeof window !== "undefined") {
+      window.rotationEditModeActive = false;
+      window.rotationPreviewAngleDeg = 0;
     }
   }
 
@@ -246,7 +247,7 @@
         );
         return;
       }
-      exitRotationEditMode(false);
+      exitRotationEditMode();
     } catch (err) {
       console.error("[Projection] Error while saving orientation:", err);
       window.alert("Error while saving orientation. See console for details.");
@@ -255,7 +256,7 @@
 
   function toggle() {
     if (rotationEditMode) {
-      exitRotationEditMode(true);
+      exitRotationEditMode();
     } else {
       enterRotationEditMode();
     }
