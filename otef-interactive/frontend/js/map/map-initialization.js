@@ -13,13 +13,34 @@ proj4.defs(
 // Model bounds (in EPSG:2039) - will be set by initializeMap()
 let modelBounds;
 
+let buildMapOptionsRef = null;
+try {
+  // eslint-disable-next-line global-require
+  buildMapOptionsRef = require("./map-options").buildMapOptions;
+} catch (_) {
+  if (
+    typeof window !== "undefined" &&
+    window.MapOptions &&
+    typeof window.MapOptions.buildMapOptions === "function"
+  ) {
+    buildMapOptionsRef = window.MapOptions.buildMapOptions;
+  }
+}
+
+const gisPerfConfig =
+  (typeof MapProjectionConfig !== "undefined" && MapProjectionConfig.GIS_PERF) || {};
+const mapOptions =
+  typeof buildMapOptionsRef === "function"
+    ? buildMapOptionsRef(gisPerfConfig)
+    : {
+        minZoom: 10,
+        maxZoom: 19,
+        zoomControl: false, // Zoom controlled by remote controller only
+        maxBoundsViscosity: 1.0, // Prevent dragging outside bounds
+      };
+
 // Initialize map in WGS84 (standard Leaflet)
-const map = L.map("map", {
-  minZoom: 10,
-  maxZoom: 19,
-  zoomControl: false, // Zoom controlled by remote controller only
-  maxBoundsViscosity: 1.0, // Prevent dragging outside bounds
-});
+const map = L.map("map", mapOptions);
 
 // Create custom panes for vector overlays to ensure they render in the correct order:
 // Polygon < Line < Point

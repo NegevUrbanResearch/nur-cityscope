@@ -54,6 +54,17 @@ function shouldLayerBeVisible(options) {
     }
   }
 
+  // 1.5) Optional hard guardrail for configured heavy layers at low zoom.
+  const heavyMinZoom =
+    typeof MapProjectionConfig !== "undefined" &&
+    MapProjectionConfig.GIS_PERF &&
+    MapProjectionConfig.GIS_PERF.HEAVY_LAYER_MIN_ZOOM
+      ? MapProjectionConfig.GIS_PERF.HEAVY_LAYER_MIN_ZOOM[fullLayerId]
+      : undefined;
+  if (typeof heavyMinZoom === "number" && zoom < heavyMinZoom) {
+    return false;
+  }
+
   // 2) Check enabled state via layerStateHelper (if provided)
   if (layerStateHelper && typeof layerStateHelper.getLayerState === 'function') {
     const state = layerStateHelper.getLayerState(fullLayerId);

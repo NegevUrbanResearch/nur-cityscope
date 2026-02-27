@@ -33,6 +33,42 @@ const MapProjectionConfig = {
     zoomOverride: null, // e.g. 14 or 15 for sharper imagery on 4K at 1:40k scale
     urlOverride: null,
   },
+
+  // GIS map performance controls.
+  // Defaults are conservative and should improve responsiveness without feature changes.
+  GIS_PERF: {
+    // Coalesce remote viewport updates through RAF and avoid over-applying.
+    ENABLE_RAF_VIEWPORT_APPLY: true,
+    MIN_APPLY_INTERVAL_MS: 33, // ~30 FPS max apply cadence
+
+    // Keep follower updates snappy; animation can create backlog under heavy load.
+    ANIMATE_REMOTE_VIEWPORT: false,
+    REMOTE_ANIMATION_DURATION_S: 0.12,
+    PAN_ANIMATION_ENABLED: false,
+    ZOOM_ANIMATION_ENABLED: true,
+    ZOOM_ANIMATION_DURATION_S: 0.12,
+
+    // Prefer canvas for vector paths to reduce SVG/DOM pressure on dense layers.
+    ENABLE_PREFER_CANVAS: true,
+
+    // Reduce duplicate visibility toggles during frequent state updates.
+    ENABLE_LAYER_VISIBILITY_BATCHING: true,
+
+    // Optional per-layer low-zoom guardrails for especially heavy packs.
+    // Example: { "map_3_future.greens": 12 }
+    HEAVY_LAYER_MIN_ZOOM: {
+      "map_3_future.greens": 12,
+      "map_3_future.land_use": 12,
+    },
+
+    // Adaptive projector highlight smoothing.
+    PROJECTOR_SMOOTHING: {
+      ENABLE_ADAPTIVE_SMOOTHING: true,
+      BASE_LERP: 0.15,
+      FAST_LERP: 0.28,
+      SPEED_THRESHOLD_PX: 40,
+    },
+  },
 };
 
 // Browser global

@@ -156,4 +156,41 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
       true
     );
   });
+
+  test("does not re-apply same visibility repeatedly for unchanged state", () => {
+    global.LayerStateHelper = { getLayerState: () => ({ enabled: true }) };
+    global.VisibilityController = { shouldLayerBeVisible: () => true };
+
+    const loadLayer = jest.fn();
+    const updateVisibility = jest.fn();
+    const loadedLayersMap = new Map();
+    loadedLayersMap.set("map_3_future.mimushim", {});
+    const deps = {
+      map: { getZoom: () => 12 },
+      layerRegistry: {
+        _initialized: true,
+        getLayerConfig: () => null,
+      },
+      loadLayerFromRegistry: loadLayer,
+      updateLayerVisibilityFromRegistry: updateVisibility,
+      loadedLayersMap,
+      updateMapLegend: () => {},
+    };
+    const layerGroups = [
+      {
+        id: "map_3_future",
+        layers: [{ id: "mimushim", enabled: true }],
+      },
+    ];
+
+    applyLayerGroupsState(layerGroups, deps);
+    const callsAfterFirstApply = updateVisibility.mock.calls.filter(
+      (call) => call[0] === "map_3_future.mimushim" && call[1] === true
+    ).length;
+    applyLayerGroupsState(layerGroups, deps);
+    const callsAfterSecondApply = updateVisibility.mock.calls.filter(
+      (call) => call[0] === "map_3_future.mimushim" && call[1] === true
+    ).length;
+    expect(callsAfterSecondApply).toBe(callsAfterFirstApply);
+  });
 });

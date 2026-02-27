@@ -51,6 +51,13 @@ describe('layer-factory: createGeoJsonLayer', () => {
 
     expect(layer).not.toBeNull();
     expect(layer.options.pane).toBe('overlayPolygon');
+    const styleResult = layer.options.style({
+      properties: { any: "value" }
+    });
+    expect(styleResult.fillColor).toBeDefined();
+    expect(styleResult.color).toBeDefined();
+    expect(styleResult.weight).toBeDefined();
+    expect(styleResult.fillOpacity).toBeDefined();
   });
 
   test('creates a GeoJSON layer with correct pane for line', () => {

@@ -8,10 +8,43 @@
 // But we need to ensure they are accessible or use the ones from there.
 // Since they are defined with 'let' in another file in the same scope, we don't redeclare here.
 
-/**
- * Apply viewport state from API (pan map to match server state)
- */
-function applyViewportFromAPI(viewport) {
+let createViewportApplySchedulerRef = null;
+let getRemoteViewportSetViewOptionsRef = null;
+try {
+  // eslint-disable-next-line global-require
+  createViewportApplySchedulerRef =
+    require("./viewport-sync-scheduler").createViewportApplyScheduler;
+  // eslint-disable-next-line global-require
+  getRemoteViewportSetViewOptionsRef =
+    require("./viewport-apply-policy").getRemoteViewportSetViewOptions;
+} catch (_) {
+  if (
+    typeof window !== "undefined" &&
+    window.ViewportSyncScheduler &&
+    typeof window.ViewportSyncScheduler.createViewportApplyScheduler === "function"
+  ) {
+    createViewportApplySchedulerRef =
+      window.ViewportSyncScheduler.createViewportApplyScheduler;
+  }
+  if (
+    typeof window !== "undefined" &&
+    window.ViewportApplyPolicy &&
+    typeof window.ViewportApplyPolicy.getRemoteViewportSetViewOptions === "function"
+  ) {
+    getRemoteViewportSetViewOptionsRef =
+      window.ViewportApplyPolicy.getRemoteViewportSetViewOptions;
+  }
+}
+
+function getGisPerfConfig() {
+  return (
+    (typeof MapProjectionConfig !== "undefined" && MapProjectionConfig.GIS_PERF) ||
+    {}
+  );
+}
+
+function applyViewportNow(viewport) {
+  const telemetryStart = Date.now();
   if (!viewport || !viewport.bbox) return;
 
   const bbox = viewport.bbox;
@@ -34,22 +67,69 @@ function applyViewportFromAPI(viewport) {
     Math.abs(currentCenter.lng - centerLng);
   const zoomDiff = Math.abs(currentZoom - zoom);
 
-  // Only update if significantly different (threshold to avoid echo)
-  // Increased thresholds to reduce unnecessary updates, but still animate for smoothness
-  if (centerDiff > 0.0005 || zoomDiff > 0.5) {
-    // Set flag to prevent feedback loop (don't broadcast this change back)
-    window.isApplyingRemoteState = true;
-    map.setView([centerLat, centerLng], zoom, {
-      animate: true,
-      duration: 0.25,
-    });
+  if (centerDiff <= 0.0005 && zoomDiff <= 0.5) return;
 
-    // Mark synchronization as active to ignore ensuing moveend events
-    if (window.syncLockTimer) clearTimeout(window.syncLockTimer);
-    window.syncLockTimer = setTimeout(() => {
-      window.isApplyingRemoteState = false;
-    }, 800);
+  const perf = getGisPerfConfig();
+  const setViewOptions =
+    typeof getRemoteViewportSetViewOptionsRef === "function"
+      ? getRemoteViewportSetViewOptionsRef(perf, { zoomDiff, centerDiff })
+      : {
+          animate: !!perf.ANIMATE_REMOTE_VIEWPORT,
+          duration:
+            typeof perf.REMOTE_ANIMATION_DURATION_S === "number"
+              ? perf.REMOTE_ANIMATION_DURATION_S
+              : 0.12,
+        };
+
+  // Set flag to prevent feedback loop (don't broadcast this change back)
+  window.isApplyingRemoteState = true;
+  map.setView([centerLat, centerLng], zoom, setViewOptions);
+
+  // Mark synchronization as active to ignore ensuing moveend events
+  if (window.syncLockTimer) clearTimeout(window.syncLockTimer);
+  window.syncLockTimer = setTimeout(() => {
+    window.isApplyingRemoteState = false;
+  }, 800);
+
+  if (
+    typeof window !== "undefined" &&
+    window.MapPerfTelemetry &&
+    typeof window.MapPerfTelemetry.record === "function"
+  ) {
+    const elapsed = Date.now() - telemetryStart;
+    window.MapPerfTelemetry.record("applyViewportMs", elapsed);
+    if (Math.abs(zoomDiff) > 0.01) {
+      window.MapPerfTelemetry.record("zoomApplyMs", elapsed);
+    } else {
+      window.MapPerfTelemetry.record("panApplyMs", elapsed);
+    }
   }
+}
+
+let remoteViewportScheduler = null;
+if (typeof createViewportApplySchedulerRef === "function") {
+  const perf = getGisPerfConfig();
+  const minApplyIntervalMs =
+    typeof perf.MIN_APPLY_INTERVAL_MS === "number" ? perf.MIN_APPLY_INTERVAL_MS : 33;
+  remoteViewportScheduler = createViewportApplySchedulerRef({
+    applyViewport: applyViewportNow,
+    minIntervalMs: minApplyIntervalMs,
+  });
+}
+
+/**
+ * Apply viewport state from API (pan map to match server state)
+ */
+function applyViewportFromAPI(viewport) {
+  if (!viewport || !viewport.bbox) return;
+  const perf = getGisPerfConfig();
+  const useScheduler =
+    perf.ENABLE_RAF_VIEWPORT_APPLY !== false && remoteViewportScheduler;
+  if (useScheduler) {
+    remoteViewportScheduler.schedule(viewport);
+    return;
+  }
+  applyViewportNow(viewport);
 }
 
 /**

@@ -150,18 +150,62 @@ function getOrCreateHighlightBox() {
 // Smoothing state
 let targetHighlight = { x: 0, y: 0, w: 0, h: 0 };
 let currentHighlight = { x: 0, y: 0, w: 0, h: 0 };
-const LERP_FACTOR =
-  (typeof MapProjectionConfig !== "undefined" &&
-    MapProjectionConfig.PROJECTION_LERP_FACTOR) ||
-  0.15; // Lower = smoother/slower, Higher = snappier
+
+function getProjectorSmoothingConfig() {
+  const perfCfg =
+    typeof MapProjectionConfig !== "undefined" &&
+    MapProjectionConfig.GIS_PERF &&
+    MapProjectionConfig.GIS_PERF.PROJECTOR_SMOOTHING
+      ? MapProjectionConfig.GIS_PERF.PROJECTOR_SMOOTHING
+      : null;
+  return (
+    perfCfg || {
+      ENABLE_ADAPTIVE_SMOOTHING: false,
+      BASE_LERP:
+        (typeof MapProjectionConfig !== "undefined" &&
+          MapProjectionConfig.PROJECTION_LERP_FACTOR) ||
+        0.15,
+      FAST_LERP:
+        (typeof MapProjectionConfig !== "undefined" &&
+          MapProjectionConfig.PROJECTION_LERP_FACTOR) ||
+        0.15,
+      SPEED_THRESHOLD_PX: 40,
+    }
+  );
+}
+
+function getLerpFactorForCurrentFrame(speedPx) {
+  const cfg = getProjectorSmoothingConfig();
+  if (
+    typeof window !== "undefined" &&
+    window.HighlightSmoothingPolicy &&
+    typeof window.HighlightSmoothingPolicy.computeLerpFactor === "function"
+  ) {
+    return window.HighlightSmoothingPolicy.computeLerpFactor({ speedPx }, cfg);
+  }
+  return typeof cfg.BASE_LERP === "number" ? cfg.BASE_LERP : 0.15;
+}
 
 function startSmoothingLoop(box) {
   const step = () => {
+    const dx = targetHighlight.x - currentHighlight.x;
+    const dy = targetHighlight.y - currentHighlight.y;
+    const driftPx = Math.sqrt(dx * dx + dy * dy);
+    const lerpFactor = getLerpFactorForCurrentFrame(driftPx);
+
     // Linear Interpolation (LERP)
-    currentHighlight.x += (targetHighlight.x - currentHighlight.x) * LERP_FACTOR;
-    currentHighlight.y += (targetHighlight.y - currentHighlight.y) * LERP_FACTOR;
-    currentHighlight.w += (targetHighlight.w - currentHighlight.w) * LERP_FACTOR;
-    currentHighlight.h += (targetHighlight.h - currentHighlight.h) * LERP_FACTOR;
+    currentHighlight.x += dx * lerpFactor;
+    currentHighlight.y += dy * lerpFactor;
+    currentHighlight.w += (targetHighlight.w - currentHighlight.w) * lerpFactor;
+    currentHighlight.h += (targetHighlight.h - currentHighlight.h) * lerpFactor;
+
+    if (
+      typeof window !== "undefined" &&
+      window.MapPerfTelemetry &&
+      typeof window.MapPerfTelemetry.record === "function"
+    ) {
+      window.MapPerfTelemetry.record("syncDriftPx", driftPx);
+    }
 
     box.style.left = currentHighlight.x + "px";
     box.style.top = currentHighlight.y + "px";

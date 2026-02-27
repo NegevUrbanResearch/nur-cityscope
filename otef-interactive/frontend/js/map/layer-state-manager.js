@@ -15,6 +15,30 @@ let pendingLayerGroupsState = null;
 let layerRegistryInitPromise = null;
 let pendingDeps = null;
 
+function isVisibilityBatchingEnabled() {
+  if (typeof MapProjectionConfig === "undefined" || !MapProjectionConfig.GIS_PERF) {
+    return true;
+  }
+  return MapProjectionConfig.GIS_PERF.ENABLE_LAYER_VISIBILITY_BATCHING !== false;
+}
+
+function applyVisibilityIfChanged(
+  updateVisibility,
+  fullLayerId,
+  nextVisible,
+  visibilityCache,
+) {
+  if (!updateVisibility) return;
+  if (!isVisibilityBatchingEnabled()) {
+    updateVisibility(fullLayerId, nextVisible);
+    return;
+  }
+  const previous = visibilityCache.get(fullLayerId);
+  if (previous === nextVisible) return;
+  visibilityCache.set(fullLayerId, nextVisible);
+  updateVisibility(fullLayerId, nextVisible);
+}
+
 /**
  * Apply layer groups state from API/notification.
  * Handles the new hierarchical layer groups structure.
@@ -26,6 +50,7 @@ let pendingDeps = null;
  * Individual layers can be shown/hidden regardless of group.enabled state.
  */
 function applyLayerGroupsState(layerGroups, deps) {
+  const reconcileStart = Date.now();
   if (!layerGroups || !Array.isArray(layerGroups)) {
     console.warn("[GIS Map] Invalid layer groups state");
     return;
@@ -69,6 +94,8 @@ function applyLayerGroupsState(layerGroups, deps) {
       ? deps.updateMapLegend
       : () => {};
   const mapInstance = deps.map || null;
+  const visibilityCache =
+    deps._visibilityStateCache || (deps._visibilityStateCache = new Map());
 
   // Process each group - individual layer.enabled is the source of truth for visibility
   for (const group of layerGroups) {
@@ -91,13 +118,23 @@ function applyLayerGroupsState(layerGroups, deps) {
         if (loadLayer) {
           if (loadedMap && loadedMap.has(fullLayerId)) {
             if (updateVisibility) {
-              updateVisibility(fullLayerId, true);
+              applyVisibilityIfChanged(
+                updateVisibility,
+                fullLayerId,
+                true,
+                visibilityCache,
+              );
             }
           } else {
             loadLayer(fullLayerId)
               .then(() => {
                 if (updateVisibility) {
-                  updateVisibility(fullLayerId, true);
+                  applyVisibilityIfChanged(
+                    updateVisibility,
+                    fullLayerId,
+                    true,
+                    visibilityCache,
+                  );
                 }
                 updateLegend();
               })
@@ -110,9 +147,12 @@ function applyLayerGroupsState(layerGroups, deps) {
           }
         }
       } else {
-        if (updateVisibility) {
-          updateVisibility(fullLayerId, false);
-        }
+        applyVisibilityIfChanged(
+          updateVisibility,
+          fullLayerId,
+          false,
+          visibilityCache,
+        );
       }
     }
   }
@@ -149,7 +189,12 @@ function applyLayerGroupsState(layerGroups, deps) {
             layerStateHelper: LayerStateHelper,
           });
 
-          updateVisibility(fullLayerId, allowed);
+          applyVisibilityIfChanged(
+            updateVisibility,
+            fullLayerId,
+            allowed,
+            visibilityCache,
+          );
         }
       }
     }
@@ -161,6 +206,17 @@ function applyLayerGroupsState(layerGroups, deps) {
   }
 
   updateLegend();
+
+  if (
+    typeof window !== "undefined" &&
+    window.MapPerfTelemetry &&
+    typeof window.MapPerfTelemetry.record === "function"
+  ) {
+    window.MapPerfTelemetry.record(
+      "layerReconcileMs",
+      Date.now() - reconcileStart,
+    );
+  }
 }
 
 // Export for Node/CommonJS consumers (tests)
