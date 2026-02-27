@@ -2085,14 +2085,14 @@ class OTEFBoundsApplyView(APIView):
         state.viewer_angle_deg = normalized["viewer_angle_deg"]
         state.save()
 
-        project_root = os.path.abspath(os.path.join(settings.BASE_DIR, "..", ".."))
-        bounds_path = os.path.join(
-            project_root,
-            "otef-interactive",
-            "frontend",
-            "data",
-            "model-bounds.json",
-        )
+        # Resolve model-bounds.json path using candidate paths that work in
+        # both Docker and local dev (same pattern as import_otef_data.py).
+        base = Path(settings.BASE_DIR)
+        bounds_candidates = [
+            Path("/app/otef-interactive/frontend/data/model-bounds.json"),       # Docker mount
+            base.resolve().parent.parent / "otef-interactive" / "frontend" / "data" / "model-bounds.json",  # Local dev
+        ]
+        bounds_path = str(next((p for p in bounds_candidates if p.parent.exists()), bounds_candidates[-1]))
         config = OTEFModelConfig.objects.filter(table=table).first()
         write_model_bounds_to_storage(normalized, config, bounds_path)
 
