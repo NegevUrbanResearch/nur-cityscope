@@ -436,3 +436,34 @@ body {
     right: 10px;
   }
 }
+
+/* Projection Viewport Highlight Box (Uniform Diffused Light) */
+.highlight-box {
+  /* Crisp 1px white border */
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  /* Uniform tint across the whole area */
+  background: rgba(255, 255, 255, 0.12);
+  /* Subtle outer glow and inner edge diffusion */
+  box-shadow:
+      0 0 15px rgba(255, 255, 255, 0.2),
+      inset 0 0 20px rgba(255, 255, 255, 0.1);
+  transform-origin: center center;
+}
+
+.highlight-box::after {
+  /* Volumetric bleed that follows the box shape rather than a circle */
+  content: '';
+  position: absolute;
+  inset: -10px;
+  background: rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+  z-index: 2;
+  filter: blur(15px);
+  animation: highlightPulseLight 4s ease-in-out infinite alternate;
+}
+
+@keyframes highlightPulseLight {
+  0% { opacity: 0.5; transform: scale(0.99); }
+  100% { opacity: 1; transform: scale(1.01); }
+}
+

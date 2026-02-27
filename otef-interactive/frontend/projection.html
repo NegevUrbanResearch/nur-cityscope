@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OTEF Projection Display</title>
+    <link rel="stylesheet" href="css/styles.css" />
     <style>
       * {
         margin: 0;
@@ -67,16 +68,6 @@
         width: 100%;
         height: 100%;
         z-index: 10;
-      }
-      .highlight-box {
-        position: absolute;
-        border: 3px solid rgba(0, 255, 255, 0.9);
-        background: rgba(0, 255, 255, 0.15);
-        box-shadow:
-          0 0 30px rgba(0, 255, 255, 0.8),
-          inset 0 0 30px rgba(0, 255, 255, 0.4);
-        pointer-events: none;
-        /* transition removed to favor 60fps LERP smoothing */
       }
 
       /* Simple instruction overlay - press H to toggle */

@@ -143,8 +143,8 @@ function getOrCreateHighlightBox() {
     box = document.createElement("div");
     box.className = "highlight-box";
     // REMOVED CSS transition for LERP-based smoothing
-    box.style.cssText =
-      "position: absolute; border: 3px solid rgba(0, 255, 255, 0.9); background: rgba(0, 255, 255, 0.15); box-shadow: 0 0 30px rgba(0, 255, 255, 0.8), inset 0 0 30px rgba(0, 255, 255, 0.4); pointer-events: none;";
+    // Aesthetics are now handled in styles.css
+    box.style.cssText = "position: absolute; pointer-events: none;";
     overlay.querySelector("svg")?.remove();
     overlay.appendChild(box);
 
@@ -396,7 +396,7 @@ function toggleFullScreen() {
     doc.exitFullscreen ||
     doc.mozCancelFullScreen ||
     doc.webkitExitFullscreen ||
-    doc.msExitFullscreen;
+    doc.msFullscreenFullscreen;
 
   if (
     !doc.fullscreenElement &&
@@ -413,10 +413,12 @@ function toggleFullScreen() {
 // Show help for 3 seconds on load
 setTimeout(() => {
   const instructions = document.getElementById("instructions");
-  instructions.classList.remove("hidden");
-  setTimeout(() => {
-    instructions.classList.add("hidden");
-  }, 3000);
+  if (instructions) {
+    instructions.classList.remove("hidden");
+    setTimeout(() => {
+      instructions.classList.add("hidden");
+    }, 3000);
+  }
 }, 500);
 
 // Cleanup subscriptions on page unload
