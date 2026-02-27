@@ -12,7 +12,7 @@
     };
   };
 
-  async function saveBounds(ctx, polygon) {
+  async function saveBounds(ctx, polygon, viewerAngleDeg) {
     if (!Array.isArray(polygon) || polygon.length < 3) {
       getLogger().warn("[OTEFDataContext] saveBounds called with invalid polygon");
       return { ok: false, error: "Invalid polygon" };
@@ -22,10 +22,17 @@
     ctx._setBounds(polygon);
 
     try {
-      const result = await OTEF_API.saveBounds(ctx._tableName, polygon);
+      const result = await OTEF_API.saveBounds(
+        ctx._tableName,
+        polygon,
+        viewerAngleDeg,
+      );
       // Backend is source of truth; if it returns a normalized polygon, adopt it
       if (result && (result.bounds_polygon || result.polygon)) {
         ctx._setBounds(result.bounds_polygon || result.polygon);
+      }
+      if (typeof result.viewer_angle_deg === "number") {
+        ctx._setViewerAngleDeg(result.viewer_angle_deg);
       }
       return { ok: true, result };
     } catch (err) {

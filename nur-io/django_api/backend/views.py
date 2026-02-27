@@ -295,7 +295,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'enabled': animations.get('parcels', False),
                     }
                 }
-            elif field == 'bounds':
+            elif field == 'bounds' or field == 'viewer_angle_deg':
                 message = {
                     'type': 'broadcast_message',
                     'message': {
@@ -361,6 +361,16 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 state.bounds_polygon = polygon or []
                 changed_fields.append('bounds')
 
+            if 'viewer_angle_deg' in request.data:
+                try:
+                    state.viewer_angle_deg = float(request.data['viewer_angle_deg'])
+                except (TypeError, ValueError):
+                    return Response(
+                        {'error': 'viewer_angle_deg must be a valid number'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                changed_fields.append('viewer_angle_deg')
+
             state.save()
 
             # Broadcast notifications for each changed field
@@ -376,6 +386,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'layerGroups': self._get_layer_groups(table),
             'animations': state.get_animations_with_defaults(),
             'bounds_polygon': state.get_bounds_polygon(),
+            'viewer_angle_deg': state.viewer_angle_deg,
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -1853,6 +1864,8 @@ from django.conf import settings
 from rest_framework.views import APIView
 from pathlib import Path
 
+from backend.calibration_io import normalize_calibration_payload, write_model_bounds_to_storage
+
 _PINK_LINE_CANDIDATES = [
     # Docker / production mount (see import_otef_data.py)
     Path("/app/public/processed/otef/layers/filled-pink-line.geojson"),
@@ -2007,6 +2020,7 @@ class OTEFBoundsApplyView(APIView):
     def post(self, request, *args, **kwargs):
         table_name = request.data.get("table", "otef")
         polygon = request.data.get("polygon")
+        raw_angle = request.data.get("viewer_angle_deg", None)
 
         if not isinstance(polygon, list) or len(polygon) < 3:
             return Response(
@@ -2035,6 +2049,17 @@ class OTEFBoundsApplyView(APIView):
                 )
             cleaned_vertices.append({"x": x, "y": y})
 
+        # Optional orientation validation
+        angle = None
+        if "viewer_angle_deg" in request.data:
+            try:
+                angle = float(raw_angle)
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "viewer_angle_deg must be a valid number"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Persist to DB
         table = Table.objects.filter(name=table_name).first()
         if not table:
@@ -2051,47 +2076,25 @@ class OTEFBoundsApplyView(APIView):
                 "animations": {"parcels": False},
             },
         )
-        state.bounds_polygon = cleaned_vertices
+        raw_payload = {
+            "bounds_polygon": cleaned_vertices,
+            "viewer_angle_deg": angle if angle is not None else getattr(state, "viewer_angle_deg", 0.0),
+        }
+        normalized = normalize_calibration_payload(raw_payload)
+        state.bounds_polygon = normalized["bounds_polygon"]
+        state.viewer_angle_deg = normalized["viewer_angle_deg"]
         state.save()
 
-        # Also mirror into OTEFModelConfig.model_bounds (if exists)
-        try:
-            config = OTEFModelConfig.objects.filter(table=table).first()
-            if config:
-                bounds = config.model_bounds or {}
-                bounds["polygon"] = cleaned_vertices
-                config.model_bounds = bounds
-                config.save()
-        except Exception as e:
-            # Non-fatal; log to console
-            print(f"Warning: failed to update OTEFModelConfig.model_bounds: {e}")
-
-        # Update Git-tracked JSON snapshot on disk
-        try:
-            # BASE_DIR typically points to nur-io/django_api; go up to repo root
-            project_root = os.path.abspath(os.path.join(settings.BASE_DIR, "..", ".."))
-            bounds_path = os.path.join(
-                project_root,
-                "otef-interactive",
-                "frontend",
-                "data",
-                "model-bounds.json",
-            )
-
-            if os.path.exists(bounds_path):
-                with open(bounds_path, "r", encoding="utf-8") as f:
-                    json_data = json.load(f)
-            else:
-                json_data = {}
-
-            json_data["polygon"] = cleaned_vertices
-
-            # Ensure directory exists and write back with pretty formatting
-            os.makedirs(os.path.dirname(bounds_path), exist_ok=True)
-            with open(bounds_path, "w", encoding="utf-8") as f:
-                json.dump(json_data, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            print(f"Warning: failed to update model-bounds.json: {e}")
+        project_root = os.path.abspath(os.path.join(settings.BASE_DIR, "..", ".."))
+        bounds_path = os.path.join(
+            project_root,
+            "otef-interactive",
+            "frontend",
+            "data",
+            "model-bounds.json",
+        )
+        config = OTEFModelConfig.objects.filter(table=table).first()
+        write_model_bounds_to_storage(normalized, config, bounds_path)
 
         # Broadcast bounds change over WebSocket (optional, lightweight notification)
         try:
@@ -2115,5 +2118,6 @@ class OTEFBoundsApplyView(APIView):
                 "status": "ok",
                 "table": table_name,
                 "bounds_polygon": cleaned_vertices,
+                "viewer_angle_deg": angle if angle is not None else state.viewer_angle_deg,
             }
         )

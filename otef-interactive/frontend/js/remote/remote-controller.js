@@ -10,6 +10,7 @@ let currentState = {
     zoom: 15,
   },
   isConnected: false,
+  viewerAngleDeg: 0,
 };
 
 // Control state management (prevent simultaneous use)
@@ -65,6 +66,25 @@ async function initialize() {
       updateConnectionStatus(isConnected ? "connected" : "disconnected");
     }),
   );
+
+  // Track orientation for viewer-frame → ITM-frame mapping
+  unsubscribeFunctions.push(
+    OTEFDataContext.subscribe("orientation", (angle) => {
+      if (typeof angle === "number" && !Number.isNaN(angle)) {
+        currentState.viewerAngleDeg = angle;
+      }
+    }),
+  );
+
+  // Seed orientation from API state (subscribe may not replay on first paint)
+  if (
+    typeof OTEFDataContext.getViewerAngleDeg === "function"
+  ) {
+    const angle = OTEFDataContext.getViewerAngleDeg();
+    if (typeof angle === "number" && !Number.isNaN(angle)) {
+      currentState.viewerAngleDeg = angle;
+    }
+  }
 
   // Initialize UI controls
   initializePanControls();
@@ -142,11 +162,14 @@ function initializePanControls() {
       const width = viewport.bbox[2] - viewport.bbox[0];
       const height = viewport.bbox[3] - viewport.bbox[1];
       const speed = 0.5; // 50% of viewport per second
+      const viewerVec = {
+        dx: vector.vx * width * speed,
+        dy: vector.vy * height * speed,
+      };
+      const angle = currentState.viewerAngleDeg || 0;
+      const rotated = rotateViewerVectorToItm(viewerVec, -angle);
 
-      OTEFDataContext.sendVelocity(
-        vector.vx * width * speed,
-        vector.vy * height * speed,
-      );
+      OTEFDataContext.sendVelocity(rotated.dx, rotated.dy);
       if (navigator.vibrate) navigator.vibrate(20);
     };
 
@@ -330,12 +353,16 @@ function handleJoystickMove(evt, data) {
   // Max speed factor: move fraction of viewport per second
   // We use 0.4 (40%) to keep it smooth but responsive
   const maxSpeedFactor = 0.4;
-  const vx = Math.cos(angleRad) * force * width * maxSpeedFactor;
-  const vy = Math.sin(angleRad) * force * height * maxSpeedFactor;
+  const viewerVec = {
+    dx: Math.cos(angleRad) * force * width * maxSpeedFactor,
+    dy: Math.sin(angleRad) * force * height * maxSpeedFactor,
+  };
+  const angle = currentState.viewerAngleDeg || 0;
+  const rotated = rotateViewerVectorToItm(viewerVec, -angle);
 
   // Reduced frequency for network messages (DataContext manages local 60fps loop)
   if (!joystickInterval) {
-    OTEFDataContext.sendVelocity(vx, vy);
+    OTEFDataContext.sendVelocity(rotated.dx, rotated.dy);
     joystickInterval = setTimeout(() => {
       joystickInterval = null;
     }, 100);

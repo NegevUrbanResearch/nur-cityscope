@@ -132,13 +132,19 @@ const OTEF_API = {
    *
    * @param {string} tableName - Table name
    * @param {Array<{x:number,y:number}>} polygon - Bounds polygon in EPSG:2039
+   * @param {number} [viewerAngleDeg] - Optional orientation angle in degrees
    */
-  async saveBounds(tableName = this.defaultTable, polygon) {
+  async saveBounds(tableName = this.defaultTable, polygon, viewerAngleDeg) {
     try {
+      const body = { table: tableName, polygon };
+      if (typeof viewerAngleDeg === "number" && !Number.isNaN(viewerAngleDeg)) {
+        body.viewer_angle_deg = viewerAngleDeg;
+      }
+
       const response = await fetch("/api/otef/bounds/apply/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ table: tableName, polygon }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {

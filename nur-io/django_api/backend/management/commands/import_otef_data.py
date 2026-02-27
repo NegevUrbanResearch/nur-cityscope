@@ -1,5 +1,12 @@
 from django.core.management.base import BaseCommand
-from backend.models import Table, OTEFModelConfig, LayerGroup, LayerState
+from backend.models import (
+    Table,
+    OTEFModelConfig,
+    LayerGroup,
+    LayerState,
+    OTEFViewportState,
+)
+from backend.calibration_io import normalize_calibration_payload, write_model_bounds_to_storage
 import json
 import os
 from pathlib import Path
@@ -37,18 +44,37 @@ class Command(BaseCommand):
 
         if model_bounds_path:
             with open(model_bounds_path, encoding='utf-8') as f:
-                bounds = json.load(f)
+                raw_bounds = json.load(f)
 
+            normalized = normalize_calibration_payload(raw_bounds)
+
+            # Persist normalized model bounds config (keeps existing semantics but
+            # adds bounds_polygon + viewer_angle_deg for consumers that need them).
             config, created = OTEFModelConfig.objects.get_or_create(
                 table=otef_table,
-                defaults={'model_bounds': bounds}
+                defaults={'model_bounds': normalized}
             )
             if created:
                 self.stdout.write(self.style.SUCCESS('✓ Imported model bounds'))
             else:
-                config.model_bounds = bounds
+                config.model_bounds = normalized
                 config.save()
                 self.stdout.write(self.style.SUCCESS('✓ Updated model bounds'))
+
+            # Hydrate OTEFViewportState from normalized calibration so fresh
+            # installs get bounds + orientation without requiring a manual apply.
+            state, _ = OTEFViewportState.objects.get_or_create(
+                table=otef_table,
+                defaults={
+                    'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+                    'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
+                    'animations': {'parcels': False},
+                },
+            )
+            state.bounds_polygon = normalized.get('bounds_polygon', [])
+            state.viewer_angle_deg = normalized.get('viewer_angle_deg', 0.0)
+            state.save()
+            write_model_bounds_to_storage(normalized, config, str(model_bounds_path))
         else:
             self.stdout.write(
                 self.style.WARNING(

@@ -176,6 +176,7 @@
       <p><strong>H</strong> - Toggle this help</p>
       <p><strong>F</strong> - Toggle fullscreen</p>
       <p><strong>B</strong> - Toggle bounds editor</p>
+      <p><strong>R</strong> - Set orientation (viewer angle)</p>
       <p style="margin-top: 10px; font-size: 12px; color: #888">
         Warping/calibration should be done in TouchDesigner
       </p>
@@ -190,6 +191,13 @@
       <button id="boundsResetBtn" class="secondary">Reset to Rect</button>
       <button id="boundsCancelBtn" class="secondary">Cancel</button>
     </div>
+
+    <div id="rotationToolbar" style="position: fixed; bottom: 12px; right: 12px; background: rgba(0,0,0,0.85); color: #fff; padding: 8px 12px; border-radius: 4px; font-family: Arial, sans-serif; font-size: 13px; z-index: 120; display: none;">
+      <span>Orientation: <span id="rotationAngleValue">0°</span> — drag to rotate</span>
+      <button id="rotationApplyBtn">Apply</button>
+      <button id="rotationCancelBtn" class="secondary">Cancel</button>
+    </div>
+    <div id="rotationCursorPopup" style="position: fixed; left: 0; top: 0; padding: 4px 8px; background: rgba(0,0,0,0.9); color: #0ff; font-family: Arial, sans-serif; font-size: 14px; border-radius: 4px; pointer-events: none; z-index: 200; display: none;"></div>
 
     <!-- Proj4 for coordinate transformations -->
     <script src="https://unpkg.com/proj4@2.9.0/dist/proj4.js"></script>
@@ -225,6 +233,7 @@
     <script src="js/projection/highlight-smoothing-policy.js"></script>
     <script src="js/projection/projection-layer-manager.js"></script>
     <script src="js/projection/projection-bounds-editor.js"></script>
+    <script src="js/projection/projection-rotation-editor.js"></script>
     <script src="js/projection/projection-display.js"></script>
     <script>
       // Initialize table switcher

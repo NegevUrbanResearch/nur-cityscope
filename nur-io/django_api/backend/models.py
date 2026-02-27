@@ -321,6 +321,8 @@ class OTEFViewportState(models.Model):
     # Stored as an ordered list of {"x": number, "y": number} vertices
     bounds_polygon = models.JSONField(default=list, blank=True)
 
+    viewer_angle_deg = models.FloatField(default=0.0)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):

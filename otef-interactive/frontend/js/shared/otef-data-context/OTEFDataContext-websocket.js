@@ -32,6 +32,9 @@
       ctx._bounds = state.bounds_polygon || state.bounds;
       if (notify) ctx._notify("bounds", ctx._bounds);
     }
+    if (typeof state.viewer_angle_deg === "number") {
+      ctx._setViewerAngleDeg(state.viewer_angle_deg);
+    }
   }
 
   function setupWebSocket(ctx) {
@@ -135,6 +138,9 @@
         const state = await OTEF_API.getState(ctx._tableName);
         if (state.bounds_polygon || state.bounds) {
           ctx._setBounds(state.bounds_polygon || state.bounds);
+        }
+        if (typeof state.viewer_angle_deg === "number") {
+          ctx._setViewerAngleDeg(state.viewer_angle_deg);
         }
       } catch (err) {
         getLogger().error(

@@ -26,6 +26,13 @@ fetch("data/model-bounds.json")
       });
     }
 
+    if (window.ProjectionRotationEditor) {
+      window.ProjectionRotationEditor.configure({
+        getModelBounds: () => modelBounds,
+        getDisplayedImageBounds,
+      });
+    }
+
     // Initialize shared OTEFDataContext and subscribe to state
     if (typeof OTEFDataContext !== 'undefined') {
       OTEFDataContext.init(TABLE_NAME).then(() => {
@@ -35,6 +42,23 @@ fetch("data/model-bounds.json")
             updateHighlightQuad(initialViewport.corners);
           } else if (initialViewport.bbox) {
             updateHighlightRect(initialViewport.bbox);
+          }
+        }
+
+        // Initialize orientation from DataContext if available, else from model bounds
+        if (typeof OTEFDataContext.getViewerAngleDeg === "function") {
+          const angle = OTEFDataContext.getViewerAngleDeg();
+          if (typeof angle === "number" && !Number.isNaN(angle)) {
+            if (typeof window !== "undefined") {
+              window.currentOrientationDeg = angle;
+            }
+          }
+        } else if (
+          modelBounds &&
+          typeof modelBounds.viewer_angle_deg === "number"
+        ) {
+          if (typeof window !== "undefined") {
+            window.currentOrientationDeg = modelBounds.viewer_angle_deg;
           }
         }
 
@@ -53,6 +77,19 @@ fetch("data/model-bounds.json")
             }
           })
         );
+
+        // Subscribe to orientation updates so highlight rotation follows calibration
+        if (typeof OTEFDataContext.subscribe === "function") {
+          window._otefUnsubscribeFunctions.push(
+            OTEFDataContext.subscribe("orientation", (angle) => {
+              if (typeof angle === "number" && !Number.isNaN(angle)) {
+                if (typeof window !== "undefined") {
+                  window.currentOrientationDeg = angle;
+                }
+              }
+            }),
+          );
+        }
 
         const initialLayerGroups =
           typeof LayerStateHelper !== "undefined" && typeof LayerStateHelper.getEffectiveLayerGroups === "function"
@@ -150,6 +187,10 @@ function getOrCreateHighlightBox() {
 // Smoothing state
 let targetHighlight = { x: 0, y: 0, w: 0, h: 0 };
 let currentHighlight = { x: 0, y: 0, w: 0, h: 0 };
+// Expose orientation on window so the rotation editor can live-preview.
+if (typeof window !== "undefined" && typeof window.currentOrientationDeg === "undefined") {
+  window.currentOrientationDeg = 0;
+}
 
 function getProjectorSmoothingConfig() {
   const perfCfg =
@@ -211,6 +252,12 @@ function startSmoothingLoop(box) {
     box.style.top = currentHighlight.y + "px";
     box.style.width = currentHighlight.w + "px";
     box.style.height = currentHighlight.h + "px";
+    box.style.transformOrigin = "center center";
+    const angle =
+      typeof window !== "undefined" && typeof window.currentOrientationDeg === "number"
+        ? window.currentOrientationDeg
+        : 0;
+    box.style.transform = "rotate(" + angle + "deg)";
 
     requestAnimationFrame(step);
   };
@@ -327,6 +374,13 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "b" || event.key === "B") {
     if (window.ProjectionBoundsEditor) {
       window.ProjectionBoundsEditor.toggle();
+    }
+  }
+
+  // R key for rotation/orientation editor
+  if (event.key === "r" || event.key === "R") {
+    if (window.ProjectionRotationEditor) {
+      window.ProjectionRotationEditor.toggle();
     }
   }
 });

@@ -34,6 +34,7 @@ class OTEFDataContextClass {
     this._layerGroups = null; // [{ id, enabled, layers: [{ id, enabled }] }] - hierarchical structure
     this._animations = null;
     this._bounds = null; // bounds_polygon from backend
+    this._viewerAngleDeg = 0; // orientation calibration from backend
     this._isConnected = false;
 
     // Subscriptions: key -> Set<callback>
@@ -43,6 +44,7 @@ class OTEFDataContextClass {
       animations: new Set(),
       bounds: new Set(),
       connection: new Set(),
+      orientation: new Set(),
     };
 
     this._wsClient = null;
@@ -134,6 +136,13 @@ class OTEFDataContextClass {
     this._notify("bounds", this._bounds);
   }
 
+  _setViewerAngleDeg(angle) {
+    if (typeof angle === "number" && !Number.isNaN(angle)) {
+      this._viewerAngleDeg = angle;
+      this._notify("orientation", this._viewerAngleDeg);
+    }
+  }
+
   _notify(key, value) {
     const subs = this._subscribers[key];
     if (!subs || subs.size === 0) return;
@@ -163,25 +172,31 @@ class OTEFDataContextClass {
     return this._bounds;
   }
 
+  getViewerAngleDeg() {
+    return this._viewerAngleDeg;
+  }
+
   isConnected() {
     return this._isConnected;
   }
 
   /**
-   * Persist new bounds polygon (hard-wall navigation limits).
+   * Persist new bounds polygon (hard-wall navigation limits) and optional
+   * orientation angle.
    * Optimistically updates local state, then calls backend to:
    * - store bounds_polygon in DB
-   * - mirror polygon into model-bounds.json on disk
+   * - mirror polygon (and viewer_angle_deg, if provided) into model-bounds.json
    *
    * @param {Array<{x:number,y:number}>} polygon
+   * @param {number} [viewerAngleDeg]
    */
-  async saveBounds(polygon) {
+  async saveBounds(polygon, viewerAngleDeg) {
     const { bounds } = getInternals();
     if (!bounds || typeof bounds.saveBounds !== "function") {
       getLogger().error("[OTEFDataContext] Missing bounds helpers");
       return { ok: false, error: "Missing bounds helpers" };
     }
-    return bounds.saveBounds(this, polygon);
+    return bounds.saveBounds(this, polygon, viewerAngleDeg);
   }
 
   /**
@@ -433,6 +448,9 @@ class OTEFDataContextClass {
         break;
       case "connection":
         current = this._isConnected;
+        break;
+      case "orientation":
+        current = this._viewerAngleDeg;
         break;
     }
     if (current !== null && current !== undefined) {
