@@ -262,6 +262,11 @@
         const cachePrefix = fullLayerId + "/";
         const self = this;
 
+        const layerOpacity =
+          typeof layerConfig?.wmts?.opacity === "number"
+            ? layerConfig.wmts.opacity
+            : 1.0;
+
         const maskGeometry = entry.maskGeometry;
         const maskExclude = entry.maskExclude;
         const hasMask =
@@ -281,7 +286,8 @@
               modelBounds,
               displayBounds,
               hasMask ? maskGeometry : null,
-              maskExclude
+              maskExclude,
+              layerOpacity
             );
             return;
           }
@@ -309,7 +315,8 @@
                   self.modelBounds,
                   self.displayBounds,
                   hasMask ? maskGeometry : null,
-                  maskExclude
+                  maskExclude,
+                  layerOpacity
                 );
                 URL.revokeObjectURL(objectUrl);
               };
@@ -337,11 +344,18 @@
       modelBounds,
       displayBounds,
       maskGeometry,
-      maskExclude
+      maskExclude,
+      layerOpacity
     ) {
       if (!modelBounds || !displayBounds || !this.ctx) return;
 
       this.ctx.save();
+
+      const effectiveOpacity =
+        typeof layerOpacity === "number" && !Number.isNaN(layerOpacity)
+          ? Math.max(0, Math.min(layerOpacity, 1))
+          : 1.0;
+      this.ctx.globalAlpha = effectiveOpacity;
 
       if (maskGeometry && maskGeometry.features && maskGeometry.features.length > 0) {
         this.ctx.beginPath();
@@ -392,6 +406,7 @@
         TILE_SIZE,
         TILE_SIZE
       );
+      this.ctx.globalAlpha = 1.0;
       this.ctx.restore();
     }
   }
