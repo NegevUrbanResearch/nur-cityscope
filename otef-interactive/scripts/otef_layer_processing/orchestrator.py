@@ -72,6 +72,14 @@ def compute_file_hash(path: Path) -> str:
     return hash_sha256.hexdigest()
 
 
+def _task_id(task: Dict) -> str:
+    """Return a stable id for logging (pack_id/layer_or_file_name)."""
+    pack_id = task["pack_id"]
+    if "geo_file" in task:
+        return f"{pack_id}/{task['geo_file'].name}"
+    return f"{pack_id}/{task['image_file'].name}"
+
+
 class ProcessingOrchestrator:
     def __init__(
         self,
@@ -150,7 +158,7 @@ class ProcessingOrchestrator:
                     packs.append(d)
         return sorted(packs)
 
-    def process_all(self):
+    def process_all(self, stuck_timeout: Optional[int] = None):
         packs = self.scan_packs()
         if not packs:
             logger.warning("No layer packs found to process.")
@@ -256,32 +264,55 @@ class ProcessingOrchestrator:
                     executor.submit(self.process_single_image, image_task, log_level)
                 ] = image_task
 
-            # Main Progress Bar
+            # Main Progress Bar; optional stuck_timeout to log which task is pending
             total_tasks = len(all_layer_tasks) + len(all_image_tasks)
+            pending = dict(futures)
             with tqdm(total=total_tasks, desc="Total Layers", unit="lyr") as pbar:
-                for future in as_completed(futures):
+                while pending:
                     try:
-                        result = future.result()
-                        if result:
-                            # result is (layer_entry, style_entry_or_None, cache_key, cache_value)
-                            layer_entry, style_entry, cache_key, cache_val = result
-                            pack_id = cache_key.split("/")[0]
+                        completion_iterator = as_completed(
+                            pending.keys(), timeout=stuck_timeout
+                        )
+                        for future in completion_iterator:
+                            task = pending[future]
+                            task_id = _task_id(task)
+                            try:
+                                result = future.result()
+                                logger.info("Completed: %s", task_id)
+                                if result:
+                                    # result is (layer_entry, style_entry_or_None, cache_key, cache_value)
+                                    layer_entry, style_entry, cache_key, cache_val = result
+                                    pack_id = cache_key.split("/")[0]
 
-                            # Update local cache in main process
-                            self.cache[cache_key] = cache_val
+                                    # Update local cache in main process
+                                    self.cache[cache_key] = cache_val
 
-                            # Add to appropriate pack manifest
-                            if pack_id in pack_manifests:
-                                pack_manifests[pack_id]["layers"].append(layer_entry)
-                                if style_entry:
-                                    styles_map[pack_id][layer_entry.id] = style_entry
+                                    # Add to appropriate pack manifest
+                                    if pack_id in pack_manifests:
+                                        pack_manifests[pack_id]["layers"].append(
+                                            layer_entry
+                                        )
+                                        if style_entry:
+                                            styles_map[pack_id][
+                                                layer_entry.id
+                                            ] = style_entry
+                            except Exception as e:
+                                logger.warning("Failed: %s — %s", task_id, e)
+                                tqdm.write(f"Task failed: {e}")
 
-                    except Exception as e:
-                        # task = futures[future]
-                        # logger.error(f"Failed to process layer {task['geo_file'].name}: {e}")
-                        tqdm.write(f"Task failed: {e}")
-
-                    pbar.update(1)
+                            del pending[future]
+                            pbar.update(1)
+                    except TimeoutError:
+                        still_pending = [
+                            (f, pending[f]) for f in pending if not f.done()
+                        ]
+                        for _f, t in still_pending:
+                            logger.warning(
+                                "No completion in %ss — still pending: %s",
+                                stuck_timeout,
+                                _task_id(t),
+                            )
+                        # continue while to keep waiting
 
         # Copy boundary assets (transform to WGS84, write to processed; not added as layers)
         for pack_id, geo_file, pack_output in boundary_assets:
@@ -375,6 +406,7 @@ class ProcessingOrchestrator:
         styles_dir = task["styles_dir"]
         pack_output = task["pack_output"]
 
+        logger.info("Processing: %s/%s", pack_id, geo_file.name)
         layer_id = geo_file.stem
         cache_key = f"{pack_id}/{geo_file.name}"
         file_hash = compute_file_hash(geo_file)
@@ -417,6 +449,7 @@ class ProcessingOrchestrator:
                 # tile-aware rendering (especially for advanced styles).
                 # Skip PMTiles for label-only layers (they render as text from GeoJSON;
                 # source may have null geometries which tippecanoe rejects).
+                # projector_base layers are used only on the projection page, not the GIS map, so no PMTiles.
                 is_label_layer = bool(
                     style_config
                     and isinstance(style_config, dict)
@@ -425,7 +458,12 @@ class ProcessingOrchestrator:
                 )
                 is_large = geo_file.stat().st_size > 15 * 1024 * 1024
                 is_advanced = _style_config_is_advanced(style_config)
-                if (is_large or is_advanced) and not is_label_layer:
+                use_pmtiles = (
+                    pack_id != "projector_base"
+                    and (is_large or is_advanced)
+                    and not is_label_layer
+                )
+                if use_pmtiles:
                     generate_pmtiles_smart(
                         wgs84_file,
                         pmtiles_file,
@@ -443,13 +481,24 @@ class ProcessingOrchestrator:
             geom_type = cached.get("geometry_type", "unknown")
             style_config = cached.get("style")
 
+        popup_cfg = self._get_popup_config_for_layer(pack_id, layer_id)
+        ui_popup = (
+            {k: v for k, v in (popup_cfg or {}).items() if k != "legendLabel"}
+            if popup_cfg
+            else None
+        )
+        if ui_popup and len(ui_popup) == 0:
+            ui_popup = None
+        ui_legend_label = (popup_cfg or {}).get("legendLabel")
+
         entry = LayerEntry(
             id=layer_id,
             name=geo_file.stem,
             file=f"{layer_id}.geojson",
             geometry_type=geom_type,
             pmtiles_file=f"{layer_id}.pmtiles" if pmtiles_file.exists() else None,
-            ui_popup=self._get_popup_config_for_layer(pack_id, layer_id),
+            ui_popup=ui_popup,
+            ui_legend_label=ui_legend_label,
         )
 
         return (
@@ -478,6 +527,7 @@ class ProcessingOrchestrator:
         image_file = task["image_file"]
         pack_output = task["pack_output"]
 
+        logger.info("Processing: %s/%s", pack_id, image_file.name)
         # Use model_base for model.png so manifest matches backend/frontend expectations
         layer_id = "model_base" if image_file.stem == "model" else image_file.stem
         name = (
@@ -632,11 +682,21 @@ class ProcessingOrchestrator:
                             "geometryType", "unknown"
                         )
 
-                # Popup
-                layer_popup = self._get_popup_config_for_layer(pack_id, layer_id)
-                # Fallback to existing manifest if not found in new config (optional, but safe)
-                if not layer_popup and layer_id in existing_layers:
-                    layer_popup = existing_layers[layer_id].get("ui", {}).get("popup")
+                # Popup and legend overrides
+                layer_popup_cfg = self._get_popup_config_for_layer(pack_id, layer_id)
+                if not layer_popup_cfg and layer_id in existing_layers:
+                    existing_ui = existing_layers[layer_id].get("ui", {})
+                    layer_popup_cfg = existing_ui.get("popup") or {}
+                    if existing_ui.get("legendLabel"):
+                        layer_popup_cfg = dict(layer_popup_cfg or {}, legendLabel=existing_ui["legendLabel"])
+                layer_popup = (
+                    {k: v for k, v in (layer_popup_cfg or {}).items() if k != "legendLabel"}
+                    if layer_popup_cfg
+                    else None
+                )
+                if layer_popup and len(layer_popup) == 0:
+                    layer_popup = None
+                ui_legend_label = (layer_popup_cfg or {}).get("legendLabel")
 
                 entry = LayerEntry(
                     id=layer_id,
@@ -649,6 +709,7 @@ class ProcessingOrchestrator:
                         else None
                     ),
                     ui_popup=layer_popup,
+                    ui_legend_label=ui_legend_label,
                 )
                 new_layers.append(entry)
                 if style_config:

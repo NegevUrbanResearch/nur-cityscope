@@ -249,7 +249,26 @@ function createGeoJsonLayer(options) {
     // layers that have no PMTiles; they render with simple styling as fallback).
     leafletLayer = LRef.geoJSON(geojson, {
       pane: layerPane,
-      style: styleFunction,
+      style: (feature) => {
+        const baseStyle = styleFunction(feature);
+        const geomType = feature && feature.geometry && feature.geometry.type;
+
+        // Special case: some layers (e.g. שטחים_פתוחים_פגועים) have a line
+        // symbol in the .lyrx (stroke only) but polygon geometries in GeoJSON.
+        // For these, we want outline-only polygons (no fill) on the GIS map,
+        // matching the projection behavior.
+        if (
+          layerConfig.geometryType === "line" &&
+          (geomType === "Polygon" || geomType === "MultiPolygon")
+        ) {
+          return {
+            ...baseStyle,
+            fillOpacity: 0,
+          };
+        }
+
+        return baseStyle;
+      },
       onEachFeature: (feature, layer) => {
         if (popupConfig && typeof renderPopupContentRef === "function" && map) {
           layer.on("click", (e) => {

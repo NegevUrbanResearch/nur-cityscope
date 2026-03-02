@@ -103,10 +103,13 @@ class CanvasLayerRenderer {
     const belowWmts = layerId.includes("רקע_שחור");
     const style = styleConfig && styleConfig.style;
     const hasLabels = style && style.labels;
-    // Only the "names" layer is label-only; other point layers render as markers
+    // Label-only layers: names, שמות_יישובים, or any layer ending in .names
     const isLabelLayer =
       (geometryType === "point" || geometryType === "Point") &&
-      (layerId.endsWith(".names") || layerId === "names") &&
+      (layerId.endsWith(".names") ||
+        layerId === "names" ||
+        layerId.endsWith(".שמות_יישובים") ||
+        layerId === "שמות_יישובים") &&
       !!hasLabels;
     this.layers[layerId] = {
       geojson: geojson,

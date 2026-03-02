@@ -6,8 +6,6 @@
  */
 
 function groupLayersByNameForSheet(layers, groupId) {
-  const suffixRegex =
-    /^(.*?)-(\u05d0\u05d6\u05d5\u05e8|\u05e0\u05e7\u05d5\u05d3\u05d4|\u05e6\u05d9\u05e8)$/;
   const groups = new Map();
   const result = [];
   const processedIds = new Set();
@@ -15,10 +13,10 @@ function groupLayersByNameForSheet(layers, groupId) {
 
   for (const layer of layers) {
     if (processedIds.has(layer.id)) continue;
-    const match = layer.name ? layer.name.match(suffixRegex) : null;
-    if (match) {
-      const rawBase = match[1].trim();
-      const baseName = normalizeLayerBaseName(rawBase);
+    const parsed = parseLayerNameWithGeometrySuffix(layer.name || layer.id);
+    if (parsed) {
+      const rawBase = parsed.baseNameRaw;
+      const baseName = parsed.baseNameNorm;
       let row = groups.get(baseName);
       if (!row) {
         row = {

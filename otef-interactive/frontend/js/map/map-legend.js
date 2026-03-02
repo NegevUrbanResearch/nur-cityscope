@@ -375,27 +375,23 @@ function itemsFromLandUse(config, distinctValues) {
 }
 
 /**
- * Group layers by name suffix (e.g. "Name-אזור", "Name-נקודה")
+ * Group layers by name suffix (e.g. "Name-אזור", "Name_אזור").
  * Returns a new list of layers where matching layers are merged into one composite layer.
+ * Supports both hyphen and underscore before Hebrew suffix (אזור, נקודה, ציר).
  */
 function groupLayersByName(layers) {
   const groups = new Map(); // baseName -> { ...layer, items: [...] }
   const result = [];
   const processedIds = new Set();
 
-  // Regex for Hebrew suffixes: -אזור (Area), -נקודה (Point), -ציר (Axis/Line)
-  // Also include English variants just in case? No, data is Hebrew.
-  const suffixRegex =
-    /^(.*?)-(\u05d0\u05d6\u05d5\u05e8|\u05e0\u05e7\u05d5\u05d3\u05d4|\u05e6\u05d9\u05e8)$/;
-
   for (const layer of layers) {
     if (processedIds.has(layer.id)) continue;
 
-    const match = layer.name ? layer.name.match(suffixRegex) : null;
+    const parsed = parseLayerNameWithGeometrySuffix(layer.name || layer.id);
 
-    if (match) {
-      const baseNameRaw = match[1].trim();
-      const baseNameNorm = normalizeLayerBaseName(baseNameRaw);
+    if (parsed) {
+      const baseNameRaw = parsed.baseNameRaw;
+      const baseNameNorm = parsed.baseNameNorm;
       let group = groups.get(baseNameNorm);
       if (!group) {
         group = {
@@ -537,7 +533,24 @@ async function buildLegendModel() {
 
       // All legend items derived from style IR (defaultSymbol) for consistency with map/projection
       if (renderer === "uniqueValue") {
-        items = itemsFromUniqueValue(config);
+        const collapseLabel = config.ui?.legendLabel;
+        if (collapseLabel) {
+          const uv = config.style?.uniqueValues || {};
+          const firstClass = (uv.classes || [])[0];
+          const layerSymbol =
+            firstClass?.symbol?.symbolLayers?.length > 0
+              ? firstClass.symbol
+              : config.style?.defaultSymbol;
+          const symbol =
+            layerSymbol?.symbolLayers?.length > 0
+              ? layerSymbol
+              : symbolFromSimpleStyle(config.style?.defaultStyle || {});
+          const result = symbolIRToLegendItems(symbol, collapseLabel, geometryType);
+          items = result.items;
+          singleRowMultiSymbol = result.singleRowMultiSymbol;
+        } else {
+          items = itemsFromUniqueValue(config);
+        }
       } else if (renderer === "landUse") {
         const field = style.landUseField || "TARGUMYEUD";
         const fallback = style.landUseFieldFallback || "KVUZ_TRG";

@@ -26,3 +26,33 @@ function normalizeLayerBaseName(name) {
   const normalized = collapsedSpace.replace(/[\s_\-]+/g, "-").replace(/-+/g, "-");
   return normalized.replace(/^-+|-+$/g, "");
 }
+
+/**
+ * Hebrew geometry suffixes used in October 7th layer names.
+ * Used to detect layers that should merge (e.g. חדירה_לישוב-אזור, חדירה_לישוב-נקודה).
+ */
+const GEOMETRY_SUFFIXES = "\u05d0\u05d6\u05d5\u05e8|\u05e0\u05e7\u05d5\u05d3\u05d4|\u05e6\u05d9\u05e8"; // אזור | נקודה | ציר
+
+/**
+ * Parse a layer name that may end with a geometry suffix.
+ * Supports both hyphen (Name-אזור) and underscore (Name_אזור) conventions.
+ *
+ * @param {string} name - Layer name or id (e.g. "חדירה_לישוב-אזור" or "מאבק_וגבורה_אזור")
+ * @returns {{ baseNameRaw: string, baseNameNorm: string, suffix: string } | null}
+ */
+function parseLayerNameWithGeometrySuffix(name) {
+  if (name == null || typeof name !== "string") return null;
+  const trimmed = name.trim();
+  if (trimmed === "") return null;
+  // Match hyphen OR underscore before Hebrew suffix
+  const re = new RegExp(`^(.*?)[_\\-](${GEOMETRY_SUFFIXES})$`);
+  const match = trimmed.match(re);
+  if (!match) return null;
+  const baseNameRaw = match[1].trim();
+  const suffix = match[2];
+  return {
+    baseNameRaw,
+    baseNameNorm: normalizeLayerBaseName(baseNameRaw),
+    suffix,
+  };
+}

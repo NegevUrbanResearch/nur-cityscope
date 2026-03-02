@@ -21,6 +21,13 @@ def main():
         help="Only regenerate manifest.json and styles.json (no transform/tiling)",
     )
     parser.add_argument("--parallel", type=int, default=default_workers, help=f"Number of parallel processes (default: {default_workers})")
+    parser.add_argument(
+        "--stuck-timeout",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help="If no task completes for this many seconds, log which task(s) are still pending (then keep waiting)",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()
@@ -46,7 +53,7 @@ def main():
     if args.metadata_only:
         orchestrator.update_metadata_only()
     else:
-        orchestrator.process_all()
+        orchestrator.process_all(stuck_timeout=args.stuck_timeout)
 
 if __name__ == "__main__":
     main()

@@ -42,6 +42,7 @@ class LayerEntry:
     geometry_type: str = "unknown"
     pmtiles_file: Optional[str] = None
     ui_popup: Optional[Dict] = None
+    ui_legend_label: Optional[str] = None
     wmts: Optional[Dict] = None
     mask: Optional[Dict] = None
 
@@ -55,8 +56,13 @@ class LayerEntry:
         }
         if self.pmtiles_file:
             d["pmtilesFile"] = self.pmtiles_file
+        ui = {}
         if self.ui_popup:
-            d["ui"] = {"popup": self.ui_popup}
+            ui["popup"] = self.ui_popup
+        if self.ui_legend_label:
+            ui["legendLabel"] = self.ui_legend_label
+        if ui:
+            d["ui"] = ui
         if self.wmts is not None:
             d["wmts"] = self.wmts
         if self.mask is not None:
