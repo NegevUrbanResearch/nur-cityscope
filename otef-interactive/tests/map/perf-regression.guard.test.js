@@ -9,4 +9,8 @@ describe("perf regression guards", () => {
     expect(MapProjectionConfig.GIS_PERF.ENABLE_RAF_VIEWPORT_APPLY).toBe(true);
     expect(MapProjectionConfig.GIS_PERF.MIN_APPLY_INTERVAL_MS).toBeGreaterThan(0);
   });
+
+  test("projection flow guardrail: animation frame budget metadata exists", () => {
+    expect(MapProjectionConfig.GIS_PERF.ANIMATION_MAX_FPS).toBeGreaterThan(0);
+  });
 });

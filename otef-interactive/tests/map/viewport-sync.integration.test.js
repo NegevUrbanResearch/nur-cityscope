@@ -34,4 +34,31 @@ describe("viewport sync integration", () => {
     expect(setViewCalls[0].zoom).toBe(13);
     expect(setViewCalls[0].options.animate).toBe(false);
   });
+
+  test("animation-state sync is isolated from viewport scheduling", () => {
+    const setViewCalls = [];
+    const map = {
+      setView: (center, zoom, options) =>
+        setViewCalls.push({ center, zoom, options }),
+    };
+    const policy = getRemoteViewportSetViewOptions({
+      ANIMATE_REMOTE_VIEWPORT: false,
+      REMOTE_ANIMATION_DURATION_S: 0.12,
+    });
+
+    const rafQueue = [];
+    const scheduler = createViewportApplyScheduler({
+      minIntervalMs: 0,
+      now: () => 1,
+      raf: (cb) => rafQueue.push(cb),
+      applyViewport: (v) => map.setView(v.center, v.zoom, policy),
+    });
+
+    scheduler.schedule({ center: [31.5, 34.6], zoom: 12 });
+    rafQueue.shift()();
+
+    const animationState = { "october_7th.חדירה_לישוב-ציר": true };
+    expect(animationState["october_7th.חדירה_לישוב-ציר"]).toBe(true);
+    expect(setViewCalls).toHaveLength(1);
+  });
 });

@@ -193,4 +193,27 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
     ).length;
     expect(callsAfterSecondApply).toBe(callsAfterFirstApply);
   });
+
+  test("animations subscription triggers renderer update without viewport mutation", () => {
+    const calls = [];
+    const mockContext = {
+      _animations: {},
+      _subscribers: { animations: new Set() },
+      subscribe(key, callback) {
+        this._subscribers[key].add(callback);
+        return () => this._subscribers[key].delete(callback);
+      },
+      _setAnimations(next) {
+        this._animations = next;
+        this._subscribers.animations.forEach((cb) => cb(next));
+      },
+    };
+
+    const unsub = mockContext.subscribe("animations", (next) => calls.push(next));
+    mockContext._setAnimations({ "october_7th.חדירה_לישוב-ציר": true });
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]["october_7th.חדירה_לישוב-ציר"]).toBe(true);
+    unsub();
+  });
 });

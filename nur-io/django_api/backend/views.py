@@ -291,8 +291,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     'message': {
                         'type': 'otef_animation_changed',
                         'table': table_name,
-                        'layerId': 'parcels',
-                        'enabled': animations.get('parcels', False),
+                        'animations': animations or {},
                     }
                 }
             elif field == 'bounds' or field == 'viewer_angle_deg':
@@ -306,8 +305,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             else:
                 continue
 
-            async_to_sync(channel_layer.group_send)(group_name, message)
-            print(f"📡 Broadcast: {field} changed for {table_name}")
+            try:
+                if channel_layer:
+                    async_to_sync(channel_layer.group_send)(group_name, message)
+            except Exception as e:
+                print(f"[WARN] Broadcast skipped for {field} ({table_name}): {e}")
 
 
     @action(detail=False, methods=['get', 'patch'], url_path='by-table/(?P<table_name>[^/.]+)')
@@ -326,7 +328,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             defaults={
                 'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                 'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                'animations': {'parcels': False}
+                'animations': {}
             }
         )
 
@@ -507,7 +509,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             defaults={
                 'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                 'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                'animations': {'parcels': False}
+                'animations': {}
             }
         )
 
@@ -2073,7 +2075,7 @@ class OTEFBoundsApplyView(APIView):
             defaults={
                 "viewport": OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                 "layers": OTEFViewportState.DEFAULT_LAYERS.copy(),
-                "animations": {"parcels": False},
+                "animations": {},
             },
         )
         raw_payload = {

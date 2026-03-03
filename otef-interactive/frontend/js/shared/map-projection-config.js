@@ -53,6 +53,7 @@ const MapProjectionConfig = {
 
     // Reduce duplicate visibility toggles during frequent state updates.
     ENABLE_LAYER_VISIBILITY_BATCHING: true,
+    ANIMATION_MAX_FPS: 30,
 
     // Optional per-layer low-zoom guardrails for especially heavy packs.
     // Example: { "map_3_future.greens": 12 }

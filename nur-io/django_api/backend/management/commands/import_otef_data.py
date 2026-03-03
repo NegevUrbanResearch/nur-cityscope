@@ -55,11 +55,11 @@ class Command(BaseCommand):
                 defaults={'model_bounds': normalized}
             )
             if created:
-                self.stdout.write(self.style.SUCCESS('✓ Imported model bounds'))
+                self.stdout.write(self.style.SUCCESS('[OK] Imported model bounds'))
             else:
                 config.model_bounds = normalized
                 config.save()
-                self.stdout.write(self.style.SUCCESS('✓ Updated model bounds'))
+                self.stdout.write(self.style.SUCCESS('[OK] Updated model bounds'))
 
             # Hydrate OTEFViewportState from normalized calibration so fresh
             # installs get bounds + orientation without requiring a manual apply.
@@ -68,7 +68,7 @@ class Command(BaseCommand):
                 defaults={
                     'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                     'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                    'animations': {'parcels': False},
+                    'animations': {},
                 },
             )
             state.bounds_polygon = normalized.get('bounds_polygon', [])
@@ -76,9 +76,9 @@ class Command(BaseCommand):
             state.save()
             write_model_bounds_to_storage(normalized, config, str(model_bounds_path))
         else:
-            self.stdout.write(
-                self.style.WARNING(
-                    '⚠️ Model bounds file not found (tried frontend data and public/processed/otef).'
+                self.stdout.write(
+                    self.style.WARNING(
+                    '[WARN] Model bounds file not found (tried frontend data and public/processed/otef).'
                 )
             )
 
@@ -97,7 +97,7 @@ class Command(BaseCommand):
 
         if not os.path.exists(layers_manifest_path):
             self.stdout.write(
-                self.style.WARNING(f'⚠️ Layers manifest not found at: {layers_manifest_path}, skipping layer groups seeding')
+                self.style.WARNING(f'[WARN] Layers manifest not found at: {layers_manifest_path}, skipping layer groups seeding')
             )
             return
 
@@ -108,7 +108,7 @@ class Command(BaseCommand):
             packs = root_manifest.get('packs', [])
             if not packs:
                 self.stdout.write(
-                    self.style.WARNING('⚠️ No packs found in layers manifest')
+                    self.style.WARNING('[WARN] No packs found in layers manifest')
                 )
                 return
 
@@ -119,7 +119,7 @@ class Command(BaseCommand):
 
                 if not os.path.exists(pack_manifest_path):
                     self.stdout.write(
-                        self.style.WARNING(f'⚠️ Pack manifest not found: {pack_manifest_path}')
+                        self.style.WARNING(f'[WARN] Pack manifest not found: {pack_manifest_path}')
                     )
                     continue
 
@@ -140,14 +140,14 @@ class Command(BaseCommand):
 
                 if group_created:
                     self.stdout.write(
-                        self.style.SUCCESS(f'✓ Created layer group: {pack_id} (enabled={group_enabled})')
+                        self.style.SUCCESS(f'[OK] Created layer group: {pack_id} (enabled={group_enabled})')
                     )
                 else:
                     # Update enabled state for existing group if it's projector_base
                     if group_enabled and not group.enabled:
                         group.enabled = True
                         group.save()
-                        self.stdout.write(self.style.SUCCESS(f'✓ Enabled layer group: {pack_id}'))
+                        self.stdout.write(self.style.SUCCESS(f'[OK] Enabled layer group: {pack_id}'))
 
                 # Process layers in this pack
                 layers = pack_manifest.get('layers', [])
@@ -178,20 +178,20 @@ class Command(BaseCommand):
 
                     if layer_created:
                         self.stdout.write(
-                            self.style.SUCCESS(f'  ✓ Created layer state: {full_layer_id} (enabled={layer_enabled})')
+                            self.style.SUCCESS(f'  [OK] Created layer state: {full_layer_id} (enabled={layer_enabled})')
                         )
                     else:
                         # Update enabled state for existing important layers
                         if layer_enabled and not layer_state.enabled:
                             layer_state.enabled = True
                             layer_state.save()
-                            self.stdout.write(self.style.SUCCESS(f'  ✓ Enabled layer state: {full_layer_id}'))
+                            self.stdout.write(self.style.SUCCESS(f'  [OK] Enabled layer state: {full_layer_id}'))
 
             self.stdout.write(
-                self.style.SUCCESS(f'✓ Seeded {len(packs)} layer group(s)')
+                self.style.SUCCESS(f'[OK] Seeded {len(packs)} layer group(s)')
             )
 
         except Exception as e:
             self.stdout.write(
-                self.style.ERROR(f'❌ Error seeding layer groups: {e}')
+                self.style.ERROR(f'[ERROR] Error seeding layer groups: {e}')
             )

@@ -124,6 +124,7 @@ class StyleConfig:
     # Styling complexity and advanced symbol IR (optional, used for advanced rendering paths)
     complexity: str = "simple"  # "simple" | "advanced"
     advanced_symbol: Optional[Dict] = None
+    animation: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         # Single source of truth for drawing: defaultSymbol only (no defaultStyle/advancedSymbol).
@@ -154,5 +155,7 @@ class StyleConfig:
                 **{k: v for k, v in self.unique_values.items() if k != "classes"},
                 "classes": classes_out,
             }
+        if self.animation:
+            d["animation"] = self.animation
         # complexity omitted: one path makes it redundant; symbol types are in defaultSymbol
         return d

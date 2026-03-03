@@ -391,6 +391,32 @@
     }
   }
 
+  async function setLayerAnimations(ctx, fullLayerIds, enabled) {
+    if (
+      !ctx._tableName ||
+      !Array.isArray(fullLayerIds) ||
+      fullLayerIds.length === 0
+    ) {
+      return { ok: true };
+    }
+
+    const previous = Object.assign({}, ctx._animations || {});
+    const next = Object.assign({}, previous);
+    for (const id of fullLayerIds) {
+      next[id] = !!enabled;
+    }
+    ctx._setAnimations(next);
+
+    try {
+      await OTEF_API.updateAnimations(ctx._tableName, next);
+      return { ok: true };
+    } catch (err) {
+      getLogger().error("[OTEFDataContext] Failed to update animations:", err);
+      ctx._setAnimations(previous);
+      return { ok: false, error: err };
+    }
+  }
+
   function understandDirection(direction, delta, width, height) {
     let dx = 0;
     let dy = 0;
@@ -486,6 +512,7 @@
     setLayersEnabled,
     toggleGroup,
     toggleAnimation,
+    setLayerAnimations,
     computePanViewport,
     computeZoomViewport,
   };

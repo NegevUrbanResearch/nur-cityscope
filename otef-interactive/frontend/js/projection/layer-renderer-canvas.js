@@ -204,8 +204,8 @@ class CanvasLayerRenderer {
       }
       return 0;
     });
-    for (const [, layer] of below) {
-      this._renderLayer(layer.geojson, layer.styleFunction, this.ctxBottom, layer.styleConfig);
+    for (const [layerId, layer] of below) {
+      this._renderLayer(layerId, layer.geojson, layer.styleFunction, this.ctxBottom, layer.styleConfig);
     }
 
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -217,8 +217,8 @@ class CanvasLayerRenderer {
       }
       return 0;
     });
-    for (const [, layer] of aboveNonLabel) {
-      this._renderLayer(layer.geojson, layer.styleFunction, this.ctx, layer.styleConfig);
+    for (const [layerId, layer] of aboveNonLabel) {
+      this._renderLayer(layerId, layer.geojson, layer.styleFunction, this.ctx, layer.styleConfig);
     }
 
     this.ctxLabels.clearRect(
@@ -241,7 +241,7 @@ class CanvasLayerRenderer {
    * Render a single layer
    * Optimized to reduce canvas operations for large feature sets
    */
-  _renderLayer(geojson, styleFunction, ctx, styleConfig) {
+  _renderLayer(layerId, geojson, styleFunction, ctx, styleConfig) {
     const targetCtx = ctx || this.ctx;
     const prevCtx = this.ctx;
     this.ctx = targetCtx;
@@ -268,6 +268,51 @@ class CanvasLayerRenderer {
         style,
         {},
       );
+      const animationCfg = style && style.animation;
+      if (animationCfg && animationCfg.type === "flow") {
+        let enabled = !!animationCfg.enabledByDefault;
+        if (
+          typeof OTEFDataContext !== "undefined" &&
+          OTEFDataContext &&
+          typeof OTEFDataContext.getAnimations === "function"
+        ) {
+          const animations = OTEFDataContext.getAnimations() || {};
+          if (Object.prototype.hasOwnProperty.call(animations, layerId)) {
+            enabled = !!animations[layerId];
+          }
+        }
+        let phasePx = 0;
+        if (enabled) {
+          if (
+            typeof AnimationRuntime !== "undefined" &&
+            AnimationRuntime &&
+            typeof AnimationRuntime.setSpeed === "function"
+          ) {
+            AnimationRuntime.setSpeed(layerId, animationCfg.speed || 0);
+          }
+          if (
+            typeof AnimationRuntime !== "undefined" &&
+            AnimationRuntime &&
+            typeof AnimationRuntime.getPhasePx === "function"
+          ) {
+            phasePx = AnimationRuntime.getPhasePx(layerId);
+          }
+        }
+
+        for (const command of commands) {
+          if (command && command.type === "drawLine") {
+            command.animation = {
+              flow: {
+                enabled,
+                phasePx,
+                dashArray: Array.isArray(animationCfg.dashArray)
+                  ? animationCfg.dashArray
+                  : null,
+              },
+            };
+          }
+        }
+      }
 
       if (!this._advancedDrawer) {
         this._advancedDrawer = new AdvancedStyleDrawing();

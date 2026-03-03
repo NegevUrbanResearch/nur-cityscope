@@ -6,6 +6,8 @@
   let getDisplayedImageBounds = null;
   let canvasRenderer = null;
   let wmtsRenderer = null;
+  let animationLoopHandle = null;
+  let animationLastFrameMs = 0;
 
   const loadedLayers = {};
 
@@ -731,10 +733,64 @@
     updateAllRendererPositions(displayBounds, modelBounds);
   }
 
+  function requestAnimationFrameForAnimations() {
+    if (!canvasRenderer) return;
+    if (animationLoopHandle) return;
+
+    const perfCfg =
+      typeof MapProjectionConfig !== "undefined" && MapProjectionConfig.GIS_PERF
+        ? MapProjectionConfig.GIS_PERF
+        : {};
+    const maxFps = Math.max(1, Number(perfCfg.ANIMATION_MAX_FPS) || 30);
+    const minFrameMs = 1000 / maxFps;
+
+    const hasEnabledAnimations = () => {
+      if (
+        typeof OTEFDataContext === "undefined" ||
+        !OTEFDataContext ||
+        typeof OTEFDataContext.getAnimations !== "function"
+      ) {
+        return false;
+      }
+      const animations = OTEFDataContext.getAnimations() || {};
+      return Object.values(animations).some((v) => !!v);
+    };
+
+    const tick = (nowMs) => {
+      if (!hasEnabledAnimations()) {
+        animationLoopHandle = null;
+        return;
+      }
+      if (nowMs - animationLastFrameMs >= minFrameMs) {
+        animationLastFrameMs = nowMs;
+        if (typeof canvasRenderer._scheduleRender === "function") {
+          canvasRenderer._scheduleRender();
+        } else if (typeof canvasRenderer.render === "function") {
+          canvasRenderer.render();
+        }
+      }
+      animationLoopHandle = requestAnimationFrame(tick);
+    };
+
+    animationLoopHandle = requestAnimationFrame(tick);
+  }
+
+  function stopAnimationLoop() {
+    if (!animationLoopHandle) return;
+    cancelAnimationFrame(animationLoopHandle);
+    animationLoopHandle = null;
+  }
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("beforeunload", stopAnimationLoop);
+  }
+
   window.ProjectionLayerManager = {
     configure,
     initializeLayers,
     syncLayerGroupsFromState,
     handleResize,
+    requestAnimationFrameForAnimations,
+    stopAnimationLoop,
   };
 })();

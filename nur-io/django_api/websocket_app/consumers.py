@@ -140,7 +140,7 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                 defaults={
                     'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                     'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                    'animations': {'parcels': False}
+                    'animations': {}
                 }
             )
 
@@ -176,7 +176,7 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                 defaults={
                     'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                     'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                    'animations': {'parcels': False}
+                    'animations': {}
                 }
             )
 
@@ -215,7 +215,7 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                 defaults={
                     'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                     'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                    'animations': {'parcels': False}
+                    'animations': {}
                 }
             )
 
@@ -242,7 +242,7 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                 defaults={
                     'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                     'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                    'animations': {'parcels': False}
+                    'animations': {}
                 }
             )
             state.layers = layers
@@ -265,7 +265,7 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                 defaults={
                     'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                     'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                    'animations': {'parcels': False}
+                    'animations': {}
                 }
             )
             animations = state.animations or {}

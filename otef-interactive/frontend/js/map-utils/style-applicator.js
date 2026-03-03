@@ -49,6 +49,14 @@ class StyleApplicator {
     return result;
   }
 
+  static _resolveWeightPx(bag, fallback = 1.0) {
+    if (bag && bag.weight !== undefined) return bag.weight;
+    if (bag && bag.strokeWidth !== undefined) {
+      return bag.strokeWidth * this.PT_TO_PX;
+    }
+    return fallback;
+  }
+
   /**
    * Get Leaflet style function for a layer.
    * @param {Object} layerConfig - Layer config from registry (includes style)
@@ -84,7 +92,7 @@ class StyleApplicator {
       fillColor: bag.fillColor || "#E0E0E0",
       fillOpacity: bag.fillOpacity !== undefined ? bag.fillOpacity : 0.7,
       color: bag.color || bag.strokeColor || "#333333",
-      weight: bag.weight || bag.strokeWidth || 0.5,
+      weight: this._resolveWeightPx(bag, 0.5),
       opacity: bag.opacity !== undefined ? bag.opacity : 1.0,
       dashArray: bag.dashArray || null,
       hatch: bag.hatch || null,
@@ -103,8 +111,13 @@ class StyleApplicator {
       fillColor: bag.fillColor || "#808080",
       fillOpacity: bag.fillOpacity !== undefined ? bag.fillOpacity : 0.7,
       color: bag.color || bag.strokeColor || "#000000",
-      weight: bag.weight || bag.strokeWidth || 1.0,
-      opacity: bag.opacity !== undefined ? bag.opacity : 1.0,
+      weight: this._resolveWeightPx(bag, 1.0),
+      opacity:
+        bag.opacity !== undefined
+          ? bag.opacity
+          : bag.strokeOpacity !== undefined
+            ? bag.strokeOpacity
+            : 1.0,
       dashArray: bag.dashArray || null,
       hatch: bag.hatch || null,
     });
@@ -169,8 +182,8 @@ class StyleApplicator {
           valueStyle.weight !== undefined
             ? valueStyle.weight
             : valueStyle.strokeWidth !== undefined
-              ? valueStyle.strokeWidth
-              : defaultBag.weight ?? defaultBag.strokeWidth ?? 1.0;
+              ? valueStyle.strokeWidth * this.PT_TO_PX
+              : this._resolveWeightPx(defaultBag, 1.0);
 
         const rawRadiusPx = valueStyle.radius ?? defaultBag.radius ?? 5;
         const radiusPx = clampRadiusIfNeeded(rawRadiusPx);
@@ -193,7 +206,7 @@ class StyleApplicator {
         fillColor: defaultBag.fillColor ?? "#808080",
         fillOpacity: defaultBag.fillOpacity ?? 0.7,
         color: defaultBag.color ?? defaultBag.strokeColor ?? "#000000",
-        weight: defaultBag.weight ?? defaultBag.strokeWidth ?? 1.0,
+        weight: this._resolveWeightPx(defaultBag, 1.0),
         opacity: defaultBag.opacity ?? defaultBag.strokeOpacity ?? 1.0,
         dashArray: defaultBag.dashArray ?? null,
         hatch: defaultBag.hatch ?? null,

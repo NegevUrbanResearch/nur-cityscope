@@ -330,3 +330,29 @@ Given this contract, we aim to guarantee:
 
 - **Extensibility**
   - New ArcGIS constructs (e.g. additional hatch patterns, more marker types) can be added to the IR and then implemented in the shared engine/frontends without redesigning the data pipeline.
+
+---
+
+## 5. Flow Animation Metadata (Phase 1)
+
+Flow animation is capability metadata on style, not runtime state:
+
+```json
+{
+  "animation": {
+    "type": "flow",
+    "enabledByDefault": false,
+    "speed": 40,
+    "dashArray": [10, 14],
+    "directionPolicy": "feature_order"
+  }
+}
+```
+
+Rules:
+
+- Runtime enabled/disabled state is stored in `OTEFViewportState.animations` as a generic map keyed by full layer id.
+- Fresh load defaults to `animations = {}` and flow effects OFF.
+- Remote UI shows layer and pack animation toggles only when style metadata includes `animation`.
+- Renderers should only spend animation work on layers that are visible + animatable + enabled.
+- Legacy single-key animation (`parcels`) is removed from backend defaults and WebSocket assumptions.

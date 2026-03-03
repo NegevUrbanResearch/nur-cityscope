@@ -344,7 +344,7 @@ class OTEFViewportState(models.Model):
 
     def get_animations_with_defaults(self):
         """Return animations with defaults"""
-        return self.animations or {"parcels": False}
+        return self.animations or {}
 
     def get_bounds_polygon(self):
         """

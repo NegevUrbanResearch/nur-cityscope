@@ -11,6 +11,7 @@
 
 // Store loaded layers by full layer ID (e.g., "map_3_future.mimushim")
 const loadedLayersMap = new Map();
+const pendingLayerLoads = new Map();
 const missingLayerConfigs = new Set();
 
 let pinkLineBaseLayerInstance = null;
@@ -64,6 +65,18 @@ const pmtilesLayersWithConfigs = window.pmtilesLayersWithConfigs;
  */
 function registerLoadedLayer(fullLayerId, layerInstance) {
   if (!fullLayerId || !layerInstance) return;
+  const existing = loadedLayersMap.get(fullLayerId);
+  if (
+    existing &&
+    existing !== layerInstance &&
+    typeof map !== "undefined" &&
+    map &&
+    typeof map.hasLayer === "function" &&
+    typeof map.removeLayer === "function" &&
+    map.hasLayer(existing)
+  ) {
+    map.removeLayer(existing);
+  }
   const key = `layer_${fullLayerId.replace(/\./g, "_")}`;
   window[key] = layerInstance;
   loadedLayersMap.set(fullLayerId, layerInstance);
@@ -316,6 +329,11 @@ async function loadCuratedLayerFromAPI(fullLayerId) {
  * @param {string} fullLayerId - Full layer ID (e.g., "map_3_future.mimushim")
  */
 async function loadLayerFromRegistry(fullLayerId) {
+  if (pendingLayerLoads.has(fullLayerId)) {
+    return pendingLayerLoads.get(fullLayerId);
+  }
+
+  const loadPromise = (async () => {
   if (loadedLayersMap.has(fullLayerId)) {
     // Skip already loaded layers silently
     return;
@@ -360,6 +378,14 @@ async function loadLayerFromRegistry(fullLayerId) {
     // Don't set it to true here - wait for the actual layer object
   } catch (error) {
     console.error(`[Map] Error loading layer ${fullLayerId}:`, error);
+  }
+  })();
+
+  pendingLayerLoads.set(fullLayerId, loadPromise);
+  try {
+    await loadPromise;
+  } finally {
+    pendingLayerLoads.delete(fullLayerId);
   }
 }
 

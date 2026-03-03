@@ -80,6 +80,36 @@ describe('layer-factory: createGeoJsonLayer', () => {
 
     expect(layer.options.pane).toBe('overlayLine');
   });
+
+  test('GIS GeoJSON line layer ignores flow animation metadata', () => {
+    const cfg = {
+      geometryType: 'line',
+      ui: {},
+      style: {
+        animation: {
+          type: 'flow',
+          enabledByDefault: true,
+          speed: 40,
+          dashArray: [10, 14],
+          directionPolicy: 'feature_order',
+        },
+      },
+    };
+    const geojson = { type: 'FeatureCollection', features: [] };
+    const map = {};
+
+    const { createGeoJsonLayer } = require('../../frontend/js/map-utils/layer-factory');
+    const layer = createGeoJsonLayer({
+      fullLayerId: 'october_7th.חדירה_לישוב-ציר',
+      layerConfig: cfg,
+      geojson,
+      map,
+    });
+
+    expect(layer).toBeTruthy();
+    expect(layer.__flowAnimationEnabled).toBeUndefined();
+    expect(layer.__applyFlowAnimationFrame).toBeUndefined();
+  });
 });
 
 describe('layer-factory: createPmtilesLayer', () => {
@@ -146,6 +176,35 @@ describe('layer-factory: createPmtilesLayer', () => {
 
     expect(layer).toBe(fakeAdvancedLayer);
     expect(global.AdvancedPmtilesLayer.createAdvancedPmtilesLayer).toHaveBeenCalled();
+  });
+
+  test('GIS PMTiles layer ignores flow animation metadata', () => {
+    global.AdvancedPmtilesLayer = {
+      createAdvancedPmtilesLayer: jest.fn(() => ({ _advanced: true })),
+    };
+    global.protomapsL = { leafletLayer: jest.fn((opts) => ({ opts })) };
+
+    const { createPmtilesLayer } = require('../../frontend/js/map-utils/layer-factory');
+
+    const layer = createPmtilesLayer({
+      fullLayerId: 'october_7th.חדירה_לישוב-ציר',
+      layerConfig: {
+        geometryType: 'line',
+        style: {
+          animation: {
+            type: 'flow',
+            enabledByDefault: true,
+            speed: 30,
+            dashArray: [10, 14],
+          },
+        },
+      },
+      dataUrl: 'https://example.com/flow.pmtiles',
+    });
+
+    expect(layer).toBeTruthy();
+    expect(layer.__flowAnimationEnabled).toBeUndefined();
+    expect(layer.__applyFlowAnimationFrame).toBeUndefined();
   });
 });
 

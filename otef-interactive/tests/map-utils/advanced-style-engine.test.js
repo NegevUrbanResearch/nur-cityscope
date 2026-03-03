@@ -1,6 +1,15 @@
 const AdvancedStyleEngine = require('../../frontend/js/map-utils/advanced-style-engine');
 
 describe('AdvancedStyleEngine', () => {
+  test('october_7th line style contains flow animation metadata', () => {
+    const styles = require('../../public/processed/layers/october_7th/styles.json');
+    const style = styles['חדירה_לישוב-ציר'];
+
+    expect(style.type).toBe('line');
+    expect(style.animation).toBeTruthy();
+    expect(style.animation.type).toBe('flow');
+  });
+
   describe('_resolveStyleSymbol', () => {
     test('uniqueValue: returns symbol for matching class value', () => {
       const styleConfig = {

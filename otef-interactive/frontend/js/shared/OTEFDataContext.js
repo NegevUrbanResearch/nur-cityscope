@@ -346,6 +346,21 @@ class OTEFDataContextClass {
   }
 
   /**
+   * Set animation state for multiple layers in one update (one API call).
+   *
+   * @param {string[]} fullLayerIds - Full layer ids (e.g. ["october_7th.layer1", "october_7th.layer2"])
+   * @param {boolean} enabled
+   */
+  async setLayerAnimations(fullLayerIds, enabled) {
+    const { actions } = getInternals();
+    if (!actions || typeof actions.setLayerAnimations !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
+      return { ok: false, error: "Missing action helpers" };
+    }
+    return actions.setLayerAnimations(this, fullLayerIds, enabled);
+  }
+
+  /**
    * Compute candidate viewport for a pan command, mirroring backend logic.
    *
    * @param {Object} viewport - Current viewport

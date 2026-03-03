@@ -49,7 +49,13 @@ class AdvancedStyleDrawing {
       if (!symbolLayers.length || !cmd.geometry) continue;
 
       if (cmd.type === "drawLine") {
-        this._drawLineCommand(ctx, cmd.geometry, symbolLayers, viewContext);
+        this._drawLineCommand(
+          ctx,
+          cmd.geometry,
+          symbolLayers,
+          viewContext,
+          cmd.animation && cmd.animation.flow ? cmd.animation.flow : null,
+        );
       } else if (cmd.type === "drawPolygon") {
         this._drawPolygonCommand(ctx, cmd.geometry, symbolLayers, viewContext);
       } else if (cmd.type === "drawMarker") {
@@ -65,7 +71,7 @@ class AdvancedStyleDrawing {
     }
   }
 
-  _drawLineCommand(ctx, geometry, symbolLayers, viewContext) {
+  _drawLineCommand(ctx, geometry, symbolLayers, viewContext, flowAnimation) {
     const strokeLayers = symbolLayers
       .filter((l) => l && l.type === "stroke")
       .slice();
@@ -103,7 +109,7 @@ class AdvancedStyleDrawing {
     for (const sl of strokeLayers) {
       const dashArray =
         sl.dash && Array.isArray(sl.dash.array) ? sl.dash.array.slice() : null;
-      const styleForDraw = { hatch: null, dashArray };
+      const styleForDraw = { hatch: null, dashArray, flow: flowAnimation };
 
       for (const line of lines) {
         this._drawLineString(
@@ -465,10 +471,23 @@ class AdvancedStyleDrawing {
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth = lineWidth;
 
-    if (style.dashArray && Array.isArray(style.dashArray)) {
+    const flow = style && style.flow;
+    if (flow && flow.enabled) {
+      const flowDashArray = Array.isArray(flow.dashArray) ? flow.dashArray : null;
+      if (flowDashArray && flowDashArray.length > 0) {
+        ctx.setLineDash(flowDashArray);
+      } else if (style.dashArray && Array.isArray(style.dashArray)) {
+        ctx.setLineDash(style.dashArray);
+      } else {
+        ctx.setLineDash([10, 14]);
+      }
+      ctx.lineDashOffset = Number(flow.phasePx) || 0;
+    } else if (style.dashArray && Array.isArray(style.dashArray)) {
       ctx.setLineDash(style.dashArray);
+      ctx.lineDashOffset = 0;
     } else {
       ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
     }
 
     ctx.stroke();

@@ -64,6 +64,96 @@ function groupLayersByNameForSheet(layers, groupId) {
   return result.concat(standalones);
 }
 
+function isLayerAnimatable(layer, groupId) {
+  if (layer && layer.style && layer.style.animation) return true;
+  if (
+    groupId &&
+    layer &&
+    layer.id &&
+    typeof layerRegistry !== "undefined" &&
+    layerRegistry &&
+    typeof layerRegistry.getLayerConfig === "function"
+  ) {
+    const cfg = layerRegistry.getLayerConfig(`${groupId}.${layer.id}`);
+    return !!(cfg && cfg.style && cfg.style.animation);
+  }
+  return false;
+}
+
+function getRowAnimatableFullLayerIds(row, groupId) {
+  if (!row || !Array.isArray(row.layers)) return [];
+  return row.layers
+    .filter((layer) => isLayerAnimatable(layer, groupId))
+    .map((layer) => `${groupId}.${layer.id}`);
+}
+
+function escapeHtmlSafe(value) {
+  if (typeof escapeHtml === "function") {
+    return escapeHtml(value);
+  }
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderLayerRow(row, options = {}) {
+  const groupId = options.groupId || "";
+  const checked =
+    row.enabled !== undefined ? row.enabled : row.layers.every((l) => l.enabled);
+  const layerIdsAttr = JSON.stringify(row.fullLayerIds || []).replace(
+    /"/g,
+    "&quot;",
+  );
+  const label =
+    row.displayLabel ?? row.baseName ?? row.layers[0]?.name ?? row.layers[0]?.id ?? "";
+  const preview = options.stylePreview || {
+    fillColor: "#808080",
+    fillOpacity: 0.7,
+    strokeColor: "#000000",
+  };
+  const animatableIds = getRowAnimatableFullLayerIds(row, groupId);
+  const hasAnimationToggle = animatableIds.length > 0;
+  const animIdsAttr = JSON.stringify(animatableIds).replace(/"/g, "&quot;");
+  const animations = options.animations || {};
+  const enabledAnimationCount = hasAnimationToggle
+    ? animatableIds.filter((id) => !!animations[id]).length
+    : 0;
+  const animationEnabled = hasAnimationToggle && enabledAnimationCount > 0;
+  const animationMixed =
+    hasAnimationToggle &&
+    enabledAnimationCount > 0 &&
+    enabledAnimationCount < animatableIds.length;
+
+  return `
+    <div class="layer-item">
+      <div class="layer-preview" style="background-color: ${preview.fillColor}; opacity: ${preview.fillOpacity}; border-color: ${preview.strokeColor};"></div>
+      <label class="group-toggle" onclick="event.stopPropagation()">
+        <input
+          type="checkbox"
+          data-layer-ids="${layerIdsAttr}"
+          ${checked ? "checked" : ""}
+          onchange="layerSheetController.toggleLayerRow(JSON.parse(this.getAttribute('data-layer-ids')), this.checked); event.stopPropagation();"
+        />
+        <span class="toggle-indicator"></span>
+      </label>
+      <span class="layer-label">${escapeHtmlSafe(label)}</span>
+      ${
+        hasAnimationToggle
+          ? `<button
+              type="button"
+              class="animation-chip ${animationEnabled ? "active" : ""} ${animationMixed ? "mixed" : ""}"
+              data-animation-toggle
+              data-animation-layer-ids="${animIdsAttr}"
+            >Flow</button>`
+          : ""
+      }
+    </div>
+  `;
+}
+
 class LayerSheetController {
   constructor() {
     this.sheet = null;
@@ -105,6 +195,7 @@ class LayerSheetController {
     // Subscribe to layer group changes
     if (typeof OTEFDataContext !== "undefined") {
       OTEFDataContext.subscribe("layerGroups", () => this.render());
+      OTEFDataContext.subscribe("animations", () => this.render());
     }
   }
 
@@ -176,6 +267,23 @@ class LayerSheetController {
         this.close();
       }
     });
+
+    // Delegated animation chip click handling (more reliable than inline handlers on mobile)
+    content.addEventListener("click", (e) => {
+      const chip = e.target.closest("[data-animation-toggle]");
+      if (!chip) return;
+      e.preventDefault();
+      e.stopPropagation();
+      let ids = [];
+      try {
+        ids = JSON.parse(chip.getAttribute("data-animation-layer-ids") || "[]");
+      } catch (_) {
+        ids = [];
+      }
+      if (!Array.isArray(ids) || ids.length === 0) return;
+      const nextEnabled = !chip.classList.contains("active");
+      this.toggleLayerRowAnimations(ids, nextEnabled);
+    });
   }
 
   open() {
@@ -224,6 +332,13 @@ class LayerSheetController {
     if (fullLayerIds.length === 0) return;
     if (typeof OTEFDataContext !== "undefined") {
       await OTEFDataContext.setLayersEnabled(fullLayerIds, enabled);
+    }
+  }
+
+  async toggleLayerRowAnimations(fullLayerIds, enabled) {
+    if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) return;
+    if (typeof OTEFDataContext !== "undefined") {
+      await OTEFDataContext.setLayerAnimations(fullLayerIds, enabled);
     }
   }
 
@@ -302,6 +417,12 @@ class LayerSheetController {
       return;
     }
 
+    const animations =
+      typeof OTEFDataContext !== "undefined" &&
+      typeof OTEFDataContext.getAnimations === "function"
+        ? OTEFDataContext.getAnimations() || {}
+        : {};
+
     content.innerHTML = groups
       .map((group) => {
         const isExpanded = this.expandedGroups.has(group.id);
@@ -309,15 +430,42 @@ class LayerSheetController {
           (l) => l.enabled,
         ).length;
         const totalLayers = (group.layers || []).length;
+        const packAnimatableLayerIds = (group.layers || [])
+          .filter((layer) => isLayerAnimatable(layer, group.id))
+          .map((layer) => `${group.id}.${layer.id}`);
+        const packHasAnimatable = packAnimatableLayerIds.length > 0;
+        const enabledPackAnimations = packHasAnimatable
+          ? packAnimatableLayerIds.filter((id) => !!animations[id]).length
+          : 0;
+        const packAnimationEnabled =
+          packHasAnimatable && enabledPackAnimations > 0;
+        const packAnimationMixed =
+          packHasAnimatable &&
+          enabledPackAnimations > 0 &&
+          enabledPackAnimations < packAnimatableLayerIds.length;
+        const packAnimLayerIdsAttr = JSON.stringify(packAnimatableLayerIds).replace(
+          /"/g,
+          "&quot;",
+        );
 
         return `
         <div class="layer-group" data-group-id="${group.id}">
           <div class="group-header">
             <div class="group-title-row" onclick="layerSheetController.toggleGroup('${group.id}')">
-              <span class="group-title">${escapeHtml(group.name)}</span>
+              <span class="group-title">${escapeHtmlSafe(group.name)}</span>
               <span class="group-count">${enabledLayers}/${totalLayers}</span>
             </div>
             <div class="group-controls">
+              ${
+                packHasAnimatable
+                  ? `<button
+                      type="button"
+                      class="animation-chip ${packAnimationEnabled ? "active" : ""} ${packAnimationMixed ? "mixed" : ""}"
+                      data-animation-toggle
+                      data-animation-layer-ids="${packAnimLayerIdsAttr}"
+                    >Flow</button>`
+                  : ""
+              }
               <label class="group-toggle" onclick="event.stopPropagation()">
                 <input
                   type="checkbox"
@@ -343,33 +491,11 @@ class LayerSheetController {
             )
               .map((row) => {
                 const style = this.getLayerStylePreview(row.layers[0]);
-                const layerIdsAttr = JSON.stringify(row.fullLayerIds).replace(
-                  /"/g,
-                  "&quot;",
-                );
-                const label =
-                  row.displayLabel ??
-                  row.baseName ??
-                  row.layers[0]?.name ??
-                  row.layers[0]?.id ??
-                  "";
-                const checked =
-                  row.enabled !== undefined
-                    ? row.enabled
-                    : row.layers.every((l) => l.enabled);
-                return `
-                <label class="layer-item" onclick="event.stopPropagation()">
-                  <div class="layer-preview" style="background-color: ${style.fillColor}; opacity: ${style.fillOpacity}; border-color: ${style.strokeColor};"></div>
-                  <input
-                    type="checkbox"
-                    data-layer-ids="${layerIdsAttr}"
-                    ${checked ? "checked" : ""}
-                    onchange="layerSheetController.toggleLayerRow(JSON.parse(this.getAttribute('data-layer-ids')), this.checked); event.stopPropagation();"
-                  />
-                  <span class="toggle-indicator"></span>
-                  <span class="layer-label">${escapeHtml(label)}</span>
-                </label>
-              `;
+                return renderLayerRow(row, {
+                  groupId: group.id,
+                  stylePreview: style,
+                  animations,
+                });
               })
               .join("")}
           </div>
@@ -406,8 +532,17 @@ class LayerSheetController {
   // escapeHtml is provided by html-utils.js (loaded via script tag)
 }
 
-// Initialize singleton
-const layerSheetController = new LayerSheetController();
+let layerSheetController = null;
+if (typeof document !== "undefined" && typeof window !== "undefined") {
+  layerSheetController = new LayerSheetController();
+  window.layerSheetController = layerSheetController;
+}
 
-// Export for global access
-window.layerSheetController = layerSheetController;
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    LayerSheetController,
+    groupLayersByNameForSheet,
+    isLayerAnimatable,
+    renderLayerRow,
+  };
+}

@@ -45,6 +45,24 @@ CACHE_FILE = ".layer-cache.json"
 
 # Stem of gis files matching this pattern are copied to processed for masking only (not added as layers).
 MASK_ASSET_STEM_SUFFIX = "_boundary"
+ANIMATION_STYLE_OVERRIDES: Dict[str, Dict[str, Dict[str, Any]]] = {
+    "october_7th": {
+        "\u05d7\u05d3\u05d9\u05e8\u05d4_\u05dc\u05d9\u05e9\u05d5\u05d1-\u05e6\u05d9\u05e8": {
+            "type": "flow",
+            "enabledByDefault": False,
+            "speed": 40,
+            "dashArray": [10, 14],
+            "directionPolicy": "feature_order",
+        },
+        "\u05de\u05d0\u05d1\u05e7_\u05d5\u05d2\u05d1\u05d5\u05e8\u05d4_\u05e6\u05d9\u05e8": {
+            "type": "flow",
+            "enabledByDefault": False,
+            "speed": 40,
+            "dashArray": [10, 14],
+            "directionPolicy": "feature_order",
+        },
+    }
+}
 
 
 def _style_config_is_advanced(style_config: Optional[Dict]) -> bool:
@@ -95,6 +113,17 @@ class ProcessingOrchestrator:
         self.cache_path = output_dir / CACHE_FILE
         self.cache = {} if no_cache else self._load_cache()
         self.popup_config = self._load_popup_config()
+
+    def _apply_animation_style_overrides(
+        self, pack_id: str, layer_id: str, style_config: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if not style_config or not isinstance(style_config, dict):
+            return style_config
+        layer_overrides = ANIMATION_STYLE_OVERRIDES.get(pack_id, {})
+        animation_cfg = layer_overrides.get(layer_id)
+        if animation_cfg:
+            style_config["animation"] = animation_cfg
+        return style_config
 
     def _load_cache(self) -> Dict:
         if self.cache_path.exists():
@@ -440,6 +469,9 @@ class ProcessingOrchestrator:
                 style_config, geom_type = self._resolve_style_for_geo_file(
                     geo_file, styles_dir
                 )
+                style_config = self._apply_animation_style_overrides(
+                    pack_id, layer_id, style_config
+                )
 
                 if geom_type == "unknown":
                     geom_type = get_geometry_type(wgs84_file)
@@ -480,6 +512,9 @@ class ProcessingOrchestrator:
             cached = self.cache[cache_key]
             geom_type = cached.get("geometry_type", "unknown")
             style_config = cached.get("style")
+            style_config = self._apply_animation_style_overrides(
+                pack_id, layer_id, style_config
+            )
 
         popup_cfg = self._get_popup_config_for_layer(pack_id, layer_id)
         ui_popup = (
@@ -670,6 +705,9 @@ class ProcessingOrchestrator:
                 # Styles (same resolution as process_single_layer for advanced/complexity)
                 style_config, geom_type = self._resolve_style_for_geo_file(
                     geo_file, styles_dir
+                )
+                style_config = self._apply_animation_style_overrides(
+                    pack_id, layer_id, style_config
                 )
 
                 if geom_type == "unknown":

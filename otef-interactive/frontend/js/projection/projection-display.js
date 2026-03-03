@@ -81,6 +81,17 @@ fetch("data/model-bounds.json")
           })
         );
 
+        window._otefUnsubscribeFunctions.push(
+          OTEFDataContext.subscribe("animations", () => {
+            if (
+              window.ProjectionLayerManager &&
+              typeof window.ProjectionLayerManager.requestAnimationFrameForAnimations === "function"
+            ) {
+              window.ProjectionLayerManager.requestAnimationFrameForAnimations();
+            }
+          }),
+        );
+
       });
     }
   })
