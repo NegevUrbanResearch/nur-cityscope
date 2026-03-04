@@ -521,21 +521,112 @@ class AdvancedStyleDrawing {
   ) {
     if (!coords || coords.length < 2) return;
 
+    const flow = style && style.flow;
+    const phasePx = Number(flow?.phasePx) || 0;
+
+    // Build pixel path once for modes that need length or reuse
+    const pts = coords.map((c) => viewContext.coordToPixel(c));
+
+    if (flow && flow.enabled && flow.mode === "reveal") {
+      // Solid line that draws along the path (no dashes). Stroke only from start
+      // up to (phasePx % totalLength) so the line "reveals" over time.
+      const totalLength = this._pathLength(pts);
+      if (totalLength <= 0) return;
+      const revealAt = phasePx % totalLength;
+
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      let acc = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const dx = pts[i].x - pts[i - 1].x;
+        const dy = pts[i].y - pts[i - 1].y;
+        const segLen = Math.sqrt(dx * dx + dy * dy);
+        if (acc + segLen >= revealAt) {
+          const t = segLen > 0 ? (revealAt - acc) / segLen : 0;
+          const x = pts[i - 1].x + dx * t;
+          const y = pts[i - 1].y + dy * t;
+          ctx.lineTo(x, y);
+          break;
+        }
+        acc += segLen;
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+      ctx.globalAlpha = strokeOpacity;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = lineWidth;
+      ctx.setLineDash([]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    if (flow && flow.enabled && flow.mode === "trail") {
+      // Point moves along path and leaves the line as trail; route stays visible.
+      // No "ball that leaves nothing" – the trail IS the route.
+      const totalLength = this._pathLength(pts);
+      if (totalLength <= 0) return;
+      // On short lines, slow the effective phase so one traverse takes at least
+      // minDuration seconds – avoids strobing when path is very short.
+      const minDurationSec = 2.2;
+      const speed = Math.max(1, Number(flow.speed) || 20);
+      const effectiveSpeed = Math.min(speed, totalLength / minDurationSec);
+      const trailPhasePx = (phasePx * effectiveSpeed) / speed;
+      const revealAt = trailPhasePx % totalLength;
+
+      // 1) Draw the trail (line from start up to current position)
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      let acc = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const dx = pts[i].x - pts[i - 1].x;
+        const dy = pts[i].y - pts[i - 1].y;
+        const segLen = Math.sqrt(dx * dx + dy * dy);
+        if (acc + segLen >= revealAt) {
+          const t = segLen > 0 ? (revealAt - acc) / segLen : 0;
+          ctx.lineTo(
+            pts[i - 1].x + dx * t,
+            pts[i - 1].y + dy * t,
+          );
+          break;
+        }
+        acc += segLen;
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+      ctx.globalAlpha = strokeOpacity;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = lineWidth;
+      ctx.setLineDash([]);
+      ctx.stroke();
+
+      // 2) Draw head (point at leading edge) unless we hide it at end
+      const hideAtEnd = flow.hideHeadAtEnd === true;
+      const atEnd = revealAt >= totalLength - 2;
+      if (!(hideAtEnd && atEnd)) {
+        const head = this._pointAtDistance(pts, revealAt);
+        const r = Math.max(1, lineWidth * (flow.headRadius ?? 1.5));
+        ctx.beginPath();
+        ctx.arc(head.x, head.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = strokeColor;
+        ctx.globalAlpha = strokeOpacity;
+        ctx.fill();
+      }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      return;
+    }
+
+    // Full path for default / dash mode
     ctx.beginPath();
-
-    const first = viewContext.coordToPixel(coords[0]);
-    ctx.moveTo(first.x, first.y);
-
-    for (let i = 1; i < coords.length; i++) {
-      const pt = viewContext.coordToPixel(coords[i]);
-      ctx.lineTo(pt.x, pt.y);
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) {
+      ctx.lineTo(pts[i].x, pts[i].y);
     }
 
     ctx.globalAlpha = strokeOpacity;
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth = lineWidth;
 
-    const flow = style && style.flow;
     if (flow && flow.enabled) {
       const flowDashArray = Array.isArray(flow.dashArray) ? flow.dashArray : null;
       if (flowDashArray && flowDashArray.length > 0) {
@@ -545,7 +636,7 @@ class AdvancedStyleDrawing {
       } else {
         ctx.setLineDash([10, 14]);
       }
-      ctx.lineDashOffset = Number(flow.phasePx) || 0;
+      ctx.lineDashOffset = phasePx;
     } else if (style.dashArray && Array.isArray(style.dashArray)) {
       ctx.setLineDash(style.dashArray);
       ctx.lineDashOffset = 0;
@@ -554,9 +645,48 @@ class AdvancedStyleDrawing {
       ctx.lineDashOffset = 0;
     }
 
+    let prevAlpha = ctx.globalAlpha;
+    if (flow && flow.enabled && typeof flow.opacity === "number") {
+      ctx.globalAlpha = prevAlpha * flow.opacity;
+    }
     ctx.stroke();
+    ctx.globalAlpha = prevAlpha;
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
+  }
+
+  _pathLength(pts) {
+    if (!pts || pts.length < 2) return 0;
+    let len = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i].x - pts[i - 1].x;
+      const dy = pts[i].y - pts[i - 1].y;
+      len += Math.sqrt(dx * dx + dy * dy);
+    }
+    return len;
+  }
+
+  /** Returns { x, y } at distance along the path (clamped to path bounds). */
+  _pointAtDistance(pts, distance) {
+    if (!pts || pts.length < 2) return pts[0] ?? { x: 0, y: 0 };
+    if (distance <= 0) return pts[0];
+    const total = this._pathLength(pts);
+    if (distance >= total) return pts[pts.length - 1];
+    let acc = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const dx = pts[i].x - pts[i - 1].x;
+      const dy = pts[i].y - pts[i - 1].y;
+      const segLen = Math.sqrt(dx * dx + dy * dy);
+      if (acc + segLen >= distance) {
+        const t = segLen > 0 ? (distance - acc) / segLen : 0;
+        return {
+          x: pts[i - 1].x + dx * t,
+          y: pts[i - 1].y + dy * t,
+        };
+      }
+      acc += segLen;
+    }
+    return pts[pts.length - 1];
   }
 
   _drawPoint(

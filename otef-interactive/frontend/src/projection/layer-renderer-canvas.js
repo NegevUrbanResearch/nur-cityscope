@@ -280,7 +280,7 @@ class CanvasLayerRenderer {
           ? styleAnimation.enabledByDefault
           : !!projectionCfg.ENABLED_BY_DEFAULT;
 
-    const speed =
+    let speed =
       layerOverride && typeof layerOverride.SPEED === "number"
         ? layerOverride.SPEED
         : typeof styleAnimation?.speed === "number"
@@ -289,7 +289,7 @@ class CanvasLayerRenderer {
             ? projectionCfg.DEFAULT_SPEED
             : 0;
 
-    const dashArray = Array.isArray(layerOverride?.DASH_ARRAY)
+    let dashArray = Array.isArray(layerOverride?.DASH_ARRAY)
       ? layerOverride.DASH_ARRAY
       : Array.isArray(styleAnimation?.dashArray)
         ? styleAnimation.dashArray
@@ -297,10 +297,32 @@ class CanvasLayerRenderer {
           ? projectionCfg.DEFAULT_DASH_ARRAY
           : null;
 
+    const mode =
+      typeof layerOverride?.MODE === "string"
+        ? layerOverride.MODE
+        : typeof styleAnimation?.mode === "string"
+          ? styleAnimation.mode
+          : undefined;
+    const headRadius =
+      typeof layerOverride?.HEAD_RADIUS === "number"
+        ? layerOverride.HEAD_RADIUS
+        : typeof styleAnimation?.headRadius === "number"
+          ? styleAnimation.headRadius
+          : undefined;
+    const hideHeadAtEnd =
+      typeof layerOverride?.HIDE_HEAD_AT_END === "boolean"
+        ? layerOverride.HIDE_HEAD_AT_END
+        : typeof styleAnimation?.hideHeadAtEnd === "boolean"
+          ? styleAnimation.hideHeadAtEnd
+          : undefined;
+
     return {
       enabledByDefault,
       speed,
       dashArray,
+      ...(typeof mode === "string" ? { mode } : {}),
+      ...(typeof headRadius === "number" ? { headRadius } : {}),
+      ...(typeof hideHeadAtEnd === "boolean" ? { hideHeadAtEnd } : {}),
     };
   }
 
@@ -376,14 +398,19 @@ class CanvasLayerRenderer {
 
     const style = styleConfig && styleConfig.style;
 
-    // Use shared advanced style engine to compute drawing commands, then
-    // delegate actual drawing to AdvancedStyleDrawing, including multi-stroke
-    // lines, hatch fills, and marker-along-line.
+    // Prefer style-config-based resolution (symbol IR from styles.json) so that
+    // per-symbol opacity (e.g. uniqueValue fill opacity) is preserved. Using
+    // styleFunction would convert symbol → bag → _symbolFromSimpleStyle → symbol
+    // and can lose or alter opacity. When style has defaultSymbol or uniqueValues,
+    // resolve from config to match GIS behavior and correct projection opacity.
+    const useConfigResolution =
+      style &&
+      (style.defaultSymbol || (style.uniqueValues && style.uniqueValues.classes?.length));
     const commands = AdvancedStyleEngine.computeCommands(
       features,
       style,
       {},
-      styleFunction,
+      useConfigResolution ? null : styleFunction,
     );
     const flowCfg = this._resolveProjectionFlowConfig(
       layerId,
@@ -425,9 +452,17 @@ class CanvasLayerRenderer {
             flow: {
               enabled,
               phasePx,
+              speed: flowCfg.speed,
               dashArray: Array.isArray(flowCfg.dashArray)
                 ? flowCfg.dashArray
                 : null,
+              ...(typeof flowCfg.mode === "string" ? { mode: flowCfg.mode } : {}),
+              ...(typeof flowCfg.headRadius === "number"
+                ? { headRadius: flowCfg.headRadius }
+                : {}),
+              ...(typeof flowCfg.hideHeadAtEnd === "boolean"
+                ? { hideHeadAtEnd: flowCfg.hideHeadAtEnd }
+                : {}),
             },
           };
         }

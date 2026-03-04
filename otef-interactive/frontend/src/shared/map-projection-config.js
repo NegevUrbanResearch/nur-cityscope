@@ -43,13 +43,28 @@ const MapProjectionConfig = {
     DEFAULT_SPEED: 0,
     DEFAULT_DASH_ARRAY: null,
     LAYER_OVERRIDES: {
-      // Example:
-      // "map_2_oct_7.some_line_layer": {
-      //   ENABLE_FLOW: true,
-      //   ENABLED_BY_DEFAULT: true,
-      //   SPEED: 10,
-      //   DASH_ARRAY: [8, 6],
-      // },
+      // Oct 7 route line(s): trail animation (point leaves line as trail; route stays visible).
+      "october_7th.חדירה_לישוב-ציר": {
+        ENABLE_FLOW: true,
+        SPEED: 22,
+        MODE: "trail",
+        HEAD_RADIUS: 1.6,
+        HIDE_HEAD_AT_END: true,
+      },
+      "october_7th.חדירה_לישוב_ציר": {
+        ENABLE_FLOW: true,
+        SPEED: 22,
+        MODE: "trail",
+        HEAD_RADIUS: 1.6,
+        HIDE_HEAD_AT_END: true,
+      },
+      "october_7th.מאבק_וגבורה_ציר": {
+        ENABLE_FLOW: true,
+        SPEED: 22,
+        MODE: "trail",
+        HEAD_RADIUS: 1.6,
+        HIDE_HEAD_AT_END: true,
+      },
     },
   },
 

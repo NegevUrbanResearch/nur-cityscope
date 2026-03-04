@@ -202,7 +202,9 @@ function symbolIRToLegendItems(symbol, label, geometryType) {
     const hatchStyles = [];
     let stroke = null;
     for (const f of fills) {
-      if (f.fillType === "solid" && f.color) fill = f.color;
+      const visible =
+        f.opacity == null || (typeof f.opacity === "number" && f.opacity > 0);
+      if (f.fillType === "solid" && f.color && visible) fill = f.color;
       if (f.fillType === "hatch" && f.hatch) {
         const css = getCssForHatch(f.hatch, f.color || "#000000");
         if (css) hatchStyles.push(css);

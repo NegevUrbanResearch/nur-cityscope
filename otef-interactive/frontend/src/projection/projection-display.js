@@ -44,6 +44,7 @@ fetch("data/model-bounds.json")
       OTEFDataContext.init(TABLE_NAME).then(() => {
         const initialViewport = OTEFDataContext.getViewport();
         if (initialViewport) {
+          setHighlightOverlayVisibilityFromZoom(initialViewport.zoom);
           if (initialViewport.corners) {
             updateHighlightQuad(initialViewport.corners);
           } else if (initialViewport.bbox) {
@@ -59,6 +60,7 @@ fetch("data/model-bounds.json")
         window._otefUnsubscribeFunctions.push(
           OTEFDataContext.subscribe('viewport', (viewport) => {
             if (!viewport) return;
+            setHighlightOverlayVisibilityFromZoom(viewport.zoom);
             if (viewport.corners) {
               updateHighlightQuad(viewport.corners);
             } else if (viewport.bbox) {
@@ -102,6 +104,17 @@ fetch("data/model-bounds.json")
 
 // Table name for state management
 const TABLE_NAME = 'otef';
+
+// Viewport highlight: hidden at zoom 10 & 11 (covers whole map), visible from 12+
+const HIGHLIGHT_VISIBLE_MIN_ZOOM = 12;
+
+function setHighlightOverlayVisibilityFromZoom(zoom) {
+  const overlay = document.getElementById("highlightOverlay");
+  if (!overlay) return;
+  const visible =
+    zoom == null || (typeof zoom === "number" && zoom >= HIGHLIGHT_VISIBLE_MIN_ZOOM);
+  overlay.style.visibility = visible ? "" : "hidden";
+}
 
 function getDisplayedImageBounds() {
   const container = document.getElementById("displayContainer");
