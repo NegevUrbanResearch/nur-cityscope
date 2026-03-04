@@ -33,8 +33,10 @@ class AdvancedStyleDrawing {
    * @param {number} viewContext.viewportWidth - unused for pattern generation now
    * @param {number} viewContext.viewportHeight - unused for pattern generation now
    * @param {Object} [viewContext.tileOrigin] - {x, y} global pixel offset of this tile/canvas origin
+   * @param {Object} [helpers] - Optional helpers provided by the renderer
+   * @param {Function} [helpers.getIcon] - (url) => { img, loaded, failed }
    */
-  drawCommands(ctx, commands, viewContext) {
+  drawCommands(ctx, commands, viewContext, helpers) {
     if (!ctx || !Array.isArray(commands) || !viewContext) return;
 
     // Default tile origin to (0,0) if not provided (e.g. for single-canvas layers)
@@ -59,7 +61,13 @@ class AdvancedStyleDrawing {
       } else if (cmd.type === "drawPolygon") {
         this._drawPolygonCommand(ctx, cmd.geometry, symbolLayers, viewContext);
       } else if (cmd.type === "drawMarker") {
-        this._drawMarkerCommand(ctx, cmd.geometry, symbolLayers, viewContext);
+        this._drawMarkerCommand(
+          ctx,
+          cmd.geometry,
+          symbolLayers,
+          viewContext,
+          helpers,
+        );
       } else if (cmd.type === "drawMarkerLine") {
         this._drawMarkerLineCommand(
           ctx,
@@ -209,7 +217,7 @@ class AdvancedStyleDrawing {
     );
   }
 
-  _drawMarkerCommand(ctx, geometry, symbolLayers, viewContext) {
+  _drawMarkerCommand(ctx, geometry, symbolLayers, viewContext, helpers) {
     let fillColor = "#808080";
     let fillOpacity = 1.0;
     let strokeColor = "#000000";
@@ -219,6 +227,7 @@ class AdvancedStyleDrawing {
     let markerStrokeFromPoint = null;
     let strokeApplied = false;
     let markerHasVisibleFill = false;
+    let iconLayer = null;
 
     for (const layer of symbolLayers) {
       if (layer.type === "fill") {
@@ -256,6 +265,9 @@ class AdvancedStyleDrawing {
             ? layer.marker.size
             : radius * 2;
         radius = sizePx / 2;
+        if (layer.marker.iconUrl) {
+          iconLayer = layer;
+        }
         if (
           layer.marker.strokeColor != null ||
           (typeof layer.marker.strokeWidth === "number" && layer.marker.strokeWidth > 0)
@@ -275,8 +287,50 @@ class AdvancedStyleDrawing {
       lineWidth = markerStrokeFromPoint.width;
       strokeOpacity = 1.0;
     }
-
     const styleForDraw = { hatch: null, dashArray: null };
+
+    // Icon marker support: when a markerPoint layer includes marker.iconUrl,
+    // delegate image loading to helpers.getIcon and draw the icon instead of
+    // a circle marker.
+    if (iconLayer && helpers && typeof helpers.getIcon === "function") {
+      const iconUrl = iconLayer.marker.iconUrl;
+      const entry = helpers.getIcon(iconUrl);
+      if (entry && entry.img && entry.loaded && !entry.failed) {
+        const sizePx =
+          typeof iconLayer.marker.size === "number"
+            ? iconLayer.marker.size
+            : radius * 2;
+        const width = sizePx;
+        const height = sizePx;
+
+        const drawAt = (coords) => {
+          if (!coords || coords.length < 2) return;
+          const pt = viewContext.coordToPixel(coords);
+          ctx.save();
+          ctx.globalAlpha = 1;
+          ctx.drawImage(
+            entry.img,
+            pt.x - width / 2,
+            pt.y - height / 2,
+            width,
+            height,
+          );
+          ctx.restore();
+        };
+
+        const type = geometry.type;
+        const coords = geometry.coordinates;
+        if (type === "Point") {
+          drawAt(coords);
+        } else if (type === "MultiPoint" && Array.isArray(coords)) {
+          coords.forEach((p) => drawAt(p));
+        }
+      }
+      // When an icon style is configured we skip circle rendering; if the icon
+      // has not finished loading yet, nothing is drawn and a later render
+      // (triggered by the loader) will paint it.
+      return;
+    }
 
     this._drawGeometry(
       ctx,

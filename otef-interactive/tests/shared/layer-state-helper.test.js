@@ -1,7 +1,8 @@
-﻿const {
+const {
   resolveLayerState,
   parseFullLayerId,
   getLayerIdOnly,
+  getEffectiveLayerGroups,
 } = require("../../frontend/src/shared/layer-state-helper");
 
 describe("layer-state-helper: parseFullLayerId", () => {
@@ -92,6 +93,52 @@ describe("layer-state-helper: resolveLayerState", () => {
     const state2 = resolveLayerState(ctx, "group1.layer2");
     expect(state2).not.toBeNull();
     expect(state2.enabled).toBe(true);
+  });
+});
+
+describe("layer-state-helper: curated group display names", () => {
+  afterEach(() => {
+    // Clean up globals so other tests are not affected.
+    delete global.OTEFDataContext;
+    delete global.layerRegistry;
+  });
+
+  test("uses backend-sent group name when present for curated groups", () => {
+    global.OTEFDataContext = {
+      getLayerGroups: () => [
+        {
+          id: "curated_my_project",
+          name: "My Project",
+          enabled: true,
+          layers: [{ id: "1", displayName: "Layer 1", enabled: true }],
+        },
+      ],
+    };
+    // No registry groups; only context should be used.
+    delete global.layerRegistry;
+
+    const groups = getEffectiveLayerGroups();
+    expect(groups).toHaveLength(1);
+    expect(groups[0].id).toBe("curated_my_project");
+    expect(groups[0].name).toBe("My Project");
+  });
+
+  test("derives human-readable name from curated_<slug> when name is missing", () => {
+    global.OTEFDataContext = {
+      getLayerGroups: () => [
+        {
+          id: "curated_my_other_project",
+          enabled: true,
+          layers: [{ id: "1", displayName: "Layer 1", enabled: true }],
+        },
+      ],
+    };
+    delete global.layerRegistry;
+
+    const groups = getEffectiveLayerGroups();
+    expect(groups).toHaveLength(1);
+    expect(groups[0].id).toBe("curated_my_other_project");
+    expect(groups[0].name).toBe("my other project");
   });
 });
 

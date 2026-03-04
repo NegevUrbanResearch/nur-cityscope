@@ -27,7 +27,7 @@ class CanvasLayerRenderer {
     this.dpr = 1;  // Device pixel ratio for high-DPI rendering
     this._patterns = {}; // Cache for hatch patterns
     this._advancedDrawer = null; // Shared AdvancedStyleDrawing instance
-    this._iconCache = {}; // Cache for loaded icon images { url: { img, loaded, failed } }
+    this._iconCache = {}; // iconUrl -> { img, loaded, failed }
 
     this._createCanvas();
   }
@@ -337,6 +337,31 @@ class CanvasLayerRenderer {
     };
   }
 
+  /**
+   * Load and cache an icon image. Returns a cache entry
+   * { img, loaded, failed } and schedules a re-render when the
+   * image finishes loading.
+   */
+  _getIconEntry(url) {
+    if (!url) return null;
+    if (this._iconCache[url]) {
+      return this._iconCache[url];
+    }
+
+    const img = new Image();
+    const entry = { img, loaded: false, failed: false };
+    img.onload = () => {
+      entry.loaded = true;
+      this._scheduleRender();
+    };
+    img.onerror = () => {
+      entry.failed = true;
+    };
+    img.src = url;
+    this._iconCache[url] = entry;
+    return entry;
+  }
+
   _renderLayer(layerId, geojson, styleFunction, ctx, styleConfig) {
     const targetCtx = ctx || this.ctx;
     const prevCtx = this.ctx;
@@ -358,6 +383,7 @@ class CanvasLayerRenderer {
       features,
       style,
       {},
+      styleFunction,
     );
     const flowCfg = this._resolveProjectionFlowConfig(
       layerId,
@@ -408,6 +434,24 @@ class CanvasLayerRenderer {
       }
     }
 
+    // When a layer is logically a "line" but its actual geometry is Polygon
+    // (e.g. damaged open space boundaries), mirror the GIS behavior by
+    // dropping polygon fill for projection so only the outline is drawn.
+    const layerMeta = this.layers[layerId];
+    const geometryType = layerMeta && layerMeta.geometryType;
+    if (geometryType === "line" && Array.isArray(commands)) {
+      for (const cmd of commands) {
+        if (!cmd || cmd.type !== "drawPolygon" || !cmd.symbol) continue;
+        const symLayers = cmd.symbol.symbolLayers;
+        if (!Array.isArray(symLayers)) continue;
+        for (const l of symLayers) {
+          if (l && l.type === "fill") {
+            l.opacity = 0;
+          }
+        }
+      }
+    }
+
     if (!this._advancedDrawer) {
       this._advancedDrawer = new AdvancedStyleDrawing();
     }
@@ -419,7 +463,9 @@ class CanvasLayerRenderer {
       viewportHeight: this.displayBounds ? this.displayBounds.height : this.canvas.height,
     };
 
-    this._advancedDrawer.drawCommands(targetCtx, commands, viewContext);
+    this._advancedDrawer.drawCommands(targetCtx, commands, viewContext, {
+      getIcon: (url) => this._getIconEntry(url),
+    });
 
     this.ctx = prevCtx;
   }

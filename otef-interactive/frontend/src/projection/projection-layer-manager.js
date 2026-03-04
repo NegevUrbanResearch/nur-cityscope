@@ -360,7 +360,7 @@ function updateWmtsVisibility(fullLayerId, visible) {
           ? layerRegistry.getLayerConfig(fullLayerId)
           : null;
       if (!layerConfig) {
-        if (fullLayerId.startsWith("curated.")) {
+        if (fullLayerId.startsWith("curated")) {
           await loadProjectionCuratedLayerFromAPI(fullLayerId);
           return;
         }
@@ -535,10 +535,13 @@ function updateWmtsVisibility(fullLayerId, visible) {
       return;
     }
 
-    const registryReady =
-      typeof layerRegistry !== "undefined" && layerRegistry._initialized;
+    const hasRegistry =
+      typeof layerRegistry !== "undefined" && !!layerRegistry;
+    const registryReady = hasRegistry && !!layerRegistry._initialized;
 
-    // Process each group - individual layer.enabled is the source of truth for visibility
+    // Process each group - individual layer.enabled is the source of truth for visibility.
+    // Curated groups are allowed even when the registry is not yet initialized;
+    // non-curated (registry-backed) groups are deferred until registryReady.
     for (const group of layerGroups) {
       const isCurated = group.id.startsWith("curated");
 
@@ -548,16 +551,29 @@ function updateWmtsVisibility(fullLayerId, visible) {
       for (const layer of group.layers || []) {
         const fullLayerId = `${group.id}.${layer.id}`;
 
+        const isCuratedGroup =
+          typeof group.id === "string" && group.id.startsWith("curated");
+        const isCuratedLayer =
+          typeof fullLayerId === "string" &&
+          fullLayerId.startsWith("curated");
+        const isCurated = isCuratedGroup || isCuratedLayer;
+
         // Handle model_base image layer specially
         if (fullLayerId === "projector_base.model_base") {
           updateModelImageVisibility(layer.enabled);
           continue;
         }
 
+        // When registry is not ready, skip non-curated registry-backed layers.
+        if (!isCurated && !registryReady) {
+          continue;
+        }
+
         // Handle WMTS layers (any pack)
-        const layerConfig = registryReady
-          ? layerRegistry.getLayerConfig(fullLayerId)
-          : null;
+        let layerConfig = null;
+        if (registryReady) {
+          layerConfig = layerRegistry.getLayerConfig(fullLayerId);
+        }
         if (layerConfig && layerConfig.format === "wmts") {
           if (layer.enabled && !loadedLayers[fullLayerId]) {
             loadProjectionLayerFromRegistry(fullLayerId)

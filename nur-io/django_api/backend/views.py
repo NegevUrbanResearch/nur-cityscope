@@ -7,6 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import json
 import os
+import re
 from django.conf import settings
 from datetime import datetime
 
@@ -428,67 +429,107 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
     def _get_layer_groups(self, table):
         """Get hierarchical layer groups structure for a table.
-        Curated groups use IDs like 'curated_<slug>' and include a display name
-        derived from the project_name stored on GISLayer rows.
-        When no LayerGroup rows exist, builds groups from GISLayer rows.
+        When no LayerGroup rows exist, builds curated groups from GISLayer so layers
+        appear in the remote. Curated groups are project-scoped when project_name
+        is available on GISLayer.
         """
-        groups = LayerGroup.objects.filter(table=table).order_by('group_id')
+        groups = LayerGroup.objects.filter(table=table).order_by("group_id")
         result = []
+
+        # Precompute mapping from project slug -> human project name for this table.
+        gis_layers = GISLayer.objects.filter(table=table, is_active=True)
+        slug_to_project_name = {}
+        for gl in gis_layers:
+            pname = (getattr(gl, "project_name", "") or "").strip()
+            if not pname:
+                continue
+            slug = _slugify_project(pname)
+            if slug and slug not in slug_to_project_name:
+                slug_to_project_name[slug] = pname
 
         for group in groups:
             layer_states = LayerState.objects.filter(
                 table=table,
-                layer_id__startswith=f"{group.group_id}."
-            ).order_by('layer_id')
+                layer_id__startswith=f"{group.group_id}.",
+            ).order_by("layer_id")
 
             layers = []
             group_display_name = None
             for layer_state in layer_states:
                 layer_id = layer_state.layer_id.replace(f"{group.group_id}.", "", 1)
-                layer_item = {'id': layer_id, 'enabled': layer_state.enabled}
-                if group.group_id.startswith('curated'):
+                layer_item = {"id": layer_id, "enabled": layer_state.enabled}
+
+                # For curated groups (project-scoped), attach displayName to layers
+                # by looking up the corresponding GISLayer row.
+                if str(group.group_id).startswith("curated"):
                     try:
                         gis_layer = GISLayer.objects.filter(
                             table=table, id=int(layer_id)
                         ).first()
                         if gis_layer:
-                            layer_item['displayName'] = gis_layer.display_name or gis_layer.name
-                            if not group_display_name and gis_layer.project_name:
-                                group_display_name = gis_layer.project_name
+                            layer_item["displayName"] = (
+                                gis_layer.display_name or gis_layer.name
+                            )
+                            layer_item["project_name"] = (
+                                getattr(gis_layer, "project_name", "") or ""
+                            )
                     except (ValueError, TypeError):
+                        # Non-numeric ids are ignored for curated GIS layers.
                         pass
                 layers.append(layer_item)
 
-            group_data = {
-                'id': group.group_id,
-                'enabled': group.enabled,
-                'layers': layers,
-            }
-            if group_display_name:
-                group_data['name'] = group_display_name
-            result.append(group_data)
+            group_name = group.group_id
+            if group.group_id == "curated":
+                group_name = "Curated"
+            elif str(group.group_id).startswith("curated_"):
+                slug = str(group.group_id)[len("curated_") :]
+                human_name = slug_to_project_name.get(slug)
+                if human_name:
+                    group_name = human_name
+
+            result.append(
+                {
+                    "id": group.group_id,
+                    "name": group_name,
+                    "enabled": group.enabled,
+                    "layers": layers,
+                }
+            )
 
         if not result:
-            gis_layers = GISLayer.objects.filter(table=table, is_active=True).order_by('order')
+            gis_layers = GISLayer.objects.filter(
+                table=table, is_active=True
+            ).order_by("order")
             if gis_layers.exists():
-                from .supabase_proxy import _slugify_project
-                by_project = {}
+                grouped = {}
                 for layer in gis_layers:
-                    pname = layer.project_name or ""
-                    slug = _slugify_project(pname) if pname else "default"
-                    group_id = f"curated_{slug}" if pname else "curated"
-                    if group_id not in by_project:
-                        by_project[group_id] = {'name': pname, 'layers': []}
-                    by_project[group_id]['layers'].append({
-                        'id': str(layer.id),
-                        'enabled': True,
-                        'displayName': layer.display_name or layer.name,
-                    })
-                for gid, info in by_project.items():
-                    entry = {'id': gid, 'enabled': True, 'layers': info['layers']}
-                    if info['name']:
-                        entry['name'] = info['name']
-                    result.append(entry)
+                    pname = (getattr(layer, "project_name", "") or "").strip()
+                    if pname:
+                        slug = _slugify_project(pname)
+                        group_id = f"curated_{slug}"
+                        group_name = pname
+                    else:
+                        group_id = "curated"
+                        group_name = "Curated"
+
+                    group = grouped.setdefault(
+                        group_id,
+                        {
+                            "id": group_id,
+                            "name": group_name,
+                            "enabled": True,
+                            "layers": [],
+                        },
+                    )
+                    group["layers"].append(
+                        {
+                            "id": str(layer.id),
+                            "enabled": True,
+                            "displayName": layer.display_name or layer.name,
+                            "project_name": pname,
+                        }
+                    )
+                result = list(grouped.values())
 
         return result
 
@@ -1839,7 +1880,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 'id': layer.id,
                 'name': layer.name,
                 'display_name': layer.display_name,
-                'project_name': layer.project_name,
+                'project_name': getattr(layer, "project_name", "") or "",
                 'layer_type': layer.layer_type,
                 'style_config': layer.style_config,
             }
@@ -1867,6 +1908,24 @@ from rest_framework.views import APIView
 from pathlib import Path
 
 from backend.calibration_io import normalize_calibration_payload, write_model_bounds_to_storage
+
+
+def _slugify_project(name):
+    """
+    Slugify a human project name for curated group IDs.
+
+    - Lowercase, trim
+    - Replace whitespace with underscore
+    - Strip non [a-z0-9_]
+    - Fallback to 'default' when empty
+    """
+    if not isinstance(name, str):
+        return "default"
+    slug = str(name).strip().lower()
+    slug = re.sub(r"\s+", "_", slug)
+    slug = re.sub(r"[^a-z0-9_]", "", slug)
+    return slug or "default"
+
 
 _PINK_LINE_CANDIDATES = [
     # Docker / production mount (see import_otef_data.py)

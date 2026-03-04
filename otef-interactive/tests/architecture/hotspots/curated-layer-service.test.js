@@ -16,3 +16,28 @@ test("curated-layer-service exports shared functions", async () => {
   expect(typeof mod.fetchPinkLinePaths).toBe("function");
   expect(typeof mod.buildCuratedRouteGeoJSON).toBe("function");
 });
+
+test("fetchCuratedLayerData supports project-scoped curated groups", async () => {
+  const originalFetch = global.fetch;
+  const fakeResponse = {
+    ok: true,
+    json: async () => [
+      {
+        id: 42,
+        layer_type: "geojson",
+        geojson: { type: "FeatureCollection", features: [] },
+      },
+    ],
+  };
+  global.fetch = jest.fn().mockResolvedValue(fakeResponse);
+
+  const { fetchCuratedLayerData } = await import(
+    "../../../frontend/src/shared/curated-layer-service.js"
+  );
+
+  const result = await fetchCuratedLayerData("curated_myproj.42");
+  expect(result).not.toBeNull();
+  expect(result.layerData.id).toBe(42);
+
+  global.fetch = originalFetch;
+});

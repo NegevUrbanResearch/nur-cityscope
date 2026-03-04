@@ -60,11 +60,10 @@ function applyLayerGroupsState(layerGroups, deps) {
     return;
   }
 
-  const registry = deps.layerRegistry;
-  const registryReady = registry && registry._initialized;
+  const registry = deps.layerRegistry || null;
+  const registryReady = !!(registry && registry._initialized);
 
-  // If registry isn't ready, queue for retry but still process curated layers now
-  if (registry && !registry._initialized) {
+  if (registry && !registryReady) {
     pendingLayerGroupsState = layerGroups;
     pendingDeps = deps;
     if (!layerRegistryInitPromise) {
@@ -84,6 +83,7 @@ function applyLayerGroupsState(layerGroups, deps) {
           layerRegistryInitPromise = null;
         });
     }
+    // Do not return here: curated/non-registry groups should still be processed.
   }
 
   const loadLayer = deps.loadLayerFromRegistry || null;
@@ -97,7 +97,9 @@ function applyLayerGroupsState(layerGroups, deps) {
   const visibilityCache =
     deps._visibilityStateCache || (deps._visibilityStateCache = new Map());
 
-  // Process each group - individual layer.enabled is the source of truth for visibility
+  // Process each group - individual layer.enabled is the source of truth for visibility.
+  // Curated groups are allowed even when the registry is not yet initialized;
+  // non-curated (registry-backed) groups are deferred until registryReady.
   for (const group of layerGroups) {
     const isCurated = group.id.startsWith("curated");
 
@@ -113,6 +115,13 @@ function applyLayerGroupsState(layerGroups, deps) {
       }
 
       const fullLayerId = `${group.id}.${layer.id}`;
+
+      const isCuratedGroup =
+        typeof group.id === "string" && group.id.startsWith("curated");
+
+      if (!isCuratedGroup && !registryReady) {
+        continue;
+      }
 
       if (layer.enabled) {
         if (loadLayer) {
@@ -173,7 +182,7 @@ function applyLayerGroupsState(layerGroups, deps) {
       if (currentZoom !== null) {
         for (const fullLayerId of loadedMap.keys()) {
           let scaleRange = null;
-          if (registry) {
+          if (registryReady) {
             const cfg = registry.getLayerConfig(fullLayerId);
             if (cfg && cfg.style && cfg.style.scaleRange) {
               scaleRange = cfg.style.scaleRange;

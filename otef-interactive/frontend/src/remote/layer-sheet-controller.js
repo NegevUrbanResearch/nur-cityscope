@@ -393,7 +393,16 @@ class LayerSheetController {
             }
             groups.push({
               id: cg.id,
-              name: displayName,
+              name:
+                (cg.name &&
+                  typeof cg.name === "string" &&
+                  cg.name.trim() !== "") ||
+                (cg.id === "curated"
+                  ? "Curated"
+                  : typeof cg.id === "string" && cg.id.startsWith("curated_")
+                    ? cg.id.slice("curated_".length).replace(/_/g, " ").trim() ||
+                      "Curated"
+                    : cg.id),
               enabled: cg.enabled,
               layers: (cg.layers || []).map((l) => ({
                 id: l.id,

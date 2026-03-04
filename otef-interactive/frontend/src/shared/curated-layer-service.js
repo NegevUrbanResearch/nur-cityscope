@@ -9,6 +9,30 @@
  */
 
 // ---------------------------------------------------------------------------
+// Memorial icon configuration (shared between curation, map, and projection)
+// ---------------------------------------------------------------------------
+
+const MEMORIAL_ICON_URLS = {
+  central: "/otef-interactive/img/memorial-sites/regional-memorial-site.png",
+  local: "/otef-interactive/img/memorial-sites/local-memorial-site.png",
+};
+
+/**
+ * Return the memorial icon URL for a feature based on feature_type, or null
+ * when the feature is not a memorial.
+ *
+ * @param {Object} props - Feature properties
+ * @returns {string|null}
+ */
+function getMemorialIconForFeature(props) {
+  const p = props || {};
+  const rawType = p.feature_type;
+  if (!rawType) return null;
+  const key = String(rawType).toLowerCase();
+  return MEMORIAL_ICON_URLS[key] || null;
+}
+
+// ---------------------------------------------------------------------------
 // fetchCuratedLayerData
 // ---------------------------------------------------------------------------
 /**
@@ -21,7 +45,8 @@
  */
 async function fetchCuratedLayerData(fullLayerId) {
   const parts = fullLayerId.split(".");
-  if (parts[0] !== "curated" || parts.length < 2) return null;
+  const groupId = parts[0] || "";
+  if (!groupId.startsWith("curated") || parts.length < 2) return null;
   const layerId = parts.slice(1).join(".");
 
   let response;
@@ -146,22 +171,38 @@ function buildCuratedRouteGeoJSON(basePaths, userPoints, layerColor, pointFeatur
     });
   });
 
-  // Point markers (nodes)
+  // Point markers (nodes) – attach per-point curated style, including
+  // memorial icon styles when feature_type is "central" or "local".
   pointFeatures.forEach((f) => {
     const c = f.geometry.coordinates;
+    const props = f.properties || {};
+    const memorialIcon = getMemorialIconForFeature(props);
+
+    let curatedStyle;
+    if (memorialIcon) {
+      // Memorial nodes render as icons on the projector canvas.
+      curatedStyle = {
+        _iconUrl: memorialIcon,
+        _iconSize: 32,
+      };
+    } else {
+      // Non-memorial nodes use the existing circular style.
+      curatedStyle = {
+        fillColor: layerColor,
+        color: "#fff",
+        weight: 1,
+        fillOpacity: 0.9,
+        opacity: 1,
+        radius: 6,
+      };
+    }
+
     features.push({
       type: "Feature",
       geometry: { type: "Point", coordinates: [c[0], c[1]] },
       properties: {
-        ...f.properties,
-        _curatedStyle: {
-          fillColor: layerColor,
-          color: "#fff",
-          weight: 1,
-          fillOpacity: 0.9,
-          opacity: 1,
-          radius: 6,
-        },
+        ...props,
+        _curatedStyle: curatedStyle,
       },
     });
   });
@@ -174,4 +215,6 @@ export {
   extractPointFeatures,
   fetchPinkLinePaths,
   buildCuratedRouteGeoJSON,
+  MEMORIAL_ICON_URLS,
+  getMemorialIconForFeature,
 };

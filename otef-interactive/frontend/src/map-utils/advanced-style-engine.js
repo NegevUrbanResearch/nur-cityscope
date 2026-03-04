@@ -35,9 +35,11 @@ class AdvancedStyleEngine {
    * @param {Object[]} features - GeoJSON-like features { geometry, properties }
    * @param {Object} styleConfig - Layer style from styles.json (renderer, defaultSymbol, uniqueValues with symbol)
    * @param {Object} viewContext - { scale, pixelRatio, ... } (currently unused, reserved for future refinement)
+   * @param {Function} [styleFunction] - Optional per-feature simple style function
+   *   (feature) => { fillColor, strokeColor, ..., _iconUrl?, _iconSize? }
    * @returns {Object[]} commands - array of drawing commands
    */
-  static computeCommands(features, styleConfig, viewContext = {}) {
+  static computeCommands(features, styleConfig, viewContext = {}, styleFunction) {
     if (!features || !Array.isArray(features) || !styleConfig) {
       return [];
     }
@@ -49,11 +51,17 @@ class AdvancedStyleEngine {
       const geom = feature && feature.geometry;
       if (!geom || !geom.type || !geom.coordinates) continue;
 
-      const styleSymbol = this._resolveStyleSymbol(
-        feature,
-        styleConfig,
-        renderer,
-      );
+      let styleSymbol;
+      if (typeof styleFunction === "function") {
+        const simpleStyle = styleFunction(feature) || {};
+        styleSymbol = this._symbolFromSimpleStyle(simpleStyle);
+      } else {
+        styleSymbol = this._resolveStyleSymbol(
+          feature,
+          styleConfig,
+          renderer,
+        );
+      }
       if (!styleSymbol) continue;
 
       this._emitCommandsForGeometry(commands, geom, styleSymbol);
@@ -124,18 +132,62 @@ class AdvancedStyleEngine {
       });
     }
 
-    if (simpleStyle.strokeColor || simpleStyle.strokeWidth) {
+    const strokeColor =
+      simpleStyle.strokeColor ??
+      simpleStyle.color ??
+      null;
+    const strokeWidth =
+      simpleStyle.strokeWidth ??
+      (typeof simpleStyle.weight === "number" ? simpleStyle.weight : null);
+    const strokeOpacity =
+      simpleStyle.strokeOpacity ??
+      (simpleStyle.opacity !== undefined ? simpleStyle.opacity : 1.0);
+    const dashArray = Array.isArray(simpleStyle.dashArray)
+      ? simpleStyle.dashArray.slice()
+      : null;
+
+    if (strokeColor != null || strokeWidth != null) {
       layers.push({
         type: "stroke",
-        color: simpleStyle.strokeColor || "#000000",
-        width: simpleStyle.strokeWidth || 1.0,
+        color: strokeColor || "#000000",
+        width: strokeWidth || 1.0,
         opacity:
-          simpleStyle.strokeOpacity !== undefined
-            ? simpleStyle.strokeOpacity
+          strokeOpacity !== undefined
+            ? strokeOpacity
             : 1.0,
-        dash: simpleStyle.dashArray
-          ? { array: simpleStyle.dashArray.slice() }
-          : null,
+        dash: dashArray ? { array: dashArray } : null,
+      });
+    }
+
+    // Optional icon marker support for point features. When simpleStyle comes
+    // from a curated style with `_iconUrl` / `_iconSize`, emit a markerPoint
+    // symbol layer so the canvas renderer can draw an image instead of a
+    // circle marker.
+    if (simpleStyle._iconUrl) {
+      const size =
+        typeof simpleStyle._iconSize === "number" && simpleStyle._iconSize > 0
+          ? simpleStyle._iconSize
+          : 24;
+      layers.push({
+        type: "markerPoint",
+        marker: {
+          size,
+          iconUrl: simpleStyle._iconUrl,
+        },
+      });
+    } else if (
+      typeof simpleStyle.radius === "number" &&
+      simpleStyle.radius > 0
+    ) {
+      // Circle marker support: when a radius is provided (Leaflet-style),
+      // propagate it via a markerPoint layer so AdvancedStyleDrawing can
+      // size the point consistently between GIS and projection.
+      const size = simpleStyle.radius * 2;
+      layers.push({
+        type: "markerPoint",
+        marker: {
+          size,
+        },
       });
     }
 

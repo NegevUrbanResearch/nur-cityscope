@@ -1,4 +1,4 @@
-﻿const {
+const {
   shouldShowLayerOnGisMap,
 } = require("../../frontend/src/shared/gis-layer-filter");
 const {
@@ -215,6 +215,55 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
     expect(calls.length).toBe(1);
     expect(calls[0]["october_7th.×—×“×™×¨×”_×œ×™×©×•×‘-×¦×™×¨"]).toBe(true);
     unsub();
+  });
+
+  test("curated groups apply even when registry is not initialized while non-curated are deferred", async () => {
+    const loadLayer = jest.fn().mockResolvedValue(undefined);
+    const updateVisibility = jest.fn();
+
+    const registry = {
+      _initialized: false,
+      init: jest.fn().mockImplementation(() => {
+        registry._initialized = true;
+        return Promise.resolve();
+      }),
+      getLayerConfig: jest.fn().mockReturnValue(null),
+    };
+
+    const deps = {
+      map: { getZoom: () => 12 },
+      layerRegistry: registry,
+      loadLayerFromRegistry: loadLayer,
+      updateLayerVisibilityFromRegistry: updateVisibility,
+      loadedLayersMap: new Map(),
+      updateMapLegend: () => {},
+    };
+
+    const layerGroups = [
+      {
+        id: "curated",
+        layers: [{ id: "42", enabled: true }],
+      },
+      {
+        id: "map_3_future",
+        layers: [{ id: "mimushim", enabled: true }],
+      },
+    ];
+
+    applyLayerGroupsState(layerGroups, deps);
+
+    // First pass: only curated group should trigger a load while registry is not ready.
+    const firstCallIds = loadLayer.mock.calls.map((call) => call[0]);
+    expect(firstCallIds).toContain("curated.42");
+    expect(firstCallIds).not.toContain("map_3_future.mimushim");
+
+    // Allow the registry.init promise chain to run and re-apply pending state.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const finalCallIds = loadLayer.mock.calls.map((call) => call[0]);
+    expect(finalCallIds).toContain("curated.42");
+    expect(finalCallIds).toContain("map_3_future.mimushim");
   });
 });
 

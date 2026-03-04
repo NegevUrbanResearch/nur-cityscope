@@ -161,13 +161,25 @@ function getEffectiveLayerGroups() {
 
   for (const cg of contextGroups || []) {
     if (groups.some((g) => g.id === cg.id)) continue;
-    let displayName = cg.name || cg.id;
-    if (!cg.name && cg.id.startsWith("curated_")) {
-      displayName = cg.id.slice("curated_".length).replace(/_/g, " ");
+    const explicitName =
+      cg.name && typeof cg.name === "string" && cg.name.trim() !== ""
+        ? cg.name
+        : null;
+    let derivedName;
+    if (!explicitName) {
+      if (cg.id === "curated") {
+        derivedName = "Curated";
+      } else if (typeof cg.id === "string" && cg.id.startsWith("curated_")) {
+        const slug = cg.id.slice("curated_".length);
+        derivedName = slug.replace(/_/g, " ").trim() || "Curated";
+      } else {
+        derivedName = cg.id;
+      }
     }
+
     groups.push({
       id: cg.id,
-      name: displayName,
+      name: explicitName || derivedName,
       enabled: !!cg.enabled,
       layers: (cg.layers || []).map((l) => ({
         id: l.id,

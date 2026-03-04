@@ -116,6 +116,7 @@ class StyleApplicator {
       opacity: bag.opacity !== undefined ? bag.opacity : 1.0,
       dashArray: bag.dashArray || null,
       hatch: bag.hatch || null,
+      radius: bag.radius !== undefined ? bag.radius : 5,
     });
   }
 
@@ -140,6 +141,7 @@ class StyleApplicator {
             : 1.0,
       dashArray: bag.dashArray || null,
       hatch: bag.hatch || null,
+      radius: bag.radius !== undefined ? bag.radius : 5,
     });
   }
 

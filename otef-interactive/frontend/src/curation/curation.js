@@ -1,9 +1,72 @@
+import { getMemorialIconForFeature } from "../shared/curated-layer-service.js";
+
 /**
  * Curation page: list Supabase projects/submissions, Leaflet preview with
  * pink line (הקו_הורוד) base route, submission features as dashed lines and
  * labeled points. Toggle features, name and publish as OTEF layer.
  * Uses API proxy only (no Supabase client on frontend).
  */
+
+/**
+ * Lightweight, DOM-free controller for curation preview state.
+ * This is exported for Jest tests and used by the runtime map code.
+ */
+export function createCurationPreviewState() {
+  const featureLayers = new Map();
+  const visibleFeatures = new Map();
+  let highlightedFeatureId = null;
+
+  function registerFeatureLayers(featureId, layers) {
+    const key = String(featureId);
+    featureLayers.set(key, Array.isArray(layers) ? [...layers] : []);
+    if (!visibleFeatures.has(key)) {
+      visibleFeatures.set(key, true);
+    }
+  }
+
+  function setFeatureVisible(featureId, isVisible) {
+    const key = String(featureId);
+    if (!featureLayers.has(key)) return;
+    visibleFeatures.set(key, Boolean(isVisible));
+  }
+
+  function getVisibleLayers() {
+    const result = [];
+    for (const [key, layers] of featureLayers.entries()) {
+      if (visibleFeatures.get(key)) {
+        result.push(...layers);
+      }
+    }
+    return result;
+  }
+
+  function clearPreview() {
+    featureLayers.clear();
+    visibleFeatures.clear();
+    highlightedFeatureId = null;
+  }
+
+  function highlightFeature(featureId) {
+    if (featureId == null) {
+      highlightedFeatureId = null;
+    } else {
+      highlightedFeatureId = String(featureId);
+    }
+  }
+
+  return {
+    featureLayers,
+    visibleFeatures,
+    getVisibleLayers,
+    registerFeatureLayers,
+    setFeatureVisible,
+    clearPreview,
+    highlightFeature,
+    get highlightedFeatureId() {
+      return highlightedFeatureId;
+    },
+  };
+}
 
 (function () {
   const LABEL_PROPERTY_KEYS = ["name", "reason", "description", "note"];
@@ -54,7 +117,12 @@
       const r = await fetch("/api/supabase/curated/publish/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, geojson: geojsonItm, table: "otef", project_name: projectName }),
+        body: JSON.stringify({
+          name,
+          geojson: geojsonItm,
+          table: "otef",
+          project_name: projectName,
+        }),
       });
       const text = await r.text();
       let data = {};
@@ -73,8 +141,7 @@
   let baseRouteLayer = null;
   let currentFeatures = [];
   let featureEnabled = new Map();
-  let featureLayers = new Map();  // index -> array of actual Leaflet layers (markers/polylines) on the map
-  let highlightedIndex = -1;
+  const previewState = createCurationPreviewState();
   let highlightMarker = null;
 
   const el = (id) => document.getElementById(id);
@@ -121,6 +188,13 @@
     return idStr.slice(0, 8) + (idStr.length > 8 ? "…" : "");
   }
 
+  function getSelectedProjectName() {
+    const select = projectSelect();
+    if (!select) return "";
+    const option = select.options[select.selectedIndex] || null;
+    return option ? (option.textContent || "").trim() : "";
+  }
+
   function getLabelFromProps(properties) {
     const p = properties || {};
     for (const key of LABEL_PROPERTY_KEYS) {
@@ -154,25 +228,35 @@
       map.removeLayer(baseRouteLayer);
       baseRouteLayer = null;
     }
-    featureLayers.forEach((layers) => {
-      layers.forEach((l) => { if (map) map.removeLayer(l); });
-    });
-    featureLayers.clear();
-    clearHighlight();
-  }
 
-  function clearHighlight() {
-    if (highlightMarker && map) {
-      map.removeLayer(highlightMarker);
-      highlightMarker = null;
+    // Remove any per-feature layers from the map.
+    if (map && previewState && previewState.featureLayers) {
+      for (const layers of previewState.featureLayers.values()) {
+        (layers || []).forEach((layer) => {
+          if (!layer) return;
+          if (typeof map.hasLayer === "function" && map.hasLayer(layer)) {
+            map.removeLayer(layer);
+          } else if (typeof map.removeLayer === "function") {
+            try {
+              map.removeLayer(layer);
+            } catch (_) {
+              // ignore
+            }
+          }
+        });
+      }
     }
-    highlightedIndex = -1;
-    const container = featuresContainer();
-    if (container) {
-      container.querySelectorAll(".curation-feature-row.highlighted").forEach(
-        (el) => el.classList.remove("highlighted")
-      );
+
+    previewState.clearPreview();
+
+    if (highlightMarker && map && typeof map.removeLayer === "function") {
+      try {
+        map.removeLayer(highlightMarker);
+      } catch (_) {
+        // ignore
+      }
     }
+    highlightMarker = null;
   }
 
   async function loadPinkLineGeojson() {
@@ -195,31 +279,35 @@
   }
 
   function createFeatureLayer(feature) {
+    if (!feature || !feature.geometry || typeof L === "undefined") return null;
     const geomType = getGeometryType(feature.geometry);
+
     if (geomType === "point") {
       return L.geoJSON(
         { type: "FeatureCollection", features: [feature] },
         {
           pointToLayer: (f, latlng) => {
-            const ft = f.properties && f.properties.feature_type;
-            const memorialIcon = ft && MEMORIAL_ICONS[ft];
-            if (memorialIcon) {
-              return L.marker(latlng, {
-                icon: L.icon({
-                  iconUrl: memorialIcon,
-                  iconSize: [36, 36],
-                  iconAnchor: [18, 18],
-                  popupAnchor: [0, -18],
-                }),
+            const props = f.properties || {};
+            const memorialIconUrl = getMemorialIconForFeature(props);
+
+            if (memorialIconUrl) {
+              const icon = L.icon({
+                iconUrl: memorialIconUrl,
+                iconSize: [36, 36],
+                iconAnchor: [18, 18],
+                popupAnchor: [0, -18],
+                className: "curation-memorial-marker-icon",
               });
+              return L.marker(latlng, { icon });
             }
-            const label = getLabelFromProps(f.properties);
+
+            const label = getLabelFromProps(props);
             return L.marker(latlng, {
               icon: L.divIcon({
                 className: "leaflet-label-icon",
                 html: label
                   ? '<span class="curation-marker-label">' + escapeHtml(label) + "</span>"
-                  : "<span class=\"curation-marker-label\">•</span>",
+                  : '<span class="curation-marker-label">•</span>',
                 iconSize: null,
                 iconAnchor: [0, 0],
               }),
@@ -227,29 +315,114 @@
           },
         }
       );
-    } else if (geomType === "line") {
+    }
+
+    if (geomType === "line") {
+      const lineStyle = { color: "#00d4ff", weight: 2.5, dashArray: "8,6", opacity: 0.95 };
       return L.geoJSON(
         { type: "FeatureCollection", features: [feature] },
-        { style: { color: "#00d4ff", weight: 2.5, dashArray: "8,6", opacity: 0.95 } }
-      );
-    } else {
-      return L.geoJSON(
-        { type: "FeatureCollection", features: [feature] },
-        { style: { color: "#00d4ff", weight: 2, fillOpacity: 0.3 } }
+        { style: lineStyle }
       );
     }
+
+    const otherStyle = { color: "#00d4ff", weight: 2, fillOpacity: 0.3 };
+    return L.geoJSON(
+      { type: "FeatureCollection", features: [feature] },
+      { style: otherStyle }
+    );
   }
 
-  function getFeatureLatLng(feature) {
-    if (!feature.geometry) return null;
-    const t = feature.geometry.type;
-    const c = feature.geometry.coordinates;
-    if (t === "Point") return L.latLng(c[1], c[0]);
-    if (t === "MultiPoint" && c.length) return L.latLng(c[0][1], c[0][0]);
-    // For lines/polygons, use centroid of bounds
-    const tmp = L.geoJSON({ type: "FeatureCollection", features: [feature] });
-    const b = tmp.getBounds();
-    return b.isValid() ? b.getCenter() : null;
+  function setFeatureVisibleOnMap(featureIndex, isVisible) {
+    previewState.setFeatureVisible(featureIndex, isVisible);
+    if (!map) return;
+    const key = String(featureIndex);
+    const layers = previewState.featureLayers.get(key) || [];
+    layers.forEach((layer) => {
+      if (!layer) return;
+      if (isVisible) {
+        if (typeof layer.addTo === "function") {
+          layer.addTo(map);
+        } else if (typeof map.addLayer === "function") {
+          map.addLayer(layer);
+        }
+      } else if (typeof map.removeLayer === "function") {
+        try {
+          map.removeLayer(layer);
+        } catch (_) {
+          // ignore
+        }
+      }
+    });
+  }
+
+  function highlightFeatureOnMap(featureIndex, rowEl) {
+    if (!map) initMap();
+    if (!map) return;
+
+    const key = String(featureIndex);
+    const layers = previewState.featureLayers.get(key) || [];
+    if (!layers.length) return;
+
+    let targetLayer = null;
+    for (const layer of layers) {
+      if (!layer) continue;
+      if (typeof layer.getBounds === "function") {
+        const b = layer.getBounds();
+        if (b && typeof b.getCenter === "function") {
+          targetLayer = layer;
+          break;
+        }
+      } else if (typeof layer.getLatLng === "function") {
+        targetLayer = layer;
+        break;
+      }
+    }
+    if (!targetLayer) {
+      targetLayer = layers[0];
+    }
+
+    let center = null;
+    if (targetLayer && typeof targetLayer.getBounds === "function") {
+      const b = targetLayer.getBounds();
+      if (b && typeof b.getCenter === "function") {
+        center = b.getCenter();
+      }
+    }
+    if (!center && targetLayer && typeof targetLayer.getLatLng === "function") {
+      center = targetLayer.getLatLng();
+    }
+    if (!center) return;
+
+    if (highlightMarker && map && typeof map.removeLayer === "function") {
+      try {
+        map.removeLayer(highlightMarker);
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    highlightMarker = L.circleMarker(center, {
+      radius: 10,
+      pane: "markerPane",
+      interactive: false,
+      className: "curation-marker-highlight",
+    }).addTo(map);
+
+    if (typeof map.panTo === "function") {
+      map.panTo(center);
+    }
+
+    const container = featuresContainer();
+    if (container) {
+      container
+        .querySelectorAll(".curation-feature-row.highlighted")
+        .forEach((el) => el.classList.remove("highlighted"));
+    }
+    if (rowEl) {
+      rowEl.classList.add("highlighted");
+    }
+
+    previewState.highlightFeature(featureIndex);
   }
 
   async function showPreview(geojson) {
@@ -273,26 +446,28 @@
     }
 
     if (!features.length) {
-      if (bounds.length) map.fitBounds(L.latLngBounds(bounds), { padding: [20, 20] });
+      if (bounds.length && typeof L !== "undefined") {
+        map.fitBounds(L.latLngBounds(bounds), { padding: [20, 20] });
+      }
       return;
     }
 
-    features.forEach((f, i) => {
-      const geoJsonGroup = createFeatureLayer(f);
-      const leafLayers = [];
-      geoJsonGroup.eachLayer((l) => {
-        l.addTo(map);
-        leafLayers.push(l);
-        if (l.getLatLng) {
-          bounds.push(L.latLngBounds([l.getLatLng(), l.getLatLng()]));
-        } else if (l.getBounds) {
-          bounds.push(l.getBounds());
-        }
-      });
-      featureLayers.set(i, leafLayers);
+    features.forEach((feature, index) => {
+      const layer = createFeatureLayer(feature);
+      if (!layer || !previewState) return;
+
+      previewState.registerFeatureLayers(index, [layer]);
+
+      const enabled = featureEnabled.get(index);
+      const visible = enabled !== false;
+      setFeatureVisibleOnMap(index, visible);
+
+      if (layer.getBounds) {
+        bounds.push(layer.getBounds());
+      }
     });
 
-    if (bounds.length) {
+    if (bounds.length && typeof L !== "undefined") {
       const b = L.latLngBounds(bounds);
       map.fitBounds(b, { padding: [24, 24], maxZoom: 16 });
     }
@@ -370,14 +545,14 @@
           `Feature ${i + 1}`;
         const subtitle = getSubtitleFromProps(props);
         const id = `curation-f-${i}`;
-        const showSubtitle = subtitle && String(subtitle).trim() !== String(name).trim();
+        const showSubtitle =
+          subtitle && String(subtitle).trim() !== String(name).trim();
         const subtitleHtml = showSubtitle
           ? `<div class="curation-feature-meta">${escapeHtml(subtitle)}</div>`
           : "";
-        const ft = props.feature_type;
-        const memorialIcon = ft && MEMORIAL_ICONS[ft];
-        const iconHtml = memorialIcon
-          ? `<img src="${memorialIcon}" alt="" style="width:20px;height:20px;margin-top:2px;flex-shrink:0;" />`
+        const memorialIconUrl = getMemorialIconForFeature(props);
+        const iconHtml = memorialIconUrl
+          ? `<img src="${memorialIconUrl}" alt="" class="curation-feature-icon" />`
           : "";
         return `
           <div class="curation-feature-row">
@@ -396,7 +571,7 @@
       input.addEventListener("change", () => {
         const idx = parseInt(input.getAttribute("data-index"), 10);
         featureEnabled.set(idx, input.checked);
-        setFeatureVisible(idx, input.checked);
+        setFeatureVisibleOnMap(idx, input.checked);
         updatePublishState();
       });
     });
@@ -409,9 +584,28 @@
     });
 
     container.querySelectorAll(".curation-feature-edit").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", (event) => {
+        event.stopPropagation();
         const idx = parseInt(btn.getAttribute("data-index"), 10);
         openFeatureModal(idx);
+      });
+    });
+
+    container.querySelectorAll(".curation-feature-row").forEach((row) => {
+      row.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!target) return;
+        if (
+          target.closest("input[type=\"checkbox\"]") ||
+          target.closest(".curation-feature-edit")
+        ) {
+          return;
+        }
+        const input = row.querySelector("input[data-index]");
+        if (!input) return;
+        const idx = parseInt(input.getAttribute("data-index"), 10);
+        if (Number.isNaN(idx)) return;
+        highlightFeatureOnMap(idx, row);
       });
     });
 
@@ -489,7 +683,7 @@
   function updatePublishState() {
     const hasSelection = getSelectedGeojson().features.length > 0;
     const hasName = (layerNameInput().value || "").trim().length > 0;
-    const hasProject = !!projectSelect().value;
+    const hasProject = (projectSelect().value || "").trim().length > 0;
     publishBtn().disabled = !hasSelection || !hasName || !hasProject;
   }
 
@@ -586,6 +780,14 @@
       return;
     }
 
+    const projectId = (projectSelect().value || "").trim();
+    const projName = getSelectedProjectName();
+    if (!projectId || !projName) {
+      setStatus("Select a project first.", "error");
+      publishBtn().disabled = false;
+      return;
+    }
+
     publishBtn().disabled = true;
     setStatus("Publishing…");
 
@@ -616,8 +818,13 @@
         payload = { ...payload, crs: { type: "name", properties: { name: "EPSG:4326" } } };
       }
       const result = await API.publish(name, payload, projName);
+      const effectiveProjectName = result.projectName || projName;
       setStatus(
-        "Published as \"" + (result.displayName || name) + "\" in project \"" + (result.projectName || projName) + "\". Layer is available in the projection and remote controller Layers sheet; open views will update automatically.",
+        "Published as \"" +
+          (result.displayName || name) +
+          "\" in project \"" +
+          effectiveProjectName +
+          "\". Layer is available in the projection and remote controller Layers sheet; open views will update automatically.",
         "success"
       );
     } catch (e) {
@@ -662,6 +869,7 @@
       submissionSelect().value = "";
       loadSubmissions(id);
       loadFeatures(null);
+      updatePublishState();
     });
 
     submissionSelect().addEventListener("change", () => {
@@ -688,9 +896,11 @@
     });
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
+  if (typeof document !== "undefined") {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
   }
 })();
