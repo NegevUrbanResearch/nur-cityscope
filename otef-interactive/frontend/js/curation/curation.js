@@ -71,9 +71,11 @@
 
   let map = null;
   let baseRouteLayer = null;
-  let currentLayer = null;
   let currentFeatures = [];
   let featureEnabled = new Map();
+  let featureLayers = new Map();  // index -> array of actual Leaflet layers (markers/polylines) on the map
+  let highlightedIndex = -1;
+  let highlightMarker = null;
 
   const el = (id) => document.getElementById(id);
   const projectSelect = () => el("curationProject");
@@ -152,9 +154,24 @@
       map.removeLayer(baseRouteLayer);
       baseRouteLayer = null;
     }
-    if (currentLayer && map) {
-      map.removeLayer(currentLayer);
-      currentLayer = null;
+    featureLayers.forEach((layers) => {
+      layers.forEach((l) => { if (map) map.removeLayer(l); });
+    });
+    featureLayers.clear();
+    clearHighlight();
+  }
+
+  function clearHighlight() {
+    if (highlightMarker && map) {
+      map.removeLayer(highlightMarker);
+      highlightMarker = null;
+    }
+    highlightedIndex = -1;
+    const container = featuresContainer();
+    if (container) {
+      container.querySelectorAll(".curation-feature-row.highlighted").forEach(
+        (el) => el.classList.remove("highlighted")
+      );
     }
   }
 
@@ -187,6 +204,64 @@
     return "polygon";
   }
 
+  function createFeatureLayer(feature) {
+    const geomType = getGeometryType(feature.geometry);
+    if (geomType === "point") {
+      return L.geoJSON(
+        { type: "FeatureCollection", features: [feature] },
+        {
+          pointToLayer: (f, latlng) => {
+            const ft = f.properties && f.properties.feature_type;
+            const memorialIcon = ft && MEMORIAL_ICONS[ft];
+            if (memorialIcon) {
+              return L.marker(latlng, {
+                icon: L.icon({
+                  iconUrl: memorialIcon,
+                  iconSize: [36, 36],
+                  iconAnchor: [18, 18],
+                  popupAnchor: [0, -18],
+                }),
+              });
+            }
+            const label = getLabelFromProps(f.properties);
+            return L.marker(latlng, {
+              icon: L.divIcon({
+                className: "leaflet-label-icon",
+                html: label
+                  ? '<span class="curation-marker-label">' + escapeHtml(label) + "</span>"
+                  : "<span class=\"curation-marker-label\">•</span>",
+                iconSize: null,
+                iconAnchor: [0, 0],
+              }),
+            });
+          },
+        }
+      );
+    } else if (geomType === "line") {
+      return L.geoJSON(
+        { type: "FeatureCollection", features: [feature] },
+        { style: { color: "#00d4ff", weight: 2.5, dashArray: "8,6", opacity: 0.95 } }
+      );
+    } else {
+      return L.geoJSON(
+        { type: "FeatureCollection", features: [feature] },
+        { style: { color: "#00d4ff", weight: 2, fillOpacity: 0.3 } }
+      );
+    }
+  }
+
+  function getFeatureLatLng(feature) {
+    if (!feature.geometry) return null;
+    const t = feature.geometry.type;
+    const c = feature.geometry.coordinates;
+    if (t === "Point") return L.latLng(c[1], c[0]);
+    if (t === "MultiPoint" && c.length) return L.latLng(c[0][1], c[0][0]);
+    // For lines/polygons, use centroid of bounds
+    const tmp = L.geoJSON({ type: "FeatureCollection", features: [feature] });
+    const b = tmp.getBounds();
+    return b.isValid() ? b.getCenter() : null;
+  }
+
   async function showPreview(geojson) {
     if (!map) initMap();
     clearPreview();
@@ -212,77 +287,62 @@
       return;
     }
 
-    const pointFeatures = [];
-    const lineFeatures = [];
-    const otherFeatures = [];
-    features.forEach((f) => {
-      const geomType = getGeometryType(f.geometry);
-      if (geomType === "point") pointFeatures.push(f);
-      else if (geomType === "line") lineFeatures.push(f);
-      else otherFeatures.push(f);
+    features.forEach((f, i) => {
+      const geoJsonGroup = createFeatureLayer(f);
+      const leafLayers = [];
+      geoJsonGroup.eachLayer((l) => {
+        l.addTo(map);
+        leafLayers.push(l);
+        if (l.getLatLng) {
+          bounds.push(L.latLngBounds([l.getLatLng(), l.getLatLng()]));
+        } else if (l.getBounds) {
+          bounds.push(l.getBounds());
+        }
+      });
+      featureLayers.set(i, leafLayers);
     });
 
-    currentLayer = L.layerGroup();
-
-    const pointLayer = L.geoJSON(
-      { type: "FeatureCollection", features: pointFeatures },
-      {
-        pointToLayer: (feature, latlng) => {
-          const ft = feature.properties && feature.properties.feature_type;
-          const memorialIcon = ft && MEMORIAL_ICONS[ft];
-          if (memorialIcon) {
-            return L.marker(latlng, {
-              icon: L.icon({
-                iconUrl: memorialIcon,
-                iconSize: [36, 36],
-                iconAnchor: [18, 18],
-                popupAnchor: [0, -18],
-              }),
-            });
-          }
-          const label = getLabelFromProps(feature.properties);
-          return L.marker(latlng, {
-            icon: L.divIcon({
-              className: "leaflet-label-icon",
-              html: label
-                ? '<span class="curation-marker-label">' + escapeHtml(label) + "</span>"
-                : "<span class=\"curation-marker-label\">•</span>",
-              iconSize: null,
-              iconAnchor: [0, 0],
-            }),
-          });
-        },
-      }
-    );
-    pointLayer.eachLayer((l) => {
-      currentLayer.addLayer(l);
-      if (l.getBounds) bounds.push(l.getBounds());
-    });
-
-    const lineStyle = { color: "#00d4ff", weight: 2.5, dashArray: "8,6", opacity: 0.95 };
-    const lineLayer = L.geoJSON(
-      { type: "FeatureCollection", features: lineFeatures },
-      { style: lineStyle }
-    );
-    lineLayer.eachLayer((l) => {
-      currentLayer.addLayer(l);
-      if (l.getBounds) bounds.push(l.getBounds());
-    });
-
-    const otherStyle = { color: "#00d4ff", weight: 2, fillOpacity: 0.3 };
-    const otherLayer = L.geoJSON(
-      { type: "FeatureCollection", features: otherFeatures },
-      { style: otherStyle }
-    );
-    otherLayer.eachLayer((l) => {
-      currentLayer.addLayer(l);
-      if (l.getBounds) bounds.push(l.getBounds());
-    });
-
-    currentLayer.addTo(map);
     if (bounds.length) {
       const b = L.latLngBounds(bounds);
       map.fitBounds(b, { padding: [24, 24], maxZoom: 16 });
+    }
+  }
+
+  function setFeatureVisible(index, visible) {
+    const layers = featureLayers.get(index);
+    if (!layers || !map) return;
+    layers.forEach((l) => {
+      if (visible) {
+        l.addTo(map);
+      } else {
+        map.removeLayer(l);
+      }
+    });
+    if (highlightedIndex === index && !visible) clearHighlight();
+  }
+
+  function highlightFeature(index) {
+    clearHighlight();
+    if (index < 0 || index >= currentFeatures.length) return;
+    if (!featureEnabled.get(index)) return;
+
+    highlightedIndex = index;
+
+    const row = featuresContainer()?.querySelector(`.curation-feature-row:nth-child(${index + 1})`);
+    if (row) row.classList.add("highlighted");
+
+    const latlng = getFeatureLatLng(currentFeatures[index]);
+    if (latlng && map) {
+      highlightMarker = L.marker(latlng, {
+        icon: L.divIcon({
+          className: "curation-marker-highlight",
+          iconSize: [40, 40],
+          iconAnchor: [20, 20],
+        }),
+        interactive: false,
+        zIndexOffset: -100,
+      }).addTo(map);
+      map.panTo(latlng);
     }
   }
 
@@ -346,7 +406,15 @@
       input.addEventListener("change", () => {
         const idx = parseInt(input.getAttribute("data-index"), 10);
         featureEnabled.set(idx, input.checked);
+        setFeatureVisible(idx, input.checked);
         updatePublishState();
+      });
+    });
+
+    container.querySelectorAll(".curation-feature-row").forEach((row, idx) => {
+      row.addEventListener("click", (e) => {
+        if (e.target.closest("input") || e.target.closest(".curation-feature-edit")) return;
+        highlightFeature(idx);
       });
     });
 
