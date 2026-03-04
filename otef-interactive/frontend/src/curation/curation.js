@@ -185,16 +185,6 @@
     }
   }
 
-  function getFirstCoordinate(geojson) {
-    if (!geojson?.features?.length) return null;
-    for (const feature of geojson.features) {
-      if (!feature.geometry?.coordinates) continue;
-      let coords = feature.geometry.coordinates;
-      while (Array.isArray(coords) && Array.isArray(coords[0])) coords = coords[0];
-      if (Array.isArray(coords) && typeof coords[0] === "number") return coords;
-    }
-    return null;
-  }
 
   function getGeometryType(geometry) {
     if (!geometry || !geometry.type) return null;
@@ -602,7 +592,7 @@
     try {
       let payload = selected;
       const crs = payload.crs?.properties?.name || "";
-      const firstCoord = getFirstCoordinate(payload);
+      const firstCoord = CoordUtils.getFirstCoordinate(payload);
       const looksLikeItm =
         firstCoord &&
         Math.abs(firstCoord[0]) >= 1000 &&

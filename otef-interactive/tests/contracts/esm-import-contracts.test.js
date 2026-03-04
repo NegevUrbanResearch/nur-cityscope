@@ -14,14 +14,14 @@ test("remote controller imports orientation transform helper explicitly", () => 
   expect(source).toMatch(/rotateViewerVectorToItm/);
 });
 
-test("layer sheet and map legend import layer-name utilities explicitly", () => {
+test("layer sheet and legend model builder import layer-name utilities explicitly", () => {
   const layerSheetSource = read("frontend/src/remote/layer-sheet-controller.js");
-  const mapLegendSource = read("frontend/src/map/map-legend.js");
+  const legendModelSource = read("frontend/src/map/legend-model-builder.js");
 
   expect(layerSheetSource).toMatch(
     /from\s+["']\.\.\/shared\/layer-name-utils\.js["']/,
   );
-  expect(mapLegendSource).toMatch(
+  expect(legendModelSource).toMatch(
     /from\s+["']\.\.\/shared\/layer-name-utils\.js["']/,
   );
 });

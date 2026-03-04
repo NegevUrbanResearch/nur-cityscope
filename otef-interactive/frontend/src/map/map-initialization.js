@@ -7,7 +7,7 @@ import { buildMapOptions } from "./map-options.js";
 import { applyViewportFromAPI } from "./viewport-sync.js";
 import { applyLayerGroupsState } from "./layer-state-manager.js";
 import { updateMapLegend } from "./map-legend.js";
-import { loadGeoJSONLayers, getMapLayerLoaderAPI } from "./leaflet-control-with-basemap.js";
+import { loadGeoJSONLayers, getMapLayerLoaderAPI, pmtilesLayersWithConfigs } from "./leaflet-control-with-basemap.js";
 
 // Define EPSG:2039 projection for transformation
 proj4.defs(
@@ -230,14 +230,14 @@ map.on("click", async (e) => {
 
   // First, check if we can find a PMTiles feature with popup config
   if (
-    typeof window.pmtilesLayersWithConfigs !== "undefined" &&
-    window.pmtilesLayersWithConfigs.size > 0
+    typeof pmtilesLayersWithConfigs !== "undefined" &&
+    pmtilesLayersWithConfigs.size > 0
   ) {
     // Check each PMTiles layer that has a popup config
     for (const [
       fullLayerId,
       layerInfo,
-    ] of window.pmtilesLayersWithConfigs.entries()) {
+    ] of pmtilesLayersWithConfigs.entries()) {
       // Only check if layer is visible on map
       if (!map.hasLayer(layerInfo.layer)) {
         continue;

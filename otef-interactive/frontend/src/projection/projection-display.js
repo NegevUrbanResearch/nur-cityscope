@@ -1,6 +1,14 @@
 // OTEF Projection Display - Simplified for TouchDesigner integration
 // Warping/calibration is handled by TouchDesigner, not by this page
 
+import {
+  configure as configureLayerManager,
+  initializeLayers,
+  syncLayerGroupsFromState,
+  handleResize as layerManagerResize,
+  requestAnimationFrameForAnimations,
+} from "./projection-layer-manager.js";
+
 // Load model bounds
 let modelBounds;
 
@@ -10,13 +18,11 @@ fetch("data/model-bounds.json")
     modelBounds = bounds;
 
     // Configure helpers and initialize layers after model bounds are loaded
-    if (window.ProjectionLayerManager) {
-      window.ProjectionLayerManager.configure({
-        getModelBounds: () => modelBounds,
-        getDisplayedImageBounds
-      });
-      window.ProjectionLayerManager.initializeLayers();
-    }
+    configureLayerManager({
+      getModelBounds: () => modelBounds,
+      getDisplayedImageBounds
+    });
+    initializeLayers();
 
     if (window.ProjectionBoundsEditor) {
       window.ProjectionBoundsEditor.configure({
@@ -65,8 +71,8 @@ fetch("data/model-bounds.json")
           typeof LayerStateHelper !== "undefined" && typeof LayerStateHelper.getEffectiveLayerGroups === "function"
             ? LayerStateHelper.getEffectiveLayerGroups()
             : OTEFDataContext.getLayerGroups();
-        if (initialLayerGroups && initialLayerGroups.length > 0 && window.ProjectionLayerManager) {
-          window.ProjectionLayerManager.syncLayerGroupsFromState(initialLayerGroups);
+        if (initialLayerGroups && initialLayerGroups.length > 0) {
+          syncLayerGroupsFromState(initialLayerGroups);
         }
 
         window._otefUnsubscribeFunctions.push(
@@ -75,20 +81,15 @@ fetch("data/model-bounds.json")
               typeof LayerStateHelper !== "undefined" && typeof LayerStateHelper.getEffectiveLayerGroups === "function"
                 ? LayerStateHelper.getEffectiveLayerGroups()
                 : OTEFDataContext.getLayerGroups();
-            if (effective && effective.length > 0 && window.ProjectionLayerManager) {
-              window.ProjectionLayerManager.syncLayerGroupsFromState(effective);
+            if (effective && effective.length > 0) {
+              syncLayerGroupsFromState(effective);
             }
           })
         );
 
         window._otefUnsubscribeFunctions.push(
           OTEFDataContext.subscribe("animations", () => {
-            if (
-              window.ProjectionLayerManager &&
-              typeof window.ProjectionLayerManager.requestAnimationFrameForAnimations === "function"
-            ) {
-              window.ProjectionLayerManager.requestAnimationFrameForAnimations();
-            }
+            requestAnimationFrameForAnimations();
           }),
         );
 
@@ -352,9 +353,7 @@ function handleResize() {
   else if (lastMessage?.bbox) updateHighlightRect(lastMessage.bbox);
 
   // Update canvas renderer position on resize
-  if (window.ProjectionLayerManager) {
-    window.ProjectionLayerManager.handleResize();
-  }
+  layerManagerResize();
 }
 
 window.addEventListener("resize", () => {

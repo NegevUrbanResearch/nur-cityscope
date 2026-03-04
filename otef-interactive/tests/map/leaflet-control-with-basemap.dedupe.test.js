@@ -86,8 +86,8 @@
         }),
     );
 
-    require("../../frontend/src/map/leaflet-control-with-basemap.js");
-    const api = global.window.getMapLayerLoaderAPI();
+    const mod = require("../../frontend/src/map/leaflet-control-with-basemap.js");
+    const api = mod.getMapLayerLoaderAPI();
     const layerId = "october_7th.sample_line";
 
     const p1 = api.loadLayerFromRegistry(layerId);

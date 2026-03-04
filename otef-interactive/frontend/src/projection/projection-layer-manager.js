@@ -1,53 +1,72 @@
 // Projection layer manager
 // Handles layer loading and registry integration only (legacy road layers removed)
 
-(function () {
-  let getModelBounds = null;
-  let getDisplayedImageBounds = null;
-  let canvasRenderer = null;
-  let wmtsRenderer = null;
-  let animationLoopHandle = null;
-  let animationLastFrameMs = 0;
+import { UI_CONFIG } from "../config/ui-config.js";
+import { CanvasLayerRenderer } from "./layer-renderer-canvas.js";
+import {
+  fetchCuratedLayerData,
+  extractPointFeatures,
+  fetchPinkLinePaths,
+  buildCuratedRouteGeoJSON,
+} from "../shared/curated-layer-service.js";
+import {
+  configureAnimationRenderer,
+  startAnimationLoop,
+  stopAnimationLoop,
+} from "./projection-animation-loop.js";
 
-  const loadedLayers = {};
-  const inFlightLayerLoads = {};
+let getModelBounds = null;
+let getDisplayedImageBounds = null;
+let canvasRenderer = null;
+let wmtsRenderer = null;
 
-  function configure(deps) {
-    getModelBounds = deps?.getModelBounds || null;
-    getDisplayedImageBounds = deps?.getDisplayedImageBounds || null;
+const loadedLayers = {};
+const inFlightLayerLoads = {};
+
+function isProjectionDebugEnabled() {
+  return (
+    typeof MapProjectionConfig !== "undefined" &&
+    MapProjectionConfig &&
+    MapProjectionConfig.ENABLE_PROJECTION_DEBUG
+  );
+}
+
+function configure(deps) {
+  getModelBounds = deps?.getModelBounds || null;
+  getDisplayedImageBounds = deps?.getDisplayedImageBounds || null;
+}
+
+function getModelBoundsSafe() {
+  return typeof getModelBounds === "function" ? getModelBounds() : null;
+}
+
+function getDisplayBoundsSafe() {
+  return typeof getDisplayedImageBounds === "function"
+    ? getDisplayedImageBounds()
+    : null;
+}
+
+function updateAllRendererPositions(displayBounds, modelBounds) {
+  if (!displayBounds || !modelBounds) return;
+  if (canvasRenderer) {
+    canvasRenderer.updatePosition(displayBounds, modelBounds);
   }
-
-  function getModelBoundsSafe() {
-    return typeof getModelBounds === "function" ? getModelBounds() : null;
+  if (wmtsRenderer) {
+    wmtsRenderer.updatePosition(displayBounds, modelBounds);
   }
+}
 
-  function getDisplayBoundsSafe() {
-    return typeof getDisplayedImageBounds === "function"
-      ? getDisplayedImageBounds()
-      : null;
+function updateLayerVisibility(layerId, visible) {
+  if (canvasRenderer) {
+    canvasRenderer.setLayerVisibility(layerId, visible);
   }
+}
 
-  function updateAllRendererPositions(displayBounds, modelBounds) {
-    if (!displayBounds || !modelBounds) return;
-    if (canvasRenderer) {
-      canvasRenderer.updatePosition(displayBounds, modelBounds);
-    }
-    if (wmtsRenderer) {
-      wmtsRenderer.updatePosition(displayBounds, modelBounds);
-    }
+function updateWmtsVisibility(fullLayerId, visible) {
+  if (wmtsRenderer) {
+    wmtsRenderer.setVisible(fullLayerId, visible);
   }
-
-  function updateLayerVisibility(layerId, visible) {
-    if (canvasRenderer) {
-      canvasRenderer.setLayerVisibility(layerId, visible);
-    }
-  }
-
-  function updateWmtsVisibility(fullLayerId, visible) {
-    if (wmtsRenderer) {
-      wmtsRenderer.setVisible(fullLayerId, visible);
-    }
-  }
+}
 
   /**
    * Initialize layers - create Canvas renderer and load default layers
@@ -62,6 +81,7 @@
     // Create Canvas renderer (replaces SVG for performance)
     try {
       canvasRenderer = new CanvasLayerRenderer("displayContainer");
+      configureAnimationRenderer(canvasRenderer);
 
       // Update canvas position now
       const displayBounds = getDisplayBoundsSafe();
@@ -160,25 +180,12 @@
   }
 
   const PINK_LINE_BASE_LAYER_ID = "pink_line_base";
-  const CURATED_PROJECTION_PALETTE = ["#00b4d8", "#2dc653", "#e9c46a", "#e76f51", "#9b59b6", "#1dd3b0"];
-  const MEMORIAL_ICON_URLS = {
-    central: "/otef-interactive/img/memorial-sites/regional-memorial-site.png",
-    local: "/otef-interactive/img/memorial-sites/local-memorial-site.png",
-  };
-  function getCuratedLayerColorForProjection(fullLayerId) {
-    let h = 0;
-    for (let i = 0; i < fullLayerId.length; i++) h = (h << 5) - h + fullLayerId.charCodeAt(i);
-    return CURATED_PROJECTION_PALETTE[Math.abs(h) % CURATED_PROJECTION_PALETTE.length];
-  }
+  const getCuratedLayerColorForProjection = UI_CONFIG.getCuratedColor;
 
   async function ensureProjectionPinkLineBaseLayer() {
     if (loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
-    if (typeof parseDefaultLinePaths !== "function") return;
     try {
-      const pinkRes = await fetch("/api/pink-line/");
-      if (!pinkRes.ok) return;
-      const pinkGeojson = await pinkRes.json();
-      const basePaths = parseDefaultLinePaths(pinkGeojson);
+      const { basePaths } = await fetchPinkLinePaths();
       if (basePaths.length === 0) return;
       const features = basePaths.map((path) => ({
         type: "Feature",
@@ -217,39 +224,21 @@
   }
 
   /**
-   * Load a curated layer for projection. Original pink line shown in full (separate layer); curated only draws variations (dashed) + nodes.
+   * Load a curated layer for Canvas projection display.
+   * Data fetching / route building is delegated to the shared CuratedLayerService;
+   * this function handles only the Canvas-specific rendering.
    */
   async function loadProjectionCuratedLayerFromAPI(fullLayerId) {
     if (loadedLayers[fullLayerId]) return;
-    const parts = fullLayerId.split(".");
-    if (!parts[0].startsWith("curated") || parts.length < 2) return;
-    const layerId = parts.slice(1).join(".");
 
-    let response;
-    try {
-      response = await fetch("/api/actions/get_otef_layers/?table=otef");
-      if (!response.ok) throw new Error(response.status);
-    } catch (e) {
-      console.warn("[Projection] Failed to fetch OTEF layers for curated:", e);
-      return;
-    }
+    // --- Shared data fetch ---
+    const result = await fetchCuratedLayerData(fullLayerId);
+    if (!result) return;
+    let { geojson } = result;
 
-    const list = await response.json();
-    const layerData = Array.isArray(list)
-      ? list.find((l) => String(l.id) === String(layerId))
-      : null;
-    if (!layerData || layerData.layer_type !== "geojson") return;
-
-    let geojson = layerData.geojson;
-    if (!geojson && layerData.url) {
-      const r = await fetch(layerData.url);
-      if (!r.ok) throw new Error(r.status);
-      geojson = await r.json();
-    }
-    if (!geojson || !geojson.features) return;
-
+    // CRS normalisation (projection needs ITM, so first get to WGS-84 if needed)
     let wgs84Geojson = geojson;
-    const firstCoord = getFirstCoordinate(geojson);
+    const firstCoord = CoordUtils.getFirstCoordinate(geojson);
     const looksLikeWgs84 =
       firstCoord &&
       Math.abs(firstCoord[0]) < 1000 &&
@@ -258,8 +247,9 @@
       wgs84Geojson = CoordUtils.transformGeojsonToWgs84(geojson);
     }
 
+    // --- Shared point extraction ---
     const pointFeatures = (wgs84Geojson.features || []).filter(
-      (f) => f.geometry && f.geometry.type === "Point" && f.geometry.coordinates
+      (f) => f.geometry && f.geometry.type === "Point" && f.geometry.coordinates,
     );
 
     // Memorial sites: render as icon markers, skip pink line route integration
@@ -298,57 +288,23 @@
       return [c[1], c[0]];
     });
 
+    // --- Shared route building ---
     let builtGeojson = null;
-    if (
-      typeof parseDefaultLinePaths === "function" &&
-      typeof buildIntegratedRoute === "function" &&
-      userPoints.length > 0
-    ) {
-      let pinkGeojson = null;
-      try {
-        const pinkRes = await fetch("/api/pink-line/");
-        if (pinkRes.ok) pinkGeojson = await pinkRes.json();
-      } catch (_) {}
-      if (pinkGeojson) {
+    if (userPoints.length > 0) {
+      const { basePaths } = await fetchPinkLinePaths();
+      if (basePaths.length > 0) {
         await ensureProjectionPinkLineBaseLayer();
-        const basePaths = parseDefaultLinePaths(pinkGeojson);
-        if (basePaths.length > 0) {
-          const { dashed } = buildIntegratedRoute(basePaths, userPoints);
-          const layerColor = getCuratedLayerColorForProjection(fullLayerId);
-          const features = [];
-          dashed.forEach((path) => {
-            const coords = path.map(([lat, lng]) => [lng, lat]);
-            features.push({
-              type: "Feature",
-              geometry: { type: "LineString", coordinates: coords },
-              properties: { _curatedStyle: { color: layerColor, weight: 5, opacity: 0.9, dashArray: [10, 10] } },
-            });
-          });
-          pointFeatures.forEach((f) => {
-            const c = f.geometry.coordinates;
-            const ft = f.properties && f.properties.feature_type;
-            const memorialIconUrl = ft && MEMORIAL_ICON_URLS[ft];
-            const pointStyle = memorialIconUrl
-              ? { _iconUrl: memorialIconUrl, _iconSize: 32 }
-              : {
-                  fillColor: layerColor,
-                  color: "#fff",
-                  weight: 1,
-                  fillOpacity: 0.9,
-                  opacity: 1,
-                  radius: 6,
-                };
-            features.push({
-              type: "Feature",
-              geometry: { type: "Point", coordinates: [c[0], c[1]] },
-              properties: { ...f.properties, _curatedStyle: pointStyle },
-            });
-          });
-          builtGeojson = { type: "FeatureCollection", features };
-        }
+        const layerColor = getCuratedLayerColorForProjection(fullLayerId);
+        builtGeojson = buildCuratedRouteGeoJSON(
+          basePaths,
+          userPoints,
+          layerColor,
+          pointFeatures,
+        );
       }
     }
 
+    // --- Canvas-specific rendering ---
     if (builtGeojson) {
       const itmGeojson = CoordUtils.transformGeojsonToItm(builtGeojson);
       const layerColor = getCuratedLayerColorForProjection(fullLayerId);
@@ -367,6 +323,7 @@
       return;
     }
 
+    // Fallback: plain GeoJSON rendering
     const itmGeojson = looksLikeWgs84
       ? CoordUtils.transformGeojsonToItm(geojson)
       : geojson;
@@ -413,9 +370,11 @@
 
       // Handle image layers differently (they don't have GeoJSON data)
       if (layerConfig.format === "image") {
-        console.log(
-          `[Projection] Skipping image layer ${fullLayerId} (rendered via <img> element)`,
-        );
+        if (isProjectionDebugEnabled()) {
+          console.log(
+            `[Projection] Skipping image layer ${fullLayerId} (rendered via <img> element)`,
+          );
+        }
         loadedLayers[fullLayerId] = { type: "image" };
         return;
       }
@@ -444,7 +403,7 @@
                   const mcrs = (
                     maskGeojson.crs?.properties?.name || ""
                   ).toUpperCase();
-                  const mFirst = getFirstCoordinate(maskGeojson);
+                  const mFirst = CoordUtils.getFirstCoordinate(maskGeojson);
                   const maskLooksWgs84 =
                     mFirst &&
                     Math.abs(mFirst[0]) < 1000 &&
@@ -473,7 +432,9 @@
             updateAllRendererPositions(displayBounds, modelBounds);
           }
           loadedLayers[fullLayerId] = { type: "wmts" };
-          console.log(`[Projection] WMTS layer loaded: ${fullLayerId}`);
+          if (isProjectionDebugEnabled()) {
+            console.log(`[Projection] WMTS layer loaded: ${fullLayerId}`);
+          }
         }
         return;
       }
@@ -488,25 +449,29 @@
           return;
         }
 
-      console.log(
-        `[Projection] Fetching layer data: ${fullLayerId} from ${dataUrl}`,
-      );
+      if (isProjectionDebugEnabled()) {
+        console.log(
+          `[Projection] Fetching layer data: ${fullLayerId} from ${dataUrl}`,
+        );
+      }
       const response = await fetch(dataUrl);
       if (!response.ok) {
         throw new Error(`Failed to load layer data: ${response.status}`);
       }
 
       let geojson = await response.json();
-      console.log(
-        `[Projection] Loaded layer ${fullLayerId}, features: ${
-          geojson.features?.length || 0
-        }`,
-      );
+      if (isProjectionDebugEnabled()) {
+        console.log(
+          `[Projection] Loaded layer ${fullLayerId}, features: ${
+            geojson.features?.length || 0
+          }`,
+        );
+      }
 
       // Normalize to ITM for projection: canvas expects ITM to match model bounds.
       // GeoJSON from processed layers is WGS84 [lon, lat]; from API/source may be ITM or WGS84.
       const crs = (geojson.crs?.properties?.name || "").toUpperCase();
-      const firstCoord = getFirstCoordinate(geojson);
+      const firstCoord = CoordUtils.getFirstCoordinate(geojson);
       const looksLikeWgs84 =
         firstCoord &&
         Math.abs(firstCoord[0]) < 1000 &&
@@ -556,28 +521,7 @@
     }
   }
 
-  /**
-   * Extract the first coordinate from a GeoJSON to detect CRS
-   * @param {Object} geojson - GeoJSON object
-   * @returns {Array|null} First coordinate [x, y] or null
-   */
-  function getFirstCoordinate(geojson) {
-    if (!geojson.features || geojson.features.length === 0) return null;
 
-    for (const feature of geojson.features) {
-      if (!feature.geometry || !feature.geometry.coordinates) continue;
-
-      let coords = feature.geometry.coordinates;
-      // Drill down to find a coordinate pair
-      while (Array.isArray(coords) && Array.isArray(coords[0])) {
-        coords = coords[0];
-      }
-      if (Array.isArray(coords) && typeof coords[0] === "number") {
-        return coords;
-      }
-    }
-    return null;
-  }
 
   /**
    * Sync layer groups state for projection display.
@@ -755,69 +699,10 @@
   }
 
   function requestAnimationFrameForAnimations() {
-    if (!canvasRenderer) return;
-    if (animationLoopHandle) return;
-
-    const projectionAnimCfg =
-      typeof MapProjectionConfig !== "undefined" &&
-      MapProjectionConfig.PROJECTION_LAYER_ANIMATIONS
-        ? MapProjectionConfig.PROJECTION_LAYER_ANIMATIONS
-        : null;
-    const perfCfg =
-      typeof MapProjectionConfig !== "undefined" && MapProjectionConfig.GIS_PERF
-        ? MapProjectionConfig.GIS_PERF
-        : {};
-    const maxFps = Math.max(
-      1,
-      Number(
-        (projectionAnimCfg && projectionAnimCfg.MAX_FPS) ||
-          perfCfg.ANIMATION_MAX_FPS,
-      ) || 30,
-    );
-    const minFrameMs = 1000 / maxFps;
-
-    const hasEnabledAnimations = () => {
-      if (
-        typeof OTEFDataContext === "undefined" ||
-        !OTEFDataContext ||
-        typeof OTEFDataContext.getAnimations !== "function"
-      ) {
-        return false;
-      }
-      const animations = OTEFDataContext.getAnimations() || {};
-      return Object.values(animations).some((v) => !!v);
-    };
-
-    const tick = (nowMs) => {
-      if (!hasEnabledAnimations()) {
-        animationLoopHandle = null;
-        return;
-      }
-      if (nowMs - animationLastFrameMs >= minFrameMs) {
-        animationLastFrameMs = nowMs;
-        if (typeof canvasRenderer._scheduleRender === "function") {
-          canvasRenderer._scheduleRender();
-        } else if (typeof canvasRenderer.render === "function") {
-          canvasRenderer.render();
-        }
-      }
-      animationLoopHandle = requestAnimationFrame(tick);
-    };
-
-    animationLoopHandle = requestAnimationFrame(tick);
+    startAnimationLoop();
   }
 
-  function stopAnimationLoop() {
-    if (!animationLoopHandle) return;
-    cancelAnimationFrame(animationLoopHandle);
-    animationLoopHandle = null;
-  }
-
-  if (typeof window !== "undefined") {
-    window.addEventListener("beforeunload", stopAnimationLoop);
-  }
-
-  window.ProjectionLayerManager = {
+  export {
     configure,
     initializeLayers,
     syncLayerGroupsFromState,
@@ -825,4 +710,3 @@
     requestAnimationFrameForAnimations,
     stopAnimationLoop,
   };
-})();

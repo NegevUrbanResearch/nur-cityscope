@@ -142,6 +142,11 @@ class AdvancedStyleEngine {
     return { symbolLayers: layers };
   }
 
+  /** Public alias for _symbolFromSimpleStyle (canonical entry point for legend and other consumers). */
+  static symbolFromSimpleStyle(simpleStyle) {
+    return this._symbolFromSimpleStyle(simpleStyle);
+  }
+
   /**
    * Convert symbol IR to Leaflet style props (for GeoJSON layers).
    * Used so map GeoJSON uses the same resolution path as PMTiles/projector.

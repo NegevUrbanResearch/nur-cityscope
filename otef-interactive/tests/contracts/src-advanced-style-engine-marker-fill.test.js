@@ -42,3 +42,4 @@ test("src AdvancedStyleEngine keeps visible marker fill when trailing fill layer
   expect(out.fillOpacity).toBe(1);
   expect(out.radius).toBe(10);
 });
+

@@ -6,14 +6,14 @@ const CoordUtils = {
         const pixelY = ((bounds.north - y) / (bounds.north - bounds.south)) * bounds.image_height;
         return [pixelX, pixelY];
     },
-    
+
     // Convert pixel coordinates to ITM
     pixelToItm(px, py, bounds) {
         const x = bounds.west + (px / bounds.image_width) * (bounds.east - bounds.west);
         const y = bounds.north - (py / bounds.image_height) * (bounds.north - bounds.south);
         return [x, y];
     },
-    
+
     // Calculate pixel bbox from ITM bbox
     bboxItmToPixel(itmBbox, bounds) {
         const [xMin, yMin, xMax, yMax] = itmBbox;
@@ -134,7 +134,7 @@ const CoordUtils = {
             { crs: "EPSG:4326" }
         );
     },
-    
+
     /**
      * Transforms entire GeoJSON from ITM (EPSG:2039) to display pixel coordinates
      * @param {Object} geojson - GeoJSON object with features in EPSG:2039
@@ -149,15 +149,35 @@ const CoordUtils = {
                 // Calculate percentage directly from ITM coordinates
                 const pctX = Math.max(0, Math.min(1, (x - modelBounds.west) / (modelBounds.east - modelBounds.west)));
                 const pctY = Math.max(0, Math.min(1, (modelBounds.north - y) / (modelBounds.north - modelBounds.south)));
-                
+
                 // Convert percentage to SVG-relative coordinates (SVG viewBox starts at 0,0)
                 // The SVG is positioned at offsetX,offsetY, so coordinates inside SVG are relative to SVG origin
                 const resultX = pctX * displayBounds.width;
                 const resultY = pctY * displayBounds.height;
-                
+
                 return [resultX, resultY];
             }
         );
+    },
+
+    /**
+     * Extract the first coordinate from a GeoJSON to detect CRS.
+     * @param {Object} geojson - GeoJSON object
+     * @returns {Array|null} First coordinate [x, y] or null
+     */
+    getFirstCoordinate(geojson) {
+        if (!geojson.features || geojson.features.length === 0) return null;
+        for (const feature of geojson.features) {
+            if (!feature.geometry || !feature.geometry.coordinates) continue;
+            let coords = feature.geometry.coordinates;
+            while (Array.isArray(coords) && Array.isArray(coords[0])) {
+                coords = coords[0];
+            }
+            if (Array.isArray(coords) && typeof coords[0] === "number") {
+                return coords;
+            }
+        }
+        return null;
     }
 };
 

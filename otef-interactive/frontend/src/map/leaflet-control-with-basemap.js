@@ -1,62 +1,21 @@
 /**
- * Leaflet-specific layer loaders for the GIS map.
- * Uses LayerRegistry and StyleApplicator only. Legacy road layers removed.
- *
- * Depends on:
- * - map, layerState, modelOverlay (from map-initialization.js)
- * - CoordUtils.transformGeojsonToWgs84 (from coordinate-utils.js)
- * - layerRegistry (from layer-registry.js)
- * - StyleApplicator (from style-applicator.js)
+ * Leaflet-specific layer orchestration for the GIS map.
+ * Delegates heavy loading logic to dedicated loader modules.
  */
+
+import { UI_CONFIG } from "../config/ui-config.js";
+import { updateMapLegend } from "./map-legend.js";
+import { loadCuratedLayerFromAPI as _loadCurated } from "./leaflet-curated-layer-loader.js";
+import { loadGeoJSONLayer } from "./map-geojson-layer-loader.js";
+import { loadPMTilesLayer } from "./map-pmtiles-layer-loader.js";
 
 // Store loaded layers by full layer ID (e.g., "map_3_future.mimushim")
 const loadedLayersMap = new Map();
 const pendingLayerLoads = new Map();
 const missingLayerConfigs = new Set();
 
-let pinkLineBaseLayerInstance = null;
-const CURATED_LAYER_PALETTE = ["#00b4d8", "#2dc653", "#e9c46a", "#e76f51", "#9b59b6", "#1dd3b0"];
-function getCuratedLayerColor(fullLayerId) {
-  let h = 0;
-  for (let i = 0; i < fullLayerId.length; i++) h = (h << 5) - h + fullLayerId.charCodeAt(i);
-  const idx = Math.abs(h) % CURATED_LAYER_PALETTE.length;
-  return CURATED_LAYER_PALETTE[idx];
-}
-
-function formatNodeTooltip(properties) {
-  const p = properties || {};
-  const name = p.name || p.reason || p.description || "";
-  if (!name) return "Node";
-  return String(name).trim().slice(0, 80);
-}
-
-function formatNodePopup(properties) {
-  const p = properties || {};
-  const parts = [];
-  ["name", "reason", "description", "note"].forEach((k) => {
-    const v = p[k];
-    if (v != null && String(v).trim() !== "") {
-      let label = k;
-      if (k === "name") label = "שם";
-      else if (k === "description") label = "תיאור";
-      parts.push(
-        `<div class="popup-field"><span class="popup-label">${escapeHtml(label)}:</span> <span class="popup-value">${escapeHtml(String(v))}</span></div>`
-      );
-    }
-  });
-  if (parts.length === 0) return "<div class=\"popup-content\">—</div>";
-  return '<div class="popup-content">' + parts.join("") + "</div>";
-}
-
-function escapeHtml(s) {
-  const div = document.createElement("div");
-  div.textContent = s;
-  return div.innerHTML;
-}
-
-// Store PMTiles layers with their configs for feature picking (global for map click handler)
-window.pmtilesLayersWithConfigs = window.pmtilesLayersWithConfigs || new Map();
-const pmtilesLayersWithConfigs = window.pmtilesLayersWithConfigs;
+// Store PMTiles layers with their configs for feature picking
+const pmtilesLayersWithConfigs = new Map();
 
 /**
  * Helper: register a loaded layer with both internal map and window debug handle.
@@ -93,7 +52,7 @@ function getLoadedLayer(fullLayerId) {
 
 /**
  * Helper: register a PMTiles layer for popup handling.
- * Keeps the public window.pmtilesLayersWithConfigs API intact.
+ * Keeps the exported pmtilesLayersWithConfigs Map up to date.
  * @param {string} fullLayerId
  * @param {Object} layerInstance
  * @param {Object} layerConfig
@@ -106,10 +65,7 @@ function registerPmtilesPopupLayer(
   popupConfig,
 ) {
   if (!fullLayerId || !layerInstance || !popupConfig) return;
-  if (!window.pmtilesLayersWithConfigs) {
-    window.pmtilesLayersWithConfigs = new Map();
-  }
-  window.pmtilesLayersWithConfigs.set(fullLayerId, {
+  pmtilesLayersWithConfigs.set(fullLayerId, {
     layer: layerInstance,
     config: layerConfig,
     popupConfig,
@@ -162,166 +118,10 @@ async function loadLayerGroups() {
 }
 
 /**
- * Extract Point features (with properties) and [lat, lng] coords for route building.
- */
-function extractPointFeaturesFromGeojson(geojson) {
-  const list = [];
-  if (!geojson || !geojson.features) return list;
-  for (const f of geojson.features) {
-    const geom = f.geometry;
-    if (!geom || geom.type !== "Point" || !geom.coordinates) continue;
-    const c = geom.coordinates;
-    list.push({ feature: f, latlng: [c[1], c[0]] });
-  }
-  return list;
-}
-
-async function ensurePinkLineBaseLayer() {
-  if (pinkLineBaseLayerInstance && map.hasLayer(pinkLineBaseLayerInstance)) return;
-  try {
-    const pinkRes = await fetch("/api/pink-line/");
-    if (!pinkRes.ok) return;
-    const pinkGeojson = await pinkRes.json();
-    if (typeof parseDefaultLinePaths !== "function") return;
-    const basePaths = parseDefaultLinePaths(pinkGeojson);
-    if (basePaths.length === 0) return;
-    const group = L.layerGroup();
-    const baseStyle = { color: "#ff69b4", weight: 5, opacity: 1 };
-    basePaths.forEach((path) => {
-      group.addLayer(L.polyline(path, baseStyle));
-    });
-    group.addTo(map);
-    pinkLineBaseLayerInstance = group;
-  } catch (_) {}
-}
-
-/**
- * Load a curated layer. Each layer is one independent suggestion: base pink line (shared, distinct style)
- * plus this layer's route in its own color. Nodes show name/metadata on hover (tooltip) and click (popup). No numbering.
+ * Load a curated layer — delegates to the curated-layer-loader module.
  */
 async function loadCuratedLayerFromAPI(fullLayerId) {
-  if (loadedLayersMap.has(fullLayerId)) return;
-  const parts = fullLayerId.split(".");
-  if (!parts[0].startsWith("curated") || parts.length < 2) return;
-  const layerId = parts.slice(1).join(".");
-
-  let response;
-  try {
-    response = await fetch("/api/actions/get_otef_layers/?table=otef");
-    if (!response.ok) throw new Error(response.status);
-  } catch (e) {
-    console.warn("[Map] Failed to fetch OTEF layers for curated:", e);
-    return;
-  }
-
-  const list = await response.json();
-  const layerData = Array.isArray(list)
-    ? list.find((l) => String(l.id) === String(layerId))
-    : null;
-  if (!layerData || layerData.layer_type !== "geojson") return;
-
-  let geojson = layerData.geojson;
-  if (!geojson && layerData.url) {
-    const r = await fetch(layerData.url);
-    if (!r.ok) throw new Error(r.status);
-    geojson = await r.json();
-  }
-  if (!geojson || !geojson.features) return;
-
-  const crs = geojson.crs?.properties?.name || "";
-  if (crs.includes("2039") || crs.includes("ITM")) {
-    geojson = CoordUtils.transformGeojsonToWgs84(geojson);
-  }
-
-  const pointItems = extractPointFeaturesFromGeojson(geojson);
-  const userPoints = pointItems.map((x) => x.latlng);
-  let pinkGeojson = null;
-  try {
-    const pinkRes = await fetch("/api/pink-line/");
-    if (pinkRes.ok) pinkGeojson = await pinkRes.json();
-  } catch (_) {}
-
-  const hasRouteUtils =
-    typeof parseDefaultLinePaths === "function" &&
-    typeof buildIntegratedRoute === "function";
-  const basePaths = pinkGeojson && hasRouteUtils ? parseDefaultLinePaths(pinkGeojson) : [];
-  const usePinkLineProjection =
-    basePaths.length > 0 && (userPoints.length > 0 || geojson.features.some((f) => f.geometry && (f.geometry.type === "LineString" || f.geometry.type === "MultiLineString")));
-
-  if (usePinkLineProjection && userPoints.length > 0) {
-    await ensurePinkLineBaseLayer();
-    const { dashed } = buildIntegratedRoute(basePaths, userPoints);
-    const layerColor = getCuratedLayerColor(fullLayerId);
-    const group = L.layerGroup();
-    const dashedStyle = { color: layerColor, weight: 5, opacity: 0.9, dashArray: "10, 10" };
-    dashed.forEach((pts) => {
-      group.addLayer(L.polyline(pts, dashedStyle));
-    });
-    pointItems.forEach(({ feature, latlng }) => {
-      const marker = L.marker(latlng, {
-        icon: L.divIcon({
-          className: "pink-line-node-marker",
-          html: `<div class="pink-line-node" style="background:${layerColor}"></div>`,
-          iconSize: [14, 14],
-          iconAnchor: [7, 7],
-        }),
-      });
-      const tip = formatNodeTooltip(feature.properties);
-      const popupContent = formatNodePopup(feature.properties);
-      marker.bindTooltip(tip, { permanent: false, direction: "top", className: "curated-node-tooltip" });
-      marker.bindPopup(popupContent, { className: "curated-node-popup" });
-      group.addLayer(marker);
-    });
-    group.addTo(map);
-    registerLoadedLayer(fullLayerId, group);
-    return;
-  }
-
-  if (usePinkLineProjection && basePaths.length > 0 && userPoints.length === 0) {
-    await ensurePinkLineBaseLayer();
-    const layerColor = getCuratedLayerColor(fullLayerId);
-    const group = L.layerGroup();
-    const lineFeatures = geojson.features.filter(
-      (f) => f.geometry && (f.geometry.type === "LineString" || f.geometry.type === "MultiLineString")
-    );
-    if (lineFeatures.length > 0) {
-      lineFeatures.forEach((f) => {
-        const coords = f.geometry.type === "LineString"
-          ? f.geometry.coordinates.map((c) => [c[1], c[0]])
-          : f.geometry.coordinates.flatMap((line) => line.map((c) => [c[1], c[0]]));
-        if (coords.length >= 2) {
-          group.addLayer(L.polyline(coords, { color: layerColor, weight: 4, opacity: 0.9, dashArray: "10, 10" }));
-        }
-      });
-    }
-    group.addTo(map);
-    registerLoadedLayer(fullLayerId, group);
-    return;
-  }
-
-  const layerConfig = {
-    style: {
-      type: "simple",
-      defaultStyle: {
-        fillColor: "#00d4ff",
-        fillOpacity: 0.4,
-        strokeColor: "#00a8cc",
-        strokeWidth: 2,
-      },
-    },
-  };
-  const leafletLayer =
-    typeof LayerFactory !== "undefined"
-      ? LayerFactory.createGeoJsonLayer({
-          fullLayerId,
-          layerConfig,
-          geojson,
-          map,
-        })
-      : null;
-  if (!leafletLayer) return;
-  leafletLayer.addTo(map);
-  registerLoadedLayer(fullLayerId, leafletLayer);
+  return _loadCurated(fullLayerId, loadedLayersMap, registerLoadedLayer);
 }
 
 /**
@@ -366,9 +166,17 @@ async function loadLayerFromRegistry(fullLayerId) {
 
     if (pmtilesUrl) {
       // Use PMTiles for better performance in GIS
-      await loadPMTilesLayer(fullLayerId, layerConfig, pmtilesUrl);
+      await loadPMTilesLayer(fullLayerId, layerConfig, pmtilesUrl, {
+        registerLoadedLayer,
+        registerPmtilesPopupLayer,
+      });
     } else if (geojsonUrl) {
-      await loadGeoJSONLayer(fullLayerId, layerConfig, geojsonUrl);
+      await loadGeoJSONLayer(
+        fullLayerId,
+        layerConfig,
+        geojsonUrl,
+        registerLoadedLayer,
+      );
     } else {
       console.warn(`[Map] No data URL for layer: ${fullLayerId}`);
       return;
@@ -389,271 +197,9 @@ async function loadLayerFromRegistry(fullLayerId) {
   }
 }
 
-/**
- * Load a GeoJSON layer from the registry.
- */
-async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl) {
-  try {
-    const response = await fetch(dataUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to load layer data: ${response.status}`);
-    }
-
-    let geojson = await response.json();
-
-    // Check CRS and transform to WGS84 if needed
-    // Processed layers should already be in WGS84, but handle edge cases
-    const crs = geojson.crs?.properties?.name || "";
-    if (crs.includes("2039") || crs.includes("ITM")) {
-      // Transform from EPSG:2039 (ITM) to WGS84
-      geojson = CoordUtils.transformGeojsonToWgs84(geojson);
-    } else if (crs.includes("3857") || crs.includes("Web Mercator")) {
-      // Transform from EPSG:3857 (Web Mercator) to WGS84
-      geojson = CoordUtils.transformGeojsonFrom3857ToWgs84(geojson);
-    }
-    // If already WGS84 or no CRS (assume WGS84), no transformation needed
-
-    // Create Leaflet layer (style + popups) via LayerFactory
-    const leafletLayer =
-      typeof LayerFactory !== "undefined"
-        ? LayerFactory.createGeoJsonLayer({
-            fullLayerId,
-            layerConfig,
-            geojson,
-            map,
-          })
-        : null;
-
-    if (!leafletLayer) {
-      console.warn(`[Map] Failed to create GeoJSON layer for ${fullLayerId}`);
-      return;
-    }
-
-    // Apply minScale/maxScale visibility based on zoom level
-    const scaleRange = layerConfig.style?.scaleRange;
-    if (scaleRange) {
-      const minScale = scaleRange.minScale;
-      const maxScale = scaleRange.maxScale;
-
-      // Prefer shared visibility-utils conversion when available
-      const convertScaleToZoom = (scale) => {
-        if (!scale) return null;
-        if (
-          typeof VisibilityUtils !== "undefined" &&
-          typeof VisibilityUtils.scaleToZoom === "function"
-        ) {
-          return VisibilityUtils.scaleToZoom(scale);
-        }
-        // Fallback to legacy inline formula (kept for safety)
-        return Math.log2(591657550 / scale);
-      };
-
-      const minZoom = convertScaleToZoom(minScale);
-      const maxZoom = convertScaleToZoom(maxScale);
-
-      if (
-        typeof MapProjectionConfig !== "undefined" &&
-        MapProjectionConfig.ENABLE_MAP_VISIBILITY_DEBUG
-      ) {
-        console.log(
-          `[Map] Scale range for ${fullLayerId}: scale[${minScale || "-"}, ${
-            maxScale || "-"
-          }] -> zoom[${minZoom?.toFixed(1) || "-"}, ${
-            maxZoom?.toFixed(1) || "-"
-          }]`,
-        );
-      }
-
-      try {
-        if (leafletLayer.setZIndex) leafletLayer.setZIndex(1000);
-      } catch (e) {}
-
-      // Also handle visibility on zoom change using visibility controller
-      const updateLayerVisibility = () => {
-        const currentZoom = map.getZoom();
-
-        if (
-          typeof VisibilityController !== "undefined" &&
-          typeof LayerStateHelper !== "undefined"
-        ) {
-          const allowed = VisibilityController.shouldLayerBeVisible({
-            fullLayerId,
-            scaleRange,
-            zoom: currentZoom,
-            layerStateHelper: LayerStateHelper,
-          });
-
-          if (!allowed) {
-            if (map.hasLayer(leafletLayer)) {
-              console.log(
-                `[Map] Hiding ${fullLayerId} at zoom ${currentZoom.toFixed(
-                  1,
-                )} (range ${minZoom?.toFixed(1) || "-"} to ${
-                  maxZoom?.toFixed(1) || "-"
-                })`,
-              );
-              map.removeLayer(leafletLayer);
-            }
-          } else if (!map.hasLayer(leafletLayer)) {
-            console.log(
-              `[Map] Showing ${fullLayerId} at zoom ${currentZoom.toFixed(1)}`,
-            );
-            map.addLayer(leafletLayer);
-          }
-        }
-      };
-
-      map.on("zoomend", updateLayerVisibility);
-      updateLayerVisibility(); // Initial check
-    } else {
-      // No scale restrictions - use normal visibility logic
-      if (typeof LayerStateHelper !== "undefined") {
-        const state = LayerStateHelper.getLayerState(fullLayerId);
-        if (state && state.enabled) {
-          map.addLayer(leafletLayer);
-        }
-      }
-    }
-
-    // Store layer reference
-    registerLoadedLayer(fullLayerId, leafletLayer);
-
-    // Initial addition to map if enabled and in range
-    if (
-      typeof VisibilityController !== "undefined" &&
-      typeof LayerStateHelper !== "undefined"
-    ) {
-      const currentZoom = map.getZoom();
-      const allowed = VisibilityController.shouldLayerBeVisible({
-        fullLayerId,
-        scaleRange,
-        zoom: currentZoom,
-        layerStateHelper: LayerStateHelper,
-      });
-
-      if (
-        typeof MapProjectionConfig !== "undefined" &&
-        MapProjectionConfig.ENABLE_MAP_VISIBILITY_DEBUG
-      ) {
-        const minZ =
-          scaleRange && scaleRange.minScale
-            ? convertScaleToZoom(scaleRange.minScale)
-            : null;
-        const maxZ =
-          scaleRange && scaleRange.maxScale
-            ? convertScaleToZoom(scaleRange.maxScale)
-            : null;
-        console.log(
-          `[Map] Visibility Check ${fullLayerId}: Zoom=${currentZoom.toFixed(
-            2,
-          )}, Range=[${minZ?.toFixed(2) || "-"}, ${
-            maxZ?.toFixed(2) || "-"
-          }], Visible=${allowed}`,
-        );
-      }
-
-      if (allowed) {
-        map.addLayer(leafletLayer);
-      }
-    }
-  } catch (error) {
-    console.error(`[Map] Error loading GeoJSON layer ${fullLayerId}:`, error);
-    throw error;
-  }
-}
-
-/**
- * Load a PMTiles layer from the registry.
- */
-async function loadPMTilesLayer(fullLayerId, layerConfig, dataUrl) {
-  try {
-    // Create vector tile layer from PMTiles file with custom pane for z-ordering
-    const pmtilesLayer =
-      typeof LayerFactory !== "undefined"
-        ? LayerFactory.createPmtilesLayer({
-            fullLayerId,
-            layerConfig,
-            dataUrl,
-          })
-        : null;
-
-    if (!pmtilesLayer) {
-      console.warn(`[Map] Failed to create PMTiles layer for ${fullLayerId}`);
-      return;
-    }
-
-    // Apply scale ranges if present
-    const scaleRange = layerConfig.style?.scaleRange;
-    if (scaleRange) {
-      const getZoomFromScale = (scale) =>
-        scale ? Math.log2(591657550 / scale) : null;
-      const minZoom = getZoomFromScale(scaleRange.minScale);
-      const maxZoom = getZoomFromScale(scaleRange.maxScale);
-
-      const updatePmtilesVisibility = () => {
-        const currentZoom = map.getZoom();
-
-        if (
-          typeof VisibilityController !== "undefined" &&
-          typeof LayerStateHelper !== "undefined"
-        ) {
-          const allowed = VisibilityController.shouldLayerBeVisible({
-            fullLayerId,
-            scaleRange,
-            zoom: currentZoom,
-            layerStateHelper: LayerStateHelper,
-          });
-
-          if (!allowed) {
-            if (map.hasLayer(pmtilesLayer)) map.removeLayer(pmtilesLayer);
-          } else if (!map.hasLayer(pmtilesLayer)) {
-            map.addLayer(pmtilesLayer);
-          }
-        }
-      };
-
-      map.on("zoomend", updatePmtilesVisibility);
-      // Initial check will be handled by the context listener or below
-    }
-
-    // Register with global map click handler for popups if config exists
-    const popupConfig = layerConfig.ui?.popup;
-    if (popupConfig) {
-      if (typeof window !== "undefined" && window.DEBUG_PMTILES_POPUPS) {
-        console.log(`[Map] Registering PMTiles layer ${fullLayerId} for popups`);
-      }
-      registerPmtilesPopupLayer(
-        fullLayerId,
-        pmtilesLayer,
-        layerConfig,
-        popupConfig,
-      );
-    }
-
-    // Store layer reference
-    registerLoadedLayer(fullLayerId, pmtilesLayer);
-
-    // Initial addition to map if enabled (and in range)
-    if (
-      typeof VisibilityController !== "undefined" &&
-      typeof LayerStateHelper !== "undefined"
-    ) {
-      const currentZoom = map.getZoom();
-      const allowed = VisibilityController.shouldLayerBeVisible({
-        fullLayerId,
-        scaleRange,
-        zoom: currentZoom,
-        layerStateHelper: LayerStateHelper,
-      });
-
-      if (allowed) {
-        map.addLayer(pmtilesLayer);
-      }
-    }
-  } catch (error) {
-    console.error(`[Map] Error loading PMTiles layer ${fullLayerId}:`, error);
-  }
-}
+// Heavy loader functions are implemented in dedicated modules:
+// - loadGeoJSONLayer (map-geojson-layer-loader.js)
+// - loadPMTilesLayer (map-pmtiles-layer-loader.js)
 
 /**
  * Update layer visibility for a layer from the registry.
@@ -744,9 +290,6 @@ function getMapLayerLoaderAPI() {
   };
 }
 
-if (typeof window !== "undefined") {
-  window.getMapLayerLoaderAPI = getMapLayerLoaderAPI;
-}
 
 export {
   loadGeoJSONLayers,
@@ -754,4 +297,5 @@ export {
   updateLayerVisibilityFromRegistry,
   getMapLayerLoaderAPI,
   loadedLayersMap,
+  pmtilesLayersWithConfigs,
 };
