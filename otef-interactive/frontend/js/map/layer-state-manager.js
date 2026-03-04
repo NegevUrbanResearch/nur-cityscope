@@ -36,11 +36,10 @@ function applyLayerGroupsState(layerGroups, deps) {
   }
 
   const registry = deps.layerRegistry;
-  if (!registry) {
-    return;
-  }
+  const registryReady = registry && registry._initialized;
 
-  if (!registry._initialized) {
+  // If registry isn't ready, queue for retry but still process curated layers now
+  if (registry && !registry._initialized) {
     pendingLayerGroupsState = layerGroups;
     pendingDeps = deps;
     if (!layerRegistryInitPromise) {
@@ -60,7 +59,6 @@ function applyLayerGroupsState(layerGroups, deps) {
           layerRegistryInitPromise = null;
         });
     }
-    return;
   }
 
   const loadLayer = deps.loadLayerFromRegistry || null;
@@ -74,6 +72,11 @@ function applyLayerGroupsState(layerGroups, deps) {
 
   // Process each group - individual layer.enabled is the source of truth for visibility
   for (const group of layerGroups) {
+    const isCurated = group.id.startsWith("curated");
+
+    // Registry layers need the registry to be initialized
+    if (!isCurated && !registryReady) continue;
+
     for (const layer of group.layers || []) {
       if (
         typeof shouldShowLayerOnGisMap === "function" &&

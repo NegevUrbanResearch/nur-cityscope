@@ -568,13 +568,16 @@
       return;
     }
 
-    // Guard against race condition: layerRegistry must be initialized before syncing
-    if (typeof layerRegistry === "undefined" || !layerRegistry._initialized) {
-      return;
-    }
+    const registryReady =
+      typeof layerRegistry !== "undefined" && layerRegistry._initialized;
 
     // Process each group - individual layer.enabled is the source of truth for visibility
     for (const group of layerGroups) {
+      const isCurated = group.id.startsWith("curated");
+
+      // Registry layers need the registry to be initialized
+      if (!isCurated && !registryReady) continue;
+
       for (const layer of group.layers || []) {
         const fullLayerId = `${group.id}.${layer.id}`;
 
@@ -585,10 +588,9 @@
         }
 
         // Handle WMTS layers (any pack)
-        const layerConfig =
-          typeof layerRegistry !== "undefined"
-            ? layerRegistry.getLayerConfig(fullLayerId)
-            : null;
+        const layerConfig = registryReady
+          ? layerRegistry.getLayerConfig(fullLayerId)
+          : null;
         if (layerConfig && layerConfig.format === "wmts") {
           if (layer.enabled && !loadedLayers[fullLayerId]) {
             loadProjectionLayerFromRegistry(fullLayerId)
@@ -608,7 +610,6 @@
         }
 
         if (layer.enabled) {
-          // Layer should be visible - load if needed, then show
           if (!loadedLayers[fullLayerId]) {
             loadProjectionLayerFromRegistry(fullLayerId)
               .then(() => {
@@ -624,7 +625,6 @@
             updateLayerVisibility(fullLayerId, true);
           }
         } else {
-          // Layer is disabled, hide it
           updateLayerVisibility(fullLayerId, false);
         }
       }
