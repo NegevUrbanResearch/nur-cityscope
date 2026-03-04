@@ -9,6 +9,11 @@
   const LABEL_PROPERTY_KEYS = ["name", "reason", "description", "note"];
   const META_SUBTITLE_KEYS = ["reason", "description", "note"];
 
+  const MEMORIAL_ICONS = {
+    central: "/otef-interactive/img/memorial-sites/regional-memorial-site.png",
+    local: "/otef-interactive/img/memorial-sites/local-memorial-site.png",
+  };
+
   const API = {
     async projects() {
       const r = await fetch("/api/supabase/projects/");
@@ -223,6 +228,18 @@
       { type: "FeatureCollection", features: pointFeatures },
       {
         pointToLayer: (feature, latlng) => {
+          const ft = feature.properties && feature.properties.feature_type;
+          const memorialIcon = ft && MEMORIAL_ICONS[ft];
+          if (memorialIcon) {
+            return L.marker(latlng, {
+              icon: L.icon({
+                iconUrl: memorialIcon,
+                iconSize: [36, 36],
+                iconAnchor: [18, 18],
+                popupAnchor: [0, -18],
+              }),
+            });
+          }
           const label = getLabelFromProps(feature.properties);
           return L.marker(latlng, {
             icon: L.divIcon({
@@ -307,9 +324,15 @@
         const subtitleHtml = showSubtitle
           ? `<div class="curation-feature-meta">${escapeHtml(subtitle)}</div>`
           : "";
+        const ft = props.feature_type;
+        const memorialIcon = ft && MEMORIAL_ICONS[ft];
+        const iconHtml = memorialIcon
+          ? `<img src="${memorialIcon}" alt="" style="width:20px;height:20px;margin-top:2px;flex-shrink:0;" />`
+          : "";
         return `
           <div class="curation-feature-row">
             <input type="checkbox" id="${id}" data-index="${i}" checked />
+            ${iconHtml}
             <div class="curation-feature-content">
               <label for="${id}" class="curation-feature-title">${escapeHtml(String(name))}</label>
               ${subtitleHtml}

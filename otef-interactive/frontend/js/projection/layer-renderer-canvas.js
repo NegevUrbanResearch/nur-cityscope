@@ -23,6 +23,7 @@ class CanvasLayerRenderer {
     this.dpr = 1;  // Device pixel ratio for high-DPI rendering
     this._patterns = {}; // Cache for hatch patterns
     this._advancedDrawer = null; // Shared AdvancedStyleDrawing instance
+    this._iconCache = {}; // Cache for loaded icon images { url: { img, loaded, failed } }
 
     this._createCanvas();
   }
@@ -626,24 +627,48 @@ class CanvasLayerRenderer {
   }
 
   /**
-   * Draw a point (circle marker)
+   * Preload an icon image and cache it. Returns the cached entry.
    */
-  _drawPoint(ctx, coords, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius) {
+  _loadIcon(url) {
+    if (this._iconCache[url]) return this._iconCache[url];
+    const entry = { img: new Image(), loaded: false, failed: false };
+    entry.img.onload = () => {
+      entry.loaded = true;
+      this._scheduleRender();
+    };
+    entry.img.onerror = () => { entry.failed = true; };
+    entry.img.src = url;
+    this._iconCache[url] = entry;
+    return entry;
+  }
+
+  /**
+   * Draw a point — either as a PNG icon (if style._iconUrl) or a circle marker
+   */
+  _drawPoint(ctx, coords, fillColor, strokeColor, fillOpacity, strokeOpacity, lineWidth, radius, style) {
     if (!coords || coords.length < 2) return;
 
     const pt = this._coordToPixel(coords);
 
+    if (style && style._iconUrl) {
+      const icon = this._loadIcon(style._iconUrl);
+      if (icon.loaded) {
+        const size = style._iconSize || 24;
+        ctx.globalAlpha = 1;
+        ctx.drawImage(icon.img, pt.x - size / 2, pt.y - size / 2, size, size);
+      }
+      return;
+    }
+
     ctx.beginPath();
     ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
 
-    // Fill
     if (fillOpacity > 0) {
       ctx.globalAlpha = fillOpacity;
       ctx.fillStyle = fillColor;
       ctx.fill();
     }
 
-    // Stroke
     if (strokeOpacity > 0 && lineWidth > 0) {
       ctx.globalAlpha = strokeOpacity;
       ctx.strokeStyle = strokeColor;

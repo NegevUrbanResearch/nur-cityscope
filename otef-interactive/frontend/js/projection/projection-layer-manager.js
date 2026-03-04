@@ -158,6 +158,10 @@
 
   const PINK_LINE_BASE_LAYER_ID = "pink_line_base";
   const CURATED_PROJECTION_PALETTE = ["#00b4d8", "#2dc653", "#e9c46a", "#e76f51", "#9b59b6", "#1dd3b0"];
+  const MEMORIAL_ICON_URLS = {
+    central: "/otef-interactive/img/memorial-sites/regional-memorial-site.png",
+    local: "/otef-interactive/img/memorial-sites/local-memorial-site.png",
+  };
   function getCuratedLayerColorForProjection(fullLayerId) {
     let h = 0;
     for (let i = 0; i < fullLayerId.length; i++) h = (h << 5) - h + fullLayerId.charCodeAt(i);
@@ -254,6 +258,38 @@
     const pointFeatures = (wgs84Geojson.features || []).filter(
       (f) => f.geometry && f.geometry.type === "Point" && f.geometry.coordinates
     );
+
+    // Memorial sites: render as icon markers, skip pink line route integration
+    const hasMemorialFeatures = pointFeatures.some(
+      (f) => f.properties && (f.properties.feature_type === "central" || f.properties.feature_type === "local")
+    );
+    if (hasMemorialFeatures) {
+      const features = pointFeatures.map((f) => {
+        const c = f.geometry.coordinates;
+        const ft = f.properties && f.properties.feature_type;
+        const iconUrl = (ft && MEMORIAL_ICON_URLS[ft]) || null;
+        return {
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [c[0], c[1]] },
+          properties: {
+            ...f.properties,
+            _curatedStyle: iconUrl
+              ? { _iconUrl: iconUrl, _iconSize: 32 }
+              : { fillColor: "#e76f51", color: "#fff", weight: 1, fillOpacity: 0.9, opacity: 1, radius: 6 },
+          },
+        };
+      });
+      const memorialGeojson = { type: "FeatureCollection", features };
+      const itmGeojson = CoordUtils.transformGeojsonToItm(memorialGeojson);
+      const customStyleFunction = (feature) =>
+        feature.properties && feature.properties._curatedStyle
+          ? feature.properties._curatedStyle
+          : { fillColor: "#e76f51", color: "#fff", weight: 1, fillOpacity: 0.9, opacity: 1, radius: 6 };
+      const layerConfig = { style: { type: "simple" } };
+      await renderLayerFromGeojson(itmGeojson, fullLayerId, layerConfig, "Point", { customStyleFunction });
+      return;
+    }
+
     const userPoints = pointFeatures.map((f) => {
       const c = f.geometry.coordinates;
       return [c[1], c[0]];
@@ -287,19 +323,22 @@
           });
           pointFeatures.forEach((f) => {
             const c = f.geometry.coordinates;
-            features.push({
-              type: "Feature",
-              geometry: { type: "Point", coordinates: [c[0], c[1]] },
-              properties: {
-                _curatedStyle: {
+            const ft = f.properties && f.properties.feature_type;
+            const memorialIconUrl = ft && MEMORIAL_ICON_URLS[ft];
+            const pointStyle = memorialIconUrl
+              ? { _iconUrl: memorialIconUrl, _iconSize: 32 }
+              : {
                   fillColor: layerColor,
                   color: "#fff",
                   weight: 1,
                   fillOpacity: 0.9,
                   opacity: 1,
                   radius: 6,
-                },
-              },
+                };
+            features.push({
+              type: "Feature",
+              geometry: { type: "Point", coordinates: [c[0], c[1]] },
+              properties: { ...f.properties, _curatedStyle: pointStyle },
             });
           });
           builtGeojson = { type: "FeatureCollection", features };
