@@ -130,6 +130,24 @@ POST /api/otef_viewport/
 
 ## Development
 
+### Frontend-B Build Workflow
+
+- Canonical migration source lives under `frontend/src/`.
+- Page entrypoints:
+  - `frontend/src/entries/map-main.js`
+  - `frontend/src/entries/projection-main.js`
+  - `frontend/src/entries/remote-main.js`
+  - `frontend/src/entries/curation-main.js`
+- Centralized runtime config lives under `frontend/src/config/`.
+
+Commands:
+
+```bash
+npm run dev:frontend
+npm run build:frontend
+npm test
+```
+
 ### Simplifying Layers
 
 To create simplified versions for web display:

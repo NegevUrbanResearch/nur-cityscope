@@ -1,4 +1,4 @@
-describe("leaflet-control-with-basemap load dedupe", () => {
+﻿describe("leaflet-control-with-basemap load dedupe", () => {
   beforeEach(() => {
     jest.resetModules();
 
@@ -86,7 +86,7 @@ describe("leaflet-control-with-basemap load dedupe", () => {
         }),
     );
 
-    require("../../frontend/js/map/leaflet-control-with-basemap.js");
+    require("../../frontend/src/map/leaflet-control-with-basemap.js");
     const api = global.window.getMapLayerLoaderAPI();
     const layerId = "october_7th.sample_line";
 
@@ -108,4 +108,5 @@ describe("leaflet-control-with-basemap load dedupe", () => {
     expect(api.loadedLayersMap.has(layerId)).toBe(true);
   });
 });
+
 

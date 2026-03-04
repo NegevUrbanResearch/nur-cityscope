@@ -1,4 +1,4 @@
-const telemetry = require("../../frontend/js/map/perf-telemetry");
+﻿const telemetry = require("../../frontend/src/map/perf-telemetry");
 
 describe("perf-telemetry", () => {
   beforeEach(() => {
@@ -17,3 +17,4 @@ describe("perf-telemetry", () => {
     expect(result.applyViewportMs.max).toBe(30);
   });
 });
+

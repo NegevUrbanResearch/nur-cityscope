@@ -1,6 +1,6 @@
-const {
+﻿const {
   getRemoteViewportSetViewOptions,
-} = require("../../frontend/js/map/viewport-apply-policy");
+} = require("../../frontend/src/map/viewport-apply-policy");
 
 describe("viewport-apply-policy", () => {
   test("uses non-animated setView by default", () => {
@@ -21,3 +21,4 @@ describe("viewport-apply-policy", () => {
     expect(options.duration).toBe(0.12);
   });
 });
+

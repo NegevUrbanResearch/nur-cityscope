@@ -1,9 +1,9 @@
-const {
+﻿const {
   createViewportApplyScheduler,
-} = require("../../frontend/js/map/viewport-sync-scheduler");
+} = require("../../frontend/src/map/viewport-sync-scheduler");
 const {
   getRemoteViewportSetViewOptions,
-} = require("../../frontend/js/map/viewport-apply-policy");
+} = require("../../frontend/src/map/viewport-apply-policy");
 
 describe("viewport sync integration", () => {
   test("applies latest viewport with non-animated policy", () => {
@@ -57,8 +57,9 @@ describe("viewport sync integration", () => {
     scheduler.schedule({ center: [31.5, 34.6], zoom: 12 });
     rafQueue.shift()();
 
-    const animationState = { "october_7th.חדירה_לישוב-ציר": true };
-    expect(animationState["october_7th.חדירה_לישוב-ציר"]).toBe(true);
+    const animationState = { "october_7th.×—×“×™×¨×”_×œ×™×©×•×‘-×¦×™×¨": true };
+    expect(animationState["october_7th.×—×“×™×¨×”_×œ×™×©×•×‘-×¦×™×¨"]).toBe(true);
     expect(setViewCalls).toHaveLength(1);
   });
 });
+

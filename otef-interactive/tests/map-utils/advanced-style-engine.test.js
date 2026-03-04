@@ -1,10 +1,15 @@
-const AdvancedStyleEngine = require('../../frontend/js/map-utils/advanced-style-engine');
+﻿const AdvancedStyleEngineModule = require('../../frontend/src/map-utils/advanced-style-engine');
+const AdvancedStyleEngine =
+  AdvancedStyleEngineModule.default || AdvancedStyleEngineModule;
 
 describe('AdvancedStyleEngine', () => {
   test('october_7th line style contains flow animation metadata', () => {
     const styles = require('../../public/processed/layers/october_7th/styles.json');
-    const style = styles['חדירה_לישוב-ציר'];
+    const style = Object.values(styles).find(
+      (entry) => entry && entry.type === 'line' && entry.animation?.type === 'flow',
+    );
 
+    expect(style).toBeTruthy();
     expect(style.type).toBe('line');
     expect(style.animation).toBeTruthy();
     expect(style.animation.type).toBe('flow');

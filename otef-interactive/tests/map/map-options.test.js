@@ -1,4 +1,4 @@
-const { buildMapOptions } = require("../../frontend/js/map/map-options");
+﻿const { buildMapOptions } = require("../../frontend/src/map/map-options");
 
 describe("map-options", () => {
   test("returns Leaflet map options with preferCanvas enabled by config", () => {
@@ -13,3 +13,4 @@ describe("map-options", () => {
     expect(opts.preferCanvas).toBe(false);
   });
 });
+

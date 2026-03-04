@@ -1,6 +1,6 @@
-const {
+﻿const {
   createViewportApplyScheduler,
-} = require("../../frontend/js/map/viewport-sync-scheduler");
+} = require("../../frontend/src/map/viewport-sync-scheduler");
 
 describe("viewport-sync scheduler", () => {
   test("coalesces rapid updates and applies latest viewport once", () => {
@@ -50,3 +50,4 @@ describe("viewport-sync scheduler", () => {
     expect(applied).toEqual([{ id: 1 }, { id: 2 }]);
   });
 });
+

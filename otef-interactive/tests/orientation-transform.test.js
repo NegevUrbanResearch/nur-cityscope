@@ -1,6 +1,6 @@
-const {
+﻿const {
   rotateViewerVectorToItm,
-} = require("../frontend/js/shared/orientation-transform");
+} = require("../frontend/src/shared/orientation-transform");
 
 describe("orientation-transform", () => {
   test("0deg keeps vector unchanged", () => {
@@ -26,4 +26,5 @@ describe("orientation-transform", () => {
     expect(out).toEqual({ dx: 0, dy: 0 });
   });
 });
+
 

@@ -1,15 +1,15 @@
-const {
+﻿const {
   shouldShowLayerOnGisMap,
-} = require("../../frontend/js/shared/gis-layer-filter");
+} = require("../../frontend/src/shared/gis-layer-filter");
 const {
   getLayerState,
-} = require("../../frontend/js/shared/layer-state-helper");
+} = require("../../frontend/src/shared/layer-state-helper");
 const {
   shouldLayerBeVisible,
-} = require("../../frontend/js/map-utils/visibility-controller");
+} = require("../../frontend/src/map-utils/visibility-controller");
 const {
   applyLayerGroupsState,
-} = require("../../frontend/js/map/layer-state-manager");
+} = require("../../frontend/src/map/layer-state-manager");
 
 describe("layer-state-manager: applyLayerGroupsState", () => {
   beforeEach(() => {
@@ -210,10 +210,11 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
     };
 
     const unsub = mockContext.subscribe("animations", (next) => calls.push(next));
-    mockContext._setAnimations({ "october_7th.חדירה_לישוב-ציר": true });
+    mockContext._setAnimations({ "october_7th.×—×“×™×¨×”_×œ×™×©×•×‘-×¦×™×¨": true });
 
     expect(calls.length).toBe(1);
-    expect(calls[0]["october_7th.חדירה_לישוב-ציר"]).toBe(true);
+    expect(calls[0]["october_7th.×—×“×™×¨×”_×œ×™×©×•×‘-×¦×™×¨"]).toBe(true);
     unsub();
   });
 });
+

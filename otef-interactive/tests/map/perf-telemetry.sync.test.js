@@ -1,4 +1,4 @@
-const telemetry = require("../../frontend/js/map/perf-telemetry");
+﻿const telemetry = require("../../frontend/src/map/perf-telemetry");
 
 describe("perf-telemetry sync metrics", () => {
   beforeEach(() => {
@@ -13,3 +13,4 @@ describe("perf-telemetry sync metrics", () => {
     expect(result.syncDriftPx.p95).toBeGreaterThan(0);
   });
 });
+

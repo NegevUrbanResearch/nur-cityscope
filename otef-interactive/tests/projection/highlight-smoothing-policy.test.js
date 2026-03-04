@@ -1,6 +1,6 @@
-const {
+﻿const {
   computeLerpFactor,
-} = require("../../frontend/js/projection/highlight-smoothing-policy");
+} = require("../../frontend/src/projection/highlight-smoothing-policy");
 
 describe("highlight-smoothing-policy", () => {
   test("adaptive smoothing increases lerp during high velocity", () => {
@@ -25,3 +25,4 @@ describe("highlight-smoothing-policy", () => {
     expect(computeLerpFactor({ speedPx: 100 }, cfg)).toBe(0.2);
   });
 });
+

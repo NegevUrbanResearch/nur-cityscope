@@ -1,9 +1,9 @@
-const {
+﻿const {
   SCALE_AT_ZOOM_0,
   scaleToZoom,
   computeZoomRange,
   isZoomInRange
-} = require('../../frontend/js/map-utils/visibility-utils');
+} = require('../../frontend/src/map-utils/visibility-utils');
 
 describe('visibility-utils: scaleToZoom', () => {
   test('returns null for falsy scale', () => {
@@ -81,4 +81,5 @@ describe('visibility-utils: isZoomInRange', () => {
   });
 }
 );
+
 

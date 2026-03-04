@@ -1,4 +1,4 @@
-describe('layer-factory: createGeoJsonLayer', () => {
+﻿describe('layer-factory: createGeoJsonLayer', () => {
   beforeEach(() => {
     global.L = {
       geoJSON: jest.fn((geojson, options) => ({ geojson, options })),
@@ -40,7 +40,7 @@ describe('layer-factory: createGeoJsonLayer', () => {
     const geojson = { type: 'FeatureCollection', features: [] };
     const map = {}; // not used in this simple test
 
-    const { createGeoJsonLayer } = require('../../frontend/js/map-utils/layer-factory');
+    const { createGeoJsonLayer } = require('../../frontend/src/map-utils/layer-factory');
 
     const layer = createGeoJsonLayer({
       fullLayerId: 'group.layer',
@@ -69,7 +69,7 @@ describe('layer-factory: createGeoJsonLayer', () => {
     const geojson = { type: 'FeatureCollection', features: [] };
     const map = {};
 
-    const { createGeoJsonLayer } = require('../../frontend/js/map-utils/layer-factory');
+    const { createGeoJsonLayer } = require('../../frontend/src/map-utils/layer-factory');
 
     const layer = createGeoJsonLayer({
       fullLayerId: 'group.layer',
@@ -98,9 +98,9 @@ describe('layer-factory: createGeoJsonLayer', () => {
     const geojson = { type: 'FeatureCollection', features: [] };
     const map = {};
 
-    const { createGeoJsonLayer } = require('../../frontend/js/map-utils/layer-factory');
+    const { createGeoJsonLayer } = require('../../frontend/src/map-utils/layer-factory');
     const layer = createGeoJsonLayer({
-      fullLayerId: 'october_7th.חדירה_לישוב-ציר',
+      fullLayerId: 'october_7th.×—×“×™×¨×”_×œ×™×©×•×‘-×¦×™×¨',
       layerConfig: cfg,
       geojson,
       map,
@@ -143,7 +143,7 @@ describe('layer-factory: createPmtilesLayer', () => {
       style: {}
     };
 
-    const { createPmtilesLayer } = require('../../frontend/js/map-utils/layer-factory');
+    const { createPmtilesLayer } = require('../../frontend/src/map-utils/layer-factory');
 
     const layer = createPmtilesLayer({
       fullLayerId: 'group.layer',
@@ -162,7 +162,7 @@ describe('layer-factory: createPmtilesLayer', () => {
     };
     global.protomapsL = { leafletLayer: jest.fn((opts) => ({ opts })) };
 
-    const { createPmtilesLayer } = require('../../frontend/js/map-utils/layer-factory');
+    const { createPmtilesLayer } = require('../../frontend/src/map-utils/layer-factory');
 
     const layer = createPmtilesLayer({
       fullLayerId: 'group.land_use',
@@ -184,10 +184,10 @@ describe('layer-factory: createPmtilesLayer', () => {
     };
     global.protomapsL = { leafletLayer: jest.fn((opts) => ({ opts })) };
 
-    const { createPmtilesLayer } = require('../../frontend/js/map-utils/layer-factory');
+    const { createPmtilesLayer } = require('../../frontend/src/map-utils/layer-factory');
 
     const layer = createPmtilesLayer({
-      fullLayerId: 'october_7th.חדירה_לישוב-ציר',
+      fullLayerId: 'october_7th.×—×“×™×¨×”_×œ×™×©×•×‘-×¦×™×¨',
       layerConfig: {
         geometryType: 'line',
         style: {
@@ -207,4 +207,5 @@ describe('layer-factory: createPmtilesLayer', () => {
     expect(layer.__applyFlowAnimationFrame).toBeUndefined();
   });
 });
+
 

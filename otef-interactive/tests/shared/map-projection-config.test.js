@@ -1,4 +1,8 @@
-const MapProjectionConfig = require('../../frontend/js/shared/map-projection-config');
+﻿const MapProjectionConfigModule = require('../../frontend/src/shared/map-projection-config');
+const MapProjectionConfig =
+  MapProjectionConfigModule.default ||
+  MapProjectionConfigModule.MapProjectionConfig ||
+  MapProjectionConfigModule;
 
 describe('map-projection-config defaults', () => {
   test('exposes expected debug flags with safe defaults', () => {
@@ -33,4 +37,3 @@ describe('map-projection-config defaults', () => {
     ).toBe(true);
   });
 });
-

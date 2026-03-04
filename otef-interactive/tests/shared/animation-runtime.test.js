@@ -1,4 +1,4 @@
-﻿const { createAnimationRuntime } = require('../../frontend/js/shared/animation-runtime');
+﻿const { createAnimationRuntime } = require('../../frontend/src/shared/animation-runtime');
 
 describe('animation-runtime', () => {
   test('global clock produces monotonic phase by speed', () => {
@@ -12,3 +12,4 @@ describe('animation-runtime', () => {
     expect(p2).toBeGreaterThan(p1);
   });
 });
+

@@ -1,4 +1,4 @@
-﻿const { renderLayerRow } = require('../../frontend/js/remote/layer-sheet-controller');
+﻿const { renderLayerRow } = require('../../frontend/src/remote/layer-sheet-controller');
 
 function makeAnimatableLayerRow() {
   return {
@@ -84,3 +84,4 @@ describe('layer sheet animation controls', () => {
     expect(html).toContain('animation-chip active mixed');
   });
 });
+

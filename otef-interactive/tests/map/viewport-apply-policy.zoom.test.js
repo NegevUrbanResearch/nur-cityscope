@@ -1,6 +1,6 @@
-const {
+﻿const {
   getRemoteViewportSetViewOptions,
-} = require("../../frontend/js/map/viewport-apply-policy");
+} = require("../../frontend/src/map/viewport-apply-policy");
 
 describe("viewport-apply-policy zoom behavior", () => {
   const cfg = {
@@ -28,3 +28,4 @@ describe("viewport-apply-policy zoom behavior", () => {
     expect(zoomChange.duration).toBe(0.12);
   });
 });
+

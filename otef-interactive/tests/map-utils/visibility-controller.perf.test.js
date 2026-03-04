@@ -1,6 +1,6 @@
-const {
+﻿const {
   shouldLayerBeVisible,
-} = require("../../frontend/js/map-utils/visibility-controller");
+} = require("../../frontend/src/map-utils/visibility-controller");
 
 describe("visibility-controller perf guardrails", () => {
   afterEach(() => {
@@ -73,3 +73,4 @@ describe("visibility-controller perf guardrails", () => {
     expect(allowed).toBe(true);
   });
 });
+

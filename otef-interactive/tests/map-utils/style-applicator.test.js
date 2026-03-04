@@ -1,4 +1,5 @@
-const StyleApplicator = require('../../frontend/js/map-utils/style-applicator');
+﻿const StyleApplicatorModule = require('../../frontend/src/map-utils/style-applicator');
+const StyleApplicator = StyleApplicatorModule.default || StyleApplicatorModule;
 
 describe('StyleApplicator.getLeafletStyle (simple renderer)', () => {
   test('returns a function that produces expected default style', () => {
@@ -34,4 +35,3 @@ describe('StyleApplicator.getLeafletStyle (simple renderer)', () => {
     expect(result.color).toBe('#000000');
   });
 });
-

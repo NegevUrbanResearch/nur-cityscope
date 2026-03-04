@@ -1,8 +1,8 @@
-const {
+﻿const {
   resolveLayerState,
   parseFullLayerId,
   getLayerIdOnly,
-} = require("../../frontend/js/shared/layer-state-helper");
+} = require("../../frontend/src/shared/layer-state-helper");
 
 describe("layer-state-helper: parseFullLayerId", () => {
   test("returns null for invalid or missing dot", () => {
@@ -94,3 +94,4 @@ describe("layer-state-helper: resolveLayerState", () => {
     expect(state2.enabled).toBe(true);
   });
 });
+

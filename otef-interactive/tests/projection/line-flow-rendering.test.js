@@ -1,4 +1,6 @@
-﻿const AdvancedStyleDrawing = require('../../frontend/js/map-utils/advanced-style-drawing');
+﻿const AdvancedStyleDrawingModule = require('../../frontend/src/map-utils/advanced-style-drawing');
+const AdvancedStyleDrawing =
+  AdvancedStyleDrawingModule.default || AdvancedStyleDrawingModule;
 
 function makeMockCanvasCtx() {
   return {
