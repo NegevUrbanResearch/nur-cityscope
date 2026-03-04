@@ -7,6 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import json
 import os
+import re
 from django.conf import settings
 from datetime import datetime
 
@@ -291,11 +292,10 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     'message': {
                         'type': 'otef_animation_changed',
                         'table': table_name,
-                        'layerId': 'parcels',
-                        'enabled': animations.get('parcels', False),
+                        'animations': animations or {},
                     }
                 }
-            elif field == 'bounds':
+            elif field == 'bounds' or field == 'viewer_angle_deg':
                 message = {
                     'type': 'broadcast_message',
                     'message': {
@@ -306,8 +306,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             else:
                 continue
 
-            async_to_sync(channel_layer.group_send)(group_name, message)
-            print(f"📡 Broadcast: {field} changed for {table_name}")
+            try:
+                if channel_layer:
+                    async_to_sync(channel_layer.group_send)(group_name, message)
+            except Exception as e:
+                print(f"[WARN] Broadcast skipped for {field} ({table_name}): {e}")
 
 
     @action(detail=False, methods=['get', 'patch'], url_path='by-table/(?P<table_name>[^/.]+)')
@@ -326,7 +329,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             defaults={
                 'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                 'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                'animations': {'parcels': False}
+                'animations': {}
             }
         )
 
@@ -361,6 +364,16 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 state.bounds_polygon = polygon or []
                 changed_fields.append('bounds')
 
+            if 'viewer_angle_deg' in request.data:
+                try:
+                    state.viewer_angle_deg = float(request.data['viewer_angle_deg'])
+                except (TypeError, ValueError):
+                    return Response(
+                        {'error': 'viewer_angle_deg must be a valid number'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                changed_fields.append('viewer_angle_deg')
+
             state.save()
 
             # Broadcast notifications for each changed field
@@ -376,6 +389,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'layerGroups': self._get_layer_groups(table),
             'animations': state.get_animations_with_defaults(),
             'bounds_polygon': state.get_bounds_polygon(),
+            'viewer_angle_deg': state.viewer_angle_deg,
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -415,67 +429,107 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
     def _get_layer_groups(self, table):
         """Get hierarchical layer groups structure for a table.
-        Curated groups use IDs like 'curated_<slug>' and include a display name
-        derived from the project_name stored on GISLayer rows.
-        When no LayerGroup rows exist, builds groups from GISLayer rows.
+        When no LayerGroup rows exist, builds curated groups from GISLayer so layers
+        appear in the remote. Curated groups are project-scoped when project_name
+        is available on GISLayer.
         """
-        groups = LayerGroup.objects.filter(table=table).order_by('group_id')
+        groups = LayerGroup.objects.filter(table=table).order_by("group_id")
         result = []
+
+        # Precompute mapping from project slug -> human project name for this table.
+        gis_layers = GISLayer.objects.filter(table=table, is_active=True)
+        slug_to_project_name = {}
+        for gl in gis_layers:
+            pname = (getattr(gl, "project_name", "") or "").strip()
+            if not pname:
+                continue
+            slug = _slugify_project(pname)
+            if slug and slug not in slug_to_project_name:
+                slug_to_project_name[slug] = pname
 
         for group in groups:
             layer_states = LayerState.objects.filter(
                 table=table,
-                layer_id__startswith=f"{group.group_id}."
-            ).order_by('layer_id')
+                layer_id__startswith=f"{group.group_id}.",
+            ).order_by("layer_id")
 
             layers = []
             group_display_name = None
             for layer_state in layer_states:
                 layer_id = layer_state.layer_id.replace(f"{group.group_id}.", "", 1)
-                layer_item = {'id': layer_id, 'enabled': layer_state.enabled}
-                if group.group_id.startswith('curated'):
+                layer_item = {"id": layer_id, "enabled": layer_state.enabled}
+
+                # For curated groups (project-scoped), attach displayName to layers
+                # by looking up the corresponding GISLayer row.
+                if str(group.group_id).startswith("curated"):
                     try:
                         gis_layer = GISLayer.objects.filter(
                             table=table, id=int(layer_id)
                         ).first()
                         if gis_layer:
-                            layer_item['displayName'] = gis_layer.display_name or gis_layer.name
-                            if not group_display_name and gis_layer.project_name:
-                                group_display_name = gis_layer.project_name
+                            layer_item["displayName"] = (
+                                gis_layer.display_name or gis_layer.name
+                            )
+                            layer_item["project_name"] = (
+                                getattr(gis_layer, "project_name", "") or ""
+                            )
                     except (ValueError, TypeError):
+                        # Non-numeric ids are ignored for curated GIS layers.
                         pass
                 layers.append(layer_item)
 
-            group_data = {
-                'id': group.group_id,
-                'enabled': group.enabled,
-                'layers': layers,
-            }
-            if group_display_name:
-                group_data['name'] = group_display_name
-            result.append(group_data)
+            group_name = group.group_id
+            if group.group_id == "curated":
+                group_name = "Curated"
+            elif str(group.group_id).startswith("curated_"):
+                slug = str(group.group_id)[len("curated_") :]
+                human_name = slug_to_project_name.get(slug)
+                if human_name:
+                    group_name = human_name
+
+            result.append(
+                {
+                    "id": group.group_id,
+                    "name": group_name,
+                    "enabled": group.enabled,
+                    "layers": layers,
+                }
+            )
 
         if not result:
-            gis_layers = GISLayer.objects.filter(table=table, is_active=True).order_by('order')
+            gis_layers = GISLayer.objects.filter(
+                table=table, is_active=True
+            ).order_by("order")
             if gis_layers.exists():
-                from .supabase_proxy import _slugify_project
-                by_project = {}
+                grouped = {}
                 for layer in gis_layers:
-                    pname = layer.project_name or ""
-                    slug = _slugify_project(pname) if pname else "default"
-                    group_id = f"curated_{slug}" if pname else "curated"
-                    if group_id not in by_project:
-                        by_project[group_id] = {'name': pname, 'layers': []}
-                    by_project[group_id]['layers'].append({
-                        'id': str(layer.id),
-                        'enabled': True,
-                        'displayName': layer.display_name or layer.name,
-                    })
-                for gid, info in by_project.items():
-                    entry = {'id': gid, 'enabled': True, 'layers': info['layers']}
-                    if info['name']:
-                        entry['name'] = info['name']
-                    result.append(entry)
+                    pname = (getattr(layer, "project_name", "") or "").strip()
+                    if pname:
+                        slug = _slugify_project(pname)
+                        group_id = f"curated_{slug}"
+                        group_name = pname
+                    else:
+                        group_id = "curated"
+                        group_name = "Curated"
+
+                    group = grouped.setdefault(
+                        group_id,
+                        {
+                            "id": group_id,
+                            "name": group_name,
+                            "enabled": True,
+                            "layers": [],
+                        },
+                    )
+                    group["layers"].append(
+                        {
+                            "id": str(layer.id),
+                            "enabled": True,
+                            "displayName": layer.display_name or layer.name,
+                            "project_name": pname,
+                        }
+                    )
+                result = list(grouped.values())
 
         return result
 
@@ -496,7 +550,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             defaults={
                 'viewport': OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                 'layers': OTEFViewportState.DEFAULT_LAYERS.copy(),
-                'animations': {'parcels': False}
+                'animations': {}
             }
         )
 
@@ -1826,7 +1880,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 'id': layer.id,
                 'name': layer.name,
                 'display_name': layer.display_name,
-                'project_name': layer.project_name,
+                'project_name': getattr(layer, "project_name", "") or "",
                 'layer_type': layer.layer_type,
                 'style_config': layer.style_config,
             }
@@ -1852,6 +1906,26 @@ import os
 from django.conf import settings
 from rest_framework.views import APIView
 from pathlib import Path
+
+from backend.calibration_io import normalize_calibration_payload, write_model_bounds_to_storage
+
+
+def _slugify_project(name):
+    """
+    Slugify a human project name for curated group IDs.
+
+    - Lowercase, trim
+    - Replace whitespace with underscore
+    - Strip non [a-z0-9_]
+    - Fallback to 'default' when empty
+    """
+    if not isinstance(name, str):
+        return "default"
+    slug = str(name).strip().lower()
+    slug = re.sub(r"\s+", "_", slug)
+    slug = re.sub(r"[^a-z0-9_]", "", slug)
+    return slug or "default"
+
 
 _PINK_LINE_CANDIDATES = [
     # Docker / production mount (see import_otef_data.py)
@@ -2007,6 +2081,7 @@ class OTEFBoundsApplyView(APIView):
     def post(self, request, *args, **kwargs):
         table_name = request.data.get("table", "otef")
         polygon = request.data.get("polygon")
+        raw_angle = request.data.get("viewer_angle_deg", None)
 
         if not isinstance(polygon, list) or len(polygon) < 3:
             return Response(
@@ -2035,6 +2110,17 @@ class OTEFBoundsApplyView(APIView):
                 )
             cleaned_vertices.append({"x": x, "y": y})
 
+        # Optional orientation validation
+        angle = None
+        if "viewer_angle_deg" in request.data:
+            try:
+                angle = float(raw_angle)
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "viewer_angle_deg must be a valid number"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Persist to DB
         table = Table.objects.filter(name=table_name).first()
         if not table:
@@ -2048,50 +2134,28 @@ class OTEFBoundsApplyView(APIView):
             defaults={
                 "viewport": OTEFViewportState.DEFAULT_VIEWPORT.copy(),
                 "layers": OTEFViewportState.DEFAULT_LAYERS.copy(),
-                "animations": {"parcels": False},
+                "animations": {},
             },
         )
-        state.bounds_polygon = cleaned_vertices
+        raw_payload = {
+            "bounds_polygon": cleaned_vertices,
+            "viewer_angle_deg": angle if angle is not None else getattr(state, "viewer_angle_deg", 0.0),
+        }
+        normalized = normalize_calibration_payload(raw_payload)
+        state.bounds_polygon = normalized["bounds_polygon"]
+        state.viewer_angle_deg = normalized["viewer_angle_deg"]
         state.save()
 
-        # Also mirror into OTEFModelConfig.model_bounds (if exists)
-        try:
-            config = OTEFModelConfig.objects.filter(table=table).first()
-            if config:
-                bounds = config.model_bounds or {}
-                bounds["polygon"] = cleaned_vertices
-                config.model_bounds = bounds
-                config.save()
-        except Exception as e:
-            # Non-fatal; log to console
-            print(f"Warning: failed to update OTEFModelConfig.model_bounds: {e}")
-
-        # Update Git-tracked JSON snapshot on disk
-        try:
-            # BASE_DIR typically points to nur-io/django_api; go up to repo root
-            project_root = os.path.abspath(os.path.join(settings.BASE_DIR, "..", ".."))
-            bounds_path = os.path.join(
-                project_root,
-                "otef-interactive",
-                "frontend",
-                "data",
-                "model-bounds.json",
-            )
-
-            if os.path.exists(bounds_path):
-                with open(bounds_path, "r", encoding="utf-8") as f:
-                    json_data = json.load(f)
-            else:
-                json_data = {}
-
-            json_data["polygon"] = cleaned_vertices
-
-            # Ensure directory exists and write back with pretty formatting
-            os.makedirs(os.path.dirname(bounds_path), exist_ok=True)
-            with open(bounds_path, "w", encoding="utf-8") as f:
-                json.dump(json_data, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            print(f"Warning: failed to update model-bounds.json: {e}")
+        # Resolve model-bounds.json path using candidate paths that work in
+        # both Docker and local dev (same pattern as import_otef_data.py).
+        base = Path(settings.BASE_DIR)
+        bounds_candidates = [
+            Path("/app/otef-interactive/frontend/data/model-bounds.json"),       # Docker mount
+            base.resolve().parent.parent / "otef-interactive" / "frontend" / "data" / "model-bounds.json",  # Local dev
+        ]
+        bounds_path = str(next((p for p in bounds_candidates if p.parent.exists()), bounds_candidates[-1]))
+        config = OTEFModelConfig.objects.filter(table=table).first()
+        write_model_bounds_to_storage(normalized, config, bounds_path)
 
         # Broadcast bounds change over WebSocket (optional, lightweight notification)
         try:
@@ -2115,5 +2179,6 @@ class OTEFBoundsApplyView(APIView):
                 "status": "ok",
                 "table": table_name,
                 "bounds_polygon": cleaned_vertices,
+                "viewer_angle_deg": angle if angle is not None else state.viewer_angle_deg,
             }
         )

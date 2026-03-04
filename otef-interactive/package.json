@@ -4,16 +4,15 @@
   "private": true,
   "description": "Tests and tooling for the OTEF interactive frontend (Leaflet map, projection, remote controller).",
   "scripts": {
-    "test": "jest"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "build:frontend": "vite build",
+    "dev:frontend": "vite"
   },
   "devDependencies": {
-    "jest": "^29.7.0"
-  },
-  "jest": {
-    "testEnvironment": "node",
-    "testMatch": [
-      "<rootDir>/tests/**/*.test.js"
-    ]
+    "@vitest/coverage-v8": "^4.0.18",
+    "vite": "^5.4.19",
+    "vitest": "^4.0.18"
   }
 }
-

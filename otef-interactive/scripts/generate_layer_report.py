@@ -144,6 +144,34 @@ def format_cim_complexity(complexity: Dict) -> str:
     return "\n".join(lines)
 
 
+def _symbol_ir_to_simple_style(symbol: Dict) -> Dict:
+    """Derive a simple style dict from symbol IR for report display (fill/stroke/dash/hatch)."""
+    out = {}
+    layers = symbol.get("symbolLayers") or []
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        t = layer.get("type")
+        if t == "fill":
+            if layer.get("color"):
+                out["fillColor"] = layer["color"]
+            if layer.get("opacity") is not None:
+                out["fillOpacity"] = layer["opacity"]
+            if layer.get("hatch"):
+                out["hatch"] = layer["hatch"]
+        elif t == "stroke":
+            if layer.get("color"):
+                out["strokeColor"] = layer["color"]
+            if layer.get("width") is not None:
+                out["strokeWidth"] = layer["width"]
+            if layer.get("opacity") is not None:
+                out["strokeOpacity"] = layer["opacity"]
+            dash = layer.get("dash")
+            if dash and isinstance(dash.get("array"), list):
+                out["dashArray"] = dash["array"]
+    return out
+
+
 def format_style_config(style: Dict) -> str:
     """Format style configuration for display."""
     lines = []
@@ -155,7 +183,9 @@ def format_style_config(style: Dict) -> str:
 
     if style.get("renderer") == "simple":
         lines.append("**Renderer Type:** Simple (single style for all features)")
-        default = style.get("defaultStyle", {})
+        default = style.get("defaultStyle") or _symbol_ir_to_simple_style(
+            style.get("defaultSymbol") or {}
+        )
         if default:
             lines.append("**Default Style:**")
             if default.get("fillColor"):
@@ -167,10 +197,14 @@ def format_style_config(style: Dict) -> str:
                     f"  - Stroke: {format_color(default['strokeColor'], default.get('strokeOpacity', 1.0))} (width: {default.get('strokeWidth', 1.0)})"
                 )
 
-        # Show full symbol stack summary and CIM complexity flags
+        # Show symbol stack summary (fullSymbolLayers if present, else defaultSymbol)
         full_layers = style.get("fullSymbolLayers", [])
+        if not full_layers:
+            full_layers = (
+                (style.get("defaultSymbol") or {}).get("symbolLayers") or []
+            )
         if full_layers:
-            lines.append(f"**Full Symbol Stack:** {len(full_layers)} layer(s)")
+            lines.append(f"**Symbol Stack:** {len(full_layers)} layer(s)")
             layer_types = {}
             for layer in full_layers:
                 ltype = layer.get("type", "unknown")
@@ -180,20 +214,22 @@ def format_style_config(style: Dict) -> str:
                     [f"{k}: {v}" for k, v in sorted(layer_types.items())]
                 )
                 lines.append(f"  - Types: {type_summary}")
-            cim_complexity = analyze_cim_complexity(full_layers)
-            if any(
-                [
-                    cim_complexity["multipleHatches"],
-                    cim_complexity["multipleStrokes"],
-                    cim_complexity["markerAlongLine"],
-                    cim_complexity["unsupportedTypes"],
-                ]
-            ):
-                lines.append("**CIM Complexity (parsing gaps):**")
-                lines.append(format_cim_complexity(cim_complexity))
+            # CIM complexity only when we have CIM (fullSymbolLayers); for IR skip
+            if style.get("fullSymbolLayers"):
+                cim_complexity = analyze_cim_complexity(style["fullSymbolLayers"])
+                if any(
+                    [
+                        cim_complexity["multipleHatches"],
+                        cim_complexity["multipleStrokes"],
+                        cim_complexity["markerAlongLine"],
+                        cim_complexity["unsupportedTypes"],
+                    ]
+                ):
+                    lines.append("**CIM Complexity (parsing gaps):**")
+                    lines.append(format_cim_complexity(cim_complexity))
 
-        # Advanced symbol IR summary (if present)
-        adv = style.get("advancedSymbol") or style.get("advanced_symbol")
+        # Symbol IR summary (defaultSymbol)
+        adv = style.get("defaultSymbol")
         if adv and adv.get("symbolLayers"):
             layers = adv["symbolLayers"]
             lines.append("**Advanced Symbol IR:**")
@@ -267,6 +303,9 @@ def format_style_config(style: Dict) -> str:
             value = cls.get("value", "")  # Backward compat
             label = cls.get("label", value)
             cls_style = cls.get("style", {})
+            # New contract: class may have only symbol; derive simple view for report
+            if not cls_style and cls.get("symbol", {}).get("symbolLayers"):
+                cls_style = _symbol_ir_to_simple_style(cls["symbol"])
 
             # Show multi-field values if present
             if values and len(values) > 0 and len(values[0]) > 1:
@@ -286,6 +325,10 @@ def format_style_config(style: Dict) -> str:
 
             # Show symbol stack summary for this class
             full_layers = cls.get("fullSymbolLayers", [])
+            if not full_layers:
+                full_layers = (
+                    (cls.get("symbol") or {}).get("symbolLayers") or []
+                )
             if full_layers:
                 lines.append(f"     - Symbol layers: {len(full_layers)}")
                 layer_types = {}
@@ -307,24 +350,27 @@ def format_style_config(style: Dict) -> str:
                         f"       - Hatch: {h['color']} (rot: {h['rotation']}, sep: {h['separation']})"
                     )
 
-                # CIM complexity flags for this class
-                cim_complexity = analyze_cim_complexity(full_layers)
-                if any(
-                    [
-                        cim_complexity["multipleHatches"],
-                        cim_complexity["multipleStrokes"],
-                        cim_complexity["markerAlongLine"],
-                        cim_complexity["unsupportedTypes"],
-                    ]
-                ):
-                    lines.append("       **CIM Complexity (parsing gaps):**")
-                    for line in (
-                        format_cim_complexity(cim_complexity).strip().split("\n")
+                # CIM complexity only when class has fullSymbolLayers (CIM)
+                if cls.get("fullSymbolLayers"):
+                    cim_complexity = analyze_cim_complexity(cls["fullSymbolLayers"])
+                    if any(
+                        [
+                            cim_complexity["multipleHatches"],
+                            cim_complexity["multipleStrokes"],
+                            cim_complexity["markerAlongLine"],
+                            cim_complexity["unsupportedTypes"],
+                        ]
                     ):
-                        lines.append("       " + line)
+                        lines.append("       **CIM Complexity (parsing gaps):**")
+                        for line in (
+                            format_cim_complexity(cim_complexity)
+                            .strip()
+                            .split("\n")
+                        ):
+                            lines.append("       " + line)
 
-            # Advanced symbol IR per class (if present)
-            adv_cls = cls.get("advancedSymbol") or cls.get("advanced_symbol")
+            # Symbol IR per class (symbol)
+            adv_cls = cls.get("symbol")
             if adv_cls and adv_cls.get("symbolLayers"):
                 layers = adv_cls["symbolLayers"]
                 lines.append("     - Advanced Symbol IR:")

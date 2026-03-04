@@ -17,6 +17,23 @@ from rest_framework import status
 logger = logging.getLogger(__name__)
 
 
+def _slugify_project(name):
+    """
+    Slugify a human project name for curated group IDs.
+
+    - Lowercase, trim
+    - Replace whitespace with underscore
+    - Strip non [a-z0-9_]
+    - Fallback to 'default' when empty
+    """
+    if not isinstance(name, str):
+        return "default"
+    slug = name.strip().lower()
+    slug = re.sub(r"\s+", "_", slug)
+    slug = re.sub(r"[^a-z0-9_]", "", slug)
+    return slug or "default"
+
+
 def _supabase_headers():
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     key = os.environ.get("SUPABASE_SECRET_KEY", "")
@@ -215,16 +232,28 @@ class CuratedLayerPublishView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            project_slug = _slugify_project(project_name)
-            layer_name = f"curated_{project_slug}_{name.lower().replace(' ', '_')[:50]}"
-
+            # Enforce project-scoped uniqueness on display_name.
             if GISLayer.objects.filter(
                 table=table, display_name=name, project_name=project_name
             ).exists():
                 return Response(
-                    {"error": f'A layer named "{name}" already exists in project "{project_name}". Please choose another name.'},
+                    {
+                        "error": f'A layer named "{name}" already exists in project "{project_name}". Please choose another name.'
+                    },
                     status=status.HTTP_409_CONFLICT,
                 )
+
+            project_slug = _slugify_project(project_name)
+            # Internal slug used for GISLayer.name; project scoped via unique_together.
+            base_slug = re.sub(r"\s+", "_", name.lower()).strip("_")[:50]
+            base = f"curated_{project_slug}_{base_slug}"[:100]
+            layer_name = base or f"curated_{project_slug}"
+            n = 0
+            while GISLayer.objects.filter(
+                table=table, name=layer_name, project_name=project_name
+            ).exists():
+                n += 1
+                layer_name = f"{base}_{n}"
 
             order = (
                 GISLayer.objects.filter(table=table).aggregate(

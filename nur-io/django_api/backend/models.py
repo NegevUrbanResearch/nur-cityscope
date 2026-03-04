@@ -230,7 +230,11 @@ class GISLayer(models.Model):
     )
     name = models.CharField(max_length=100)
     display_name = models.CharField(max_length=255)
-    project_name = models.CharField(max_length=255, blank=True, default="")
+    project_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+    )
     layer_type = models.CharField(
         max_length=50,
         choices=[
@@ -253,8 +257,10 @@ class GISLayer(models.Model):
         ordering = ["order", "name"]
 
     def __str__(self):
-        prefix = f"{self.project_name}/" if self.project_name else ""
-        return f"{self.table.name}/{prefix}{self.display_name}"
+        project_part = (
+            f"/{self.project_name}" if getattr(self, "project_name", "") else ""
+        )
+        return f"{self.table.name}{project_part}/{self.display_name}"
 
 
 class OTEFModelConfig(models.Model):
@@ -321,6 +327,8 @@ class OTEFViewportState(models.Model):
     # Stored as an ordered list of {"x": number, "y": number} vertices
     bounds_polygon = models.JSONField(default=list, blank=True)
 
+    viewer_angle_deg = models.FloatField(default=0.0)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
@@ -342,7 +350,7 @@ class OTEFViewportState(models.Model):
 
     def get_animations_with_defaults(self):
         """Return animations with defaults"""
-        return self.animations or {"parcels": False}
+        return self.animations or {}
 
     def get_bounds_polygon(self):
         """

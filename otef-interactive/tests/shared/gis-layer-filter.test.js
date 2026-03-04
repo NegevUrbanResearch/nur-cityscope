@@ -1,7 +1,7 @@
 const {
   shouldShowLayerOnGisMap,
   filterGroupsForGisMap,
-} = require("../../frontend/js/shared/gis-layer-filter");
+} = require("../../frontend/src/shared/gis-layer-filter");
 
 describe("gis-layer-filter: shouldShowLayerOnGisMap", () => {
   test("returns false for projector_base when layer is not Tkuma_Area_LIne", () => {
@@ -57,3 +57,4 @@ describe("gis-layer-filter: filterGroupsForGisMap", () => {
     expect(filtered[0].layers).toHaveLength(0);
   });
 });
+

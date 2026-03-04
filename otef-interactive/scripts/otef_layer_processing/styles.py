@@ -613,6 +613,14 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
                     # ArcGIS often uses 0-100 for alpha
                     a = values[3]
                     color_opacity = (a / 100.0) if a <= 100 else (a / 255.0)
+        # haloColor: convert CIMRGBColor to hex for frontend ctx.strokeStyle
+        halo_color_hex = None
+        halo_obj = text_symbol.get("haloColor")
+        if halo_obj and isinstance(halo_obj, dict):
+            h_vals = halo_obj.get("values", [])
+            if len(h_vals) >= 3:
+                hr, hg, hb = int(h_vals[0]), int(h_vals[1]), int(h_vals[2])
+                halo_color_hex = f"#{hr:02x}{hg:02x}{hb:02x}"
         # size: ArcGIS CIM "height" is in points
         label_config = {
             "field": field,
@@ -621,7 +629,7 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
             "color": color_hex or "#000000",
             "colorOpacity": color_opacity,
             "haloSize": text_symbol.get("haloSize", 0),
-            "haloColor": text_symbol.get("haloColor"),  # optional, not always present
+            "haloColor": halo_color_hex,  # hex string or None; frontend uses "#ffffff" fallback
             "horizontalAlignment": text_symbol.get("horizontalAlignment", "Center"),
             "verticalAlignment": text_symbol.get("verticalAlignment", "Baseline"),
             "textDirection": text_symbol.get("textDirection", "LTR"),
@@ -689,7 +697,6 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
                             "value": value,
                             "label": cls.get("label", ""),
                             "style": class_style,
-                            "fullSymbolLayers": all_layers,
                             "advancedSymbol": class_advanced_symbol or None,
                         }
                     )

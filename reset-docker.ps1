@@ -92,13 +92,27 @@ if (-not $pythonCmd) {
     Write-Host "   Warning: Python not found, skipping layer pack processing" -ForegroundColor Yellow
 }
 
+# Ensure Bun and OTEF frontend dependencies (for tests and dev)
+Write-Host "6. Ensuring Bun and OTEF frontend dependencies..." -ForegroundColor Cyan
+$bunExe = "$env:USERPROFILE\.bun\bin\bun.exe"
+if (-not (Test-Path $bunExe)) {
+    Write-Host "   Installing Bun (one-time)..." -ForegroundColor Gray
+    irm https://bun.sh/install.ps1 | iex
+}
+if (Test-Path $bunExe) {
+    Write-Host "   Installing OTEF frontend dependencies (bun install)..." -ForegroundColor Gray
+    & $bunExe install --cwd "otef-interactive"
+} else {
+    Write-Host "   Warning: Bun not found after install, skipping otef-interactive deps (run 'bun install' in otef-interactive manually)" -ForegroundColor Yellow
+}
+
 # Rebuild and start containers
-Write-Host "6. Rebuilding and starting containers..." -ForegroundColor Cyan
+Write-Host "7. Rebuilding and starting containers..." -ForegroundColor Cyan
 $env:COMPOSE_BAKE = "true"
 docker-compose up --build -d
 
 # Wait for API and seed database (migrate, create_data, import_otef_data)
-Write-Host "7. Waiting for API and seeding database..." -ForegroundColor Cyan
+Write-Host "8. Waiting for API and seeding database..." -ForegroundColor Cyan
 Start-Sleep -Seconds 15
 Write-Host "   Running migrations..." -ForegroundColor Gray
 docker exec nur-api python manage.py migrate

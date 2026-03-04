@@ -45,6 +45,41 @@ CACHE_FILE = ".layer-cache.json"
 
 # Stem of gis files matching this pattern are copied to processed for masking only (not added as layers).
 MASK_ASSET_STEM_SUFFIX = "_boundary"
+ANIMATION_STYLE_OVERRIDES: Dict[str, Dict[str, Dict[str, Any]]] = {
+    "october_7th": {
+        "\u05d7\u05d3\u05d9\u05e8\u05d4_\u05dc\u05d9\u05e9\u05d5\u05d1-\u05e6\u05d9\u05e8": {
+            "type": "flow",
+            "enabledByDefault": False,
+            "speed": 40,
+            "dashArray": [10, 14],
+            "directionPolicy": "feature_order",
+        },
+        "\u05de\u05d0\u05d1\u05e7_\u05d5\u05d2\u05d1\u05d5\u05e8\u05d4_\u05e6\u05d9\u05e8": {
+            "type": "flow",
+            "enabledByDefault": False,
+            "speed": 40,
+            "dashArray": [10, 14],
+            "directionPolicy": "feature_order",
+        },
+    }
+}
+
+
+def _style_config_is_advanced(style_config: Optional[Dict]) -> bool:
+    """True if layer should use PMTiles for advanced rendering (legacy complexity or defaultSymbol hints)."""
+    if not style_config or not isinstance(style_config, dict):
+        return False
+    if style_config.get("complexity") == "advanced":
+        return True
+    layers = (style_config.get("defaultSymbol") or {}).get("symbolLayers") or []
+    if len(layers) > 1:
+        return True
+    for layer in layers:
+        if isinstance(layer, dict) and layer.get("type") in ("markerLine", "markerPoint"):
+            return True
+        if isinstance(layer, dict) and layer.get("hatch"):
+            return True
+    return False
 
 
 def compute_file_hash(path: Path) -> str:
@@ -53,6 +88,14 @@ def compute_file_hash(path: Path) -> str:
         for chunk in iter(lambda: f.read(4096), b""):
             hash_sha256.update(chunk)
     return hash_sha256.hexdigest()
+
+
+def _task_id(task: Dict) -> str:
+    """Return a stable id for logging (pack_id/layer_or_file_name)."""
+    pack_id = task["pack_id"]
+    if "geo_file" in task:
+        return f"{pack_id}/{task['geo_file'].name}"
+    return f"{pack_id}/{task['image_file'].name}"
 
 
 class ProcessingOrchestrator:
@@ -71,6 +114,17 @@ class ProcessingOrchestrator:
         self.cache = {} if no_cache else self._load_cache()
         self.popup_config = self._load_popup_config()
 
+    def _apply_animation_style_overrides(
+        self, pack_id: str, layer_id: str, style_config: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if not style_config or not isinstance(style_config, dict):
+            return style_config
+        layer_overrides = ANIMATION_STYLE_OVERRIDES.get(pack_id, {})
+        animation_cfg = layer_overrides.get(layer_id)
+        if animation_cfg:
+            style_config["animation"] = animation_cfg
+        return style_config
+
     def _load_cache(self) -> Dict:
         if self.cache_path.exists():
             try:
@@ -84,7 +138,7 @@ class ProcessingOrchestrator:
         if not self.no_cache:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             with open(self.cache_path, "w", encoding="utf-8") as f:
-                json.dump(self.cache, f, indent=2)
+                json.dump(self.cache, f, indent=2, ensure_ascii=False)
 
     def _load_popup_config(self) -> Dict:
         # source_dir is typically ".../public/source/layers" or just ".../public/source"
@@ -133,7 +187,7 @@ class ProcessingOrchestrator:
                     packs.append(d)
         return sorted(packs)
 
-    def process_all(self):
+    def process_all(self, stuck_timeout: Optional[int] = None):
         packs = self.scan_packs()
         if not packs:
             logger.warning("No layer packs found to process.")
@@ -239,32 +293,55 @@ class ProcessingOrchestrator:
                     executor.submit(self.process_single_image, image_task, log_level)
                 ] = image_task
 
-            # Main Progress Bar
+            # Main Progress Bar; optional stuck_timeout to log which task is pending
             total_tasks = len(all_layer_tasks) + len(all_image_tasks)
+            pending = dict(futures)
             with tqdm(total=total_tasks, desc="Total Layers", unit="lyr") as pbar:
-                for future in as_completed(futures):
+                while pending:
                     try:
-                        result = future.result()
-                        if result:
-                            # result is (layer_entry, style_entry_or_None, cache_key, cache_value)
-                            layer_entry, style_entry, cache_key, cache_val = result
-                            pack_id = cache_key.split("/")[0]
+                        completion_iterator = as_completed(
+                            pending.keys(), timeout=stuck_timeout
+                        )
+                        for future in completion_iterator:
+                            task = pending[future]
+                            task_id = _task_id(task)
+                            try:
+                                result = future.result()
+                                logger.info("Completed: %s", task_id)
+                                if result:
+                                    # result is (layer_entry, style_entry_or_None, cache_key, cache_value)
+                                    layer_entry, style_entry, cache_key, cache_val = result
+                                    pack_id = cache_key.split("/")[0]
 
-                            # Update local cache in main process
-                            self.cache[cache_key] = cache_val
+                                    # Update local cache in main process
+                                    self.cache[cache_key] = cache_val
 
-                            # Add to appropriate pack manifest
-                            if pack_id in pack_manifests:
-                                pack_manifests[pack_id]["layers"].append(layer_entry)
-                                if style_entry:
-                                    styles_map[pack_id][layer_entry.id] = style_entry
+                                    # Add to appropriate pack manifest
+                                    if pack_id in pack_manifests:
+                                        pack_manifests[pack_id]["layers"].append(
+                                            layer_entry
+                                        )
+                                        if style_entry:
+                                            styles_map[pack_id][
+                                                layer_entry.id
+                                            ] = style_entry
+                            except Exception as e:
+                                logger.warning("Failed: %s — %s", task_id, e)
+                                tqdm.write(f"Task failed: {e}")
 
-                    except Exception as e:
-                        # task = futures[future]
-                        # logger.error(f"Failed to process layer {task['geo_file'].name}: {e}")
-                        tqdm.write(f"Task failed: {e}")
-
-                    pbar.update(1)
+                            del pending[future]
+                            pbar.update(1)
+                    except TimeoutError:
+                        still_pending = [
+                            (f, pending[f]) for f in pending if not f.done()
+                        ]
+                        for _f, t in still_pending:
+                            logger.warning(
+                                "No completion in %ss — still pending: %s",
+                                stuck_timeout,
+                                _task_id(t),
+                            )
+                        # continue while to keep waiting
 
         # Copy boundary assets (transform to WGS84, write to processed; not added as layers)
         for pack_id, geo_file, pack_output in boundary_assets:
@@ -334,10 +411,10 @@ class ProcessingOrchestrator:
                 "layers": layers_list,
             }
             with open(pack_output / "manifest.json", "w", encoding="utf-8") as f:
-                json.dump(manifest_dict, f, indent=2)
+                json.dump(manifest_dict, f, indent=2, ensure_ascii=False)
 
             with open(pack_output / "styles.json", "w", encoding="utf-8") as f:
-                json.dump(styles_map[pack_id], f, indent=2)
+                json.dump(styles_map[pack_id], f, indent=2, ensure_ascii=False)
 
         self.generate_root_manifest(processed_pack_ids)
         self.save_cache()
@@ -358,6 +435,7 @@ class ProcessingOrchestrator:
         styles_dir = task["styles_dir"]
         pack_output = task["pack_output"]
 
+        logger.info("Processing: %s/%s", pack_id, geo_file.name)
         layer_id = geo_file.stem
         cache_key = f"{pack_id}/{geo_file.name}"
         file_hash = compute_file_hash(geo_file)
@@ -391,6 +469,9 @@ class ProcessingOrchestrator:
                 style_config, geom_type = self._resolve_style_for_geo_file(
                     geo_file, styles_dir
                 )
+                style_config = self._apply_animation_style_overrides(
+                    pack_id, layer_id, style_config
+                )
 
                 if geom_type == "unknown":
                     geom_type = get_geometry_type(wgs84_file)
@@ -400,6 +481,7 @@ class ProcessingOrchestrator:
                 # tile-aware rendering (especially for advanced styles).
                 # Skip PMTiles for label-only layers (they render as text from GeoJSON;
                 # source may have null geometries which tippecanoe rejects).
+                # projector_base layers are used only on the projection page, not the GIS map, so no PMTiles.
                 is_label_layer = bool(
                     style_config
                     and isinstance(style_config, dict)
@@ -407,12 +489,13 @@ class ProcessingOrchestrator:
                     and str(geom_type).lower() == "point"
                 )
                 is_large = geo_file.stat().st_size > 15 * 1024 * 1024
-                is_advanced = bool(
-                    style_config
-                    and isinstance(style_config, dict)
-                    and style_config.get("complexity") == "advanced"
+                is_advanced = _style_config_is_advanced(style_config)
+                use_pmtiles = (
+                    pack_id != "projector_base"
+                    and (is_large or is_advanced)
+                    and not is_label_layer
                 )
-                if (is_large or is_advanced) and not is_label_layer:
+                if use_pmtiles:
                     generate_pmtiles_smart(
                         wgs84_file,
                         pmtiles_file,
@@ -429,6 +512,19 @@ class ProcessingOrchestrator:
             cached = self.cache[cache_key]
             geom_type = cached.get("geometry_type", "unknown")
             style_config = cached.get("style")
+            style_config = self._apply_animation_style_overrides(
+                pack_id, layer_id, style_config
+            )
+
+        popup_cfg = self._get_popup_config_for_layer(pack_id, layer_id)
+        ui_popup = (
+            {k: v for k, v in (popup_cfg or {}).items() if k != "legendLabel"}
+            if popup_cfg
+            else None
+        )
+        if ui_popup and len(ui_popup) == 0:
+            ui_popup = None
+        ui_legend_label = (popup_cfg or {}).get("legendLabel")
 
         entry = LayerEntry(
             id=layer_id,
@@ -436,7 +532,8 @@ class ProcessingOrchestrator:
             file=f"{layer_id}.geojson",
             geometry_type=geom_type,
             pmtiles_file=f"{layer_id}.pmtiles" if pmtiles_file.exists() else None,
-            ui_popup=self._get_popup_config_for_layer(pack_id, layer_id),
+            ui_popup=ui_popup,
+            ui_legend_label=ui_legend_label,
         )
 
         return (
@@ -449,7 +546,7 @@ class ProcessingOrchestrator:
     def generate_root_manifest(self, pack_ids: List[str]):
         root_manifest = {"packs": sorted(pack_ids)}
         with open(self.output_dir / "layers-manifest.json", "w", encoding="utf-8") as f:
-            json.dump(root_manifest, f, indent=2)
+            json.dump(root_manifest, f, indent=2, ensure_ascii=False)
 
     def process_single_image(self, task: Dict, log_level: int) -> Optional[Any]:
         """
@@ -465,6 +562,7 @@ class ProcessingOrchestrator:
         image_file = task["image_file"]
         pack_output = task["pack_output"]
 
+        logger.info("Processing: %s/%s", pack_id, image_file.name)
         # Use model_base for model.png so manifest matches backend/frontend expectations
         layer_id = "model_base" if image_file.stem == "model" else image_file.stem
         name = (
@@ -499,7 +597,6 @@ class ProcessingOrchestrator:
             "type": "image",
             "renderer": "image",
             "defaultStyle": {"opacity": 1.0},
-            "fullSymbolLayers": [],
             "labels": None,
             "scaleRange": None,
         }
@@ -597,13 +694,20 @@ class ProcessingOrchestrator:
             new_styles = {}
 
             # --- Process Geo Layers ---
-            geo_files = list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
+            geo_files = [
+                f
+                for f in list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
+                if not f.name.endswith(".wmts.json")
+            ]
             for geo_file in geo_files:
                 layer_id = geo_file.stem
 
                 # Styles (same resolution as process_single_layer for advanced/complexity)
                 style_config, geom_type = self._resolve_style_for_geo_file(
                     geo_file, styles_dir
+                )
+                style_config = self._apply_animation_style_overrides(
+                    pack_id, layer_id, style_config
                 )
 
                 if geom_type == "unknown":
@@ -616,11 +720,21 @@ class ProcessingOrchestrator:
                             "geometryType", "unknown"
                         )
 
-                # Popup
-                layer_popup = self._get_popup_config_for_layer(pack_id, layer_id)
-                # Fallback to existing manifest if not found in new config (optional, but safe)
-                if not layer_popup and layer_id in existing_layers:
-                    layer_popup = existing_layers[layer_id].get("ui", {}).get("popup")
+                # Popup and legend overrides
+                layer_popup_cfg = self._get_popup_config_for_layer(pack_id, layer_id)
+                if not layer_popup_cfg and layer_id in existing_layers:
+                    existing_ui = existing_layers[layer_id].get("ui", {})
+                    layer_popup_cfg = existing_ui.get("popup") or {}
+                    if existing_ui.get("legendLabel"):
+                        layer_popup_cfg = dict(layer_popup_cfg or {}, legendLabel=existing_ui["legendLabel"])
+                layer_popup = (
+                    {k: v for k, v in (layer_popup_cfg or {}).items() if k != "legendLabel"}
+                    if layer_popup_cfg
+                    else None
+                )
+                if layer_popup and len(layer_popup) == 0:
+                    layer_popup = None
+                ui_legend_label = (layer_popup_cfg or {}).get("legendLabel")
 
                 entry = LayerEntry(
                     id=layer_id,
@@ -633,6 +747,7 @@ class ProcessingOrchestrator:
                         else None
                     ),
                     ui_popup=layer_popup,
+                    ui_legend_label=ui_legend_label,
                 )
                 new_layers.append(entry)
                 if style_config:
@@ -670,13 +785,33 @@ class ProcessingOrchestrator:
                     "type": "image",
                     "renderer": "image",
                     "defaultStyle": {"opacity": 1.0},
-                    "fullSymbolLayers": [],
                     "labels": None,
                     "scaleRange": None,
                 }
 
                 new_layers.append(entry)
                 new_styles[layer_id] = style_config
+
+            # --- Discover WMTS layers from gis/*.wmts.json (mirror process_all) ---
+            for wmts_path in sorted(gis_dir.glob("*.wmts.json")):
+                try:
+                    with open(wmts_path, "r", encoding="utf-8") as f:
+                        wmts_data = json.load(f)
+                    layer_id = wmts_data.get("id", wmts_path.stem)
+                    name = wmts_data.get("name", layer_id.replace("_", " ").title())
+                    wmts_config = wmts_data.get("wmts")
+                    mask_config = wmts_data.get("mask")
+                    if wmts_config:
+                        entry = LayerEntry.create_wmts_layer(
+                            layer_id=layer_id,
+                            name=name,
+                            wmts_config=wmts_config,
+                            mask=mask_config,
+                        )
+                        new_layers.append(entry)
+                        logger.info(f"WMTS layer from {wmts_path.name}: {pack_id}.{layer_id}")
+                except Exception as e:
+                    logger.warning(f"Could not load WMTS {wmts_path}: {e}")
 
             # Write changes
             if new_layers:
@@ -686,15 +821,10 @@ class ProcessingOrchestrator:
                     name=pack_id.title().replace("_", " "),
                     layers=new_layers,
                 )
-
-                # Start from manifest dict and inject default WMTS layer for projector_base,
-                # mirroring the behavior in process_all().
                 manifest_dict = manifest.to_dict()
-                if pack_id == "projector_base":
-                    manifest_dict["layers"].extend(DEFAULT_PROJECTOR_BASE_WMTS_LAYERS)
 
                 with open(pack_output / "manifest.json", "w", encoding="utf-8") as f:
-                    json.dump(manifest_dict, f, indent=2)
+                    json.dump(manifest_dict, f, indent=2, ensure_ascii=False)
 
                 # Merge styles with existing
                 styles_path = pack_output / "styles.json"
@@ -709,7 +839,7 @@ class ProcessingOrchestrator:
                 current_styles.update(new_styles)
 
                 with open(styles_path, "w", encoding="utf-8") as f:
-                    json.dump(current_styles, f, indent=2)
+                    json.dump(current_styles, f, indent=2, ensure_ascii=False)
 
         self.generate_root_manifest(processed_pack_ids)
         logger.info("Metadata update complete.")

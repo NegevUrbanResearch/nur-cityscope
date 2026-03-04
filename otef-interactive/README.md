@@ -11,6 +11,8 @@ Interactive mapping module for the OTEF physical model with synchronized project
 - WebSocket sync between interactive map and projection display
 - Mobile remote controller for touch-based navigation
 - Maptastic.js calibration for projection adjustment
+- Flow animation metadata for selected line layers (default OFF on fresh load)
+- Remote layer-sheet animation toggles (layer + pack, animatable layers only)
 
 ## Access Points
 
@@ -116,9 +118,41 @@ POST /api/otef_viewport/
 - Directional pad and virtual joystick for navigation
 - Zoom slider (10-19)
 - Layer toggles (layer groups, model base)
+- Animation toggles for animatable layers/packs only
 - Real-time synchronization
 
+## Animation State Model
+
+- Style capability lives in `styles.json` as `style.animation` metadata.
+- Runtime state is synchronized via `OTEFViewportState.animations` (generic map by full layer id).
+- Fresh load state is `animations = {}` (all flow effects OFF).
+- Backend/WebSocket no longer assume a legacy `parcels` animation key.
+
 ## Development
+
+### Frontend-B Build Workflow
+
+- Canonical migration source lives under `frontend/src/`.
+- Page entrypoints:
+  - `frontend/src/entries/map-main.js`
+  - `frontend/src/entries/projection-main.js`
+  - `frontend/src/entries/remote-main.js`
+  - `frontend/src/entries/curation-main.js`
+- Centralized runtime config lives under `frontend/src/config/`.
+
+Commands:
+
+```bash
+# Preferred (Bun + Vitest)
+bun run dev:frontend
+bun run build:frontend
+bun run test
+
+# Alternatively, via npm scripts
+npm run dev:frontend
+npm run build:frontend
+npm test
+```
 
 ### Simplifying Layers
 
