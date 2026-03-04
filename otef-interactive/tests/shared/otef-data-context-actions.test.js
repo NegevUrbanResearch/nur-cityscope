@@ -1,8 +1,8 @@
-﻿let setLayerAnimations;
+let setLayerAnimations;
 
 beforeEach(async () => {
-  jest.resetModules();
-  global.fetch = jest.fn().mockResolvedValue({
+  vi.resetModules();
+  global.fetch = vi.fn().mockResolvedValue({
     ok: true,
     json: async () => ({ ok: true }),
   });
@@ -28,7 +28,7 @@ function makeMockContextWithAnimations(initial) {
 describe('OTEFDataContext actions', () => {
   test('setLayerAnimations toggles multiple layer ids in one state update', async () => {
     const ctx = makeMockContextWithAnimations({});
-    const ids = ['october_7th.חדירה_לישוב-ציר', 'october_7th.מאבק_וגבורה_ציר'];
+    const ids = ['october_7th.?????_?????-???', 'october_7th.????_??????_???'];
 
     const result = await setLayerAnimations(ctx, ids, true);
 

@@ -29,7 +29,7 @@ test("fetchCuratedLayerData supports project-scoped curated groups", async () =>
       },
     ],
   };
-  global.fetch = jest.fn().mockResolvedValue(fakeResponse);
+  global.fetch = vi.fn().mockResolvedValue(fakeResponse);
 
   const { fetchCuratedLayerData } = await import(
     "../../../frontend/src/shared/curated-layer-service.js"

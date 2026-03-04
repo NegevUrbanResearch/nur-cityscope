@@ -1,4 +1,4 @@
-﻿const MapProjectionConfigModule = require("../../frontend/src/shared/map-projection-config");
+const MapProjectionConfigModule = require("../../frontend/src/shared/map-projection-config");
 const MapProjectionConfig =
   MapProjectionConfigModule.default ||
   MapProjectionConfigModule.MapProjectionConfig ||

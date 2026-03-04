@@ -53,7 +53,6 @@ ensureBrowserRefs();
 
 StyleApplicatorRef = StyleApplicatorRef || StyleApplicator;
 AdvancedStyleEngineRef = AdvancedStyleEngineRef || AdvancedStyleEngine;
-AdvancedPmtilesLayerRef = AdvancedPmtilesLayerRef || createAdvancedPmtilesLayer;
 renderPopupContentRef = renderPopupContentRef || renderPopupContent;
 
 /**
@@ -278,9 +277,17 @@ function createPmtilesLayer(options) {
     return null;
   }
 
+  // Prefer an injected / browser global advanced PMTiles layer (for tests and browser),
+  // but fall back to the imported factory when no global is available.
+  const advancedFactory =
+    AdvancedPmtilesLayerRef ||
+    (typeof createAdvancedPmtilesLayer === "function"
+      ? createAdvancedPmtilesLayer
+      : null);
+
   // One path: use advanced PMTiles layer whenever available (engine handles simple styles via defaultStyle).
-  if (layerConfig.style && AdvancedPmtilesLayerRef) {
-    return AdvancedPmtilesLayerRef({
+  if (layerConfig.style && advancedFactory) {
+    return advancedFactory({
       fullLayerId,
       layerConfig,
       dataUrl,

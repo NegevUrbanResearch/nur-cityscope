@@ -1,6 +1,6 @@
-﻿describe("leaflet-control-with-basemap load dedupe", () => {
+describe("leaflet-control-with-basemap load dedupe", () => {
   beforeEach(() => {
-    jest.resetModules();
+    vi.resetModules();
 
     global.window = global.window || {};
     global.document = global.document || {
@@ -21,15 +21,15 @@
 
     const mapLayers = new Set();
     global.map = {
-      addLayer: jest.fn((layer) => {
+      addLayer: vi.fn((layer) => {
         mapLayers.add(layer);
       }),
-      removeLayer: jest.fn((layer) => {
+      removeLayer: vi.fn((layer) => {
         mapLayers.delete(layer);
       }),
-      hasLayer: jest.fn((layer) => mapLayers.has(layer)),
-      getZoom: jest.fn(() => 14),
-      on: jest.fn(),
+      hasLayer: vi.fn((layer) => mapLayers.has(layer)),
+      getZoom: vi.fn(() => 14),
+      on: vi.fn(),
     };
 
     global.CoordUtils = {
@@ -38,28 +38,28 @@
     };
 
     global.LayerFactory = {
-      createGeoJsonLayer: jest.fn(() => ({
+      createGeoJsonLayer: vi.fn(() => ({
         options: {},
       })),
     };
 
     global.layerRegistry = {
       _initialized: true,
-      init: jest.fn(async () => {}),
-      getGroups: jest.fn(() => []),
-      getLayerConfig: jest.fn(() => ({
+      init: vi.fn(async () => {}),
+      getGroups: vi.fn(() => []),
+      getLayerConfig: vi.fn(() => ({
         style: {},
       })),
-      getLayerPMTilesUrl: jest.fn(() => null),
-      getLayerDataUrl: jest.fn(() => "/fake.geojson"),
+      getLayerPMTilesUrl: vi.fn(() => null),
+      getLayerDataUrl: vi.fn(() => "/fake.geojson"),
     };
 
     global.LayerStateHelper = {
-      getLayerState: jest.fn(() => ({ enabled: true })),
+      getLayerState: vi.fn(() => ({ enabled: true })),
     };
 
     global.VisibilityController = {
-      shouldLayerBeVisible: jest.fn(() => true),
+      shouldLayerBeVisible: vi.fn(() => true),
     };
   });
 
@@ -79,7 +79,7 @@
 
   test("deduplicates concurrent loads of the same layer id", async () => {
     let resolveFetch;
-    global.fetch = jest.fn(
+    global.fetch = vi.fn(
       () =>
         new Promise((resolve) => {
           resolveFetch = resolve;

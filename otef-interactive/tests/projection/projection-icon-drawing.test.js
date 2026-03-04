@@ -8,16 +8,16 @@ const AdvancedStyleDrawing =
 
 function makeMockCanvasCtx() {
   return {
-    drawImage: jest.fn(),
-    beginPath: jest.fn(),
-    moveTo: jest.fn(),
-    lineTo: jest.fn(),
-    arc: jest.fn(),
-    fill: jest.fn(),
-    stroke: jest.fn(),
-    setLineDash: jest.fn(),
-    save: jest.fn(),
-    restore: jest.fn(),
+    drawImage: vi.fn(),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    arc: vi.fn(),
+    fill: vi.fn(),
+    stroke: vi.fn(),
+    setLineDash: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
   };
 }
 
@@ -47,7 +47,7 @@ describe("projection canvas icon drawing", () => {
     const symbol = AdvancedStyleEngine.symbolFromSimpleStyle(simpleStyle);
 
     const helpers = {
-      getIcon: jest.fn(() => ({
+      getIcon: vi.fn(() => ({
         img: {},
         loaded: true,
         failed: false,

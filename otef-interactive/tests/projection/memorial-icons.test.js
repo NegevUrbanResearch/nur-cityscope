@@ -7,7 +7,7 @@ const {
 describe("projection memorial icon styles for curated routes", () => {
   beforeEach(() => {
     // Stub global buildIntegratedRoute so buildCuratedRouteGeoJSON can run
-    global.buildIntegratedRoute = jest.fn(() => ({
+    global.buildIntegratedRoute = vi.fn(() => ({
       dashed: [],
     }));
   });

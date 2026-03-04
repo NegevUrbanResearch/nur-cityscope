@@ -1,4 +1,4 @@
-﻿const {
+const {
   computeLerpFactor,
 } = require("../../frontend/src/projection/highlight-smoothing-policy");
 

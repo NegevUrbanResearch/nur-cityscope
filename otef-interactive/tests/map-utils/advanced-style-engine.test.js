@@ -1,4 +1,4 @@
-﻿const AdvancedStyleEngineModule = require('../../frontend/src/map-utils/advanced-style-engine');
+const AdvancedStyleEngineModule = require('../../frontend/src/map-utils/advanced-style-engine');
 const AdvancedStyleEngine =
   AdvancedStyleEngineModule.default || AdvancedStyleEngineModule;
 

@@ -25,8 +25,8 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
   });
 
   test("no-ops when layerGroups is null or not an array", () => {
-    const loadLayer = jest.fn();
-    const updateVisibility = jest.fn();
+    const loadLayer = vi.fn();
+    const updateVisibility = vi.fn();
     const deps = {
       map: { getZoom: () => 12 },
       layerRegistry: { _initialized: true, getLayerConfig: () => null },
@@ -45,7 +45,7 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
   });
 
   test("no-ops when deps.layerRegistry is missing", () => {
-    const loadLayer = jest.fn();
+    const loadLayer = vi.fn();
     const deps = {
       map: { getZoom: () => 12 },
       layerRegistry: null,
@@ -62,9 +62,9 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
   });
 
   test("requests load and sets visibility for enabled GIS-visible layers", async () => {
-    const loadLayer = jest.fn().mockResolvedValue(undefined);
-    const updateVisibility = jest.fn();
-    const updateLegend = jest.fn();
+    const loadLayer = vi.fn().mockResolvedValue(undefined);
+    const updateVisibility = vi.fn();
+    const updateLegend = vi.fn();
     const loadedLayersMap = new Map();
     const deps = {
       map: { getZoom: () => 12 },
@@ -98,8 +98,8 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
   });
 
   test("skips projector_base-only layers (GIS filter)", () => {
-    const loadLayer = jest.fn().mockResolvedValue(undefined);
-    const updateVisibility = jest.fn();
+    const loadLayer = vi.fn().mockResolvedValue(undefined);
+    const updateVisibility = vi.fn();
     const deps = {
       map: { getZoom: () => 12 },
       layerRegistry: { _initialized: true, getLayerConfig: () => null },
@@ -129,8 +129,8 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
   });
 
   test("when layer already in loadedLayersMap, only updates visibility", () => {
-    const loadLayer = jest.fn();
-    const updateVisibility = jest.fn();
+    const loadLayer = vi.fn();
+    const updateVisibility = vi.fn();
     const loadedLayersMap = new Map();
     loadedLayersMap.set("map_3_future.mimushim", {});
     const deps = {
@@ -161,8 +161,8 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
     global.LayerStateHelper = { getLayerState: () => ({ enabled: true }) };
     global.VisibilityController = { shouldLayerBeVisible: () => true };
 
-    const loadLayer = jest.fn();
-    const updateVisibility = jest.fn();
+    const loadLayer = vi.fn();
+    const updateVisibility = vi.fn();
     const loadedLayersMap = new Map();
     loadedLayersMap.set("map_3_future.mimushim", {});
     const deps = {
@@ -218,16 +218,16 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
   });
 
   test("curated groups apply even when registry is not initialized while non-curated are deferred", async () => {
-    const loadLayer = jest.fn().mockResolvedValue(undefined);
-    const updateVisibility = jest.fn();
+    const loadLayer = vi.fn().mockResolvedValue(undefined);
+    const updateVisibility = vi.fn();
 
     const registry = {
       _initialized: false,
-      init: jest.fn().mockImplementation(() => {
+      init: vi.fn().mockImplementation(() => {
         registry._initialized = true;
         return Promise.resolve();
       }),
-      getLayerConfig: jest.fn().mockReturnValue(null),
+      getLayerConfig: vi.fn().mockReturnValue(null),
     };
 
     const deps = {

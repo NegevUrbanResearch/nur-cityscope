@@ -1,4 +1,4 @@
-﻿const {
+const {
   getRemoteViewportSetViewOptions,
 } = require("../../frontend/src/map/viewport-apply-policy");
 

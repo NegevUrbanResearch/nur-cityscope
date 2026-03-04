@@ -1,4 +1,4 @@
-﻿const {
+const {
   shouldLayerBeVisible,
 } = require("../../frontend/src/map-utils/visibility-controller");
 

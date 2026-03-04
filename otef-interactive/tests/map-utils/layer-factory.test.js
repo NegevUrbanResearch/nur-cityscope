@@ -1,9 +1,9 @@
-﻿describe('layer-factory: createGeoJsonLayer', () => {
+describe('layer-factory: createGeoJsonLayer', () => {
   beforeEach(() => {
     global.L = {
-      geoJSON: jest.fn((geojson, options) => ({ geojson, options })),
-      circleMarker: jest.fn((latlng, opts) => ({ latlng, opts })),
-      popup: jest.fn(() => ({
+      geoJSON: vi.fn((geojson, options) => ({ geojson, options })),
+      circleMarker: vi.fn((latlng, opts) => ({ latlng, opts })),
+      popup: vi.fn(() => ({
         setLatLng: function () { return this; },
         setContent: function () { return this; },
         openOn: function () { return this; }
@@ -12,7 +12,7 @@
 
     // Minimal StyleApplicator mock
     global.StyleApplicator = {
-      getLeafletStyle: jest.fn(() => () => ({
+      getLeafletStyle: vi.fn(() => () => ({
         fillColor: '#ff0000',
         color: '#000000',
         weight: 2,
@@ -21,14 +21,14 @@
     };
 
     // popup renderer mock
-    global.renderPopupContent = jest.fn(() => '<div>popup</div>');
+    global.renderPopupContent = vi.fn(() => '<div>popup</div>');
   });
 
   afterEach(() => {
     delete global.L;
     delete global.StyleApplicator;
     delete global.renderPopupContent;
-    jest.resetModules();
+    vi.resetModules();
   });
 
   test('creates a GeoJSON layer with correct pane for polygon', () => {
@@ -100,7 +100,7 @@
 
     const { createGeoJsonLayer } = require('../../frontend/src/map-utils/layer-factory');
     const layer = createGeoJsonLayer({
-      fullLayerId: 'october_7th.×—×“×™×¨×”_×œ×™×©×•×‘-×¦×™×¨',
+      fullLayerId: 'october_7th.חדירה_לישוב-ציר',
       layerConfig: cfg,
       geojson,
       map,
@@ -115,13 +115,13 @@
 describe('layer-factory: createPmtilesLayer', () => {
   beforeEach(() => {
     global.protomapsL = {
-      PolygonSymbolizer: jest.fn(function (opts) { this.opts = opts; }),
-      LineSymbolizer: jest.fn(function (opts) { this.opts = opts; }),
-      leafletLayer: jest.fn((opts) => ({ opts }))
+      PolygonSymbolizer: vi.fn(function (opts) { this.opts = opts; }),
+      LineSymbolizer: vi.fn(function (opts) { this.opts = opts; }),
+      leafletLayer: vi.fn((opts) => ({ opts }))
     };
 
     global.StyleApplicator = {
-      getLeafletStyle: jest.fn(() => () => ({
+      getLeafletStyle: vi.fn(() => () => ({
         fillColor: '#00ff00',
         color: '#000000',
         weight: 1,
@@ -134,7 +134,7 @@ describe('layer-factory: createPmtilesLayer', () => {
   afterEach(() => {
     delete global.protomapsL;
     delete global.StyleApplicator;
-    jest.resetModules();
+    vi.resetModules();
   });
 
   test('creates a PMTiles layer with correct pane for line', () => {
@@ -158,9 +158,9 @@ describe('layer-factory: createPmtilesLayer', () => {
   test('PMTiles layer with style uses advanced path when AdvancedPmtilesLayerRef available', () => {
     const fakeAdvancedLayer = { _advanced: true };
     global.AdvancedPmtilesLayer = {
-      createAdvancedPmtilesLayer: jest.fn(() => fakeAdvancedLayer)
+      createAdvancedPmtilesLayer: vi.fn(() => fakeAdvancedLayer)
     };
-    global.protomapsL = { leafletLayer: jest.fn((opts) => ({ opts })) };
+    global.protomapsL = { leafletLayer: vi.fn((opts) => ({ opts })) };
 
     const { createPmtilesLayer } = require('../../frontend/src/map-utils/layer-factory');
 
@@ -180,14 +180,14 @@ describe('layer-factory: createPmtilesLayer', () => {
 
   test('GIS PMTiles layer ignores flow animation metadata', () => {
     global.AdvancedPmtilesLayer = {
-      createAdvancedPmtilesLayer: jest.fn(() => ({ _advanced: true })),
+      createAdvancedPmtilesLayer: vi.fn(() => ({ _advanced: true })),
     };
-    global.protomapsL = { leafletLayer: jest.fn((opts) => ({ opts })) };
+    global.protomapsL = { leafletLayer: vi.fn((opts) => ({ opts })) };
 
     const { createPmtilesLayer } = require('../../frontend/src/map-utils/layer-factory');
 
     const layer = createPmtilesLayer({
-      fullLayerId: 'october_7th.×—×“×™×¨×”_×œ×™×©×•×‘-×¦×™×¨',
+      fullLayerId: 'october_7th.חדירה_לישוב-ציר',
       layerConfig: {
         geometryType: 'line',
         style: {

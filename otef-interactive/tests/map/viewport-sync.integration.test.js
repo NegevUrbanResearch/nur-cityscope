@@ -1,4 +1,4 @@
-﻿const {
+const {
   createViewportApplyScheduler,
 } = require("../../frontend/src/map/viewport-sync-scheduler");
 const {
@@ -57,8 +57,8 @@ describe("viewport sync integration", () => {
     scheduler.schedule({ center: [31.5, 34.6], zoom: 12 });
     rafQueue.shift()();
 
-    const animationState = { "october_7th.×—×“×™×¨×”_×œ×™×©×•×‘-×¦×™×¨": true };
-    expect(animationState["october_7th.×—×“×™×¨×”_×œ×™×©×•×‘-×¦×™×¨"]).toBe(true);
+    const animationState = { "october_7th.חדירה_לישוב-ציר": true };
+    expect(animationState["october_7th.חדירה_לישוב-ציר"]).toBe(true);
     expect(setViewCalls).toHaveLength(1);
   });
 });

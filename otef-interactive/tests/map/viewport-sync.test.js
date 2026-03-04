@@ -1,4 +1,4 @@
-﻿const {
+const {
   createViewportApplyScheduler,
 } = require("../../frontend/src/map/viewport-sync-scheduler");
 

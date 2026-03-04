@@ -143,6 +143,12 @@ POST /api/otef_viewport/
 Commands:
 
 ```bash
+# Preferred (Bun + Vitest)
+bun run dev:frontend
+bun run build:frontend
+bun run test
+
+# Alternatively, via npm scripts
 npm run dev:frontend
 npm run build:frontend
 npm test

@@ -1,4 +1,4 @@
-﻿const { shouldLayerBeVisible } = require('../../frontend/src/map-utils/visibility-controller');
+const { shouldLayerBeVisible } = require('../../frontend/src/map-utils/visibility-controller');
 const { computeZoomRange } = require('../../frontend/src/map-utils/visibility-utils');
 
 describe('visibility-controller: shouldLayerBeVisible', () => {

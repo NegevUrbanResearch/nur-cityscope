@@ -1,4 +1,4 @@
-﻿const {
+const {
   SCALE_AT_ZOOM_0,
   scaleToZoom,
   computeZoomRange,

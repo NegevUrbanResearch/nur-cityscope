@@ -1,26 +1,26 @@
-﻿const AdvancedStyleDrawingModule = require('../../frontend/src/map-utils/advanced-style-drawing');
+const AdvancedStyleDrawingModule = require('../../frontend/src/map-utils/advanced-style-drawing');
 const AdvancedStyleDrawing =
   AdvancedStyleDrawingModule.default || AdvancedStyleDrawingModule;
 
 function makeMockCanvasCtx() {
   return {
     lineDashOffset: 0,
-    beginPath: jest.fn(),
-    moveTo: jest.fn(),
-    lineTo: jest.fn(),
-    stroke: jest.fn(),
-    setLineDash: jest.fn(),
-    createPattern: jest.fn(),
-    save: jest.fn(),
-    restore: jest.fn(),
-    translate: jest.fn(),
-    rotate: jest.fn(),
-    arc: jest.fn(),
-    rect: jest.fn(),
-    fill: jest.fn(),
-    closePath: jest.fn(),
-    fillText: jest.fn(),
-    strokeText: jest.fn(),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    stroke: vi.fn(),
+    setLineDash: vi.fn(),
+    createPattern: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
+    translate: vi.fn(),
+    rotate: vi.fn(),
+    arc: vi.fn(),
+    rect: vi.fn(),
+    fill: vi.fn(),
+    closePath: vi.fn(),
+    fillText: vi.fn(),
+    strokeText: vi.fn(),
   };
 }
 

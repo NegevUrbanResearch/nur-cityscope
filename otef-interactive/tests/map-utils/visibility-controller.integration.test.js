@@ -1,4 +1,4 @@
-﻿const { computeZoomRange } = require('../../frontend/src/map-utils/visibility-utils');
+const { computeZoomRange } = require('../../frontend/src/map-utils/visibility-utils');
 const { shouldLayerBeVisible } = require('../../frontend/src/map-utils/visibility-controller');
 
 describe('visibility-controller integration-style behavior', () => {
@@ -27,7 +27,7 @@ describe('visibility-controller integration-style behavior', () => {
 
     const midZoom = (zoomRange.minZoom + zoomRange.maxZoom) / 2;
 
-    // Enabled + in-range â†’ visible
+    // Enabled + in-range → visible
     expect(
       shouldLayerBeVisible({
         fullLayerId,
@@ -37,7 +37,7 @@ describe('visibility-controller integration-style behavior', () => {
       })
     ).toBe(true);
 
-    // Disabled + in-range â†’ hidden
+    // Disabled + in-range → hidden
     expect(
       shouldLayerBeVisible({
         fullLayerId,
@@ -47,7 +47,7 @@ describe('visibility-controller integration-style behavior', () => {
       })
     ).toBe(false);
 
-    // Enabled but zoom below min â†’ hidden
+    // Enabled but zoom below min → hidden
     expect(
       shouldLayerBeVisible({
         fullLayerId,
@@ -57,7 +57,7 @@ describe('visibility-controller integration-style behavior', () => {
       })
     ).toBe(false);
 
-    // Enabled but zoom above max â†’ hidden
+    // Enabled but zoom above max → hidden
     expect(
       shouldLayerBeVisible({
         fullLayerId,

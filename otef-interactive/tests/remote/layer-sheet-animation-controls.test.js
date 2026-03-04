@@ -1,14 +1,14 @@
-﻿const { renderLayerRow } = require('../../frontend/src/remote/layer-sheet-controller');
+const { renderLayerRow } = require('../../frontend/src/remote/layer-sheet-controller');
 
 function makeAnimatableLayerRow() {
   return {
-    baseName: 'חדירה_לישוב-ציר',
-    displayLabel: 'חדירה לישוב ציר',
-    fullLayerIds: ['october_7th.חדירה_לישוב-ציר'],
+    baseName: '?????_?????-???',
+    displayLabel: '????? ????? ???',
+    fullLayerIds: ['october_7th.?????_?????-???'],
     layers: [
       {
-        id: 'חדירה_לישוב-ציר',
-        name: 'חדירה לישוב ציר',
+        id: '?????_?????-???',
+        name: '????? ????? ???',
         enabled: true,
         style: { animation: { type: 'flow' } },
       },
@@ -19,13 +19,13 @@ function makeAnimatableLayerRow() {
 
 function makeNonAnimatableLayerRow() {
   return {
-    baseName: 'מרחב_לחימה',
-    displayLabel: 'מרחב לחימה',
-    fullLayerIds: ['october_7th.מרחב_לחימה'],
+    baseName: '????_?????',
+    displayLabel: '???? ?????',
+    fullLayerIds: ['october_7th.????_?????'],
     layers: [
       {
-        id: 'מרחב_לחימה',
-        name: 'מרחב לחימה',
+        id: '????_?????',
+        name: '???? ?????',
         enabled: true,
       },
     ],
@@ -50,22 +50,22 @@ describe('layer sheet animation controls', () => {
 
   test('layer row animation chip is active when any row animation is enabled', () => {
     const row = {
-      baseName: 'חדירה_לישוב-ציר',
-      displayLabel: 'חדירה לישוב ציר',
+      baseName: '?????_?????-???',
+      displayLabel: '????? ????? ???',
       fullLayerIds: [
-        'october_7th.חדירה_לישוב-ציר',
-        'october_7th.חדירה_לישוב-ציר_נוסף',
+        'october_7th.?????_?????-???',
+        'october_7th.?????_?????-???_????',
       ],
       layers: [
         {
-          id: 'חדירה_לישוב-ציר',
-          name: 'חדירה לישוב ציר',
+          id: '?????_?????-???',
+          name: '????? ????? ???',
           enabled: true,
           style: { animation: { type: 'flow' } },
         },
         {
-          id: 'חדירה_לישוב-ציר_נוסף',
-          name: 'חדירה לישוב ציר נוסף',
+          id: '?????_?????-???_????',
+          name: '????? ????? ??? ????',
           enabled: true,
           style: { animation: { type: 'flow' } },
         },
@@ -76,8 +76,8 @@ describe('layer sheet animation controls', () => {
     const html = renderLayerRow(row, {
       groupId: 'october_7th',
       animations: {
-        'october_7th.חדירה_לישוב-ציר': true,
-        'october_7th.חדירה_לישוב-ציר_נוסף': false,
+        'october_7th.?????_?????-???': true,
+        'october_7th.?????_?????-???_????': false,
       },
     });
 

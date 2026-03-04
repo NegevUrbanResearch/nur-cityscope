@@ -1,4 +1,4 @@
-﻿const {
+const {
   rotateViewerVectorToItm,
 } = require("../frontend/src/shared/orientation-transform");
 

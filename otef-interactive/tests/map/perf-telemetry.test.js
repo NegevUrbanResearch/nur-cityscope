@@ -1,4 +1,4 @@
-﻿const telemetry = require("../../frontend/src/map/perf-telemetry");
+const telemetry = require("../../frontend/src/map/perf-telemetry");
 
 describe("perf-telemetry", () => {
   beforeEach(() => {

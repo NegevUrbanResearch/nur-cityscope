@@ -1,4 +1,4 @@
-﻿const {
+const {
   shouldShowLayerOnGisMap,
   filterGroupsForGisMap,
 } = require("../../frontend/src/shared/gis-layer-filter");
