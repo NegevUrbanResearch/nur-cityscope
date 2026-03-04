@@ -415,7 +415,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
     def _get_layer_groups(self, table):
         """Get hierarchical layer groups structure for a table.
-        When no LayerGroup rows exist, builds a single 'curated' group from GISLayer so layers appear in the remote.
+        Curated groups use IDs like 'curated_<slug>' and include a display name
+        derived from the project_name stored on GISLayer rows.
+        When no LayerGroup rows exist, builds groups from GISLayer rows.
         """
         groups = LayerGroup.objects.filter(table=table).order_by('group_id')
         result = []
@@ -427,38 +429,53 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             ).order_by('layer_id')
 
             layers = []
+            group_display_name = None
             for layer_state in layer_states:
                 layer_id = layer_state.layer_id.replace(f"{group.group_id}.", "", 1)
                 layer_item = {'id': layer_id, 'enabled': layer_state.enabled}
-                if group.group_id == 'curated':
+                if group.group_id.startswith('curated'):
                     try:
                         gis_layer = GISLayer.objects.filter(
                             table=table, id=int(layer_id)
                         ).first()
                         if gis_layer:
                             layer_item['displayName'] = gis_layer.display_name or gis_layer.name
+                            if not group_display_name and gis_layer.project_name:
+                                group_display_name = gis_layer.project_name
                     except (ValueError, TypeError):
                         pass
                 layers.append(layer_item)
 
-            result.append({
+            group_data = {
                 'id': group.group_id,
                 'enabled': group.enabled,
-                'layers': layers
-            })
+                'layers': layers,
+            }
+            if group_display_name:
+                group_data['name'] = group_display_name
+            result.append(group_data)
 
         if not result:
             gis_layers = GISLayer.objects.filter(table=table, is_active=True).order_by('order')
             if gis_layers.exists():
-                curated_layers = [
-                    {
+                from .supabase_proxy import _slugify_project
+                by_project = {}
+                for layer in gis_layers:
+                    pname = layer.project_name or ""
+                    slug = _slugify_project(pname) if pname else "default"
+                    group_id = f"curated_{slug}" if pname else "curated"
+                    if group_id not in by_project:
+                        by_project[group_id] = {'name': pname, 'layers': []}
+                    by_project[group_id]['layers'].append({
                         'id': str(layer.id),
                         'enabled': True,
                         'displayName': layer.display_name or layer.name,
-                    }
-                    for layer in gis_layers
-                ]
-                result = [{'id': 'curated', 'enabled': True, 'layers': curated_layers}]
+                    })
+                for gid, info in by_project.items():
+                    entry = {'id': gid, 'enabled': True, 'layers': info['layers']}
+                    if info['name']:
+                        entry['name'] = info['name']
+                    result.append(entry)
 
         return result
 
@@ -1809,11 +1826,11 @@ class CustomActionsViewSet(viewsets.ViewSet):
                 'id': layer.id,
                 'name': layer.name,
                 'display_name': layer.display_name,
+                'project_name': layer.project_name,
                 'layer_type': layer.layer_type,
                 'style_config': layer.style_config,
             }
 
-            # For GeoJSON, include data or URL
             if layer.layer_type == 'geojson':
                 if layer.data:
                     layer_data['geojson'] = layer.data

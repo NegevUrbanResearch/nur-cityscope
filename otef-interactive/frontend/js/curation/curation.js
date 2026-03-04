@@ -50,11 +50,11 @@
       if (!r.ok) throw new Error(body.error || `Failed to load features (${r.status})`);
       return body;
     },
-    async publish(name, geojsonItm) {
+    async publish(name, geojsonItm, projectName) {
       const r = await fetch("/api/supabase/curated/publish/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, geojson: geojsonItm, table: "otef" }),
+        body: JSON.stringify({ name, geojson: geojsonItm, table: "otef", project_name: projectName }),
       });
       const text = await r.text();
       let data = {};
@@ -499,7 +499,8 @@
   function updatePublishState() {
     const hasSelection = getSelectedGeojson().features.length > 0;
     const hasName = (layerNameInput().value || "").trim().length > 0;
-    publishBtn().disabled = !hasSelection || !hasName;
+    const hasProject = !!projectSelect().value;
+    publishBtn().disabled = !hasSelection || !hasName || !hasProject;
   }
 
   async function loadProjects() {
@@ -569,10 +570,23 @@
     }
   }
 
+  function getSelectedProjectName() {
+    const sel = projectSelect();
+    if (!sel || !sel.value) return "";
+    const opt = sel.options[sel.selectedIndex];
+    return opt ? opt.textContent.trim() : "";
+  }
+
   async function publish() {
     const name = (layerNameInput().value || "").trim();
     if (!name) {
       setStatus("Enter a layer name.", "error");
+      return;
+    }
+
+    const projName = getSelectedProjectName();
+    if (!projName) {
+      setStatus("Select a project first.", "error");
       return;
     }
 
@@ -611,9 +625,9 @@
       } else if (!payload.crs) {
         payload = { ...payload, crs: { type: "name", properties: { name: "EPSG:4326" } } };
       }
-      const result = await API.publish(name, payload);
+      const result = await API.publish(name, payload, projName);
       setStatus(
-        "Published as \"" + (result.displayName || name) + "\". Layer is available in the projection and remote controller Layers sheet; open views will update automatically.",
+        "Published as \"" + (result.displayName || name) + "\" in project \"" + (result.projectName || projName) + "\". Layer is available in the projection and remote controller Layers sheet; open views will update automatically.",
         "success"
       );
     } catch (e) {

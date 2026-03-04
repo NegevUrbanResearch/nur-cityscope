@@ -220,6 +220,8 @@ class LayerConfig(models.Model):
 class GISLayer(models.Model):
     """
     Stores GIS layer definitions (GeoJSON, vector tiles, etc.)
+    Each curated layer belongs to a Supabase project, allowing same-named
+    layers across different projects while preventing duplicates within one.
     """
 
     id = models.AutoField(primary_key=True)
@@ -228,6 +230,7 @@ class GISLayer(models.Model):
     )
     name = models.CharField(max_length=100)
     display_name = models.CharField(max_length=255)
+    project_name = models.CharField(max_length=255, blank=True, default="")
     layer_type = models.CharField(
         max_length=50,
         choices=[
@@ -246,11 +249,12 @@ class GISLayer(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = [["table", "name"]]
+        unique_together = [["table", "name", "project_name"]]
         ordering = ["order", "name"]
 
     def __str__(self):
-        return f"{self.table.name}/{self.display_name}"
+        prefix = f"{self.project_name}/" if self.project_name else ""
+        return f"{self.table.name}/{prefix}{self.display_name}"
 
 
 class OTEFModelConfig(models.Model):

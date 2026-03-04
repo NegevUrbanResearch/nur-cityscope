@@ -161,9 +161,13 @@ function getEffectiveLayerGroups() {
 
   for (const cg of contextGroups || []) {
     if (groups.some((g) => g.id === cg.id)) continue;
+    let displayName = cg.name || cg.id;
+    if (!cg.name && cg.id.startsWith("curated_")) {
+      displayName = cg.id.slice("curated_".length).replace(/_/g, " ");
+    }
     groups.push({
       id: cg.id,
-      name: cg.id === "curated" ? "Curated" : cg.id,
+      name: displayName,
       enabled: !!cg.enabled,
       layers: (cg.layers || []).map((l) => ({
         id: l.id,

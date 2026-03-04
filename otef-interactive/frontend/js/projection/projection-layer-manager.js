@@ -219,7 +219,7 @@
   async function loadProjectionCuratedLayerFromAPI(fullLayerId) {
     if (loadedLayers[fullLayerId]) return;
     const parts = fullLayerId.split(".");
-    if (parts[0] !== "curated" || parts.length < 2) return;
+    if (!parts[0].startsWith("curated") || parts.length < 2) return;
     const layerId = parts.slice(1).join(".");
 
     let response;
@@ -396,7 +396,7 @@
         ? layerRegistry.getLayerConfig(fullLayerId)
         : null;
     if (!layerConfig) {
-      if (fullLayerId.startsWith("curated.")) {
+      if (fullLayerId.startsWith("curated")) {
         await loadProjectionCuratedLayerFromAPI(fullLayerId);
         return;
       }

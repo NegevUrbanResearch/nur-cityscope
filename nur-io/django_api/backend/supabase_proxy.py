@@ -5,6 +5,7 @@ All Supabase access goes through these endpoints; frontend never uses Supabase d
 
 import logging
 import os
+import re
 import requests
 from django.db import models
 from django.utils.decorators import method_decorator
@@ -155,13 +156,21 @@ class SupabaseSubmissionFeaturesView(APIView):
         return Response({"type": "FeatureCollection", "features": features})
 
 
+def _slugify_project(name):
+    """Lowercase slug from project name for use in group IDs."""
+    slug = name.lower().strip().replace(" ", "_")
+    slug = re.sub(r"[^a-z0-9_]", "", slug)
+    return slug or "default"
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class CuratedLayerPublishView(APIView):
     """
     POST /api/supabase/curated/publish/
-    Body: { "name": str, "geojson": object (GeoJSON, WGS84 preferred), "table": str (optional, default "otef") }
-    Creates GISLayer, ensures "curated" LayerGroup, adds LayerState, returns layer id and group id.
-    Broadcasts otef_layers_changed so projection and remote controller refresh layers.
+    Body: { "name": str, "geojson": object, "table": str, "project_name": str }
+    Creates GISLayer scoped to a project, ensures per-project LayerGroup,
+    adds LayerState, returns layer id and group id.
+    Rejects duplicate layer names within the same project.
     """
 
     def post(self, request):
@@ -172,10 +181,16 @@ class CuratedLayerPublishView(APIView):
         name = (request.data.get("name") or "").strip()
         geojson = request.data.get("geojson")
         table_name = request.data.get("table") or "otef"
+        project_name = (request.data.get("project_name") or "").strip()
 
         if not name:
             return Response(
                 {"error": "name is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not project_name:
+            return Response(
+                {"error": "project_name is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if not geojson or not isinstance(geojson, dict):
@@ -200,12 +215,16 @@ class CuratedLayerPublishView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            base = f"curated_{name.lower().replace(' ', '_')[:50]}"
-            layer_name = base
-            n = 0
-            while GISLayer.objects.filter(table=table, name=layer_name).exists():
-                n += 1
-                layer_name = f"{base}_{n}"
+            project_slug = _slugify_project(project_name)
+            layer_name = f"curated_{project_slug}_{name.lower().replace(' ', '_')[:50]}"
+
+            if GISLayer.objects.filter(
+                table=table, display_name=name, project_name=project_name
+            ).exists():
+                return Response(
+                    {"error": f'A layer named "{name}" already exists in project "{project_name}". Please choose another name.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
 
             order = (
                 GISLayer.objects.filter(table=table).aggregate(
@@ -218,6 +237,7 @@ class CuratedLayerPublishView(APIView):
                 table=table,
                 name=layer_name,
                 display_name=name,
+                project_name=project_name,
                 layer_type="geojson",
                 data=geojson,
                 style_config={},
@@ -225,15 +245,16 @@ class CuratedLayerPublishView(APIView):
                 order=order,
             )
 
+            group_id = f"curated_{project_slug}"
             group, _ = LayerGroup.objects.get_or_create(
                 table=table,
-                group_id="curated",
+                group_id=group_id,
                 defaults={"enabled": True},
             )
             group.enabled = True
             group.save()
 
-            full_layer_id = f"curated.{layer.id}"
+            full_layer_id = f"{group_id}.{layer.id}"
             LayerState.objects.update_or_create(
                 table=table,
                 layer_id=full_layer_id,
@@ -262,9 +283,10 @@ class CuratedLayerPublishView(APIView):
             return Response(
                 {
                     "layerId": layer.id,
-                    "groupId": "curated",
+                    "groupId": group_id,
                     "fullLayerId": full_layer_id,
                     "displayName": name,
+                    "projectName": project_name,
                 },
                 status=status.HTTP_201_CREATED,
             )

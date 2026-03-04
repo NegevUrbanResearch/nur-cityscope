@@ -189,7 +189,7 @@ async function ensurePinkLineBaseLayer() {
 async function loadCuratedLayerFromAPI(fullLayerId) {
   if (loadedLayersMap.has(fullLayerId)) return;
   const parts = fullLayerId.split(".");
-  if (parts[0] !== "curated" || parts.length < 2) return;
+  if (!parts[0].startsWith("curated") || parts.length < 2) return;
   const layerId = parts.slice(1).join(".");
 
   let response;
@@ -322,7 +322,7 @@ async function loadLayerFromRegistry(fullLayerId) {
   }
 
   if (!layerRegistry || !layerRegistry._initialized) {
-    if (fullLayerId.startsWith("curated.")) {
+    if (fullLayerId.startsWith("curated")) {
       await loadCuratedLayerFromAPI(fullLayerId);
     }
     return;
@@ -330,7 +330,7 @@ async function loadLayerFromRegistry(fullLayerId) {
 
   const layerConfig = layerRegistry.getLayerConfig(fullLayerId);
   if (!layerConfig) {
-    if (fullLayerId.startsWith("curated.")) {
+    if (fullLayerId.startsWith("curated")) {
       await loadCuratedLayerFromAPI(fullLayerId);
       return;
     }
