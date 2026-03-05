@@ -781,8 +781,7 @@ export function createCurationPreviewState() {
     }
 
     const projectId = (projectSelect().value || "").trim();
-    const projName = getSelectedProjectName();
-    if (!projectId || !projName) {
+    if (!projectId) {
       setStatus("Select a project first.", "error");
       publishBtn().disabled = false;
       return;

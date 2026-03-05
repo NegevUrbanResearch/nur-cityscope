@@ -8,6 +8,11 @@
  *   - projection-layer-manager.js      (Canvas / projection)
  */
 
+import {
+  parseDefaultLinePaths,
+  buildIntegratedRoute,
+} from "../map-utils/pink-line-route.js";
+
 // ---------------------------------------------------------------------------
 // Memorial icon configuration (shared between curation, map, and projection)
 // ---------------------------------------------------------------------------

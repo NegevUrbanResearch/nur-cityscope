@@ -12,7 +12,9 @@ import {
   fetchCuratedLayerData,
   extractPointFeatures,
   fetchPinkLinePaths,
+  getMemorialIconForFeature,
 } from "../shared/curated-layer-service.js";
+import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
 
 let pinkLineBaseLayerInstance = null;
 const getCuratedLayerColor = UI_CONFIG.getCuratedColor;
@@ -118,6 +120,54 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
             f.geometry.type === "MultiLineString"),
       ));
 
+  // --- Memorial-only layers: render as PNG icons, no pink-line integration ---
+  const hasMemorialPoints = pointItems.some(({ feature }) =>
+    getMemorialIconForFeature((feature && feature.properties) || {}),
+  );
+  const hasLineFeatures = geojson.features.some(
+    (f) =>
+      f.geometry &&
+      (f.geometry.type === "LineString" ||
+        f.geometry.type === "MultiLineString"),
+  );
+
+  if (hasMemorialPoints && !hasLineFeatures) {
+    const group = L.layerGroup();
+    pointItems.forEach(({ feature, latlng }) => {
+      const props = feature.properties || {};
+      const memorialIconUrl = getMemorialIconForFeature(props);
+
+      let marker;
+      if (memorialIconUrl) {
+        const icon = L.icon({
+          iconUrl: memorialIconUrl,
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
+          popupAnchor: [0, -18],
+          className: "curation-memorial-marker-icon",
+        });
+        marker = L.marker(latlng, { icon });
+      } else {
+        marker = L.marker(latlng);
+      }
+
+      const tip = formatNodeTooltip(props);
+      const popupContent = formatNodePopup(props);
+      marker.bindTooltip(tip, {
+        permanent: false,
+        direction: "top",
+        className: "curated-node-tooltip",
+      });
+      marker.bindPopup(popupContent, {
+        className: "curated-node-popup",
+      });
+      group.addLayer(marker);
+    });
+    group.addTo(map);
+    registerLoadedLayer(fullLayerId, group);
+    return;
+  }
+
   // --- Leaflet-specific rendering ---
   if (usePinkLineProjection && userPoints.length > 0 && hasRouteUtils) {
     await ensurePinkLineBaseLayer();
@@ -129,16 +179,32 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
       group.addLayer(L.polyline(pts, dashedStyle));
     });
     pointItems.forEach(({ feature, latlng }) => {
-      const marker = L.marker(latlng, {
-        icon: L.divIcon({
-          className: "pink-line-node-marker",
-          html: `<div class="pink-line-node" style="background:${layerColor}"></div>`,
-          iconSize: [14, 14],
-          iconAnchor: [7, 7],
-        }),
-      });
-      const tip = formatNodeTooltip(feature.properties);
-      const popupContent = formatNodePopup(feature.properties);
+      const props = feature.properties || {};
+      const memorialIconUrl = getMemorialIconForFeature(props);
+
+      let marker;
+      if (memorialIconUrl) {
+        const icon = L.icon({
+          iconUrl: memorialIconUrl,
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
+          popupAnchor: [0, -18],
+          className: "curation-memorial-marker-icon",
+        });
+        marker = L.marker(latlng, { icon });
+      } else {
+        marker = L.marker(latlng, {
+          icon: L.divIcon({
+            className: "pink-line-node-marker",
+            html: `<div class="pink-line-node" style="background:${layerColor}"></div>`,
+            iconSize: [14, 14],
+            iconAnchor: [7, 7],
+          }),
+        });
+      }
+
+      const tip = formatNodeTooltip(props);
+      const popupContent = formatNodePopup(props);
       marker.bindTooltip(tip, { permanent: false, direction: "top", className: "curated-node-tooltip" });
       marker.bindPopup(popupContent, { className: "curated-node-popup" });
       group.addLayer(marker);

@@ -18,7 +18,12 @@ body {
   height: 100%;
 }
 
-/* Hide tile borders if any tiles are used */
+/* Match OSM tile background to hide subpixel seams between tiles */
+.leaflet-container {
+  background-color: #d4d4d4 !important;
+}
+
+/* Hide tile borders / seams when using raster basemaps */
 .leaflet-tile-container {
   border: none !important;
 }
@@ -26,6 +31,11 @@ body {
 .leaflet-tile {
   border: none !important;
   outline: none !important;
+  /* Keep native tile size and overlap slightly to hide subpixel gaps */
+  width: 256px !important;
+  height: 256px !important;
+  margin-right: -1px;
+  margin-bottom: -1px;
 }
 
 /* Hide debug grid layers */

@@ -8,6 +8,7 @@ import {
   extractPointFeatures,
   fetchPinkLinePaths,
   buildCuratedRouteGeoJSON,
+  getMemorialIconForFeature,
 } from "../shared/curated-layer-service.js";
 import {
   configureAnimationRenderer,
@@ -254,13 +255,12 @@ function updateWmtsVisibility(fullLayerId, visible) {
 
     // Memorial sites: render as icon markers, skip pink line route integration
     const hasMemorialFeatures = pointFeatures.some(
-      (f) => f.properties && (f.properties.feature_type === "central" || f.properties.feature_type === "local")
+      (f) => f.properties && getMemorialIconForFeature(f.properties),
     );
     if (hasMemorialFeatures) {
       const features = pointFeatures.map((f) => {
         const c = f.geometry.coordinates;
-        const ft = f.properties && f.properties.feature_type;
-        const iconUrl = (ft && MEMORIAL_ICON_URLS[ft]) || null;
+        const iconUrl = getMemorialIconForFeature(f.properties || {});
         return {
           type: "Feature",
           geometry: { type: "Point", coordinates: [c[0], c[1]] },

@@ -42,6 +42,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Match Leaflet basemap background to typical tile edge color to hide seams */
+.leaflet-container {
+  background-color: #d4d4d4 !important;
+}
+
 /* Header */
 .remote-header {
   background: var(--bg-secondary);
