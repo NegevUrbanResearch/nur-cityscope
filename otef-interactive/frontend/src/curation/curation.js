@@ -1,4 +1,8 @@
 import { getMemorialIconForFeature } from "../shared/curated-layer-service.js";
+import {
+  parseDefaultLinePaths,
+  buildIntegratedRoute,
+} from "../map-utils/pink-line-route.js";
 
 /**
  * Curation page: list Supabase projects/submissions, Leaflet preview with
@@ -139,6 +143,7 @@ export function createCurationPreviewState() {
 
   let map = null;
   let baseRouteLayer = null;
+  let integratedRouteLayer = null;
   let currentFeatures = [];
   let featureEnabled = new Map();
   const previewState = createCurationPreviewState();
@@ -229,6 +234,11 @@ export function createCurationPreviewState() {
       baseRouteLayer = null;
     }
 
+    if (integratedRouteLayer && map) {
+      map.removeLayer(integratedRouteLayer);
+      integratedRouteLayer = null;
+    }
+
     // Remove any per-feature layers from the map.
     if (map && previewState && previewState.featureLayers) {
       for (const layers of previewState.featureLayers.values()) {
@@ -283,6 +293,7 @@ export function createCurationPreviewState() {
     const geomType = getGeometryType(feature.geometry);
 
     if (geomType === "point") {
+      const layerColor = "#00d4ff";
       return L.geoJSON(
         { type: "FeatureCollection", features: [feature] },
         {
@@ -290,6 +301,7 @@ export function createCurationPreviewState() {
             const props = f.properties || {};
             const memorialIconUrl = getMemorialIconForFeature(props);
 
+            let marker;
             if (memorialIconUrl) {
               const icon = L.icon({
                 iconUrl: memorialIconUrl,
@@ -298,20 +310,31 @@ export function createCurationPreviewState() {
                 popupAnchor: [0, -18],
                 className: "curation-memorial-marker-icon",
               });
-              return L.marker(latlng, { icon });
+              marker = L.marker(latlng, { icon });
+            } else {
+              marker = L.marker(latlng, {
+                icon: L.divIcon({
+                  className: "pink-line-node-marker",
+                  html:
+                    '<div class="pink-line-node" style="background:' +
+                    layerColor +
+                    '"></div>',
+                  iconSize: [14, 14],
+                  iconAnchor: [7, 7],
+                }),
+              });
             }
 
             const label = getLabelFromProps(props);
-            return L.marker(latlng, {
-              icon: L.divIcon({
-                className: "leaflet-label-icon",
-                html: label
-                  ? '<span class="curation-marker-label">' + escapeHtml(label) + "</span>"
-                  : '<span class="curation-marker-label">•</span>',
-                iconSize: null,
-                iconAnchor: [0, 0],
-              }),
-            });
+            if (label) {
+              marker.bindTooltip(label, {
+                permanent: false,
+                direction: "top",
+                className: "curated-node-tooltip",
+              });
+            }
+
+            return marker;
           },
         }
       );
@@ -430,19 +453,27 @@ export function createCurationPreviewState() {
     clearPreview();
     const features = geojson?.features || [];
     const bounds = [];
+    let basePaths = [];
 
     const pinkGeojson = await loadPinkLineGeojson();
     if (pinkGeojson && pinkGeojson.features && pinkGeojson.features.length && map) {
       baseRouteLayer = L.geoJSON(pinkGeojson, {
         style: {
-          color: "#ff7f7f",
-          weight: 3,
-          opacity: 0.9,
+          // Match GIS/projection pink-line styling
+          color: "#ff69b4",
+          weight: 5,
+          opacity: 1,
         },
       }).addTo(map);
       baseRouteLayer.eachLayer((l) => {
         if (l.getBounds) bounds.push(l.getBounds());
       });
+
+      try {
+        basePaths = parseDefaultLinePaths(pinkGeojson) || [];
+      } catch (_) {
+        basePaths = [];
+      }
     }
 
     if (!features.length) {
@@ -451,6 +482,8 @@ export function createCurationPreviewState() {
       }
       return;
     }
+
+    const userPoints = [];
 
     features.forEach((feature, index) => {
       const layer = createFeatureLayer(feature);
@@ -465,7 +498,52 @@ export function createCurationPreviewState() {
       if (layer.getBounds) {
         bounds.push(layer.getBounds());
       }
+
+      // Collect point features for integrated pink-line route preview
+      const geom = feature.geometry;
+      if (geom && geom.type === "Point" && Array.isArray(geom.coordinates)) {
+        const [lng, lat] = geom.coordinates;
+        if (
+          typeof lat === "number" &&
+          typeof lng === "number" &&
+          Number.isFinite(lat) &&
+          Number.isFinite(lng)
+        ) {
+          userPoints.push([lat, lng]);
+        }
+      }
     });
+
+    // Add integrated dashed route showing how nodes deviate from the pink line,
+    // matching the curated layer behaviour on the GIS / projection views.
+    if (
+      map &&
+      Array.isArray(basePaths) &&
+      basePaths.length > 0 &&
+      Array.isArray(userPoints) &&
+      userPoints.length > 0 &&
+      typeof buildIntegratedRoute === "function"
+    ) {
+      try {
+        const { dashed } = buildIntegratedRoute(basePaths, userPoints);
+        if (dashed && dashed.length) {
+          const layerColor = "#00d4ff";
+          const dashedStyle = {
+            color: layerColor,
+            weight: 5,
+            opacity: 0.9,
+            dashArray: "10, 10",
+          };
+          integratedRouteLayer = L.layerGroup();
+          dashed.forEach((pts) => {
+            integratedRouteLayer.addLayer(L.polyline(pts, dashedStyle));
+          });
+          integratedRouteLayer.addTo(map);
+        }
+      } catch (_) {
+        // If integrated route fails, fall back to per-feature layers only.
+      }
+    }
 
     if (bounds.length && typeof L !== "undefined") {
       const b = L.latLngBounds(bounds);

@@ -77,6 +77,34 @@ async function ensurePinkLineBaseLayer() {
   } catch (_) {}
 }
 
+/**
+ * Explicitly control visibility of the shared pink-line base layer on the GIS map.
+ * Called from layer-state-manager so that when all curated layers are disabled,
+ * the base pink line is also hidden.
+ */
+function setPinkLineBaseVisibility(visible) {
+  if (typeof map === "undefined" || !map) return;
+
+  if (visible) {
+    if (pinkLineBaseLayerInstance) {
+      if (!map.hasLayer(pinkLineBaseLayerInstance)) {
+        pinkLineBaseLayerInstance.addTo(map);
+      }
+    } else {
+      // Lazily create and add the base layer when first needed.
+      // No need to await; it will appear once loaded.
+      void ensurePinkLineBaseLayer();
+    }
+  } else if (
+    pinkLineBaseLayerInstance &&
+    typeof map.hasLayer === "function" &&
+    typeof map.removeLayer === "function" &&
+    map.hasLayer(pinkLineBaseLayerInstance)
+  ) {
+    map.removeLayer(pinkLineBaseLayerInstance);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // loadCuratedLayerFromAPI
 // ---------------------------------------------------------------------------
@@ -258,4 +286,4 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
   registerLoadedLayer(fullLayerId, leafletLayer);
 }
 
-export { loadCuratedLayerFromAPI };
+export { loadCuratedLayerFromAPI, setPinkLineBaseVisibility };

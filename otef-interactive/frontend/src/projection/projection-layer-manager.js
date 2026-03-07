@@ -225,6 +225,15 @@ function updateWmtsVisibility(fullLayerId, visible) {
   }
 
   /**
+   * Toggle visibility of the shared pink-line base layer in the projection.
+   * This allows the base line to disappear when all curated layers are disabled.
+   */
+  function setProjectionPinkLineBaseVisibility(visible) {
+    if (!canvasRenderer || !loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
+    canvasRenderer.setLayerVisibility(PINK_LINE_BASE_LAYER_ID, visible);
+  }
+
+  /**
    * Load a curated layer for Canvas projection display.
    * Data fetching / route building is delegated to the shared CuratedLayerService;
    * this function handles only the Canvas-specific rendering.
@@ -542,6 +551,8 @@ function updateWmtsVisibility(fullLayerId, visible) {
     // Process each group - individual layer.enabled is the source of truth for visibility.
     // Curated groups are allowed even when the registry is not yet initialized;
     // non-curated (registry-backed) groups are deferred until registryReady.
+    let hasEnabledCuratedLayer = false;
+
     for (const group of layerGroups) {
       const isCurated = group.id.startsWith("curated");
 
@@ -593,6 +604,9 @@ function updateWmtsVisibility(fullLayerId, visible) {
         }
 
         if (layer.enabled) {
+          if (isCurated) {
+            hasEnabledCuratedLayer = true;
+          }
           if (!loadedLayers[fullLayerId]) {
             loadProjectionLayerFromRegistry(fullLayerId)
               .then(() => {
@@ -611,6 +625,14 @@ function updateWmtsVisibility(fullLayerId, visible) {
           updateLayerVisibility(fullLayerId, false);
         }
       }
+    }
+
+    // When no curated layers are enabled, hide the shared pink-line base layer.
+    // When at least one curated layer is enabled, ensure it is visible.
+    try {
+      setProjectionPinkLineBaseVisibility(hasEnabledCuratedLayer);
+    } catch (_) {
+      // Non-fatal; base pink-line visibility is a visual enhancement.
     }
   }
 
