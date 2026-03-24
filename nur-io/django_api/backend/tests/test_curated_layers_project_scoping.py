@@ -1,3 +1,4 @@
+import os
 from django.db import IntegrityError
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -8,7 +9,16 @@ from backend.models import Table, GISLayer, LayerGroup, LayerState
 class CuratedLayersProjectScopingTests(TestCase):
     def setUp(self):
         self.table = Table.objects.create(name="otef", display_name="OTEF")
+        self._old_token = os.environ.get("CURATION_WRITE_TOKEN")
+        os.environ["CURATION_WRITE_TOKEN"] = "test-write-token"
         self.client = APIClient()
+        self.client.credentials(HTTP_X_CURATION_WRITE_TOKEN="test-write-token")
+
+    def tearDown(self):
+        if self._old_token is None:
+            os.environ.pop("CURATION_WRITE_TOKEN", None)
+        else:
+            os.environ["CURATION_WRITE_TOKEN"] = self._old_token
 
     def _minimal_geojson(self):
         return {
@@ -75,6 +85,20 @@ class CuratedLayersProjectScopingTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("project_name", str(response.data.get("error", "")))
+
+    def test_curated_publish_requires_auth_token(self):
+        unauth = APIClient()
+        response = unauth.post(
+            "/api/supabase/curated/publish/",
+            {
+                "name": "My Layer",
+                "geojson": self._minimal_geojson(),
+                "table": "otef",
+                "project_name": "My Project",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 401, response.data)
 
     def test_curated_publish_creates_project_scoped_group_and_state(self):
         payload = {

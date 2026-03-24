@@ -244,7 +244,7 @@ function updateWmtsVisibility(fullLayerId, visible) {
     // --- Shared data fetch ---
     const result = await fetchCuratedLayerData(fullLayerId);
     if (!result) return;
-    let { geojson } = result;
+    let { geojson, layerData } = result;
 
     // CRS normalisation (projection needs ITM, so first get to WGS-84 if needed)
     let wgs84Geojson = geojson;
@@ -262,36 +262,6 @@ function updateWmtsVisibility(fullLayerId, visible) {
       (f) => f.geometry && f.geometry.type === "Point" && f.geometry.coordinates,
     );
 
-    // Memorial sites: render as icon markers, skip pink line route integration
-    const hasMemorialFeatures = pointFeatures.some(
-      (f) => f.properties && getMemorialIconForFeature(f.properties),
-    );
-    if (hasMemorialFeatures) {
-      const features = pointFeatures.map((f) => {
-        const c = f.geometry.coordinates;
-        const iconUrl = getMemorialIconForFeature(f.properties || {});
-        return {
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [c[0], c[1]] },
-          properties: {
-            ...f.properties,
-            _curatedStyle: iconUrl
-              ? { _iconUrl: iconUrl, _iconSize: 32 }
-              : { fillColor: "#e76f51", color: "#fff", weight: 1, fillOpacity: 0.9, opacity: 1, radius: 6 },
-          },
-        };
-      });
-      const memorialGeojson = { type: "FeatureCollection", features };
-      const itmGeojson = CoordUtils.transformGeojsonToItm(memorialGeojson);
-      const customStyleFunction = (feature) =>
-        feature.properties && feature.properties._curatedStyle
-          ? feature.properties._curatedStyle
-          : { fillColor: "#e76f51", color: "#fff", weight: 1, fillOpacity: 0.9, opacity: 1, radius: 6 };
-      const layerConfig = { style: { type: "simple" } };
-      await renderLayerFromGeojson(itmGeojson, fullLayerId, layerConfig, "Point", { customStyleFunction });
-      return;
-    }
-
     const userPoints = pointFeatures.map((f) => {
       const c = f.geometry.coordinates;
       return [c[1], c[0]];
@@ -303,7 +273,7 @@ function updateWmtsVisibility(fullLayerId, visible) {
       const { basePaths } = await fetchPinkLinePaths();
       if (basePaths.length > 0) {
         await ensureProjectionPinkLineBaseLayer();
-        const layerColor = getCuratedLayerColorForProjection(fullLayerId);
+        const layerColor = getCuratedLayerColorForProjection(fullLayerId, layerData);
         builtGeojson = buildCuratedRouteGeoJSON(
           basePaths,
           userPoints,
@@ -316,7 +286,7 @@ function updateWmtsVisibility(fullLayerId, visible) {
     // --- Canvas-specific rendering ---
     if (builtGeojson) {
       const itmGeojson = CoordUtils.transformGeojsonToItm(builtGeojson);
-      const layerColor = getCuratedLayerColorForProjection(fullLayerId);
+      const layerColor = getCuratedLayerColorForProjection(fullLayerId, layerData);
       const customStyleFunction = (feature) =>
         feature.properties && feature.properties._curatedStyle
           ? feature.properties._curatedStyle
@@ -329,6 +299,51 @@ function updateWmtsVisibility(fullLayerId, visible) {
         "line",
         { customStyleFunction },
       );
+      return;
+    }
+
+    // When pink-line base data is unavailable, still render memorial/non-memorial
+    // point markers with curated styling instead of falling back to plain GeoJSON.
+    if (pointFeatures.length > 0) {
+      const features = pointFeatures.map((f) => {
+        const c = f.geometry.coordinates;
+        const props = f.properties || {};
+        const iconUrl = getMemorialIconForFeature(props);
+        return {
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [c[0], c[1]] },
+          properties: {
+            ...props,
+            _curatedStyle: iconUrl
+              ? { _iconUrl: iconUrl, _iconSize: 32 }
+              : {
+                  fillColor: getCuratedLayerColorForProjection(fullLayerId, layerData),
+                  color: "#fff",
+                  weight: 1,
+                  fillOpacity: 0.9,
+                  opacity: 1,
+                  radius: 6,
+                },
+          },
+        };
+      });
+      const fallbackPointGeojson = { type: "FeatureCollection", features };
+      const itmGeojson = CoordUtils.transformGeojsonToItm(fallbackPointGeojson);
+      const customStyleFunction = (feature) =>
+        feature.properties && feature.properties._curatedStyle
+          ? feature.properties._curatedStyle
+          : {
+              fillColor: "#e76f51",
+              color: "#fff",
+              weight: 1,
+              fillOpacity: 0.9,
+              opacity: 1,
+              radius: 6,
+            };
+      const layerConfig = { style: { type: "simple" } };
+      await renderLayerFromGeojson(itmGeojson, fullLayerId, layerConfig, "Point", {
+        customStyleFunction,
+      });
       return;
     }
 

@@ -463,19 +463,22 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 # by looking up the corresponding GISLayer row.
                 if str(group.group_id).startswith("curated"):
                     try:
-                        gis_layer = GISLayer.objects.filter(
-                            table=table, id=int(layer_id)
-                        ).first()
-                        if gis_layer:
-                            layer_item["displayName"] = (
-                                gis_layer.display_name or gis_layer.name
-                            )
-                            layer_item["project_name"] = (
-                                getattr(gis_layer, "project_name", "") or ""
-                            )
+                        gid = int(layer_id)
                     except (ValueError, TypeError):
                         # Non-numeric ids are ignored for curated GIS layers.
-                        pass
+                        continue
+                    gis_layer = GISLayer.objects.filter(
+                        table=table, id=gid
+                    ).first()
+                    if not gis_layer or not gis_layer.is_active:
+                        # Unpublished / deleted layers must not appear as remote toggles.
+                        continue
+                    layer_item["displayName"] = (
+                        gis_layer.display_name or gis_layer.name
+                    )
+                    layer_item["project_name"] = (
+                        getattr(gis_layer, "project_name", "") or ""
+                    )
                 layers.append(layer_item)
 
             group_name = group.group_id
@@ -531,7 +534,76 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     )
                 result = list(grouped.values())
 
-        return result
+        return self._coalesce_curated_groups(result)
+
+    def _coalesce_curated_groups(self, groups):
+        """
+        Merge any curated* groups into a single combined curated group for UI/state.
+        """
+        if not isinstance(groups, list) or not groups:
+            return []
+
+        curated_groups = [
+            g
+            for g in groups
+            if isinstance(g, dict)
+            and isinstance(g.get("id"), str)
+            and g.get("id", "").startswith("curated")
+        ]
+        if len(curated_groups) <= 1:
+            if curated_groups:
+                curated = curated_groups[0]
+                curated["id"] = "curated_moresht_axis"
+                curated["name"] = "Moreshet Axis"
+            return groups
+
+        non_curated_groups = [
+            g
+            for g in groups
+            if not (
+                isinstance(g, dict)
+                and isinstance(g.get("id"), str)
+                and g.get("id", "").startswith("curated")
+            )
+        ]
+
+        merged_layers_map = {}
+        all_enabled = True
+        sorted_curated_groups = sorted(
+            curated_groups,
+            key=lambda g: (0 if g.get("id") == "curated_moresht_axis" else 1, g.get("id", "")),
+        )
+        for group in sorted_curated_groups:
+            group_enabled = group.get("enabled", False) is True
+            if not group_enabled:
+                all_enabled = False
+            for layer in group.get("layers", []) or []:
+                layer_id = str(layer.get("id", "")).strip()
+                if not layer_id:
+                    continue
+                layer_enabled = layer.get("enabled", False) is True
+                if not layer_enabled:
+                    all_enabled = False
+                candidate = {
+                    "id": layer_id,
+                    "enabled": layer_enabled,
+                    "displayName": layer.get("displayName", layer_id),
+                    "project_name": layer.get("project_name", ""),
+                }
+                existing = merged_layers_map.get(layer_id)
+                # Prefer canonical moresht-axis rows when duplicates exist.
+                if existing is None or group.get("id") == "curated_moresht_axis":
+                    merged_layers_map[layer_id] = candidate
+
+        merged_layers = list(merged_layers_map.values())
+
+        merged_curated = {
+            "id": "curated_moresht_axis",
+            "name": "Moreshet Axis",
+            "enabled": all_enabled,
+            "layers": merged_layers,
+        }
+        return non_curated_groups + [merged_curated]
 
     @action(detail=False, methods=['post'], url_path='by-table/(?P<table_name>[^/.]+)/command')
     def command(self, request, table_name=None):
@@ -1894,7 +1966,7 @@ class CustomActionsViewSet(viewsets.ViewSet):
             data.append(layer_data)
 
         response = JsonResponse(data, safe=False)
-        response["Cache-Control"] = "public, max-age=60"
+        response["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         return response
 
 

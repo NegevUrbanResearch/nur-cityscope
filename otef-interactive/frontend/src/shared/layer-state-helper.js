@@ -189,7 +189,68 @@ function getEffectiveLayerGroups() {
     });
   }
 
-  return groups;
+  return coalesceCuratedGroups(groups);
+}
+
+function coalesceCuratedGroups(groups) {
+  if (!Array.isArray(groups) || groups.length === 0) return [];
+
+  const curatedGroups = groups.filter(
+    (g) => g && typeof g.id === "string" && g.id.startsWith("curated"),
+  );
+  if (curatedGroups.length === 0) return groups;
+
+  const nonCuratedGroups = groups.filter(
+    (g) => !(g && typeof g.id === "string" && g.id.startsWith("curated")),
+  );
+  const mergedLayerMap = new Map();
+  let allEnabled = true;
+  const sortedCuratedGroups = [...curatedGroups].sort((a, b) => {
+    const aPriority = a && a.id === "curated_moresht_axis" ? 0 : 1;
+    const bPriority = b && b.id === "curated_moresht_axis" ? 0 : 1;
+    if (aPriority !== bPriority) return aPriority - bPriority;
+    return String(a?.id || "").localeCompare(String(b?.id || ""));
+  });
+
+  for (const group of sortedCuratedGroups) {
+    const groupEnabled = group && group.enabled !== false;
+    if (!groupEnabled) allEnabled = false;
+    for (const layer of group.layers || []) {
+      const key = String(layer.id);
+      if (!key) continue;
+      const originalFullId = `${group.id}.${key}`;
+      const candidate = {
+        ...layer,
+        id: key,
+        enabled: !!layer.enabled,
+        fullLayerIds: Array.isArray(layer.fullLayerIds) && layer.fullLayerIds.length
+          ? [...layer.fullLayerIds]
+          : [originalFullId],
+      };
+      const existing = mergedLayerMap.get(key);
+      if (!existing || group.id === "curated_moresht_axis") {
+        mergedLayerMap.set(key, candidate);
+      } else if (existing) {
+        const nextFullLayerIds = new Set([
+          ...(Array.isArray(existing.fullLayerIds) ? existing.fullLayerIds : []),
+          ...candidate.fullLayerIds,
+        ]);
+        existing.fullLayerIds = Array.from(nextFullLayerIds);
+        mergedLayerMap.set(key, existing);
+      }
+      if (!layer.enabled) allEnabled = false;
+    }
+  }
+  const mergedLayers = Array.from(mergedLayerMap.values());
+
+  const mergedCuratedGroup = {
+    id: "curated_moresht_axis",
+    name: "Moreshet Axis",
+    enabled: allEnabled,
+    layers: mergedLayers,
+  };
+
+  return nonCuratedGroups.concat([mergedCuratedGroup]);
 }
 
 function defaultGroupEnabledFor(groupId, layers) {
@@ -210,6 +271,7 @@ if (typeof window !== "undefined") {
     resolveLayerState,
     getLayerState,
     getEffectiveLayerGroups,
+    coalesceCuratedGroups,
   };
 }
 
@@ -219,4 +281,5 @@ export {
   resolveLayerState,
   getLayerState,
   getEffectiveLayerGroups,
+  coalesceCuratedGroups,
 };

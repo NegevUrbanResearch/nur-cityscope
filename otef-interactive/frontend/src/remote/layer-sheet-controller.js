@@ -18,6 +18,10 @@ function groupLayersByNameForSheet(layers, groupId) {
 
   for (const layer of layers) {
     if (processedIds.has(layer.id)) continue;
+    const layerFullIds =
+      Array.isArray(layer.fullLayerIds) && layer.fullLayerIds.length > 0
+        ? layer.fullLayerIds
+        : [`${groupId}.${layer.id}`];
     const parsed = parseLayerNameWithGeometrySuffix(layer.name || layer.id);
     if (parsed) {
       const rawBase = parsed.baseNameRaw;
@@ -33,7 +37,7 @@ function groupLayersByNameForSheet(layers, groupId) {
         groups.set(baseName, row);
         result.push(row);
       }
-      row.fullLayerIds.push(`${groupId}.${layer.id}`);
+      row.fullLayerIds.push(...layerFullIds);
       row.layers.push(layer);
       processedIds.add(layer.id);
     } else {
@@ -41,7 +45,7 @@ function groupLayersByNameForSheet(layers, groupId) {
       standalones.push({
         baseName: normalizeLayerBaseName(rawName),
         displayLabel: rawName,
-        fullLayerIds: [`${groupId}.${layer.id}`],
+        fullLayerIds: layerFullIds,
         layers: [layer],
       });
       processedIds.add(layer.id);
@@ -314,6 +318,32 @@ class LayerSheetController {
   async toggleGroupEnabled(groupId, enabled) {
     if (typeof OTEFDataContext === "undefined") return;
     try {
+      if (groupId === "curated_moresht_axis") {
+        const ctxGroups = OTEFDataContext.getLayerGroups?.() || [];
+        const curatedIds = [];
+        for (const group of ctxGroups) {
+          if (!group || typeof group.id !== "string") continue;
+          if (!group.id.startsWith("curated")) continue;
+          for (const layer of group.layers || []) {
+            const fullIds =
+              Array.isArray(layer.fullLayerIds) && layer.fullLayerIds.length > 0
+                ? layer.fullLayerIds
+                : [`${group.id}.${layer.id}`];
+            curatedIds.push(...fullIds);
+          }
+        }
+        const deduped = Array.from(new Set(curatedIds));
+        if (deduped.length > 0) {
+          const result = await OTEFDataContext.setLayersEnabled(deduped, enabled);
+          if (!result || !result.ok) {
+            console.error(
+              `[LayerSheet] Failed to toggle curated group ${groupId}:`,
+              result?.error,
+            );
+          }
+          return;
+        }
+      }
       const result = await OTEFDataContext.toggleGroup(groupId, enabled);
       if (!result || !result.ok) {
         console.error(
@@ -494,11 +524,14 @@ class LayerSheetController {
             </div>
           </div>
           <div class="group-layers ${isExpanded ? "expanded" : ""}">
-            ${(group.id === "october_7th"
+            ${(group.id === "october_7th" || group.id === "curated_moresht_axis"
               ? groupLayersByNameForSheet(group.layers, group.id)
               : (group.layers || []).map((layer) => ({
                   baseName: layer.name || layer.id,
-                  fullLayerIds: [`${group.id}.${layer.id}`],
+                  fullLayerIds:
+                    Array.isArray(layer.fullLayerIds) && layer.fullLayerIds.length > 0
+                      ? layer.fullLayerIds
+                      : [`${group.id}.${layer.id}`],
                   layers: [layer],
                   enabled: layer.enabled,
                 }))

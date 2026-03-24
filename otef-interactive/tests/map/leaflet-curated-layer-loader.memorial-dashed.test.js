@@ -1,0 +1,13 @@
+const fs = require("fs");
+
+test("leaflet curated loader does not short-circuit memorial point layers before dashed route integration", () => {
+  const src = fs.readFileSync(
+    "frontend/src/map/leaflet-curated-layer-loader.js",
+    "utf8",
+  );
+
+  // Guard against regressions where memorial-only layers bypass dashed route
+  // construction and only render point markers.
+  expect(src.includes("if (hasMemorialPoints && !hasLineFeatures)")).toBe(false);
+});
+

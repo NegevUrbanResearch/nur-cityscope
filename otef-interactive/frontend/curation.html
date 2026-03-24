@@ -332,6 +332,51 @@
       .curation-submission-edit-wrap select {
         flex: 1;
       }
+      .curation-type-badge {
+        display: none;
+        margin-top: 8px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1;
+        width: fit-content;
+        border: 1px solid var(--border-color);
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+      }
+      .curation-type-badge.visible {
+        display: inline-block;
+      }
+      .curation-type-badge.type-moreshet {
+        border-color: rgba(0, 212, 255, 0.35);
+        background: rgba(0, 212, 255, 0.12);
+        color: #9beeff;
+      }
+      .curation-type-badge.type-memorial {
+        border-color: rgba(255, 140, 80, 0.35);
+        background: rgba(255, 140, 80, 0.12);
+        color: #ffd0b5;
+      }
+      .curation-type-badge.type-multiple {
+        border-color: rgba(255, 200, 0, 0.35);
+        background: rgba(255, 200, 0, 0.12);
+        color: #ffe999;
+      }
+      .curation-filter-row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-top: 8px;
+      }
+      .curation-filter-row label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        user-select: none;
+      }
       .leaflet-label-icon {
         background: transparent;
         border: none;
@@ -415,24 +460,28 @@
       <div class="curation-body">
         <aside class="curation-sidebar">
           <section class="curation-section">
-            <h2>Project</h2>
-            <select id="curationProject" class="curation-select" aria-label="Select project">
-              <option value="">— Select project —</option>
-            </select>
-          </section>
-
-          <section class="curation-section">
-            <h2>Submission</h2>
+            <h2>Submissions</h2>
             <div class="curation-submission-edit-wrap">
               <select id="curationSubmission" class="curation-select" aria-label="Select submission" disabled>
                 <option value="">— Select submission —</option>
               </select>
               <button type="button" id="curationEditSubmission" class="curation-header-btn" title="Edit submission name" aria-label="Edit submission name">Edit</button>
             </div>
+            <div id="curationSubmissionTypeBadge" class="curation-type-badge" aria-live="polite"></div>
           </section>
 
           <section class="curation-section">
             <h2>Features (toggle to include)</h2>
+            <div class="curation-filter-row">
+              <label for="curationShowCurrent">
+                <input type="checkbox" id="curationShowCurrent" checked />
+                Current
+              </label>
+              <label for="curationShowHistory">
+                <input type="checkbox" id="curationShowHistory" />
+                History
+              </label>
+            </div>
             <div id="curationFeatures" class="curation-features">
               <div class="curation-status">Select a submission to list features.</div>
             </div>
@@ -450,7 +499,17 @@
             <button type="button" id="curationPublish" class="curation-publish-btn" disabled>
               Publish as OTEF layer
             </button>
+            <button type="button" id="curationSaveEdits" class="curation-header-btn" style="width: 100%; margin-top: 8px;" disabled>
+              Save source edits
+            </button>
             <div id="curationStatus" class="curation-status"></div>
+          </section>
+
+          <section class="curation-section">
+            <h2>Published layers on remote</h2>
+            <div id="curationPublishedLayers" class="curation-features">
+              <div class="curation-status">Loading published curated layers…</div>
+            </div>
           </section>
         </aside>
 
