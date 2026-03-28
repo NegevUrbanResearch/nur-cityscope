@@ -12,6 +12,200 @@ const LABEL_PROPERTY_KEYS = ["name", "reason", "description", "note"];
 const META_SUBTITLE_KEYS = ["reason", "description", "note"];
 
 /**
+ * Above default overlay pane (400, pink base) but below current edits (450).
+ * If z-index is below 400, the OSM overlay + pink reference line paint over history and it reads as “same as current”.
+ */
+const HISTORY_LINE_PANE = "curationHistoryLines";
+/** Top: current route draws above history when geometry coincides. */
+const CURRENT_LINE_PANE = "curationCurrentLines";
+
+/**
+ * Shared stroke specs for map polylines and the sidebar legend (keep in sync via initCurationMapRouteLegend).
+ */
+export const CURATION_ROUTE_LINE_STYLES = {
+  current: {
+    color: "#00d4ff",
+    weight: 4,
+    opacity: 1,
+    dashArray: "18,10",
+  },
+  history: {
+    color: "#00d4ff",
+    weight: 3,
+    opacity: 0.45,
+    /** Shorter dashes + dot vs long-dash current (same cyan family). */
+    dashArray: "6,10,2,10",
+  },
+};
+
+/** Perpendicular offset (meters): separates shifted history from current when paths overlap. */
+const HISTORY_LINE_OFFSET_METERS = 11;
+
+/**
+ * Applies {@link CURATION_ROUTE_LINE_STYLES} to legend SVG lines (ids in curation.html).
+ */
+export function initCurationMapRouteLegend() {
+  if (typeof document === "undefined") return;
+  const cur = document.getElementById("curationLegendCurrentLine");
+  const hist = document.getElementById("curationLegendHistoryLine");
+  const { current, history } = CURATION_ROUTE_LINE_STYLES;
+  const apply = (el, spec) => {
+    if (!el) return;
+    el.setAttribute("stroke", spec.color);
+    el.setAttribute("stroke-width", String(spec.weight));
+    el.setAttribute("stroke-opacity", String(spec.opacity));
+    el.setAttribute("stroke-dasharray", spec.dashArray.replace(/,/g, " "));
+  };
+  apply(cur, current);
+  apply(hist, history);
+}
+
+/**
+ * @param {import("leaflet").Map | null} mapInstance
+ */
+function ensureCurationLinePanes(mapInstance) {
+  if (!mapInstance || mapInstance._curationLinePanesReady) return;
+  mapInstance._curationLinePanesReady = true;
+  mapInstance.createPane(HISTORY_LINE_PANE);
+  const historyPane = mapInstance.getPane(HISTORY_LINE_PANE);
+  historyPane.style.zIndex = "412";
+  mapInstance.createPane(CURRENT_LINE_PANE);
+  const currentPane = mapInstance.getPane(CURRENT_LINE_PANE);
+  currentPane.style.zIndex = "450";
+}
+
+/**
+ * @param {GeoJSON.Geometry} geometry
+ * @returns {import("leaflet").LatLng[][]}
+ */
+function lineGeometryToLatLngRings(geometry) {
+  if (!geometry || !geometry.type) return [];
+  const t = geometry.type;
+  if (t === "LineString") {
+    const c = geometry.coordinates;
+    if (!Array.isArray(c) || c.length < 2) return [];
+    return [
+      c.map(([lng, lat]) => {
+        return L.latLng(lat, lng);
+      }),
+    ];
+  }
+  if (t === "MultiLineString") {
+    const parts = geometry.coordinates;
+    if (!Array.isArray(parts)) return [];
+    return parts
+      .filter((ring) => Array.isArray(ring) && ring.length >= 2)
+      .map((ring) =>
+        ring.map(([lng, lat]) => {
+          return L.latLng(lat, lng);
+        }),
+      );
+  }
+  return [];
+}
+
+/**
+ * Offset a line ring sideways by a small distance in meters.
+ * Keeps current geometry untouched while making historical overlap readable.
+ * @param {import("leaflet").LatLng[]} latlngs
+ * @param {number} offsetMeters
+ * @returns {import("leaflet").LatLng[]}
+ */
+function offsetLineRingLatLngs(latlngs, offsetMeters) {
+  if (!Array.isArray(latlngs) || latlngs.length < 2 || !Number.isFinite(offsetMeters)) {
+    return latlngs;
+  }
+  const out = [];
+  for (let i = 0; i < latlngs.length; i += 1) {
+    const cur = latlngs[i];
+    const prev = latlngs[i - 1] || cur;
+    const next = latlngs[i + 1] || cur;
+
+    const cosLat = Math.max(0.2, Math.cos((cur.lat * Math.PI) / 180));
+    const metersPerDegLng = 111320 * cosLat;
+    const metersPerDegLat = 110540;
+
+    const dxm = (next.lng - prev.lng) * metersPerDegLng;
+    const dym = (next.lat - prev.lat) * metersPerDegLat;
+    const len = Math.hypot(dxm, dym);
+    if (!Number.isFinite(len) || len < 1e-6) {
+      out.push(L.latLng(cur.lat, cur.lng));
+      continue;
+    }
+
+    // Right-hand normal of direction vector.
+    const nx = -dym / len;
+    const ny = dxm / len;
+    const dLat = (ny * offsetMeters) / metersPerDegLat;
+    const dLng = (nx * offsetMeters) / metersPerDegLng;
+    out.push(L.latLng(cur.lat + dLat, cur.lng + dLng));
+  }
+  return out;
+}
+
+/**
+ * Whether this feature is a non-current revision (history). Accepts string "false" from some JSON edges.
+ * @param {Record<string, unknown> | null | undefined} properties
+ */
+function featurePropertiesAreHistory(properties) {
+  const p = properties || {};
+  const v = p.is_current;
+  if (v === false) return true;
+  if (typeof v === "string" && v.toLowerCase() === "false") return true;
+  return false;
+}
+
+/**
+ * @param {GeoJSON.Feature} feature
+ * @returns {import("leaflet").LayerGroup | null}
+ */
+function buildLinePreviewLayers(feature) {
+  if (!feature || !feature.geometry || typeof L === "undefined") return null;
+  const rings = lineGeometryToLatLngRings(feature.geometry);
+  if (!rings.length) return null;
+
+  const isHistory = featurePropertiesAreHistory(feature.properties);
+  const group = L.layerGroup();
+
+  if (isHistory) {
+    const h = CURATION_ROUTE_LINE_STYLES.history;
+    rings.forEach((latlngs) => {
+      const shifted = offsetLineRingLatLngs(latlngs, HISTORY_LINE_OFFSET_METERS);
+      group.addLayer(
+        L.polyline(shifted, {
+          pane: HISTORY_LINE_PANE,
+          color: h.color,
+          weight: h.weight,
+          opacity: h.opacity,
+          dashArray: h.dashArray,
+          lineCap: "round",
+          lineJoin: "round",
+          interactive: false,
+        }),
+      );
+    });
+    return group;
+  }
+
+  const c = CURATION_ROUTE_LINE_STYLES.current;
+  rings.forEach((latlngs) => {
+    group.addLayer(
+      L.polyline(latlngs, {
+        pane: CURRENT_LINE_PANE,
+        color: c.color,
+        weight: c.weight,
+        opacity: c.opacity,
+        dashArray: c.dashArray,
+        lineCap: "round",
+        lineJoin: "round",
+        interactive: false,
+      }),
+    );
+  });
+  return group;
+}
+
+/**
  * @param {object} deps
  * @param {ReturnType<import("./curation-state.js").createCurationPreviewState>} deps.previewState
  * @param {Map<string, object>} deps.pendingGeometryEdits
@@ -51,6 +245,7 @@ export function createCurationMapPreview(deps) {
     const container = document.getElementById("curationMap");
     if (!container || map) return map;
     map = L.map(container, { center: [32.08, 34.78], zoom: 12 });
+    ensureCurationLinePanes(map);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "© OpenStreetMap",
     }).addTo(map);
@@ -126,7 +321,7 @@ export function createCurationMapPreview(deps) {
         {
           pointToLayer: (f, latlng) => {
             const props = f.properties || {};
-            const isHistory = props.is_current === false;
+            const isHistory = featurePropertiesAreHistory(props);
             const memorialIconUrl = getMemorialIconForFeature(props);
 
             let marker;
@@ -206,20 +401,13 @@ export function createCurationMapPreview(deps) {
     }
 
     if (geomType === "line") {
-      const isHistory = feature?.properties?.is_current === false;
-      const lineStyle = {
-        color: "#00d4ff",
-        weight: isHistory ? 2 : 2.5,
-        dashArray: isHistory ? "3,7" : "8,6",
-        opacity: isHistory ? 0.45 : 0.95,
-      };
-      return L.geoJSON(
-        { type: "FeatureCollection", features: [feature] },
-        { style: lineStyle }
-      );
+      if (!map) initMap();
+      if (!map) return null;
+      ensureCurationLinePanes(map);
+      return buildLinePreviewLayers(feature);
     }
 
-    const isHistory = feature?.properties?.is_current === false;
+    const isHistory = featurePropertiesAreHistory(feature?.properties);
     const otherStyle = {
       color: "#00d4ff",
       weight: 2,
@@ -364,7 +552,8 @@ export function createCurationMapPreview(deps) {
       return;
     }
 
-    const userPoints = [];
+    const currentUserPoints = [];
+    const historyUserPoints = [];
 
     features.forEach((feature, index) => {
       const layer = createFeatureLayer(feature, index);
@@ -389,7 +578,12 @@ export function createCurationMapPreview(deps) {
           Number.isFinite(lat) &&
           Number.isFinite(lng)
         ) {
-          userPoints.push([lat, lng]);
+          const pair = [lat, lng];
+          if (featurePropertiesAreHistory(feature.properties)) {
+            historyUserPoints.push(pair);
+          } else {
+            currentUserPoints.push(pair);
+          }
         }
       }
     });
@@ -400,27 +594,67 @@ export function createCurationMapPreview(deps) {
       map &&
       Array.isArray(basePaths) &&
       basePaths.length > 0 &&
-      Array.isArray(userPoints) &&
-      userPoints.length > 0 &&
-      typeof buildIntegratedRoute === "function"
+      typeof buildIntegratedRoute === "function" &&
+      (currentUserPoints.length > 0 || historyUserPoints.length > 0)
     ) {
       try {
-        const { dashed } = buildIntegratedRoute(basePaths, userPoints);
-        if (dashed && dashed.length) {
-          const layerColor = "#00d4ff";
-          const dashedStyle = {
-            color: layerColor,
-            weight: 5,
-            opacity: 0.9,
-            dashArray: "10, 10",
-          };
-          integratedRouteLayer = L.layerGroup();
+        ensureCurationLinePanes(map);
+        integratedRouteLayer = L.layerGroup();
+
+        const addHistoryIntegrated = (userPoints) => {
+          if (!userPoints.length) return;
+          const { dashed } = buildIntegratedRoute(basePaths, userPoints);
+          if (!dashed || !dashed.length) return;
+          const h = CURATION_ROUTE_LINE_STYLES.history;
           dashed.forEach((pts) => {
-            integratedRouteLayer.addLayer(L.polyline(pts, dashedStyle));
+            const latlngs = pts.map((p) => L.latLng(p[0], p[1]));
+            const shifted = offsetLineRingLatLngs(latlngs, HISTORY_LINE_OFFSET_METERS);
+            integratedRouteLayer.addLayer(
+              L.polyline(shifted, {
+                pane: HISTORY_LINE_PANE,
+                color: h.color,
+                weight: h.weight,
+                opacity: h.opacity,
+                dashArray: h.dashArray,
+                lineCap: "round",
+                lineJoin: "round",
+                interactive: false,
+              }),
+            );
           });
+        };
+
+        const addCurrentIntegrated = (userPoints) => {
+          if (!userPoints.length) return;
+          const { dashed } = buildIntegratedRoute(basePaths, userPoints);
+          if (!dashed || !dashed.length) return;
+          const c = CURATION_ROUTE_LINE_STYLES.current;
+          dashed.forEach((pts) => {
+            integratedRouteLayer.addLayer(
+              L.polyline(pts, {
+                pane: CURRENT_LINE_PANE,
+                color: c.color,
+                weight: c.weight,
+                opacity: c.opacity,
+                dashArray: c.dashArray,
+                lineCap: "round",
+                lineJoin: "round",
+                interactive: false,
+              }),
+            );
+          });
+        };
+
+        addHistoryIntegrated(historyUserPoints);
+        addCurrentIntegrated(currentUserPoints);
+
+        if (integratedRouteLayer.getLayers().length > 0) {
           integratedRouteLayer.addTo(map);
+        } else {
+          integratedRouteLayer = null;
         }
       } catch (_) {
+        integratedRouteLayer = null;
         // If integrated route fails, fall back to per-feature layers only.
       }
     }

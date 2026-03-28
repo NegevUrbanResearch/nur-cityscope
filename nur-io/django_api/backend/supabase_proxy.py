@@ -174,6 +174,175 @@ def _post(path, payload, params=None):
         return None, str(e)
 
 
+def _delete(path, params=None):
+    """DELETE via PostgREST; returns (True, None) on success."""
+    base, key, err = _supabase_headers()
+    if err:
+        return False, err
+    url = f"{base}/rest/v1{path}"
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Accept": "application/json",
+    }
+    try:
+        r = requests.delete(url, headers=headers, params=params or {}, timeout=30)
+        r.raise_for_status()
+        return True, None
+    except requests.RequestException as e:
+        return False, str(e)
+
+
+# Immutable geo_features revision columns (Postgres / PostgREST)
+_GEO_FEATURE_IMMUTABLE_REQUIRED = ("feature_lineage_id", "revision", "is_current")
+_GEO_FEATURE_IMMUTABLE_OPTIONAL = (
+    "supersedes_feature_id",
+    "edited_at",
+    "edited_by",
+    "edit_reason",
+)
+
+
+def _geo_feature_row_has_immutable_schema(row):
+    if not isinstance(row, dict):
+        return False
+    return all(col in row for col in _GEO_FEATURE_IMMUTABLE_REQUIRED)
+
+
+def _geo_feature_lineage_id(source_row):
+    if not isinstance(source_row, dict):
+        return ""
+    sid = str(source_row.get("id") or "").strip()
+    return str(source_row.get("feature_lineage_id") or sid or "").strip()
+
+
+def _prune_geo_feature_lineage_history(lineage_id, keep_feature_id=None):
+    """
+    Remove non-current rows for a lineage so at most one history row remains
+    after the caller demotes the current row (one-current + one-history invariant).
+    """
+    lineage = str(lineage_id or "").strip()
+    if not lineage:
+        return "feature_lineage_id is missing for immutable geo_features edit"
+    params = {
+        "feature_lineage_id": f"eq.{lineage}",
+        "is_current": "eq.false",
+    }
+    keep_id = str(keep_feature_id or "").strip()
+    if keep_id:
+        params["id"] = f"not.eq.{keep_id}"
+
+    ok, err = _delete(
+        "/geo_features",
+        params=params,
+    )
+    if not ok:
+        return err or "Failed to prune geo_features history"
+    return None
+
+
+def _build_immutable_successor_row(source_row, after_geom, edited_by, reason):
+    """Build POST body for the new current row; does not mutate source_row."""
+    new_row = dict(source_row)
+    source_row_id = str(new_row.pop("id", "") or "").strip()
+    lineage = _geo_feature_lineage_id(source_row)
+    try:
+        revision = int(source_row.get("revision") or 1)
+    except (TypeError, ValueError):
+        revision = 1
+
+    new_row["geom"] = after_geom
+    new_row["is_current"] = True
+    new_row["feature_lineage_id"] = lineage or source_row_id
+    new_row["revision"] = revision + 1
+
+    source_props = source_row if isinstance(source_row, dict) else {}
+    if "supersedes_feature_id" in source_props:
+        new_row["supersedes_feature_id"] = source_row_id
+    if "edited_at" in source_props:
+        new_row["edited_at"] = _utc_now_iso()
+    if "edited_by" in source_props:
+        new_row["edited_by"] = edited_by
+    if "edit_reason" in source_props:
+        new_row["edit_reason"] = reason
+
+    return new_row, source_row_id
+
+
+def apply_immutable_geo_feature_geometry_revision(source_row, after_geom, edited_by, reason):
+    """
+    Enforce one current + at most one history per feature_lineage_id:
+    mark previous current non-current, prune older history rows, insert new current.
+
+    Returns (inserted_row_dict, None) on success, or (None, error_message).
+    """
+    if not isinstance(after_geom, dict):
+        return None, "after_geom must be an object"
+
+    new_row, source_row_id = _build_immutable_successor_row(
+        source_row, after_geom, edited_by, reason
+    )
+    if not source_row_id:
+        return None, "Source geo_features row id is missing"
+
+    _, patch_err = _patch(
+        "/geo_features",
+        payload={"is_current": False},
+        params={"id": f"eq.{source_row_id}", "is_current": "eq.true"},
+    )
+    if patch_err:
+        return None, (
+            "Failed to mark previous current row as non-current before "
+            f"immutable insert: {patch_err}"
+        )
+
+    lineage = _geo_feature_lineage_id(source_row)
+    prune_err = _prune_geo_feature_lineage_history(
+        lineage,
+        keep_feature_id=source_row_id,
+    )
+    if prune_err:
+        return None, prune_err
+
+    inserted_rows, post_err = _post("/geo_features", payload=new_row)
+    if post_err:
+        return None, post_err
+    inserted = (
+        inserted_rows[0]
+        if isinstance(inserted_rows, list) and inserted_rows
+        else (inserted_rows if isinstance(inserted_rows, dict) else {})
+    )
+    new_id = str(inserted.get("id") or "").strip()
+    if not new_id:
+        return None, "Supabase insert did not return new geo_features row id"
+
+    return inserted, None
+
+
+def _immutable_schema_error_response(missing_columns):
+    cols = ", ".join(sorted(set(missing_columns)))
+    sql_hint = (
+        "ALTER TABLE geo_features "
+        "ADD COLUMN IF NOT EXISTS feature_lineage_id text, "
+        "ADD COLUMN IF NOT EXISTS revision integer DEFAULT 1, "
+        "ADD COLUMN IF NOT EXISTS is_current boolean DEFAULT true, "
+        "ADD COLUMN IF NOT EXISTS supersedes_feature_id text, "
+        "ADD COLUMN IF NOT EXISTS edited_at timestamptz, "
+        "ADD COLUMN IF NOT EXISTS edited_by text, "
+        "ADD COLUMN IF NOT EXISTS edit_reason text;"
+    )
+    return Response(
+        {
+            "error": (
+                "Immutable edit schema is missing in Supabase geo_features. "
+                f"Missing columns: {cols}"
+            ),
+            "migration_sql": sql_hint,
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
 def _utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
 
@@ -181,6 +350,132 @@ def _utc_now_iso():
 def _projects_path():
     table = os.environ.get("SUPABASE_PROJECTS_TABLE", "projects").strip() or "projects"
     return f"/{table}"
+
+
+def _parse_supabase_ts(value):
+    """Parse Supabase/Postgres ISO timestamps for sorting; returns None if missing or invalid."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (TypeError, ValueError):
+        return None
+
+
+def _geom_is_line_like(geom):
+    if not isinstance(geom, dict):
+        return False
+    t = geom.get("type")
+    if t in ("LineString", "MultiLineString"):
+        return True
+    if t == "Feature":
+        return _geom_is_line_like(geom.get("geometry") or {})
+    return False
+
+
+def _feature_type_is_memorial(raw):
+    if raw is None:
+        return False
+    key = str(raw).strip().lower()
+    return key in ("central", "local")
+
+
+def _project_name_signals(name):
+    n = str(name or "").strip().lower()
+    memorial = any(
+        marker in n for marker in ("memorial", "הנצחה", "זיכרון")
+    )
+    line_axis = (
+        "tkuma" in n
+        or "moreshet" in n
+        or "axis" in n
+        or bool(re.search(r"\bline\b", n))
+    )
+    return memorial, line_axis
+
+
+def _submission_type_label(memorial_signal, line_signal):
+    if memorial_signal and line_signal:
+        return "Mixed"
+    if memorial_signal:
+        return "Memorials"
+    return "Tkuma Line"
+
+
+def _submission_type_tags(memorial_signal, line_signal):
+    """Chip labels aligned with type_label (Tkuma-only / Memorial-only / Mixed)."""
+    if memorial_signal and line_signal:
+        return ["Tkuma Line", "Memorials"]
+    if memorial_signal:
+        return ["Memorials"]
+    return ["Tkuma Line"]
+
+
+def _fallback_submission_display_name(submission_id):
+    sid = str(submission_id or "").strip()
+    if not sid:
+        return "Submission"
+    if len(sid) > 8:
+        return f"{sid[:8]}…"
+    return sid
+
+
+def _fetch_submission_batch_rows():
+    rows, err = _get(
+        "/submission_batches",
+        params={"select": "submission_id,submission_name,updated_at"},
+    )
+    if err:
+        logger.info("submission_batches unavailable for listing: %s", err)
+        return []
+    return rows if isinstance(rows, list) else []
+
+
+def _fetch_project_name_map():
+    rows, err = _get(_projects_path())
+    if err:
+        logger.info("projects unavailable for submission type hints: %s", err)
+        return {}
+    if not isinstance(rows, list):
+        return {}
+    out = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        pid = row.get("id")
+        if pid is None:
+            continue
+        name = row.get("name") or row.get("title") or row.get("project_name")
+        out[str(pid)] = name
+    return out
+
+
+def _fetch_all_geo_feature_rows():
+    select_attempts = (
+        "submission_id,project_id,is_current,updated_at,feature_type,geom",
+        "submission_id,project_id,is_current,updated_at,feature_type",
+        "submission_id,project_id,is_current,updated_at",
+        "submission_id,project_id,is_current",
+        "submission_id,project_id",
+    )
+    last_err = None
+    for select_expr in select_attempts:
+        rows, err = _get(
+            "/geo_features",
+            params={"select": select_expr},
+        )
+        if not err and isinstance(rows, list):
+            return rows, select_expr
+        last_err = err
+    return None, last_err
 
 
 class SupabaseProjectsView(APIView):
@@ -254,6 +549,137 @@ class SupabaseProjectSubmissionsView(APIView):
         return Response(submissions)
 
 
+class SupabaseSubmissionsView(APIView):
+    """GET /api/supabase/submissions/ - list all submissions (distinct submission_id from geo_features)."""
+
+    def get(self, request):
+        _, _, hdr_err = _supabase_headers()
+        if hdr_err:
+            return Response({"error": hdr_err}, status=status.HTTP_502_BAD_GATEWAY)
+        try:
+            batch_rows = _fetch_submission_batch_rows()
+            batch_by_submission_id = {}
+            batch_ts_by_submission_id = {}
+            for b in batch_rows:
+                if not isinstance(b, dict):
+                    continue
+                # Map by submission_batches.submission_id (the submission UUID), not the batch row id.
+                sub_key = b.get("submission_id")
+                if sub_key is None:
+                    continue
+                key = str(sub_key).strip()
+                if not key:
+                    continue
+                batch_by_submission_id[key] = b
+                batch_ts_by_submission_id[key] = _parse_supabase_ts(b.get("updated_at"))
+
+            project_names = _fetch_project_name_map()
+
+            feature_rows, gf_err = _fetch_all_geo_feature_rows()
+            if feature_rows is None:
+                return Response(
+                    {"error": gf_err or "Failed to load geo_features"},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+            use_revision_flags = any(
+                isinstance(row, dict) and row.get("is_current") is not None
+                for row in feature_rows
+            )
+
+            aggs = {}
+            for row in feature_rows:
+                if not isinstance(row, dict):
+                    continue
+                sid_raw = row.get("submission_id")
+                if sid_raw is None:
+                    continue
+                sid = str(sid_raw)
+                agg = aggs.setdefault(
+                    sid,
+                    {
+                        "has_current": False,
+                        "has_history": False,
+                        "max_updated": None,
+                        "memorial_signal": False,
+                        "line_signal": False,
+                        "project_ids": set(),
+                    },
+                )
+                if use_revision_flags:
+                    ic = row.get("is_current")
+                    if ic is True:
+                        agg["has_current"] = True
+                    elif ic is False:
+                        agg["has_history"] = True
+
+                ts = _parse_supabase_ts(row.get("updated_at"))
+                if ts is not None:
+                    if agg["max_updated"] is None or ts > agg["max_updated"]:
+                        agg["max_updated"] = ts
+
+                if _feature_type_is_memorial(row.get("feature_type")):
+                    agg["memorial_signal"] = True
+                if _geom_is_line_like(row.get("geom")):
+                    agg["line_signal"] = True
+
+                pid = row.get("project_id")
+                if pid is not None:
+                    agg["project_ids"].add(str(pid))
+
+            if not use_revision_flags:
+                for agg in aggs.values():
+                    agg["has_current"] = True
+                    agg["has_history"] = False
+
+            for sid, agg in aggs.items():
+                for pid in agg["project_ids"]:
+                    pm, pl = _project_name_signals(project_names.get(pid))
+                    if pm:
+                        agg["memorial_signal"] = True
+                    if pl:
+                        agg["line_signal"] = True
+                bts = batch_ts_by_submission_id.get(sid)
+                if bts is not None:
+                    if agg["max_updated"] is None or bts > agg["max_updated"]:
+                        agg["max_updated"] = bts
+
+            results = []
+            for sid, agg in aggs.items():
+                batch = batch_by_submission_id.get(sid, {})
+                raw_name = batch.get("submission_name")
+                if raw_name is not None and str(raw_name).strip():
+                    name = str(raw_name).strip()
+                else:
+                    name = _fallback_submission_display_name(sid)
+                mem, line = agg["memorial_signal"], agg["line_signal"]
+                results.append(
+                    {
+                        "id": sid,
+                        "name": name,
+                        "has_current": agg["has_current"],
+                        "has_history": agg["has_history"],
+                        "type_label": _submission_type_label(mem, line),
+                        "type_tags": _submission_type_tags(mem, line),
+                    }
+                )
+
+            def sort_key(item):
+                sid = item["id"]
+                ts = aggs[sid]["max_updated"]
+                eff = ts.timestamp() if ts is not None else float("-inf")
+                return (-eff, item["name"].lower())
+
+            results.sort(key=sort_key)
+            return Response(results)
+        except Exception as e:
+            logger.exception("Supabase submissions list unhandled error")
+            return Response(
+                {"error": f"Server error: {str(e)}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+
 class SupabaseSubmissionFeaturesView(APIView):
     """GET /api/supabase/submissions/<id>/features/ - GeoJSON FeatureCollection for the submission."""
 
@@ -311,13 +737,6 @@ class SupabaseSubmissionFeaturesView(APIView):
                 props[key] = value
             features.append(feat)
         return Response({"type": "FeatureCollection", "features": features})
-
-
-def _slugify_project(name):
-    """Lowercase slug from project name for use in group IDs."""
-    slug = name.lower().strip().replace(" ", "_")
-    slug = re.sub(r"[^a-z0-9_]", "", slug)
-    return slug or "default"
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -547,7 +966,7 @@ class CuratedLayerEditView(APIView):
 
         rows, get_err = _get(
             "/geo_features",
-            params={**filters, "select": "id,geom,project_id,submission_id"},
+            params={**filters, "select": "*"},
         )
         if get_err:
             return Response(
@@ -576,6 +995,8 @@ class CuratedLayerEditView(APIView):
         )
 
         persisted_before = source_row.get("geom")
+        use_immutable_revision = _geo_feature_row_has_immutable_schema(source_row)
+        response_feature_id = feature_id
 
         new_full_layer_id = None
         source_layer = None
@@ -644,16 +1065,54 @@ class CuratedLayerEditView(APIView):
                     status=status.HTTP_409_CONFLICT,
                 )
 
-        updated, patch_err = _patch(
-            "/geo_features",
-            payload={"geom": after_geom},
-            params=filters,
-        )
-        if patch_err:
-            return Response(
-                {"error": f"Failed to save feature edit to Supabase: {patch_err}"},
-                status=status.HTTP_502_BAD_GATEWAY,
+        updated = None
+
+        if use_immutable_revision:
+            if source_row.get("is_current") is False:
+                return Response(
+                    {
+                        "error": (
+                            "Source feature is not a current row. "
+                            "Reload curation and retry with the latest version."
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            inserted, imm_err = apply_immutable_geo_feature_geometry_revision(
+                source_row, after_geom, edited_by, reason
             )
+            if imm_err:
+                missing_column_tokens = [
+                    c
+                    for c in (_GEO_FEATURE_IMMUTABLE_REQUIRED + _GEO_FEATURE_IMMUTABLE_OPTIONAL)
+                    if c in str(imm_err)
+                ]
+                if missing_column_tokens and "does not exist" in str(imm_err):
+                    return _immutable_schema_error_response(missing_column_tokens)
+                return Response(
+                    {"error": f"Failed to save immutable feature edit to Supabase: {imm_err}"},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            updated = [inserted] if inserted else []
+            response_feature_id = str(inserted.get("id") or feature_id)
+            if source_layer and candidate_next_geojson and response_feature_id != feature_id:
+                for feat in candidate_next_geojson.get("features") or []:
+                    props = feat.get("properties") if isinstance(feat, dict) else None
+                    if not isinstance(props, dict):
+                        continue
+                    if str(props.get("id", "")) == feature_id:
+                        props["id"] = response_feature_id
+        else:
+            updated, patch_err = _patch(
+                "/geo_features",
+                payload={"geom": after_geom},
+                params=filters,
+            )
+            if patch_err:
+                return Response(
+                    {"error": f"Failed to save feature edit to Supabase: {patch_err}"},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
 
         revision = None
         revision_warning = None
@@ -799,7 +1258,7 @@ class CuratedLayerEditView(APIView):
             {
                 "ok": True,
                 "revision_id": revision.id if revision else None,
-                "feature_id": feature_id,
+                "feature_id": response_feature_id,
                 "updated_rows": len(updated) if isinstance(updated, list) else None,
                 "new_full_layer_id": new_full_layer_id,
                 **({"warning": revision_warning} if revision_warning else {}),
@@ -834,36 +1293,11 @@ class CuratedLayerBatchEditView(APIView):
     - create one GIS layer revision per request (if source layer known)
     """
 
-    REQUIRED_IMMUTABLE_COLUMNS = ("feature_lineage_id", "revision", "is_current")
-    OPTIONAL_IMMUTABLE_COLUMNS = (
-        "supersedes_feature_id",
-        "edited_at",
-        "edited_by",
-        "edit_reason",
-    )
+    REQUIRED_IMMUTABLE_COLUMNS = _GEO_FEATURE_IMMUTABLE_REQUIRED
+    OPTIONAL_IMMUTABLE_COLUMNS = _GEO_FEATURE_IMMUTABLE_OPTIONAL
 
     def _schema_error_response(self, missing_columns):
-        cols = ", ".join(sorted(set(missing_columns)))
-        sql_hint = (
-            "ALTER TABLE geo_features "
-            "ADD COLUMN IF NOT EXISTS feature_lineage_id text, "
-            "ADD COLUMN IF NOT EXISTS revision integer DEFAULT 1, "
-            "ADD COLUMN IF NOT EXISTS is_current boolean DEFAULT true, "
-            "ADD COLUMN IF NOT EXISTS supersedes_feature_id text, "
-            "ADD COLUMN IF NOT EXISTS edited_at timestamptz, "
-            "ADD COLUMN IF NOT EXISTS edited_by text, "
-            "ADD COLUMN IF NOT EXISTS edit_reason text;"
-        )
-        return Response(
-            {
-                "error": (
-                    "Immutable edit schema is missing in Supabase geo_features. "
-                    f"Missing columns: {cols}"
-                ),
-                "migration_sql": sql_hint,
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return _immutable_schema_error_response(missing_columns)
 
     def _resolve_source_layer(self, table, published_full_layer_id, first_feature_id):
         from .models import GISLayer
@@ -1024,68 +1458,26 @@ class CuratedLayerBatchEditView(APIView):
                     status=status.HTTP_409_CONFLICT,
                 )
 
-            lineage = str(source_row.get("feature_lineage_id") or source_row.get("id") or "")
-            try:
-                revision = int(source_row.get("revision") or 1)
-            except (TypeError, ValueError):
-                revision = 1
-
-            new_row = dict(source_row)
-            source_row_id = str(new_row.pop("id", ""))
-            new_row["geom"] = after_geom
-            new_row["is_current"] = True
-            new_row["feature_lineage_id"] = lineage or source_row_id
-            new_row["revision"] = revision + 1
-
-            source_props = source_row if isinstance(source_row, dict) else {}
-            if "supersedes_feature_id" in source_props:
-                new_row["supersedes_feature_id"] = source_row_id
-            if "edited_at" in source_props:
-                new_row["edited_at"] = _utc_now_iso()
-            if "edited_by" in source_props:
-                new_row["edited_by"] = edited_by
-            if "edit_reason" in source_props:
-                new_row["edit_reason"] = reason
-
-            inserted_rows, post_err = _post("/geo_features", payload=new_row)
-            if post_err:
+            inserted, imm_err = apply_immutable_geo_feature_geometry_revision(
+                source_row, after_geom, edited_by, reason
+            )
+            if imm_err:
                 missing_column_tokens = [
                     c
                     for c in (self.REQUIRED_IMMUTABLE_COLUMNS + self.OPTIONAL_IMMUTABLE_COLUMNS)
-                    if c in str(post_err)
+                    if c in str(imm_err)
                 ]
-                if missing_column_tokens and "does not exist" in str(post_err):
+                if missing_column_tokens and "does not exist" in str(imm_err):
                     return self._schema_error_response(missing_column_tokens)
                 return Response(
-                    {"error": f"Failed to insert immutable revision for {feature_id}: {post_err}"},
+                    {"error": f"Failed to insert immutable revision for {feature_id}: {imm_err}"},
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
 
-            inserted = (
-                inserted_rows[0]
-                if isinstance(inserted_rows, list) and inserted_rows
-                else (inserted_rows if isinstance(inserted_rows, dict) else {})
-            )
             new_feature_id = str(inserted.get("id") or "")
             if not new_feature_id:
                 return Response(
                     {"error": f"Supabase insert did not return new row id for {feature_id}"},
-                    status=status.HTTP_502_BAD_GATEWAY,
-                )
-
-            _, patch_err = _patch(
-                "/geo_features",
-                payload={"is_current": False},
-                params={"id": f"eq.{source_row_id}"},
-            )
-            if patch_err:
-                return Response(
-                    {
-                        "error": (
-                            f"New immutable row was inserted for {feature_id}, but the previous "
-                            f"row could not be marked non-current: {patch_err}"
-                        )
-                    },
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
 
@@ -1131,6 +1523,9 @@ class CuratedLayerBatchEditView(APIView):
                 feat_id = str(props.get("id", "")).strip()
                 if feat_id and feat_id in pending_geo_mutations:
                     feat["geometry"] = pending_geo_mutations[feat_id]
+                    mapped_new_id = str(new_feature_ids.get(feat_id) or "").strip()
+                    if mapped_new_id:
+                        props["id"] = mapped_new_id
                     mutated_ids.add(feat_id)
 
             missing_from_gis = set(pending_geo_mutations.keys()) - mutated_ids

@@ -1,5 +1,5 @@
 /**
- * Curation UI state: preview layer registry + submission naming / type labels.
+ * Curation UI state: preview layer registry + submission type styling.
  */
 
 /**
@@ -63,62 +63,12 @@ export function createCurationPreviewState() {
   };
 }
 
-export const SUBMISSION_NAMES_KEY = "curation_submission_names";
 export const CURATION_HISTORY_FILTER_KEY = "curation_history_filter";
-
-export function getSubmissionNames() {
-  try {
-    const raw = localStorage.getItem(SUBMISSION_NAMES_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch (_) {
-    return {};
-  }
-}
-
-export function setSubmissionName(submissionId, name) {
-  const names = getSubmissionNames();
-  if (name != null && String(name).trim() !== "") {
-    names[submissionId] = String(name).trim();
-  } else {
-    delete names[submissionId];
-  }
-  localStorage.setItem(SUBMISSION_NAMES_KEY, JSON.stringify(names));
-}
-
-export function getSubmissionDisplayName(submissionKey) {
-  const names = getSubmissionNames();
-  const custom = names[submissionKey];
-  if (custom != null && String(custom).trim() !== "") return String(custom).trim();
-  const idStr = String(submissionKey);
-  return idStr.slice(0, 8) + (idStr.length > 8 ? "…" : "");
-}
-
-export function inferSubmissionTypeLabel(projectNames) {
-  const names = Array.isArray(projectNames)
-    ? Array.from(
-        new Set(
-          projectNames
-            .map((v) => String(v || "").trim())
-            .filter((v) => v.length > 0),
-        ),
-      )
-    : [];
-  if (names.length > 1) return "Multiple";
-  const only = (names[0] || "").toLowerCase();
-  if (
-    only.includes("memorial") ||
-    only.includes("הנצחה") ||
-    only.includes("זיכרון")
-  ) {
-    return "Memorial";
-  }
-  return "Moreshet Axis";
-}
 
 export function getSubmissionTypeClass(typeLabel) {
   const label = String(typeLabel || "").toLowerCase();
-  if (label === "multiple") return "type-multiple";
-  if (label === "memorial") return "type-memorial";
+  if (label.includes("mixed") || label.includes("multiple")) return "type-multiple";
+  if (label.includes("memorial")) return "type-memorial";
   return "type-moreshet";
 }
 
@@ -126,20 +76,20 @@ export function getHistoryFilterState() {
   try {
     const raw = localStorage.getItem(CURATION_HISTORY_FILTER_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
+    if (parsed && typeof parsed.showOldRevisions === "boolean") {
+      return { showOldRevisions: parsed.showOldRevisions };
+    }
     return {
-      showCurrent: parsed?.showCurrent !== false,
-      showHistory: parsed?.showHistory === true,
+      showOldRevisions:
+        parsed?.showHistory === true && parsed?.showCurrent !== false,
     };
   } catch (_) {
-    return { showCurrent: true, showHistory: false };
+    return { showOldRevisions: false };
   }
 }
 
 export function setHistoryFilterState(state) {
-  const next = {
-    showCurrent: state?.showCurrent !== false,
-    showHistory: state?.showHistory === true,
-  };
+  const next = { showOldRevisions: state?.showOldRevisions === true };
   localStorage.setItem(CURATION_HISTORY_FILTER_KEY, JSON.stringify(next));
   return next;
 }

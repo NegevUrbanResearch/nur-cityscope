@@ -47,6 +47,30 @@ export function createCurationApi() {
       if (!r.ok) throw new Error(body.error || `Failed to load submissions (${r.status})`);
       return body;
     },
+    async submissionsAll() {
+      const r = await fetch("/api/supabase/submissions/");
+      const body = await r.json().catch(() => null);
+      if (!r.ok) {
+        const msg =
+          body && typeof body === "object" && !Array.isArray(body) && body.error
+            ? body.error
+            : `Failed to load submissions (${r.status})`;
+        throw new Error(msg);
+      }
+      let raw = [];
+      if (Array.isArray(body)) {
+        raw = body;
+      } else if (body && typeof body === "object") {
+        if (Array.isArray(body.submissions)) {
+          raw = body.submissions;
+        } else if (Array.isArray(body.results)) {
+          raw = body.results;
+        }
+      }
+      return raw
+        .filter((item) => item !== null && typeof item === "object")
+        .map((item) => ({ ...item }));
+    },
     async features(submissionId, options = {}) {
       const qs = new URLSearchParams();
       if (options && options.projectId) {

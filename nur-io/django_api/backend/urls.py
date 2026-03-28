@@ -6,6 +6,7 @@ from . import views
 from .supabase_proxy import (
     SupabaseProjectsView,
     SupabaseProjectSubmissionsView,
+    SupabaseSubmissionsView,
     SupabaseSubmissionFeaturesView,
     CuratedLayerPublishView,
     CuratedLayerEditView,
@@ -84,6 +85,11 @@ urlpatterns = [
         "supabase/projects/<uuid:project_id>/submissions/",
         SupabaseProjectSubmissionsView.as_view(),
         name="supabase_project_submissions",
+    ),
+    path(
+        "supabase/submissions/",
+        SupabaseSubmissionsView.as_view(),
+        name="supabase_submissions",
     ),
     path(
         "supabase/submissions/<uuid:submission_id>/features/",

@@ -23,11 +23,8 @@ export function extractSubmissionIdsFromLayerData(layerData) {
  * @param {(msg: string, type?: string) => void} deps.setStatus
  * @param {{ current: Array<{ fullLayerId: string; displayName: string; submissionId: string }> }} deps.publishedCuratedLayersRef
  * @param {{ current: string | null }} deps.lastPublishedFullLayerIdRef
- * @param {() => HTMLSelectElement | null} deps.submissionSelect
- * @param {(submissionId: string) => void} deps.updateSubmissionTypeBadge
- * @param {(submissionId: string) => Promise<void>} deps.loadFeatures
- * @param {() => void} deps.updatePublishState
- * @param {() => void} deps.updateSaveEditsState
+ * @param {(submissionId: string) => void} deps.selectSubmissionById
+ * @param {(submissionId: string) => boolean} deps.submissionExists
  */
 export function createPublishedCuratedLayersPanel(deps) {
   const {
@@ -37,11 +34,8 @@ export function createPublishedCuratedLayersPanel(deps) {
     setStatus,
     publishedCuratedLayersRef,
     lastPublishedFullLayerIdRef,
-    submissionSelect,
-    updateSubmissionTypeBadge,
-    loadFeatures,
-    updatePublishState,
-    updateSaveEditsState,
+    selectSubmissionById,
+    submissionExists,
   } = deps;
 
   function renderPublishedCuratedLayers() {
@@ -81,18 +75,11 @@ export function createPublishedCuratedLayersPanel(deps) {
           setStatus("This published layer maps to multiple/unknown submissions.", "error");
           return;
         }
-        const select = submissionSelect();
-        if (!select) return;
-        const hasOption = Array.from(select.options).some((opt) => opt.value === submissionId);
-        if (!hasOption) {
-          setStatus(`Submission ${submissionId} is not available in the dropdown.`, "error");
+        if (!submissionExists(submissionId)) {
+          setStatus(`Submission ${submissionId} is not available in the submissions list.`, "error");
           return;
         }
-        select.value = submissionId;
-        updateSubmissionTypeBadge(submissionId);
-        await loadFeatures(submissionId);
-        updatePublishState();
-        updateSaveEditsState();
+        selectSubmissionById(submissionId);
         setStatus(`Loaded submission ${submissionId} from published layer.`, "success");
       });
     });

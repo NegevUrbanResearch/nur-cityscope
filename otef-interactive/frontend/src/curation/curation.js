@@ -1,17 +1,16 @@
 import { getMemorialIconForFeature } from "../shared/curated-layer-service.js";
 import {
   createCurationPreviewState,
-  getSubmissionNames,
-  setSubmissionName,
-  getSubmissionDisplayName,
-  getSubmissionTypeClass,
   getHistoryFilterState,
   setHistoryFilterState,
 } from "./curation-state.js";
 import { createCurationApi } from "./curation-api.js";
 import { createPublishedCuratedLayersPanel } from "./curation-published-layers.js";
-import { createLoadSubmissions } from "./curation-submissions.js";
-import { createCurationMapPreview } from "./curation-map-preview.js";
+import { createSubmissionsPanel } from "./curation-submissions.js";
+import {
+  createCurationMapPreview,
+  initCurationMapRouteLegend,
+} from "./curation-map-preview.js";
 
 export { createCurationPreviewState } from "./curation-state.js";
 
@@ -32,11 +31,14 @@ export { createCurationPreviewState } from "./curation-state.js";
   const publishedCuratedLayersRef = { current: [] };
   const lastPublishedFullLayerIdRef = { current: null };
   const submissionTypeById = new Map();
+  let isPublishing = false;
 
   let mapCtl;
 
   const el = (id) => document.getElementById(id);
-  const submissionSelect = () => el("curationSubmission");
+  const selectedSubmissionInput = () => el("curationSubmission");
+  const selectedSubmissionId = () =>
+    String(selectedSubmissionInput()?.value || "").trim();
   const featuresContainer = () => el("curationFeatures");
   const layerNameInput = () => el("curationLayerName");
   const publishBtn = () => el("curationPublish");
@@ -44,9 +46,7 @@ export { createCurationPreviewState } from "./curation-state.js";
   const refreshBtn = () => el("curationRefresh");
   const saveEditsBtn = () => el("curationSaveEdits");
   const publishedLayersContainer = () => el("curationPublishedLayers");
-  const submissionTypeBadge = () => el("curationSubmissionTypeBadge");
-  const showCurrentCheckbox = () => el("curationShowCurrent");
-  const showHistoryCheckbox = () => el("curationShowHistory");
+  const publishModalOverlay = () => el("curationModalPublish");
   const CURATED_GROUP_NAME = "Moreshet Axis";
   let historyFilterState = getHistoryFilterState();
 
@@ -57,28 +57,7 @@ export { createCurationPreviewState } from "./curation-state.js";
     s.className = "curation-status" + (type ? " " + type : "");
   }
 
-  function updateSubmissionTypeBadge(submissionId) {
-    const badge = submissionTypeBadge();
-    if (!badge) return;
-    const key = String(submissionId || "").trim();
-    if (!key) {
-      badge.textContent = "";
-      badge.className = "curation-type-badge";
-      return;
-    }
-    const typeLabel = submissionTypeById.get(key) || "Moreshet Axis";
-    badge.textContent = typeLabel;
-    badge.className = `curation-type-badge visible ${getSubmissionTypeClass(typeLabel)}`;
-  }
-
-  const loadSubmissions = createLoadSubmissions({
-    API,
-    submissionSelect,
-    submissionTypeById,
-    setStatus,
-    updateSubmissionTypeBadge,
-    updateSaveEditsState,
-  });
+  const submissionsCtlRef = { current: null };
 
   mapCtl = createCurationMapPreview({
     previewState,
@@ -93,6 +72,7 @@ export { createCurationPreviewState } from "./curation-state.js";
       setStatus("Moved node locally. Click 'Save source edits' to persist changes.", "success");
     },
   });
+  initCurationMapRouteLegend();
 
   const publishedPanel = createPublishedCuratedLayersPanel({
     API,
@@ -101,12 +81,47 @@ export { createCurationPreviewState } from "./curation-state.js";
     setStatus,
     publishedCuratedLayersRef,
     lastPublishedFullLayerIdRef,
-    submissionSelect,
-    updateSubmissionTypeBadge,
-    loadFeatures,
-    updatePublishState,
-    updateSaveEditsState,
+    selectSubmissionById: (id) => submissionsCtlRef.current?.selectSubmissionById(id),
+    submissionExists: (id) => Boolean(submissionsCtlRef.current?.hasSubmissionId(id)),
   });
+
+  submissionsCtlRef.current = createSubmissionsPanel({
+    API,
+    getSearchInput: () => el("curationSubmissionSearch"),
+    getListContainer: () => el("curationSubmissionList"),
+    getComboRoot: () => el("curationSubmissionCombo"),
+    getComboField: () => el("curationSubmissionComboField"),
+    getSelectedTagsContainer: () => el("curationSubmissionSelectedTags"),
+    getSelectedIdInput: () => selectedSubmissionInput(),
+    submissionTypeById,
+    setStatus,
+    updateSaveEditsState,
+    onSelectionChange: (id) => {
+      syncLayerNameFromSelectedSubmission(id);
+      void loadFeatures(id);
+      updatePublishState();
+      updateSaveEditsState();
+    },
+  });
+
+  const loadSubmissions = () => submissionsCtlRef.current.loadSubmissions();
+
+  /**
+   * Default layer name from the selected submission row (still editable in the input).
+   * @param {string} submissionId
+   */
+  function syncLayerNameFromSelectedSubmission(submissionId) {
+    const input = layerNameInput();
+    if (!input) return;
+    const sid = String(submissionId || "").trim();
+    if (!sid) {
+      input.value = "";
+      return;
+    }
+    const row = submissionsCtlRef.current?.getSelectedSubmission?.();
+    const name = row?.name != null ? String(row.name).trim() : "";
+    input.value = name;
+  }
 
   function escapeHtml(s) {
     const div = document.createElement("div");
@@ -123,7 +138,7 @@ export { createCurationPreviewState } from "./curation-state.js";
     if (!currentFeatures.length) {
       container.innerHTML =
         '<div class="curation-status">No features in this submission.</div>';
-      publishBtn().disabled = true;
+      updatePublishState();
       return;
     }
 
@@ -156,7 +171,7 @@ export { createCurationPreviewState } from "./curation-state.js";
           ? `<img src="${memorialIconUrl}" alt="" class="curation-feature-icon" />`
           : "";
         return `
-          <div class="curation-feature-row">
+          <div class="curation-feature-row${isHistory ? " curation-feature-row--history" : ""}">
             <input type="checkbox" id="${id}" data-index="${i}" checked />
             ${iconHtml}
             <div class="curation-feature-content">
@@ -204,42 +219,14 @@ export { createCurationPreviewState } from "./curation-state.js";
       });
     });
 
-    publishBtn().disabled = !getSelectedGeojson().features.length;
-  }
-
-  function openSubmissionModal() {
-    const sid = submissionSelect().value;
-    if (!sid) return;
-    el("curationModalSubmissionId").value = sid;
-    el("curationModalSubmissionName").value = getSubmissionNames()[sid] || "";
-    el("curationModalSubmission").classList.add("open");
-    el("curationModalSubmission").setAttribute("aria-hidden", "false");
-  }
-
-  function closeSubmissionModal() {
-    el("curationModalSubmission").classList.remove("open");
-    el("curationModalSubmission").setAttribute("aria-hidden", "true");
-  }
-
-  function saveSubmissionModal() {
-    const sid = el("curationModalSubmissionId").value;
-    const name = (el("curationModalSubmissionName").value || "").trim();
-    setSubmissionName(sid, name);
-    const opts = submissionSelect().querySelectorAll("option");
-    opts.forEach((opt) => {
-      if (opt.value === sid) {
-        const typeLabel = submissionTypeById.get(sid) || "Moreshet Axis";
-        opt.textContent = `[${typeLabel}] ${getSubmissionDisplayName(sid)}`;
-      }
-    });
-    updateSubmissionTypeBadge(sid);
-    closeSubmissionModal();
+    updatePublishState();
   }
 
   function openFeatureModal(featureIndex) {
     const f = currentFeatures[featureIndex];
     if (!f) return;
     const p = f.properties || {};
+    if (p.is_current === false) return;
     el("curationModalFeatureName").value = p.name != null ? String(p.name) : "";
     el("curationModalFeatureReason").value = p.reason != null ? String(p.reason) : "";
     el("curationModalFeatureDescription").value = p.description != null ? String(p.description) : "";
@@ -271,9 +258,21 @@ export { createCurationPreviewState } from "./curation-state.js";
     closeFeatureModal();
   }
 
-  function getSelectedGeojson() {
+  /**
+   * @param {boolean} [includeHistoryInPayload=true] When false, drops checked features with `is_current === false`.
+   */
+  function getSelectedGeojson(includeHistoryInPayload = true) {
     const features = currentFeatures
-      .filter((_, i) => featureEnabled.get(i))
+      .filter((f, i) => {
+        if (!featureEnabled.get(i)) return false;
+        if (
+          !includeHistoryInPayload &&
+          (f.properties || {}).is_current === false
+        ) {
+          return false;
+        }
+        return true;
+      })
       .map((f) => ({
         type: "Feature",
         geometry: f.geometry,
@@ -283,16 +282,16 @@ export { createCurationPreviewState } from "./curation-state.js";
   }
 
   function updatePublishState() {
-    const hasSelection = getSelectedGeojson().features.length > 0;
+    const hasSelection = getSelectedGeojson(true).features.length > 0;
     const hasName = (layerNameInput().value || "").trim().length > 0;
-    publishBtn().disabled = !hasSelection || !hasName;
+    publishBtn().disabled = isPublishing || !hasSelection || !hasName;
   }
 
   function updateSaveEditsState() {
     const btn = saveEditsBtn();
     if (!btn) return;
     const pendingCount = pendingGeometryEdits.size;
-    btn.disabled = pendingCount === 0 || !submissionSelect().value;
+    btn.disabled = pendingCount === 0 || !selectedSubmissionId();
     btn.textContent =
       pendingCount > 0
         ? `Save source edits (${pendingCount})`
@@ -305,7 +304,7 @@ export { createCurationPreviewState } from "./curation-state.js";
       updateSaveEditsState();
       return;
     }
-    const submissionId = String(submissionSelect().value || "").trim();
+    const submissionId = selectedSubmissionId();
     if (!submissionId) {
       setStatus("Select a submission before saving edits.", "error");
       return;
@@ -337,6 +336,15 @@ export { createCurationPreviewState } from "./curation-state.js";
             skippedCount += 1;
             continue;
           }
+          const srcFeat = currentFeatures.find(
+            (cf) =>
+              cf?.properties?.id != null &&
+              String(cf.properties.id) === String(edit.featureId),
+          );
+          if (srcFeat?.properties?.is_current === false) {
+            skippedCount += 1;
+            continue;
+          }
           requestEdits.push({
             feature_id: edit.featureId,
             project_id: edit.projectId || null,
@@ -364,6 +372,7 @@ export { createCurationPreviewState } from "./curation-state.js";
       pendingGeometryEdits.clear();
       updateSaveEditsState();
       await publishedPanel.loadPublishedCuratedLayers();
+      await submissionsCtlRef.current.loadSubmissions({ preserveOnError: true });
       const skippedSuffix =
         skippedCount > 0 ? ` (${skippedCount} skipped without feature ids)` : "";
       const warningSuffix =
@@ -391,8 +400,8 @@ export { createCurationPreviewState } from "./curation-state.js";
 
     try {
       const geojson = await API.features(submissionId, {
-        includeCurrent: historyFilterState.showCurrent,
-        includeHistory: historyFilterState.showHistory,
+        includeCurrent: true,
+        includeHistory: historyFilterState.showOldRevisions,
       });
       const features = geojson.features || [];
       await mapCtl.showPreview(geojson);
@@ -410,7 +419,7 @@ export { createCurationPreviewState } from "./curation-state.js";
     return CURATED_GROUP_NAME;
   }
 
-  async function publish() {
+  function openPublishDialog() {
     const name = (layerNameInput().value || "").trim();
     if (!name) {
       setStatus("Enter a layer name.", "error");
@@ -423,16 +432,88 @@ export { createCurationPreviewState } from "./curation-state.js";
       return;
     }
 
-    const selected = getSelectedGeojson();
-    if (!selected.features.length) {
+    if (getSelectedGeojson(true).features.length === 0) {
       setStatus("Select at least one feature.", "error");
       return;
     }
 
-    publishBtn().disabled = true;
-    setStatus("Publishing…");
+    setPublishModeSegmentState(false);
 
+    const overlay = publishModalOverlay();
+    if (!overlay) return;
+    overlay.classList.add("open");
+    overlay.setAttribute("aria-hidden", "false");
+  }
+
+  function closePublishDialog() {
+    const overlay = publishModalOverlay();
+    if (!overlay) return;
+    overlay.classList.remove("open");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+
+  function setPublishDialogBusy(isBusy) {
+    const confirmBtn = el("curationModalPublishConfirm");
+    if (confirmBtn) confirmBtn.disabled = !!isBusy;
+  }
+
+  function confirmPublishFromDialog() {
+    if (isPublishing) return;
+    const historyBtn = el("curationPublishModeHistory");
+    const includeHistory = historyBtn?.getAttribute("aria-pressed") === "true";
+    void publishWithOptions(includeHistory);
+  }
+
+  /** @param {boolean} includeHistory */
+  function setPublishModeSegmentState(includeHistory) {
+    const cur = el("curationPublishModeCurrent");
+    const hist = el("curationPublishModeHistory");
+    if (cur) cur.setAttribute("aria-pressed", includeHistory ? "false" : "true");
+    if (hist) hist.setAttribute("aria-pressed", includeHistory ? "true" : "false");
+  }
+
+  function syncHistoryRevisionSegmentUI() {
+    const cur = el("curationHistoryFilterCurrent");
+    const hist = el("curationHistoryFilterWithHistory");
+    const show = historyFilterState.showOldRevisions;
+    if (cur) cur.setAttribute("aria-pressed", show ? "false" : "true");
+    if (hist) hist.setAttribute("aria-pressed", show ? "true" : "false");
+  }
+
+  async function publishWithOptions(includeHistoryInPayload) {
+    if (isPublishing) return;
+    isPublishing = true;
+    setPublishDialogBusy(true);
+    updatePublishState();
     try {
+      const name = (layerNameInput().value || "").trim();
+      if (!name) {
+        setStatus("Enter a layer name.", "error");
+        return;
+      }
+
+      const projName = getSelectedProjectName();
+      if (!projName) {
+        setStatus("Missing curated group name.", "error");
+        return;
+      }
+
+      const selected = getSelectedGeojson(includeHistoryInPayload);
+      if (!selected.features.length) {
+        setStatus(
+          includeHistoryInPayload
+            ? "Select at least one feature."
+            : "Select at least one current feature (history excluded in Current only).",
+          "error",
+        );
+        return;
+      }
+
+      closePublishDialog();
+
+      publishBtn().disabled = true;
+      setStatus("Publishing…");
+
       let payload = selected;
       const crs = payload.crs?.properties?.name || "";
       const firstCoord = CoordUtils.getFirstCoordinate(payload);
@@ -475,7 +556,9 @@ export { createCurationPreviewState } from "./curation-state.js";
         console.error("[Curation] Publish failed:", e);
       }
       setStatus("Publish failed: " + msg, "error");
-      publishBtn().disabled = false;
+    } finally {
+      isPublishing = false;
+      setPublishDialogBusy(false);
       updatePublishState();
     }
   }
@@ -483,7 +566,7 @@ export { createCurationPreviewState } from "./curation-state.js";
   function refresh() {
     setStatus("");
     Promise.all([loadSubmissions(), publishedPanel.loadPublishedCuratedLayers()]).then(() => {
-      const sid = submissionSelect().value;
+      const sid = selectedSubmissionId();
       if (sid) loadFeatures(sid);
     });
   }
@@ -493,42 +576,38 @@ export { createCurationPreviewState } from "./curation-state.js";
     loadSubmissions();
     publishedPanel.loadPublishedCuratedLayers();
 
-    const currentToggle = showCurrentCheckbox();
-    const historyToggle = showHistoryCheckbox();
-    if (currentToggle) currentToggle.checked = historyFilterState.showCurrent;
-    if (historyToggle) historyToggle.checked = historyFilterState.showHistory;
-
-    submissionSelect().addEventListener("change", () => {
-      updateSubmissionTypeBadge(submissionSelect().value);
-      loadFeatures(submissionSelect().value);
-      updatePublishState();
-      updateSaveEditsState();
-    });
-
-    const onHistoryToggleChange = () => {
-      historyFilterState = setHistoryFilterState({
-        showCurrent: !!showCurrentCheckbox()?.checked,
-        showHistory: !!showHistoryCheckbox()?.checked,
-      });
-      const sid = submissionSelect().value;
+    syncHistoryRevisionSegmentUI();
+    el("curationHistoryFilterCurrent")?.addEventListener("click", () => {
+      if (!historyFilterState.showOldRevisions) return;
+      historyFilterState = setHistoryFilterState({ showOldRevisions: false });
+      syncHistoryRevisionSegmentUI();
+      const sid = selectedSubmissionId();
       if (sid) loadFeatures(sid);
-    };
-    showCurrentCheckbox()?.addEventListener("change", onHistoryToggleChange);
-    showHistoryCheckbox()?.addEventListener("change", onHistoryToggleChange);
+    });
+    el("curationHistoryFilterWithHistory")?.addEventListener("click", () => {
+      if (historyFilterState.showOldRevisions) return;
+      historyFilterState = setHistoryFilterState({ showOldRevisions: true });
+      syncHistoryRevisionSegmentUI();
+      const sid = selectedSubmissionId();
+      if (sid) loadFeatures(sid);
+    });
 
     layerNameInput().addEventListener("input", updatePublishState);
 
-    publishBtn().addEventListener("click", publish);
+    publishBtn().addEventListener("click", openPublishDialog);
+    el("curationPublishModeCurrent")?.addEventListener("click", () =>
+      setPublishModeSegmentState(false),
+    );
+    el("curationPublishModeHistory")?.addEventListener("click", () =>
+      setPublishModeSegmentState(true),
+    );
+    el("curationModalPublishCancel")?.addEventListener("click", closePublishDialog);
+    el("curationModalPublishConfirm")?.addEventListener("click", confirmPublishFromDialog);
+    publishModalOverlay()?.addEventListener("click", (e) => {
+      if (e.target === publishModalOverlay()) closePublishDialog();
+    });
     saveEditsBtn()?.addEventListener("click", savePendingEdits);
     refreshBtn().addEventListener("click", refresh);
-
-    el("curationEditSubmission").addEventListener("click", openSubmissionModal);
-
-    el("curationModalSubmissionCancel").addEventListener("click", closeSubmissionModal);
-    el("curationModalSubmissionSave").addEventListener("click", saveSubmissionModal);
-    el("curationModalSubmission").addEventListener("click", (e) => {
-      if (e.target === el("curationModalSubmission")) closeSubmissionModal();
-    });
 
     el("curationModalFeatureCancel").addEventListener("click", closeFeatureModal);
     el("curationModalFeatureSave").addEventListener("click", saveFeatureModal);
