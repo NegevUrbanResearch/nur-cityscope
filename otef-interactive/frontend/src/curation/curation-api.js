@@ -116,7 +116,7 @@ export function createCurationApi() {
       const r = await fetch("/api/supabase/curated/compute-route/", {
         method: "POST",
         headers: api._writeHeaders(),
-        body: JSON.stringify(payload),
+        body: JSON.stringify(payload || {}),
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || `Route computation failed (${r.status})`);
