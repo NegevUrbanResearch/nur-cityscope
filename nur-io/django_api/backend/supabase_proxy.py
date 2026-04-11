@@ -814,6 +814,14 @@ class CurationRouteComputeProxyView(APIView):
                 json=payload,
                 timeout=60,
             )
+        except requests.Timeout as e:
+            return Response(
+                {
+                    "error": f"Route compute upstream request timed out: {e}",
+                    "error_code": "UPSTREAM_TIMEOUT",
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
         except requests.RequestException as e:
             return Response(
                 {"error": f"Route compute upstream request failed: {e}"},

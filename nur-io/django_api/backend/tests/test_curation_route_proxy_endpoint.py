@@ -257,3 +257,26 @@ class CurationRouteComputeProxyEndpointTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 502, response.data)
+
+    @patch("backend.supabase_proxy.requests.post")
+    @patch("backend.supabase_proxy._is_curation_write_authorized")
+    @patch.dict(
+        os.environ,
+        {
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_SECRET_KEY": "service-key",
+        },
+        clear=False,
+    )
+    def test_upstream_timeout_maps_to_502_with_error_code(self, mock_auth, mock_post):
+        mock_auth.return_value = (True, None)
+        mock_post.side_effect = requests.Timeout("timed out")
+
+        response = self.client.post(
+            "/api/supabase/curated/compute-route/",
+            self.valid_payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 502, response.data)
+        self.assertEqual(response.data.get("error_code"), "UPSTREAM_TIMEOUT")

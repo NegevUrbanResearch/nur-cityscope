@@ -2,6 +2,8 @@
  * Curation page HTTP helpers (Django proxy only).
  */
 
+export const CURATED_ROUTE_COMPUTE_PATH = "/api/supabase/curated/compute-route/";
+
 export function createCurationApi() {
   const api = {
     _writeHeaders() {
@@ -113,7 +115,7 @@ export function createCurationApi() {
       return data;
     },
     async computeRoute(payload) {
-      const r = await fetch("/api/supabase/curated/compute-route/", {
+      const r = await fetch(CURATED_ROUTE_COMPUTE_PATH, {
         method: "POST",
         headers: api._writeHeaders(),
         body: JSON.stringify(payload || {}),

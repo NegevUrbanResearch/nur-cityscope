@@ -147,6 +147,16 @@ test("batch edit endpoint path exists", () => {
   expect(src.includes('"/api/supabase/curated/edit-batch/"')).toBe(true);
 });
 
+test("compute route endpoint path is centralized and declared once", () => {
+  const src = fs.readFileSync(path.join(CURATION_SRC_DIR, "curation-api.js"), "utf8");
+  expect(src.includes('export const CURATED_ROUTE_COMPUTE_PATH = "/api/supabase/curated/compute-route/";')).toBe(
+    true,
+  );
+  const occurrences = (src.match(/\/api\/supabase\/curated\/compute-route\//g) || []).length;
+  expect(occurrences).toBe(1);
+  expect(src.includes("fetch(CURATED_ROUTE_COMPUTE_PATH, {")).toBe(true);
+});
+
 test("published layers primary list only includes active GIS-backed layer ids", () => {
   const src = fs.readFileSync(path.join(CURATION_SRC_DIR, "curation-published-layers.js"), "utf8");
   expect(src.includes("activeById.has(String(layer.id))")).toBe(true);
