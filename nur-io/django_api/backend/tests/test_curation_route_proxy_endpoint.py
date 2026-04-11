@@ -183,6 +183,39 @@ class CurationRouteComputeProxyEndpointTests(TestCase):
         {
             "SUPABASE_URL": "https://example.supabase.co",
             "SUPABASE_SECRET_KEY": "service-key",
+            "SUPABASE_CURATION_ROUTE_FUNCTION_PATH": "/functions/v1/primary-route",
+            "SUPABASE_CURATION_ROUTE_COMPUTE_PATH": "/functions/v1/legacy-route",
+        },
+        clear=False,
+    )
+    def test_uses_primary_route_function_path_env_var_precedence(
+        self, mock_auth, mock_post
+    ):
+        mock_auth.return_value = (True, None)
+        upstream_response = Mock()
+        upstream_response.ok = True
+        upstream_response.json.return_value = {"ok": True}
+        mock_post.return_value = upstream_response
+
+        response = self.client.post(
+            "/api/supabase/curated/compute-route/",
+            self.valid_payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            mock_post.call_args.args[0],
+            "https://example.supabase.co/functions/v1/primary-route",
+        )
+
+    @patch("backend.supabase_proxy.requests.post")
+    @patch("backend.supabase_proxy._is_curation_write_authorized")
+    @patch.dict(
+        os.environ,
+        {
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_SECRET_KEY": "service-key",
         },
         clear=False,
     )

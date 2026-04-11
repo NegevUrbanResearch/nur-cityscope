@@ -792,7 +792,8 @@ class CurationRouteComputeProxyView(APIView):
             return Response({"error": err}, status=status.HTTP_502_BAD_GATEWAY)
 
         function_path = (
-            os.environ.get("SUPABASE_CURATION_ROUTE_COMPUTE_PATH")
+            os.environ.get("SUPABASE_CURATION_ROUTE_FUNCTION_PATH")
+            or os.environ.get("SUPABASE_CURATION_ROUTE_COMPUTE_PATH")
             or "/functions/v1/curation-route-compute"
         ).strip()
         if not function_path.startswith("/"):
