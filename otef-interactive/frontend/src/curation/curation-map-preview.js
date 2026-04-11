@@ -156,6 +156,53 @@ function featurePropertiesAreHistory(properties) {
 }
 
 /**
+ * Computes dashed route segments via backend route compute when available.
+ * Falls back to local route integration whenever backend output is missing/invalid.
+ * @param {object} params
+ * @param {Array} params.basePaths
+ * @param {Array} params.currentUserPoints
+ * @param {Array} params.historyUserPoints
+ * @param {(payload: object) => Promise<{current_dashed: Array, history_dashed: Array}>} [params.computeRoute]
+ * @param {(basePaths: Array, userPoints: Array) => {dashed?: Array}} [params.buildRoute]
+ */
+export async function computeDashedWithFallback({
+  basePaths,
+  currentUserPoints,
+  historyUserPoints,
+  computeRoute,
+  buildRoute = buildIntegratedRoute,
+}) {
+  if (typeof computeRoute === "function") {
+    try {
+      const computed = await computeRoute({
+        base_paths: basePaths,
+        current_points: currentUserPoints,
+        history_points: historyUserPoints,
+      });
+      if (
+        computed &&
+        Array.isArray(computed.current_dashed) &&
+        Array.isArray(computed.history_dashed)
+      ) {
+        return {
+          currentDashed: computed.current_dashed,
+          historyDashed: computed.history_dashed,
+        };
+      }
+    } catch (_) {
+      // fall through to local fallback
+    }
+  }
+
+  const localCurrent = buildRoute(basePaths, currentUserPoints);
+  const localHistory = buildRoute(basePaths, historyUserPoints);
+  return {
+    currentDashed: Array.isArray(localCurrent?.dashed) ? localCurrent.dashed : [],
+    historyDashed: Array.isArray(localHistory?.dashed) ? localHistory.dashed : [],
+  };
+}
+
+/**
  * @param {GeoJSON.Feature} feature
  * @returns {import("leaflet").LayerGroup | null}
  */
@@ -224,6 +271,7 @@ export function createCurationMapPreview(deps) {
     getLastPublishedFullLayerId,
     featuresContainer,
     onAfterMarkerDrag,
+    computeRoute,
   } = deps;
 
   let map = null;
@@ -594,17 +642,20 @@ export function createCurationMapPreview(deps) {
       map &&
       Array.isArray(basePaths) &&
       basePaths.length > 0 &&
-      typeof buildIntegratedRoute === "function" &&
       (currentUserPoints.length > 0 || historyUserPoints.length > 0)
     ) {
       try {
         ensureCurationLinePanes(map);
         integratedRouteLayer = L.layerGroup();
+        const { currentDashed, historyDashed } = await computeDashedWithFallback({
+          basePaths,
+          currentUserPoints,
+          historyUserPoints,
+          computeRoute,
+        });
 
-        const addHistoryIntegrated = (userPoints) => {
-          if (!userPoints.length) return;
-          const { dashed } = buildIntegratedRoute(basePaths, userPoints);
-          if (!dashed || !dashed.length) return;
+        const addHistoryIntegrated = (dashed) => {
+          if (!Array.isArray(dashed) || !dashed.length) return;
           const h = CURATION_ROUTE_LINE_STYLES.history;
           dashed.forEach((pts) => {
             const latlngs = pts.map((p) => L.latLng(p[0], p[1]));
@@ -624,10 +675,8 @@ export function createCurationMapPreview(deps) {
           });
         };
 
-        const addCurrentIntegrated = (userPoints) => {
-          if (!userPoints.length) return;
-          const { dashed } = buildIntegratedRoute(basePaths, userPoints);
-          if (!dashed || !dashed.length) return;
+        const addCurrentIntegrated = (dashed) => {
+          if (!Array.isArray(dashed) || !dashed.length) return;
           const c = CURATION_ROUTE_LINE_STYLES.current;
           dashed.forEach((pts) => {
             integratedRouteLayer.addLayer(
@@ -645,8 +694,8 @@ export function createCurationMapPreview(deps) {
           });
         };
 
-        addHistoryIntegrated(historyUserPoints);
-        addCurrentIntegrated(currentUserPoints);
+        addHistoryIntegrated(historyDashed);
+        addCurrentIntegrated(currentDashed);
 
         if (integratedRouteLayer.getLayers().length > 0) {
           integratedRouteLayer.addTo(map);

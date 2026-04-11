@@ -66,6 +66,7 @@ export { createCurationPreviewState } from "./curation-state.js";
     getCurrentFeatures: () => currentFeatures,
     getLastPublishedFullLayerId: () => lastPublishedFullLayerIdRef.current,
     featuresContainer,
+    computeRoute: (payload) => API.computeRoute(payload),
     onAfterMarkerDrag: async () => {
       renderFeatureList(currentFeatures);
       updateSaveEditsState();
