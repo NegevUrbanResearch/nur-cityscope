@@ -28,6 +28,53 @@ class CurationRouteComputeProxyEndpointTests(TestCase):
         self.assertEqual(response.status_code, 401, response.data)
         mock_auth.assert_called_once()
 
+    @patch.dict(os.environ, {"CURATION_WRITE_TOKEN": "test-write-token"}, clear=False)
+    def test_missing_auth_token_returns_401(self):
+        response = self.client.post(
+            "/api/supabase/curated/compute-route/",
+            self.valid_payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 401, response.data)
+
+    @patch.dict(os.environ, {"CURATION_WRITE_TOKEN": "test-write-token"}, clear=False)
+    def test_wrong_auth_token_returns_401(self):
+        response = self.client.post(
+            "/api/supabase/curated/compute-route/",
+            self.valid_payload,
+            format="json",
+            HTTP_X_CURATION_WRITE_TOKEN="wrong-token",
+        )
+
+        self.assertEqual(response.status_code, 401, response.data)
+
+    @patch("backend.supabase_proxy.requests.post")
+    @patch.dict(
+        os.environ,
+        {
+            "CURATION_WRITE_TOKEN": "test-write-token",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_SECRET_KEY": "service-key",
+        },
+        clear=False,
+    )
+    def test_valid_auth_token_reaches_downstream(self, mock_post):
+        upstream_response = Mock()
+        upstream_response.ok = True
+        upstream_response.json.return_value = {"ok": True, "route": []}
+        mock_post.return_value = upstream_response
+
+        response = self.client.post(
+            "/api/supabase/curated/compute-route/",
+            self.valid_payload,
+            format="json",
+            HTTP_X_CURATION_WRITE_TOKEN="test-write-token",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        mock_post.assert_called_once()
+
     @patch("backend.supabase_proxy._is_curation_write_authorized")
     def test_base_paths_is_required_list(self, mock_auth):
         mock_auth.return_value = (True, None)
@@ -77,6 +124,19 @@ class CurationRouteComputeProxyEndpointTests(TestCase):
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn("history_points", str(response.data.get("error", "")))
+
+    @patch("backend.supabase_proxy._is_curation_write_authorized")
+    def test_non_object_payload_returns_400(self, mock_auth):
+        mock_auth.return_value = (True, None)
+
+        response = self.client.post(
+            "/api/supabase/curated/compute-route/",
+            ["not", "an", "object"],
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("json object", str(response.data.get("error", "")).lower())
 
     @patch("backend.supabase_proxy.requests.post")
     @patch("backend.supabase_proxy._is_curation_write_authorized")

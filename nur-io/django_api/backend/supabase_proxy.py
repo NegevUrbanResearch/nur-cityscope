@@ -6,6 +6,7 @@ All Supabase access goes through these endpoints; frontend never uses Supabase d
 import logging
 import os
 import re
+from collections.abc import Mapping
 from datetime import datetime, timezone
 import requests
 from django.conf import settings
@@ -754,9 +755,21 @@ class CurationRouteComputeProxyView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        base_paths = request.data.get("base_paths")
-        current_points = request.data.get("current_points")
-        history_points = request.data.get("history_points")
+        payload = request.data
+        if not isinstance(payload, Mapping):
+            return Response(
+                {
+                    "error": (
+                        "Request body must be a JSON object with keys: "
+                        "base_paths, current_points, history_points"
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        base_paths = payload.get("base_paths")
+        current_points = payload.get("current_points")
+        history_points = payload.get("history_points")
 
         if not isinstance(base_paths, list):
             return Response(
@@ -792,8 +805,6 @@ class CurationRouteComputeProxyView(APIView):
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-
-        payload = request.data if isinstance(request.data, dict) else {}
 
         try:
             upstream = requests.post(
