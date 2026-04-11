@@ -8,6 +8,7 @@ from .supabase_proxy import (
     SupabaseProjectSubmissionsView,
     SupabaseSubmissionsView,
     SupabaseSubmissionFeaturesView,
+    CurationRouteComputeProxyView,
     CuratedLayerPublishView,
     CuratedLayerEditView,
     CuratedLayerBatchEditView,
@@ -95,6 +96,11 @@ urlpatterns = [
         "supabase/submissions/<uuid:submission_id>/features/",
         SupabaseSubmissionFeaturesView.as_view(),
         name="supabase_submission_features",
+    ),
+    path(
+        "supabase/curated/compute-route/",
+        CurationRouteComputeProxyView.as_view(),
+        name="supabase_curated_compute_route",
     ),
     path(
         "supabase/curated/publish/",

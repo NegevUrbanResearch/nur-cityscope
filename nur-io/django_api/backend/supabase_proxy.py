@@ -740,6 +740,98 @@ class SupabaseSubmissionFeaturesView(APIView):
 
 
 @method_decorator(csrf_exempt, name="dispatch")
+class CurationRouteComputeProxyView(APIView):
+    """
+    POST /api/supabase/curated/compute-route/
+    Proxy route-compute requests through Django backend using service-role credentials.
+    """
+
+    def post(self, request):
+        authorized, auth_error = _is_curation_write_authorized(request)
+        if not authorized:
+            return Response(
+                {"error": auth_error},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        base_paths = request.data.get("base_paths")
+        current_points = request.data.get("current_points")
+        history_points = request.data.get("history_points")
+
+        if not isinstance(base_paths, list):
+            return Response(
+                {"error": "base_paths is required and must be a list"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(current_points, list):
+            return Response(
+                {"error": "current_points must be a list"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(history_points, list):
+            return Response(
+                {"error": "history_points must be a list"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        base, key, err = _supabase_headers()
+        if err:
+            return Response({"error": err}, status=status.HTTP_502_BAD_GATEWAY)
+
+        function_path = (
+            os.environ.get("SUPABASE_CURATION_ROUTE_COMPUTE_PATH")
+            or "/functions/v1/curation-route-compute"
+        ).strip()
+        if not function_path.startswith("/"):
+            function_path = f"/{function_path}"
+
+        url = f"{base}{function_path}"
+        headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+        payload = request.data if isinstance(request.data, dict) else {}
+
+        try:
+            upstream = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=60,
+            )
+        except requests.RequestException as e:
+            return Response(
+                {"error": f"Route compute upstream request failed: {e}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        if not upstream.ok:
+            try:
+                body = upstream.json()
+            except ValueError:
+                body = {"detail": (upstream.text or "")[:500]}
+            return Response(
+                {
+                    "error": "Route compute upstream returned non-success status",
+                    "upstream_status": upstream.status_code,
+                    "upstream_body": body,
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        try:
+            return Response(upstream.json(), status=status.HTTP_200_OK)
+        except ValueError:
+            return Response(
+                {"ok": True, "raw": upstream.text},
+                status=status.HTTP_200_OK,
+            )
+
+
+@method_decorator(csrf_exempt, name="dispatch")
 class CuratedLayerPublishView(APIView):
     """
     POST /api/supabase/curated/publish/
