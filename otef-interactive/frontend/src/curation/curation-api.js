@@ -112,6 +112,16 @@ export function createCurationApi() {
       if (!r.ok) throw new Error(errMsg || `Publish failed (${r.status})`);
       return data;
     },
+    async computeRoute(payload) {
+      const r = await fetch("/api/supabase/curated/compute-route/", {
+        method: "POST",
+        headers: api._writeHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `Route computation failed (${r.status})`);
+      return body;
+    },
     async editFeaturesBatch(payload) {
       const paths = [
         "/api/supabase/curated/edit-batch/",
