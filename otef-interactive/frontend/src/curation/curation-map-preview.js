@@ -172,6 +172,18 @@ export async function computeDashedWithFallback({
   computeRoute,
   buildRoute = buildIntegratedRoute,
 }) {
+  const isPointTuple = (point) =>
+    Array.isArray(point) &&
+    point.length === 2 &&
+    Number.isFinite(point[0]) &&
+    Number.isFinite(point[1]);
+
+  const isDashedSegments = (dashed) =>
+    Array.isArray(dashed) &&
+    dashed.every(
+      (segment) => Array.isArray(segment) && segment.every((point) => isPointTuple(point)),
+    );
+
   if (typeof computeRoute === "function") {
     try {
       const computed = await computeRoute({
@@ -179,11 +191,7 @@ export async function computeDashedWithFallback({
         current_points: currentUserPoints,
         history_points: historyUserPoints,
       });
-      if (
-        computed &&
-        Array.isArray(computed.current_dashed) &&
-        Array.isArray(computed.history_dashed)
-      ) {
+      if (computed && isDashedSegments(computed.current_dashed) && isDashedSegments(computed.history_dashed)) {
         return {
           currentDashed: computed.current_dashed,
           historyDashed: computed.history_dashed,
@@ -653,6 +661,7 @@ export function createCurationMapPreview(deps) {
           historyUserPoints,
           computeRoute,
         });
+        if (mySeq !== showPreviewSeq) return;
 
         const addHistoryIntegrated = (dashed) => {
           if (!Array.isArray(dashed) || !dashed.length) return;
