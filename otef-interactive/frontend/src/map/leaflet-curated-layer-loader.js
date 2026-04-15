@@ -16,8 +16,17 @@ import {
   resolvePinkLinePackStyleBundle,
 } from "../shared/curated-layer-service.js";
 import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
+import {
+  PINK_LINE_PARKING_ICON_URL,
+  fetchPinkLineParkingLotsGeojson,
+  createLeafletPinkLineParkingGroup,
+} from "../map-utils/pink-line-parking.js";
 
 let pinkLineBaseLayerInstance = null;
+let pinkLineParkingLayerInstance = null;
+/** Bumped whenever pink-line parking is detached; invalidates in-flight parking fetches. */
+let pinkLineParkingAttachGeneration = 0;
+let pinkLineParkingMapVisibleIntent = false;
 const getCuratedLayerColor = UI_CONFIG.getCuratedColor;
 
 // ---------------------------------------------------------------------------
@@ -82,9 +91,31 @@ async function ensurePinkLineBaseLayer() {
 }
 
 /**
- * Explicitly control visibility of the shared pink-line base layer on the GIS map.
- * Called from layer-state-manager so that when all curated layers are disabled,
- * the base pink line is also hidden.
+ * Parking lots along the pink line (static GeoJSON + icon). Tied to base pink visibility.
+ */
+async function ensurePinkLineParkingLayer() {
+  if (typeof map === "undefined" || !map || typeof L === "undefined") return;
+  if (pinkLineParkingLayerInstance && map.hasLayer(pinkLineParkingLayerInstance)) return;
+  const attachGen = pinkLineParkingAttachGeneration;
+  try {
+    const geojson = await fetchPinkLineParkingLotsGeojson();
+    if (attachGen !== pinkLineParkingAttachGeneration) return;
+    if (!pinkLineBaseLayerInstance || !map.hasLayer(pinkLineBaseLayerInstance)) return;
+    if (!geojson) return;
+    const group = createLeafletPinkLineParkingGroup(L, geojson, PINK_LINE_PARKING_ICON_URL);
+    if (!group) return;
+    if (attachGen !== pinkLineParkingAttachGeneration) return;
+    if (!pinkLineParkingMapVisibleIntent) return;
+    if (!pinkLineBaseLayerInstance || !map.hasLayer(pinkLineBaseLayerInstance)) return;
+    if (pinkLineParkingLayerInstance && map.hasLayer(pinkLineParkingLayerInstance)) return;
+    group.addTo(map);
+    pinkLineParkingLayerInstance = group;
+  } catch (_) {}
+}
+
+/**
+ * Control visibility of the shared pink-line *base polylines* on the GIS map
+ * (not parking markers — use setPinkLineParkingMapVisibility).
  */
 function setPinkLineBaseVisibility(visible) {
   if (typeof map === "undefined" || !map) return;
@@ -95,8 +126,6 @@ function setPinkLineBaseVisibility(visible) {
         pinkLineBaseLayerInstance.addTo(map);
       }
     } else {
-      // Lazily create and add the base layer when first needed.
-      // No need to await; it will appear once loaded.
       void ensurePinkLineBaseLayer();
     }
   } else if (
@@ -107,6 +136,52 @@ function setPinkLineBaseVisibility(visible) {
   ) {
     map.removeLayer(pinkLineBaseLayerInstance);
   }
+}
+
+/**
+ * Parking markers along the axis: independent of remote toggle intent vs base lines.
+ */
+function setPinkLineParkingMapVisibility(visible) {
+  if (typeof map === "undefined" || !map) return;
+  pinkLineParkingMapVisibleIntent = !!visible;
+
+  if (!pinkLineParkingMapVisibleIntent) {
+    pinkLineParkingAttachGeneration += 1;
+    if (
+      pinkLineParkingLayerInstance &&
+      typeof map.hasLayer === "function" &&
+      typeof map.removeLayer === "function" &&
+      map.hasLayer(pinkLineParkingLayerInstance)
+    ) {
+      map.removeLayer(pinkLineParkingLayerInstance);
+    }
+    return;
+  }
+
+  if (pinkLineParkingLayerInstance) {
+    if (!map.hasLayer(pinkLineParkingLayerInstance)) {
+      if (pinkLineBaseLayerInstance && map.hasLayer(pinkLineBaseLayerInstance)) {
+        pinkLineParkingLayerInstance.addTo(map);
+      } else {
+        void ensurePinkLineBaseLayer().then(() => {
+          if (
+            pinkLineParkingMapVisibleIntent &&
+            pinkLineParkingLayerInstance &&
+            pinkLineBaseLayerInstance &&
+            map.hasLayer(pinkLineBaseLayerInstance) &&
+            !map.hasLayer(pinkLineParkingLayerInstance)
+          ) {
+            pinkLineParkingLayerInstance.addTo(map);
+          }
+        });
+      }
+    }
+    return;
+  }
+
+  void ensurePinkLineBaseLayer().then(() => {
+    if (pinkLineParkingMapVisibleIntent) void ensurePinkLineParkingLayer();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -282,4 +357,8 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
   registerLoadedLayer(fullLayerId, leafletLayer);
 }
 
-export { loadCuratedLayerFromAPI, setPinkLineBaseVisibility };
+export {
+  loadCuratedLayerFromAPI,
+  setPinkLineBaseVisibility,
+  setPinkLineParkingMapVisibility,
+};

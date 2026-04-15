@@ -159,15 +159,23 @@ class CuratedLayersProjectScopingTests(TestCase):
         )
         self.assertEqual(resp_b.status_code, 201, resp_b.data)
 
-        # Same name again in Project A must conflict.
-        resp_conflict = self.client.post(
+        # Same name again in Project A replaces the prior active row (republish UX).
+        resp_replace = self.client.post(
             "/api/supabase/curated/publish/",
             {**base_payload, "project_name": "Project A"},
             format="json",
         )
-        self.assertEqual(resp_conflict.status_code, 409, resp_conflict.data)
-        msg = str(resp_conflict.data.get("error", "") or resp_conflict.data)
-        self.assertIn("Project A", msg)
+        self.assertEqual(resp_replace.status_code, 201, resp_replace.data)
+        self.assertNotEqual(resp_replace.data.get("layerId"), resp_a.data.get("layerId"))
+        old = GISLayer.objects.get(id=resp_a.data["layerId"])
+        self.assertFalse(old.is_active)
+        active_same_name = GISLayer.objects.filter(
+            table=self.table,
+            display_name="Shared Name",
+            project_name="Project A",
+            is_active=True,
+        )
+        self.assertEqual(active_same_name.count(), 1)
 
     def test_get_otef_layers_includes_project_name(self):
         # Create a couple of layers with different logical projects.

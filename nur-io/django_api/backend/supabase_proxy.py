@@ -54,6 +54,28 @@ def _slugify_project(name):
     return slug or "default"
 
 
+def _delete_layer_states_for_gis_layer_pk(table, layer_pk):
+    """
+    Delete LayerState rows that reference a GISLayer primary key.
+
+    Matches on the full layer id suffix after the last dot (e.g. curated_moresht_axis.1),
+    not on naive __endswith('.1'), which can collide with ids like 11, 21, 101 in some DBs.
+    """
+    from .models import LayerState
+
+    needle = str(int(layer_pk))
+    suffix = f".{needle}"
+    candidate_pks = [
+        pk
+        for pk, layer_id in LayerState.objects.filter(
+            table=table, layer_id__endswith=suffix
+        ).values_list("pk", "layer_id")
+        if str(layer_id).rsplit(".", 1)[-1] == needle
+    ]
+    if candidate_pks:
+        LayerState.objects.filter(pk__in=candidate_pks).delete()
+
+
 def _supabase_headers():
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     key = os.environ.get("SUPABASE_SECRET_KEY", "")
@@ -903,6 +925,8 @@ class CuratedLayerPublishView(APIView):
             )
 
         try:
+            from django.db import transaction
+
             table = Table.objects.filter(name=table_name).first()
             if not table:
                 return Response(
@@ -910,63 +934,69 @@ class CuratedLayerPublishView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            # Enforce project-scoped uniqueness on display_name.
-            if GISLayer.objects.filter(
-                table=table, display_name=name, project_name=project_name
-            ).exists():
-                return Response(
-                    {
-                        "error": f'A layer named "{name}" already exists in project "{project_name}". Please choose another name.'
-                    },
-                    status=status.HTTP_409_CONFLICT,
+            # Same display name + project: replace in place (soft-deactivate prior actives)
+            # so "republish" works without a separate unpublish step, matching curation UX.
+            with transaction.atomic():
+                conflicting = list(
+                    GISLayer.objects.select_for_update()
+                    .filter(
+                        table=table,
+                        display_name=name,
+                        project_name=project_name,
+                        is_active=True,
+                    )
+                )
+                for old in conflicting:
+                    old.is_active = False
+                    old.save(update_fields=["is_active", "updated_at"])
+                    _delete_layer_states_for_gis_layer_pk(table, old.id)
+
+                project_slug = _slugify_project(project_name)
+                # Internal slug used for GISLayer.name; project scoped via unique_together.
+                base_slug = re.sub(r"\s+", "_", name.lower()).strip("_")[:50]
+                base = f"curated_{project_slug}_{base_slug}"[:100]
+                layer_name = base or f"curated_{project_slug}"
+                n = 0
+                while GISLayer.objects.filter(
+                    table=table, name=layer_name, project_name=project_name
+                ).exists():
+                    n += 1
+                    layer_name = f"{base}_{n}"
+
+                order = (
+                    GISLayer.objects.filter(table=table).aggregate(
+                        max_order=models.Max("order")
+                    ).get("max_order")
+                    or 0
+                ) + 1
+
+                layer = GISLayer.objects.create(
+                    table=table,
+                    name=layer_name,
+                    display_name=name,
+                    project_name=project_name,
+                    layer_type="geojson",
+                    data=geojson,
+                    style_config={},
+                    is_active=True,
+                    order=order,
                 )
 
-            project_slug = _slugify_project(project_name)
-            # Internal slug used for GISLayer.name; project scoped via unique_together.
-            base_slug = re.sub(r"\s+", "_", name.lower()).strip("_")[:50]
-            base = f"curated_{project_slug}_{base_slug}"[:100]
-            layer_name = base or f"curated_{project_slug}"
-            n = 0
-            while GISLayer.objects.filter(
-                table=table, name=layer_name, project_name=project_name
-            ).exists():
-                n += 1
-                layer_name = f"{base}_{n}"
+                group_id = "curated_moresht_axis"
+                group, _ = LayerGroup.objects.get_or_create(
+                    table=table,
+                    group_id=group_id,
+                    defaults={"enabled": True},
+                )
+                group.enabled = True
+                group.save()
 
-            order = (
-                GISLayer.objects.filter(table=table).aggregate(
-                    max_order=models.Max("order")
-                ).get("max_order")
-                or 0
-            ) + 1
-
-            layer = GISLayer.objects.create(
-                table=table,
-                name=layer_name,
-                display_name=name,
-                project_name=project_name,
-                layer_type="geojson",
-                data=geojson,
-                style_config={},
-                is_active=True,
-                order=order,
-            )
-
-            group_id = "curated_moresht_axis"
-            group, _ = LayerGroup.objects.get_or_create(
-                table=table,
-                group_id=group_id,
-                defaults={"enabled": True},
-            )
-            group.enabled = True
-            group.save()
-
-            full_layer_id = f"{group_id}.{layer.id}"
-            LayerState.objects.update_or_create(
-                table=table,
-                layer_id=full_layer_id,
-                defaults={"enabled": True},
-            )
+                full_layer_id = f"{group_id}.{layer.id}"
+                LayerState.objects.update_or_create(
+                    table=table,
+                    layer_id=full_layer_id,
+                    defaults={"enabled": True},
+                )
 
             from channels.layers import get_channel_layer
             from asgiref.sync import async_to_sync

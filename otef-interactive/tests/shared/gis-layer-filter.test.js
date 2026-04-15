@@ -22,6 +22,12 @@ describe("gis-layer-filter: shouldShowLayerOnGisMap", () => {
     expect(shouldShowLayerOnGisMap("land_use", "parcels")).toBe(true);
     expect(shouldShowLayerOnGisMap("other_group", "any_layer")).toBe(true);
   });
+
+  test("returns false for synthetic pink-line parking companion layer", () => {
+    expect(shouldShowLayerOnGisMap("curated_moresht_axis", "pink_line_parking")).toBe(
+      false,
+    );
+  });
 });
 
 describe("gis-layer-filter: filterGroupsForGisMap", () => {

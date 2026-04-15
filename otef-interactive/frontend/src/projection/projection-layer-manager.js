@@ -16,6 +16,13 @@ import {
   startAnimationLoop,
   stopAnimationLoop,
 } from "./projection-animation-loop.js";
+import {
+  MORESHET_AXIS_GROUP_ID,
+  computePinkLineBaseLayerVisible,
+  computePinkLineParkingOverlayVisible,
+  isPinkLineParkingLayerId,
+} from "../map-utils/curated-pink-axis-state.js";
+import { createProjectionPinkLineCanvasController } from "./projection-pink-line-canvas.js";
 
 let getModelBounds = null;
 let getDisplayedImageBounds = null;
@@ -175,62 +182,29 @@ function updateWmtsVisibility(fullLayerId, visible) {
     for (const group of layerGroups) {
       for (const layer of group.layers || []) {
         if (!layer.enabled) continue;
+        if (
+          group.id === MORESHET_AXIS_GROUP_ID &&
+          isPinkLineParkingLayerId(String(layer.id || ""))
+        ) {
+          continue;
+        }
         const fullLayerId = `${group.id}.${layer.id}`;
         await loadProjectionLayerFromRegistry(fullLayerId);
       }
     }
   }
 
-  const PINK_LINE_BASE_LAYER_ID = "pink_line_base";
   const getCuratedLayerColorForProjection = UI_CONFIG.getCuratedColor;
 
-  async function ensureProjectionPinkLineBaseLayer() {
-    if (loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
-    try {
-      const [{ basePaths }, styleBundle] = await Promise.all([
-        fetchPinkLinePaths(),
-        resolvePinkLinePackStyleBundle(),
-      ]);
-      if (basePaths.length === 0) return;
-      const features = basePaths.map((path) => ({
-        type: "Feature",
-        geometry: {
-          type: "LineString",
-          coordinates: path.map(([lat, lng]) => [lng, lat]),
-        },
-        properties: {},
-      }));
-      const wgs84Geojson = { type: "FeatureCollection", features };
-      const itmGeojson = CoordUtils.transformGeojsonToItm(wgs84Geojson);
-      const layerConfig = styleBundle.styleConfigForProjection;
-      const styleFunction = styleBundle.styleFunction;
-      loadedLayers[PINK_LINE_BASE_LAYER_ID] = {
-        originalGeojson: itmGeojson,
-        styleFunction,
-        styleConfig: layerConfig,
-        geometryType: styleBundle.geometryType || "line",
-      };
-      if (canvasRenderer) {
-        canvasRenderer.setLayer(
-          PINK_LINE_BASE_LAYER_ID,
-          itmGeojson,
-          styleFunction,
-          styleBundle.geometryType || "line",
-          layerConfig,
-        );
-        canvasRenderer.setLayerVisibility(PINK_LINE_BASE_LAYER_ID, true);
-      }
-    } catch (_) {}
-  }
-
-  /**
-   * Toggle visibility of the shared pink-line base layer in the projection.
-   * This allows the base line to disappear when all curated layers are disabled.
-   */
-  function setProjectionPinkLineBaseVisibility(visible) {
-    if (!canvasRenderer || !loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
-    canvasRenderer.setLayerVisibility(PINK_LINE_BASE_LAYER_ID, visible);
-  }
+  const pinkLineCanvas = createProjectionPinkLineCanvasController({
+    getCanvasRenderer: () => canvasRenderer,
+    loadedLayers,
+  });
+  const {
+    ensureProjectionPinkLineBaseLayer,
+    ensureProjectionPinkLineParkingLayer,
+    setProjectionPinkLineAxisGlyphsVisible,
+  } = pinkLineCanvas;
 
   /**
    * Load a curated layer for Canvas projection display.
@@ -565,7 +539,6 @@ function updateWmtsVisibility(fullLayerId, visible) {
     // Process each group - individual layer.enabled is the source of truth for visibility.
     // Curated groups are allowed even when the registry is not yet initialized;
     // non-curated (registry-backed) groups are deferred until registryReady.
-    let hasEnabledCuratedLayer = false;
 
     for (const group of layerGroups) {
       const isCurated = group.id.startsWith("curated");
@@ -582,6 +555,13 @@ function updateWmtsVisibility(fullLayerId, visible) {
           typeof fullLayerId === "string" &&
           fullLayerId.startsWith("curated");
         const isCurated = isCuratedGroup || isCuratedLayer;
+
+        if (
+          group.id === MORESHET_AXIS_GROUP_ID &&
+          isPinkLineParkingLayerId(String(layer.id || ""))
+        ) {
+          continue;
+        }
 
         // Handle model_base image layer specially
         if (fullLayerId === "projector_base.model_base") {
@@ -618,9 +598,6 @@ function updateWmtsVisibility(fullLayerId, visible) {
         }
 
         if (layer.enabled) {
-          if (isCurated) {
-            hasEnabledCuratedLayer = true;
-          }
           if (!loadedLayers[fullLayerId]) {
             loadProjectionLayerFromRegistry(fullLayerId)
               .then(() => {
@@ -641,10 +618,11 @@ function updateWmtsVisibility(fullLayerId, visible) {
       }
     }
 
-    // When no curated layers are enabled, hide the shared pink-line base layer.
-    // When at least one curated layer is enabled, ensure it is visible.
     try {
-      setProjectionPinkLineBaseVisibility(hasEnabledCuratedLayer);
+      setProjectionPinkLineAxisGlyphsVisible(
+        computePinkLineBaseLayerVisible(layerGroups),
+        computePinkLineParkingOverlayVisible(layerGroups),
+      );
     } catch (_) {
       // Non-fatal; base pink-line visibility is a visual enhancement.
     }

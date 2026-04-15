@@ -11,6 +11,11 @@ import {
   parseDefaultLinePaths,
   buildIntegratedRoute,
 } from "../map-utils/pink-line-route.js";
+import {
+  PINK_LINE_PARKING_ICON_URL,
+  fetchPinkLineParkingLotsGeojson,
+  createLeafletPinkLineParkingGroup,
+} from "../map-utils/pink-line-parking.js";
 
 const LABEL_PROPERTY_KEYS = ["name", "reason", "description", "note"];
 const META_SUBTITLE_KEYS = ["reason", "description", "note"];
@@ -288,6 +293,7 @@ export function createCurationMapPreview(deps) {
 
   let map = null;
   let baseRouteLayer = null;
+  let pinkLineParkingLayer = null;
   let integratedRouteLayer = null;
   let highlightMarker = null;
   let showPreviewSeq = 0;
@@ -316,6 +322,15 @@ export function createCurationMapPreview(deps) {
     if (baseRouteLayer && map) {
       map.removeLayer(baseRouteLayer);
       baseRouteLayer = null;
+    }
+
+    if (pinkLineParkingLayer && map) {
+      try {
+        map.removeLayer(pinkLineParkingLayer);
+      } catch (_) {
+        // ignore
+      }
+      pinkLineParkingLayer = null;
     }
 
     if (integratedRouteLayer && map) {
@@ -595,6 +610,26 @@ export function createCurationMapPreview(deps) {
         basePaths = parseDefaultLinePaths(pinkGeojson) || [];
       } catch (_) {
         basePaths = [];
+      }
+
+      if (mySeq === showPreviewSeq && map && typeof L !== "undefined" && !pinkLineParkingLayer) {
+        try {
+          const parkingGeojson = await fetchPinkLineParkingLotsGeojson();
+          if (mySeq !== showPreviewSeq) return;
+          if (parkingGeojson) {
+            const g = createLeafletPinkLineParkingGroup(
+              L,
+              parkingGeojson,
+              PINK_LINE_PARKING_ICON_URL,
+            );
+            if (g) {
+              g.addTo(map);
+              pinkLineParkingLayer = g;
+            }
+          }
+        } catch (_) {
+          // non-fatal; parking is optional decoration
+        }
       }
     }
 

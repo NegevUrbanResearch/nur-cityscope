@@ -11,6 +11,10 @@
  * @returns {boolean} - true if the layer should be shown on the GIS map
  */
 function shouldShowLayerOnGisMap(groupId, layerId) {
+  // Parking companion is driven by pink-line modules, not registry GeoJSON.
+  if (groupId === "curated_moresht_axis" && layerId === "pink_line_parking") {
+    return false;
+  }
   if (typeof layerRegistry !== "undefined" && layerRegistry.getLayerConfig) {
     const config = layerRegistry.getLayerConfig(`${groupId}.${layerId}`);
     if (config) {

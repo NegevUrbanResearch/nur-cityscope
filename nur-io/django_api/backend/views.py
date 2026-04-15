@@ -462,6 +462,10 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 # For curated groups (project-scoped), attach displayName to layers
                 # by looking up the corresponding GISLayer row.
                 if str(group.group_id).startswith("curated"):
+                    if layer_id == "pink_line_parking":
+                        layer_item["displayName"] = "Parking lots"
+                        layers.append(layer_item)
+                        continue
                     try:
                         gid = int(layer_id)
                     except (ValueError, TypeError):
@@ -534,7 +538,47 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     )
                 result = list(grouped.values())
 
-        return self._coalesce_curated_groups(result)
+        coalesced = self._coalesce_curated_groups(result)
+        self._ensure_pink_line_parking_toggle_in_moreshet_group(table, coalesced)
+        return coalesced
+
+    def _ensure_pink_line_parking_toggle_in_moreshet_group(self, table, groups):
+        """
+        When the merged Moreshet axis pack lists published content but no parking
+        LayerState row exists yet, expose an explicit pink_line_parking layer so
+        clients never infer default-ON from a missing row (fixes toggle snap-back).
+        """
+        if not isinstance(groups, list):
+            return
+        for g in groups:
+            if not isinstance(g, dict) or g.get("id") != "curated_moresht_axis":
+                continue
+            layers = list(g.get("layers") or [])
+            has_published_content = any(
+                isinstance(x, dict) and str(x.get("id", "")) != "pink_line_parking"
+                for x in layers
+            )
+            if not has_published_content:
+                continue
+            if any(
+                isinstance(x, dict) and str(x.get("id", "")) == "pink_line_parking"
+                for x in layers
+            ):
+                continue
+            st = LayerState.objects.filter(
+                table=table, layer_id="curated_moresht_axis.pink_line_parking"
+            ).first()
+            layers.append(
+                {
+                    "id": "pink_line_parking",
+                    "enabled": bool(st.enabled) if st else True,
+                    "displayName": "Parking lots",
+                }
+            )
+            g["layers"] = layers
+            g["enabled"] = layers and all(
+                isinstance(x, dict) and x.get("enabled", False) is True for x in layers
+            )
 
     def _coalesce_curated_groups(self, groups):
         """
@@ -594,6 +638,18 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 # Prefer canonical moresht-axis rows when duplicates exist.
                 if existing is None or group.get("id") == "curated_moresht_axis":
                     merged_layers_map[layer_id] = candidate
+                elif layer_id == "pink_line_parking":
+                    # Synthetic parking toggle: any curated group turning it OFF must win
+                    # over another group's stale ON (legacy multi-group LayerGroup rows).
+                    merged_layers_map[layer_id] = {
+                        "id": layer_id,
+                        "enabled": bool(existing.get("enabled"))
+                        and bool(candidate.get("enabled")),
+                        "displayName": existing.get("displayName")
+                        or candidate.get("displayName", layer_id),
+                        "project_name": existing.get("project_name")
+                        or candidate.get("project_name", ""),
+                    }
 
         merged_layers = list(merged_layers_map.values())
 
