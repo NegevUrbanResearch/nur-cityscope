@@ -13,6 +13,7 @@ import {
   extractPointFeatures,
   fetchPinkLinePaths,
   getMemorialIconForFeature,
+  resolvePinkLinePackStyleBundle,
 } from "../shared/curated-layer-service.js";
 import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
 
@@ -65,10 +66,13 @@ function escapeHtml(s) {
 async function ensurePinkLineBaseLayer() {
   if (pinkLineBaseLayerInstance && map.hasLayer(pinkLineBaseLayerInstance)) return;
   try {
-    const { basePaths } = await fetchPinkLinePaths();
+    const [{ basePaths }, styleBundle] = await Promise.all([
+      fetchPinkLinePaths(),
+      resolvePinkLinePackStyleBundle(),
+    ]);
     if (basePaths.length === 0) return;
     const group = L.layerGroup();
-    const baseStyle = { color: "#ff69b4", weight: 5, opacity: 1 };
+    const baseStyle = styleBundle.leafletPolylineOptions;
     basePaths.forEach((path) => {
       group.addLayer(L.polyline(path, baseStyle));
     });

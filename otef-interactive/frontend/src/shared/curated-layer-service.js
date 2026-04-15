@@ -12,6 +12,170 @@ import {
   parseDefaultLinePaths,
   buildIntegratedRoute,
 } from "../map-utils/pink-line-route.js";
+import AdvancedStyleEngine from "../map-utils/advanced-style-engine.js";
+import layerRegistry from "./layer-registry.js";
+
+/**
+ * Full layer ids for the canonical pink-line geometry (same GeoJSON the GIS map
+ * loads from the processed layer pack). Some deployments still use the legacy
+ * `הקו_הורוד` id while newer manifests expose `הציר_הורוד_חדש`.
+ */
+const PINK_LINE_PACK_LAYER_IDS = [
+  "future_development.הציר_הורוד_חדש",
+  "future_development.הקו_הורוד",
+];
+
+const PINK_LINE_LAYER_SUFFIX_PRIORITY = ["הציר_הורוד_חדש", "הקו_הורוד"];
+
+/**
+ * Build ordered full layer ids for pink-line pack GeoJSON: manifest-driven
+ * first (via registry), then {@link PINK_LINE_PACK_LAYER_IDS} for legacy ids.
+ *
+ * @param {{ getAllLayerIds?: () => string[], getLayerDataUrl?: (id: string) => string | null }} registry
+ * @returns {string[]}
+ */
+function collectPinkLinePackFullLayerIds(registry) {
+  const out = [];
+  const seen = new Set();
+  const add = (id) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  };
+
+  if (registry && typeof registry.getAllLayerIds === "function") {
+    const all = registry.getAllLayerIds();
+    const ranked = [];
+    if (Array.isArray(all)) {
+      for (const fullId of all) {
+        if (!fullId || typeof fullId !== "string") continue;
+        const dot = fullId.indexOf(".");
+        if (dot < 0) continue;
+        const layerOnly = fullId.slice(dot + 1);
+        const rank = PINK_LINE_LAYER_SUFFIX_PRIORITY.indexOf(layerOnly);
+        if (rank >= 0) ranked.push({ fullId, rank });
+      }
+    }
+    ranked.sort((a, b) => a.rank - b.rank || a.fullId.localeCompare(b.fullId));
+    ranked.forEach((x) => add(x.fullId));
+  }
+
+  for (const id of PINK_LINE_PACK_LAYER_IDS) add(id);
+  return out;
+}
+
+/**
+ * Stroke from `future_development` pink-line .lyrx when styles.json is not
+ * loaded (e.g. empty registry in isolated tests). Matches processed pack output.
+ */
+const PINK_LINE_PACK_STYLE_FALLBACK = {
+  renderer: "simple",
+  defaultStyle: {
+    color: "#ff7f7f",
+    weight: 1.3333333333333333,
+    opacity: 1,
+  },
+};
+
+/**
+ * @param {Object} leafletProps
+ * @returns {{ color: string, weight: number, opacity: number, dashArray?: string }}
+ */
+function leafletPropsToPolylineOptions(leafletProps) {
+  const p = leafletProps || {};
+  const out = {
+    color: p.color,
+    weight: p.weight,
+    opacity: p.opacity,
+  };
+  if (p.dashArray != null) {
+    out.dashArray = Array.isArray(p.dashArray)
+      ? p.dashArray.join(",")
+      : String(p.dashArray);
+  }
+  return out;
+}
+
+/**
+ * Resolve pink-line symbology from the same pack styles.json entry the GIS map
+ * uses for `future_development` line layers (priority matches GeoJSON fetch).
+ *
+ * @returns {Promise<{
+ *   styleConfigForProjection: { style: Object },
+ *   leafletPolylineOptions: { color: string, weight: number, opacity: number, dashArray?: string },
+ *   styleFunction: (feature: object) => object,
+ *   geometryType: string,
+ *   sourceFullLayerId: string | null
+ * }>}
+ */
+async function resolvePinkLinePackStyleBundle() {
+  if (layerRegistry && typeof layerRegistry.init === "function") {
+    await layerRegistry.init();
+  }
+
+  const ids = collectPinkLinePackFullLayerIds(layerRegistry);
+  let packStyle = null;
+  let geometryType = "line";
+  let sourceFullLayerId = null;
+
+  for (const fullId of ids) {
+    const raw =
+      layerRegistry && typeof layerRegistry.getPackStyleJsonForLayer === "function"
+        ? layerRegistry.getPackStyleJsonForLayer(fullId)
+        : null;
+    if (!raw) {
+      continue;
+    }
+    packStyle = raw;
+    sourceFullLayerId = fullId;
+    if (typeof layerRegistry.getLayerConfig === "function") {
+      const cfg = layerRegistry.getLayerConfig(fullId);
+      if (cfg && cfg.geometryType) {
+        geometryType = cfg.geometryType;
+      }
+    }
+    break;
+  }
+
+  if (!packStyle) {
+    packStyle = PINK_LINE_PACK_STYLE_FALLBACK;
+    sourceFullLayerId = null;
+  }
+
+  const layerConfigForEngine = { geometryType, style: packStyle };
+  const styleFunction =
+    AdvancedStyleEngine &&
+    typeof AdvancedStyleEngine.getLeafletStyleFunction === "function"
+      ? AdvancedStyleEngine.getLeafletStyleFunction(layerConfigForEngine)
+      : () => ({ color: "#ff7f7f", weight: 1.3333333333333333, opacity: 1 });
+
+  const leafletPolylineOptions = leafletPropsToPolylineOptions(styleFunction({}));
+
+  return {
+    styleConfigForProjection: { style: packStyle },
+    leafletPolylineOptions,
+    styleFunction,
+    geometryType,
+    sourceFullLayerId,
+  };
+}
+
+let _pinkLinePackUnavailableLogged = false;
+
+function warnPinkLinePackEmptyOnce() {
+  if (
+    typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    import.meta.env.MODE === "test"
+  ) {
+    return;
+  }
+  if (_pinkLinePackUnavailableLogged) return;
+  _pinkLinePackUnavailableLogged = true;
+  console.warn(
+    "[CuratedLayerService] Pink line unavailable: OTEF processed layer pack did not provide usable line geometry (pack-only).",
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Memorial icon configuration (shared between curation, map, and projection)
@@ -106,11 +270,52 @@ function extractPointFeatures(geojson) {
 // fetchPinkLinePaths
 // ---------------------------------------------------------------------------
 /**
- * Fetch the pink-line base data from `/api/pink-line/` and parse it into an
- * array of path coordinate arrays via the global `parseDefaultLinePaths`.
+ * Load pink-line geometry from the processed OTEF layer pack (same source as
+ * GIS / projection for the canonical pink-line layer in `future_development`).
  *
- * Returns an empty array when the endpoint is unreachable or the parser
- * is not available.
+ * @returns {Promise<{basePaths: Array, pinkGeojson: Object|null}>}
+ */
+async function fetchPinkLinePathsFromLayerPack() {
+  if (typeof parseDefaultLinePaths !== "function") {
+    return { basePaths: [], pinkGeojson: null };
+  }
+  try {
+    if (layerRegistry && typeof layerRegistry.init === "function") {
+      await layerRegistry.init();
+    }
+    const fullLayerIds = collectPinkLinePackFullLayerIds(layerRegistry);
+    for (const fullLayerId of fullLayerIds) {
+      const url =
+        layerRegistry && typeof layerRegistry.getLayerDataUrl === "function"
+          ? layerRegistry.getLayerDataUrl(fullLayerId)
+          : null;
+      if (!url) continue;
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const pinkGeojson = await res.json();
+      const basePaths = parseDefaultLinePaths(pinkGeojson);
+      if (basePaths.length > 0) {
+        return { basePaths, pinkGeojson };
+      }
+    }
+  } catch (err) {
+    const isDev =
+      typeof import.meta !== "undefined" &&
+      import.meta.env &&
+      import.meta.env.DEV &&
+      import.meta.env.MODE !== "test";
+    if (isDev) {
+      console.warn("[CuratedLayerService] Pink line layer pack load failed:", err);
+    }
+  }
+  warnPinkLinePackEmptyOnce();
+  return { basePaths: [], pinkGeojson: null };
+}
+
+/**
+ * Fetch pink-line base paths for integrated curation / curated routes.
+ * Uses only the processed OTEF layer pack (same GeoJSON URLs as the GIS map);
+ * there is no alternate HTTP source for this geometry.
  *
  * @returns {Promise<{basePaths: Array, pinkGeojson: Object|null}>}
  */
@@ -118,15 +323,7 @@ async function fetchPinkLinePaths() {
   if (typeof parseDefaultLinePaths !== "function") {
     return { basePaths: [], pinkGeojson: null };
   }
-  try {
-    const pinkRes = await fetch("/api/pink-line/");
-    if (!pinkRes.ok) return { basePaths: [], pinkGeojson: null };
-    const pinkGeojson = await pinkRes.json();
-    const basePaths = parseDefaultLinePaths(pinkGeojson);
-    return { basePaths, pinkGeojson };
-  } catch (_) {
-    return { basePaths: [], pinkGeojson: null };
-  }
+  return fetchPinkLinePathsFromLayerPack();
 }
 
 // ---------------------------------------------------------------------------
@@ -222,4 +419,5 @@ export {
   buildCuratedRouteGeoJSON,
   MEMORIAL_ICON_URLS,
   getMemorialIconForFeature,
+  resolvePinkLinePackStyleBundle,
 };

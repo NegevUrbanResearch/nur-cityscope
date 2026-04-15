@@ -1999,18 +1999,27 @@ def _slugify_project(name):
     return slug or "default"
 
 
-_PINK_LINE_CANDIDATES = [
-    # Docker / production mount (see import_otef_data.py)
-    Path("/app/public/processed/otef/layers/filled-pink-line.geojson"),
-    # Docker / production mount for Django public data (mounted as /app/public_idistrict)
-    Path("/app/public_idistrict/processed/otef/layers/filled-pink-line.geojson"),
+_PINK_LINE_PACK_CANDIDATES = [
+    # OTEF processed layer pack (Docker: ./otef-interactive/public -> /app/public)
+    Path(
+        "/app/public/processed/layers/future_development/"
+        "הציר_הורוד_חדש.geojson",
+    ),
+    Path(
+        "/app/public/processed/layers/future_development/"
+        "הקו_הורוד.geojson",
+    ),
 ]
 
 
 @require_GET
 def pink_line_geojson(request):
-    """Serve the base filled-pink-line GeoJSON (WGS84) for integrated route display."""
-    path = next((p for p in _PINK_LINE_CANDIDATES if p.exists()), None)
+    """Serve pink-line GeoJSON (WGS84) from the OTEF processed layer pack only.
+
+    Same files as nginx under ``/otef-interactive/public/processed/layers/``.
+    Returns 404 if neither pack asset exists on disk.
+    """
+    path = next((p for p in _PINK_LINE_PACK_CANDIDATES if p.exists()), None)
     if not path:
         return HttpResponse("Pink line data not found", status=404)
     try:

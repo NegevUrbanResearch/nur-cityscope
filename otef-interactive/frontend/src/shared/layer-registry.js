@@ -200,6 +200,45 @@ class LayerRegistry {
   }
 
   /**
+   * Raw style object from the pack's styles.json for this full layer id, or
+   * null when the pack or per-layer style entry is missing (no synthetic defaults).
+   *
+   * @param {string} fullLayerId - e.g. "future_development.הקו_הורוד"
+   * @returns {Object|null}
+   */
+  getPackStyleJsonForLayer(fullLayerId) {
+    if (!this._initialized || !fullLayerId) {
+      return null;
+    }
+
+    let groupId;
+    let layerIdOnly;
+    const parsed =
+      typeof LayerStateHelper !== "undefined" &&
+      typeof LayerStateHelper.parseFullLayerId === "function"
+        ? LayerStateHelper.parseFullLayerId(fullLayerId)
+        : null;
+    if (parsed) {
+      groupId = parsed.groupId;
+      layerIdOnly = parsed.layerId;
+    } else {
+      const parts = fullLayerId.split(".");
+      if (parts.length < 2) {
+        return null;
+      }
+      groupId = parts[0];
+      layerIdOnly = parts.slice(1).join(".");
+    }
+
+    const styles = this._packStyles.get(groupId);
+    if (!styles || typeof styles !== "object") {
+      return null;
+    }
+    const entry = styles[layerIdOnly];
+    return entry != null && typeof entry === "object" ? entry : null;
+  }
+
+  /**
    * Get the URL for a layer's data file (GeoJSON).
    * WMTS layers have no file; returns null.
    * @param {string} layerId - Full layer ID

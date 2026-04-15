@@ -9,6 +9,7 @@ import {
   fetchPinkLinePaths,
   buildCuratedRouteGeoJSON,
   getMemorialIconForFeature,
+  resolvePinkLinePackStyleBundle,
 } from "../shared/curated-layer-service.js";
 import {
   configureAnimationRenderer,
@@ -186,7 +187,10 @@ function updateWmtsVisibility(fullLayerId, visible) {
   async function ensureProjectionPinkLineBaseLayer() {
     if (loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
     try {
-      const { basePaths } = await fetchPinkLinePaths();
+      const [{ basePaths }, styleBundle] = await Promise.all([
+        fetchPinkLinePaths(),
+        resolvePinkLinePackStyleBundle(),
+      ]);
       if (basePaths.length === 0) return;
       const features = basePaths.map((path) => ({
         type: "Feature",
@@ -198,25 +202,20 @@ function updateWmtsVisibility(fullLayerId, visible) {
       }));
       const wgs84Geojson = { type: "FeatureCollection", features };
       const itmGeojson = CoordUtils.transformGeojsonToItm(wgs84Geojson);
-      const layerConfig = {
-        style: {
-          type: "simple",
-          defaultStyle: { color: "#ff69b4", weight: 5, opacity: 1 },
-        },
-      };
-      const styleFunction = () => ({ color: "#ff69b4", weight: 5, opacity: 1 });
+      const layerConfig = styleBundle.styleConfigForProjection;
+      const styleFunction = styleBundle.styleFunction;
       loadedLayers[PINK_LINE_BASE_LAYER_ID] = {
         originalGeojson: itmGeojson,
         styleFunction,
         styleConfig: layerConfig,
-        geometryType: "line",
+        geometryType: styleBundle.geometryType || "line",
       };
       if (canvasRenderer) {
         canvasRenderer.setLayer(
           PINK_LINE_BASE_LAYER_ID,
           itmGeojson,
           styleFunction,
-          "line",
+          styleBundle.geometryType || "line",
           layerConfig,
         );
         canvasRenderer.setLayerVisibility(PINK_LINE_BASE_LAYER_ID, true);

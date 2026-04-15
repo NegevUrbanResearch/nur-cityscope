@@ -2,7 +2,11 @@
  * Leaflet map: pink line base, feature preview, integrated route, node drag.
  */
 
-import { getMemorialIconForFeature } from "../shared/curated-layer-service.js";
+import {
+  fetchPinkLinePaths,
+  getMemorialIconForFeature,
+  resolvePinkLinePackStyleBundle,
+} from "../shared/curated-layer-service.js";
 import {
   parseDefaultLinePaths,
   buildIntegratedRoute,
@@ -349,13 +353,8 @@ export function createCurationMapPreview(deps) {
   }
 
   async function loadPinkLineGeojson() {
-    try {
-      const res = await fetch("/api/pink-line/");
-      if (!res.ok) return null;
-      return await res.json();
-    } catch (_) {
-      return null;
-    }
+    const { pinkGeojson } = await fetchPinkLinePaths();
+    return pinkGeojson;
   }
 
   function getGeometryType(geometry) {
@@ -578,16 +577,15 @@ export function createCurationMapPreview(deps) {
     const bounds = [];
     let basePaths = [];
 
-    const pinkGeojson = await loadPinkLineGeojson();
+    const [pinkGeojson, pinkStyleBundle] = await Promise.all([
+      loadPinkLineGeojson(),
+      resolvePinkLinePackStyleBundle(),
+    ]);
     if (mySeq !== showPreviewSeq) return;
 
     if (pinkGeojson && pinkGeojson.features && pinkGeojson.features.length && map) {
       baseRouteLayer = L.geoJSON(pinkGeojson, {
-        style: {
-          color: "#ff69b4",
-          weight: 5,
-          opacity: 1,
-        },
+        style: pinkStyleBundle.leafletPolylineOptions,
       }).addTo(map);
       baseRouteLayer.eachLayer((l) => {
         if (l.getBounds) bounds.push(l.getBounds());
