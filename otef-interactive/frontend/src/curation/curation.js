@@ -1,8 +1,18 @@
 import { getMemorialIconForFeature } from "../shared/curated-layer-service.js";
 import {
-  parseDefaultLinePaths,
-  buildIntegratedRoute,
-} from "../map-utils/pink-line-route.js";
+  createCurationPreviewState,
+  getHistoryFilterState,
+  setHistoryFilterState,
+} from "./curation-state.js";
+import { createCurationApi } from "./curation-api.js";
+import { createPublishedCuratedLayersPanel } from "./curation-published-layers.js";
+import { createSubmissionsPanel } from "./curation-submissions.js";
+import {
+  createCurationMapPreview,
+  initCurationMapRouteLegend,
+} from "./curation-map-preview.js";
+
+export { createCurationPreviewState } from "./curation-state.js";
 
 /**
  * Curation page: list Supabase projects/submissions, Leaflet preview with
@@ -11,153 +21,34 @@ import {
  * Uses API proxy only (no Supabase client on frontend).
  */
 
-/**
- * Lightweight, DOM-free controller for curation preview state.
- * This is exported for Jest tests and used by the runtime map code.
- */
-export function createCurationPreviewState() {
-  const featureLayers = new Map();
-  const visibleFeatures = new Map();
-  let highlightedFeatureId = null;
-
-  function registerFeatureLayers(featureId, layers) {
-    const key = String(featureId);
-    featureLayers.set(key, Array.isArray(layers) ? [...layers] : []);
-    if (!visibleFeatures.has(key)) {
-      visibleFeatures.set(key, true);
-    }
-  }
-
-  function setFeatureVisible(featureId, isVisible) {
-    const key = String(featureId);
-    if (!featureLayers.has(key)) return;
-    visibleFeatures.set(key, Boolean(isVisible));
-  }
-
-  function getVisibleLayers() {
-    const result = [];
-    for (const [key, layers] of featureLayers.entries()) {
-      if (visibleFeatures.get(key)) {
-        result.push(...layers);
-      }
-    }
-    return result;
-  }
-
-  function clearPreview() {
-    featureLayers.clear();
-    visibleFeatures.clear();
-    highlightedFeatureId = null;
-  }
-
-  function highlightFeature(featureId) {
-    if (featureId == null) {
-      highlightedFeatureId = null;
-    } else {
-      highlightedFeatureId = String(featureId);
-    }
-  }
-
-  return {
-    featureLayers,
-    visibleFeatures,
-    getVisibleLayers,
-    registerFeatureLayers,
-    setFeatureVisible,
-    clearPreview,
-    highlightFeature,
-    get highlightedFeatureId() {
-      return highlightedFeatureId;
-    },
-  };
-}
-
 (function () {
-  const LABEL_PROPERTY_KEYS = ["name", "reason", "description", "note"];
-  const META_SUBTITLE_KEYS = ["reason", "description", "note"];
+  const API = createCurationApi();
 
-  const MEMORIAL_ICONS = {
-    central: "/otef-interactive/img/memorial-sites/regional-memorial-site.png",
-    local: "/otef-interactive/img/memorial-sites/local-memorial-site.png",
-  };
-
-  const API = {
-    async projects() {
-      const r = await fetch("/api/supabase/projects/");
-      let body = {};
-      const text = await r.text();
-      try {
-        body = text ? JSON.parse(text) : {};
-      } catch (_) {
-        if (r.status === 502 && /<title>.*502.*<\/title>/i.test(text)) {
-          body = { error: "API unavailable (502). Ensure the backend (nur-api) is running and try again." };
-        } else {
-          body = { error: text ? text.slice(0, 200) : `Server returned ${r.status}` };
-        }
-      }
-      if (!r.ok) {
-        const msg = body.error || `Failed to load projects (${r.status}). Check API and Supabase configuration.`;
-        throw new Error(msg);
-      }
-      return body;
-    },
-    async submissions(projectId) {
-      const r = await fetch(
-        `/api/supabase/projects/${projectId}/submissions/`
-      );
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || `Failed to load submissions (${r.status})`);
-      return body;
-    },
-    async features(submissionId) {
-      const r = await fetch(
-        `/api/supabase/submissions/${submissionId}/features/`
-      );
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || `Failed to load features (${r.status})`);
-      return body;
-    },
-    async publish(name, geojsonItm, projectName) {
-      const r = await fetch("/api/supabase/curated/publish/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          geojson: geojsonItm,
-          table: "otef",
-          project_name: projectName,
-        }),
-      });
-      const text = await r.text();
-      let data = {};
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch (_) {
-        data = { error: r.status === 502 ? "API unavailable." : (text ? text.slice(0, 150) : "Request failed") };
-      }
-      const errMsg = data.error || data.detail || data.message;
-      if (!r.ok) throw new Error(errMsg || `Publish failed (${r.status})`);
-      return data;
-    },
-  };
-
-  let map = null;
-  let baseRouteLayer = null;
-  let integratedRouteLayer = null;
   let currentFeatures = [];
-  let featureEnabled = new Map();
+  const featureEnabled = new Map();
   const previewState = createCurationPreviewState();
-  let highlightMarker = null;
+  const pendingGeometryEdits = new Map();
+  const publishedCuratedLayersRef = { current: [] };
+  const lastPublishedFullLayerIdRef = { current: null };
+  const submissionTypeById = new Map();
+  let isPublishing = false;
+
+  let mapCtl;
 
   const el = (id) => document.getElementById(id);
-  const projectSelect = () => el("curationProject");
-  const submissionSelect = () => el("curationSubmission");
+  const selectedSubmissionInput = () => el("curationSubmission");
+  const selectedSubmissionId = () =>
+    String(selectedSubmissionInput()?.value || "").trim();
   const featuresContainer = () => el("curationFeatures");
   const layerNameInput = () => el("curationLayerName");
   const publishBtn = () => el("curationPublish");
   const statusEl = () => el("curationStatus");
   const refreshBtn = () => el("curationRefresh");
-  const SUBMISSION_NAMES_KEY = "curation_submission_names";
+  const saveEditsBtn = () => el("curationSaveEdits");
+  const publishedLayersContainer = () => el("curationPublishedLayers");
+  const publishModalOverlay = () => el("curationModalPublish");
+  const CURATED_GROUP_NAME = "Moreshet Axis";
+  let historyFilterState = getHistoryFilterState();
 
   function setStatus(msg, type) {
     const s = statusEl();
@@ -166,427 +57,71 @@ export function createCurationPreviewState() {
     s.className = "curation-status" + (type ? " " + type : "");
   }
 
-  function getSubmissionNames() {
-    try {
-      const raw = localStorage.getItem(SUBMISSION_NAMES_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch (_) {
-      return {};
-    }
-  }
+  const submissionsCtlRef = { current: null };
 
-  function setSubmissionName(submissionId, name) {
-    const names = getSubmissionNames();
-    if (name != null && String(name).trim() !== "") {
-      names[submissionId] = String(name).trim();
-    } else {
-      delete names[submissionId];
-    }
-    localStorage.setItem(SUBMISSION_NAMES_KEY, JSON.stringify(names));
-  }
+  mapCtl = createCurationMapPreview({
+    previewState,
+    pendingGeometryEdits,
+    featureEnabled,
+    getCurrentFeatures: () => currentFeatures,
+    getLastPublishedFullLayerId: () => lastPublishedFullLayerIdRef.current,
+    featuresContainer,
+    computeRoute: (payload) => API.computeRoute(payload),
+    onAfterMarkerDrag: async () => {
+      renderFeatureList(currentFeatures);
+      updateSaveEditsState();
+      setStatus("Moved node locally. Click 'Save source edits' to persist changes.", "success");
+    },
+  });
+  initCurationMapRouteLegend();
 
-  function getSubmissionDisplayName(submissionId) {
-    const names = getSubmissionNames();
-    const custom = names[submissionId];
-    if (custom != null && String(custom).trim() !== "") return String(custom).trim();
-    const idStr = String(submissionId);
-    return idStr.slice(0, 8) + (idStr.length > 8 ? "…" : "");
-  }
+  const publishedPanel = createPublishedCuratedLayersPanel({
+    API,
+    publishedLayersContainer,
+    escapeHtml,
+    setStatus,
+    publishedCuratedLayersRef,
+    lastPublishedFullLayerIdRef,
+    selectSubmissionById: (id) => submissionsCtlRef.current?.selectSubmissionById(id),
+    submissionExists: (id) => Boolean(submissionsCtlRef.current?.hasSubmissionId(id)),
+  });
 
-  function getSelectedProjectName() {
-    const select = projectSelect();
-    if (!select) return "";
-    const option = select.options[select.selectedIndex] || null;
-    return option ? (option.textContent || "").trim() : "";
-  }
+  submissionsCtlRef.current = createSubmissionsPanel({
+    API,
+    getSearchInput: () => el("curationSubmissionSearch"),
+    getListContainer: () => el("curationSubmissionList"),
+    getComboRoot: () => el("curationSubmissionCombo"),
+    getComboField: () => el("curationSubmissionComboField"),
+    getSelectedTagsContainer: () => el("curationSubmissionSelectedTags"),
+    getSelectedIdInput: () => selectedSubmissionInput(),
+    submissionTypeById,
+    setStatus,
+    updateSaveEditsState,
+    onSelectionChange: (id) => {
+      syncLayerNameFromSelectedSubmission(id);
+      void loadFeatures(id);
+      updatePublishState();
+      updateSaveEditsState();
+    },
+  });
 
-  function getLabelFromProps(properties) {
-    const p = properties || {};
-    for (const key of LABEL_PROPERTY_KEYS) {
-      const v = p[key];
-      if (v != null && String(v).trim() !== "") return String(v).trim();
-    }
-    return null;
-  }
+  const loadSubmissions = () => submissionsCtlRef.current.loadSubmissions();
 
-  function getSubtitleFromProps(properties) {
-    const p = properties || {};
-    for (const key of META_SUBTITLE_KEYS) {
-      const v = p[key];
-      if (v != null && String(v).trim() !== "") return String(v).trim();
-    }
-    return null;
-  }
-
-  function initMap() {
-    const container = document.getElementById("curationMap");
-    if (!container || map) return map;
-    map = L.map(container, { center: [32.08, 34.78], zoom: 12 });
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "© OpenStreetMap",
-    }).addTo(map);
-    return map;
-  }
-
-  function clearPreview() {
-    if (baseRouteLayer && map) {
-      map.removeLayer(baseRouteLayer);
-      baseRouteLayer = null;
-    }
-
-    if (integratedRouteLayer && map) {
-      map.removeLayer(integratedRouteLayer);
-      integratedRouteLayer = null;
-    }
-
-    // Remove any per-feature layers from the map.
-    if (map && previewState && previewState.featureLayers) {
-      for (const layers of previewState.featureLayers.values()) {
-        (layers || []).forEach((layer) => {
-          if (!layer) return;
-          if (typeof map.hasLayer === "function" && map.hasLayer(layer)) {
-            map.removeLayer(layer);
-          } else if (typeof map.removeLayer === "function") {
-            try {
-              map.removeLayer(layer);
-            } catch (_) {
-              // ignore
-            }
-          }
-        });
-      }
-    }
-
-    previewState.clearPreview();
-
-    if (highlightMarker && map && typeof map.removeLayer === "function") {
-      try {
-        map.removeLayer(highlightMarker);
-      } catch (_) {
-        // ignore
-      }
-    }
-    highlightMarker = null;
-  }
-
-  async function loadPinkLineGeojson() {
-    try {
-      const res = await fetch("/api/pink-line/");
-      if (!res.ok) return null;
-      return await res.json();
-    } catch (_) {
-      return null;
-    }
-  }
-
-
-  function getGeometryType(geometry) {
-    if (!geometry || !geometry.type) return null;
-    const t = geometry.type.toLowerCase();
-    if (t === "point" || t === "multipoint") return "point";
-    if (t === "linestring" || t === "multilinestring") return "line";
-    return "polygon";
-  }
-
-  function createFeatureLayer(feature) {
-    if (!feature || !feature.geometry || typeof L === "undefined") return null;
-    const geomType = getGeometryType(feature.geometry);
-
-    if (geomType === "point") {
-      const layerColor = "#00d4ff";
-      return L.geoJSON(
-        { type: "FeatureCollection", features: [feature] },
-        {
-          pointToLayer: (f, latlng) => {
-            const props = f.properties || {};
-            const memorialIconUrl = getMemorialIconForFeature(props);
-
-            let marker;
-            if (memorialIconUrl) {
-              const icon = L.icon({
-                iconUrl: memorialIconUrl,
-                iconSize: [36, 36],
-                iconAnchor: [18, 18],
-                popupAnchor: [0, -18],
-                className: "curation-memorial-marker-icon",
-              });
-              marker = L.marker(latlng, { icon });
-            } else {
-              marker = L.marker(latlng, {
-                icon: L.divIcon({
-                  className: "pink-line-node-marker",
-                  html:
-                    '<div class="pink-line-node" style="background:' +
-                    layerColor +
-                    '"></div>',
-                  iconSize: [14, 14],
-                  iconAnchor: [7, 7],
-                }),
-              });
-            }
-
-            const label = getLabelFromProps(props);
-            if (label) {
-              marker.bindTooltip(label, {
-                permanent: false,
-                direction: "top",
-                className: "curated-node-tooltip",
-              });
-            }
-
-            return marker;
-          },
-        }
-      );
-    }
-
-    if (geomType === "line") {
-      const lineStyle = { color: "#00d4ff", weight: 2.5, dashArray: "8,6", opacity: 0.95 };
-      return L.geoJSON(
-        { type: "FeatureCollection", features: [feature] },
-        { style: lineStyle }
-      );
-    }
-
-    const otherStyle = { color: "#00d4ff", weight: 2, fillOpacity: 0.3 };
-    return L.geoJSON(
-      { type: "FeatureCollection", features: [feature] },
-      { style: otherStyle }
-    );
-  }
-
-  function setFeatureVisibleOnMap(featureIndex, isVisible) {
-    previewState.setFeatureVisible(featureIndex, isVisible);
-    if (!map) return;
-    const key = String(featureIndex);
-    const layers = previewState.featureLayers.get(key) || [];
-    layers.forEach((layer) => {
-      if (!layer) return;
-      if (isVisible) {
-        if (typeof layer.addTo === "function") {
-          layer.addTo(map);
-        } else if (typeof map.addLayer === "function") {
-          map.addLayer(layer);
-        }
-      } else if (typeof map.removeLayer === "function") {
-        try {
-          map.removeLayer(layer);
-        } catch (_) {
-          // ignore
-        }
-      }
-    });
-  }
-
-  function highlightFeatureOnMap(featureIndex, rowEl) {
-    if (!map) initMap();
-    if (!map) return;
-
-    const key = String(featureIndex);
-    const layers = previewState.featureLayers.get(key) || [];
-    if (!layers.length) return;
-
-    let targetLayer = null;
-    for (const layer of layers) {
-      if (!layer) continue;
-      if (typeof layer.getBounds === "function") {
-        const b = layer.getBounds();
-        if (b && typeof b.getCenter === "function") {
-          targetLayer = layer;
-          break;
-        }
-      } else if (typeof layer.getLatLng === "function") {
-        targetLayer = layer;
-        break;
-      }
-    }
-    if (!targetLayer) {
-      targetLayer = layers[0];
-    }
-
-    let center = null;
-    if (targetLayer && typeof targetLayer.getBounds === "function") {
-      const b = targetLayer.getBounds();
-      if (b && typeof b.getCenter === "function") {
-        center = b.getCenter();
-      }
-    }
-    if (!center && targetLayer && typeof targetLayer.getLatLng === "function") {
-      center = targetLayer.getLatLng();
-    }
-    if (!center) return;
-
-    if (highlightMarker && map && typeof map.removeLayer === "function") {
-      try {
-        map.removeLayer(highlightMarker);
-      } catch (_) {
-        // ignore
-      }
-    }
-
-    highlightMarker = L.circleMarker(center, {
-      radius: 10,
-      pane: "markerPane",
-      interactive: false,
-      className: "curation-marker-highlight",
-    }).addTo(map);
-
-    if (typeof map.panTo === "function") {
-      map.panTo(center);
-    }
-
-    const container = featuresContainer();
-    if (container) {
-      container
-        .querySelectorAll(".curation-feature-row.highlighted")
-        .forEach((el) => el.classList.remove("highlighted"));
-    }
-    if (rowEl) {
-      rowEl.classList.add("highlighted");
-    }
-
-    previewState.highlightFeature(featureIndex);
-  }
-
-  async function showPreview(geojson) {
-    if (!map) initMap();
-    clearPreview();
-    const features = geojson?.features || [];
-    const bounds = [];
-    let basePaths = [];
-
-    const pinkGeojson = await loadPinkLineGeojson();
-    if (pinkGeojson && pinkGeojson.features && pinkGeojson.features.length && map) {
-      baseRouteLayer = L.geoJSON(pinkGeojson, {
-        style: {
-          // Match GIS/projection pink-line styling
-          color: "#ff69b4",
-          weight: 5,
-          opacity: 1,
-        },
-      }).addTo(map);
-      baseRouteLayer.eachLayer((l) => {
-        if (l.getBounds) bounds.push(l.getBounds());
-      });
-
-      try {
-        basePaths = parseDefaultLinePaths(pinkGeojson) || [];
-      } catch (_) {
-        basePaths = [];
-      }
-    }
-
-    if (!features.length) {
-      if (bounds.length && typeof L !== "undefined") {
-        map.fitBounds(L.latLngBounds(bounds), { padding: [20, 20] });
-      }
+  /**
+   * Default layer name from the selected submission row (still editable in the input).
+   * @param {string} submissionId
+   */
+  function syncLayerNameFromSelectedSubmission(submissionId) {
+    const input = layerNameInput();
+    if (!input) return;
+    const sid = String(submissionId || "").trim();
+    if (!sid) {
+      input.value = "";
       return;
     }
-
-    const userPoints = [];
-
-    features.forEach((feature, index) => {
-      const layer = createFeatureLayer(feature);
-      if (!layer || !previewState) return;
-
-      previewState.registerFeatureLayers(index, [layer]);
-
-      const enabled = featureEnabled.get(index);
-      const visible = enabled !== false;
-      setFeatureVisibleOnMap(index, visible);
-
-      if (layer.getBounds) {
-        bounds.push(layer.getBounds());
-      }
-
-      // Collect point features for integrated pink-line route preview
-      const geom = feature.geometry;
-      if (geom && geom.type === "Point" && Array.isArray(geom.coordinates)) {
-        const [lng, lat] = geom.coordinates;
-        if (
-          typeof lat === "number" &&
-          typeof lng === "number" &&
-          Number.isFinite(lat) &&
-          Number.isFinite(lng)
-        ) {
-          userPoints.push([lat, lng]);
-        }
-      }
-    });
-
-    // Add integrated dashed route showing how nodes deviate from the pink line,
-    // matching the curated layer behaviour on the GIS / projection views.
-    if (
-      map &&
-      Array.isArray(basePaths) &&
-      basePaths.length > 0 &&
-      Array.isArray(userPoints) &&
-      userPoints.length > 0 &&
-      typeof buildIntegratedRoute === "function"
-    ) {
-      try {
-        const { dashed } = buildIntegratedRoute(basePaths, userPoints);
-        if (dashed && dashed.length) {
-          const layerColor = "#00d4ff";
-          const dashedStyle = {
-            color: layerColor,
-            weight: 5,
-            opacity: 0.9,
-            dashArray: "10, 10",
-          };
-          integratedRouteLayer = L.layerGroup();
-          dashed.forEach((pts) => {
-            integratedRouteLayer.addLayer(L.polyline(pts, dashedStyle));
-          });
-          integratedRouteLayer.addTo(map);
-        }
-      } catch (_) {
-        // If integrated route fails, fall back to per-feature layers only.
-      }
-    }
-
-    if (bounds.length && typeof L !== "undefined") {
-      const b = L.latLngBounds(bounds);
-      map.fitBounds(b, { padding: [24, 24], maxZoom: 16 });
-    }
-  }
-
-  function setFeatureVisible(index, visible) {
-    const layers = featureLayers.get(index);
-    if (!layers || !map) return;
-    layers.forEach((l) => {
-      if (visible) {
-        l.addTo(map);
-      } else {
-        map.removeLayer(l);
-      }
-    });
-    if (highlightedIndex === index && !visible) clearHighlight();
-  }
-
-  function highlightFeature(index) {
-    clearHighlight();
-    if (index < 0 || index >= currentFeatures.length) return;
-    if (!featureEnabled.get(index)) return;
-
-    highlightedIndex = index;
-
-    const row = featuresContainer()?.querySelector(`.curation-feature-row:nth-child(${index + 1})`);
-    if (row) row.classList.add("highlighted");
-
-    const latlng = getFeatureLatLng(currentFeatures[index]);
-    if (latlng && map) {
-      highlightMarker = L.marker(latlng, {
-        icon: L.divIcon({
-          className: "curation-marker-highlight",
-          iconSize: [40, 40],
-          iconAnchor: [20, 20],
-        }),
-        interactive: false,
-        zIndexOffset: -100,
-      }).addTo(map);
-      map.panTo(latlng);
-    }
+    const row = submissionsCtlRef.current?.getSelectedSubmission?.();
+    const name = row?.name != null ? String(row.name).trim() : "";
+    input.value = name;
   }
 
   function escapeHtml(s) {
@@ -604,7 +139,7 @@ export function createCurationPreviewState() {
     if (!currentFeatures.length) {
       container.innerHTML =
         '<div class="curation-status">No features in this submission.</div>';
-      publishBtn().disabled = true;
+      updatePublishState();
       return;
     }
 
@@ -615,32 +150,37 @@ export function createCurationPreviewState() {
     container.innerHTML = currentFeatures
       .map((f, i) => {
         const props = f.properties || {};
+        const isHistory = props.is_current === false;
         const name =
           props.name ||
           props.description ||
           props.reason ||
           props.id ||
           `Feature ${i + 1}`;
-        const subtitle = getSubtitleFromProps(props);
+        const subtitle = mapCtl.getSubtitleFromProps(props);
         const id = `curation-f-${i}`;
         const showSubtitle =
           subtitle && String(subtitle).trim() !== String(name).trim();
         const subtitleHtml = showSubtitle
           ? `<div class="curation-feature-meta">${escapeHtml(subtitle)}</div>`
           : "";
+        const historyHtml = isHistory
+          ? '<div class="curation-feature-meta">History revision</div>'
+          : "";
         const memorialIconUrl = getMemorialIconForFeature(props);
         const iconHtml = memorialIconUrl
           ? `<img src="${memorialIconUrl}" alt="" class="curation-feature-icon" />`
           : "";
         return `
-          <div class="curation-feature-row">
+          <div class="curation-feature-row${isHistory ? " curation-feature-row--history" : ""}">
             <input type="checkbox" id="${id}" data-index="${i}" checked />
             ${iconHtml}
             <div class="curation-feature-content">
               <label for="${id}" class="curation-feature-title">${escapeHtml(String(name))}</label>
               ${subtitleHtml}
+              ${historyHtml}
             </div>
-            <button type="button" class="curation-feature-edit" data-index="${i}" aria-label="Edit feature">Edit</button>
+            <button type="button" class="curation-feature-edit" data-index="${i}" aria-label="Edit feature" ${isHistory ? "disabled" : ""}>Edit</button>
           </div>`;
       })
       .join("");
@@ -649,15 +189,8 @@ export function createCurationPreviewState() {
       input.addEventListener("change", () => {
         const idx = parseInt(input.getAttribute("data-index"), 10);
         featureEnabled.set(idx, input.checked);
-        setFeatureVisibleOnMap(idx, input.checked);
+        mapCtl.setFeatureVisibleOnMap(idx, input.checked);
         updatePublishState();
-      });
-    });
-
-    container.querySelectorAll(".curation-feature-row").forEach((row, idx) => {
-      row.addEventListener("click", (e) => {
-        if (e.target.closest("input") || e.target.closest(".curation-feature-edit")) return;
-        highlightFeature(idx);
       });
     });
 
@@ -683,42 +216,18 @@ export function createCurationPreviewState() {
         if (!input) return;
         const idx = parseInt(input.getAttribute("data-index"), 10);
         if (Number.isNaN(idx)) return;
-        highlightFeatureOnMap(idx, row);
+        mapCtl.highlightFeatureOnMap(idx, row);
       });
     });
 
-    publishBtn().disabled = !getSelectedGeojson().features.length;
-  }
-
-  function openSubmissionModal() {
-    const sid = submissionSelect().value;
-    if (!sid) return;
-    el("curationModalSubmissionId").value = sid;
-    el("curationModalSubmissionName").value = getSubmissionNames()[sid] || "";
-    el("curationModalSubmission").classList.add("open");
-    el("curationModalSubmission").setAttribute("aria-hidden", "false");
-  }
-
-  function closeSubmissionModal() {
-    el("curationModalSubmission").classList.remove("open");
-    el("curationModalSubmission").setAttribute("aria-hidden", "true");
-  }
-
-  function saveSubmissionModal() {
-    const sid = el("curationModalSubmissionId").value;
-    const name = (el("curationModalSubmissionName").value || "").trim();
-    setSubmissionName(sid, name);
-    const opts = submissionSelect().querySelectorAll("option");
-    opts.forEach((opt) => {
-      if (opt.value === sid) opt.textContent = getSubmissionDisplayName(sid);
-    });
-    closeSubmissionModal();
+    updatePublishState();
   }
 
   function openFeatureModal(featureIndex) {
     const f = currentFeatures[featureIndex];
     if (!f) return;
     const p = f.properties || {};
+    if (p.is_current === false) return;
     el("curationModalFeatureName").value = p.name != null ? String(p.name) : "";
     el("curationModalFeatureReason").value = p.reason != null ? String(p.reason) : "";
     el("curationModalFeatureDescription").value = p.description != null ? String(p.description) : "";
@@ -743,13 +252,28 @@ export function createCurationPreviewState() {
     f.properties.description = (el("curationModalFeatureDescription").value || "").trim() || undefined;
     f.properties.note = (el("curationModalFeatureNote").value || "").trim() || undefined;
     renderFeatureList(currentFeatures);
-    showPreview({ type: "FeatureCollection", features: currentFeatures });
+    mapCtl.showPreview(
+      { type: "FeatureCollection", features: currentFeatures },
+      { preserveView: true },
+    );
     closeFeatureModal();
   }
 
-  function getSelectedGeojson() {
+  /**
+   * @param {boolean} [includeHistoryInPayload=true] When false, drops checked features with `is_current === false`.
+   */
+  function getSelectedGeojson(includeHistoryInPayload = true) {
     const features = currentFeatures
-      .filter((_, i) => featureEnabled.get(i))
+      .filter((f, i) => {
+        if (!featureEnabled.get(i)) return false;
+        if (
+          !includeHistoryInPayload &&
+          (f.properties || {}).is_current === false
+        ) {
+          return false;
+        }
+        return true;
+      })
       .map((f) => ({
         type: "Feature",
         geometry: f.geometry,
@@ -759,59 +283,114 @@ export function createCurationPreviewState() {
   }
 
   function updatePublishState() {
-    const hasSelection = getSelectedGeojson().features.length > 0;
+    const hasSelection = getSelectedGeojson(true).features.length > 0;
     const hasName = (layerNameInput().value || "").trim().length > 0;
-    const hasProject = (projectSelect().value || "").trim().length > 0;
-    publishBtn().disabled = !hasSelection || !hasName || !hasProject;
+    publishBtn().disabled = isPublishing || !hasSelection || !hasName;
   }
 
-  async function loadProjects() {
-    try {
-      const list = await API.projects();
-      const select = projectSelect();
-      if (!select) return;
-      const current = select.value;
-      select.innerHTML =
-        '<option value="">— Select project —</option>' +
-        (Array.isArray(list) ? list : [])
-          .map((p) => {
-            const id = p.id ?? p.project_id ?? p;
-            const name = p.name ?? p.display_name ?? String(id);
-            return `<option value="${escapeHtml(String(id))}">${escapeHtml(String(name))}</option>`;
-          })
-          .join("");
-      if (current) select.value = current;
-    } catch (e) {
-      setStatus("Could not load projects: " + e.message, "error");
+  function updateSaveEditsState() {
+    const btn = saveEditsBtn();
+    if (!btn) return;
+    const pendingCount = pendingGeometryEdits.size;
+    btn.disabled = pendingCount === 0 || !selectedSubmissionId();
+    btn.textContent =
+      pendingCount > 0
+        ? `Save source edits (${pendingCount})`
+        : "Save source edits";
+  }
+
+  async function savePendingEdits() {
+    if (!pendingGeometryEdits.size) {
+      setStatus("No pending geometry edits to save.");
+      updateSaveEditsState();
+      return;
     }
-  }
+    const submissionId = selectedSubmissionId();
+    if (!submissionId) {
+      setStatus("Select a submission before saving edits.", "error");
+      return;
+    }
 
-  async function loadSubmissions(projectId) {
-    const subSelect = submissionSelect();
-    if (!subSelect) return;
-    subSelect.disabled = true;
-    subSelect.innerHTML = "<option value=\"\">— Select submission —</option>";
-    if (!projectId) return;
+    const btn = saveEditsBtn();
+    if (btn) btn.disabled = true;
+    setStatus(`Saving ${pendingGeometryEdits.size} source edit(s)…`);
 
+    let savedCount = 0;
+    let skippedCount = 0;
+    const warnings = [];
+    let latestPublishedLayerId = lastPublishedFullLayerIdRef.current || null;
+    const edits = Array.from(pendingGeometryEdits.values());
+    const groupedEdits = new Map();
+    edits.forEach((edit) => {
+      const key = `${edit?.sourcePublishedLayerFullId || "auto"}::${edit?.projectId || "none"}`;
+      const row = groupedEdits.get(key) || [];
+      row.push(edit);
+      groupedEdits.set(key, row);
+    });
     try {
-      const list = await API.submissions(projectId);
-      list.forEach((s) => {
-        const id = s.id ?? s.submission_id ?? s;
-        const opt = document.createElement("option");
-        opt.value = id;
-        opt.textContent = getSubmissionDisplayName(id);
-        subSelect.appendChild(opt);
-      });
-      subSelect.disabled = false;
-    } catch (e) {
-      setStatus("Could not load submissions: " + e.message, "error");
-      subSelect.disabled = false;
+      for (const group of groupedEdits.values()) {
+        if (!Array.isArray(group) || group.length === 0) continue;
+        const sourceLayerId = group[0]?.sourcePublishedLayerFullId || null;
+        const requestEdits = [];
+        for (const edit of group) {
+          if (!edit || !edit.featureId) {
+            skippedCount += 1;
+            continue;
+          }
+          const srcFeat = currentFeatures.find(
+            (cf) =>
+              cf?.properties?.id != null &&
+              String(cf.properties.id) === String(edit.featureId),
+          );
+          if (srcFeat?.properties?.is_current === false) {
+            skippedCount += 1;
+            continue;
+          }
+          requestEdits.push({
+            feature_id: edit.featureId,
+            project_id: edit.projectId || null,
+            before_geom: edit.beforeGeom || {},
+            after_geom: edit.afterGeom || {},
+          });
+        }
+        if (requestEdits.length === 0) continue;
+        const result = await API.editFeaturesBatch({
+          table: "otef",
+          project_name: CURATED_GROUP_NAME,
+          submission_id: submissionId,
+          published_layer_full_id: sourceLayerId,
+          edits: requestEdits,
+        });
+        if (result && result.new_full_layer_id) {
+          latestPublishedLayerId = String(result.new_full_layer_id);
+        }
+        if (result && result.warning) {
+          warnings.push(String(result.warning));
+        }
+        savedCount += Number(result?.edits_applied || requestEdits.length);
+      }
+      lastPublishedFullLayerIdRef.current = latestPublishedLayerId;
+      pendingGeometryEdits.clear();
+      updateSaveEditsState();
+      await publishedPanel.loadPublishedCuratedLayers();
+      await submissionsCtlRef.current.loadSubmissions({ preserveOnError: true });
+      const skippedSuffix =
+        skippedCount > 0 ? ` (${skippedCount} skipped without feature ids)` : "";
+      const warningSuffix =
+        warnings.length > 0 ? ` Warning: ${warnings[0]}` : "";
+      setStatus(`Saved ${savedCount} source edit(s)${skippedSuffix}.${warningSuffix}`, "success");
+    } catch (err) {
+      updateSaveEditsState();
+      setStatus("Could not save source edits: " + (err?.message || String(err)), "error");
     }
   }
 
   async function loadFeatures(submissionId) {
-    clearPreview();
+    mapCtl.clearPreview();
     renderFeatureList([]);
+    pendingGeometryEdits.clear();
+    updateSaveEditsState();
+    lastPublishedFullLayerIdRef.current = null;
     setStatus("Loading…");
     if (!submissionId) {
       featuresContainer().innerHTML =
@@ -821,25 +400,27 @@ export function createCurationPreviewState() {
     }
 
     try {
-      const geojson = await API.features(submissionId);
+      const geojson = await API.features(submissionId, {
+        includeCurrent: true,
+        includeHistory: historyFilterState.showOldRevisions,
+      });
       const features = geojson.features || [];
-      await showPreview(geojson);
+      await mapCtl.showPreview(geojson);
       renderFeatureList(features);
       setStatus("");
+      updateSaveEditsState();
     } catch (e) {
       setStatus("Could not load features: " + e.message, "error");
       renderFeatureList([]);
+      updateSaveEditsState();
     }
   }
 
   function getSelectedProjectName() {
-    const sel = projectSelect();
-    if (!sel || !sel.value) return "";
-    const opt = sel.options[sel.selectedIndex];
-    return opt ? opt.textContent.trim() : "";
+    return CURATED_GROUP_NAME;
   }
 
-  async function publish() {
+  function openPublishDialog() {
     const name = (layerNameInput().value || "").trim();
     if (!name) {
       setStatus("Enter a layer name.", "error");
@@ -848,27 +429,92 @@ export function createCurationPreviewState() {
 
     const projName = getSelectedProjectName();
     if (!projName) {
-      setStatus("Select a project first.", "error");
+      setStatus("Missing curated group name.", "error");
       return;
     }
 
-    const selected = getSelectedGeojson();
-    if (!selected.features.length) {
+    if (getSelectedGeojson(true).features.length === 0) {
       setStatus("Select at least one feature.", "error");
       return;
     }
 
-    const projectId = (projectSelect().value || "").trim();
-    if (!projectId) {
-      setStatus("Select a project first.", "error");
-      publishBtn().disabled = false;
-      return;
-    }
+    setPublishModeSegmentState(false);
 
-    publishBtn().disabled = true;
-    setStatus("Publishing…");
+    const overlay = publishModalOverlay();
+    if (!overlay) return;
+    overlay.classList.add("open");
+    overlay.setAttribute("aria-hidden", "false");
+  }
 
+  function closePublishDialog() {
+    const overlay = publishModalOverlay();
+    if (!overlay) return;
+    overlay.classList.remove("open");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+
+  function setPublishDialogBusy(isBusy) {
+    const confirmBtn = el("curationModalPublishConfirm");
+    if (confirmBtn) confirmBtn.disabled = !!isBusy;
+  }
+
+  function confirmPublishFromDialog() {
+    if (isPublishing) return;
+    const historyBtn = el("curationPublishModeHistory");
+    const includeHistory = historyBtn?.getAttribute("aria-pressed") === "true";
+    void publishWithOptions(includeHistory);
+  }
+
+  /** @param {boolean} includeHistory */
+  function setPublishModeSegmentState(includeHistory) {
+    const cur = el("curationPublishModeCurrent");
+    const hist = el("curationPublishModeHistory");
+    if (cur) cur.setAttribute("aria-pressed", includeHistory ? "false" : "true");
+    if (hist) hist.setAttribute("aria-pressed", includeHistory ? "true" : "false");
+  }
+
+  function syncHistoryRevisionSegmentUI() {
+    const cur = el("curationHistoryFilterCurrent");
+    const hist = el("curationHistoryFilterWithHistory");
+    const show = historyFilterState.showOldRevisions;
+    if (cur) cur.setAttribute("aria-pressed", show ? "false" : "true");
+    if (hist) hist.setAttribute("aria-pressed", show ? "true" : "false");
+  }
+
+  async function publishWithOptions(includeHistoryInPayload) {
+    if (isPublishing) return;
+    isPublishing = true;
+    setPublishDialogBusy(true);
+    updatePublishState();
     try {
+      const name = (layerNameInput().value || "").trim();
+      if (!name) {
+        setStatus("Enter a layer name.", "error");
+        return;
+      }
+
+      const projName = getSelectedProjectName();
+      if (!projName) {
+        setStatus("Missing curated group name.", "error");
+        return;
+      }
+
+      const selected = getSelectedGeojson(includeHistoryInPayload);
+      if (!selected.features.length) {
+        setStatus(
+          includeHistoryInPayload
+            ? "Select at least one feature."
+            : "Select at least one current feature (history excluded in Current only).",
+          "error",
+        );
+        return;
+      }
+
+      closePublishDialog();
+
+      publishBtn().disabled = true;
+      setStatus("Publishing…");
+
       let payload = selected;
       const crs = payload.crs?.properties?.name || "";
       const firstCoord = CoordUtils.getFirstCoordinate(payload);
@@ -895,12 +541,13 @@ export function createCurationPreviewState() {
         payload = { ...payload, crs: { type: "name", properties: { name: "EPSG:4326" } } };
       }
       const result = await API.publish(name, payload, projName);
-      const effectiveProjectName = result.projectName || projName;
+      lastPublishedFullLayerIdRef.current = result.fullLayerId || null;
+      await publishedPanel.loadPublishedCuratedLayers();
       setStatus(
         "Published as \"" +
           (result.displayName || name) +
-          "\" in project \"" +
-          effectiveProjectName +
+          "\" in group \"" +
+          CURATED_GROUP_NAME +
           "\". Layer is available in the projection and remote controller Layers sheet; open views will update automatically.",
         "success"
       );
@@ -910,61 +557,58 @@ export function createCurationPreviewState() {
         console.error("[Curation] Publish failed:", e);
       }
       setStatus("Publish failed: " + msg, "error");
-      publishBtn().disabled = false;
+    } finally {
+      isPublishing = false;
+      setPublishDialogBusy(false);
       updatePublishState();
     }
   }
 
   function refresh() {
     setStatus("");
-    loadProjects();
-    const pid = projectSelect().value;
-    if (pid) loadSubmissions(pid);
-    const sid = submissionSelect().value;
-    if (sid) loadFeatures(sid);
-  }
-
-  let pollTimer = null;
-  function startPolling() {
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(refresh, 30000);
-  }
-  function stopPolling() {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
-    }
+    Promise.all([loadSubmissions(), publishedPanel.loadPublishedCuratedLayers()]).then(() => {
+      const sid = selectedSubmissionId();
+      if (sid) loadFeatures(sid);
+    });
   }
 
   function init() {
-    initMap();
-    loadProjects();
-    startPolling();
+    mapCtl.initMap();
+    loadSubmissions();
+    publishedPanel.loadPublishedCuratedLayers();
 
-    projectSelect().addEventListener("change", () => {
-      const id = projectSelect().value;
-      submissionSelect().value = "";
-      loadSubmissions(id);
-      loadFeatures(null);
-      updatePublishState();
+    syncHistoryRevisionSegmentUI();
+    el("curationHistoryFilterCurrent")?.addEventListener("click", () => {
+      if (!historyFilterState.showOldRevisions) return;
+      historyFilterState = setHistoryFilterState({ showOldRevisions: false });
+      syncHistoryRevisionSegmentUI();
+      const sid = selectedSubmissionId();
+      if (sid) loadFeatures(sid);
     });
-
-    submissionSelect().addEventListener("change", () => {
-      loadFeatures(submissionSelect().value);
+    el("curationHistoryFilterWithHistory")?.addEventListener("click", () => {
+      if (historyFilterState.showOldRevisions) return;
+      historyFilterState = setHistoryFilterState({ showOldRevisions: true });
+      syncHistoryRevisionSegmentUI();
+      const sid = selectedSubmissionId();
+      if (sid) loadFeatures(sid);
     });
 
     layerNameInput().addEventListener("input", updatePublishState);
 
-    publishBtn().addEventListener("click", publish);
-    refreshBtn().addEventListener("click", refresh);
-
-    el("curationEditSubmission").addEventListener("click", openSubmissionModal);
-
-    el("curationModalSubmissionCancel").addEventListener("click", closeSubmissionModal);
-    el("curationModalSubmissionSave").addEventListener("click", saveSubmissionModal);
-    el("curationModalSubmission").addEventListener("click", (e) => {
-      if (e.target === el("curationModalSubmission")) closeSubmissionModal();
+    publishBtn().addEventListener("click", openPublishDialog);
+    el("curationPublishModeCurrent")?.addEventListener("click", () =>
+      setPublishModeSegmentState(false),
+    );
+    el("curationPublishModeHistory")?.addEventListener("click", () =>
+      setPublishModeSegmentState(true),
+    );
+    el("curationModalPublishCancel")?.addEventListener("click", closePublishDialog);
+    el("curationModalPublishConfirm")?.addEventListener("click", confirmPublishFromDialog);
+    publishModalOverlay()?.addEventListener("click", (e) => {
+      if (e.target === publishModalOverlay()) closePublishDialog();
     });
+    saveEditsBtn()?.addEventListener("click", savePendingEdits);
+    refreshBtn().addEventListener("click", refresh);
 
     el("curationModalFeatureCancel").addEventListener("click", closeFeatureModal);
     el("curationModalFeatureSave").addEventListener("click", saveFeatureModal);

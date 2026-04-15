@@ -103,7 +103,7 @@ describe("layer-state-helper: curated group display names", () => {
     delete global.layerRegistry;
   });
 
-  test("uses backend-sent group name when present for curated groups", () => {
+  test("canonicalizes single curated group to Moreshet Axis name/id", () => {
     global.OTEFDataContext = {
       getLayerGroups: () => [
         {
@@ -119,11 +119,11 @@ describe("layer-state-helper: curated group display names", () => {
 
     const groups = getEffectiveLayerGroups();
     expect(groups).toHaveLength(1);
-    expect(groups[0].id).toBe("curated_my_project");
-    expect(groups[0].name).toBe("My Project");
+    expect(groups[0].id).toBe("curated_moresht_axis");
+    expect(groups[0].name).toBe("Moreshet Axis");
   });
 
-  test("derives human-readable name from curated_<slug> when name is missing", () => {
+  test("canonicalizes curated slug-only group to Moreshet Axis", () => {
     global.OTEFDataContext = {
       getLayerGroups: () => [
         {
@@ -137,8 +137,34 @@ describe("layer-state-helper: curated group display names", () => {
 
     const groups = getEffectiveLayerGroups();
     expect(groups).toHaveLength(1);
-    expect(groups[0].id).toBe("curated_my_other_project");
-    expect(groups[0].name).toBe("my other project");
+    expect(groups[0].id).toBe("curated_moresht_axis");
+    expect(groups[0].name).toBe("Moreshet Axis");
+  });
+
+  test("coalesces multiple curated project groups into one Moreshet Axis group", () => {
+    global.OTEFDataContext = {
+      getLayerGroups: () => [
+        {
+          id: "curated_project_a",
+          name: "Project A",
+          enabled: true,
+          layers: [{ id: "10", displayName: "Proposal A", enabled: true }],
+        },
+        {
+          id: "curated_project_b",
+          name: "Project B",
+          enabled: true,
+          layers: [{ id: "11", displayName: "Proposal B", enabled: false }],
+        },
+      ],
+    };
+    delete global.layerRegistry;
+
+    const groups = getEffectiveLayerGroups();
+    expect(groups).toHaveLength(1);
+    expect(groups[0].id).toBe("curated_moresht_axis");
+    expect(groups[0].name).toBe("Moreshet Axis");
+    expect(groups[0].layers.map((l) => l.id)).toEqual(["10", "11"]);
   });
 });
 

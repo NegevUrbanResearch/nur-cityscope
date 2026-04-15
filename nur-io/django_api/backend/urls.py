@@ -6,8 +6,13 @@ from . import views
 from .supabase_proxy import (
     SupabaseProjectsView,
     SupabaseProjectSubmissionsView,
+    SupabaseSubmissionsView,
     SupabaseSubmissionFeaturesView,
+    CurationRouteComputeProxyView,
     CuratedLayerPublishView,
+    CuratedLayerEditView,
+    CuratedLayerBatchEditView,
+    CuratedLayerUnpublishView,
 )
 from .views import (
     TableViewSet,
@@ -83,14 +88,39 @@ urlpatterns = [
         name="supabase_project_submissions",
     ),
     path(
+        "supabase/submissions/",
+        SupabaseSubmissionsView.as_view(),
+        name="supabase_submissions",
+    ),
+    path(
         "supabase/submissions/<uuid:submission_id>/features/",
         SupabaseSubmissionFeaturesView.as_view(),
         name="supabase_submission_features",
     ),
     path(
+        "supabase/curated/compute-route/",
+        CurationRouteComputeProxyView.as_view(),
+        name="supabase_curated_compute_route",
+    ),
+    path(
         "supabase/curated/publish/",
         CuratedLayerPublishView.as_view(),
         name="supabase_curated_publish",
+    ),
+    path(
+        "supabase/curated/edit/",
+        CuratedLayerEditView.as_view(),
+        name="supabase_curated_edit",
+    ),
+    path(
+        "supabase/curated/edit-batch/",
+        CuratedLayerBatchEditView.as_view(),
+        name="supabase_curated_edit_batch",
+    ),
+    path(
+        "supabase/curated/unpublish/",
+        CuratedLayerUnpublishView.as_view(),
+        name="supabase_curated_unpublish",
     ),
     path("pink-line/", pink_line_geojson, name="pink_line_geojson"),
     path("maps/<path:path>", serve_map_file, name="serve_map_file"),

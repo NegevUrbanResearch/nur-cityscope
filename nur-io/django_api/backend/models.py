@@ -263,6 +263,37 @@ class GISLayer(models.Model):
         return f"{self.table.name}{project_part}/{self.display_name}"
 
 
+class CurationEditRevision(models.Model):
+    """
+    Append-only history of curation geometry edits.
+    Stores before/after geometry for immutable audit and comparison.
+    """
+
+    id = models.AutoField(primary_key=True)
+    table = models.ForeignKey(
+        Table, on_delete=models.CASCADE, related_name="curation_edit_revisions"
+    )
+    project_name = models.CharField(max_length=255, blank=True, default="")
+    submission_id = models.CharField(max_length=100, blank=True, default="")
+    feature_id = models.CharField(max_length=100)
+    edit_type = models.CharField(max_length=50, default="move_geometry")
+    before_geom = models.JSONField(default=dict)
+    after_geom = models.JSONField(default=dict)
+    edited_by = models.CharField(max_length=255, blank=True, default="")
+    reason = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["table", "feature_id", "-created_at"]),
+            models.Index(fields=["table", "submission_id", "-created_at"]),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.table.name}/{self.feature_id}@{self.created_at.isoformat() if self.created_at else 'n/a'}"
+
+
 class OTEFModelConfig(models.Model):
     """
     Stores OTEF physical model configuration (bounds, calibration, etc.)
