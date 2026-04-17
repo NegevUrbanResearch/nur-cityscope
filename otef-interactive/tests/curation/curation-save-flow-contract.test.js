@@ -129,9 +129,14 @@ test("history line geometries are paler and visually distinct from current lines
   expect(src.includes("#0a1520")).toBe(false);
 });
 
-test("feature list can still style history rows if present in payload", () => {
+test("publish payload builder still drops history revisions (is_current === false)", () => {
   const orch = readCurationSource();
-  expect(orch.includes("curation-feature-row--history")).toBe(true);
+  const publishGeojson = fs.readFileSync(
+    path.join(CURATION_SRC_DIR, "curation-publish-geojson.js"),
+    "utf8",
+  );
+  expect(orch.includes("buildPublishGeojsonFromApiFeatures")).toBe(true);
+  expect(publishGeojson.includes("is_current === false")).toBe(true);
 });
 
 test("batch edit endpoint path exists", () => {

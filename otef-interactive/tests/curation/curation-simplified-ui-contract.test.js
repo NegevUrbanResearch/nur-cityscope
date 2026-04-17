@@ -7,6 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND = path.resolve(__dirname, "../../frontend");
 const CURATION_HTML = path.join(FRONTEND, "curation.html");
 const CURATION_JS = path.join(FRONTEND, "src/curation/curation.js");
+const CURATION_PUBLISH_GEOJSON_JS = path.join(FRONTEND, "src/curation/curation-publish-geojson.js");
 const CURATION_API_JS = path.join(FRONTEND, "src/curation/curation-api.js");
 
 function readUtf8(p) {
@@ -25,15 +26,18 @@ describe("curation simplified UI (HTML + orchestration contracts)", () => {
     expect(html.includes('id="curationUnpublishAll"')).toBe(true);
     expect(html.includes('id="curationSubmissionCombo"')).toBe(true);
     expect(html.includes('id="curationPublishedLayers"')).toBe(true);
-    expect(html.includes('id="curationFeatures"')).toBe(true);
+    expect(html.includes('id="curationFeatures"')).toBe(false);
+    expect(html.includes('id="curationLayerName"')).toBe(false);
     expect(html.includes('id="curationStatus"')).toBe(true);
     expect(html.includes('id="curationPublishModeHistory"')).toBe(false);
     expect(html.includes("Current + history")).toBe(false);
-    expect(html.includes('id="curationPublishScopeNote"')).toBe(true);
+    expect(html.includes('id="curationPublishScopeNote"')).toBe(false);
+    expect(html.includes('id="curationModalPublish"')).toBe(false);
   });
 
   test("curation.js loads features with current-only revisions and omits map / edit flows", () => {
     const js = readUtf8(CURATION_JS);
+    const publishGeojsonJs = readUtf8(CURATION_PUBLISH_GEOJSON_JS);
     const apiJs = readUtf8(CURATION_API_JS);
     expect(js.includes("includeHistory: false")).toBe(true);
     expect(js.includes("createCurationMapPreview")).toBe(false);
@@ -44,7 +48,12 @@ describe("curation simplified UI (HTML + orchestration contracts)", () => {
     expect(js.includes("curationUnpublishAll")).toBe(true);
     expect(js.includes("API.unpublishAllCuratedLayers")).toBe(true);
     expect(apiJs.includes("/api/supabase/curated/unpublish-all/")).toBe(true);
-    expect(js.includes("curation-feature-row--pick")).toBe(true);
+    expect(js.includes("curation-feature-row--pick")).toBe(false);
+    expect(js.includes("getPublishLayerNameFromSelection")).toBe(true);
+    expect(js.includes("getSelectedSubmission")).toBe(true);
+    expect(js.includes("buildPublishGeojsonFromApiFeatures")).toBe(true);
+    expect(js.includes("curation-publish-geojson")).toBe(true);
+    expect(publishGeojsonJs.includes("is_current === false")).toBe(true);
     expect(js.includes("curationPublishModeHistory")).toBe(false);
     expect(js.includes("setPublishModeSegmentState")).toBe(false);
     expect(js.includes("publishSelectedCuratedLayer")).toBe(true);

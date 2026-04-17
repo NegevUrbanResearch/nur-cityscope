@@ -1,20 +1,19 @@
-import { getMemorialIconForFeature } from "../shared/curated-layer-service.js";
 import { createCurationApi } from "./curation-api.js";
+import { buildPublishGeojsonFromApiFeatures } from "./curation-publish-geojson.js";
 import { createPublishedCuratedLayersPanel } from "./curation-published-layers.js";
 import { createSubmissionsPanel } from "./curation-submissions.js";
 
 export { createCurationPreviewState } from "./curation-state.js";
 
 /**
- * Curation page: list Supabase submissions, toggle features for publish, name and
- * publish as OTEF layer. Uses API proxy only (no Supabase client on frontend).
+ * Curation page: list Supabase submissions and publish the full current-only
+ * feature set as an OTEF layer (name from the selected submission row).
+ * Uses API proxy only (no Supabase client on frontend).
  */
 
 (function () {
   const API = createCurationApi();
 
-  let currentFeatures = [];
-  const featureEnabled = new Map();
   const publishedCuratedLayersRef = { current: [] };
   const lastPublishedFullLayerIdRef = { current: null };
   const submissionTypeById = new Map();
@@ -24,13 +23,10 @@ export { createCurationPreviewState } from "./curation-state.js";
   const selectedSubmissionInput = () => el("curationSubmission");
   const selectedSubmissionId = () =>
     String(selectedSubmissionInput()?.value || "").trim();
-  const featuresContainer = () => el("curationFeatures");
-  const layerNameInput = () => el("curationLayerName");
   const publishBtn = () => el("curationPublish");
   const statusEl = () => el("curationStatus");
   const refreshBtn = () => el("curationRefresh");
   const publishedLayersContainer = () => el("curationPublishedLayers");
-  const publishModalOverlay = () => el("curationModalPublish");
   const CURATED_GROUP_NAME = "Moreshet Axis";
   const CURATION_TABLE = "otef";
 
@@ -64,31 +60,13 @@ export { createCurationPreviewState } from "./curation-state.js";
     getSelectedIdInput: () => selectedSubmissionInput(),
     submissionTypeById,
     setStatus,
-    onSelectionChange: (id) => {
-      syncLayerNameFromSelectedSubmission(id);
-      void loadFeatures(id);
+    onSelectionChange: () => {
+      lastPublishedFullLayerIdRef.current = null;
       updatePublishState();
     },
   });
 
   const loadSubmissions = () => submissionsCtlRef.current.loadSubmissions();
-
-  /**
-   * Default layer name from the selected submission row (still editable in the input).
-   * @param {string} submissionId
-   */
-  function syncLayerNameFromSelectedSubmission(submissionId) {
-    const input = layerNameInput();
-    if (!input) return;
-    const sid = String(submissionId || "").trim();
-    if (!sid) {
-      input.value = "";
-      return;
-    }
-    const row = submissionsCtlRef.current?.getSelectedSubmission?.();
-    const name = row?.name != null ? String(row.name).trim() : "";
-    input.value = name;
-  }
 
   function escapeHtml(s) {
     const div = document.createElement("div");
@@ -96,147 +74,28 @@ export { createCurationPreviewState } from "./curation-state.js";
     return div.innerHTML;
   }
 
-  function renderFeatureList(features) {
-    currentFeatures = features || [];
-    featureEnabled.clear();
-    const container = featuresContainer();
-    if (!container) return;
-
-    if (!currentFeatures.length) {
-      container.innerHTML =
-        '<div class="curation-status">No features in this submission.</div>';
-      updatePublishState();
-      return;
-    }
-
-    currentFeatures.forEach((_, i) => {
-      featureEnabled.set(i, true);
-    });
-
-    container.innerHTML = currentFeatures
-      .map((f, i) => {
-        const props = f.properties || {};
-        const isHistory = props.is_current === false;
-        const name =
-          props.name ||
-          props.description ||
-          props.reason ||
-          props.id ||
-          `Feature ${i + 1}`;
-        const subtitle = subtitleFromProps(props);
-        const id = `curation-f-${i}`;
-        const showSubtitle =
-          subtitle && String(subtitle).trim() !== String(name).trim();
-        const subtitleHtml = showSubtitle
-          ? `<div class="curation-feature-meta">${escapeHtml(subtitle)}</div>`
-          : "";
-        const historyHtml = isHistory
-          ? '<div class="curation-feature-meta">History revision</div>'
-          : "";
-        const memorialIconUrl = getMemorialIconForFeature(props);
-        const iconHtml = memorialIconUrl
-          ? `<img src="${memorialIconUrl}" alt="" class="curation-feature-icon" />`
-          : "";
-        return `
-          <div class="curation-feature-row curation-feature-row--pick${isHistory ? " curation-feature-row--history" : ""}">
-            <input type="checkbox" id="${id}" data-index="${i}" checked />
-            ${iconHtml}
-            <div class="curation-feature-content">
-              <label for="${id}" class="curation-feature-title">${escapeHtml(String(name))}</label>
-              ${subtitleHtml}
-              ${historyHtml}
-            </div>
-          </div>`;
-      })
-      .join("");
-
-    container.querySelectorAll("input[data-index]").forEach((input) => {
-      input.addEventListener("change", () => {
-        const idx = parseInt(input.getAttribute("data-index"), 10);
-        featureEnabled.set(idx, input.checked);
-        updatePublishState();
-      });
-    });
-
-    updatePublishState();
-  }
-
-  function subtitleFromProps(props) {
-    const p = props || {};
-    const reason = p.reason != null ? String(p.reason).trim() : "";
-    const desc = p.description != null ? String(p.description).trim() : "";
-    const note = p.note != null ? String(p.note).trim() : "";
-    const id = p.id != null ? String(p.id).trim() : "";
-    const bits = [];
-    if (reason) bits.push(reason);
-    if (desc && desc !== reason) bits.push(desc);
-    if (note) bits.push(note);
-    if (id) bits.push(`id: ${id}`);
-    return bits.join(" · ");
-  }
-
   /**
-   * @param {boolean} [includeHistoryInPayload=false] When false, drops checked features with `is_current === false`.
+   * Layer display name for publish: full name from the selected submission row.
    */
-  function getSelectedGeojson(includeHistoryInPayload = false) {
-    const features = currentFeatures
-      .filter((f, i) => {
-        if (!featureEnabled.get(i)) return false;
-        if (
-          !includeHistoryInPayload &&
-          (f.properties || {}).is_current === false
-        ) {
-          return false;
-        }
-        return true;
-      })
-      .map((f) => ({
-        type: "Feature",
-        geometry: f.geometry,
-        properties: f.properties ? { ...f.properties } : {},
-      }));
-    return { type: "FeatureCollection", features };
+  function getPublishLayerNameFromSelection() {
+    const row = submissionsCtlRef.current?.getSelectedSubmission?.();
+    return row?.name != null ? String(row.name).trim() : "";
   }
 
   function updatePublishState() {
-    const hasSelection = getSelectedGeojson().features.length > 0;
-    const hasName = (layerNameInput().value || "").trim().length > 0;
-    publishBtn().disabled = isPublishing || !hasSelection || !hasName;
+    const btn = publishBtn();
+    if (!btn) return;
+    const sid = selectedSubmissionId();
+    const name = getPublishLayerNameFromSelection();
+    btn.disabled = isPublishing || !sid || !name;
   }
 
-  async function loadFeatures(submissionId) {
-    renderFeatureList([]);
-    lastPublishedFullLayerIdRef.current = null;
-    setStatus("Loading…");
-    if (!submissionId) {
-      featuresContainer().innerHTML =
-        '<div class="curation-status">Select a submission to list features.</div>';
-      setStatus("");
-      return;
-    }
-
-    try {
-      const geojson = await API.features(submissionId, {
-        includeCurrent: true,
-        includeHistory: false,
-      });
-      const features = geojson.features || [];
-      renderFeatureList(features);
-      setStatus("");
-    } catch (e) {
-      setStatus("Could not load features: " + e.message, "error");
-      renderFeatureList([]);
-    }
-  }
-
-  function getSelectedProjectName() {
-    return CURATED_GROUP_NAME;
-  }
-
-  function openPublishDialog() {
-    const name = (layerNameInput().value || "").trim();
-    if (!name) {
-      setStatus("Enter a layer name.", "error");
+  async function publishSelectedCuratedLayer() {
+    if (isPublishing) return;
+    const sid = selectedSubmissionId();
+    const name = getPublishLayerNameFromSelection();
+    if (!sid || !name) {
+      setStatus("Select a submission to publish.", "error");
       return;
     }
 
@@ -246,61 +105,21 @@ export { createCurationPreviewState } from "./curation-state.js";
       return;
     }
 
-    if (getSelectedGeojson().features.length === 0) {
-      setStatus("Select at least one feature.", "error");
-      return;
-    }
-
-    const overlay = publishModalOverlay();
-    if (!overlay) return;
-    overlay.classList.add("open");
-    overlay.setAttribute("aria-hidden", "false");
-  }
-
-  function closePublishDialog() {
-    const overlay = publishModalOverlay();
-    if (!overlay) return;
-    overlay.classList.remove("open");
-    overlay.setAttribute("aria-hidden", "true");
-  }
-
-  function setPublishDialogBusy(isBusy) {
-    const confirmBtn = el("curationModalPublishConfirm");
-    if (confirmBtn) confirmBtn.disabled = !!isBusy;
-  }
-
-  function confirmPublishFromDialog() {
-    if (isPublishing) return;
-    void publishSelectedCuratedLayer();
-  }
-
-  async function publishSelectedCuratedLayer() {
-    if (isPublishing) return;
     isPublishing = true;
-    setPublishDialogBusy(true);
     updatePublishState();
     try {
-      const name = (layerNameInput().value || "").trim();
-      if (!name) {
-        setStatus("Enter a layer name.", "error");
-        return;
-      }
-
-      const projName = getSelectedProjectName();
-      if (!projName) {
-        setStatus("Missing curated group name.", "error");
-        return;
-      }
-
-      const selected = getSelectedGeojson();
+      const geojson = await API.features(sid, {
+        includeCurrent: true,
+        includeHistory: false,
+      });
+      const selected = buildPublishGeojsonFromApiFeatures(geojson.features || [], geojson);
       if (!selected.features.length) {
-        setStatus("Select at least one current feature.", "error");
+        setStatus("No current features to publish for this submission.", "error");
         return;
       }
 
-      closePublishDialog();
-
-      publishBtn().disabled = true;
+      const pb = publishBtn();
+      if (pb) pb.disabled = true;
       setStatus("Publishing…");
 
       let payload = selected;
@@ -347,9 +166,12 @@ export { createCurationPreviewState } from "./curation-state.js";
       setStatus("Publish failed: " + msg, "error");
     } finally {
       isPublishing = false;
-      setPublishDialogBusy(false);
       updatePublishState();
     }
+  }
+
+  function getSelectedProjectName() {
+    return CURATED_GROUP_NAME;
   }
 
   async function unpublishAllCuratedLayers() {
@@ -420,8 +242,7 @@ export { createCurationPreviewState } from "./curation-state.js";
     setStatus("");
     void loadWorkshopModeUi();
     Promise.all([loadSubmissions(), publishedPanel.loadPublishedCuratedLayers()]).then(() => {
-      const sid = selectedSubmissionId();
-      if (sid) loadFeatures(sid);
+      updatePublishState();
     });
   }
 
@@ -430,13 +251,8 @@ export { createCurationPreviewState } from "./curation-state.js";
     publishedPanel.loadPublishedCuratedLayers();
     void loadWorkshopModeUi();
 
-    layerNameInput().addEventListener("input", updatePublishState);
-
-    publishBtn().addEventListener("click", openPublishDialog);
-    el("curationModalPublishCancel")?.addEventListener("click", closePublishDialog);
-    el("curationModalPublishConfirm")?.addEventListener("click", confirmPublishFromDialog);
-    publishModalOverlay()?.addEventListener("click", (e) => {
-      if (e.target === publishModalOverlay()) closePublishDialog();
+    publishBtn()?.addEventListener("click", () => {
+      void publishSelectedCuratedLayer();
     });
     el("curationUnpublishAll")?.addEventListener("click", () => {
       void unpublishAllCuratedLayers();
@@ -444,7 +260,7 @@ export { createCurationPreviewState } from "./curation-state.js";
     el("curationWorkshopAutoPublish")?.addEventListener("change", () => {
       void onWorkshopModeToggle();
     });
-    refreshBtn().addEventListener("click", refresh);
+    refreshBtn()?.addEventListener("click", refresh);
   }
 
   if (typeof document !== "undefined") {

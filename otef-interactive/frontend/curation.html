@@ -125,74 +125,6 @@
           max-height: 240px;
         }
       }
-      .curation-feature-row {
-        display: flex;
-        align-items: flex-start;
-        padding: 10px 12px;
-        border-bottom: 1px solid var(--border-color);
-        gap: 10px;
-        cursor: pointer;
-        transition: background-color 0.15s ease, border-color 0.15s ease;
-      }
-      .curation-feature-row:last-child {
-        border-bottom: none;
-      }
-      .curation-feature-row:hover {
-        background: var(--bg-secondary);
-      }
-      .curation-feature-row--pick {
-        cursor: default;
-      }
-      .curation-feature-row--pick:hover {
-        background: var(--bg-tertiary);
-      }
-      .curation-feature-row.highlighted {
-        background: var(--bg-secondary);
-        border-left: 3px solid var(--accent-primary);
-      }
-      .curation-feature-row.curation-feature-row--history {
-        opacity: 0.62;
-      }
-      .curation-feature-row input[type="checkbox"] {
-        margin-top: 3px;
-        flex-shrink: 0;
-        cursor: pointer;
-      }
-      .curation-feature-icon {
-        width: 20px;
-        height: 20px;
-        margin-top: 2px;
-        flex-shrink: 0;
-      }
-      .curation-feature-content {
-        flex: 1;
-        min-width: 0;
-      }
-      .curation-feature-title {
-        font-size: 14px;
-        font-weight: 500;
-        color: var(--text-primary);
-        cursor: inherit;
-      }
-      .curation-feature-meta {
-        font-size: 12px;
-        color: var(--text-muted);
-        margin-top: 2px;
-        line-height: 1.35;
-      }
-      .curation-name-input {
-        width: 100%;
-        padding: 10px 12px;
-        border: 1px solid var(--border-color);
-        border-radius: var(--border-radius);
-        background: var(--bg-tertiary);
-        color: var(--text-primary);
-        font-size: 14px;
-      }
-      .curation-name-input:focus {
-        outline: none;
-        border-color: var(--accent-primary);
-      }
       .curation-publish-btn {
         padding: 12px 16px;
         margin-top: 0;
@@ -244,124 +176,6 @@
       a.curation-header-btn {
         text-decoration: none;
         display: inline-block;
-      }
-      .curation-modal-overlay {
-        display: none;
-        position: fixed;
-        inset: 0;
-        background: rgba(0,0,0,0.6);
-        z-index: 9998;
-        align-items: center;
-        justify-content: center;
-        padding: var(--spacing-unit);
-      }
-      .curation-modal-overlay.open {
-        display: flex;
-      }
-      .curation-modal {
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
-        border-radius: var(--border-radius);
-        max-width: 400px;
-        width: 100%;
-        max-height: 90vh;
-        overflow-y: auto;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-      }
-      .curation-modal h3 {
-        font-size: 16px;
-        padding: var(--spacing-unit);
-        border-bottom: 1px solid var(--border-color);
-        margin: 0;
-      }
-      .curation-modal .curation-modal-body {
-        padding: var(--spacing-unit);
-      }
-      .curation-modal .curation-modal-actions {
-        padding: var(--spacing-unit);
-        border-top: 1px solid var(--border-color);
-        display: flex;
-        gap: 8px;
-        justify-content: flex-end;
-      }
-      .curation-modal label {
-        display: block;
-        font-size: 12px;
-        color: var(--text-secondary);
-        margin-bottom: 4px;
-      }
-      .curation-modal input[type="text"],
-      .curation-modal textarea {
-        width: 100%;
-        padding: 10px 12px;
-        border: 1px solid var(--border-color);
-        border-radius: var(--border-radius);
-        background: var(--bg-tertiary);
-        color: var(--text-primary);
-        font-size: 14px;
-        margin-bottom: 12px;
-      }
-      .curation-modal textarea {
-        min-height: 80px;
-        resize: vertical;
-      }
-      .curation-modal-field-label {
-        display: block;
-        font-size: 12px;
-        color: var(--text-secondary);
-        margin-bottom: 8px;
-      }
-      .curation-segmented {
-        display: flex;
-        width: 100%;
-        border-radius: var(--border-radius);
-        border: 1px solid var(--border-color);
-        overflow: hidden;
-        background: var(--bg-tertiary);
-      }
-      .curation-segmented button {
-        flex: 1;
-        margin: 0;
-        padding: 10px 12px;
-        font-size: 13px;
-        font-weight: 600;
-        border: none;
-        background: transparent;
-        color: var(--text-secondary);
-        cursor: pointer;
-        transition: background-color 0.15s ease, color 0.15s ease;
-      }
-      .curation-segmented button + button {
-        border-left: 1px solid var(--border-color);
-      }
-      .curation-segmented button:hover {
-        color: var(--text-primary);
-        background: var(--bg-secondary);
-      }
-      .curation-segmented button[aria-pressed="true"] {
-        background: var(--accent-primary);
-        color: var(--bg-primary);
-      }
-      .curation-segmented button[aria-pressed="true"]:hover {
-        filter: brightness(1.05);
-        color: var(--bg-primary);
-      }
-      .curation-publish-mode-segmented {
-        margin-bottom: 0;
-      }
-      .curation-feature-row .curation-feature-edit {
-        flex-shrink: 0;
-        padding: 6px 10px;
-        font-size: 12px;
-        border-radius: var(--border-radius);
-        border: 1px solid var(--border-color);
-        background: var(--bg-tertiary);
-        color: var(--text-primary);
-        cursor: pointer;
-      }
-      .curation-feature-row .curation-feature-edit:hover {
-        border-color: var(--accent-primary);
-        color: var(--accent-primary);
       }
       .curation-submission-combo {
         position: relative;
@@ -613,21 +427,7 @@
           </section>
 
           <section class="curation-section">
-            <h2>Features (toggle to include)</h2>
-            <div id="curationFeatures" class="curation-features">
-              <div class="curation-status">Select a submission to list features.</div>
-            </div>
-          </section>
-
-          <section class="curation-section">
-            <h2>Layer name</h2>
-            <input
-              type="text"
-              id="curationLayerName"
-              class="curation-name-input"
-              placeholder="e.g. My curated layer"
-              aria-label="Layer name"
-            />
+            <h2>Publish</h2>
             <div class="curation-publish-actions">
               <button
                 type="button"
@@ -663,21 +463,6 @@
             </div>
           </section>
         </aside>
-      </div>
-    </div>
-
-    <div id="curationModalPublish" class="curation-modal-overlay" aria-hidden="true">
-      <div class="curation-modal" role="dialog" aria-labelledby="curationModalPublishTitle">
-        <h3 id="curationModalPublishTitle">Publish layer</h3>
-        <div class="curation-modal-body">
-          <p id="curationPublishScopeNote" class="curation-modal-field-label" style="margin-bottom: 0">
-            The published OTEF layer includes <strong>current revisions only</strong>. History revisions are not loaded on this page.
-          </p>
-        </div>
-        <div class="curation-modal-actions">
-          <button type="button" id="curationModalPublishCancel" class="curation-header-btn">Cancel</button>
-          <button type="button" id="curationModalPublishConfirm" class="curation-publish-btn" style="margin-top: 0;">Publish</button>
-        </div>
       </div>
     </div>
 
