@@ -360,6 +360,8 @@ class OTEFViewportState(models.Model):
 
     viewer_angle_deg = models.FloatField(default=0.0)
 
+    workshop_auto_publish = models.BooleanField(default=False)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):

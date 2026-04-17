@@ -271,7 +271,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'table': table_name,
                     }
                 }
-            elif field == 'layers' or field == 'layerGroups':
+            elif (
+                field == 'layers'
+                or field == 'layerGroups'
+                or field == 'workshop_auto_publish'
+            ):
                 message = {
                     'type': 'broadcast_message',
                     'message': {
@@ -374,6 +378,16 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     )
                 changed_fields.append('viewer_angle_deg')
 
+            if 'workshop_auto_publish' in request.data:
+                wap = request.data['workshop_auto_publish']
+                if not isinstance(wap, bool):
+                    return Response(
+                        {'error': 'workshop_auto_publish must be a boolean'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                state.workshop_auto_publish = wap
+                changed_fields.append('workshop_auto_publish')
+
             state.save()
 
             # Broadcast notifications for each changed field
@@ -390,6 +404,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'animations': state.get_animations_with_defaults(),
             'bounds_polygon': state.get_bounds_polygon(),
             'viewer_angle_deg': state.viewer_angle_deg,
+            'workshop_auto_publish': state.workshop_auto_publish,
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
