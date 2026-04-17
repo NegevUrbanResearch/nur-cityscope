@@ -218,6 +218,36 @@ export function createCurationApi() {
       if (!r.ok) throw new Error(body.error || `Failed to load layer groups (${r.status})`);
       return body;
     },
+    async getWorkshopMode(tableName = "otef") {
+      const r = await fetch(`/api/otef_viewport/by-table/${encodeURIComponent(tableName)}/`);
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `Failed to load workshop mode (${r.status})`);
+      return Boolean(body.workshop_auto_publish);
+    },
+    async setWorkshopMode(enabled, tableName = "otef") {
+      const r = await fetch(`/api/otef_viewport/by-table/${encodeURIComponent(tableName)}/`, {
+        method: "PATCH",
+        headers: api._writeHeaders(),
+        body: JSON.stringify({ workshop_auto_publish: Boolean(enabled) }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        throw new Error(
+          body.error || body.detail || body.message || `Failed to update workshop mode (${r.status})`,
+        );
+      }
+      return body;
+    },
+    async unpublishAllCuratedLayers(payload = {}) {
+      const r = await fetch("/api/supabase/curated/unpublish-all/", {
+        method: "POST",
+        headers: api._writeHeaders(),
+        body: JSON.stringify({ table: "otef", ...payload }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `Unpublish all failed (${r.status})`);
+      return body;
+    },
     async activeGisLayers(tableName) {
       const r = await fetch(`/api/gis_layers/?table=${encodeURIComponent(tableName)}`);
       const body = await r.json().catch(() => ({}));

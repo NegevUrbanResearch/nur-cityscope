@@ -32,6 +32,7 @@ export { createCurationPreviewState } from "./curation-state.js";
   const publishedLayersContainer = () => el("curationPublishedLayers");
   const publishModalOverlay = () => el("curationModalPublish");
   const CURATED_GROUP_NAME = "Moreshet Axis";
+  const CURATION_TABLE = "otef";
 
   function setStatus(msg, type) {
     const s = statusEl();
@@ -361,15 +362,7 @@ export { createCurationPreviewState } from "./curation-state.js";
     if (btn) btn.disabled = true;
     setStatus("Removing all published curated layers…");
     try {
-      const r = await fetch("/api/supabase/curated/unpublish-all/", {
-        method: "POST",
-        headers: API._writeHeaders(),
-        body: JSON.stringify({ table: "otef" }),
-      });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        throw new Error(body.error || `Unpublish all failed (${r.status})`);
-      }
+      const body = await API.unpublishAllCuratedLayers({ table: CURATION_TABLE });
       lastPublishedFullLayerIdRef.current = null;
       const n = body.removed_count;
       setStatus(
@@ -387,8 +380,45 @@ export { createCurationPreviewState } from "./curation-state.js";
     }
   }
 
+  async function loadWorkshopModeUi() {
+    const input = el("curationWorkshopAutoPublish");
+    if (!input) return;
+    input.disabled = true;
+    try {
+      const on = await API.getWorkshopMode(CURATION_TABLE);
+      input.checked = on;
+    } catch (e) {
+      setStatus("Could not load workshop mode: " + (e?.message || String(e)), "error");
+      input.checked = false;
+    } finally {
+      input.disabled = false;
+    }
+  }
+
+  async function onWorkshopModeToggle() {
+    const input = el("curationWorkshopAutoPublish");
+    if (!input || input.disabled) return;
+    const next = input.checked;
+    input.disabled = true;
+    try {
+      await API.setWorkshopMode(next, CURATION_TABLE);
+      setStatus(
+        next
+          ? "Workshop auto-publish is on: new submissions can publish automatically when eligible."
+          : "Workshop auto-publish is off.",
+        "success",
+      );
+    } catch (e) {
+      input.checked = !next;
+      setStatus("Could not update workshop mode: " + (e?.message || String(e)), "error");
+    } finally {
+      input.disabled = false;
+    }
+  }
+
   function refresh() {
     setStatus("");
+    void loadWorkshopModeUi();
     Promise.all([loadSubmissions(), publishedPanel.loadPublishedCuratedLayers()]).then(() => {
       const sid = selectedSubmissionId();
       if (sid) loadFeatures(sid);
@@ -398,6 +428,7 @@ export { createCurationPreviewState } from "./curation-state.js";
   function init() {
     loadSubmissions();
     publishedPanel.loadPublishedCuratedLayers();
+    void loadWorkshopModeUi();
 
     layerNameInput().addEventListener("input", updatePublishState);
 
@@ -409,6 +440,9 @@ export { createCurationPreviewState } from "./curation-state.js";
     });
     el("curationUnpublishAll")?.addEventListener("click", () => {
       void unpublishAllCuratedLayers();
+    });
+    el("curationWorkshopAutoPublish")?.addEventListener("change", () => {
+      void onWorkshopModeToggle();
     });
     refreshBtn().addEventListener("click", refresh);
   }

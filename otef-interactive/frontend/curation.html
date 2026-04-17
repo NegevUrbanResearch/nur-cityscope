@@ -58,6 +58,28 @@
         gap: var(--spacing-unit);
         margin-bottom: 6px;
       }
+      .curation-section-head-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .curation-workshop-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+      }
+      .curation-workshop-label input {
+        margin: 0;
+        cursor: pointer;
+      }
       .curation-section-head h2 {
         margin-bottom: 0;
       }
@@ -622,9 +644,19 @@
           <section class="curation-section">
             <div class="curation-section-head">
               <h2>Published layers on remote</h2>
-              <button type="button" id="curationUnpublishAll" class="curation-header-btn">
-                Unpublish all
-              </button>
+              <div class="curation-section-head-actions">
+                <label class="curation-workshop-label">
+                  <input
+                    type="checkbox"
+                    id="curationWorkshopAutoPublish"
+                    aria-label="Workshop auto-publish"
+                  />
+                  Workshop auto-publish
+                </label>
+                <button type="button" id="curationUnpublishAll" class="curation-header-btn">
+                  Unpublish all
+                </button>
+              </div>
             </div>
             <div id="curationPublishedLayers" class="curation-features">
               <div class="curation-status">Loading published curated layers…</div>
