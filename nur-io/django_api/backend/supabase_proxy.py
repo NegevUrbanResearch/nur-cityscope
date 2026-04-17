@@ -54,6 +54,194 @@ def _slugify_project(name):
     return slug or "default"
 
 
+def _broadcast_otef_layers_changed(table_name):
+    try:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)(
+                "otef_channel",
+                {
+                    "type": "broadcast_message",
+                    "message": {
+                        "type": "otef_layers_changed",
+                        "table": table_name,
+                    },
+                },
+            )
+    except Exception:
+        pass
+
+
+def _rows_to_geojson_feature_collection(
+    rows, include_current=True, include_history=False
+):
+    """Build a GeoJSON FeatureCollection from Supabase geo_features rows."""
+    features = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        is_current = row.get("is_current")
+        if include_current and not include_history:
+            if is_current is False:
+                continue
+        elif include_history and not include_current:
+            if is_current is not False:
+                continue
+        geom = row.get("geom")
+        if not geom:
+            continue
+        if isinstance(geom, dict) and geom.get("type") == "Feature":
+            feat = geom
+        elif isinstance(geom, dict) and geom.get("type") in (
+            "Point",
+            "LineString",
+            "Polygon",
+            "MultiPoint",
+            "MultiLineString",
+            "MultiPolygon",
+        ):
+            feat = {"type": "Feature", "geometry": geom, "properties": {}}
+        else:
+            feat = {"type": "Feature", "geometry": geom, "properties": {}}
+        props = feat.setdefault("properties", {})
+        for key, value in row.items():
+            if key == "geom":
+                continue
+            props[key] = value
+        features.append(feat)
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _fetch_submission_geojson_fc(submission_id):
+    """Load current geo_features for a submission as a FeatureCollection."""
+    rows, err = _get(
+        "/geo_features",
+        params={"submission_id": f"eq.{submission_id}", "select": "*"},
+    )
+    if err:
+        return None, err
+    if not isinstance(rows, list):
+        return {"type": "FeatureCollection", "features": []}, None
+    return _rows_to_geojson_feature_collection(rows), None
+
+
+def _find_active_curated_layer_for_submission(table, submission_id):
+    from .models import GISLayer
+
+    sid = str(submission_id or "").strip()
+    if not sid:
+        return None
+    for layer in GISLayer.objects.filter(table=table, is_active=True).order_by(
+        "-updated_at"
+    ):
+        if not str(layer.name or "").startswith("curated_"):
+            continue
+        data = layer.data if isinstance(layer.data, dict) else {}
+        for feat in data.get("features") or []:
+            if not isinstance(feat, dict):
+                continue
+            props = feat.get("properties")
+            if not isinstance(props, dict):
+                continue
+            psid = props.get("submission_id") or props.get("submissionId")
+            if psid is not None and str(psid).strip() == sid:
+                return layer
+    return None
+
+
+def _read_workshop_auto_publish(table):
+    from .models import OTEFViewportState
+
+    state = OTEFViewportState.objects.filter(table=table).first()
+    return bool(state and state.workshop_auto_publish)
+
+
+def _autopublish_curated_submission(table, table_name, submission_id, geojson_fc):
+    """
+    Create an active curated GISLayer for a submission (workshop auto-publish).
+    Mirrors CuratedLayerPublishView conflict rules for same display name + project.
+    """
+    import json
+    from django.db import transaction
+    from .models import GISLayer, LayerGroup, LayerState
+
+    display_name = _fallback_submission_display_name(submission_id)
+    project_name = "Moreshet Axis"
+
+    try:
+        geojson_fc = json.loads(json.dumps(geojson_fc))
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Invalid geojson: {e}") from e
+    if not isinstance(geojson_fc, dict):
+        raise ValueError("geojson must be an object")
+
+    with transaction.atomic():
+        conflicting = list(
+            GISLayer.objects.select_for_update()
+            .filter(
+                table=table,
+                display_name=display_name,
+                project_name=project_name,
+                is_active=True,
+            )
+        )
+        for old in conflicting:
+            old.is_active = False
+            old.save(update_fields=["is_active", "updated_at"])
+            _delete_layer_states_for_gis_layer_pk(table, old.id)
+
+        project_slug = _slugify_project(project_name)
+        base_slug = re.sub(r"\s+", "_", display_name.lower()).strip("_")[:50]
+        base = f"curated_{project_slug}_{base_slug}"[:100]
+        layer_name = base or f"curated_{project_slug}"
+        n = 0
+        while GISLayer.objects.filter(
+            table=table, name=layer_name, project_name=project_name
+        ).exists():
+            n += 1
+            layer_name = f"{base}_{n}"
+
+        order = (
+            GISLayer.objects.filter(table=table).aggregate(
+                max_order=models.Max("order")
+            ).get("max_order")
+            or 0
+        ) + 1
+
+        layer = GISLayer.objects.create(
+            table=table,
+            name=layer_name,
+            display_name=display_name,
+            project_name=project_name,
+            layer_type="geojson",
+            data=geojson_fc,
+            style_config={},
+            is_active=True,
+            order=order,
+        )
+
+        group_id = "curated_moresht_axis"
+        group, _ = LayerGroup.objects.get_or_create(
+            table=table,
+            group_id=group_id,
+            defaults={"enabled": True},
+        )
+        group.enabled = True
+        group.save()
+
+        full_layer_id = f"{group_id}.{layer.id}"
+        LayerState.objects.update_or_create(
+            table=table,
+            layer_id=full_layer_id,
+            defaults={"enabled": True},
+        )
+
+    return layer
+
+
 def _delete_layer_states_for_gis_layer_pk(table, layer_pk):
     """
     Delete LayerState rows that reference a GISLayer primary key.
@@ -1806,11 +1994,16 @@ class CuratedLayerUnpublishView(APIView):
             )
 
         is_curated_name = str(getattr(layer, "name", "") or "").startswith("curated_")
-        is_curated_state = LayerState.objects.filter(
-            table=table,
-            layer_id__endswith=f".{layer_id}",
-            layer_id__startswith="curated",
-        ).exists()
+        needle = str(int(layer.id))
+        suffix = f".{needle}"
+        is_curated_state = any(
+            str(lid).rsplit(".", 1)[-1] == needle
+            for lid in LayerState.objects.filter(
+                table=table,
+                layer_id__endswith=suffix,
+                layer_id__startswith="curated",
+            ).values_list("layer_id", flat=True)
+        )
         if not (is_curated_name or is_curated_state):
             return Response(
                 {"error": "Only curated published layers can be removed from this endpoint"},
@@ -1822,9 +2015,7 @@ class CuratedLayerUnpublishView(APIView):
 
         # Remove LayerState rows that reference this numeric GIS layer id so group
         # listings cannot resurrect unpublished layers from stale state.
-        LayerState.objects.filter(
-            table=table, layer_id__endswith=f".{layer_id}"
-        ).delete()
+        _delete_layer_states_for_gis_layer_pk(table, layer.id)
 
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
@@ -1849,3 +2040,118 @@ class CuratedLayerUnpublishView(APIView):
                 "is_active": False,
             }
         )
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class CuratedLayerUnpublishAllView(APIView):
+    """
+    POST /api/supabase/curated/unpublish-all/
+    Body: { "table": "otef" }
+    Deactivates all active curated GISLayers for the table, removes matching LayerState rows,
+    and broadcasts otef_layers_changed.
+    """
+
+    def post(self, request):
+        from django.db import transaction
+        from .models import Table, GISLayer
+
+        authorized, auth_error = _is_curation_write_authorized(request)
+        if not authorized:
+            return Response(
+                {"error": auth_error},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        table_name = (request.data.get("table") or "otef").strip() or "otef"
+        table = Table.objects.filter(name=table_name).first()
+        if not table:
+            return Response(
+                {"error": f"Table '{table_name}' not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        with transaction.atomic():
+            layers = list(
+                GISLayer.objects.select_for_update()
+                .filter(table=table, is_active=True, name__startswith="curated_")
+            )
+            removed_count = len(layers)
+            for layer in layers:
+                _delete_layer_states_for_gis_layer_pk(table, layer.id)
+                layer.is_active = False
+                layer.save(update_fields=["is_active", "updated_at"])
+
+        _broadcast_otef_layers_changed(table_name)
+        return Response({"ok": True, "removed_count": removed_count})
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class CuratedSubmissionSyncView(APIView):
+    """
+    POST /api/supabase/curated/sync-submission/
+    Body: { "table": "otef", "submission_id": "<uuid>" }
+    Refreshes published curated layer GeoJSON from Supabase geo_features, or auto-publishes
+    when workshop_auto_publish is enabled on OTEFViewportState for the table.
+    """
+
+    def post(self, request):
+        from .models import Table
+
+        authorized, auth_error = _is_curation_write_authorized(request)
+        if not authorized:
+            return Response(
+                {"error": auth_error},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        table_name = (request.data.get("table") or "otef").strip() or "otef"
+        submission_id = str(request.data.get("submission_id") or "").strip()
+        table = Table.objects.filter(name=table_name).first()
+        if not table or not submission_id:
+            return Response(
+                {"error": "table and submission_id are required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        features_fc, fetch_err = _fetch_submission_geojson_fc(submission_id)
+        if fetch_err:
+            return Response(
+                {"error": f"Failed to load submission features: {fetch_err}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        existing = _find_active_curated_layer_for_submission(table, submission_id)
+        workshop_on = _read_workshop_auto_publish(table)
+
+        if existing:
+            existing.data = features_fc
+            existing.save(update_fields=["data", "updated_at"])
+            _broadcast_otef_layers_changed(table_name)
+            return Response({"ok": True, "action": "updated_existing"})
+
+        if workshop_on:
+            try:
+                layer = _autopublish_curated_submission(
+                    table, table_name, submission_id, features_fc
+                )
+            except ValueError as e:
+                return Response(
+                    {"error": str(e)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            except Exception as e:
+                logger.exception("Curated submission sync autopublish failed")
+                return Response(
+                    {"error": str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            _broadcast_otef_layers_changed(table_name)
+            return Response(
+                {
+                    "ok": True,
+                    "action": "autopublished",
+                    "layer_id": layer.id,
+                }
+            )
+
+        return Response({"ok": True, "action": "noop_unpublished_workshop_off"})

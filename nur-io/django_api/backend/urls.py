@@ -13,6 +13,8 @@ from .supabase_proxy import (
     CuratedLayerEditView,
     CuratedLayerBatchEditView,
     CuratedLayerUnpublishView,
+    CuratedLayerUnpublishAllView,
+    CuratedSubmissionSyncView,
 )
 from .views import (
     TableViewSet,
@@ -121,6 +123,16 @@ urlpatterns = [
         "supabase/curated/unpublish/",
         CuratedLayerUnpublishView.as_view(),
         name="supabase_curated_unpublish",
+    ),
+    path(
+        "supabase/curated/unpublish-all/",
+        CuratedLayerUnpublishAllView.as_view(),
+        name="supabase_curated_unpublish_all",
+    ),
+    path(
+        "supabase/curated/sync-submission/",
+        CuratedSubmissionSyncView.as_view(),
+        name="supabase_curated_sync_submission",
     ),
     path("pink-line/", pink_line_geojson, name="pink_line_geojson"),
     path("maps/<path:path>", serve_map_file, name="serve_map_file"),
