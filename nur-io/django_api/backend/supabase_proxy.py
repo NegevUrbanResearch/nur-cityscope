@@ -639,14 +639,131 @@ def _fallback_submission_display_name(submission_id):
     return sid
 
 
+_GEO_FEATURE_COLOR_KEYS = (
+    "stroke",
+    "color",
+    "line_color",
+    "lineColor",
+    "map_color",
+    "mapColor",
+    "submission_color",
+    "submissionColor",
+    "fill",
+)
+
+_MAX_CSS_COLOR_LEN = 120
+_CSS_COLOR_INJECTION_RE = re.compile(
+    r"[;{}]|/\*|\*/|\\|url\s*\(|expression\s*\(",
+    re.I,
+)
+_RGB_FULL_RE = re.compile(
+    r"^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$",
+    re.I,
+)
+_RGBA_FULL_RE = re.compile(
+    r"^rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*"
+    r"((?:\d+(?:\.\d+)?|\.\d+))\s*\)$",
+    re.I,
+)
+
+
+def _rgb_channel_strict_ok(channel: str) -> bool:
+    if not isinstance(channel, str) or not re.fullmatch(r"\d{1,3}", channel):
+        return False
+    v = int(channel)
+    if v < 0 or v > 255:
+        return False
+    return channel == str(v)
+
+
+def _alpha_strict_ok(alpha: str) -> bool:
+    if not isinstance(alpha, str) or re.search(r"[eE]", alpha):
+        return False
+    if not re.fullmatch(r"(?:\d+(?:\.\d+)?|\.\d+)", alpha):
+        return False
+    try:
+        a = float(alpha)
+    except ValueError:
+        return False
+    return 0.0 <= a <= 1.0
+
+
+def _sanitize_css_color_signal(raw):
+    """Best-effort CSS color string for JSON/API (hex / strict rgb / strict rgba only)."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s or len(s) > _MAX_CSS_COLOR_LEN:
+        return None
+    if _CSS_COLOR_INJECTION_RE.search(s):
+        return None
+    if re.match(r"^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$", s, re.I):
+        return s
+    m = _RGB_FULL_RE.match(s)
+    if m:
+        if all(_rgb_channel_strict_ok(m.group(i)) for i in (1, 2, 3)):
+            return s
+        return None
+    m = _RGBA_FULL_RE.match(s)
+    if m:
+        if all(_rgb_channel_strict_ok(m.group(i)) for i in (1, 2, 3)) and _alpha_strict_ok(
+            m.group(4)
+        ):
+            return s
+        return None
+    return None
+
+
+def _color_signal_from_geo_feature_row(row):
+    """
+    Extract a display-safe color from a geo_features row (flat columns and/or
+    GeoJSON Feature payload in geom.properties).
+    """
+    if not isinstance(row, Mapping):
+        return None
+    for key in _GEO_FEATURE_COLOR_KEYS:
+        c = _sanitize_css_color_signal(row.get(key))
+        if c:
+            return c
+    geom = row.get("geom")
+    if not isinstance(geom, Mapping):
+        return None
+    if geom.get("type") == "Feature":
+        props = geom.get("properties")
+        if isinstance(props, Mapping):
+            for key in _GEO_FEATURE_COLOR_KEYS:
+                c = _sanitize_css_color_signal(props.get(key))
+                if c:
+                    return c
+    return None
+
+
+def _norm_submission_id_key(val):
+    """Normalize submission id strings for joins (PostgREST UUID casing can vary)."""
+    if val is None:
+        return ""
+    return str(val).strip().lower()
+
+
 def _fetch_submission_batch_rows():
     rows, err = _get(
         "/submission_batches",
-        params={"select": "submission_id,submission_name,updated_at"},
+        params={
+            "select": "submission_id,submission_name,updated_at,display_color",
+        },
     )
     if err:
-        logger.info("submission_batches unavailable for listing: %s", err)
-        return []
+        msg_l = str(err).lower()
+        if "display_color" in msg_l or (
+            "column" in msg_l and "does not exist" in msg_l
+        ):
+            rows, err = _get(
+                "/submission_batches",
+                params={"select": "submission_id,submission_name,updated_at"},
+            )
+        if err:
+            logger.info("submission_batches unavailable for listing: %s", err)
+            return []
     return rows if isinstance(rows, list) else []
 
 
@@ -671,6 +788,7 @@ def _fetch_project_name_map():
 
 def _fetch_all_geo_feature_rows():
     select_attempts = (
+        "submission_id,project_id,is_current,updated_at,feature_type,geom,stroke,color,line_color,map_color,submission_color",
         "submission_id,project_id,is_current,updated_at,feature_type,geom",
         "submission_id,project_id,is_current,updated_at,feature_type",
         "submission_id,project_id,is_current,updated_at",
@@ -776,9 +894,7 @@ class SupabaseSubmissionsView(APIView):
                     continue
                 # Map by submission_batches.submission_id (the submission UUID), not the batch row id.
                 sub_key = b.get("submission_id")
-                if sub_key is None:
-                    continue
-                key = str(sub_key).strip()
+                key = _norm_submission_id_key(sub_key)
                 if not key:
                     continue
                 batch_by_submission_id[key] = b
@@ -805,7 +921,9 @@ class SupabaseSubmissionsView(APIView):
                 sid_raw = row.get("submission_id")
                 if sid_raw is None:
                     continue
-                sid = str(sid_raw)
+                sid = _norm_submission_id_key(sid_raw)
+                if not sid:
+                    continue
                 agg = aggs.setdefault(
                     sid,
                     {
@@ -815,6 +933,7 @@ class SupabaseSubmissionsView(APIView):
                         "memorial_signal": False,
                         "line_signal": False,
                         "project_ids": set(),
+                        "color_signal": None,
                     },
                 )
                 if use_revision_flags:
@@ -837,6 +956,11 @@ class SupabaseSubmissionsView(APIView):
                 pid = row.get("project_id")
                 if pid is not None:
                     agg["project_ids"].add(str(pid))
+
+                if agg.get("color_signal") is None:
+                    col = _color_signal_from_geo_feature_row(row)
+                    if col:
+                        agg["color_signal"] = col
 
             if not use_revision_flags:
                 for agg in aggs.values():
@@ -864,16 +988,21 @@ class SupabaseSubmissionsView(APIView):
                 else:
                     name = _fallback_submission_display_name(sid)
                 mem, line = agg["memorial_signal"], agg["line_signal"]
-                results.append(
-                    {
-                        "id": sid,
-                        "name": name,
-                        "has_current": agg["has_current"],
-                        "has_history": agg["has_history"],
-                        "type_label": _submission_type_label(mem, line),
-                        "type_tags": _submission_type_tags(mem, line),
-                    }
-                )
+                item = {
+                    "id": sid,
+                    "name": name,
+                    "has_current": agg["has_current"],
+                    "has_history": agg["has_history"],
+                    "type_label": _submission_type_label(mem, line),
+                    "type_tags": _submission_type_tags(mem, line),
+                }
+                # Canonical color: submission_batches.display_color (Supabase), then geo_features.
+                batch_color = _sanitize_css_color_signal(batch.get("display_color"))
+                geo_color = agg.get("color_signal")
+                cs = batch_color or geo_color
+                if cs:
+                    item["submission_color"] = cs
+                results.append(item)
 
             def sort_key(item):
                 sid = item["id"]
