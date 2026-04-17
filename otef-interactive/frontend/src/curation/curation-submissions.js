@@ -69,7 +69,7 @@ function renderOptionChipsHtml(row) {
  * @param {() => HTMLInputElement | null} deps.getSelectedIdInput
  * @param {Map<string, string>} deps.submissionTypeById
  * @param {(msg: string, type?: string) => void} deps.setStatus
- * @param {() => void} deps.updateSaveEditsState
+ * @param {() => void} [deps.updateSaveEditsState]
  * @param {(submissionId: string) => void} [deps.onSelectionChange]
  */
 export function createSubmissionsPanel(deps) {
@@ -83,7 +83,7 @@ export function createSubmissionsPanel(deps) {
     getSelectedIdInput,
     submissionTypeById,
     setStatus,
-    updateSaveEditsState,
+    updateSaveEditsState = () => {},
     onSelectionChange,
   } = deps;
 

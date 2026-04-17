@@ -33,17 +33,19 @@ test("curation refresh is manual-only (no polling interval)", () => {
   expect(src.includes("setInterval(refresh, 30000)")).toBe(false);
 });
 
-test("dragging nodes does not write immediately to API", () => {
-  const workspace = readCurationWorkspaceSource();
-  expect(workspace.includes('marker.on("dragend", async')).toBe(true);
-  expect(workspace.includes("{ preserveView: true }")).toBe(true);
-  expect(
-    workspace.includes("Moved node locally. Click 'Save source edits' to persist changes."),
-  ).toBe(true);
+test("map preview module still stages drags locally (orchestrator no longer saves geometry)", () => {
+  const mapPreview = fs.readFileSync(
+    path.join(CURATION_SRC_DIR, "curation-map-preview.js"),
+    "utf8",
+  );
+  expect(mapPreview.includes('marker.on("dragend", async')).toBe(true);
+  expect(mapPreview.includes("{ preserveView: true }")).toBe(true);
   const orch = readCurationSource();
-  expect(orch.includes("async function savePendingEdits()")).toBe(true);
-  expect(orch.includes("await API.editFeaturesBatch(")).toBe(true);
-  expect(orch.includes("for (const edit of group)")).toBe(true);
+  expect(orch.includes("async function savePendingEdits()")).toBe(false);
+  expect(orch.includes("await API.editFeaturesBatch(")).toBe(false);
+  expect(
+    orch.includes("Moved node locally. Click 'Save source edits' to persist changes."),
+  ).toBe(false);
 });
 
 test("map preview ignores stale async showPreview runs (sequence guard)", () => {
@@ -76,23 +78,18 @@ test("curation sidebar title is plain submissions", () => {
   expect(html.includes("Submissions (combined)")).toBe(false);
   expect(html.includes('id="curationSubmissionTypeBadge"')).toBe(false);
   expect(html.includes('id="curationSubmissionSelectedTags"')).toBe(true);
-  expect(html.includes('id="curationPublishSaveGroup"')).toBe(true);
-  expect(html.includes('id="curationHistoryFilter"')).toBe(true);
-  expect(html.includes('id="curationHistoryFilterCurrent"')).toBe(true);
-  expect(html.includes('id="curationHistoryFilterWithHistory"')).toBe(true);
-  expect(html.includes("Current only")).toBe(true);
-  expect(html.includes("With history")).toBe(true);
+  expect(html.includes('id="curationPublishSaveGroup"')).toBe(false);
+  expect(html.includes('id="curationHistoryFilter"')).toBe(false);
+  expect(html.includes('id="curationUnpublishAll"')).toBe(true);
   expect(html.includes('id="curationShowOldRevisions"')).toBe(false);
   expect(html.includes('id="curationShowCurrent"')).toBe(false);
   expect(html.includes('id="curationShowHistory"')).toBe(false);
 });
 
-test("features load always requests current; history follows show-old toggle", () => {
+test("features load requests current revisions only (no history list in simplified UI)", () => {
   const orch = readCurationSource();
   expect(orch.includes("includeCurrent: true")).toBe(true);
-  expect(orch.includes("includeHistory: historyFilterState.showOldRevisions")).toBe(
-    true,
-  );
+  expect(orch.includes("includeHistory: false")).toBe(true);
 });
 
 test("history filter persisted state uses showOldRevisions", () => {
@@ -132,12 +129,7 @@ test("history line geometries are paler and visually distinct from current lines
   expect(src.includes("#0a1520")).toBe(false);
 });
 
-test("batch save skips geometry edits targeting history rows", () => {
-  const orch = readCurationSource();
-  expect(orch.includes("srcFeat?.properties?.is_current === false")).toBe(true);
-});
-
-test("feature list marks history rows for muted sidebar styling", () => {
+test("feature list can still style history rows if present in payload", () => {
   const orch = readCurationSource();
   expect(orch.includes("curation-feature-row--history")).toBe(true);
 });
@@ -169,13 +161,7 @@ test("editFeaturePosition uses raw text and surfaces path/status for failures", 
   expect(src.includes("[curation] editFeaturePosition failed")).toBe(true);
 });
 
-test("save flow surfaces backend warning payloads", () => {
-  const orch = readCurationSource();
-  expect(orch.includes("result && result.warning")).toBe(true);
-  expect(orch.includes("Warning:")).toBe(true);
-});
-
-test("after saving source edits submissions list reloads so tags update without dropping selection on refresh failure", () => {
+test("unpublish all refreshes submissions list with preserveOnError after bulk remove", () => {
   const orch = readCurationSource();
   expect(orch.includes("loadSubmissions({ preserveOnError: true })")).toBe(true);
 });
@@ -186,10 +172,8 @@ test("features API supports current/history filters", () => {
   expect(src.includes("include_history")).toBe(true);
 });
 
-test("modal feature save refreshes preview without resetting map bounds", () => {
+test("curation orchestration has no feature metadata modal wiring", () => {
   const orch = readCurationSource();
-  expect(orch.includes("function saveFeatureModal()")).toBe(true);
-  expect(orch.includes("mapCtl.showPreview(")).toBe(true);
-  const block = orch.slice(orch.indexOf("function saveFeatureModal()"));
-  expect(block.includes("{ preserveView: true }")).toBe(true);
+  expect(orch.includes("saveFeatureModal")).toBe(false);
+  expect(orch.includes("curationModalFeature")).toBe(false);
 });

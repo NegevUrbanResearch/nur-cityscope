@@ -1,24 +1,13 @@
 import { getMemorialIconForFeature } from "../shared/curated-layer-service.js";
-import {
-  createCurationPreviewState,
-  getHistoryFilterState,
-  setHistoryFilterState,
-} from "./curation-state.js";
 import { createCurationApi } from "./curation-api.js";
 import { createPublishedCuratedLayersPanel } from "./curation-published-layers.js";
 import { createSubmissionsPanel } from "./curation-submissions.js";
-import {
-  createCurationMapPreview,
-  initCurationMapRouteLegend,
-} from "./curation-map-preview.js";
 
 export { createCurationPreviewState } from "./curation-state.js";
 
 /**
- * Curation page: list Supabase projects/submissions, Leaflet preview with
- * pink line (הקו_הורוד) base route, submission features as dashed lines and
- * labeled points. Toggle features, name and publish as OTEF layer.
- * Uses API proxy only (no Supabase client on frontend).
+ * Curation page: list Supabase submissions, toggle features for publish, name and
+ * publish as OTEF layer. Uses API proxy only (no Supabase client on frontend).
  */
 
 (function () {
@@ -26,14 +15,10 @@ export { createCurationPreviewState } from "./curation-state.js";
 
   let currentFeatures = [];
   const featureEnabled = new Map();
-  const previewState = createCurationPreviewState();
-  const pendingGeometryEdits = new Map();
   const publishedCuratedLayersRef = { current: [] };
   const lastPublishedFullLayerIdRef = { current: null };
   const submissionTypeById = new Map();
   let isPublishing = false;
-
-  let mapCtl;
 
   const el = (id) => document.getElementById(id);
   const selectedSubmissionInput = () => el("curationSubmission");
@@ -44,11 +29,9 @@ export { createCurationPreviewState } from "./curation-state.js";
   const publishBtn = () => el("curationPublish");
   const statusEl = () => el("curationStatus");
   const refreshBtn = () => el("curationRefresh");
-  const saveEditsBtn = () => el("curationSaveEdits");
   const publishedLayersContainer = () => el("curationPublishedLayers");
   const publishModalOverlay = () => el("curationModalPublish");
   const CURATED_GROUP_NAME = "Moreshet Axis";
-  let historyFilterState = getHistoryFilterState();
 
   function setStatus(msg, type) {
     const s = statusEl();
@@ -58,22 +41,6 @@ export { createCurationPreviewState } from "./curation-state.js";
   }
 
   const submissionsCtlRef = { current: null };
-
-  mapCtl = createCurationMapPreview({
-    previewState,
-    pendingGeometryEdits,
-    featureEnabled,
-    getCurrentFeatures: () => currentFeatures,
-    getLastPublishedFullLayerId: () => lastPublishedFullLayerIdRef.current,
-    featuresContainer,
-    computeRoute: (payload) => API.computeRoute(payload),
-    onAfterMarkerDrag: async () => {
-      renderFeatureList(currentFeatures);
-      updateSaveEditsState();
-      setStatus("Moved node locally. Click 'Save source edits' to persist changes.", "success");
-    },
-  });
-  initCurationMapRouteLegend();
 
   const publishedPanel = createPublishedCuratedLayersPanel({
     API,
@@ -96,12 +63,10 @@ export { createCurationPreviewState } from "./curation-state.js";
     getSelectedIdInput: () => selectedSubmissionInput(),
     submissionTypeById,
     setStatus,
-    updateSaveEditsState,
     onSelectionChange: (id) => {
       syncLayerNameFromSelectedSubmission(id);
       void loadFeatures(id);
       updatePublishState();
-      updateSaveEditsState();
     },
   });
 
@@ -157,7 +122,7 @@ export { createCurationPreviewState } from "./curation-state.js";
           props.reason ||
           props.id ||
           `Feature ${i + 1}`;
-        const subtitle = mapCtl.getSubtitleFromProps(props);
+        const subtitle = subtitleFromProps(props);
         const id = `curation-f-${i}`;
         const showSubtitle =
           subtitle && String(subtitle).trim() !== String(name).trim();
@@ -172,7 +137,7 @@ export { createCurationPreviewState } from "./curation-state.js";
           ? `<img src="${memorialIconUrl}" alt="" class="curation-feature-icon" />`
           : "";
         return `
-          <div class="curation-feature-row${isHistory ? " curation-feature-row--history" : ""}">
+          <div class="curation-feature-row curation-feature-row--pick${isHistory ? " curation-feature-row--history" : ""}">
             <input type="checkbox" id="${id}" data-index="${i}" checked />
             ${iconHtml}
             <div class="curation-feature-content">
@@ -180,7 +145,6 @@ export { createCurationPreviewState } from "./curation-state.js";
               ${subtitleHtml}
               ${historyHtml}
             </div>
-            <button type="button" class="curation-feature-edit" data-index="${i}" aria-label="Edit feature" ${isHistory ? "disabled" : ""}>Edit</button>
           </div>`;
       })
       .join("");
@@ -189,80 +153,31 @@ export { createCurationPreviewState } from "./curation-state.js";
       input.addEventListener("change", () => {
         const idx = parseInt(input.getAttribute("data-index"), 10);
         featureEnabled.set(idx, input.checked);
-        mapCtl.setFeatureVisibleOnMap(idx, input.checked);
         updatePublishState();
-      });
-    });
-
-    container.querySelectorAll(".curation-feature-edit").forEach((btn) => {
-      btn.addEventListener("click", (event) => {
-        event.stopPropagation();
-        const idx = parseInt(btn.getAttribute("data-index"), 10);
-        openFeatureModal(idx);
-      });
-    });
-
-    container.querySelectorAll(".curation-feature-row").forEach((row) => {
-      row.addEventListener("click", (event) => {
-        const target = event.target;
-        if (!target) return;
-        if (
-          target.closest("input[type=\"checkbox\"]") ||
-          target.closest(".curation-feature-edit")
-        ) {
-          return;
-        }
-        const input = row.querySelector("input[data-index]");
-        if (!input) return;
-        const idx = parseInt(input.getAttribute("data-index"), 10);
-        if (Number.isNaN(idx)) return;
-        mapCtl.highlightFeatureOnMap(idx, row);
       });
     });
 
     updatePublishState();
   }
 
-  function openFeatureModal(featureIndex) {
-    const f = currentFeatures[featureIndex];
-    if (!f) return;
-    const p = f.properties || {};
-    if (p.is_current === false) return;
-    el("curationModalFeatureName").value = p.name != null ? String(p.name) : "";
-    el("curationModalFeatureReason").value = p.reason != null ? String(p.reason) : "";
-    el("curationModalFeatureDescription").value = p.description != null ? String(p.description) : "";
-    el("curationModalFeatureNote").value = p.note != null ? String(p.note) : "";
-    el("curationModalFeature").setAttribute("data-feature-index", String(featureIndex));
-    el("curationModalFeature").classList.add("open");
-    el("curationModalFeature").setAttribute("aria-hidden", "false");
-  }
-
-  function closeFeatureModal() {
-    el("curationModalFeature").classList.remove("open");
-    el("curationModalFeature").setAttribute("aria-hidden", "true");
-  }
-
-  function saveFeatureModal() {
-    const idx = parseInt(el("curationModalFeature").getAttribute("data-feature-index"), 10);
-    const f = currentFeatures[idx];
-    if (!f) return;
-    f.properties = f.properties || {};
-    f.properties.name = (el("curationModalFeatureName").value || "").trim() || undefined;
-    f.properties.reason = (el("curationModalFeatureReason").value || "").trim() || undefined;
-    f.properties.description = (el("curationModalFeatureDescription").value || "").trim() || undefined;
-    f.properties.note = (el("curationModalFeatureNote").value || "").trim() || undefined;
-    renderFeatureList(currentFeatures);
-    mapCtl.showPreview(
-      { type: "FeatureCollection", features: currentFeatures },
-      { preserveView: true },
-    );
-    closeFeatureModal();
+  function subtitleFromProps(props) {
+    const p = props || {};
+    const reason = p.reason != null ? String(p.reason).trim() : "";
+    const desc = p.description != null ? String(p.description).trim() : "";
+    const note = p.note != null ? String(p.note).trim() : "";
+    const id = p.id != null ? String(p.id).trim() : "";
+    const bits = [];
+    if (reason) bits.push(reason);
+    if (desc && desc !== reason) bits.push(desc);
+    if (note) bits.push(note);
+    if (id) bits.push(`id: ${id}`);
+    return bits.join(" · ");
   }
 
   /**
-   * @param {boolean} [includeHistoryInPayload=true] When false, drops checked features with `is_current === false`.
+   * @param {boolean} [includeHistoryInPayload=false] When false, drops checked features with `is_current === false`.
    */
-  function getSelectedGeojson(includeHistoryInPayload = true) {
+  function getSelectedGeojson(includeHistoryInPayload = false) {
     const features = currentFeatures
       .filter((f, i) => {
         if (!featureEnabled.get(i)) return false;
@@ -283,113 +198,13 @@ export { createCurationPreviewState } from "./curation-state.js";
   }
 
   function updatePublishState() {
-    const hasSelection = getSelectedGeojson(true).features.length > 0;
+    const hasSelection = getSelectedGeojson().features.length > 0;
     const hasName = (layerNameInput().value || "").trim().length > 0;
     publishBtn().disabled = isPublishing || !hasSelection || !hasName;
   }
 
-  function updateSaveEditsState() {
-    const btn = saveEditsBtn();
-    if (!btn) return;
-    const pendingCount = pendingGeometryEdits.size;
-    btn.disabled = pendingCount === 0 || !selectedSubmissionId();
-    btn.textContent =
-      pendingCount > 0
-        ? `Save source edits (${pendingCount})`
-        : "Save source edits";
-  }
-
-  async function savePendingEdits() {
-    if (!pendingGeometryEdits.size) {
-      setStatus("No pending geometry edits to save.");
-      updateSaveEditsState();
-      return;
-    }
-    const submissionId = selectedSubmissionId();
-    if (!submissionId) {
-      setStatus("Select a submission before saving edits.", "error");
-      return;
-    }
-
-    const btn = saveEditsBtn();
-    if (btn) btn.disabled = true;
-    setStatus(`Saving ${pendingGeometryEdits.size} source edit(s)…`);
-
-    let savedCount = 0;
-    let skippedCount = 0;
-    const warnings = [];
-    let latestPublishedLayerId = lastPublishedFullLayerIdRef.current || null;
-    const edits = Array.from(pendingGeometryEdits.values());
-    const groupedEdits = new Map();
-    edits.forEach((edit) => {
-      const key = `${edit?.sourcePublishedLayerFullId || "auto"}::${edit?.projectId || "none"}`;
-      const row = groupedEdits.get(key) || [];
-      row.push(edit);
-      groupedEdits.set(key, row);
-    });
-    try {
-      for (const group of groupedEdits.values()) {
-        if (!Array.isArray(group) || group.length === 0) continue;
-        const sourceLayerId = group[0]?.sourcePublishedLayerFullId || null;
-        const requestEdits = [];
-        for (const edit of group) {
-          if (!edit || !edit.featureId) {
-            skippedCount += 1;
-            continue;
-          }
-          const srcFeat = currentFeatures.find(
-            (cf) =>
-              cf?.properties?.id != null &&
-              String(cf.properties.id) === String(edit.featureId),
-          );
-          if (srcFeat?.properties?.is_current === false) {
-            skippedCount += 1;
-            continue;
-          }
-          requestEdits.push({
-            feature_id: edit.featureId,
-            project_id: edit.projectId || null,
-            before_geom: edit.beforeGeom || {},
-            after_geom: edit.afterGeom || {},
-          });
-        }
-        if (requestEdits.length === 0) continue;
-        const result = await API.editFeaturesBatch({
-          table: "otef",
-          project_name: CURATED_GROUP_NAME,
-          submission_id: submissionId,
-          published_layer_full_id: sourceLayerId,
-          edits: requestEdits,
-        });
-        if (result && result.new_full_layer_id) {
-          latestPublishedLayerId = String(result.new_full_layer_id);
-        }
-        if (result && result.warning) {
-          warnings.push(String(result.warning));
-        }
-        savedCount += Number(result?.edits_applied || requestEdits.length);
-      }
-      lastPublishedFullLayerIdRef.current = latestPublishedLayerId;
-      pendingGeometryEdits.clear();
-      updateSaveEditsState();
-      await publishedPanel.loadPublishedCuratedLayers();
-      await submissionsCtlRef.current.loadSubmissions({ preserveOnError: true });
-      const skippedSuffix =
-        skippedCount > 0 ? ` (${skippedCount} skipped without feature ids)` : "";
-      const warningSuffix =
-        warnings.length > 0 ? ` Warning: ${warnings[0]}` : "";
-      setStatus(`Saved ${savedCount} source edit(s)${skippedSuffix}.${warningSuffix}`, "success");
-    } catch (err) {
-      updateSaveEditsState();
-      setStatus("Could not save source edits: " + (err?.message || String(err)), "error");
-    }
-  }
-
   async function loadFeatures(submissionId) {
-    mapCtl.clearPreview();
     renderFeatureList([]);
-    pendingGeometryEdits.clear();
-    updateSaveEditsState();
     lastPublishedFullLayerIdRef.current = null;
     setStatus("Loading…");
     if (!submissionId) {
@@ -402,17 +217,14 @@ export { createCurationPreviewState } from "./curation-state.js";
     try {
       const geojson = await API.features(submissionId, {
         includeCurrent: true,
-        includeHistory: historyFilterState.showOldRevisions,
+        includeHistory: false,
       });
       const features = geojson.features || [];
-      await mapCtl.showPreview(geojson);
       renderFeatureList(features);
       setStatus("");
-      updateSaveEditsState();
     } catch (e) {
       setStatus("Could not load features: " + e.message, "error");
       renderFeatureList([]);
-      updateSaveEditsState();
     }
   }
 
@@ -433,12 +245,10 @@ export { createCurationPreviewState } from "./curation-state.js";
       return;
     }
 
-    if (getSelectedGeojson(true).features.length === 0) {
+    if (getSelectedGeojson().features.length === 0) {
       setStatus("Select at least one feature.", "error");
       return;
     }
-
-    setPublishModeSegmentState(false);
 
     const overlay = publishModalOverlay();
     if (!overlay) return;
@@ -460,28 +270,10 @@ export { createCurationPreviewState } from "./curation-state.js";
 
   function confirmPublishFromDialog() {
     if (isPublishing) return;
-    const historyBtn = el("curationPublishModeHistory");
-    const includeHistory = historyBtn?.getAttribute("aria-pressed") === "true";
-    void publishWithOptions(includeHistory);
+    void publishSelectedCuratedLayer();
   }
 
-  /** @param {boolean} includeHistory */
-  function setPublishModeSegmentState(includeHistory) {
-    const cur = el("curationPublishModeCurrent");
-    const hist = el("curationPublishModeHistory");
-    if (cur) cur.setAttribute("aria-pressed", includeHistory ? "false" : "true");
-    if (hist) hist.setAttribute("aria-pressed", includeHistory ? "true" : "false");
-  }
-
-  function syncHistoryRevisionSegmentUI() {
-    const cur = el("curationHistoryFilterCurrent");
-    const hist = el("curationHistoryFilterWithHistory");
-    const show = historyFilterState.showOldRevisions;
-    if (cur) cur.setAttribute("aria-pressed", show ? "false" : "true");
-    if (hist) hist.setAttribute("aria-pressed", show ? "true" : "false");
-  }
-
-  async function publishWithOptions(includeHistoryInPayload) {
+  async function publishSelectedCuratedLayer() {
     if (isPublishing) return;
     isPublishing = true;
     setPublishDialogBusy(true);
@@ -499,14 +291,9 @@ export { createCurationPreviewState } from "./curation-state.js";
         return;
       }
 
-      const selected = getSelectedGeojson(includeHistoryInPayload);
+      const selected = getSelectedGeojson();
       if (!selected.features.length) {
-        setStatus(
-          includeHistoryInPayload
-            ? "Select at least one feature."
-            : "Select at least one current feature (history excluded in Current only).",
-          "error",
-        );
+        setStatus("Select at least one current feature.", "error");
         return;
       }
 
@@ -564,6 +351,42 @@ export { createCurationPreviewState } from "./curation-state.js";
     }
   }
 
+  async function unpublishAllCuratedLayers() {
+    const ok =
+      typeof window === "undefined" || !window.confirm
+        ? true
+        : window.confirm("Remove all published curated layers from the remote?");
+    if (!ok) return;
+    const btn = el("curationUnpublishAll");
+    if (btn) btn.disabled = true;
+    setStatus("Removing all published curated layers…");
+    try {
+      const r = await fetch("/api/supabase/curated/unpublish-all/", {
+        method: "POST",
+        headers: API._writeHeaders(),
+        body: JSON.stringify({ table: "otef" }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        throw new Error(body.error || `Unpublish all failed (${r.status})`);
+      }
+      lastPublishedFullLayerIdRef.current = null;
+      const n = body.removed_count;
+      setStatus(
+        typeof n === "number"
+          ? `Removed ${n} published layer(s) from remote.`
+          : "All published curated layers removed from remote.",
+        "success",
+      );
+      await publishedPanel.loadPublishedCuratedLayers();
+      await submissionsCtlRef.current.loadSubmissions({ preserveOnError: true });
+    } catch (err) {
+      setStatus("Could not unpublish all: " + (err?.message || String(err)), "error");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   function refresh() {
     setStatus("");
     Promise.all([loadSubmissions(), publishedPanel.loadPublishedCuratedLayers()]).then(() => {
@@ -573,48 +396,21 @@ export { createCurationPreviewState } from "./curation-state.js";
   }
 
   function init() {
-    mapCtl.initMap();
     loadSubmissions();
     publishedPanel.loadPublishedCuratedLayers();
-
-    syncHistoryRevisionSegmentUI();
-    el("curationHistoryFilterCurrent")?.addEventListener("click", () => {
-      if (!historyFilterState.showOldRevisions) return;
-      historyFilterState = setHistoryFilterState({ showOldRevisions: false });
-      syncHistoryRevisionSegmentUI();
-      const sid = selectedSubmissionId();
-      if (sid) loadFeatures(sid);
-    });
-    el("curationHistoryFilterWithHistory")?.addEventListener("click", () => {
-      if (historyFilterState.showOldRevisions) return;
-      historyFilterState = setHistoryFilterState({ showOldRevisions: true });
-      syncHistoryRevisionSegmentUI();
-      const sid = selectedSubmissionId();
-      if (sid) loadFeatures(sid);
-    });
 
     layerNameInput().addEventListener("input", updatePublishState);
 
     publishBtn().addEventListener("click", openPublishDialog);
-    el("curationPublishModeCurrent")?.addEventListener("click", () =>
-      setPublishModeSegmentState(false),
-    );
-    el("curationPublishModeHistory")?.addEventListener("click", () =>
-      setPublishModeSegmentState(true),
-    );
     el("curationModalPublishCancel")?.addEventListener("click", closePublishDialog);
     el("curationModalPublishConfirm")?.addEventListener("click", confirmPublishFromDialog);
     publishModalOverlay()?.addEventListener("click", (e) => {
       if (e.target === publishModalOverlay()) closePublishDialog();
     });
-    saveEditsBtn()?.addEventListener("click", savePendingEdits);
-    refreshBtn().addEventListener("click", refresh);
-
-    el("curationModalFeatureCancel").addEventListener("click", closeFeatureModal);
-    el("curationModalFeatureSave").addEventListener("click", saveFeatureModal);
-    el("curationModalFeature").addEventListener("click", (e) => {
-      if (e.target === el("curationModalFeature")) closeFeatureModal();
+    el("curationUnpublishAll")?.addEventListener("click", () => {
+      void unpublishAllCuratedLayers();
     });
+    refreshBtn().addEventListener("click", refresh);
   }
 
   if (typeof document !== "undefined") {

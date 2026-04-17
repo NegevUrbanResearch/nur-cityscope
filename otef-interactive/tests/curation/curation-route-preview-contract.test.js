@@ -101,10 +101,10 @@ describe("curation route preview integration contract", () => {
     });
   });
 
-  test("curation wiring injects API computeRoute into createCurationMapPreview", () => {
+  test("curation page orchestration does not mount the map preview module", () => {
     const src = fs.readFileSync(path.join(CURATION_SRC_DIR, "curation.js"), "utf8");
-    expect(src.includes("createCurationMapPreview({")).toBe(true);
-    expect(src.includes("computeRoute: (payload) => API.computeRoute(payload)")).toBe(true);
+    expect(src.includes("createCurationMapPreview")).toBe(false);
+    expect(src.includes("curation-map-preview")).toBe(false);
   });
 
   test("map preview guards against stale sequence after async dashed compute", () => {

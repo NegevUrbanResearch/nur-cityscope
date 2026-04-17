@@ -9,10 +9,6 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <title>OTEF Curation</title>
     <link rel="stylesheet" href="css/remote-styles.css" />
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    />
     <style>
       .curation-layout {
         display: flex;
@@ -46,108 +42,27 @@
       .curation-body {
         flex: 1;
         min-height: 0;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-      }
-      .curation-map-wrap {
-        order: 0;
-        flex: 1;
-        min-height: 260px;
-        display: flex;
-        flex-direction: column;
-        position: relative;
+        overflow-y: auto;
       }
       .curation-sidebar {
-        order: 1;
-        flex: 0 0 auto;
-        overflow-y: auto;
-        padding: var(--spacing-unit);
-        border-top: 1px solid var(--border-color);
-        max-height: 50vh;
-      }
-      @media (min-width: 900px) {
-        .curation-body {
-          flex-direction: row;
-        }
-        .curation-map-wrap {
-          order: 1;
-          min-height: 400px;
-        }
-        .curation-sidebar {
-          order: 0;
-          width: 360px;
-          max-height: none;
-          border-top: none;
-          border-right: 1px solid var(--border-color);
-        }
-      }
-      @media (min-width: 900px) {
-        .curation-map-wrap {
-          min-height: 400px;
-        }
-      }
-      #curationMap {
-        flex: 1;
-        min-height: 280px;
         width: 100%;
-        border-radius: 0;
+        max-width: 640px;
+        margin: 0 auto;
+        padding: var(--spacing-unit);
+        box-sizing: border-box;
       }
-      @media (min-width: 900px) {
-        #curationMap {
-          min-height: 400px;
-        }
-      }
-      .curation-map-legend {
-        position: absolute;
-        z-index: 500;
-        left: 10px;
-        bottom: 10px;
-        max-width: min(260px, calc(100% - 20px));
-        padding: 8px 10px;
-        border-radius: 4px;
-        background: rgba(15, 22, 32, 0.88);
-        color: #e8eef5;
-        font-size: 11px;
-        line-height: 1.35;
-        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-        pointer-events: none;
-      }
-      .curation-map-legend__title {
-        margin: 0 0 6px;
-        font-size: 10px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: #b8c5d6;
-      }
-      .curation-map-legend__list {
-        margin: 0;
-        padding: 0;
-        list-style: none;
-      }
-      .curation-map-legend__item {
+      .curation-section-head {
         display: flex;
         align-items: center;
-        gap: 8px;
-        margin-top: 6px;
+        justify-content: space-between;
+        gap: var(--spacing-unit);
+        margin-bottom: 6px;
       }
-      .curation-map-legend__item:first-child {
-        margin-top: 0;
+      .curation-section-head h2 {
+        margin-bottom: 0;
       }
-      .curation-map-legend__item svg {
-        flex: 0 0 56px;
-        height: 14px;
-        display: block;
-      }
-      .curation-map-legend__item line {
-        stroke-linecap: round;
-        stroke-linejoin: round;
-        fill: none;
-      }
-      .curation-map-legend__label {
-        flex: 1;
-        min-width: 0;
+      .curation-publish-actions {
+        margin-top: 8px;
       }
       .curation-section {
         margin-bottom: var(--spacing-unit);
@@ -203,6 +118,12 @@
       .curation-feature-row:hover {
         background: var(--bg-secondary);
       }
+      .curation-feature-row--pick {
+        cursor: default;
+      }
+      .curation-feature-row--pick:hover {
+        background: var(--bg-tertiary);
+      }
       .curation-feature-row.highlighted {
         background: var(--bg-secondary);
         border-left: 3px solid var(--accent-primary);
@@ -229,7 +150,7 @@
         font-size: 14px;
         font-weight: 500;
         color: var(--text-primary);
-        cursor: pointer;
+        cursor: inherit;
       }
       .curation-feature-meta {
         font-size: 12px;
@@ -266,43 +187,6 @@
       }
       .curation-publish-btn:disabled {
         opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .curation-publish-save-row {
-        margin-top: 8px;
-        width: 100%;
-      }
-      .curation-publish-save-row button {
-        flex: 1;
-        min-width: 0;
-        padding: 11px 8px;
-        font-size: 12px;
-        font-weight: 600;
-        line-height: 1.25;
-        white-space: normal;
-        text-align: center;
-      }
-      .curation-publish-save-row .curation-segment-publish {
-        background: var(--accent-primary);
-        color: var(--bg-primary);
-      }
-      .curation-publish-save-row .curation-segment-publish:hover:not(:disabled) {
-        filter: brightness(1.08);
-      }
-      .curation-publish-save-row .curation-segment-publish:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .curation-publish-save-row .curation-segment-save {
-        background: transparent;
-        color: var(--text-primary);
-      }
-      .curation-publish-save-row .curation-segment-save:hover:not(:disabled) {
-        color: var(--accent-primary);
-        background: var(--bg-secondary);
-      }
-      .curation-publish-save-row .curation-segment-save:disabled {
-        opacity: 0.45;
         cursor: not-allowed;
       }
       .curation-status {
@@ -656,78 +540,6 @@
         background: rgba(255, 200, 0, 0.12);
         color: #ffe999;
       }
-      .curation-filter-row {
-        margin-top: 8px;
-      }
-      .curation-filter-row .curation-segmented {
-        max-width: 100%;
-      }
-      .leaflet-label-icon {
-        background: transparent;
-        border: none;
-      }
-      .leaflet-label-icon .curation-marker-label {
-        background: rgba(10, 10, 15, 0.9);
-        color: var(--text-primary);
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-size: 12px;
-        white-space: nowrap;
-        max-width: 200px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        border: 1px solid var(--border-color);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-      }
-      /* Pink line curated layer: node markers (no numbers), tooltip on hover */
-      .pink-line-node-marker {
-        background: transparent;
-        border: none;
-      }
-      .pink-line-node {
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        background: currentColor;
-        border: 2px solid #fff;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-      }
-      .curated-node-tooltip {
-        font-size: 13px;
-        padding: 6px 10px;
-        white-space: nowrap;
-        max-width: 240px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .curation-marker-highlight {
-        width: 18px;
-        height: 18px;
-        margin-left: -9px;
-        margin-top: -9px;
-        border-radius: 50%;
-        border: 2px solid #ffffff;
-        background: var(--accent-primary);
-        box-shadow: 0 0 0 0 rgba(255, 102, 163, 0.9);
-        animation: curation-glow 1.2s ease-out infinite;
-      }
-      @keyframes curation-glow {
-        0% {
-          box-shadow: 0 0 0 0 rgba(255, 102, 163, 0.9);
-          opacity: 1;
-          transform: scale(1);
-        }
-        70% {
-          box-shadow: 0 0 0 14px rgba(255, 102, 163, 0);
-          opacity: 0.9;
-          transform: scale(1.05);
-        }
-        100% {
-          box-shadow: 0 0 0 0 rgba(255, 102, 163, 0);
-          opacity: 0.8;
-          transform: scale(1);
-        }
-      }
     </style>
   </head>
   <body>
@@ -780,29 +592,6 @@
 
           <section class="curation-section">
             <h2>Features (toggle to include)</h2>
-            <div class="curation-filter-row">
-              <div
-                id="curationHistoryFilter"
-                class="curation-segmented"
-                role="group"
-                aria-label="Which revisions to load"
-              >
-                <button
-                  type="button"
-                  id="curationHistoryFilterCurrent"
-                  aria-pressed="true"
-                >
-                  Current only
-                </button>
-                <button
-                  type="button"
-                  id="curationHistoryFilterWithHistory"
-                  aria-pressed="false"
-                >
-                  With history
-                </button>
-              </div>
-            </div>
             <div id="curationFeatures" class="curation-features">
               <div class="curation-status">Select a submission to list features.</div>
             </div>
@@ -817,74 +606,31 @@
               placeholder="e.g. My curated layer"
               aria-label="Layer name"
             />
-            <div
-              id="curationPublishSaveGroup"
-              class="curation-segmented curation-publish-save-row"
-              role="group"
-              aria-label="Publish layer and save geometry edits"
-            >
+            <div class="curation-publish-actions">
               <button
                 type="button"
                 id="curationPublish"
-                class="curation-segment-publish"
+                class="curation-publish-btn"
                 disabled
               >
                 Publish as OTEF layer
-              </button>
-              <button type="button" id="curationSaveEdits" class="curation-segment-save" disabled>
-                Save source edits
               </button>
             </div>
             <div id="curationStatus" class="curation-status"></div>
           </section>
 
           <section class="curation-section">
-            <h2>Published layers on remote</h2>
+            <div class="curation-section-head">
+              <h2>Published layers on remote</h2>
+              <button type="button" id="curationUnpublishAll" class="curation-header-btn">
+                Unpublish all
+              </button>
+            </div>
             <div id="curationPublishedLayers" class="curation-features">
               <div class="curation-status">Loading published curated layers…</div>
             </div>
           </section>
         </aside>
-
-        <div class="curation-map-wrap">
-          <div id="curationMap"></div>
-          <div
-            class="curation-map-legend"
-            role="group"
-            aria-labelledby="curationMapLegendTitle"
-          >
-            <p id="curationMapLegendTitle" class="curation-map-legend__title">
-              Map lines
-            </p>
-            <ul class="curation-map-legend__list">
-              <li class="curation-map-legend__item">
-                <svg viewBox="0 0 56 14" width="56" height="14" aria-hidden="true" focusable="false">
-                  <line
-                    id="curationLegendCurrentLine"
-                    x1="2"
-                    y1="7"
-                    x2="54"
-                    y2="7"
-                  />
-                </svg>
-                <span class="curation-map-legend__label">Current revision route</span>
-              </li>
-              <li class="curation-map-legend__item">
-                <svg viewBox="0 0 56 14" width="56" height="14" aria-hidden="true" focusable="false">
-                  <line
-                    id="curationLegendHistoryLine"
-                    x1="2"
-                    y1="7"
-                    x2="54"
-                    y2="7"
-                  />
-                </svg>
-                <span class="curation-map-legend__label"
-                  >Historical revision (faded; offset when overlapping)</span>
-              </li>
-            </ul>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -892,29 +638,9 @@
       <div class="curation-modal" role="dialog" aria-labelledby="curationModalPublishTitle">
         <h3 id="curationModalPublishTitle">Publish layer</h3>
         <div class="curation-modal-body">
-          <span id="curationPublishModeLabel" class="curation-modal-field-label">Include in published layer</span>
-          <div
-            class="curation-segmented curation-publish-mode-segmented"
-            role="radiogroup"
-            aria-labelledby="curationPublishModeLabel"
-          >
-            <button
-              type="button"
-              id="curationPublishModeCurrent"
-              data-publish-mode="current_only"
-              aria-pressed="true"
-            >
-              Current only
-            </button>
-            <button
-              type="button"
-              id="curationPublishModeHistory"
-              data-publish-mode="current_plus_history"
-              aria-pressed="false"
-            >
-              Current + history
-            </button>
-          </div>
+          <p id="curationPublishScopeNote" class="curation-modal-field-label" style="margin-bottom: 0">
+            The published OTEF layer includes <strong>current revisions only</strong>. History revisions are not loaded on this page.
+          </p>
         </div>
         <div class="curation-modal-actions">
           <button type="button" id="curationModalPublishCancel" class="curation-header-btn">Cancel</button>
@@ -923,27 +649,6 @@
       </div>
     </div>
 
-    <div id="curationModalFeature" class="curation-modal-overlay" aria-hidden="true">
-      <div class="curation-modal" role="dialog" aria-labelledby="curationModalFeatureTitle">
-        <h3 id="curationModalFeatureTitle">Edit feature metadata</h3>
-        <div class="curation-modal-body">
-          <label for="curationModalFeatureName">Name</label>
-          <input type="text" id="curationModalFeatureName" />
-          <label for="curationModalFeatureReason">Reason</label>
-          <input type="text" id="curationModalFeatureReason" placeholder="Reason entered" />
-          <label for="curationModalFeatureDescription">Description</label>
-          <textarea id="curationModalFeatureDescription" placeholder="Description"></textarea>
-          <label for="curationModalFeatureNote">Note</label>
-          <textarea id="curationModalFeatureNote" placeholder="Note"></textarea>
-        </div>
-        <div class="curation-modal-actions">
-          <button type="button" id="curationModalFeatureCancel" class="curation-header-btn">Cancel</button>
-          <button type="button" id="curationModalFeatureSave" class="curation-publish-btn" style="margin-top: 0;">Save</button>
-        </div>
-      </div>
-    </div>
-
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/proj4@2.9.0/dist/proj4.js"></script>
     <script type="module" src="./src/entries/curation-main.js"></script>
   </body>

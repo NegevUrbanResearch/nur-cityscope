@@ -16,30 +16,14 @@ function readCurationJs() {
 }
 
 describe("curation publish dialog (HTML + source contracts)", () => {
-  test("default publish option is Current only (segment pressed, history not)", () => {
-    const html = readCurationHtml();
-    expect(html.includes('id="curationPublishModeCurrent"')).toBe(true);
-    expect(html.includes('id="curationPublishModeHistory"')).toBe(true);
-    const currentIdx = html.indexOf('id="curationPublishModeCurrent"');
-    const historyIdx = html.indexOf('id="curationPublishModeHistory"');
-    expect(currentIdx).toBeGreaterThanOrEqual(0);
-    expect(historyIdx).toBeGreaterThan(currentIdx);
-    const sliceToHistory = html.slice(0, historyIdx);
-    expect(/id="curationPublishModeCurrent"[\s\S]*?aria-pressed="true"/.test(sliceToHistory)).toBe(
-      true,
-    );
-    expect(
-      /id="curationPublishModeHistory"[\s\S]{0,160}aria-pressed="false"/.test(html),
-    ).toBe(true);
-  });
-
-  test("publish dialog exposes segmented Current only and Current + history options", () => {
+  test("publish dialog is current-only (no history mode control)", () => {
     const html = readCurationHtml();
     expect(html.includes('id="curationModalPublish"')).toBe(true);
-    expect(html.includes("Current only")).toBe(true);
-    expect(html.includes("Current + history")).toBe(true);
-    expect(html.includes('data-publish-mode="current_only"')).toBe(true);
-    expect(html.includes('data-publish-mode="current_plus_history"')).toBe(true);
+    expect(html.includes('id="curationPublishScopeNote"')).toBe(true);
+    expect(html.includes("current revisions only")).toBe(true);
+    expect(html.includes('id="curationPublishModeHistory"')).toBe(false);
+    expect(html.includes("Current + history")).toBe(false);
+    expect(html.includes('data-publish-mode="current_plus_history"')).toBe(false);
     expect(html.includes('type="radio"')).toBe(false);
     expect(html.includes("curation-publish-mode-option")).toBe(false);
   });
@@ -53,14 +37,15 @@ describe("curation publish dialog (HTML + source contracts)", () => {
     expect(js.includes("layerNameInput()")).toBe(true);
   });
 
-  test("publish payload respects history inclusion flag on getSelectedGeojson", () => {
+  test("publish uses getSelectedGeojson current-only default (history rows excluded from payload)", () => {
     const js = readCurationJs();
     expect(js.includes("function getSelectedGeojson(")).toBe(true);
-    expect(js.includes("includeHistoryInPayload")).toBe(true);
+    expect(js.includes("includeHistoryInPayload = false")).toBe(true);
     expect(js.includes("is_current === false")).toBe(true);
-    expect(js.includes("publishWithOptions(")).toBe(true);
+    expect(js.includes("publishSelectedCuratedLayer")).toBe(true);
     expect(js.includes("openPublishDialog")).toBe(true);
-    expect(js.includes('getAttribute("aria-pressed")')).toBe(true);
-    expect(js.includes("setPublishModeSegmentState")).toBe(true);
+    expect(js.includes("confirmPublishFromDialog")).toBe(true);
+    expect(js.includes('getAttribute("aria-pressed")')).toBe(false);
+    expect(js.includes("setPublishModeSegmentState")).toBe(false);
   });
 });
