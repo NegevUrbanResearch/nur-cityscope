@@ -157,6 +157,8 @@ test("compute route endpoint path is centralized and declared once", () => {
 test("published layers primary list only includes active GIS-backed layer ids", () => {
   const src = fs.readFileSync(path.join(CURATION_SRC_DIR, "curation-published-layers.js"), "utf8");
   expect(src.includes("activeById.has(String(layer.id))")).toBe(true);
+  expect(src.includes("curation-published-layer-card")).toBe(true);
+  expect(src.includes("derivePublishedLayerUiFields")).toBe(true);
 });
 
 test("editFeaturePosition uses raw text and surfaces path/status for failures", () => {

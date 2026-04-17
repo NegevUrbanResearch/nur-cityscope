@@ -26,6 +26,9 @@ describe("curation simplified UI (HTML + orchestration contracts)", () => {
     expect(html.includes('id="curationUnpublishAll"')).toBe(true);
     expect(html.includes('id="curationSubmissionCombo"')).toBe(true);
     expect(html.includes('id="curationPublishedLayers"')).toBe(true);
+    expect(html.includes("curation-published-layers")).toBe(true);
+    expect(html.includes("max-width: 899px")).toBe(true);
+    expect(html.includes(".curation-published-layers.curation-features")).toBe(true);
     expect(html.includes('id="curationFeatures"')).toBe(false);
     expect(html.includes('id="curationLayerName"')).toBe(false);
     expect(html.includes('id="curationStatus"')).toBe(true);
@@ -57,5 +60,7 @@ describe("curation simplified UI (HTML + orchestration contracts)", () => {
     expect(js.includes("curationPublishModeHistory")).toBe(false);
     expect(js.includes("setPublishModeSegmentState")).toBe(false);
     expect(js.includes("publishSelectedCuratedLayer")).toBe(true);
+    expect(js.includes("remote controller Layers sheet")).toBe(false);
+    expect(js.includes('Published "')).toBe(true);
   });
 });

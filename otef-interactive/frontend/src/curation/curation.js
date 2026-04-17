@@ -22,7 +22,7 @@ export { createCurationPreviewState } from "./curation-state.js";
   const el = (id) => document.getElementById(id);
   const selectedSubmissionInput = () => el("curationSubmission");
   const selectedSubmissionId = () =>
-    String(selectedSubmissionInput()?.value || "").trim();
+    String(selectedSubmissionInput()?.value || "").trim().toLowerCase();
   const publishBtn = () => el("curationPublish");
   const statusEl = () => el("curationStatus");
   const refreshBtn = () => el("curationRefresh");
@@ -48,6 +48,12 @@ export { createCurationPreviewState } from "./curation-state.js";
     lastPublishedFullLayerIdRef,
     selectSubmissionById: (id) => submissionsCtlRef.current?.selectSubmissionById(id),
     submissionExists: (id) => Boolean(submissionsCtlRef.current?.hasSubmissionId(id)),
+    getSubmissionDisplayName: (id) =>
+      submissionsCtlRef.current?.getSubmissionDisplayName?.(id) ?? "",
+    getSubmissionColorCss: (id) =>
+      submissionsCtlRef.current?.getSubmissionColorCss?.(id) ?? null,
+    resolveSubmissionIdByDisplayName: (displayName) =>
+      submissionsCtlRef.current?.findSubmissionIdByDisplayName?.(displayName) ?? null,
   });
 
   submissionsCtlRef.current = createSubmissionsPanel({
@@ -64,6 +70,7 @@ export { createCurationPreviewState } from "./curation-state.js";
       lastPublishedFullLayerIdRef.current = null;
       updatePublishState();
     },
+    onSubmissionsLoaded: () => publishedPanel.renderPublishedCuratedLayers(),
   });
 
   const loadSubmissions = () => submissionsCtlRef.current.loadSubmissions();
@@ -122,7 +129,13 @@ export { createCurationPreviewState } from "./curation-state.js";
       if (pb) pb.disabled = true;
       setStatus("Publishing…");
 
-      let payload = selected;
+      let payload = {
+        ...selected,
+        features: (selected.features || []).map((f) => ({
+          ...f,
+          properties: { ...(f.properties || {}), submission_id: sid },
+        })),
+      };
       const crs = payload.crs?.properties?.name || "";
       const firstCoord = CoordUtils.getFirstCoordinate(payload);
       const looksLikeItm =
@@ -150,14 +163,7 @@ export { createCurationPreviewState } from "./curation-state.js";
       const result = await API.publish(name, payload, projName);
       lastPublishedFullLayerIdRef.current = result.fullLayerId || null;
       await publishedPanel.loadPublishedCuratedLayers();
-      setStatus(
-        "Published as \"" +
-          (result.displayName || name) +
-          "\" in group \"" +
-          CURATED_GROUP_NAME +
-          "\". Layer is available in the projection and remote controller Layers sheet; open views will update automatically.",
-        "success"
-      );
+      setStatus('Published "' + (result.displayName || name) + '".', "success");
     } catch (e) {
       const msg = (e && e.message) || (e && typeof e === "object" && e.toString && e.toString()) || String(e) || "Unknown error";
       if (typeof console !== "undefined" && console.error) {
@@ -247,8 +253,10 @@ export { createCurationPreviewState } from "./curation-state.js";
   }
 
   function init() {
-    loadSubmissions();
-    publishedPanel.loadPublishedCuratedLayers();
+    void Promise.all([
+      submissionsCtlRef.current.loadSubmissions(),
+      publishedPanel.loadPublishedCuratedLayers(),
+    ]).then(() => updatePublishState());
     void loadWorkshopModeUi();
 
     publishBtn()?.addEventListener("click", () => {

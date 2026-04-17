@@ -39,6 +39,7 @@ describe("curation API submissionsAll", () => {
       type_label: "Memorials",
       has_history: true,
       has_current: true,
+      submission_color: "#aabbcc",
       extra_from_api: 42,
     };
     fetchMock.mockResolvedValue({
@@ -59,6 +60,7 @@ describe("curation API submissionsAll", () => {
     expect(out[0].has_history).toBe(row.has_history);
     expect(out[0].has_current).toBe(row.has_current);
     expect(out[0].extra_from_api).toBe(42);
+    expect(out[0].submission_color).toBe("#aabbcc");
   });
 
   test("normalizes wrapped list shapes to an array", async () => {
@@ -130,6 +132,12 @@ describe("curation submissions list UI (HTML + source contracts)", () => {
     expect(src.includes("syncSelectedTagsUi")).toBe(true);
     expect(src.includes("getSelectedTagsContainer")).toBe(true);
     expect(src.includes("preserveOnError")).toBe(true);
+    expect(src.includes("curation-submission-option-head")).toBe(true);
+    expect(src.includes("curation-submission-option-swatch")).toBe(true);
+    expect(src.includes("curation-submission-selected-swatch")).toBe(true);
+    expect(src.includes("submission_color")).toBe(true);
+    expect(src.includes("getSubmissionDisplayName")).toBe(true);
+    expect(src.includes("getSubmissionColorCss")).toBe(true);
   });
 
   test("getSubmissionTagLabels never adds History (hasHistory ignored for UI tags)", () => {
@@ -159,17 +167,21 @@ describe("curation submissions list UI (HTML + source contracts)", () => {
     ).toBe(false);
   });
 
-  test("closed combobox lays out selected name and tags on one row", () => {
+  test("closed combobox stacks tags then full name (wrap, no ellipsis on selected value)", () => {
     const html = readCurationHtml();
     expect(html.includes("has-selected-tags")).toBe(true);
-    expect(
-      html.includes("tag chips on the left, submission name (search) on the right"),
-    ).toBe(true);
+    expect(html.includes("full submission name wraps below")).toBe(true);
     const idx = html.indexOf(".curation-submission-combo-field.has-selected-tags");
     expect(idx).toBeGreaterThan(0);
-    const slice = html.slice(idx, idx + 1100);
-    expect(slice.includes("flex-direction: row-reverse")).toBe(true);
+    const slice = html.slice(idx, idx + 1400);
+    expect(slice.includes("flex-direction: column")).toBe(true);
     expect(slice.includes(".curation-submission-selected-tags")).toBe(true);
+    const searchBlockIdx = slice.indexOf(".curation-submission-search");
+    expect(searchBlockIdx).toBeGreaterThan(0);
+    const searchBlock = slice.slice(searchBlockIdx, searchBlockIdx + 450);
+    expect(searchBlock.includes("white-space: normal")).toBe(true);
+    expect(searchBlock.includes("overflow: visible")).toBe(true);
+    expect(searchBlock.includes("text-overflow: clip")).toBe(true);
   });
 
   test("legacy submission edit control and modal removed from HTML", () => {
