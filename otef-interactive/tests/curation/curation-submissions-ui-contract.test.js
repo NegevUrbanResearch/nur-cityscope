@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { createCurationApi } from "../../frontend/src/curation/curation-api.js";
+import { getSubmissionTagLabels } from "../../frontend/src/curation/curation-submissions.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CURATION_HTML_PATH = path.resolve(__dirname, "../../frontend/curation.html");
@@ -116,10 +117,10 @@ describe("curation submissions list UI (HTML + source contracts)", () => {
     expect(html.includes('id="curationSubmissionSummary"')).toBe(false);
   });
 
-  test("submissions module renders multi-tag chips (Tkuma Line / Memorials / History)", () => {
+  test("submissions module renders type chips (Tkuma Line / Memorials), not History", () => {
     const src = readCurationSubmissionsSource();
     expect(src.includes("curation-chip-type")).toBe(true);
-    expect(src.includes("curation-chip-history")).toBe(true);
+    expect(src.includes("curation-chip-history")).toBe(false);
     expect(src.includes("getSubmissionTagLabels")).toBe(true);
     expect(src.includes("Tkuma Line")).toBe(true);
     expect(src.includes("Memorials")).toBe(true);
@@ -129,6 +130,33 @@ describe("curation submissions list UI (HTML + source contracts)", () => {
     expect(src.includes("syncSelectedTagsUi")).toBe(true);
     expect(src.includes("getSelectedTagsContainer")).toBe(true);
     expect(src.includes("preserveOnError")).toBe(true);
+  });
+
+  test("getSubmissionTagLabels never adds History (hasHistory ignored for UI tags)", () => {
+    expect(
+      getSubmissionTagLabels({
+        typeLabel: "Mixed",
+        hasHistory: true,
+      }),
+    ).toEqual(["Tkuma Line", "Memorials"]);
+    expect(
+      getSubmissionTagLabels({
+        typeLabel: "Memorials",
+        hasHistory: true,
+      }),
+    ).toEqual(["Memorials"]);
+    expect(
+      getSubmissionTagLabels({
+        typeLabel: "Tkuma Line",
+        hasHistory: false,
+      }),
+    ).toEqual(["Tkuma Line"]);
+    expect(
+      getSubmissionTagLabels({
+        typeLabel: "Mixed",
+        hasHistory: true,
+      }).some((t) => String(t).toLowerCase().includes("history")),
+    ).toBe(false);
   });
 
   test("closed combobox lays out selected name and tags on one row", () => {

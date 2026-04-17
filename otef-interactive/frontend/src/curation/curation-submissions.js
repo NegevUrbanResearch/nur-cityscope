@@ -13,13 +13,12 @@ function escapeHtml(s) {
  */
 function chipClassForTag(tagLabel) {
   const t = String(tagLabel || "").toLowerCase();
-  if (t === "history") return "curation-chip curation-chip-history";
   if (t === "memorials") return "curation-chip curation-chip-type type-memorial";
   return "curation-chip curation-chip-type type-moreshet";
 }
 
 /**
- * Multiple tags per row: Tkuma Line / Memorials / History when applicable.
+ * Multiple tags per row: Tkuma Line / Memorials when applicable.
  * @param {ReturnType<normalizeSubmissionRow>} row
  * @returns {string[]}
  */
@@ -33,7 +32,6 @@ export function getSubmissionTagLabels(row) {
   } else {
     tags.push("Tkuma Line");
   }
-  if (row?.hasHistory) tags.push("History");
   return tags;
 }
 
