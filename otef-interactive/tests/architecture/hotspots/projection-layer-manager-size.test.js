@@ -7,8 +7,7 @@ test("projection-layer-manager.js stays bounded after pink-line canvas extractio
     "utf8",
   );
   const lines = src.split("\n").length;
-  // Was 760; Colab-aligned curated canvas overlay + Supabase reload path added substantive logic.
-  expect(lines).toBeLessThan(820);
+  expect(lines).toBeLessThan(760);
 });
 
 test("projection-pink-line-canvas.js holds pink-line canvas bundle under 220 lines", () => {
