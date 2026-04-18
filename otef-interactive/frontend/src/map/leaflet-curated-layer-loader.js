@@ -29,6 +29,7 @@ import {
   sanitizeDisplayColorHex,
 } from "./leaflet-curated-pink-helpers.js";
 import { planPinkCuratedOverlayLayers } from "./pink-curated-overlay-plan.js";
+import { buildMemorialInspectHtml } from "./curated-memorial-inspect-html.js";
 import {
   PINK_LINE_PARKING_ICON_URL,
   fetchPinkLineParkingLotsGeojson,
@@ -434,14 +435,27 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
 
       let marker;
       if (memorialIconUrl) {
-        const icon = L.icon({
-          iconUrl: memorialIconUrl,
-          iconSize: [36, 36],
-          iconAnchor: [18, 18],
-          popupAnchor: [0, -18],
-          className: "curation-memorial-marker-icon",
-        });
-        marker = L.marker(latlng, { icon });
+        const accentHex = sanitizeDisplayColorHex(props.display_color);
+        if (accentHex) {
+          marker = L.marker(latlng, {
+            icon: L.divIcon({
+              className: "curation-memorial-marker-root",
+              html: `<div class="curation-memorial-marker-shell curation-memorial-marker-accent" style="--memorial-accent:${accentHex}"><img class="curation-memorial-marker-img" src="${memorialIconUrl}" alt="" /></div>`,
+              iconSize: [40, 40],
+              iconAnchor: [20, 20],
+              popupAnchor: [0, -20],
+            }),
+          });
+        } else {
+          const icon = L.icon({
+            iconUrl: memorialIconUrl,
+            iconSize: [36, 36],
+            iconAnchor: [18, 18],
+            popupAnchor: [0, -18],
+            className: "curation-memorial-marker-icon",
+          });
+          marker = L.marker(latlng, { icon });
+        }
       } else {
         const pinkOrder = pinkNodeOrderByFeature.get(feature);
         const label =
@@ -461,7 +475,9 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
       }
 
       const tip = formatNodeTooltip(props);
-      const popupContent = formatNodePopup(props);
+      const popupContent = memorialIconUrl
+        ? buildMemorialInspectHtml(props)
+        : formatNodePopup(props);
       marker.bindTooltip(tip, { permanent: false, direction: "top", className: "curated-node-tooltip" });
       marker.bindPopup(popupContent, { className: "curated-node-popup" });
       group.addLayer(marker);
@@ -505,14 +521,27 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
 
       let marker;
       if (memorialIconUrl) {
-        const icon = L.icon({
-          iconUrl: memorialIconUrl,
-          iconSize: [36, 36],
-          iconAnchor: [18, 18],
-          popupAnchor: [0, -18],
-          className: "curation-memorial-marker-icon",
-        });
-        marker = L.marker(latlng, { icon });
+        const accentHex = sanitizeDisplayColorHex(props.display_color);
+        if (accentHex) {
+          marker = L.marker(latlng, {
+            icon: L.divIcon({
+              className: "curation-memorial-marker-root",
+              html: `<div class="curation-memorial-marker-shell curation-memorial-marker-accent" style="--memorial-accent:${accentHex}"><img class="curation-memorial-marker-img" src="${memorialIconUrl}" alt="" /></div>`,
+              iconSize: [40, 40],
+              iconAnchor: [20, 20],
+              popupAnchor: [0, -20],
+            }),
+          });
+        } else {
+          const icon = L.icon({
+            iconUrl: memorialIconUrl,
+            iconSize: [36, 36],
+            iconAnchor: [18, 18],
+            popupAnchor: [0, -18],
+            className: "curation-memorial-marker-icon",
+          });
+          marker = L.marker(latlng, { icon });
+        }
       } else {
         marker = L.marker(latlng, {
           icon: L.divIcon({
@@ -524,7 +553,9 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
         });
       }
       const tip = formatNodeTooltip(props);
-      const popupContent = formatNodePopup(props);
+      const popupContent = memorialIconUrl
+        ? buildMemorialInspectHtml(props)
+        : formatNodePopup(props);
       marker.bindTooltip(tip, { permanent: false, direction: "top", className: "curated-node-tooltip" });
       marker.bindPopup(popupContent, { className: "curated-node-popup" });
       group.addLayer(marker);
