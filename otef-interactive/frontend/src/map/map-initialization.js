@@ -7,7 +7,13 @@ import { buildMapOptions } from "./map-options.js";
 import { applyViewportFromAPI } from "./viewport-sync.js";
 import { applyLayerGroupsState } from "./layer-state-manager.js";
 import { updateMapLegend } from "./map-legend.js";
-import { loadGeoJSONLayers, getMapLayerLoaderAPI, pmtilesLayersWithConfigs } from "./leaflet-control-with-basemap.js";
+import {
+  loadGeoJSONLayers,
+  getMapLayerLoaderAPI,
+  reloadCuratedLayersOnMapIfUpdated,
+  pmtilesLayersWithConfigs,
+} from "./leaflet-control-with-basemap.js";
+import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
 
 // Define EPSG:2039 projection for transformation
 proj4.defs(
@@ -195,6 +201,24 @@ function initializeMap(bounds) {
           updateConnectionStatus(!!connected);
         }),
       );
+
+      if (!window._nurCuratedHeartbeatStop) {
+        window._nurCuratedHeartbeatStop = startCuratedSupabaseHeartbeat({
+          table: "otef",
+          onUpdated: async () => {
+            reloadCuratedLayersOnMapIfUpdated();
+            window.dispatchEvent(
+              new CustomEvent("nur-curated-supabase-pull", { detail: { source: "gis" } }),
+            );
+          },
+        });
+        window._otefUnsubscribeFunctions.push(() => {
+          if (typeof window._nurCuratedHeartbeatStop === "function") {
+            window._nurCuratedHeartbeatStop();
+            window._nurCuratedHeartbeatStop = null;
+          }
+        });
+      }
       });
   }
 

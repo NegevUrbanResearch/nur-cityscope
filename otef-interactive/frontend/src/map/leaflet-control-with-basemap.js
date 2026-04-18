@@ -5,7 +5,9 @@
 
 import { UI_CONFIG } from "../config/ui-config.js";
 import { updateMapLegend } from "./map-legend.js";
-import { loadCuratedLayerFromAPI as _loadCurated } from "./leaflet-curated-layer-loader.js";
+import {
+  loadCuratedLayerFromAPI as _loadCurated,
+} from "./leaflet-curated-layer-loader.js";
 import { loadGeoJSONLayer } from "./map-geojson-layer-loader.js";
 import { loadPMTilesLayer } from "./map-pmtiles-layer-loader.js";
 
@@ -122,6 +124,16 @@ async function loadLayerGroups() {
  */
 async function loadCuratedLayerFromAPI(fullLayerId) {
   return _loadCurated(fullLayerId, loadedLayersMap, registerLoadedLayer);
+}
+
+/**
+ * Force reload every curated.* layer already on the map (after Supabase pull).
+ */
+function reloadCuratedLayersOnMapIfUpdated() {
+  const ids = [...loadedLayersMap.keys()].filter((id) => id.startsWith("curated."));
+  for (const id of ids) {
+    void _loadCurated(id, loadedLayersMap, registerLoadedLayer, { force: true });
+  }
 }
 
 /**
@@ -298,4 +310,5 @@ export {
   getMapLayerLoaderAPI,
   loadedLayersMap,
   pmtilesLayersWithConfigs,
+  reloadCuratedLayersOnMapIfUpdated,
 };

@@ -137,6 +137,16 @@ class CanvasLayerRenderer {
   }
 
   /**
+   * Remove a layer from the canvas pipeline (e.g. before reloading curated GeoJSON).
+   */
+  removeLayer(layerId) {
+    if (this.layers[layerId]) {
+      delete this.layers[layerId];
+      this._scheduleRender();
+    }
+  }
+
+  /**
    * Debounced render to prevent excessive re-renders
    */
   _renderScheduled = false;
