@@ -204,9 +204,10 @@ class CuratedLayersProjectScopingTests(TestCase):
             "/api/actions/get_otef_layers/", {"table": "otef"}
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIsInstance(response.data, list)
-        self.assertGreaterEqual(len(response.data), 2)
-        for item in response.data:
+        payload = response.json()
+        self.assertIsInstance(payload, list)
+        self.assertGreaterEqual(len(payload), 2)
+        for item in payload:
             # Every layer entry should include project_name so frontends can group curated packs by project.
             self.assertIn("project_name", item)
 

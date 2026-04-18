@@ -3,161 +3,60 @@ from unittest.mock import patch
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from backend.models import GISLayer, OTEFViewportState, Table
+from backend.models import Table
 
 
-class CuratedSubmissionSyncEndpointTests(TestCase):
+class CuratedSupabasePullEndpointTests(TestCase):
+    """GET /api/supabase/curated/pull-from-supabase/ (CuratedSupabasePullView)."""
+
     def setUp(self):
         self.client = APIClient()
         self.table = Table.objects.create(name="otef", display_name="OTEF")
-        self.sub_id = "550e8400-e29b-41d4-a716-446655440000"
-        self.batch_row = {
-            "submission_id": self.sub_id,
-            "display_color": "#FF69B4",
-            "submission_name": "Synced Batch Name",
+
+    @patch("backend.supabase_proxy.pull_published_curated_layers_from_supabase")
+    def test_pull_success_ok_and_updated_key_present(self, mock_pull):
+        mock_pull.return_value = {
+            "checked": 2,
+            "updated": 0,
+            "errors": [],
         }
+        response = self.client.get(
+            "/api/supabase/curated/pull-from-supabase/?table=otef",
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body.get("ok"))
+        self.assertIn("updated", body)
+        self.assertEqual(body.get("updated"), 0)
+        self.assertEqual(body.get("checked"), 2)
+        mock_pull.assert_called_once()
 
-    def _mock_get_geo_then_batch(self, mock_get, geo_rows):
-        mock_get.side_effect = [
-            (geo_rows, None),
-            ([self.batch_row], None),
+    @patch("backend.supabase_proxy.pull_published_curated_layers_from_supabase")
+    def test_pull_updated_increments_per_mock_return(self, mock_pull):
+        mock_pull.side_effect = [
+            {"checked": 1, "updated": 0, "errors": []},
+            {"checked": 1, "updated": 3, "errors": []},
         ]
+        r1 = self.client.get("/api/supabase/curated/pull-from-supabase/?table=otef")
+        r2 = self.client.get("/api/supabase/curated/pull-from-supabase/?table=otef")
+        self.assertEqual(r1.status_code, 200)
+        self.assertEqual(r2.status_code, 200)
+        self.assertEqual(r1.json().get("updated"), 0)
+        self.assertEqual(r2.json().get("updated"), 3)
+        self.assertEqual(mock_pull.call_count, 2)
 
-    @patch.dict("os.environ", {"CURATION_WRITE_TOKEN": "test-token"}, clear=False)
-    @patch("backend.supabase_proxy._get")
-    def test_sync_updates_existing_published_layer(self, mock_get):
-        self._mock_get_geo_then_batch(
-            mock_get,
-            [
-                {
-                    "id": "feat-1",
-                    "submission_id": self.sub_id,
-                    "geom": {"type": "Point", "coordinates": [35.0, 31.5]},
-                    "is_current": True,
-                }
-            ],
-        )
-        layer = GISLayer.objects.create(
-            table=self.table,
-            name="curated_test_layer",
-            display_name="My Pub",
-            project_name="Moreshet Axis",
-            layer_type="geojson",
-            data={
-                "type": "FeatureCollection",
-                "features": [
-                    {
-                        "type": "Feature",
-                        "geometry": {"type": "Point", "coordinates": [0, 0]},
-                        "properties": {
-                            "submission_id": self.sub_id,
-                            "id": "feat-old",
-                        },
-                    }
-                ],
-            },
-            style_config={},
-            is_active=True,
-            order=1,
-        )
+    @patch("backend.supabase_proxy.pull_published_curated_layers_from_supabase")
+    def test_pull_passes_table_model_and_name(self, mock_pull):
+        mock_pull.return_value = {"checked": 0, "updated": 0, "errors": []}
+        self.client.get("/api/supabase/curated/pull-from-supabase/?table=otef")
+        args, _kwargs = mock_pull.call_args
+        table_arg, name_arg = args
+        self.assertEqual(table_arg, self.table)
+        self.assertEqual(name_arg, "otef")
 
-        response = self.client.post(
-            "/api/supabase/curated/sync-submission/",
-            {"table": "otef", "submission_id": self.sub_id},
-            format="json",
-            HTTP_X_CURATION_WRITE_TOKEN="test-token",
+    def test_pull_unknown_table_404(self):
+        response = self.client.get(
+            "/api/supabase/curated/pull-from-supabase/?table=nonexistent_table_xyz",
         )
-
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertTrue(response.data.get("ok"))
-        self.assertEqual(response.data.get("action"), "updated_existing")
-        layer.refresh_from_db()
-        feats = (layer.data or {}).get("features") or []
-        self.assertEqual(len(feats), 1)
-        self.assertEqual(feats[0]["geometry"]["coordinates"], [35.0, 31.5])
-        props = feats[0].get("properties") or {}
-        self.assertEqual(props.get("display_color"), "#FF69B4")
-        self.assertEqual(props.get("submission_name"), "Synced Batch Name")
-        self.assertEqual(mock_get.call_count, 2)
-
-    @patch.dict("os.environ", {"CURATION_WRITE_TOKEN": "test-token"}, clear=False)
-    @patch("backend.supabase_proxy._get")
-    def test_sync_unpublished_workshop_off_is_noop(self, mock_get):
-        self._mock_get_geo_then_batch(
-            mock_get,
-            [
-                {
-                    "id": "feat-1",
-                    "submission_id": self.sub_id,
-                    "geom": {"type": "Point", "coordinates": [34.0, 32.0]},
-                    "is_current": True,
-                }
-            ],
-        )
-        OTEFViewportState.objects.create(
-            table=self.table, workshop_auto_publish=False
-        )
-
-        response = self.client.post(
-            "/api/supabase/curated/sync-submission/",
-            {"table": "otef", "submission_id": self.sub_id},
-            format="json",
-            HTTP_X_CURATION_WRITE_TOKEN="test-token",
-        )
-
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertTrue(response.data.get("ok"))
-        self.assertEqual(
-            response.data.get("action"), "noop_unpublished_workshop_off"
-        )
-        self.assertFalse(
-            GISLayer.objects.filter(
-                table=self.table, name__startswith="curated_"
-            ).exists()
-        )
-
-    @patch.dict("os.environ", {"CURATION_WRITE_TOKEN": "test-token"}, clear=False)
-    @patch("backend.supabase_proxy._get")
-    def test_sync_autopublishes_when_workshop_on_and_no_curated_layer(self, mock_get):
-        self._mock_get_geo_then_batch(
-            mock_get,
-            [
-                {
-                    "id": "feat-1",
-                    "submission_id": self.sub_id,
-                    "geom": {"type": "Point", "coordinates": [35.0, 31.5]},
-                    "is_current": True,
-                }
-            ],
-        )
-        OTEFViewportState.objects.create(
-            table=self.table, workshop_auto_publish=True
-        )
-
-        response = self.client.post(
-            "/api/supabase/curated/sync-submission/",
-            {"table": "otef", "submission_id": self.sub_id},
-            format="json",
-            HTTP_X_CURATION_WRITE_TOKEN="test-token",
-        )
-
-        self.assertEqual(response.status_code, 200, response.data)
-        self.assertTrue(response.data.get("ok"))
-        self.assertEqual(response.data.get("action"), "autopublished")
-        layer_id = response.data.get("layer_id")
-        self.assertIsNotNone(layer_id)
-
-        self.assertTrue(
-            GISLayer.objects.filter(
-                table=self.table, name__startswith="curated_", is_active=True
-            ).exists()
-        )
-        layer = GISLayer.objects.get(pk=layer_id, table=self.table)
-        self.assertTrue(layer.is_active)
-        self.assertTrue(str(layer.name or "").startswith("curated_"))
-        feats = (layer.data or {}).get("features") or []
-        self.assertEqual(len(feats), 1)
-        props = feats[0].get("properties") or {}
-        self.assertEqual(props.get("display_color"), "#FF69B4")
-        self.assertEqual(props.get("submission_name"), "Synced Batch Name")
-        self.assertEqual(mock_get.call_count, 2)
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("error", response.json())
