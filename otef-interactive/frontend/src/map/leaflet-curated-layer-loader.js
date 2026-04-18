@@ -11,11 +11,22 @@ import { UI_CONFIG } from "../config/ui-config.js";
 import {
   fetchCuratedLayerData,
   extractPointFeatures,
+  extractPinkDetourPointFeatures,
   fetchPinkLinePaths,
   getMemorialIconForFeature,
   resolvePinkLinePackStyleBundle,
 } from "../shared/curated-layer-service.js";
 import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
+import {
+  OFFICIAL_NETWORK_GAP_METERS,
+  routeLineStylesForDisplayColor,
+} from "../map-utils/pink-route-map-styles.js";
+import {
+  findOffroadTwoPointSegments,
+  parsePinkLineRouteFromGeojson,
+  resolveFirstDisplayColorFromGeojson,
+  sanitizeDisplayColorHex,
+} from "./leaflet-curated-pink-helpers.js";
 import {
   PINK_LINE_PARKING_ICON_URL,
   fetchPinkLineParkingLotsGeojson,
@@ -28,6 +39,9 @@ let pinkLineParkingLayerInstance = null;
 let pinkLineParkingAttachGeneration = 0;
 let pinkLineParkingMapVisibleIntent = false;
 const getCuratedLayerColor = UI_CONFIG.getCuratedColor;
+
+/** Dev-only: avoid spamming console when published GeoJSON has no stored route. */
+const noStoredPinkRouteLoggedIds = new Set();
 
 // ---------------------------------------------------------------------------
 // Tooltip / popup formatters
@@ -62,6 +76,16 @@ function escapeHtml(s) {
   const div = document.createElement("div");
   div.textContent = s;
   return div.innerHTML;
+}
+
+function ensureCuratedPinkOffroadPane(mapInstance) {
+  const paneName = "curatedPinkOffroad";
+  if (!mapInstance || typeof mapInstance.getPane !== "function") return paneName;
+  if (mapInstance.getPane(paneName)) return paneName;
+  const pane = mapInstance.createPane(paneName);
+  pane.style.zIndex = "650";
+  pane.style.pointerEvents = "none";
+  return paneName;
 }
 
 // ---------------------------------------------------------------------------
@@ -196,9 +220,24 @@ function setPinkLineParkingMapVisibility(visible) {
  * @param {string} fullLayerId - e.g. "curated.42"
  * @param {Map} loadedLayersMap - the host module's loaded-layers map
  * @param {function} registerLoadedLayer - callback to register the layer
+ * @param {{ force?: boolean }} [opts] - when `force === true`, replace an existing registration
  */
-async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoadedLayer) {
-  if (loadedLayersMap.has(fullLayerId)) return;
+async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoadedLayer, opts = {}) {
+  const force = opts && opts.force === true;
+  if (!force && loadedLayersMap.has(fullLayerId)) return;
+
+  if (force && typeof map !== "undefined" && map) {
+    const existing = loadedLayersMap.get(fullLayerId);
+    if (
+      existing &&
+      typeof map.hasLayer === "function" &&
+      typeof map.removeLayer === "function" &&
+      map.hasLayer(existing)
+    ) {
+      map.removeLayer(existing);
+    }
+    loadedLayersMap.delete(fullLayerId);
+  }
 
   // --- Shared data fetch ---
   const result = await fetchCuratedLayerData(fullLayerId);
@@ -213,30 +252,101 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
 
   // --- Shared point / pink-line extraction ---
   const pointItems = extractPointFeatures(geojson);
-  const userPoints = pointItems.map((x) => x.latlng);
+  const detourPointItems = extractPinkDetourPointFeatures(geojson);
+  const userPointsDetour = detourPointItems.map((x) => x.latlng);
   const { basePaths } = await fetchPinkLinePaths();
 
   const hasRouteUtils = typeof buildIntegratedRoute === "function";
   const usePinkLineProjection =
     basePaths.length > 0 &&
-    (userPoints.length > 0 ||
+    (userPointsDetour.length > 0 ||
       geojson.features.some(
         (f) =>
           f.geometry &&
-          (f.geometry.type === "LineString" ||
-            f.geometry.type === "MultiLineString"),
+          (f.geometry.type === "LineString" || f.geometry.type === "MultiLineString"),
       ));
 
   // --- Leaflet-specific rendering ---
-  if (usePinkLineProjection && userPoints.length > 0 && hasRouteUtils) {
+  if (usePinkLineProjection && userPointsDetour.length > 0 && hasRouteUtils) {
     await ensurePinkLineBaseLayer();
-    const { dashed } = buildIntegratedRoute(basePaths, userPoints);
-    const layerColor = getCuratedLayerColor(fullLayerId, layerData);
+    const { solid, removed, dashed } = buildIntegratedRoute(basePaths, userPointsDetour);
+
+    const fromGeoColor = resolveFirstDisplayColorFromGeojson(geojson);
+    const fallbackCurated = getCuratedLayerColor(fullLayerId, layerData);
+    const styles = routeLineStylesForDisplayColor(fromGeoColor ?? fallbackCurated);
+    const nodeFillHex =
+      fromGeoColor ??
+      sanitizeDisplayColorHex(fallbackCurated) ??
+      styles.proposedLine.color;
+
+    const { pathsLatLng } = parsePinkLineRouteFromGeojson(geojson);
+    const hasStoredPinkRoute = pathsLatLng.some((p) => p.length >= 2);
+
+    if (!hasStoredPinkRoute) {
+      const isDev =
+        typeof import.meta !== "undefined" &&
+        import.meta.env &&
+        import.meta.env.DEV &&
+        import.meta.env.MODE !== "test";
+      if (isDev && !noStoredPinkRouteLoggedIds.has(fullLayerId)) {
+        noStoredPinkRouteLoggedIds.add(fullLayerId);
+        console.debug(
+          "[CuratedLayer] No pink_line_route LineString/MultiLineString; proposed route uses integrated dashed segments from buildIntegratedRoute.",
+        );
+      }
+    }
+
     const group = L.layerGroup();
-    const dashedStyle = { color: layerColor, weight: 5, opacity: 0.9, dashArray: "10, 10" };
-    dashed.forEach((pts) => {
-      group.addLayer(L.polyline(pts, dashedStyle));
+
+    solid.forEach((pts) => {
+      if (pts.length >= 2) group.addLayer(L.polyline(pts, styles.solidLine));
     });
+    removed.forEach((pts) => {
+      if (pts.length >= 2) group.addLayer(L.polyline(pts, styles.oldHalo));
+    });
+    removed.forEach((pts) => {
+      if (pts.length >= 2) group.addLayer(L.polyline(pts, styles.oldLine));
+    });
+
+    if (hasStoredPinkRoute) {
+      for (const path of pathsLatLng) {
+        if (path.length < 2) continue;
+        group.addLayer(L.polyline(path, styles.proposedHalo));
+        group.addLayer(L.polyline(path, styles.proposedLine));
+      }
+
+      const offroadEnabled =
+        typeof MapProjectionConfig !== "undefined" &&
+        MapProjectionConfig &&
+        MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
+      if (offroadEnabled && typeof map !== "undefined" && map) {
+        const segs = findOffroadTwoPointSegments(pathsLatLng, OFFICIAL_NETWORK_GAP_METERS);
+        if (segs.length > 0) {
+          const paneName = ensureCuratedPinkOffroadPane(map);
+          const offStyle = { ...styles.offroadLine, pane: paneName };
+          segs.forEach((seg) => {
+            if (seg.length === 2) group.addLayer(L.polyline(seg, offStyle));
+          });
+        }
+      }
+    } else {
+      /*
+       * No stored pink_line_route: keep pre-Task-5 behavior — proposed walk is the integrated
+       * `dashed` polylines from buildIntegratedRoute (not the Supabase vertex path).
+       */
+      const dashedStyle = {
+        color: styles.proposedLine.color,
+        weight: 5,
+        opacity: 0.9,
+        dashArray: "10, 10",
+        lineCap: "round",
+        lineJoin: "round",
+      };
+      dashed.forEach((pts) => {
+        if (pts.length >= 2) group.addLayer(L.polyline(pts, dashedStyle));
+      });
+    }
+
     pointItems.forEach(({ feature, latlng }) => {
       const props = feature.properties || {};
       const memorialIconUrl = getMemorialIconForFeature(props);
@@ -255,7 +365,7 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
         marker = L.marker(latlng, {
           icon: L.divIcon({
             className: "pink-line-node-marker",
-            html: `<div class="pink-line-node" style="background:${layerColor}"></div>`,
+            html: `<div class="pink-line-node" style="background:${nodeFillHex}"></div>`,
             iconSize: [14, 14],
             iconAnchor: [7, 7],
           }),
@@ -273,7 +383,7 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
     return;
   }
 
-  if (usePinkLineProjection && basePaths.length > 0 && userPoints.length === 0) {
+  if (usePinkLineProjection && basePaths.length > 0 && userPointsDetour.length === 0) {
     await ensurePinkLineBaseLayer();
     const layerColor = getCuratedLayerColor(fullLayerId, layerData);
     const group = L.layerGroup();
