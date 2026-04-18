@@ -132,18 +132,20 @@ function orderPointsBetweenEndpoints(start, end, points) {
 /**
  * @param {Array<Array<[number,number]>>} basePaths - from parseDefaultLinePaths
  * @param {Array<[number,number]>} userPoints - [lat, lng] per point
- * @returns {{ solid: Array<Array<[number,number]>>, dashed: Array<Array<[number,number]>> }}
+ * @returns {{ solid: Array<Array<[number,number]>>, dashed: Array<Array<[number,number]>>, removed: Array<Array<[number,number]>> }}
+ *   `removed` lists base-path polylines replaced by each merged detour (heritage segments), empty when there are no user points.
  */
 function buildIntegratedRoute(basePaths, userPoints) {
   const solid = [];
   const dashed = [];
+  const removed = [];
 
   const basePath = mergePaths(basePaths);
-  if (basePath.length === 0) return { solid, dashed };
+  if (basePath.length === 0) return { solid, dashed, removed };
 
   if (userPoints.length === 0) {
     solid.push([...basePath]);
-    return { solid, dashed };
+    return { solid, dashed, removed };
   }
 
   const prefix = buildPrefixDistances(basePath);
@@ -171,6 +173,9 @@ function buildIntegratedRoute(basePaths, userPoints) {
       inThisDetour.map((x) => x.point)
     );
     dashed.push([leave, ...pointsInOrder, rejoin]);
+    if (intr.end > intr.start) {
+      removed.push(basePath.slice(intr.start, intr.end + 1));
+    }
   }
 
   let lastEnd = 0;
@@ -188,7 +193,7 @@ function buildIntegratedRoute(basePaths, userPoints) {
     solid.push([...basePath]);
   }
 
-  return { solid, dashed };
+  return { solid, dashed, removed };
 }
 
 if (typeof window !== "undefined") {
