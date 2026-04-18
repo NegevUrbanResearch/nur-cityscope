@@ -19,6 +19,7 @@ export default defineConfig({
     },
   },
   test: {
+    pool: "vmThreads",
     globals: true,
     environment: "node",
     include: ["tests/**/*.test.js"],
