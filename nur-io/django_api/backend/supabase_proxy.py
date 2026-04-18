@@ -128,6 +128,110 @@ def _fetch_submission_geojson_fc(submission_id):
     return _rows_to_geojson_feature_collection(rows), None
 
 
+def enrich_feature_collection_with_submission_batch(fc, submission_id, batch_row):
+    """
+    Merge submission_batches display_color (sanitized) and submission_name into every
+    feature's properties when batch_row matches submission_id. batch_row may be a
+    single dict, a list of dicts (first match wins), or None (no-op).
+
+    submission_name: For every feature, always set properties["submission_name"] to a
+    string when a matching batch row exists (use "" when the batch value is null/blank).
+
+    display_color: When _sanitize_css_color_signal returns a non-empty value, set it on
+    every feature. When the batch value is empty or invalid, do not add or change
+    properties["display_color"] (omit the key here) so unsafe strings never overwrite
+    existing safe GeoJSON properties.
+    """
+    if batch_row is None:
+        return fc
+    if not isinstance(fc, dict):
+        return fc
+    features = fc.get("features")
+    if not isinstance(features, list):
+        return fc
+
+    target_key = _norm_submission_id_key(submission_id)
+    if not target_key:
+        return fc
+
+    row = None
+    if isinstance(batch_row, list):
+        for b in batch_row:
+            if not isinstance(b, dict):
+                continue
+            if _norm_submission_id_key(b.get("submission_id")) == target_key:
+                row = b
+                break
+    elif isinstance(batch_row, dict):
+        if _norm_submission_id_key(batch_row.get("submission_id")) == target_key:
+            row = batch_row
+
+    if not row:
+        return fc
+
+    display_color = _sanitize_css_color_signal(row.get("display_color"))
+    raw_name = row.get("submission_name")
+    submission_name = (
+        str(raw_name).strip() if raw_name is not None else ""
+    )
+
+    for feat in features:
+        if not isinstance(feat, dict):
+            continue
+        props = feat.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+            feat["properties"] = props
+        if display_color:
+            props["display_color"] = display_color
+        props["submission_name"] = submission_name
+
+    return fc
+
+
+def _fetch_submission_batch_row_for_sync(submission_id):
+    """
+    Load one submission_batches row for enrich during curated sync.
+    Returns the row dict, or None if unavailable (caller leaves FeatureCollection unchanged).
+    """
+    sid = str(submission_id or "").strip()
+    if not sid:
+        return None
+
+    rows, err = _get(
+        "/submission_batches",
+        params={
+            "submission_id": f"eq.{sid}",
+            "select": "submission_id,submission_name,display_color,updated_at",
+            "order": "updated_at.desc",
+            "limit": "1",
+        },
+    )
+    if err:
+        msg_l = str(err).lower()
+        if "display_color" in msg_l or (
+            "column" in msg_l and "does not exist" in msg_l
+        ):
+            rows, err = _get(
+                "/submission_batches",
+                params={
+                    "submission_id": f"eq.{sid}",
+                    "select": "submission_id,submission_name,updated_at",
+                    "order": "updated_at.desc",
+                    "limit": "1",
+                },
+            )
+        if err:
+            logger.info(
+                "submission_batches fetch skipped for sync enrich: %s", err
+            )
+            return None
+    if not isinstance(rows, list) or not rows:
+        return None
+    first = rows[0]
+    return first if isinstance(first, dict) else None
+
+
 def _find_active_curated_layer_for_submission(table, submission_id):
     from .models import GISLayer
 
@@ -2248,6 +2352,11 @@ class CuratedSubmissionSyncView(APIView):
                 {"error": f"Failed to load submission features: {fetch_err}"},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+        batch_row = _fetch_submission_batch_row_for_sync(submission_id)
+        enrich_feature_collection_with_submission_batch(
+            features_fc, submission_id, batch_row
+        )
 
         existing = _find_active_curated_layer_for_submission(table, submission_id)
         workshop_on = _read_workshop_auto_publish(table)
