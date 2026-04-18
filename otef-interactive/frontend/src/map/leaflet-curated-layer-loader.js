@@ -27,6 +27,7 @@ import {
   resolveFirstDisplayColorFromGeojson,
   sanitizeDisplayColorHex,
 } from "./leaflet-curated-pink-helpers.js";
+import { planPinkCuratedOverlayLayers } from "./pink-curated-overlay-plan.js";
 import {
   PINK_LINE_PARKING_ICON_URL,
   fetchPinkLineParkingLotsGeojson,
@@ -86,6 +87,80 @@ function ensureCuratedPinkOffroadPane(mapInstance) {
   pane.style.zIndex = "650";
   pane.style.pointerEvents = "none";
   return paneName;
+}
+
+function collectOffroadJunctionLatLngs(offroadSegments) {
+  const seen = new Set();
+  const out = [];
+  for (const seg of offroadSegments) {
+    if (!Array.isArray(seg) || seg.length !== 2) continue;
+    for (const ll of seg) {
+      if (!ll || ll.length < 2) continue;
+      const key = `${ll[0]},${ll[1]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(ll);
+    }
+  }
+  return out;
+}
+
+/**
+ * @param {string} styleKey
+ * @param {ReturnType<typeof routeLineStylesForDisplayColor>} styles
+ * @param {string} offroadPaneName
+ */
+function resolvePinkOverlayPolylineStyle(styleKey, styles, offroadPaneName) {
+  if (styleKey === "solidLine") return { ...styles.solidLine };
+  if (styleKey === "oldHalo") return { ...styles.oldHalo };
+  if (styleKey === "oldLine") return { ...styles.oldLine };
+  if (styleKey === "proposedHalo") return { ...styles.proposedHalo };
+  if (styleKey === "proposedLine") return { ...styles.proposedLine };
+  if (styleKey === "offroadLine") {
+    const line = { ...styles.offroadLine };
+    if (offroadPaneName) line.pane = offroadPaneName;
+    return line;
+  }
+  if (styleKey === "dashedPlannerHalo") return { ...styles.proposedHalo };
+  if (styleKey === "dashedPlannerStroke") {
+    return {
+      color: styles.proposedLine.color,
+      weight: 5,
+      opacity: 0.9,
+      dashArray: "10, 10",
+      lineCap: "round",
+      lineJoin: "round",
+    };
+  }
+  return { ...styles.solidLine };
+}
+
+/**
+ * @param {string} styleKey
+ * @param {ReturnType<typeof routeLineStylesForDisplayColor>} styles
+ * @param {string} offroadPaneName
+ */
+function resolvePinkOverlayCircleMarkerStyle(styleKey, styles, offroadPaneName) {
+  if (styleKey === "offroadJunction") {
+    const opts = {
+      radius: 5,
+      color: styles.offroadLine.color,
+      fillColor: styles.offroadLine.color,
+      fillOpacity: 0.85,
+      weight: 1,
+      opacity: 1,
+      interactive: false,
+    };
+    if (offroadPaneName) opts.pane = offroadPaneName;
+    return opts;
+  }
+  return {
+    radius: 4,
+    color: styles.proposedLine.color,
+    fillColor: styles.proposedLine.color,
+    fillOpacity: 0.9,
+    weight: 1,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -298,53 +373,41 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
 
     const group = L.layerGroup();
 
-    solid.forEach((pts) => {
-      if (pts.length >= 2) group.addLayer(L.polyline(pts, styles.solidLine));
-    });
-    removed.forEach((pts) => {
-      if (pts.length >= 2) group.addLayer(L.polyline(pts, styles.oldHalo));
-    });
-    removed.forEach((pts) => {
-      if (pts.length >= 2) group.addLayer(L.polyline(pts, styles.oldLine));
+    const offroadEnabled =
+      typeof MapProjectionConfig !== "undefined" &&
+      MapProjectionConfig &&
+      MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
+    let offroadSegmentsLatLng = [];
+    let offroadJunctionsLatLng = [];
+    if (hasStoredPinkRoute && offroadEnabled && typeof map !== "undefined" && map) {
+      offroadSegmentsLatLng = findOffroadTwoPointSegments(pathsLatLng, OFFICIAL_NETWORK_GAP_METERS);
+      offroadJunctionsLatLng = collectOffroadJunctionLatLngs(offroadSegmentsLatLng);
+    }
+
+    const offroadPaneName =
+      offroadSegmentsLatLng.length > 0 && typeof map !== "undefined" && map
+        ? ensureCuratedPinkOffroadPane(map)
+        : "";
+
+    const overlayOps = planPinkCuratedOverlayLayers({
+      hasDetourPoints: userPointsDetour.length > 0,
+      hasStoredPinkRoute,
+      solid,
+      removed,
+      dashedPlanner: dashed,
+      proposedPathsLatLng: pathsLatLng,
+      offroadSegmentsLatLng,
+      offroadJunctionsLatLng,
     });
 
-    if (hasStoredPinkRoute) {
-      for (const path of pathsLatLng) {
-        if (path.length < 2) continue;
-        group.addLayer(L.polyline(path, styles.proposedHalo));
-        group.addLayer(L.polyline(path, styles.proposedLine));
+    for (const op of overlayOps) {
+      if (op.kind === "polyline") {
+        const lineOpts = resolvePinkOverlayPolylineStyle(op.styleKey, styles, offroadPaneName);
+        group.addLayer(L.polyline(op.latLngs, lineOpts));
+      } else if (op.kind === "circleMarker") {
+        const markerOpts = resolvePinkOverlayCircleMarkerStyle(op.styleKey, styles, offroadPaneName);
+        group.addLayer(L.circleMarker(op.latLng, markerOpts));
       }
-
-      const offroadEnabled =
-        typeof MapProjectionConfig !== "undefined" &&
-        MapProjectionConfig &&
-        MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
-      if (offroadEnabled && typeof map !== "undefined" && map) {
-        const segs = findOffroadTwoPointSegments(pathsLatLng, OFFICIAL_NETWORK_GAP_METERS);
-        if (segs.length > 0) {
-          const paneName = ensureCuratedPinkOffroadPane(map);
-          const offStyle = { ...styles.offroadLine, pane: paneName };
-          segs.forEach((seg) => {
-            if (seg.length === 2) group.addLayer(L.polyline(seg, offStyle));
-          });
-        }
-      }
-    } else {
-      /*
-       * No stored pink_line_route: keep pre-Task-5 behavior — proposed walk is the integrated
-       * `dashed` polylines from buildIntegratedRoute (not the Supabase vertex path).
-       */
-      const dashedStyle = {
-        color: styles.proposedLine.color,
-        weight: 5,
-        opacity: 0.9,
-        dashArray: "10, 10",
-        lineCap: "round",
-        lineJoin: "round",
-      };
-      dashed.forEach((pts) => {
-        if (pts.length >= 2) group.addLayer(L.polyline(pts, dashedStyle));
-      });
     }
 
     pointItems.forEach(({ feature, latlng }) => {

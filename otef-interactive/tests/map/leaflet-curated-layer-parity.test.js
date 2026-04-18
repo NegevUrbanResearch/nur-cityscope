@@ -101,5 +101,7 @@ describe("leaflet-curated-layer-loader Task 5 wiring", () => {
     expect(src).toContain("OFFICIAL_NETWORK_GAP_METERS");
     expect(src).toContain("opts.force");
     expect(src).toContain("ENABLE_CURATED_OFFROAD_SPLIT");
+    expect(src).toContain("planPinkCuratedOverlayLayers");
+    expect(src).toContain("pink-curated-overlay-plan");
   });
 });
