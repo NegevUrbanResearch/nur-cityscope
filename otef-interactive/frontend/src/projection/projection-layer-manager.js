@@ -3,11 +3,14 @@
 
 import { UI_CONFIG } from "../config/ui-config.js";
 import { CanvasLayerRenderer } from "./layer-renderer-canvas.js";
+import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
 import {
   fetchCuratedLayerData,
   extractPointFeatures,
+  extractPinkDetourPointFeatures,
   fetchPinkLinePaths,
   buildCuratedRouteGeoJSON,
+  buildColabAlignedCuratedOverlayGeoJSON,
   getMemorialIconForFeature,
   resolvePinkLinePackStyleBundle,
 } from "../shared/curated-layer-service.js";
@@ -240,20 +243,31 @@ function updateWmtsVisibility(fullLayerId, visible) {
       return [c[1], c[0]];
     });
 
+    const detourPointItems = extractPinkDetourPointFeatures(wgs84Geojson);
+    const userPointsDetour = detourPointItems.map((x) => x.latlng);
+    const hasRouteUtils = typeof buildIntegratedRoute === "function";
+
     // --- Shared route building ---
     let builtGeojson = null;
-    if (userPoints.length > 0) {
-      const { basePaths } = await fetchPinkLinePaths();
-      if (basePaths.length > 0) {
-        await ensureProjectionPinkLineBaseLayer();
-        const layerColor = getCuratedLayerColorForProjection(fullLayerId, layerData);
-        builtGeojson = buildCuratedRouteGeoJSON(
-          basePaths,
-          userPoints,
-          layerColor,
-          pointFeatures,
-        );
-      }
+    const { basePaths } = await fetchPinkLinePaths();
+    if (basePaths.length > 0 && userPointsDetour.length > 0 && hasRouteUtils) {
+      await ensureProjectionPinkLineBaseLayer();
+      const layerColor = getCuratedLayerColorForProjection(fullLayerId, layerData);
+      builtGeojson = buildColabAlignedCuratedOverlayGeoJSON(
+        basePaths,
+        wgs84Geojson,
+        layerColor,
+      );
+    }
+    if (!builtGeojson && userPoints.length > 0 && basePaths.length > 0) {
+      await ensureProjectionPinkLineBaseLayer();
+      const layerColor = getCuratedLayerColorForProjection(fullLayerId, layerData);
+      builtGeojson = buildCuratedRouteGeoJSON(
+        basePaths,
+        userPoints,
+        layerColor,
+        pointFeatures,
+      );
     }
 
     // --- Canvas-specific rendering ---
@@ -732,6 +746,59 @@ function updateWmtsVisibility(fullLayerId, visible) {
     startAnimationLoop();
   }
 
+  function listCuratedFullLayerIdsToReload() {
+    const layerGroups =
+      typeof LayerStateHelper !== "undefined" &&
+      typeof LayerStateHelper.getEffectiveLayerGroups === "function"
+        ? LayerStateHelper.getEffectiveLayerGroups()
+        : typeof OTEFDataContext !== "undefined"
+          ? OTEFDataContext.getLayerGroups()
+          : null;
+    const ids = [];
+    if (!Array.isArray(layerGroups)) return ids;
+    for (const g of layerGroups) {
+      if (!g || typeof g.id !== "string" || !g.id.startsWith("curated")) continue;
+      for (const layer of g.layers || []) {
+        if (!layer || !layer.enabled) continue;
+        if (
+          g.id === MORESHET_AXIS_GROUP_ID &&
+          isPinkLineParkingLayerId(String(layer.id || ""))
+        ) {
+          continue;
+        }
+        ids.push(`${g.id}.${layer.id}`);
+      }
+    }
+    return ids;
+  }
+
+  async function reloadProjectionCuratedLayersFromSupabase() {
+    const curatedKeys = Object.keys(loadedLayers).filter(
+      (k) => k.startsWith("curated_") && k.includes("."),
+    );
+    for (const id of curatedKeys) {
+      delete inFlightLayerLoads[id];
+      delete loadedLayers[id];
+      if (canvasRenderer && typeof canvasRenderer.removeLayer === "function") {
+        canvasRenderer.removeLayer(id);
+      }
+    }
+    const toLoad = listCuratedFullLayerIdsToReload();
+    for (const fullLayerId of toLoad) {
+      try {
+        await loadProjectionLayerFromRegistry(fullLayerId);
+      } catch (err) {
+        console.error(
+          `[Projection] Curated Supabase reload failed for ${fullLayerId}:`,
+          err,
+        );
+      }
+    }
+    for (const fullLayerId of toLoad) {
+      updateLayerVisibility(fullLayerId, true);
+    }
+  }
+
   export {
     configure,
     initializeLayers,
@@ -739,4 +806,5 @@ function updateWmtsVisibility(fullLayerId, visible) {
     handleResize,
     requestAnimationFrameForAnimations,
     stopAnimationLoop,
+    reloadProjectionCuratedLayersFromSupabase,
   };

@@ -7,7 +7,9 @@ import {
   syncLayerGroupsFromState,
   handleResize as layerManagerResize,
   requestAnimationFrameForAnimations,
+  reloadProjectionCuratedLayersFromSupabase,
 } from "./projection-layer-manager.js";
+import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
 
 // Load model bounds
 let modelBounds;
@@ -94,6 +96,26 @@ fetch("data/model-bounds.json")
             requestAnimationFrameForAnimations();
           }),
         );
+
+        if (!window._nurCuratedHeartbeatStop) {
+          window._nurCuratedHeartbeatStop = startCuratedSupabaseHeartbeat({
+            table: TABLE_NAME,
+            onUpdated: async () => {
+              await reloadProjectionCuratedLayersFromSupabase();
+              window.dispatchEvent(
+                new CustomEvent("nur-curated-supabase-pull", {
+                  detail: { source: "projection" },
+                }),
+              );
+            },
+          });
+          window._otefUnsubscribeFunctions.push(() => {
+            if (typeof window._nurCuratedHeartbeatStop === "function") {
+              window._nurCuratedHeartbeatStop();
+              window._nurCuratedHeartbeatStop = null;
+            }
+          });
+        }
 
       });
     }
