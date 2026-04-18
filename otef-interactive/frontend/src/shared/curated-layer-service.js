@@ -22,6 +22,7 @@ import {
   resolveFirstDisplayColorFromGeojson,
   sanitizeDisplayColorHex,
 } from "../map/leaflet-curated-pink-helpers.js";
+import { assignPinkNodeDisplayOrders } from "../map-utils/pink-route-optimizer.js";
 import AdvancedStyleEngine from "../map-utils/advanced-style-engine.js";
 import layerRegistry from "./layer-registry.js";
 import MapProjectionConfig from "./map-projection-config.js";
@@ -627,6 +628,8 @@ function buildColabAlignedCuratedOverlayGeoJSON(
       properties: { ...props, _curatedStyle: curatedStyle },
     });
   });
+
+  assignPinkNodeDisplayOrders(features);
 
   return { type: "FeatureCollection", features };
 }

@@ -17,6 +17,7 @@ import {
   resolvePinkLinePackStyleBundle,
 } from "../shared/curated-layer-service.js";
 import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
+import { optimizePinkNodeVisitOrder } from "../map-utils/pink-route-optimizer.js";
 import {
   OFFICIAL_NETWORK_GAP_METERS,
   routeLineStylesForDisplayColor,
@@ -329,6 +330,23 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
   const pointItems = extractPointFeatures(geojson);
   const detourPointItems = extractPinkDetourPointFeatures(geojson);
   const userPointsDetour = detourPointItems.map((x) => x.latlng);
+
+  const pinkNodeOrderByFeature = new Map();
+  if (detourPointItems.length > 0) {
+    const nodes = detourPointItems.map((x, i) => ({
+      id: `__pink:${i}`,
+      lat: x.latlng[0],
+      lng: x.latlng[1],
+    }));
+    const ordered = optimizePinkNodeVisitOrder(nodes);
+    ordered.forEach((n, pos) => {
+      const m = /^__pink:(\d+)$/.exec(n.id);
+      if (m) {
+        const item = detourPointItems[Number(m[1])];
+        if (item) pinkNodeOrderByFeature.set(item.feature, pos + 1);
+      }
+    });
+  }
   const { basePaths } = await fetchPinkLinePaths();
 
   const hasRouteUtils = typeof buildIntegratedRoute === "function";
@@ -425,10 +443,17 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
         });
         marker = L.marker(latlng, { icon });
       } else {
+        const pinkOrder = pinkNodeOrderByFeature.get(feature);
+        const label =
+          typeof pinkOrder === "number"
+            ? `<span style="font-size:8px;font-weight:700;color:#fff;line-height:1;pointer-events:none">${pinkOrder}</span>`
+            : "";
+        const nodeFlex =
+          typeof pinkOrder === "number" ? "display:flex;align-items:center;justify-content:center;" : "";
         marker = L.marker(latlng, {
           icon: L.divIcon({
             className: "pink-line-node-marker",
-            html: `<div class="pink-line-node" style="background:${nodeFillHex}"></div>`,
+            html: `<div class="pink-line-node" style="background:${nodeFillHex};${nodeFlex}">${label}</div>`,
             iconSize: [14, 14],
             iconAnchor: [7, 7],
           }),
