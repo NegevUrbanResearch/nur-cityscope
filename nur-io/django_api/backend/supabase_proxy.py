@@ -3,6 +3,7 @@ Supabase proxy: query Supabase from Django only (service role key).
 All Supabase access goes through these endpoints; frontend never uses Supabase directly.
 """
 
+import json
 import logging
 import os
 import re
@@ -230,6 +231,75 @@ def _fetch_submission_batch_row_for_sync(submission_id):
         return None
     first = rows[0]
     return first if isinstance(first, dict) else None
+
+
+def _submission_id_from_feature_collection(fc):
+    """First submission_id (or submissionId) found on any feature properties."""
+    if not isinstance(fc, dict):
+        return None
+    for feat in fc.get("features") or []:
+        if not isinstance(feat, dict):
+            continue
+        props = feat.get("properties")
+        if not isinstance(props, dict):
+            continue
+        sid = props.get("submission_id") or props.get("submissionId")
+        if sid is None:
+            continue
+        s = str(sid).strip()
+        if s:
+            return s
+    return None
+
+
+def pull_published_curated_layers_from_supabase(table, table_name):
+    """
+    Refresh each active published curated GISLayer from Supabase geo_features
+    when the FeatureCollection payload differs. Used by the public pull endpoint
+    and periodic frontend heartbeat (replaces Colab → sync-submission POST).
+    """
+    from .models import GISLayer
+
+    checked = 0
+    updated = 0
+    errors = []
+    layers = list(
+        GISLayer.objects.filter(
+            table=table, is_active=True, layer_type="geojson"
+        ).order_by("order")
+    )
+    for layer in layers:
+        if not str(layer.name or "").startswith("curated_"):
+            continue
+        data = layer.data if isinstance(layer.data, dict) else {}
+        if not data.get("features"):
+            continue
+        sid = _submission_id_from_feature_collection(data)
+        if not sid:
+            errors.append({"layer_id": layer.id, "error": "no submission_id in geojson"})
+            continue
+        checked += 1
+        features_fc, fetch_err = _fetch_submission_geojson_fc(sid)
+        if fetch_err:
+            errors.append(
+                {"layer_id": layer.id, "submission_id": sid, "error": str(fetch_err)}
+            )
+            continue
+        batch_row = _fetch_submission_batch_row_for_sync(sid)
+        enrich_feature_collection_with_submission_batch(features_fc, sid, batch_row)
+        try:
+            old_sig = json.dumps(data, sort_keys=True, default=str)
+            new_sig = json.dumps(features_fc, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            old_sig = repr(data)
+            new_sig = repr(features_fc)
+        if old_sig != new_sig:
+            layer.data = features_fc
+            layer.save(update_fields=["data", "updated_at"])
+            updated += 1
+    if updated:
+        _broadcast_otef_layers_changed(table_name)
+    return {"checked": checked, "updated": updated, "errors": errors}
 
 
 def _find_active_curated_layer_for_submission(table, submission_id):
@@ -2318,78 +2388,24 @@ class CuratedLayerUnpublishAllView(APIView):
         return Response({"ok": True, "removed_count": removed_count})
 
 
-@method_decorator(csrf_exempt, name="dispatch")
-class CuratedSubmissionSyncView(APIView):
+class CuratedSupabasePullView(APIView):
     """
-    POST /api/supabase/curated/sync-submission/
-    Body: { "table": "otef", "submission_id": "<uuid>" }
-    Refreshes published curated layer GeoJSON from Supabase geo_features, or auto-publishes
-    when workshop_auto_publish is enabled on OTEFViewportState for the table.
+    GET /api/supabase/curated/pull-from-supabase/?table=otef
+
+    Re-fetches Supabase geo_features for every **published** curated GISLayer and
+    updates Django when the payload changed. Intended for a lightweight periodic
+    heartbeat from GIS / projection pages (no Colab webhook, no sync-submission POST).
     """
 
-    def post(self, request):
+    def get(self, request):
         from .models import Table
 
-        authorized, auth_error = _is_curation_write_authorized(request)
-        if not authorized:
-            return Response(
-                {"error": auth_error},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        table_name = (request.data.get("table") or "otef").strip() or "otef"
-        submission_id = str(request.data.get("submission_id") or "").strip()
+        table_name = (request.query_params.get("table") or "otef").strip() or "otef"
         table = Table.objects.filter(name=table_name).first()
-        if not table or not submission_id:
+        if not table:
             return Response(
-                {"error": "table and submission_id are required"},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"error": f"Table '{table_name}' not found"},
+                status=status.HTTP_404_NOT_FOUND,
             )
-
-        features_fc, fetch_err = _fetch_submission_geojson_fc(submission_id)
-        if fetch_err:
-            return Response(
-                {"error": f"Failed to load submission features: {fetch_err}"},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
-
-        batch_row = _fetch_submission_batch_row_for_sync(submission_id)
-        enrich_feature_collection_with_submission_batch(
-            features_fc, submission_id, batch_row
-        )
-
-        existing = _find_active_curated_layer_for_submission(table, submission_id)
-        workshop_on = _read_workshop_auto_publish(table)
-
-        if existing:
-            existing.data = features_fc
-            existing.save(update_fields=["data", "updated_at"])
-            _broadcast_otef_layers_changed(table_name)
-            return Response({"ok": True, "action": "updated_existing"})
-
-        if workshop_on:
-            try:
-                layer = _autopublish_curated_submission(
-                    table, table_name, submission_id, features_fc
-                )
-            except ValueError as e:
-                return Response(
-                    {"error": str(e)},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            except Exception as e:
-                logger.exception("Curated submission sync autopublish failed")
-                return Response(
-                    {"error": str(e)},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-            _broadcast_otef_layers_changed(table_name)
-            return Response(
-                {
-                    "ok": True,
-                    "action": "autopublished",
-                    "layer_id": layer.id,
-                }
-            )
-
-        return Response({"ok": True, "action": "noop_unpublished_workshop_off"})
+        out = pull_published_curated_layers_from_supabase(table, table_name)
+        return Response({"ok": True, **out})
