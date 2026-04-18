@@ -62,6 +62,7 @@ test("curated-layer-service exports shared functions", async () => {
   expect(typeof mod.extractPointFeatures).toBe("function");
   expect(typeof mod.fetchPinkLinePaths).toBe("function");
   expect(typeof mod.buildCuratedRouteGeoJSON).toBe("function");
+  expect(typeof mod.buildColabAlignedCuratedOverlayGeoJSON).toBe("function");
   expect(typeof mod.resolvePinkLinePackStyleBundle).toBe("function");
 });
 

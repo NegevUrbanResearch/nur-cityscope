@@ -12,6 +12,16 @@ import {
   parseDefaultLinePaths,
   buildIntegratedRoute,
 } from "../map-utils/pink-line-route.js";
+import {
+  routeLineStylesForDisplayColor,
+  OFFICIAL_NETWORK_GAP_METERS,
+} from "../map-utils/pink-route-map-styles.js";
+import {
+  findOffroadTwoPointSegments,
+  parsePinkLineRouteFromGeojson,
+  resolveFirstDisplayColorFromGeojson,
+  sanitizeDisplayColorHex,
+} from "../map/leaflet-curated-pink-helpers.js";
 import AdvancedStyleEngine from "../map-utils/advanced-style-engine.js";
 import layerRegistry from "./layer-registry.js";
 
@@ -450,12 +460,184 @@ function buildCuratedRouteGeoJSON(basePaths, userPoints, layerColor, pointFeatur
   return { type: "FeatureCollection", features };
 }
 
+function parseDashArrayToNumbers(value) {
+  if (value == null) return null;
+  if (Array.isArray(value)) {
+    const nums = value.map((v) => Number(v)).filter((n) => !Number.isNaN(n));
+    return nums.length ? nums : null;
+  }
+  if (typeof value === "string") {
+    const nums = value
+      .split(/[\s,]+/)
+      .map((x) => Number(String(x).trim()))
+      .filter((n) => !Number.isNaN(n));
+    return nums.length ? nums : null;
+  }
+  return null;
+}
+
+/**
+ * @param {Record<string, unknown>} leafletLike
+ * @returns {Record<string, unknown>}
+ */
+function leafletPolylineLikeToCuratedCanvas(leafletLike) {
+  if (!leafletLike) return {};
+  const out = {
+    color: leafletLike.color,
+    weight: leafletLike.weight,
+    opacity: leafletLike.opacity != null ? leafletLike.opacity : 1,
+  };
+  const dash = parseDashArrayToNumbers(leafletLike.dashArray);
+  if (dash) out.dashArray = dash;
+  return out;
+}
+
+function pushCuratedLineWgs84(features, ptsLatLng, curatedStyle) {
+  if (!ptsLatLng || ptsLatLng.length < 2) return;
+  const coords = ptsLatLng.map(([lat, lng]) => [lng, lat]);
+  features.push({
+    type: "Feature",
+    geometry: { type: "LineString", coordinates: coords },
+    properties: { _curatedStyle: curatedStyle },
+  });
+}
+
+/**
+ * Colab-aligned curated overlay as a single WGS84 FeatureCollection (LineStrings + Points)
+ * for canvas projection — mirrors the GIS `leaflet-curated-layer-loader` stack.
+ *
+ * @param {Array} basePaths - pink-line base paths [[lat,lng], …]
+ * @param {Object} geojsonWgs84 - published submission FeatureCollection (WGS84)
+ * @param {string|null|undefined} fallbackDisplayColorHex - UI / layer card color when GeoJSON has none
+ * @returns {Object|null}
+ */
+function buildColabAlignedCuratedOverlayGeoJSON(
+  basePaths,
+  geojsonWgs84,
+  fallbackDisplayColorHex,
+) {
+  if (
+    typeof buildIntegratedRoute !== "function" ||
+    !basePaths ||
+    basePaths.length === 0 ||
+    !geojsonWgs84 ||
+    !Array.isArray(geojsonWgs84.features)
+  ) {
+    return null;
+  }
+  const detourPointItems = extractPinkDetourPointFeatures(geojsonWgs84);
+  const userPointsDetour = detourPointItems.map((x) => x.latlng);
+  if (userPointsDetour.length === 0) return null;
+
+  const { solid, removed, dashed } = buildIntegratedRoute(basePaths, userPointsDetour);
+  const fromGeoColor = resolveFirstDisplayColorFromGeojson(geojsonWgs84);
+  const styles = routeLineStylesForDisplayColor(
+    fromGeoColor ?? sanitizeDisplayColorHex(fallbackDisplayColorHex) ?? undefined,
+  );
+  const nodeFillHex =
+    fromGeoColor ??
+    sanitizeDisplayColorHex(fallbackDisplayColorHex) ??
+    styles.proposedLine.color;
+
+  const { pathsLatLng } = parsePinkLineRouteFromGeojson(geojsonWgs84);
+  const hasStoredPinkRoute = pathsLatLng.some((p) => p.length >= 2);
+
+  const features = [];
+
+  solid.forEach((pts) => {
+    pushCuratedLineWgs84(
+      features,
+      pts,
+      leafletPolylineLikeToCuratedCanvas(styles.solidLine),
+    );
+  });
+  removed.forEach((pts) => {
+    pushCuratedLineWgs84(
+      features,
+      pts,
+      leafletPolylineLikeToCuratedCanvas(styles.oldHalo),
+    );
+  });
+  removed.forEach((pts) => {
+    pushCuratedLineWgs84(
+      features,
+      pts,
+      leafletPolylineLikeToCuratedCanvas(styles.oldLine),
+    );
+  });
+
+  if (hasStoredPinkRoute) {
+    for (const path of pathsLatLng) {
+      if (path.length < 2) continue;
+      pushCuratedLineWgs84(
+        features,
+        path,
+        leafletPolylineLikeToCuratedCanvas(styles.proposedHalo),
+      );
+      pushCuratedLineWgs84(
+        features,
+        path,
+        leafletPolylineLikeToCuratedCanvas(styles.proposedLine),
+      );
+    }
+    const offroadEnabled =
+      typeof MapProjectionConfig !== "undefined" &&
+      MapProjectionConfig &&
+      MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
+    if (offroadEnabled) {
+      const segs = findOffroadTwoPointSegments(pathsLatLng, OFFICIAL_NETWORK_GAP_METERS);
+      const offStyle = leafletPolylineLikeToCuratedCanvas(styles.offroadLine);
+      segs.forEach((seg) => {
+        pushCuratedLineWgs84(features, seg, offStyle);
+      });
+    }
+  } else {
+    const dashedStyle = {
+      color: styles.proposedLine.color,
+      weight: 5,
+      opacity: 0.9,
+      dashArray: [10, 10],
+    };
+    dashed.forEach((pts) => {
+      pushCuratedLineWgs84(features, pts, dashedStyle);
+    });
+  }
+
+  const pointItems = extractPointFeatures(geojsonWgs84);
+  pointItems.forEach(({ feature, latlng }) => {
+    const props = feature.properties || {};
+    const memorialIcon = getMemorialIconForFeature(props);
+    const [lat, lng] = latlng;
+    let curatedStyle;
+    if (memorialIcon) {
+      curatedStyle = { _iconUrl: memorialIcon, _iconSize: 32 };
+    } else {
+      curatedStyle = {
+        fillColor: nodeFillHex,
+        color: "#fff",
+        weight: 1,
+        fillOpacity: 0.9,
+        opacity: 1,
+        radius: 6,
+      };
+    }
+    features.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [lng, lat] },
+      properties: { ...props, _curatedStyle: curatedStyle },
+    });
+  });
+
+  return { type: "FeatureCollection", features };
+}
+
 export {
   fetchCuratedLayerData,
   extractPointFeatures,
   extractPinkDetourPointFeatures,
   fetchPinkLinePaths,
   buildCuratedRouteGeoJSON,
+  buildColabAlignedCuratedOverlayGeoJSON,
   MEMORIAL_ICON_URLS,
   getMemorialIconForFeature,
   resolvePinkLinePackStyleBundle,
