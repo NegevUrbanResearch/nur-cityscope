@@ -1,15 +1,15 @@
-const {
+import {
   shouldShowLayerOnGisMap,
-} = require("../../frontend/src/shared/gis-layer-filter");
-const {
+} from "../../frontend/src/shared/gis-layer-filter.js";
+import {
   getLayerState,
-} = require("../../frontend/src/shared/layer-state-helper");
-const {
+} from "../../frontend/src/shared/layer-state-helper.js";
+import {
   shouldLayerBeVisible,
-} = require("../../frontend/src/map-utils/visibility-controller");
-const {
+} from "../../frontend/src/map-utils/visibility-controller.js";
+import {
   applyLayerGroupsState,
-} = require("../../frontend/src/map/layer-state-manager");
+} from "../../frontend/src/map/layer-state-manager.js";
 
 describe("layer-state-manager: applyLayerGroupsState", () => {
   beforeEach(() => {

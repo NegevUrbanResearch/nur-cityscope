@@ -24,6 +24,7 @@ import {
 } from "../map/leaflet-curated-pink-helpers.js";
 import AdvancedStyleEngine from "../map-utils/advanced-style-engine.js";
 import layerRegistry from "./layer-registry.js";
+import MapProjectionConfig from "./map-projection-config.js";
 
 /**
  * Full layer ids for the canonical pink-line geometry (same GeoJSON the GIS map
@@ -492,13 +493,13 @@ function leafletPolylineLikeToCuratedCanvas(leafletLike) {
   return out;
 }
 
-function pushCuratedLineWgs84(features, ptsLatLng, curatedStyle) {
+function pushCuratedLineWgs84(features, ptsLatLng, curatedStyle, extraProperties) {
   if (!ptsLatLng || ptsLatLng.length < 2) return;
   const coords = ptsLatLng.map(([lat, lng]) => [lng, lat]);
   features.push({
     type: "Feature",
     geometry: { type: "LineString", coordinates: coords },
-    properties: { _curatedStyle: curatedStyle },
+    properties: { ...(extraProperties || {}), _curatedStyle: curatedStyle },
   });
 }
 
@@ -580,15 +581,14 @@ function buildColabAlignedCuratedOverlayGeoJSON(
         leafletPolylineLikeToCuratedCanvas(styles.proposedLine),
       );
     }
-    const offroadEnabled =
-      typeof MapProjectionConfig !== "undefined" &&
-      MapProjectionConfig &&
-      MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
+    const offroadEnabled = MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
     if (offroadEnabled) {
       const segs = findOffroadTwoPointSegments(pathsLatLng, OFFICIAL_NETWORK_GAP_METERS);
       const offStyle = leafletPolylineLikeToCuratedCanvas(styles.offroadLine);
       segs.forEach((seg) => {
-        pushCuratedLineWgs84(features, seg, offStyle);
+        pushCuratedLineWgs84(features, seg, offStyle, {
+          curated_overlay_role: "pink_offroad_segment",
+        });
       });
     }
   } else {

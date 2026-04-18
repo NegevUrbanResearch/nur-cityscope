@@ -6,8 +6,8 @@
 // NOTE: These defaults preserve existing behavior; change with care.
 const MapProjectionConfig = {
   // When true, long two-point edges on stored `pink_line_route` are re-drawn in the
-  // off-road style on a dedicated high z-index pane (Colab parity). Default off for perf.
-  ENABLE_CURATED_OFFROAD_SPLIT: false,
+  // off-road style on a dedicated high z-index pane (Colab parity). Default on for GIS + projection.
+  ENABLE_CURATED_OFFROAD_SPLIT: true,
 
   // Debug flags (can be toggled from devtools if needed)
   ENABLE_MAP_LAYER_DEBUG: false,

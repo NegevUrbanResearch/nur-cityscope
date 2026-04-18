@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
+import MapProjectionConfig from "../../frontend/src/shared/map-projection-config.js";
 import {
   findOffroadTwoPointSegments,
   haversineMeters,
@@ -88,6 +89,12 @@ describe("leaflet-curated-pink-helpers", () => {
     const segs = findOffroadTwoPointSegments(paths, OFFICIAL_NETWORK_GAP_METERS);
     expect(segs.length).toBe(1);
     expect(segs[0].length).toBe(2);
+  });
+});
+
+describe("map-projection-config curated off-road default", () => {
+  it("ENABLE_CURATED_OFFROAD_SPLIT defaults true for GIS + projection parity", () => {
+    expect(MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT).toBe(true);
   });
 });
 

@@ -1,6 +1,4 @@
-const AdvancedStyleDrawingModule = require('../../frontend/src/map-utils/advanced-style-drawing');
-const AdvancedStyleDrawing =
-  AdvancedStyleDrawingModule.default || AdvancedStyleDrawingModule;
+import AdvancedStyleDrawing from "../../frontend/src/map-utils/advanced-style-drawing.js";
 
 function makeMockCanvasCtx() {
   return {

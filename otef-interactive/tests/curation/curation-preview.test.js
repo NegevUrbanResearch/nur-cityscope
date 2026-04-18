@@ -1,12 +1,10 @@
-const {
+import {
   createCurationPreviewState,
-} = require("../../frontend/src/curation/curation");
-
-const curatedServiceModule = require("../../frontend/src/shared/curated-layer-service.js");
-const {
+} from "../../frontend/src/curation/curation.js";
+import {
   MEMORIAL_ICON_URLS,
   getMemorialIconForFeature,
-} = curatedServiceModule;
+} from "../../frontend/src/shared/curated-layer-service.js";
 
 describe("curation preview state controller", () => {
   test("tracks per-feature layers and visibility", () => {

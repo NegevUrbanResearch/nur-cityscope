@@ -86,7 +86,7 @@ describe("leaflet-control-with-basemap load dedupe", () => {
         }),
     );
 
-    const mod = require("../../frontend/src/map/leaflet-control-with-basemap.js");
+    const mod = await import("../../frontend/src/map/leaflet-control-with-basemap.js");
     const api = mod.getMapLayerLoaderAPI();
     const layerId = "october_7th.sample_line";
 

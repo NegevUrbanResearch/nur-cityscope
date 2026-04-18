@@ -1,4 +1,4 @@
-const telemetry = require("../../frontend/src/map/perf-telemetry");
+import * as telemetry from "../../frontend/src/map/perf-telemetry.js";
 
 describe("perf-telemetry", () => {
   beforeEach(() => {

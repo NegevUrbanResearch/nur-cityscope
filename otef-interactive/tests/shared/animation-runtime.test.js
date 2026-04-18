@@ -1,4 +1,4 @@
-const { createAnimationRuntime } = require('../../frontend/src/shared/animation-runtime');
+import { createAnimationRuntime } from "../../frontend/src/shared/animation-runtime.js";
 
 describe('animation-runtime', () => {
   test('global clock produces monotonic phase by speed', () => {

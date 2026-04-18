@@ -1,8 +1,7 @@
-const curatedServiceModule = require("../../frontend/src/shared/curated-layer-service.js");
-const {
+import {
   buildCuratedRouteGeoJSON,
   MEMORIAL_ICON_URLS,
-} = curatedServiceModule;
+} from "../../frontend/src/shared/curated-layer-service.js";
 
 describe("projection memorial icon styles for curated routes", () => {
   beforeEach(() => {

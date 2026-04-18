@@ -19,9 +19,9 @@ export default defineConfig({
     },
   },
   test: {
-    pool: "vmThreads",
     globals: true,
     environment: "node",
+    pool: "vmThreads",
     include: ["tests/**/*.test.js"],
     coverage: {
       provider: "v8",

@@ -1,8 +1,4 @@
-const MapProjectionConfigModule = require("../../frontend/src/shared/map-projection-config");
-const MapProjectionConfig =
-  MapProjectionConfigModule.default ||
-  MapProjectionConfigModule.MapProjectionConfig ||
-  MapProjectionConfigModule;
+import MapProjectionConfig from "../../frontend/src/shared/map-projection-config.js";
 
 describe("perf regression guards", () => {
   test("keeps remote viewport animation disabled by default", () => {

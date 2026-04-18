@@ -1,10 +1,5 @@
-const AdvancedStyleEngineModule = require("../../frontend/src/map-utils/advanced-style-engine.js");
-const AdvancedStyleDrawingModule = require("../../frontend/src/map-utils/advanced-style-drawing.js");
-
-const AdvancedStyleEngine =
-  AdvancedStyleEngineModule.default || AdvancedStyleEngineModule;
-const AdvancedStyleDrawing =
-  AdvancedStyleDrawingModule.default || AdvancedStyleDrawingModule;
+import AdvancedStyleEngine from "../../frontend/src/map-utils/advanced-style-engine.js";
+import AdvancedStyleDrawing from "../../frontend/src/map-utils/advanced-style-drawing.js";
 
 function makeMockCanvasCtx() {
   return {

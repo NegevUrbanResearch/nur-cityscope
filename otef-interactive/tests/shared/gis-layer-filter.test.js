@@ -1,8 +1,8 @@
-const {
+import {
   shouldShowLayerOnGisMap,
   filterGroupsForGisMap,
   isCuratedPackFullLayerId,
-} = require("../../frontend/src/shared/gis-layer-filter");
+} from "../../frontend/src/shared/gis-layer-filter.js";
 
 describe("gis-layer-filter: isCuratedPackFullLayerId", () => {
   test("accepts curated_moresht_axis pack ids (underscore group)", () => {

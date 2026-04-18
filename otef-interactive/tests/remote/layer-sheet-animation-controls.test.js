@@ -1,4 +1,4 @@
-const { renderLayerRow } = require('../../frontend/src/remote/layer-sheet-controller');
+import { renderLayerRow } from "../../frontend/src/remote/layer-sheet-controller.js";
 
 function makeAnimatableLayerRow() {
   return {

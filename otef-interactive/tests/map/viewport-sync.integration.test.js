@@ -1,9 +1,9 @@
-const {
+import {
   createViewportApplyScheduler,
-} = require("../../frontend/src/map/viewport-sync-scheduler");
-const {
+} from "../../frontend/src/map/viewport-sync-scheduler.js";
+import {
   getRemoteViewportSetViewOptions,
-} = require("../../frontend/src/map/viewport-apply-policy");
+} from "../../frontend/src/map/viewport-apply-policy.js";
 
 describe("viewport sync integration", () => {
   test("applies latest viewport with non-animated policy", () => {

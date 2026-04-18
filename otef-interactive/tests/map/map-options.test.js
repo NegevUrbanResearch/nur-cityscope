@@ -1,4 +1,4 @@
-const { buildMapOptions } = require("../../frontend/src/map/map-options");
+import { buildMapOptions } from "../../frontend/src/map/map-options.js";
 
 describe("map-options", () => {
   test("returns Leaflet map options with preferCanvas enabled by config", () => {

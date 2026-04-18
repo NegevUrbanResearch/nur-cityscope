@@ -1,5 +1,4 @@
-const StyleApplicatorModule = require('../../frontend/src/map-utils/style-applicator');
-const StyleApplicator = StyleApplicatorModule.default || StyleApplicatorModule;
+import StyleApplicator from "../../frontend/src/map-utils/style-applicator.js";
 
 describe('StyleApplicator.getLeafletStyle (simple renderer)', () => {
   test('returns a function that produces expected default style', () => {

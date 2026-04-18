@@ -1,7 +1,4 @@
-const AdvancedStyleEngineModule = require("../../frontend/src/map-utils/advanced-style-engine.js");
-
-const AdvancedStyleEngine =
-  AdvancedStyleEngineModule.default || AdvancedStyleEngineModule;
+import AdvancedStyleEngine from "../../frontend/src/map-utils/advanced-style-engine.js";
 
 describe("AdvancedStyleEngine simple style adapter", () => {
   test("creates fill and stroke layers when given strokeColor/strokeWidth", () => {

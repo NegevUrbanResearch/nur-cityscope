@@ -1,14 +1,15 @@
-const MapProjectionConfigModule = require('../../frontend/src/shared/map-projection-config');
-const MapProjectionConfig =
-  MapProjectionConfigModule.default ||
-  MapProjectionConfigModule.MapProjectionConfig ||
-  MapProjectionConfigModule;
+import { describe, expect, test } from "vitest";
+import MapProjectionConfig from "../../frontend/src/shared/map-projection-config.js";
 
-describe('map-projection-config defaults', () => {
+describe("map-projection-config defaults", () => {
   test('exposes expected debug flags with safe defaults', () => {
     expect(MapProjectionConfig.ENABLE_MAP_LAYER_DEBUG).toBe(false);
     expect(MapProjectionConfig.ENABLE_MAP_VISIBILITY_DEBUG).toBe(false);
     expect(MapProjectionConfig.ENABLE_PROJECTION_DEBUG).toBe(false);
+  });
+
+  test('enables curated offroad split by default', () => {
+    expect(MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT).toBe(true);
   });
 
   test('exposes projection tuning constants matching legacy behavior', () => {

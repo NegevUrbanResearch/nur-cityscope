@@ -1,13 +1,13 @@
-const {
+import {
   resolveLayerState,
   parseFullLayerId,
   getLayerIdOnly,
   getEffectiveLayerGroups,
   coalesceCuratedGroups,
-} = require("../../frontend/src/shared/layer-state-helper");
-const {
+} from "../../frontend/src/shared/layer-state-helper.js";
+import {
   PINK_LINE_PARKING_LAYER_ID,
-} = require("../../frontend/src/map-utils/curated-pink-axis-state.js");
+} from "../../frontend/src/map-utils/curated-pink-axis-state.js";
 
 describe("layer-state-helper: parseFullLayerId", () => {
   test("returns null for invalid or missing dot", () => {
