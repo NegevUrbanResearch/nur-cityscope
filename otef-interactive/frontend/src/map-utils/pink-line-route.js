@@ -1,16 +1,13 @@
 /**
  * Integrated route along the pink line with detours to visit user points.
  * Solid = unchanged original route; dashed = detour segments.
- * Ported from nur-colab-map pinkLineRoute.ts.
+ * Ported from nur-colab-map pinkLineRoute.ts (buildIntegratedRoute + heritage normalization).
  */
 
-/**
- * Max haversine gap (meters) between consecutive heritage paths for merging
- * into one run (snap join). Above this, paths stay separate (Colab-style
- * multi-run; avoids detour logic spanning a bogus long chord). Order-of-magnitude
- * aligned with Colab `normalizeHeritageSegments` neighbor tolerance.
- */
-const HERITAGE_PATH_JOIN_GAP_M = 25;
+/** Max haversine length (meters) of a single heritage edge; longer edges start a new run. */
+const MAX_HERITAGE_GAP_METERS = 3500;
+
+const CHANGE_PENALTY = 0.7;
 
 function toLatLng(coord) {
   return [coord[1], coord[0]];
@@ -53,41 +50,75 @@ function parseDefaultLinePaths(geojson) {
 }
 
 /**
- * Merge heritage polylines into one or more runs. Consecutive paths whose
- * endpoint gap is > 0 and ≤ {@link HERITAGE_PATH_JOIN_GAP_M} (haversine) are
- * joined by snapping the next path’s first vertex to the previous last (omit
- * the duplicate start — one chord in the polyline). If the gap is larger than
- * {@link HERITAGE_PATH_JOIN_GAP_M}, starts a new run (no long bridge).
+ * Split one path where consecutive vertices are farther than {@link MAX_HERITAGE_GAP_METERS}
+ * apart (haversine). Drops degenerate runs with fewer than two points.
+ * @param {Array<[number, number]>} path
+ * @returns {Array<Array<[number, number]>>}
+ */
+function splitPathAtMaxGapMeters(path, maxGapMeters) {
+  const runs = [];
+  if (!path || path.length < 2) return runs;
+  let cur = [path[0]];
+  for (let i = 1; i < path.length; i++) {
+    if (haversineM(path[i - 1], path[i]) > maxGapMeters) {
+      if (cur.length >= 2) runs.push(cur);
+      cur = [path[i]];
+    } else {
+      cur.push(path[i]);
+    }
+  }
+  if (cur.length >= 2) runs.push(cur);
+  return runs;
+}
+
+/**
+ * Colab `normalizeHeritageSegments`: split each input path at large internal gaps; each
+ * resulting run is a separate heritage segment (no cross-path snap merge).
  * @param {Array<Array<[number, number]>>} paths
  * @returns {Array<Array<[number, number]>>}
  */
-function mergePaths(paths) {
-  const runs = [];
-  let current = null;
-  for (const path of paths) {
-    if (!path || path.length === 0) continue;
-    if (!current) {
-      current = [...path];
-      continue;
-    }
-    const last = current[current.length - 1];
-    const first = path[0];
-    if (last[0] === first[0] && last[1] === first[1]) {
-      current.push(...path.slice(1));
-      continue;
-    }
-    const gapM = haversineM(last, first);
-    if (gapM > HERITAGE_PATH_JOIN_GAP_M) {
-      runs.push(current);
-      current = [...path];
-    } else {
-      // Snap join: first vertex of next run coincides with previous last; one
-      // connecting segment (previous last → former second vertex, if any).
-      current.push(...path.slice(1));
+function normalizeHeritageSegments(paths) {
+  const out = [];
+  for (const p of paths) {
+    for (const run of splitPathAtMaxGapMeters(p, MAX_HERITAGE_GAP_METERS)) {
+      out.push(run);
     }
   }
-  if (current) runs.push(current);
-  return runs;
+  return out;
+}
+
+function distPointToSegment(p, a, b) {
+  const px = p[1];
+  const py = p[0];
+  const ax = a[1];
+  const ay = a[0];
+  const bx = b[1];
+  const by = b[0];
+  const abx = bx - ax;
+  const aby = by - ay;
+  const apx = px - ax;
+  const apy = py - ay;
+  const ab2 = abx * abx + aby * aby;
+  if (ab2 < 1e-18) return dist(p, a);
+  let t = (apx * abx + apy * aby) / ab2;
+  t = Math.max(0, Math.min(1, t));
+  const qx = ax + t * abx;
+  const qy = ay + t * aby;
+  const dlat = py - qy;
+  const dlng = px - qx;
+  return Math.sqrt(dlat * dlat + dlng * dlng);
+}
+
+function minDistancePointToPolyline(p, path) {
+  const n = path.length;
+  if (n === 0) return Number.POSITIVE_INFINITY;
+  if (n === 1) return dist(p, path[0]);
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < n - 1; i++) {
+    const d = distPointToSegment(p, path[i], path[i + 1]);
+    if (d < best) best = d;
+  }
+  return best;
 }
 
 function buildPrefixDistances(path) {
@@ -103,17 +134,15 @@ function segmentLength(prefix, i, j) {
   return prefix[j] - prefix[i];
 }
 
-const CHANGE_PENALTY = 0.75;
-
 function bestIntervalForPoint(path, prefix, point) {
   const n = path.length;
-  if (n === 0) return null;
+  if (n < 2) return null;
   let bestCost = Number.POSITIVE_INFINITY;
   let bestStart = 0;
   let bestEnd = 0;
 
-  for (let i = 0; i < n; i++) {
-    for (let j = i; j < n; j++) {
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = i + 1; j < n; j++) {
       const removed = segmentLength(prefix, i, j);
       const added = dist(path[i], point) + dist(point, path[j]);
       const addedDist = added - removed;
@@ -170,17 +199,16 @@ function orderPointsBetweenEndpoints(start, end, points) {
 }
 
 /**
- * @param {Array<Array<[number,number]>>} basePaths - from parseDefaultLinePaths
- * @param {Array<[number,number]>} userPoints - [lat, lng] per point
+ * @param {Array<[number,number]>} basePath
+ * @param {Array<[number,number]>} userPoints
  * @returns {{ solid: Array<Array<[number,number]>>, dashed: Array<Array<[number,number]>>, removed: Array<Array<[number,number]>> }}
- *   `removed` lists base-path polylines replaced by each merged detour (heritage segments), empty when there are no user points.
  */
-function buildIntegratedRouteForSingleBasePath(basePath, userPoints) {
+function buildIntegratedRouteOneSegment(basePath, userPoints) {
   const solid = [];
   const dashed = [];
   const removed = [];
 
-  if (basePath.length === 0) return { solid, dashed, removed };
+  if (!basePath || basePath.length === 0) return { solid, dashed, removed };
 
   if (userPoints.length === 0) {
     solid.push([...basePath]);
@@ -192,29 +220,27 @@ function buildIntegratedRouteForSingleBasePath(basePath, userPoints) {
   const pointIntervals = [];
   for (const p of userPoints) {
     const interval = bestIntervalForPoint(basePath, prefix, p);
-    if (!interval) continue;
+    if (!interval || interval.end <= interval.start) continue;
     pointIntervals.push({ point: p, start: interval.start, end: interval.end });
   }
   const byStart = [...pointIntervals].sort((a, b) => a.start - b.start);
   const mergedIntervals = mergeIntervals(
-    byStart.map((x) => ({ start: x.start, end: x.end }))
+    byStart.map((x) => ({ start: x.start, end: x.end })),
   );
 
   for (const intr of mergedIntervals) {
     const leave = basePath[intr.start];
     const rejoin = basePath[intr.end];
     const inThisDetour = byStart.filter(
-      (x) => x.start <= intr.end && x.end >= intr.start
+      (x) => x.start <= intr.end && x.end >= intr.start,
     );
     const pointsInOrder = orderPointsBetweenEndpoints(
       leave,
       rejoin,
-      inThisDetour.map((x) => x.point)
+      inThisDetour.map((x) => x.point),
     );
     dashed.push([leave, ...pointsInOrder, rejoin]);
-    if (intr.end > intr.start) {
-      removed.push(basePath.slice(intr.start, intr.end + 1));
-    }
+    removed.push(basePath.slice(intr.start, intr.end + 1));
   }
 
   let lastEnd = 0;
@@ -228,22 +254,47 @@ function buildIntegratedRouteForSingleBasePath(basePath, userPoints) {
     solid.push(basePath.slice(lastEnd, basePath.length));
   }
 
-  if (solid.length === 0) {
-    solid.push([...basePath]);
-  }
-
   return { solid, dashed, removed };
 }
 
+/**
+ * @param {Array<Array<[number,number]>>} basePaths - from parseDefaultLinePaths
+ * @param {Array<[number,number]>} userPoints - [lat, lng] per point
+ * @returns {{ solid: Array<Array<[number,number]>>, dashed: Array<Array<[number,number]>>, removed: Array<Array<[number,number]>> }}
+ *   `removed` lists base-path polylines replaced by each merged detour (heritage segments), empty when there are no user points.
+ */
 function buildIntegratedRoute(basePaths, userPoints) {
-  const runs = mergePaths(basePaths);
   const solid = [];
   const dashed = [];
   const removed = [];
-  if (runs.length === 0) return { solid, dashed, removed };
 
-  for (const basePath of runs) {
-    const part = buildIntegratedRouteForSingleBasePath(basePath, userPoints);
+  const segments = normalizeHeritageSegments(basePaths);
+  if (segments.length === 0) return { solid, dashed, removed };
+
+  if (userPoints.length === 0) {
+    for (const s of segments) solid.push([...s]);
+    return { solid, dashed, removed };
+  }
+
+  const pointsBySegment = segments.map(() => []);
+  for (const p of userPoints) {
+    let bestSi = 0;
+    let bestD = Number.POSITIVE_INFINITY;
+    for (let si = 0; si < segments.length; si++) {
+      const d = minDistancePointToPolyline(p, segments[si]);
+      if (d < bestD) {
+        bestD = d;
+        bestSi = si;
+      }
+    }
+    pointsBySegment[bestSi].push(p);
+  }
+
+  for (let si = 0; si < segments.length; si++) {
+    const part = buildIntegratedRouteOneSegment(
+      segments[si],
+      pointsBySegment[si],
+    );
     solid.push(...part.solid);
     dashed.push(...part.dashed);
     removed.push(...part.removed);

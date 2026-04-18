@@ -40,7 +40,7 @@ describe("buildIntegratedRoute removed (heritage base segments)", () => {
     expect(detour[detour.length - 1]).toEqual(heritage[heritage.length - 1]);
   });
 
-  test("when best interval is a single base vertex, removed may be empty while dashed still has a detour", () => {
+  test("Colab-style best interval spans at least one edge; removed is that heritage subpath", () => {
     const basePaths = [
       [
         [32.0, 34.0],
@@ -49,8 +49,13 @@ describe("buildIntegratedRoute removed (heritage base segments)", () => {
       ],
     ];
     const { dashed, removed } = buildIntegratedRoute(basePaths, [[32.02, 34.02]]);
-    expect(removed).toEqual([]);
+    expect(removed).toHaveLength(1);
+    expect(removed[0]).toEqual([
+      [32.02, 34.0],
+      [32.04, 34.0],
+    ]);
     expect(dashed.length).toBe(1);
-    expect(dashed[0].length).toBeGreaterThanOrEqual(2);
+    expect(dashed[0][0]).toEqual([32.02, 34.0]);
+    expect(dashed[0][dashed[0].length - 1]).toEqual([32.04, 34.0]);
   });
 });
