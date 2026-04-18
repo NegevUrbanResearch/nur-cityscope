@@ -40,12 +40,29 @@ describe("buildPublishGeojsonFromApiFeatures", () => {
     expect(fc).toEqual({ type: "FeatureCollection", features: [] });
   });
 
-test("preserves collection-level CRS when provided", () => {
-  const crs = { type: "name", properties: { name: "EPSG:2039" } };
-  const fc = buildPublishGeojsonFromApiFeatures(
-    [{ geometry: { type: "Point", coordinates: [219529.584, 626907.39] }, properties: { id: "itm" } }],
-    { crs },
-  );
-  expect(fc.crs).toEqual(crs);
+  test("preserves collection-level CRS when provided", () => {
+    const crs = { type: "name", properties: { name: "EPSG:2039" } };
+    const fc = buildPublishGeojsonFromApiFeatures(
+      [{ geometry: { type: "Point", coordinates: [219529.584, 626907.39] }, properties: { id: "itm" } }],
+      { crs },
+    );
+    expect(fc.crs).toEqual(crs);
+  });
+
+  test("optional stamp adds display_color and submission_name on each feature", () => {
+    const fc = buildPublishGeojsonFromApiFeatures(
+      [
+        {
+          geometry: { type: "Point", coordinates: [34, 32] },
+          properties: { id: "a" },
+        },
+      ],
+      null,
+      { display_color: "#FF69B4", submission_name: "Batch A" },
+    );
+    expect(fc.features).toHaveLength(1);
+    expect(fc.features[0].properties.display_color).toBe("#FF69B4");
+    expect(fc.features[0].properties.submission_name).toBe("Batch A");
+  });
 });
-});
+

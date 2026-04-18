@@ -119,7 +119,19 @@ export { createCurationPreviewState } from "./curation-state.js";
         includeCurrent: true,
         includeHistory: false,
       });
-      const selected = buildPublishGeojsonFromApiFeatures(geojson.features || [], geojson);
+      const selRow = submissionsCtlRef.current?.getSelectedSubmission?.();
+      const featureStamp = {};
+      if (selRow?.colorCss) {
+        featureStamp.display_color = selRow.colorCss;
+      }
+      if (selRow?.name != null && String(selRow.name).trim() !== "") {
+        featureStamp.submission_name = String(selRow.name).trim();
+      }
+      const selected = buildPublishGeojsonFromApiFeatures(
+        geojson.features || [],
+        geojson,
+        Object.keys(featureStamp).length ? featureStamp : undefined,
+      );
       if (!selected.features.length) {
         setStatus("No current features to publish for this submission.", "error");
         return;
