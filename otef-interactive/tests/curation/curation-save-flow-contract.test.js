@@ -8,7 +8,6 @@ function readCurationWorkspaceSource() {
     "curation.js",
     "curation-api.js",
     "curation-state.js",
-    "curation-map-preview.js",
     "curation-submissions.js",
     "curation-published-layers.js",
   ];
@@ -31,30 +30,6 @@ function readCurationHtml() {
 test("curation refresh is manual-only (no polling interval)", () => {
   const src = readCurationWorkspaceSource();
   expect(src.includes("setInterval(refresh, 30000)")).toBe(false);
-});
-
-test("map preview module still stages drags locally (orchestrator no longer saves geometry)", () => {
-  const mapPreview = fs.readFileSync(
-    path.join(CURATION_SRC_DIR, "curation-map-preview.js"),
-    "utf8",
-  );
-  expect(mapPreview.includes('marker.on("dragend", async')).toBe(true);
-  expect(mapPreview.includes("{ preserveView: true }")).toBe(true);
-  const orch = readCurationSource();
-  expect(orch.includes("async function savePendingEdits()")).toBe(false);
-  expect(orch.includes("await API.editFeaturesBatch(")).toBe(false);
-  expect(
-    orch.includes("Moved node locally. Click 'Save source edits' to persist changes."),
-  ).toBe(false);
-});
-
-test("map preview ignores stale async showPreview runs (sequence guard)", () => {
-  const src = fs.readFileSync(
-    path.join(CURATION_SRC_DIR, "curation-map-preview.js"),
-    "utf8",
-  );
-  expect(src.includes("showPreviewSeq")).toBe(true);
-  expect(src.includes("if (mySeq !== showPreviewSeq) return")).toBe(true);
 });
 
 test("submission list loads from all-submissions API (searchable list, no project merge)", () => {
@@ -99,34 +74,6 @@ test("history filter persisted state uses showOldRevisions", () => {
   );
   expect(state.includes("showOldRevisions")).toBe(true);
   expect(state.includes("setHistoryFilterState")).toBe(true);
-});
-
-test("history map features use reduced opacity and are not draggable", () => {
-  const src = fs.readFileSync(
-    path.join(CURATION_SRC_DIR, "curation-map-preview.js"),
-    "utf8",
-  );
-  expect(src.includes("draggable: !isHistory")).toBe(true);
-  expect(src.includes("opacity: isHistory ? 0.55 : 1")).toBe(true);
-  expect(src.includes("if (isHistory) return")).toBe(true);
-});
-
-test("history line geometries are paler and visually distinct from current lines", () => {
-  const src = fs.readFileSync(
-    path.join(CURATION_SRC_DIR, "curation-map-preview.js"),
-    "utf8",
-  );
-  expect(src.includes("isHistory")).toBe(true);
-  expect(src.includes("ensureCurationLinePanes")).toBe(true);
-  expect(src.includes("curationHistoryLines")).toBe(true);
-  expect(src.includes("curationCurrentLines")).toBe(true);
-  expect(src.includes("buildLinePreviewLayers")).toBe(true);
-  expect(src.includes("CURATION_ROUTE_LINE_STYLES")).toBe(true);
-  expect(src.includes("HISTORY_LINE_OFFSET_METERS")).toBe(true);
-  expect(src.includes("#00d4ff")).toBe(true);
-  expect(src.includes("pane: CURRENT_LINE_PANE")).toBe(true);
-  expect(src.includes("pane: HISTORY_LINE_PANE")).toBe(true);
-  expect(src.includes("#0a1520")).toBe(false);
 });
 
 test("publish payload builder still drops history revisions (is_current === false)", () => {
@@ -183,4 +130,15 @@ test("curation orchestration has no feature metadata modal wiring", () => {
   const orch = readCurationSource();
   expect(orch.includes("saveFeatureModal")).toBe(false);
   expect(orch.includes("curationModalFeature")).toBe(false);
+});
+
+test("dead workshop map preview module file is removed", () => {
+  const p = path.join(CURATION_SRC_DIR, "curation" + "-map-preview.js");
+  expect(fs.existsSync(p)).toBe(false);
+});
+
+test("curation orchestrator does not import map preview", () => {
+  const orch = readCurationSource();
+  expect(orch.includes("curation" + "-map-preview")).toBe(false);
+  expect(orch.includes("createCurationMapPreview")).toBe(false);
 });

@@ -44,7 +44,7 @@ describe("curation simplified UI (HTML + orchestration contracts)", () => {
     const apiJs = readUtf8(CURATION_API_JS);
     expect(js.includes("includeHistory: false")).toBe(true);
     expect(js.includes("createCurationMapPreview")).toBe(false);
-    expect(js.includes("curation-map-preview")).toBe(false);
+    expect(js.includes("curation" + "-map-preview")).toBe(false);
     expect(js.includes("curationHistoryFilter")).toBe(false);
     expect(js.includes("openFeatureModal")).toBe(false);
     expect(js.includes("savePendingEdits")).toBe(false);
