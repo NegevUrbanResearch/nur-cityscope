@@ -266,6 +266,44 @@ function extractPointFeatures(geojson) {
   return list;
 }
 
+/**
+ * Memorial `feature_type` values must not contribute to pink detour / integrated
+ * route geometry (only route nodes and untyped points do).
+ *
+ * @param {unknown} featureType - `properties.feature_type`
+ * @returns {boolean}
+ */
+function isPinkDetourPointFeatureType(featureType) {
+  if (featureType === null || featureType === undefined) return true;
+  if (typeof featureType !== "string") return false;
+  const normalized = featureType.trim().toLowerCase();
+  if (normalized === "central" || normalized === "local") return false;
+  if (normalized === "") return true;
+  return normalized === "pink_line_node";
+}
+
+/**
+ * Like {@link extractPointFeatures}, but only Point features whose
+ * `feature_type` is `pink_line_node` (any case), missing, `null`, or `""`
+ * after trim. Memorial types `central` and `local` are excluded.
+ *
+ * @param {Object} geojson - GeoJSON FeatureCollection
+ * @returns {Array<{feature: Object, latlng: [number, number]}>}
+ */
+function extractPinkDetourPointFeatures(geojson) {
+  const list = [];
+  if (!geojson || !geojson.features) return list;
+  for (const f of geojson.features) {
+    const geom = f.geometry;
+    if (!geom || geom.type !== "Point" || !geom.coordinates) continue;
+    const props = f.properties || {};
+    if (!isPinkDetourPointFeatureType(props.feature_type)) continue;
+    const c = geom.coordinates;
+    list.push({ feature: f, latlng: [c[1], c[0]] });
+  }
+  return list;
+}
+
 // ---------------------------------------------------------------------------
 // fetchPinkLinePaths
 // ---------------------------------------------------------------------------
@@ -415,6 +453,7 @@ function buildCuratedRouteGeoJSON(basePaths, userPoints, layerColor, pointFeatur
 export {
   fetchCuratedLayerData,
   extractPointFeatures,
+  extractPinkDetourPointFeatures,
   fetchPinkLinePaths,
   buildCuratedRouteGeoJSON,
   MEMORIAL_ICON_URLS,
