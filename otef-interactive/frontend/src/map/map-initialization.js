@@ -202,23 +202,18 @@ function initializeMap(bounds) {
         }),
       );
 
-      if (!window._nurCuratedHeartbeatStop) {
-        window._nurCuratedHeartbeatStop = startCuratedSupabaseHeartbeat({
-          table: "otef",
-          onUpdated: async () => {
-            reloadCuratedLayersOnMapIfUpdated();
-            window.dispatchEvent(
-              new CustomEvent("nur-curated-supabase-pull", { detail: { source: "gis" } }),
-            );
-          },
-        });
-        window._otefUnsubscribeFunctions.push(() => {
-          if (typeof window._nurCuratedHeartbeatStop === "function") {
-            window._nurCuratedHeartbeatStop();
-            window._nurCuratedHeartbeatStop = null;
-          }
-        });
-      }
+      const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
+        table: "otef",
+        onUpdated: async () => {
+          reloadCuratedLayersOnMapIfUpdated();
+          window.dispatchEvent(
+            new CustomEvent("nur-curated-supabase-pull", { detail: { source: "gis" } }),
+          );
+        },
+      });
+      window._otefUnsubscribeFunctions.push(() => {
+        stopCuratedHeartbeat();
+      });
       });
   }
 

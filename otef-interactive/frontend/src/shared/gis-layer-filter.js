@@ -4,6 +4,21 @@
  */
 
 /**
+ * True when `fullLayerId` is a curated pack layer id (`curated…<group>.<layer>`), including
+ * `curated_moresht_axis.12` (underscore group ids), not only the legacy `curated.12` form.
+ *
+ * @param {unknown} fullLayerId
+ * @returns {boolean}
+ */
+function isCuratedPackFullLayerId(fullLayerId) {
+  return (
+    typeof fullLayerId === "string" &&
+    fullLayerId.startsWith("curated") &&
+    fullLayerId.includes(".")
+  );
+}
+
+/**
  * Whether a layer should be shown on the GIS map.
  *
  * @param {string} groupId - Layer group id (e.g. "projector_base", "map_3_future")
@@ -60,4 +75,4 @@ if (typeof window !== "undefined") {
   window.filterGroupsForGisMap = filterGroupsForGisMap;
 }
 
-export { shouldShowLayerOnGisMap, filterGroupsForGisMap };
+export { shouldShowLayerOnGisMap, filterGroupsForGisMap, isCuratedPackFullLayerId };

@@ -97,25 +97,20 @@ fetch("data/model-bounds.json")
           }),
         );
 
-        if (!window._nurCuratedHeartbeatStop) {
-          window._nurCuratedHeartbeatStop = startCuratedSupabaseHeartbeat({
-            table: TABLE_NAME,
-            onUpdated: async () => {
-              await reloadProjectionCuratedLayersFromSupabase();
-              window.dispatchEvent(
-                new CustomEvent("nur-curated-supabase-pull", {
-                  detail: { source: "projection" },
-                }),
-              );
-            },
-          });
-          window._otefUnsubscribeFunctions.push(() => {
-            if (typeof window._nurCuratedHeartbeatStop === "function") {
-              window._nurCuratedHeartbeatStop();
-              window._nurCuratedHeartbeatStop = null;
-            }
-          });
-        }
+        const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
+          table: TABLE_NAME,
+          onUpdated: async () => {
+            await reloadProjectionCuratedLayersFromSupabase();
+            window.dispatchEvent(
+              new CustomEvent("nur-curated-supabase-pull", {
+                detail: { source: "projection" },
+              }),
+            );
+          },
+        });
+        window._otefUnsubscribeFunctions.push(() => {
+          stopCuratedHeartbeat();
+        });
 
       });
     }

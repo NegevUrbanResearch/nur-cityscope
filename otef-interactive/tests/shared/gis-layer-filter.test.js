@@ -1,7 +1,24 @@
 const {
   shouldShowLayerOnGisMap,
   filterGroupsForGisMap,
+  isCuratedPackFullLayerId,
 } = require("../../frontend/src/shared/gis-layer-filter");
+
+describe("gis-layer-filter: isCuratedPackFullLayerId", () => {
+  test("accepts curated_moresht_axis pack ids (underscore group)", () => {
+    expect(isCuratedPackFullLayerId("curated_moresht_axis.42")).toBe(true);
+  });
+
+  test("accepts legacy curated.<pk> ids", () => {
+    expect(isCuratedPackFullLayerId("curated.7")).toBe(true);
+  });
+
+  test("rejects non-curated full layer ids", () => {
+    expect(isCuratedPackFullLayerId("map_3_future.mimushim")).toBe(false);
+    expect(isCuratedPackFullLayerId("curated_no_dot")).toBe(false);
+    expect(isCuratedPackFullLayerId(null)).toBe(false);
+  });
+});
 
 describe("gis-layer-filter: shouldShowLayerOnGisMap", () => {
   test("returns false for projector_base when layer is not Tkuma_Area_LIne", () => {

@@ -4,6 +4,7 @@
  */
 
 import { UI_CONFIG } from "../config/ui-config.js";
+import { isCuratedPackFullLayerId } from "../shared/gis-layer-filter.js";
 import { updateMapLegend } from "./map-legend.js";
 import {
   loadCuratedLayerFromAPI as _loadCurated,
@@ -127,10 +128,11 @@ async function loadCuratedLayerFromAPI(fullLayerId) {
 }
 
 /**
- * Force reload every curated.* layer already on the map (after Supabase pull).
+ * Force reload every curated pack layer already on the map (after Supabase pull).
+ * Matches `curated_moresht_axis.<pk>` and legacy `curated.<pk>` keys in `loadedLayersMap`.
  */
 function reloadCuratedLayersOnMapIfUpdated() {
-  const ids = [...loadedLayersMap.keys()].filter((id) => id.startsWith("curated."));
+  const ids = [...loadedLayersMap.keys()].filter((id) => isCuratedPackFullLayerId(id));
   for (const id of ids) {
     void _loadCurated(id, loadedLayersMap, registerLoadedLayer, { force: true });
   }
