@@ -11,6 +11,14 @@ import {
 } from "./projection-layer-manager.js";
 import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
 
+if (typeof window !== "undefined") {
+  window.addEventListener("otef-curated-geojson-refresh", () => {
+    if (typeof reloadProjectionCuratedLayersFromSupabase === "function") {
+      void reloadProjectionCuratedLayersFromSupabase();
+    }
+  });
+}
+
 // Load model bounds
 let modelBounds;
 

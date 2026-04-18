@@ -75,7 +75,12 @@ function setupWebSocket(ctx) {
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async () => {
     try {
       const state = await OTEF_API.getState(ctx._tableName);
-      if (state.layerGroups) ctx._setLayerGroups(state.layerGroups);
+      if (state.layerGroups) {
+        ctx._setLayerGroups(state.layerGroups);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("otef-curated-geojson-refresh"));
+        }
+      }
     } catch (err) {
       getLogger().error("[OTEFDataContext] Failed to refresh layers after LAYERS_CHANGED:", err);
     }

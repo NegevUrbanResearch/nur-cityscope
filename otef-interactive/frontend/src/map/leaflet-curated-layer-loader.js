@@ -17,12 +17,14 @@ import {
   resolvePinkLinePackStyleBundle,
 } from "../shared/curated-layer-service.js";
 import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
-import { optimizePinkNodeVisitOrder } from "../map-utils/pink-route-optimizer.js";
+import { assignPinkNodeDisplayOrders } from "../map-utils/pink-route-optimizer.js";
 import {
-  OFFICIAL_NETWORK_GAP_METERS,
+  STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
   routeLineStylesForDisplayColor,
 } from "../map-utils/pink-route-map-styles.js";
 import {
+  clipProposedPathsLatLngExcludingOffroadGaps,
+  collectOffroadJunctionLatLngs,
   findOffroadTwoPointSegments,
   parsePinkLineRouteFromGeojson,
   resolveFirstDisplayColorFromGeojson,
@@ -30,11 +32,13 @@ import {
 } from "./leaflet-curated-pink-helpers.js";
 import { planPinkCuratedOverlayLayers } from "./pink-curated-overlay-plan.js";
 import { buildMemorialInspectHtml } from "./curated-memorial-inspect-html.js";
+import { readPinkNodeOrder } from "../map-utils/pink-node-order.js";
 import {
   PINK_LINE_PARKING_ICON_URL,
   fetchPinkLineParkingLotsGeojson,
   createLeafletPinkLineParkingGroup,
 } from "../map-utils/pink-line-parking.js";
+import MapProjectionConfig from "../shared/map-projection-config.js";
 
 let pinkLineBaseLayerInstance = null;
 let pinkLineParkingLayerInstance = null;
@@ -42,6 +46,9 @@ let pinkLineParkingLayerInstance = null;
 let pinkLineParkingAttachGeneration = 0;
 let pinkLineParkingMapVisibleIntent = false;
 const getCuratedLayerColor = UI_CONFIG.getCuratedColor;
+
+// Colab parity: Hebrew label for off-road junction tooltips (single source).
+const PINK_OFFROAD_JUNCTION_TOOLTIP = "מחבר";
 
 /** Dev-only: avoid spamming console when published GeoJSON has no stored route. */
 const noStoredPinkRouteLoggedIds = new Set();
@@ -89,22 +96,6 @@ function ensureCuratedPinkOffroadPane(mapInstance) {
   pane.style.zIndex = "650";
   pane.style.pointerEvents = "none";
   return paneName;
-}
-
-function collectOffroadJunctionLatLngs(offroadSegments) {
-  const seen = new Set();
-  const out = [];
-  for (const seg of offroadSegments) {
-    if (!Array.isArray(seg) || seg.length !== 2) continue;
-    for (const ll of seg) {
-      if (!ll || ll.length < 2) continue;
-      const key = `${ll[0]},${ll[1]}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(ll);
-    }
-  }
-  return out;
 }
 
 /**
@@ -331,43 +322,43 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
   const pointItems = extractPointFeatures(geojson);
   const detourPointItems = extractPinkDetourPointFeatures(geojson);
   const userPointsDetour = detourPointItems.map((x) => x.latlng);
-
-  const pinkNodeOrderByFeature = new Map();
-  if (detourPointItems.length > 0) {
-    const nodes = detourPointItems.map((x, i) => ({
-      id: `__pink:${i}`,
-      lat: x.latlng[0],
-      lng: x.latlng[1],
-    }));
-    const ordered = optimizePinkNodeVisitOrder(nodes);
-    ordered.forEach((n, pos) => {
-      const m = /^__pink:(\d+)$/.exec(n.id);
-      if (m) {
-        const item = detourPointItems[Number(m[1])];
-        if (item) pinkNodeOrderByFeature.set(item.feature, pos + 1);
-      }
-    });
+  let routingLatLng = userPointsDetour.slice();
+  if (routingLatLng.length === 0 && pointItems.length > 0) {
+    routingLatLng = pointItems
+      .filter(({ feature }) => !getMemorialIconForFeature(feature.properties || {}))
+      .map((x) => x.latlng);
   }
+
+  // Detour markers read properties.pink_node_order (assignPinkNodeDisplayOrders).
+  assignPinkNodeDisplayOrders(pointItems.map((item) => item.feature));
   const { basePaths } = await fetchPinkLinePaths();
 
+  const hasAnyLineGeometryInGeojson = geojson.features.some(
+    (f) =>
+      f.geometry &&
+      (f.geometry.type === "LineString" || f.geometry.type === "MultiLineString"),
+  );
   const hasRouteUtils = typeof buildIntegratedRoute === "function";
   const usePinkLineProjection =
     basePaths.length > 0 &&
-    (userPointsDetour.length > 0 ||
-      geojson.features.some(
-        (f) =>
-          f.geometry &&
-          (f.geometry.type === "LineString" || f.geometry.type === "MultiLineString"),
-      ));
+    (routingLatLng.length > 0 || hasAnyLineGeometryInGeojson);
 
   // --- Leaflet-specific rendering ---
-  if (usePinkLineProjection && userPointsDetour.length > 0 && hasRouteUtils) {
+  if (usePinkLineProjection && routingLatLng.length > 0 && hasRouteUtils) {
     await ensurePinkLineBaseLayer();
-    const { solid, removed, dashed } = buildIntegratedRoute(basePaths, userPointsDetour);
+    const { solid, removed, dashed } = buildIntegratedRoute(basePaths, routingLatLng);
 
     const fromGeoColor = resolveFirstDisplayColorFromGeojson(geojson);
     const fallbackCurated = getCuratedLayerColor(fullLayerId, layerData);
-    const styles = routeLineStylesForDisplayColor(fromGeoColor ?? fallbackCurated);
+    const submissionHex =
+      fromGeoColor ?? sanitizeDisplayColorHex(fallbackCurated) ?? undefined;
+    const baseStyles = routeLineStylesForDisplayColor(null);
+    const proposedTint = routeLineStylesForDisplayColor(submissionHex);
+    const styles = {
+      ...baseStyles,
+      proposedHalo: proposedTint.proposedHalo,
+      proposedLine: proposedTint.proposedLine,
+    };
     const nodeFillHex =
       fromGeoColor ??
       sanitizeDisplayColorHex(fallbackCurated) ??
@@ -392,15 +383,20 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
 
     const group = L.layerGroup();
 
-    const offroadEnabled =
-      typeof MapProjectionConfig !== "undefined" &&
-      MapProjectionConfig &&
-      MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
+    const offroadEnabled = MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
     let offroadSegmentsLatLng = [];
     let offroadJunctionsLatLng = [];
-    if (hasStoredPinkRoute && offroadEnabled && typeof map !== "undefined" && map) {
-      offroadSegmentsLatLng = findOffroadTwoPointSegments(pathsLatLng, OFFICIAL_NETWORK_GAP_METERS);
+    let proposedPathsForOverlay = pathsLatLng;
+    if (hasStoredPinkRoute && offroadEnabled) {
+      offroadSegmentsLatLng = findOffroadTwoPointSegments(
+        pathsLatLng,
+        STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
+      );
       offroadJunctionsLatLng = collectOffroadJunctionLatLngs(offroadSegmentsLatLng);
+      proposedPathsForOverlay = clipProposedPathsLatLngExcludingOffroadGaps(
+        pathsLatLng,
+        STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
+      );
     }
 
     const offroadPaneName =
@@ -409,12 +405,12 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
         : "";
 
     const overlayOps = planPinkCuratedOverlayLayers({
-      hasDetourPoints: userPointsDetour.length > 0,
+      hasDetourPoints: routingLatLng.length > 0,
       hasStoredPinkRoute,
       solid,
       removed,
       dashedPlanner: dashed,
-      proposedPathsLatLng: pathsLatLng,
+      proposedPathsLatLng: proposedPathsForOverlay,
       offroadSegmentsLatLng,
       offroadJunctionsLatLng,
     });
@@ -424,8 +420,27 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
         const lineOpts = resolvePinkOverlayPolylineStyle(op.styleKey, styles, offroadPaneName);
         group.addLayer(L.polyline(op.latLngs, lineOpts));
       } else if (op.kind === "circleMarker") {
-        const markerOpts = resolvePinkOverlayCircleMarkerStyle(op.styleKey, styles, offroadPaneName);
-        group.addLayer(L.circleMarker(op.latLng, markerOpts));
+        if (op.role === "offroadJunction") {
+          const lineColor = styles.offroadLine.color || "#c62828";
+          const junctionMarker = L.marker(op.latLng, {
+            icon: L.divIcon({
+              className: "pink-offroad-junction-marker-root",
+              html: `<div class="pink-offroad-junction-node" style="--pink-offroad-junction-color:${lineColor}"></div>`,
+              iconSize: [22, 22],
+              iconAnchor: [11, 11],
+            }),
+            interactive: true,
+          });
+          junctionMarker.bindTooltip(PINK_OFFROAD_JUNCTION_TOOLTIP, {
+            permanent: false,
+            direction: "top",
+            className: "curated-node-tooltip",
+          });
+          group.addLayer(junctionMarker);
+        } else {
+          const markerOpts = resolvePinkOverlayCircleMarkerStyle(op.styleKey, styles, offroadPaneName);
+          group.addLayer(L.circleMarker(op.latLng, markerOpts));
+        }
       }
     }
 
@@ -441,9 +456,9 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
             icon: L.divIcon({
               className: "curation-memorial-marker-root",
               html: `<div class="curation-memorial-marker-shell curation-memorial-marker-accent" style="--memorial-accent:${accentHex}"><img class="curation-memorial-marker-img" src="${memorialIconUrl}" alt="" /></div>`,
-              iconSize: [40, 40],
-              iconAnchor: [20, 20],
-              popupAnchor: [0, -20],
+              iconSize: [44, 44],
+              iconAnchor: [22, 22],
+              popupAnchor: [0, -22],
             }),
           });
         } else {
@@ -457,19 +472,16 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
           marker = L.marker(latlng, { icon });
         }
       } else {
-        const pinkOrder = pinkNodeOrderByFeature.get(feature);
-        const label =
-          typeof pinkOrder === "number"
-            ? `<span style="font-size:8px;font-weight:700;color:#fff;line-height:1;pointer-events:none">${pinkOrder}</span>`
-            : "";
-        const nodeFlex =
-          typeof pinkOrder === "number" ? "display:flex;align-items:center;justify-content:center;" : "";
+        const pinkOrder = readPinkNodeOrder(props);
+        if (pinkOrder == null) return;
+        const label = `<span style="font-size:11px;font-weight:700;color:#fff;line-height:1;pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,0.45)">${pinkOrder}</span>`;
+        const nodeFlex = "display:flex;align-items:center;justify-content:center;";
         marker = L.marker(latlng, {
           icon: L.divIcon({
             className: "pink-line-node-marker",
             html: `<div class="pink-line-node" style="background:${nodeFillHex};${nodeFlex}">${label}</div>`,
-            iconSize: [14, 14],
-            iconAnchor: [7, 7],
+            iconSize: [30, 30],
+            iconAnchor: [15, 15],
           }),
         });
       }
@@ -487,7 +499,7 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
     return;
   }
 
-  if (usePinkLineProjection && basePaths.length > 0 && userPointsDetour.length === 0) {
+  if (usePinkLineProjection && basePaths.length > 0 && routingLatLng.length === 0) {
     await ensurePinkLineBaseLayer();
     const layerColor = getCuratedLayerColor(fullLayerId, layerData);
     const group = L.layerGroup();
@@ -527,9 +539,9 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
             icon: L.divIcon({
               className: "curation-memorial-marker-root",
               html: `<div class="curation-memorial-marker-shell curation-memorial-marker-accent" style="--memorial-accent:${accentHex}"><img class="curation-memorial-marker-img" src="${memorialIconUrl}" alt="" /></div>`,
-              iconSize: [40, 40],
-              iconAnchor: [20, 20],
-              popupAnchor: [0, -20],
+              iconSize: [44, 44],
+              iconAnchor: [22, 22],
+              popupAnchor: [0, -22],
             }),
           });
         } else {
@@ -543,12 +555,16 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
           marker = L.marker(latlng, { icon });
         }
       } else {
+        const pinkOrder = readPinkNodeOrder(props);
+        if (pinkOrder == null) return;
+        const label = `<span style="font-size:11px;font-weight:700;color:#fff;line-height:1;pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,0.45)">${pinkOrder}</span>`;
+        const nodeFlex = "display:flex;align-items:center;justify-content:center;";
         marker = L.marker(latlng, {
           icon: L.divIcon({
             className: "pink-line-node-marker",
-            html: `<div class="pink-line-node" style="background:${layerColor}"></div>`,
-            iconSize: [14, 14],
-            iconAnchor: [7, 7],
+            html: `<div class="pink-line-node" style="background:${layerColor};${nodeFlex}">${label}</div>`,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15],
           }),
         });
       }

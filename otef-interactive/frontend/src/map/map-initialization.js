@@ -11,9 +11,20 @@ import {
   loadGeoJSONLayers,
   getMapLayerLoaderAPI,
   reloadCuratedLayersOnMapIfUpdated,
+  loadLayerFromRegistry,
   pmtilesLayersWithConfigs,
 } from "./leaflet-control-with-basemap.js";
+import { syncCuratedMapLayersAfterSupabasePull } from "./map-curated-supabase-sync.js";
 import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
+
+if (typeof window !== "undefined") {
+  window.addEventListener("otef-curated-geojson-refresh", () => {
+    void syncCuratedMapLayersAfterSupabasePull({
+      reloadCuratedOnMap: reloadCuratedLayersOnMapIfUpdated,
+      loadLayerFromRegistry,
+    });
+  });
+}
 
 // Define EPSG:2039 projection for transformation
 proj4.defs(
@@ -205,7 +216,10 @@ function initializeMap(bounds) {
       const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
         table: "otef",
         onUpdated: async () => {
-          reloadCuratedLayersOnMapIfUpdated();
+          await syncCuratedMapLayersAfterSupabasePull({
+            reloadCuratedOnMap: reloadCuratedLayersOnMapIfUpdated,
+            loadLayerFromRegistry,
+          });
           window.dispatchEvent(
             new CustomEvent("nur-curated-supabase-pull", { detail: { source: "gis" } }),
           );

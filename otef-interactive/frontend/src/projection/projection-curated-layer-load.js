@@ -6,10 +6,9 @@ export async function loadProjectionCuratedLayerFromAPI(deps, fullLayerId) {
     CoordUtils,
     loadedLayers,
     fetchCuratedLayerData,
-    extractPinkDetourPointFeatures,
     fetchPinkLinePaths,
     buildColabAlignedCuratedOverlayGeoJSON,
-    buildCuratedRouteGeoJSON,
+    applyProjectionCuratedOverlayContrast,
     getMemorialIconForFeature,
     getCuratedLayerColorForProjection,
     ensureProjectionPinkLineBaseLayer,
@@ -37,38 +36,25 @@ export async function loadProjectionCuratedLayerFromAPI(deps, fullLayerId) {
     (f) => f.geometry && f.geometry.type === "Point" && f.geometry.coordinates,
   );
 
-  const userPoints = pointFeatures.map((f) => {
-    const c = f.geometry.coordinates;
-    return [c[1], c[0]];
-  });
-
-  const detourPointItems = extractPinkDetourPointFeatures(wgs84Geojson);
-  const userPointsDetour = detourPointItems.map((x) => x.latlng);
   const hasRouteUtils = typeof buildIntegratedRoute === "function";
 
   let builtGeojson = null;
   const { basePaths } = await fetchPinkLinePaths();
-  if (basePaths.length > 0 && userPointsDetour.length > 0 && hasRouteUtils) {
+  if (basePaths.length > 0 && hasRouteUtils && pointFeatures.length > 0) {
     await ensureProjectionPinkLineBaseLayer();
     const layerColor = getCuratedLayerColorForProjection(fullLayerId, layerData);
     builtGeojson = buildColabAlignedCuratedOverlayGeoJSON(
       basePaths,
       wgs84Geojson,
       layerColor,
-    );
-  }
-  if (!builtGeojson && userPoints.length > 0 && basePaths.length > 0) {
-    await ensureProjectionPinkLineBaseLayer();
-    const layerColor = getCuratedLayerColorForProjection(fullLayerId, layerData);
-    builtGeojson = buildCuratedRouteGeoJSON(
-      basePaths,
-      userPoints,
-      layerColor,
-      pointFeatures,
+      { useAllPointsAsDetourWhenEmpty: true },
     );
   }
 
   if (builtGeojson) {
+    if (typeof applyProjectionCuratedOverlayContrast === "function") {
+      applyProjectionCuratedOverlayContrast(builtGeojson);
+    }
     const itmGeojson = CoordUtils.transformGeojsonToItm(builtGeojson);
     const layerColor = getCuratedLayerColorForProjection(fullLayerId, layerData);
     const customStyleFunction = (feature) =>
@@ -191,6 +177,9 @@ export async function reloadProjectionCuratedLayersFromSupabase(deps) {
     if (canvasRenderer && typeof canvasRenderer.removeLayer === "function") {
       canvasRenderer.removeLayer(id);
     }
+  }
+  if (typeof deps.refreshLayerGroupsBeforeReload === "function") {
+    await deps.refreshLayerGroupsBeforeReload();
   }
   const listDeps = {
     getLayerGroups,

@@ -18,6 +18,10 @@ export function sanitizeDisplayColorHex(displayColorHex) {
 
 /**
  * First feature in the collection with a palette-valid `display_color`.
+ * Colab parity: this hex tints **proposed** route / halo and node fills only;
+ * solid heritage and removed (`old` / `oldHalo`) use fixed tokens from
+ * `routeLineStylesForDisplayColor(null)` — callers should merge proposed
+ * styles from `routeLineStylesForDisplayColor(thisHex)` into that base.
  *
  * @param {{ features?: Array<{ properties?: Record<string, unknown> }> } | null | undefined} geojson
  * @returns {string | null}
@@ -98,6 +102,60 @@ export function findOffroadTwoPointSegments(pathsLatLng, gapMeters) {
         ]);
       }
     }
+  }
+  return out;
+}
+
+// curated-layer-service and GIS loader should both use these helpers (canonical Path B) to avoid drift.
+/**
+ * Path B (off-road parity): proposed overlay must not re-draw edges already emitted as
+ * off-road connectors; split stored routes into runs of consecutive "on-network" edges only.
+ *
+ * @param {Array<Array<[number, number]>>} pathsLatLng
+ * @param {number} gapMeters - same threshold as {@link findOffroadTwoPointSegments}
+ * @returns {Array<Array<[number, number]>>}
+ */
+export function clipProposedPathsLatLngExcludingOffroadGaps(pathsLatLng, gapMeters) {
+  const out = [];
+  for (const path of pathsLatLng) {
+    if (!Array.isArray(path) || path.length < 2) continue;
+    /** @type {Array<[number, number]>} */
+    let run = [path[0]];
+    for (let i = 0; i < path.length - 1; i++) {
+      const [lat1, lng1] = path[i];
+      const [lat2, lng2] = path[i + 1];
+      if (haversineMeters(lat1, lng1, lat2, lng2) > gapMeters) {
+        if (run.length >= 2) out.push(run);
+        run = [[lat2, lng2]];
+      } else {
+        run.push([lat2, lng2]);
+      }
+    }
+    if (run.length >= 2) out.push(run);
+  }
+  return out;
+}
+
+/**
+ * One junction lat/lng per off-road two-point segment: **seg[0]** only — the first
+ * vertex along stored path order (network-side end of the long edge). Matches Colab
+ * `pinkDetourLeaflet` behavior (single `roadEnd` marker per off-road piece, not both
+ * endpoints). Deduplicated across segments.
+ *
+ * @param {Array<Array<[number, number]>>} offroadSegments
+ * @returns {Array<[number, number]>}
+ */
+export function collectOffroadJunctionLatLngs(offroadSegments) {
+  const seen = new Set();
+  const out = [];
+  for (const seg of offroadSegments) {
+    if (!Array.isArray(seg) || seg.length !== 2) continue;
+    const ll = seg[0];
+    if (!ll || ll.length < 2) continue;
+    const key = `${ll[0]},${ll[1]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(ll);
   }
   return out;
 }

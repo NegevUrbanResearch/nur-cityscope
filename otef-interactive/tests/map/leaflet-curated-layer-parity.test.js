@@ -105,7 +105,7 @@ describe("leaflet-curated-layer-loader Task 5 wiring", () => {
     const src = readFileSync("frontend/src/map/leaflet-curated-layer-loader.js", "utf8");
     expect(src).toContain("extractPinkDetourPointFeatures");
     expect(src).toContain("routeLineStylesForDisplayColor");
-    expect(src).toContain("OFFICIAL_NETWORK_GAP_METERS");
+    expect(src).toContain("STORED_PINK_ROUTE_OFFROAD_GAP_METERS");
     expect(src).toContain("opts.force");
     expect(src).toContain("ENABLE_CURATED_OFFROAD_SPLIT");
     expect(src).toContain("planPinkCuratedOverlayLayers");

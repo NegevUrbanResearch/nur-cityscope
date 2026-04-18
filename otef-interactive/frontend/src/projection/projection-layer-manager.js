@@ -6,10 +6,9 @@ import { CanvasLayerRenderer } from "./layer-renderer-canvas.js";
 import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
 import {
   fetchCuratedLayerData,
-  extractPinkDetourPointFeatures,
   fetchPinkLinePaths,
-  buildCuratedRouteGeoJSON,
   buildColabAlignedCuratedOverlayGeoJSON,
+  applyProjectionCuratedOverlayContrast,
   getMemorialIconForFeature,
 } from "../shared/curated-layer-service.js";
 import {
@@ -227,10 +226,9 @@ function updateWmtsVisibility(fullLayerId, visible) {
         CoordUtils,
         loadedLayers,
         fetchCuratedLayerData,
-        extractPinkDetourPointFeatures,
         fetchPinkLinePaths,
         buildColabAlignedCuratedOverlayGeoJSON,
-        buildCuratedRouteGeoJSON,
+        applyProjectionCuratedOverlayContrast,
         getMemorialIconForFeature,
         getCuratedLayerColorForProjection,
         ensureProjectionPinkLineBaseLayer,
@@ -652,6 +650,11 @@ function updateWmtsVisibility(fullLayerId, visible) {
       getLayerGroups: getLayerGroupsForCuratedReload,
       MORESHET_AXIS_GROUP_ID,
       isPinkLineParkingLayerId,
+      refreshLayerGroupsBeforeReload:
+        typeof OTEFDataContext !== "undefined" &&
+        typeof OTEFDataContext.refreshLayerGroupsFromApi === "function"
+          ? () => OTEFDataContext.refreshLayerGroupsFromApi()
+          : undefined,
     });
   }
 

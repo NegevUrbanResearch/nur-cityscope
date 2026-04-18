@@ -164,15 +164,25 @@ class AdvancedStyleEngine {
     // symbol layer so the canvas renderer can draw an image instead of a
     // circle marker.
     if (simpleStyle._iconUrl) {
-      const size =
-        typeof simpleStyle._iconSize === "number" && simpleStyle._iconSize > 0
-          ? simpleStyle._iconSize
-          : 24;
+      const outer =
+        typeof simpleStyle._memorialOuterPx === "number" &&
+        simpleStyle._memorialOuterPx > 0
+          ? simpleStyle._memorialOuterPx
+          : typeof simpleStyle._iconSize === "number" && simpleStyle._iconSize > 0
+            ? simpleStyle._iconSize
+            : 24;
+      const imgPx =
+        typeof simpleStyle._memorialImgPx === "number" &&
+        simpleStyle._memorialImgPx > 0
+          ? simpleStyle._memorialImgPx
+          : outer;
       layers.push({
         type: "markerPoint",
         marker: {
-          size,
+          size: outer,
           iconUrl: simpleStyle._iconUrl,
+          memorialAccentHex: simpleStyle._memorialAccentHex || null,
+          memorialImgPx: imgPx,
         },
       });
     } else if (
@@ -187,6 +197,7 @@ class AdvancedStyleEngine {
         type: "markerPoint",
         marker: {
           size,
+          offroadJunctionCanvas: simpleStyle._offroadJunctionCanvas === true,
         },
       });
     }

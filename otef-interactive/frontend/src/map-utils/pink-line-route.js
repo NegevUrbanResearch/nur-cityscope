@@ -13,12 +13,6 @@ function toLatLng(coord) {
   return [coord[1], coord[0]];
 }
 
-function dist(a, b) {
-  const dlat = a[0] - b[0];
-  const dlng = a[1] - b[1];
-  return Math.sqrt(dlat * dlat + dlng * dlng);
-}
-
 /** Haversine distance in meters; `a` and `b` are [lat, lng]. */
 function haversineM(a, b) {
   const R = 6371000;
@@ -87,7 +81,11 @@ function normalizeHeritageSegments(paths) {
   return out;
 }
 
-function distPointToSegment(p, a, b) {
+/**
+ * Closest point on segment a–b to p in WGS84; `p`, `a`, `b` are [lat, lng].
+ * Uses planar projection in lng/lat for the projection step (Colab `pinkLineRoute.ts`).
+ */
+function closestLatLngOnSegment(p, a, b) {
   const px = p[1];
   const py = p[0];
   const ax = a[1];
@@ -99,23 +97,26 @@ function distPointToSegment(p, a, b) {
   const apx = px - ax;
   const apy = py - ay;
   const ab2 = abx * abx + aby * aby;
-  if (ab2 < 1e-18) return dist(p, a);
+  if (ab2 < 1e-18) return a;
   let t = (apx * abx + apy * aby) / ab2;
   t = Math.max(0, Math.min(1, t));
   const qx = ax + t * abx;
   const qy = ay + t * aby;
-  const dlat = py - qy;
-  const dlng = px - qx;
-  return Math.sqrt(dlat * dlat + dlng * dlng);
+  return [qy, qx];
+}
+
+function haversinePointToSegmentMeters(p, a, b) {
+  const q = closestLatLngOnSegment(p, a, b);
+  return haversineM(p, q);
 }
 
 function minDistancePointToPolyline(p, path) {
   const n = path.length;
   if (n === 0) return Number.POSITIVE_INFINITY;
-  if (n === 1) return dist(p, path[0]);
+  if (n === 1) return haversineM(p, path[0]);
   let best = Number.POSITIVE_INFINITY;
   for (let i = 0; i < n - 1; i++) {
-    const d = distPointToSegment(p, path[i], path[i + 1]);
+    const d = haversinePointToSegmentMeters(p, path[i], path[i + 1]);
     if (d < best) best = d;
   }
   return best;
@@ -124,7 +125,7 @@ function minDistancePointToPolyline(p, path) {
 function buildPrefixDistances(path) {
   const prefix = [0];
   for (let i = 1; i < path.length; i++) {
-    prefix[i] = prefix[i - 1] + dist(path[i - 1], path[i]);
+    prefix[i] = prefix[i - 1] + haversineM(path[i - 1], path[i]);
   }
   return prefix;
 }
@@ -144,7 +145,8 @@ function bestIntervalForPoint(path, prefix, point) {
   for (let i = 0; i < n - 1; i++) {
     for (let j = i + 1; j < n; j++) {
       const removed = segmentLength(prefix, i, j);
-      const added = dist(path[i], point) + dist(point, path[j]);
+      const added =
+        haversineM(path[i], point) + haversineM(point, path[j]);
       const addedDist = added - removed;
       const cost = addedDist + CHANGE_PENALTY * removed;
       if (cost < bestCost) {
@@ -187,7 +189,8 @@ function orderPointsBetweenEndpoints(start, end, points) {
     for (let i = 1; i < route.length; i++) {
       const prev = route[i - 1];
       const next = route[i];
-      const added = dist(prev, p) + dist(p, next) - dist(prev, next);
+      const added =
+        haversineM(prev, p) + haversineM(p, next) - haversineM(prev, next);
       if (added < bestCost) {
         bestCost = added;
         bestIdx = i;

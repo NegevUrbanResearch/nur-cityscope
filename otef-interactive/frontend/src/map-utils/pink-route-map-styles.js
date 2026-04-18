@@ -5,7 +5,16 @@
 
 /** @typedef {{ color?: string; weight?: number; opacity?: number; dashArray?: string; lineCap?: string; lineJoin?: string; pane?: string }} LeafletPolylineLike */
 
+/** Colab `OFFICIAL_NETWORK_GAP_METERS`: used only after **Google-routed** legs vs chord targets in `pinkLineRoute.ts`. */
 export const OFFICIAL_NETWORK_GAP_METERS = 28;
+
+/**
+ * Stored `pink_line_route` LineStrings are **not** Google-routed vertex chains. Applying 28 m
+ * between consecutive published vertices flags almost every leg as "off-road" and destroys
+ * parity (red overlay + junction spam). Use a **heritage-scale** jump threshold instead so
+ * only true discontinuities in stored geometry get connector styling.
+ */
+export const STORED_PINK_ROUTE_OFFROAD_GAP_METERS = 3500;
 
 const VALID_CSS_HEX_6 = /^#[0-9A-Fa-f]{6}$/;
 
@@ -32,7 +41,7 @@ const SOLID_LINE = {
 const OLD_LINE = {
   color: "#ff69b4",
   weight: 4.5,
-  opacity: 0.5,
+  opacity: 0.4,
   lineCap: "round",
   lineJoin: "round",
 };
@@ -40,8 +49,8 @@ const OLD_LINE = {
 /** @type {LeafletPolylineLike} */
 const OLD_HALO = {
   color: "#ffffff",
-  weight: 6,
-  opacity: 0.22,
+  weight: 6.5,
+  opacity: 0.32,
   lineCap: "round",
   lineJoin: "round",
 };

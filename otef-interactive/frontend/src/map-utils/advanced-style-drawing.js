@@ -1,4 +1,12 @@
 /**
+ * @param {unknown} order
+ * @returns {string}
+ */
+export function formatPinkNodeLabel(order) {
+  return String(Math.floor(Number(order)));
+}
+
+/**
  * AdvancedStyleDrawing
  *
  * Canvas only. Draws commands using viewContext (must include tileOrigin for
@@ -228,6 +236,7 @@ class AdvancedStyleDrawing {
     let strokeApplied = false;
     let markerHasVisibleFill = false;
     let iconLayer = null;
+    let offroadJunctionCanvas = false;
 
     for (const layer of symbolLayers) {
       if (layer.type === "fill") {
@@ -265,6 +274,9 @@ class AdvancedStyleDrawing {
             ? layer.marker.size
             : radius * 2;
         radius = sizePx / 2;
+        if (layer.marker.offroadJunctionCanvas === true) {
+          offroadJunctionCanvas = true;
+        }
         if (layer.marker.iconUrl) {
           iconLayer = layer;
         }
@@ -288,6 +300,9 @@ class AdvancedStyleDrawing {
       strokeOpacity = 1.0;
     }
     const styleForDraw = { hatch: null, dashArray: null };
+    if (offroadJunctionCanvas) {
+      styleForDraw.offroadJunctionCanvas = true;
+    }
 
     // Icon marker support: when a markerPoint layer includes marker.iconUrl,
     // delegate image loading to helpers.getIcon and draw the icon instead of
@@ -300,20 +315,39 @@ class AdvancedStyleDrawing {
           typeof iconLayer.marker.size === "number"
             ? iconLayer.marker.size
             : radius * 2;
-        const width = sizePx;
-        const height = sizePx;
+        const accentHex = iconLayer.marker.memorialAccentHex || null;
+        const imgDrawPx =
+          typeof iconLayer.marker.memorialImgPx === "number" &&
+          iconLayer.marker.memorialImgPx > 0
+            ? iconLayer.marker.memorialImgPx
+            : sizePx;
 
         const drawAt = (coords) => {
           if (!coords || coords.length < 2) return;
           const pt = viewContext.coordToPixel(coords);
           ctx.save();
           ctx.globalAlpha = 1;
+          if (accentHex) {
+            const outerR = sizePx / 2;
+            ctx.shadowColor = "rgba(0,0,0,0.22)";
+            ctx.shadowBlur = 5;
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, outerR, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(255,255,255,0.96)";
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, outerR, 0, Math.PI * 2);
+            ctx.strokeStyle = accentHex;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
           ctx.drawImage(
             entry.img,
-            pt.x - width / 2,
-            pt.y - height / 2,
-            width,
-            height,
+            pt.x - imgDrawPx / 2,
+            pt.y - imgDrawPx / 2,
+            imgDrawPx,
+            imgDrawPx,
           );
           ctx.restore();
         };
@@ -425,6 +459,7 @@ class AdvancedStyleDrawing {
         strokeOpacity,
         lineWidth,
         radius,
+        style,
         viewContext,
       );
     } else if (type === "MultiPoint") {
@@ -438,6 +473,7 @@ class AdvancedStyleDrawing {
           strokeOpacity,
           lineWidth,
           radius,
+          style,
           viewContext,
         );
       }
@@ -698,11 +734,43 @@ class AdvancedStyleDrawing {
     strokeOpacity,
     lineWidth,
     radius,
+    style,
     viewContext,
   ) {
     if (!coords || coords.length < 2) return;
 
     const pt = viewContext.coordToPixel(coords);
+    const junctionShadow = style && style.offroadJunctionCanvas === true;
+
+    if (junctionShadow) {
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.35)";
+      ctx.shadowBlur = 5;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 2;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+      if (fillOpacity > 0) {
+        ctx.globalAlpha = fillOpacity;
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+      }
+      ctx.restore();
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.shadowOffsetX = 0;
+      if (strokeOpacity > 0 && lineWidth > 0) {
+        ctx.globalAlpha = strokeOpacity;
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = lineWidth;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
 
     ctx.beginPath();
     ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);

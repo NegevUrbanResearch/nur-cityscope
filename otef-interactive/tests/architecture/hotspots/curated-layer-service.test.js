@@ -296,9 +296,9 @@ describe("resolvePinkLinePackStyleBundle", () => {
     );
     const bundle = await resolvePinkLinePackStyleBundle();
     expect(bundle.sourceFullLayerId).toBeNull();
-    expect(bundle.leafletPolylineOptions.color.toLowerCase()).toBe("#ff7f7f");
-    expect(bundle.leafletPolylineOptions.weight).toBeCloseTo(1.3333333333333333, 10);
-    expect(bundle.leafletPolylineOptions.opacity).toBe(1);
+    expect(bundle.leafletPolylineOptions.color.toLowerCase()).toBe("#ff69b4");
+    expect(bundle.leafletPolylineOptions.weight).toBe(5);
+    expect(bundle.leafletPolylineOptions.opacity).toBe(0.9);
   });
 
   test("uses first matching pack style by pink-line id priority", async () => {
@@ -320,8 +320,8 @@ describe("resolvePinkLinePackStyleBundle", () => {
     const bundle = await resolvePinkLinePackStyleBundle();
 
     expect(bundle.sourceFullLayerId).toBe(PACK_LAYER_IDS[0]);
-    expect(bundle.leafletPolylineOptions.color.toLowerCase()).toBe("#112233");
-    expect(bundle.leafletPolylineOptions.weight).toBe(2.5);
+    expect(bundle.leafletPolylineOptions.color.toLowerCase()).toBe("#ff69b4");
+    expect(bundle.leafletPolylineOptions.weight).toBe(5);
     expect(bundle.styleConfigForProjection.style).toEqual(packStyle);
   });
 
@@ -347,8 +347,8 @@ describe("resolvePinkLinePackStyleBundle", () => {
     const bundle = await resolvePinkLinePackStyleBundle();
 
     expect(bundle.sourceFullLayerId).toBe(PACK_LAYER_IDS[1]);
-    expect(bundle.leafletPolylineOptions.color.toLowerCase()).toBe("#aabbcc");
-    expect(bundle.leafletPolylineOptions.weight).toBe(3);
+    expect(bundle.leafletPolylineOptions.color.toLowerCase()).toBe("#ff69b4");
+    expect(bundle.leafletPolylineOptions.weight).toBe(5);
     expect(bundle.leafletPolylineOptions.opacity).toBe(0.9);
   });
 });

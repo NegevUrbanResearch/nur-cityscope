@@ -1,6 +1,10 @@
 /**
  * Pure overlay plan for curated pink-line Leaflet stack (Colab draw order).
  * No Leaflet — returns ordered draw ops for the host to materialize.
+ *
+ * Path B: `proposedPathsLatLng` is expected to be pre-clipped (see
+ * `clipProposedPathsLatLngExcludingOffroadGaps`) so off-road gaps are not double-stacked
+ * under full-opacity proposed halo/stroke.
  */
 
 /**

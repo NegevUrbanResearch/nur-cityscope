@@ -1,12 +1,17 @@
 import { describe, expect, test } from "vitest";
 import {
   OFFICIAL_NETWORK_GAP_METERS,
+  STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
   routeLineStylesForDisplayColor,
 } from "../../frontend/src/map-utils/pink-route-map-styles.js";
 
 describe("pink-route-map-styles", () => {
-  test("exports OFFICIAL_NETWORK_GAP_METERS for off-road heuristics", () => {
+  test("exports OFFICIAL_NETWORK_GAP_METERS for Colab Google-leg vs chord heuristic", () => {
     expect(OFFICIAL_NETWORK_GAP_METERS).toBe(28);
+  });
+
+  test("exports STORED_PINK_ROUTE_OFFROAD_GAP_METERS for stored pink_line_route (not 28m)", () => {
+    expect(STORED_PINK_ROUTE_OFFROAD_GAP_METERS).toBe(3500);
   });
 
   test("routeLineStylesForDisplayColor: valid 6-digit # hex sets proposedLine.color (normalized uppercase)", () => {
@@ -37,14 +42,14 @@ describe("pink-route-map-styles", () => {
     expect(styles.oldLine).toMatchObject({
       color: "#ff69b4",
       weight: 4.5,
-      opacity: 0.5,
+      opacity: 0.4,
       lineCap: "round",
       lineJoin: "round",
     });
     expect(styles.oldHalo).toMatchObject({
       color: "#ffffff",
-      weight: 6,
-      opacity: 0.22,
+      weight: 6.5,
+      opacity: 0.32,
       lineCap: "round",
       lineJoin: "round",
     });

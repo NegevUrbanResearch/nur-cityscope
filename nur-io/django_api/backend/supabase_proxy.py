@@ -73,7 +73,10 @@ def _broadcast_otef_layers_changed(table_name):
                 },
             )
     except Exception:
-        pass
+        logger.exception(
+            "Failed to broadcast otef_layers_changed for table %s",
+            table_name,
+        )
 
 
 def _rows_to_geojson_feature_collection(
@@ -260,6 +263,7 @@ def pull_published_curated_layers_from_supabase(table, table_name):
     """
     from .models import GISLayer
 
+    workshop_auto_publish = _read_workshop_auto_publish(table)
     checked = 0
     updated = 0
     autopublished = 0
@@ -301,23 +305,29 @@ def pull_published_curated_layers_from_supabase(table, table_name):
     if updated:
         _broadcast_otef_layers_changed(table_name)
 
-    if not _read_workshop_auto_publish(table):
+    if not workshop_auto_publish:
         return {
             "checked": checked,
             "updated": updated,
             "autopublished": autopublished,
             "errors": errors,
+            "workshop_auto_publish": workshop_auto_publish,
         }
 
     project_id, workshop_err = _supabase_project_id_from_published_curated_layers(table)
     if workshop_err:
-        errors.append({"error": workshop_err})
-        return {
-            "checked": checked,
-            "updated": updated,
-            "autopublished": autopublished,
-            "errors": errors,
-        }
+        project_id, fb_err = _workshop_project_id_fallback_from_pink_geo_features()
+        if not project_id:
+            errors.append({"error": workshop_err})
+            if fb_err:
+                errors.append({"error": fb_err})
+            return {
+                "checked": checked,
+                "updated": updated,
+                "autopublished": autopublished,
+                "errors": errors,
+                "workshop_auto_publish": workshop_auto_publish,
+            }
 
     pink_subs, list_err = _list_submission_ids_with_pink_geo_features_for_project(
         project_id
@@ -329,6 +339,7 @@ def pull_published_curated_layers_from_supabase(table, table_name):
             "updated": updated,
             "autopublished": autopublished,
             "errors": errors,
+            "workshop_auto_publish": workshop_auto_publish,
         }
 
     for sid in pink_subs:
@@ -361,6 +372,7 @@ def pull_published_curated_layers_from_supabase(table, table_name):
         "updated": updated,
         "autopublished": autopublished,
         "errors": errors,
+        "workshop_auto_publish": workshop_auto_publish,
     }
 
 
@@ -427,6 +439,42 @@ def _supabase_project_id_from_published_curated_layers(table):
     if len(by_lower) > 1:
         return None, "workshop_autopublish_ambiguous_project_id"
     return next(iter(by_lower.values())), None
+
+
+def _workshop_project_id_fallback_from_pink_geo_features():
+    """
+    When published curated GeoJSON has no usable project_id, infer workshop scope from
+    distinct non-null project_id values on current pink geo_features (PostgREST only).
+    """
+    params = {
+        "select": "project_id,feature_type,is_current,geom",
+        "feature_type": "like.pink_%",
+    }
+    rows, err = _get("/geo_features", params=params)
+    if err:
+        return None, "workshop_autopublish_fallback_geo_features_query_failed"
+    by_lower = {}
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("is_current") is False:
+            continue
+        if not _geo_feature_row_is_pink_feature(row):
+            continue
+        raw = row.get("project_id")
+        if raw is None:
+            continue
+        token = str(raw).strip()
+        if not token:
+            continue
+        low = token.lower()
+        if low not in by_lower:
+            by_lower[low] = token
+    if len(by_lower) == 1:
+        return next(iter(by_lower.values())), None
+    if not by_lower:
+        return None, "workshop_autopublish_fallback_no_distinct_project_id"
+    return None, "workshop_autopublish_fallback_ambiguous_project_id"
 
 
 def _list_submission_ids_with_pink_geo_features_for_project(project_id):
