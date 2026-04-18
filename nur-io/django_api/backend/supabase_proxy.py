@@ -262,6 +262,7 @@ def pull_published_curated_layers_from_supabase(table, table_name):
 
     checked = 0
     updated = 0
+    autopublished = 0
     errors = []
     layers = list(
         GISLayer.objects.filter(
@@ -299,7 +300,68 @@ def pull_published_curated_layers_from_supabase(table, table_name):
             updated += 1
     if updated:
         _broadcast_otef_layers_changed(table_name)
-    return {"checked": checked, "updated": updated, "errors": errors}
+
+    if not _read_workshop_auto_publish(table):
+        return {
+            "checked": checked,
+            "updated": updated,
+            "autopublished": autopublished,
+            "errors": errors,
+        }
+
+    project_id, workshop_err = _supabase_project_id_from_published_curated_layers(table)
+    if workshop_err:
+        errors.append({"error": workshop_err})
+        return {
+            "checked": checked,
+            "updated": updated,
+            "autopublished": autopublished,
+            "errors": errors,
+        }
+
+    pink_subs, list_err = _list_submission_ids_with_pink_geo_features_for_project(
+        project_id
+    )
+    if list_err:
+        errors.append({"error": str(list_err)})
+        return {
+            "checked": checked,
+            "updated": updated,
+            "autopublished": autopublished,
+            "errors": errors,
+        }
+
+    for sid in pink_subs:
+        if _find_active_curated_layer_for_submission(table, sid):
+            continue
+        features_fc, fetch_err = _fetch_submission_geojson_fc(sid)
+        if fetch_err:
+            errors.append(
+                {"submission_id": sid, "error": str(fetch_err)}
+            )
+            continue
+        batch_row = _fetch_submission_batch_row_for_sync(sid)
+        enrich_feature_collection_with_submission_batch(features_fc, sid, batch_row)
+        try:
+            _autopublish_curated_submission(table, table_name, sid, features_fc)
+            autopublished += 1
+        except ValueError as e:
+            errors.append({"submission_id": sid, "error": str(e)})
+        except (IntegrityError, DatabaseError) as e:
+            errors.append({"submission_id": sid, "error": str(e)})
+        except Exception as e:
+            logger.exception("workshop autopublish failed for submission %s", sid)
+            errors.append({"submission_id": sid, "error": str(e)})
+
+    if autopublished:
+        _broadcast_otef_layers_changed(table_name)
+
+    return {
+        "checked": checked,
+        "updated": updated,
+        "autopublished": autopublished,
+        "errors": errors,
+    }
 
 
 def _find_active_curated_layer_for_submission(table, submission_id):
@@ -324,6 +386,95 @@ def _find_active_curated_layer_for_submission(table, submission_id):
             if psid is not None and str(psid).strip() == sid:
                 return layer
     return None
+
+
+def _supabase_project_id_from_published_curated_layers(table):
+    """
+    Scan active published curated GeoJSON layers for properties.project_id / projectId.
+
+    Returns (project_id_str_or_None, error_token_or_None).
+    error_token is workshop_autopublish_skipped_no_published_curated_project_id or
+    workshop_autopublish_ambiguous_project_id when the workshop branch must skip.
+    """
+    from .models import GISLayer
+
+    by_lower = {}
+    for layer in GISLayer.objects.filter(
+        table=table, is_active=True, layer_type="geojson"
+    ).order_by("order"):
+        if not str(layer.name or "").startswith("curated_"):
+            continue
+        data = layer.data if isinstance(layer.data, dict) else {}
+        for feat in data.get("features") or []:
+            if not isinstance(feat, dict):
+                continue
+            props = feat.get("properties")
+            if not isinstance(props, dict):
+                continue
+            raw = props.get("project_id")
+            if raw is None:
+                raw = props.get("projectId")
+            if raw is None:
+                continue
+            token = str(raw).strip()
+            if not token:
+                continue
+            low = token.lower()
+            if low not in by_lower:
+                by_lower[low] = token
+    if not by_lower:
+        return None, "workshop_autopublish_skipped_no_published_curated_project_id"
+    if len(by_lower) > 1:
+        return None, "workshop_autopublish_ambiguous_project_id"
+    return next(iter(by_lower.values())), None
+
+
+def _list_submission_ids_with_pink_geo_features_for_project(project_id):
+    """
+    Distinct submission_id values with at least one current pink geo_features row,
+    scoped with project_id=eq.{project_id} like SupabaseProjectSubmissionsView.
+    Returns (ids, error_message_or_None).
+    """
+    pid = str(project_id or "").strip()
+    if not pid:
+        return [], "workshop_autopublish_missing_project_id"
+    base_params = {"project_id": f"eq.{pid}"}
+    select_attempts = (
+        "submission_id,is_current,feature_type",
+        "submission_id,feature_type",
+        "submission_id,is_current",
+        "submission_id",
+    )
+    last_err = None
+    for sel in select_attempts:
+        params = dict(base_params)
+        params["select"] = sel
+        rows, err = _get("/geo_features", params=params)
+        if not err and isinstance(rows, list):
+            return _distinct_current_pink_submission_ids_from_geo_rows(rows), None
+        last_err = err
+    return [], last_err or "geo_features query failed"
+
+
+def _distinct_current_pink_submission_ids_from_geo_rows(rows):
+    out = []
+    seen = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if row.get("is_current") is False:
+            continue
+        if not _geo_feature_row_is_pink_feature(row):
+            continue
+        sid = row.get("submission_id")
+        if sid is None:
+            continue
+        key = _norm_submission_id_key(sid)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(str(sid).strip())
+    return out
 
 
 def _read_workshop_auto_publish(table):
@@ -771,6 +922,26 @@ def _feature_type_is_memorial(raw):
         return False
     key = str(raw).strip().lower()
     return key in ("central", "local")
+
+
+def _geo_feature_row_is_pink_feature(row):
+    """
+    True when a geo_features row represents pink curation geometry
+    (pink_line_route, pink_line_node, pink_offroad_segment, …).
+    """
+    if not isinstance(row, dict):
+        return False
+    ft = row.get("feature_type")
+    if ft is None:
+        geom = row.get("geom")
+        if isinstance(geom, dict) and geom.get("type") == "Feature":
+            props = geom.get("properties")
+            if isinstance(props, dict):
+                ft = props.get("feature_type") or props.get("featureType")
+    if ft is None:
+        return False
+    key = str(ft).strip().lower()
+    return bool(key) and key.startswith("pink_")
 
 
 def _project_name_signals(name):
