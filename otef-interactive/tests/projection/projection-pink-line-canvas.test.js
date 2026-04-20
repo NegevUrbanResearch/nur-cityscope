@@ -154,4 +154,40 @@ describe("projection-pink-line-canvas (behavior)", () => {
     ctrl.setProjectionPinkLineAxisGlyphsVisible(true, true);
     expect(renderer.setLayerVisibility).not.toHaveBeenCalled();
   });
+
+  test("heritage clip omits base polyline but parking still registers on canvas", async () => {
+    const renderer = {
+      setLayer: vi.fn(),
+      setLayerVisibility: vi.fn(),
+      removeLayer: vi.fn(),
+    };
+    const loadedLayers = {};
+    const ctrl = createProjectionPinkLineCanvasController({
+      getCanvasRenderer: () => renderer,
+      loadedLayers,
+    });
+
+    await ctrl.ensureProjectionPinkLineBaseLayer({
+      removedPaths: [
+        [
+          [32.0, 34.8],
+          [32.01, 34.81],
+        ],
+      ],
+    });
+
+    expect(loadedLayers[PINK_LINE_BASE_LAYER_ID]).toBeUndefined();
+    for (let i = 0; i < 30; i++) {
+      await Promise.resolve();
+      if (loadedLayers[PINK_LINE_CANVAS_PARKING_LAYER_ID]) break;
+    }
+    expect(loadedLayers[PINK_LINE_CANVAS_PARKING_LAYER_ID]).toBeDefined();
+    expect(renderer.setLayer).toHaveBeenCalledWith(
+      PINK_LINE_CANVAS_PARKING_LAYER_ID,
+      expect.anything(),
+      expect.any(Function),
+      "Point",
+      expect.anything(),
+    );
+  });
 });

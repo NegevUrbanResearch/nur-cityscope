@@ -51,6 +51,10 @@ function createProjectionPinkLineCanvasController(options) {
           }
         }
         projectionPinkLineBaseIsClipped = true;
+        // Parking is independent of the base polyline (e.g. heritage clip removes base only).
+        if (projectionPinkLineParkingVisibleIntent) {
+          void ensureProjectionPinkLineParkingLayer();
+        }
         return;
       }
       const [{ basePaths }, styleBundle] = await Promise.all([
@@ -124,8 +128,7 @@ function createProjectionPinkLineCanvasController(options) {
     try {
       const parkingWgs = await fetchPinkLineParkingLotsGeojson();
       if (attachGen !== projectionPinkParkingAttachGeneration) return;
-      if (!loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
-      if (!projectionPinkLineBaseVisibleIntent || !projectionPinkLineParkingVisibleIntent) return;
+      if (!projectionPinkLineParkingVisibleIntent) return;
       if (!parkingWgs || !parkingWgs.features || !parkingWgs.features.length) return;
       const enriched = enrichParkingGeojsonForProjection(
         parkingWgs,
@@ -134,8 +137,7 @@ function createProjectionPinkLineCanvasController(options) {
       if (!enriched.features.length) return;
       const itmGeojson = CoordUtils.transformGeojsonToItm(enriched);
       if (attachGen !== projectionPinkParkingAttachGeneration) return;
-      if (!loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
-      if (!projectionPinkLineBaseVisibleIntent || !projectionPinkLineParkingVisibleIntent) return;
+      if (!projectionPinkLineParkingVisibleIntent) return;
       if (loadedLayers[PINK_LINE_CANVAS_PARKING_LAYER_ID]) return;
       // #888: intentional fallback when parking feature has no curated style (not a parity bug).
       const customStyleFunction = (feature) =>
@@ -158,7 +160,7 @@ function createProjectionPinkLineCanvasController(options) {
       );
       canvasRenderer.setLayerVisibility(
         PINK_LINE_CANVAS_PARKING_LAYER_ID,
-        !!(projectionPinkLineBaseVisibleIntent && projectionPinkLineParkingVisibleIntent),
+        !!projectionPinkLineParkingVisibleIntent,
       );
     } catch (err) {
       if (
@@ -180,18 +182,20 @@ function createProjectionPinkLineCanvasController(options) {
     }
 
     const canvasRenderer = getCanvasRenderer();
-    if (!canvasRenderer || !loadedLayers[PINK_LINE_BASE_LAYER_ID]) {
+    if (!canvasRenderer) {
       return;
     }
 
-    canvasRenderer.setLayerVisibility(PINK_LINE_BASE_LAYER_ID, !!baseVisible);
+    if (loadedLayers[PINK_LINE_BASE_LAYER_ID]) {
+      canvasRenderer.setLayerVisibility(PINK_LINE_BASE_LAYER_ID, !!baseVisible);
+    }
 
     if (loadedLayers[PINK_LINE_CANVAS_PARKING_LAYER_ID]) {
       canvasRenderer.setLayerVisibility(
         PINK_LINE_CANVAS_PARKING_LAYER_ID,
-        !!(baseVisible && parkingVisible),
+        !!parkingVisible,
       );
-    } else if (baseVisible && parkingVisible) {
+    } else if (parkingVisible) {
       void ensureProjectionPinkLineParkingLayer();
     }
   }

@@ -646,22 +646,28 @@ function updateWmtsVisibility(fullLayerId, visible) {
     });
   }
 
-  async function reloadProjectionCuratedLayersFromSupabase() {
-    return reloadProjectionCuratedLayersFromSupabaseImpl({
-      loadedLayers,
-      inFlightLayerLoads,
-      canvasRenderer,
-      loadProjectionLayerFromRegistry,
-      updateLayerVisibility,
-      getLayerGroups: getLayerGroupsForCuratedReload,
-      MORESHET_AXIS_GROUP_ID,
-      isPinkLineParkingLayerId,
-      refreshLayerGroupsBeforeReload:
-        typeof OTEFDataContext !== "undefined" &&
-        typeof OTEFDataContext.refreshLayerGroupsFromApi === "function"
-          ? () => OTEFDataContext.refreshLayerGroupsFromApi()
-          : undefined,
-    });
+  /**
+   * @param {{ affectedCuratedFullLayerIds?: string[] }} [options]
+   */
+  async function reloadProjectionCuratedLayersFromSupabase(options) {
+    return reloadProjectionCuratedLayersFromSupabaseImpl(
+      {
+        loadedLayers,
+        inFlightLayerLoads,
+        canvasRenderer,
+        loadProjectionLayerFromRegistry,
+        updateLayerVisibility,
+        getLayerGroups: getLayerGroupsForCuratedReload,
+        MORESHET_AXIS_GROUP_ID,
+        isPinkLineParkingLayerId,
+        refreshLayerGroupsBeforeReload:
+          typeof OTEFDataContext !== "undefined" &&
+          typeof OTEFDataContext.refreshLayerGroupsFromApi === "function"
+            ? () => OTEFDataContext.refreshLayerGroupsFromApi()
+            : undefined,
+      },
+      options && typeof options === "object" ? options : {},
+    );
   }
 
   export {

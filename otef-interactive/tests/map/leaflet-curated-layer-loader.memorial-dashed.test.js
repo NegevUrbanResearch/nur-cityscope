@@ -11,3 +11,13 @@ test("leaflet curated loader does not short-circuit memorial point layers before
   expect(src.includes("if (hasMemorialPoints && !hasLineFeatures)")).toBe(false);
 });
 
+test("pink-line parking attach is not gated on pink base layer presence", () => {
+  const src = fs.readFileSync(
+    "frontend/src/map/leaflet-curated-layer-loader.js",
+    "utf8",
+  );
+  expect(src).not.toContain(
+    "if (!pinkLineBaseLayerInstance || !map.hasLayer(pinkLineBaseLayerInstance)) return;",
+  );
+});
+

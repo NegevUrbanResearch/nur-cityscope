@@ -72,6 +72,9 @@ function setupWebSocket(ctx) {
     }
   });
 
+  // v1: WS `otef_layers_changed` still dispatches a full GIS curated refresh (no affected ids in
+  // the message). The Supabase heartbeat path uses pull JSON `affected_curated_full_layer_ids`
+  // for selective reload; enriching the WS payload is a future optimization.
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async () => {
     try {
       const state = await OTEF_API.getState(ctx._tableName);

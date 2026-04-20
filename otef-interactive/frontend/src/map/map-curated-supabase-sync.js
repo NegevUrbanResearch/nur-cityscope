@@ -2,17 +2,93 @@
  * After a curated Supabase pull, refresh API layer groups and sync the GIS map:
  * reload packs already loaded, then load any newly enabled curated ids.
  *
- * @param {{ reloadCuratedOnMap: () => void, loadLayerFromRegistry: (fullLayerId: string) => Promise<void> }} options
+ * Calls are debounced (~400ms) so rapid triggers coalesce into one refresh.
+ *
+ * @param {{
+ *   reloadCuratedOnMap: (opts?: { affectedCuratedFullLayerIds?: string[] }) => void,
+ *   loadLayerFromRegistry: (fullLayerId: string) => Promise<void>,
+ *   pullPayload?: { affected_curated_full_layer_ids?: string[] } | null,
+ * }} options
  */
-export async function syncCuratedMapLayersAfterSupabasePull(options) {
-  const { reloadCuratedOnMap, loadLayerFromRegistry } = options;
+
+const SYNC_DEBOUNCE_MS = 400;
+
+let syncDebounceTimer = null;
+/** @type {object[]} */
+let pendingSyncCalls = [];
+/** @type {Array<{ resolve: () => void, reject: (e: unknown) => void }>} */
+let syncWaiters = [];
+
+/**
+ * Coalesce debounced calls: latest callbacks, union selective ids, or full reload if any call requires it.
+ * @param {object[]} calls
+ */
+function mergePendingSyncCuratedCalls(calls) {
+  if (!calls.length) {
+    return {};
+  }
+  const latest = calls[calls.length - 1];
+  const reloadCuratedOnMap = latest.reloadCuratedOnMap;
+  const loadLayerFromRegistry = latest.loadLayerFromRegistry;
+
+  /** @type {Set<string>} */
+  const idSet = new Set();
+  let forceFull = false;
+  for (const c of calls) {
+    const pp = c && c.pullPayload;
+    if (
+      !pp ||
+      !Array.isArray(pp.affected_curated_full_layer_ids) ||
+      pp.affected_curated_full_layer_ids.length === 0
+    ) {
+      forceFull = true;
+      break;
+    }
+    for (const id of pp.affected_curated_full_layer_ids) {
+      if (typeof id === "string") {
+        idSet.add(id);
+      }
+    }
+  }
+
+  if (forceFull) {
+    return {
+      reloadCuratedOnMap,
+      loadLayerFromRegistry,
+      pullPayload: null,
+    };
+  }
+  return {
+    reloadCuratedOnMap,
+    loadLayerFromRegistry,
+    pullPayload: {
+      affected_curated_full_layer_ids: [...idSet],
+    },
+  };
+}
+
+/**
+ * @param {object | null | undefined} options
+ */
+async function runSyncCuratedMapLayersAfterSupabasePull(options) {
+  const { reloadCuratedOnMap, loadLayerFromRegistry, pullPayload } = options || {};
   if (
     typeof OTEFDataContext !== "undefined" &&
     typeof OTEFDataContext.refreshLayerGroupsFromApi === "function"
   ) {
     await OTEFDataContext.refreshLayerGroupsFromApi();
   }
-  reloadCuratedOnMap();
+  const affected =
+    pullPayload &&
+    Array.isArray(pullPayload.affected_curated_full_layer_ids) &&
+    pullPayload.affected_curated_full_layer_ids.length > 0
+      ? pullPayload.affected_curated_full_layer_ids
+      : null;
+  if (affected) {
+    reloadCuratedOnMap({ affectedCuratedFullLayerIds: affected });
+  } else {
+    reloadCuratedOnMap();
+  }
   if (
     typeof LayerStateHelper !== "undefined" &&
     typeof LayerStateHelper.getEffectiveLayerGroups === "function"
@@ -34,4 +110,34 @@ export async function syncCuratedMapLayersAfterSupabasePull(options) {
       }
     }
   }
+}
+
+/**
+ * @param {{
+ *   reloadCuratedOnMap: (opts?: { affectedCuratedFullLayerIds?: string[] }) => void,
+ *   loadLayerFromRegistry: (fullLayerId: string) => Promise<void>,
+ *   pullPayload?: { affected_curated_full_layer_ids?: string[] } | null,
+ * }} options
+ * @returns {Promise<void>}
+ */
+export function syncCuratedMapLayersAfterSupabasePull(options) {
+  pendingSyncCalls.push(options ?? {});
+  return new Promise((resolve, reject) => {
+    syncWaiters.push({ resolve, reject });
+    if (syncDebounceTimer) {
+      clearTimeout(syncDebounceTimer);
+    }
+    syncDebounceTimer = setTimeout(async () => {
+      syncDebounceTimer = null;
+      const calls = pendingSyncCalls.splice(0);
+      const opts = mergePendingSyncCuratedCalls(calls);
+      const batch = syncWaiters.splice(0);
+      try {
+        await runSyncCuratedMapLayersAfterSupabasePull(opts);
+        for (const w of batch) w.resolve();
+      } catch (e) {
+        for (const w of batch) w.reject(e);
+      }
+    }, SYNC_DEBOUNCE_MS);
+  });
 }

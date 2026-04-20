@@ -244,7 +244,9 @@ async function ensurePinkLineBaseLayer(options = {}) {
 }
 
 /**
- * Parking lots along the pink line (static GeoJSON + icon). Tied to base pink visibility.
+ * Parking lots along the pink line (static GeoJSON + icon).
+ * Loads when map + `pinkLineParkingMapVisibleIntent` are set; does not require the pink base layer
+ * (e.g. when heritage clipping omits base polylines).
  */
 async function ensurePinkLineParkingLayer() {
   if (typeof map === "undefined" || !map || typeof L === "undefined") return;
@@ -253,15 +255,19 @@ async function ensurePinkLineParkingLayer() {
   try {
     const geojson = await fetchPinkLineParkingLotsGeojson();
     if (attachGen !== pinkLineParkingAttachGeneration) return;
-    if (!pinkLineBaseLayerInstance || !map.hasLayer(pinkLineBaseLayerInstance)) return;
     if (!geojson) return;
     const group = createLeafletPinkLineParkingGroup(L, geojson, PINK_LINE_PARKING_ICON_URL);
     if (!group) return;
     if (attachGen !== pinkLineParkingAttachGeneration) return;
     if (!pinkLineParkingMapVisibleIntent) return;
-    if (!pinkLineBaseLayerInstance || !map.hasLayer(pinkLineBaseLayerInstance)) return;
     if (pinkLineParkingLayerInstance && map.hasLayer(pinkLineParkingLayerInstance)) return;
     group.addTo(map);
+    // Markers use the marker pane above base polylines (overlay); keep order stable within the pane.
+    if (typeof group.eachLayer === "function") {
+      group.eachLayer((ly) => {
+        if (ly && typeof ly.bringToFront === "function") ly.bringToFront();
+      });
+    }
     pinkLineParkingLayerInstance = group;
   } catch (_) {}
 }
@@ -313,28 +319,18 @@ function setPinkLineParkingMapVisibility(visible) {
 
   if (pinkLineParkingLayerInstance) {
     if (!map.hasLayer(pinkLineParkingLayerInstance)) {
-      if (pinkLineBaseLayerInstance && map.hasLayer(pinkLineBaseLayerInstance)) {
-        pinkLineParkingLayerInstance.addTo(map);
-      } else {
-        void ensurePinkLineBaseLayer().then(() => {
-          if (
-            pinkLineParkingMapVisibleIntent &&
-            pinkLineParkingLayerInstance &&
-            pinkLineBaseLayerInstance &&
-            map.hasLayer(pinkLineBaseLayerInstance) &&
-            !map.hasLayer(pinkLineParkingLayerInstance)
-          ) {
-            pinkLineParkingLayerInstance.addTo(map);
-          }
+      pinkLineParkingLayerInstance.addTo(map);
+      if (typeof pinkLineParkingLayerInstance.eachLayer === "function") {
+        pinkLineParkingLayerInstance.eachLayer((ly) => {
+          if (ly && typeof ly.bringToFront === "function") ly.bringToFront();
         });
       }
     }
     return;
   }
 
-  void ensurePinkLineBaseLayer().then(() => {
-    if (pinkLineParkingMapVisibleIntent) void ensurePinkLineParkingLayer();
-  });
+  void ensurePinkLineBaseLayer();
+  if (pinkLineParkingMapVisibleIntent) void ensurePinkLineParkingLayer();
 }
 
 // ---------------------------------------------------------------------------

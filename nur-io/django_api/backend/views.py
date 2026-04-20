@@ -405,6 +405,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'bounds_polygon': state.get_bounds_polygon(),
             'viewer_angle_deg': state.viewer_angle_deg,
             'workshop_auto_publish': state.workshop_auto_publish,
+            'workshop_autopublish_started_at': (
+                state.workshop_autopublish_started_at.isoformat()
+                if state.workshop_autopublish_started_at
+                else None
+            ),
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 

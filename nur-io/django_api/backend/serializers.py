@@ -228,9 +228,15 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "layers",
             "animations",
             "workshop_auto_publish",
+            "workshop_autopublish_started_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "updated_at", "table_name"]
+        read_only_fields = [
+            "id",
+            "updated_at",
+            "table_name",
+            "workshop_autopublish_started_at",
+        ]
 
 
 class LayerStateSerializer(serializers.ModelSerializer):

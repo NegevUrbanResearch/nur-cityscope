@@ -247,6 +247,35 @@ function getMemorialIconForFeature(props) {
   return MEMORIAL_ICON_URLS[key] || null;
 }
 
+let otefLayersListPromise = null;
+let otefLayersListFetchedAt = 0;
+const OTEF_LAYERS_LIST_TTL_MS = 2000;
+
+/**
+ * Dedupe concurrent and rapid repeat calls to the OTEF layers list endpoint
+ * (`/api/actions/get_otef_layers/?table=otef`) with a short-lived in-memory cache.
+ *
+ * @returns {Promise<unknown[]>}
+ */
+function getOtefLayersListDeduped() {
+  const now = Date.now();
+  if (otefLayersListPromise && now - otefLayersListFetchedAt < OTEF_LAYERS_LIST_TTL_MS) {
+    return otefLayersListPromise;
+  }
+  otefLayersListFetchedAt = now;
+  otefLayersListPromise = fetch("/api/actions/get_otef_layers/?table=otef")
+    .then((r) => {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    })
+    .finally(() => {
+      setTimeout(() => {
+        otefLayersListPromise = null;
+      }, OTEF_LAYERS_LIST_TTL_MS);
+    });
+  return otefLayersListPromise;
+}
+
 // ---------------------------------------------------------------------------
 // fetchCuratedLayerData
 // ---------------------------------------------------------------------------
@@ -264,16 +293,14 @@ async function fetchCuratedLayerData(fullLayerId) {
   if (!groupId.startsWith("curated") || parts.length < 2) return null;
   const layerId = parts.slice(1).join(".");
 
-  let response;
+  let list;
   try {
-    response = await fetch("/api/actions/get_otef_layers/?table=otef");
-    if (!response.ok) throw new Error(response.status);
+    list = await getOtefLayersListDeduped();
   } catch (e) {
     console.warn("[CuratedLayerService] Failed to fetch OTEF layers:", e);
     return null;
   }
 
-  const list = await response.json();
   const layerData = Array.isArray(list)
     ? list.find((l) => String(l.id) === String(layerId))
     : null;

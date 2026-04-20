@@ -5,6 +5,7 @@ import {
   colabBundleHasRenderableGeometry,
   parseColabRouteGeometryBundle,
 } from "../map-utils/colab-route-geometry-bundle.js";
+import { isCuratedPackFullLayerId } from "../shared/gis-layer-filter.js";
 
 export async function loadProjectionCuratedLayerFromAPI(deps, fullLayerId) {
   const {
@@ -207,7 +208,13 @@ export function listCuratedFullLayerIdsToReload(deps) {
   return ids;
 }
 
-export async function reloadProjectionCuratedLayersFromSupabase(deps) {
+/**
+ * @param {{ affectedCuratedFullLayerIds?: string[] }} [options]
+ * When `affectedCuratedFullLayerIds` is a non-empty array of strings, only those curated
+ * pack layers are removed and re-fetched; otherwise all curated packs in `loadedLayers`
+ * are cleared and every enabled curated layer is reloaded (previous behavior).
+ */
+export async function reloadProjectionCuratedLayersFromSupabase(deps, options = {}) {
   const {
     loadedLayers,
     inFlightLayerLoads,
@@ -219,25 +226,49 @@ export async function reloadProjectionCuratedLayersFromSupabase(deps) {
     isPinkLineParkingLayerId,
   } = deps;
 
-  const curatedKeys = Object.keys(loadedLayers).filter(
-    (k) => k.startsWith("curated_") && k.includes("."),
+  const affected = options.affectedCuratedFullLayerIds;
+  const want =
+    Array.isArray(affected) && affected.length > 0
+      ? new Set(
+          affected.filter(
+            (id) => typeof id === "string" && id.length > 0,
+          ),
+        )
+      : null;
+  const selective = !!(want && want.size > 0);
+
+  if (selective && typeof deps.refreshLayerGroupsBeforeReload === "function") {
+    await deps.refreshLayerGroupsBeforeReload();
+  }
+
+  const curatedKeys = Object.keys(loadedLayers).filter((k) =>
+    isCuratedPackFullLayerId(k),
   );
-  for (const id of curatedKeys) {
+  const keysToRemove = selective
+    ? curatedKeys.filter((k) => want.has(k))
+    : curatedKeys;
+
+  for (const id of keysToRemove) {
     delete inFlightLayerLoads[id];
     delete loadedLayers[id];
     if (canvasRenderer && typeof canvasRenderer.removeLayer === "function") {
       canvasRenderer.removeLayer(id);
     }
   }
-  if (typeof deps.refreshLayerGroupsBeforeReload === "function") {
+
+  if (!selective && typeof deps.refreshLayerGroupsBeforeReload === "function") {
     await deps.refreshLayerGroupsBeforeReload();
   }
+
   const listDeps = {
     getLayerGroups,
     MORESHET_AXIS_GROUP_ID,
     isPinkLineParkingLayerId,
   };
-  const toLoad = listCuratedFullLayerIdsToReload(listDeps);
+  const allEnabledCurated = listCuratedFullLayerIdsToReload(listDeps);
+  const toLoad = selective
+    ? allEnabledCurated.filter((id) => want.has(id))
+    : allEnabledCurated;
   for (const fullLayerId of toLoad) {
     try {
       await loadProjectionLayerFromRegistry(fullLayerId);

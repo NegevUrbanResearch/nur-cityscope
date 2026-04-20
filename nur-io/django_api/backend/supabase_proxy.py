@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import requests
 from django.conf import settings
 from django.db import DatabaseError, IntegrityError, models
+from django.utils import timezone as django_tz
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.views import APIView
@@ -167,6 +168,8 @@ def _submission_batches_sync_fetch_err_is_schema_retryable(err):
         return False
     if "display_color" in msg_l:
         return True
+    if "created_at" in msg_l:
+        return True
     if "colab_route_geometry_bundle" in msg_l:
         return True
     if "column" in msg_l and "does not exist" in msg_l:
@@ -257,13 +260,16 @@ def _fetch_submission_batch_row_for_sync(submission_id):
     if not sid:
         return None
 
-    # Multi-step select: optional columns (display_color, colab_route_geometry_bundle)
-    # may be absent on older PostgREST schemas — retry with reduced projections like the
-    # legacy display_color-only fallback, extended for the Colab bundle column.
+    # Multi-step select: optional columns (display_color, colab_route_geometry_bundle,
+    # created_at) may be absent on older PostgREST schemas — retry with reduced projections.
     select_attempts = (
+        "submission_id,submission_name,display_color,colab_route_geometry_bundle,created_at,updated_at",
         "submission_id,submission_name,display_color,colab_route_geometry_bundle,updated_at",
+        "submission_id,submission_name,display_color,created_at,updated_at",
         "submission_id,submission_name,display_color,updated_at",
+        "submission_id,submission_name,colab_route_geometry_bundle,created_at,updated_at",
         "submission_id,submission_name,colab_route_geometry_bundle,updated_at",
+        "submission_id,submission_name,created_at,updated_at",
         "submission_id,submission_name,updated_at",
     )
 
@@ -313,19 +319,54 @@ def _submission_id_from_feature_collection(fc):
     return None
 
 
+def _record_workshop_autopublish_suppression_for_layer_data(table, layer_data):
+    """Persist suppression when user manually unpublishes (normalized submission_id)."""
+    from .models import WorkshopAutopublishSuppression
+
+    if not isinstance(layer_data, dict):
+        return
+    sid = _submission_id_from_feature_collection(layer_data)
+    key = _norm_submission_id_key(sid)
+    if not key:
+        return
+    WorkshopAutopublishSuppression.objects.get_or_create(
+        table=table, submission_id=key
+    )
+
+
+def _clear_workshop_autopublish_suppression_for_geojson(table, geojson):
+    """Remove suppression after a successful manual publish of this submission."""
+    from .models import WorkshopAutopublishSuppression
+
+    if not isinstance(geojson, dict):
+        return
+    sid = _submission_id_from_feature_collection(geojson)
+    key = _norm_submission_id_key(sid)
+    if not key:
+        return
+    WorkshopAutopublishSuppression.objects.filter(
+        table=table, submission_id=key
+    ).delete()
+
+
 def pull_published_curated_layers_from_supabase(table, table_name):
     """
     Refresh each active published curated GISLayer from Supabase geo_features
     when the FeatureCollection payload differs. Used by the public pull endpoint
     and periodic frontend heartbeat (replaces Colab → sync-submission POST).
     """
-    from .models import GISLayer
+    from .models import GISLayer, WorkshopAutopublishSuppression
+
+    # Same group_id as CuratedLayerPublishView (full_layer_id prefix).
+    curated_group_id = "curated_moresht_axis"
 
     workshop_auto_publish = _read_workshop_auto_publish(table)
     checked = 0
     updated = 0
     autopublished = 0
     errors = []
+    updated_layer_ids = []
+    autopublished_layer_ids = []
     layers = list(
         GISLayer.objects.filter(
             table=table, is_active=True, layer_type="geojson"
@@ -360,8 +401,20 @@ def pull_published_curated_layers_from_supabase(table, table_name):
             layer.data = features_fc
             layer.save(update_fields=["data", "updated_at"])
             updated += 1
+            updated_layer_ids.append(layer.id)
     if updated:
         _broadcast_otef_layers_changed(table_name)
+
+    def _pull_curated_response_payload():
+        affected = sorted(
+            {f"{curated_group_id}.{pk}" for pk in updated_layer_ids}
+            | {f"{curated_group_id}.{pk}" for pk in autopublished_layer_ids}
+        )
+        return {
+            "updated_layer_ids": list(updated_layer_ids),
+            "autopublished_layer_ids": list(autopublished_layer_ids),
+            "affected_curated_full_layer_ids": affected,
+        }
 
     if not workshop_auto_publish:
         return {
@@ -370,6 +423,7 @@ def pull_published_curated_layers_from_supabase(table, table_name):
             "autopublished": autopublished,
             "errors": errors,
             "workshop_auto_publish": workshop_auto_publish,
+            **_pull_curated_response_payload(),
         }
 
     project_id, workshop_err = _supabase_project_id_from_published_curated_layers(table)
@@ -385,6 +439,7 @@ def pull_published_curated_layers_from_supabase(table, table_name):
                 "autopublished": autopublished,
                 "errors": errors,
                 "workshop_auto_publish": workshop_auto_publish,
+                **_pull_curated_response_payload(),
             }
 
     pink_subs, list_err = _list_submission_ids_with_pink_geo_features_for_project(
@@ -398,10 +453,26 @@ def pull_published_curated_layers_from_supabase(table, table_name):
             "autopublished": autopublished,
             "errors": errors,
             "workshop_auto_publish": workshop_auto_publish,
+            **_pull_curated_response_payload(),
         }
 
+    started_at = _workshop_autopublish_started_at_for_table(table)
+    suppressed = set(
+        _norm_submission_id_key(sid)
+        for sid in WorkshopAutopublishSuppression.objects.filter(table=table).values_list(
+            "submission_id", flat=True
+        )
+    )
+
     for sid in pink_subs:
+        if _norm_submission_id_key(sid) in suppressed:
+            continue
         if _find_active_curated_layer_for_submission(table, sid):
+            continue
+        batch_row = _fetch_submission_batch_row_for_sync(sid)
+        if not _submission_eligible_for_workshop_autopublish_after(
+            sid, project_id, started_at, batch_row, suppressed
+        ):
             continue
         features_fc, fetch_err = _fetch_submission_geojson_fc(sid)
         if fetch_err:
@@ -409,11 +480,13 @@ def pull_published_curated_layers_from_supabase(table, table_name):
                 {"submission_id": sid, "error": str(fetch_err)}
             )
             continue
-        batch_row = _fetch_submission_batch_row_for_sync(sid)
         enrich_feature_collection_with_submission_batch(features_fc, sid, batch_row)
         try:
-            _autopublish_curated_submission(table, table_name, sid, features_fc)
+            new_layer = _autopublish_curated_submission(
+                table, table_name, sid, features_fc, batch_row=batch_row
+            )
             autopublished += 1
+            autopublished_layer_ids.append(new_layer.id)
         except ValueError as e:
             errors.append({"submission_id": sid, "error": str(e)})
         except (IntegrityError, DatabaseError) as e:
@@ -431,14 +504,15 @@ def pull_published_curated_layers_from_supabase(table, table_name):
         "autopublished": autopublished,
         "errors": errors,
         "workshop_auto_publish": workshop_auto_publish,
+        **_pull_curated_response_payload(),
     }
 
 
 def _find_active_curated_layer_for_submission(table, submission_id):
     from .models import GISLayer
 
-    sid = str(submission_id or "").strip()
-    if not sid:
+    target_key = _norm_submission_id_key(submission_id)
+    if not target_key:
         return None
     for layer in GISLayer.objects.filter(table=table, is_active=True).order_by(
         "-updated_at"
@@ -453,7 +527,7 @@ def _find_active_curated_layer_for_submission(table, submission_id):
             if not isinstance(props, dict):
                 continue
             psid = props.get("submission_id") or props.get("submissionId")
-            if psid is not None and str(psid).strip() == sid:
+            if psid is not None and _norm_submission_id_key(psid) == target_key:
                 return layer
     return None
 
@@ -590,16 +664,142 @@ def _read_workshop_auto_publish(table):
     return bool(state and state.workshop_auto_publish)
 
 
-def _autopublish_curated_submission(table, table_name, submission_id, geojson_fc):
+def _workshop_autopublish_started_at_for_table(table):
+    """Timezone-aware `workshop_autopublish_started_at` from OTEFViewportState, or None."""
+    from .models import OTEFViewportState
+
+    state = OTEFViewportState.objects.filter(table=table).first()
+    return getattr(state, "workshop_autopublish_started_at", None)
+
+
+def _ensure_aware_dt_for_compare(dt):
+    """Coerce naive datetimes to UTC-aware for comparison with Supabase-parsed times."""
+    if dt is None:
+        return None
+    if django_tz.is_naive(dt):
+        return django_tz.make_aware(dt, timezone.utc)
+    return dt
+
+
+def _min_updated_at_pink_geo_features_for_submission(submission_id, project_id):
+    """
+    Minimum current pink geo_features.updated_at for a submission within a project.
+    Uses the same _get patterns as list/sync; returns None if no parseable timestamps.
+    """
+    pid = str(project_id or "").strip()
+    sid = str(submission_id or "").strip()
+    if not pid or not sid:
+        return None
+    base_params = {
+        "project_id": f"eq.{pid}",
+        "submission_id": f"eq.{sid}",
+    }
+    select_attempts = (
+        "submission_id,is_current,feature_type,updated_at",
+        "submission_id,feature_type,updated_at",
+        "submission_id,is_current,updated_at",
+        "submission_id,updated_at",
+    )
+    last_err = None
+    for sel in select_attempts:
+        params = dict(base_params)
+        params["select"] = sel
+        rows, err = _get("/geo_features", params=params)
+        if not err and isinstance(rows, list):
+            best = None
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if row.get("is_current") is False:
+                    continue
+                if not _geo_feature_row_is_pink_feature(row):
+                    continue
+                ts = _parse_supabase_ts(row.get("updated_at"))
+                if ts is None:
+                    continue
+                if best is None or ts < best:
+                    best = ts
+            return best
+        last_err = err
+    if last_err:
+        logger.info(
+            "submission pink geo_features min updated_at skipped: %s", last_err
+        )
+    return None
+
+
+def _workshop_clock_from_batch_row(batch_row):
+    """
+    Eligibility clock from submission_batches: created_at if truthy, else updated_at.
+    batch_row comes from _fetch_submission_batch_row_for_sync (latest row by updated_at).
+    """
+    if not isinstance(batch_row, dict):
+        return None
+    raw = batch_row.get("created_at")
+    if raw is not None and str(raw).strip():
+        ts = _parse_supabase_ts(raw)
+        if ts is not None:
+            return ts
+    raw = batch_row.get("updated_at")
+    if raw is not None and str(raw).strip():
+        return _parse_supabase_ts(raw)
+    return None
+
+
+def _submission_eligible_for_workshop_autopublish_after(
+    submission_id,
+    project_id,
+    started_at,
+    batch_row,
+    suppressed_set,
+):
+    """
+    Decide whether a submission may be workshop auto-published after started_at.
+
+    batch_row is from _fetch_submission_batch_row_for_sync (latest row by updated_at).
+    When the batch row has no usable clock or batch_row is None, falls back to the
+    minimum updated_at among current pink geo_features for this submission.
+    """
+    key = _norm_submission_id_key(submission_id)
+    if not key:
+        return False
+    if key in suppressed_set:
+        return False
+
+    if started_at is None:
+        return True
+
+    started_at = _ensure_aware_dt_for_compare(started_at)
+    clock = _workshop_clock_from_batch_row(batch_row)
+    if clock is None:
+        clock = _min_updated_at_pink_geo_features_for_submission(submission_id, project_id)
+    if clock is None:
+        return False
+    return clock >= started_at
+
+
+def _autopublish_curated_submission(
+    table, table_name, submission_id, geojson_fc, batch_row=None
+):
     """
     Create an active curated GISLayer for a submission (workshop auto-publish).
     Mirrors CuratedLayerPublishView conflict rules for same display name + project.
+
+    batch_row is the submission_batches row from _fetch_submission_batch_row_for_sync.
+    When omitted, fetches once for display_name (submission_name) and slug pipeline.
     """
     import json
     from django.db import transaction
     from .models import GISLayer, LayerGroup, LayerState
 
-    display_name = _fallback_submission_display_name(submission_id)
+    row = batch_row
+    if row is None:
+        row = _fetch_submission_batch_row_for_sync(submission_id)
+    raw_name = (row or {}).get("submission_name")
+    if raw_name is not None and str(raw_name).strip():
+        display_name = str(raw_name).strip()
+    else:
+        display_name = _fallback_submission_display_name(submission_id)
     project_name = "Moreshet Axis"
 
     try:
@@ -1749,6 +1949,7 @@ class CuratedLayerPublishView(APIView):
                     is_active=True,
                     order=order,
                 )
+                _clear_workshop_autopublish_suppression_for_geojson(table, geojson)
 
                 group_id = "curated_moresht_axis"
                 group, _ = LayerGroup.objects.get_or_create(
@@ -2590,12 +2791,17 @@ class CuratedLayerUnpublishView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        layer.is_active = False
-        layer.save(update_fields=["is_active", "updated_at"])
+        from django.db import transaction
 
-        # Remove LayerState rows that reference this numeric GIS layer id so group
-        # listings cannot resurrect unpublished layers from stale state.
-        _delete_layer_states_for_gis_layer_pk(table, layer.id)
+        with transaction.atomic():
+            _record_workshop_autopublish_suppression_for_layer_data(table, layer.data)
+
+            layer.is_active = False
+            layer.save(update_fields=["is_active", "updated_at"])
+
+            # Remove LayerState rows that reference this numeric GIS layer id so group
+            # listings cannot resurrect unpublished layers from stale state.
+            _delete_layer_states_for_gis_layer_pk(table, layer.id)
 
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
@@ -2657,6 +2863,9 @@ class CuratedLayerUnpublishAllView(APIView):
             )
             removed_count = len(layers)
             for layer in layers:
+                _record_workshop_autopublish_suppression_for_layer_data(
+                    table, layer.data
+                )
                 _delete_layer_states_for_gis_layer_pk(table, layer.id)
                 layer.is_active = False
                 layer.save(update_fields=["is_active", "updated_at"])

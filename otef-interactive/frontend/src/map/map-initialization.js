@@ -215,10 +215,11 @@ function initializeMap(bounds) {
 
       const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
         table: "otef",
-        onUpdated: async () => {
+        onUpdated: async (data) => {
           await syncCuratedMapLayersAfterSupabasePull({
             reloadCuratedOnMap: reloadCuratedLayersOnMapIfUpdated,
             loadLayerFromRegistry,
+            pullPayload: data,
           });
           window.dispatchEvent(
             new CustomEvent("nur-curated-supabase-pull", { detail: { source: "gis" } }),
