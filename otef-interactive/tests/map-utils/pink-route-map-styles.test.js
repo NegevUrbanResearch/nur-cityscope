@@ -70,7 +70,7 @@ describe("pink-route-map-styles", () => {
     });
     expect(styles.proposedHalo).toMatchObject({
       color: "#e8eef5",
-      weight: 10,
+      weight: 8,
       opacity: 0.32,
       lineCap: "round",
       lineJoin: "round",

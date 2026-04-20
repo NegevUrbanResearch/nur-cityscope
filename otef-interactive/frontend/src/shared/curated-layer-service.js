@@ -28,7 +28,10 @@ import {
   isAllowedSubmissionDisplayColor,
   normalizeSubmissionDisplayColorHex,
 } from "../map-utils/submission-display-color.js";
-import { assignPinkNodeDisplayOrders } from "../map-utils/pink-route-optimizer.js";
+import {
+  assignPinkNodeDisplayOrders,
+  isPinkDetourNumberingPoint,
+} from "../map-utils/pink-route-optimizer.js";
 import AdvancedStyleEngine from "../map-utils/advanced-style-engine.js";
 import layerRegistry from "./layer-registry.js";
 import MapProjectionConfig from "./map-projection-config.js";
@@ -305,25 +308,9 @@ function extractPointFeatures(geojson) {
 }
 
 /**
- * Memorial `feature_type` values must not contribute to pink detour / integrated
- * route geometry (only route nodes and untyped points do).
- *
- * @param {unknown} featureType - `properties.feature_type`
- * @returns {boolean}
- */
-function isPinkDetourPointFeatureType(featureType) {
-  if (featureType === null || featureType === undefined) return true;
-  if (typeof featureType !== "string") return false;
-  const normalized = featureType.trim().toLowerCase();
-  if (normalized === "central" || normalized === "local") return false;
-  if (normalized === "") return true;
-  return normalized === "pink_line_node";
-}
-
-/**
- * Like {@link extractPointFeatures}, but only Point features whose
- * `feature_type` is `pink_line_node` (any case), missing, `null`, or `""`
- * after trim. Memorial types `central` and `local` are excluded.
+ * Like {@link extractPointFeatures}, but only Point features that pass
+ * {@link isPinkDetourNumberingPoint} (pink_line_node / untyped detour points;
+ * memorial types and `pink_offroad_junction` excluded).
  *
  * @param {Object} geojson - GeoJSON FeatureCollection
  * @returns {Array<{feature: Object, latlng: [number, number]}>}
@@ -335,7 +322,7 @@ function extractPinkDetourPointFeatures(geojson) {
     const geom = f.geometry;
     if (!geom || geom.type !== "Point" || !geom.coordinates) continue;
     const props = f.properties || {};
-    if (!isPinkDetourPointFeatureType(props.feature_type)) continue;
+    if (!isPinkDetourNumberingPoint(props)) continue;
     const c = geom.coordinates;
     list.push({ feature: f, latlng: [c[1], c[0]] });
   }

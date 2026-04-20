@@ -338,18 +338,12 @@ class AdvancedStyleDrawing {
           ctx.save();
           ctx.globalAlpha = 1;
           if (accentHex) {
-            const outerR = sizePx / 2;
-            ctx.shadowColor = "rgba(0,0,0,0.22)";
-            ctx.shadowBlur = 5;
+            // Hug the drawn bitmap (memorialImgPx may differ from marker.size); do not use sizePx/2.
+            const ringR = imgDrawPx / 2 - 2;
             ctx.beginPath();
-            ctx.arc(pt.x, pt.y, outerR, 0, Math.PI * 2);
-            ctx.fillStyle = "rgba(255,255,255,0.96)";
-            ctx.fill();
-            ctx.shadowBlur = 0;
-            ctx.beginPath();
-            ctx.arc(pt.x, pt.y, outerR, 0, Math.PI * 2);
+            ctx.arc(pt.x, pt.y, ringR, 0, Math.PI * 2);
             ctx.strokeStyle = accentHex;
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 3;
             ctx.stroke();
           }
           ctx.drawImage(

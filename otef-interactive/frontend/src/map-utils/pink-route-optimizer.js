@@ -76,8 +76,7 @@ export function optimizePinkNodeVisitOrder(nodes) {
 }
 
 /**
- * Memorial `feature_type` values must not contribute to pink detour ordering
- * (mirrors `curated-layer-service` `isPinkDetourPointFeatureType`).
+ * Memorial `feature_type` values must not contribute to pink detour ordering.
  *
  * @param {unknown} featureType
  * @returns {boolean}
@@ -89,6 +88,19 @@ function isPinkDetourPointFeatureType(featureType) {
   if (normalized === "central" || normalized === "local") return false;
   if (normalized === "") return true;
   return normalized === "pink_line_node";
+}
+
+/**
+ * Whether a Point's properties should participate in pink detour numbering and
+ * integrated-route detour extraction (kept in sync with `curated-layer-service`).
+ *
+ * @param {Record<string, unknown>|null|undefined} properties
+ * @returns {boolean}
+ */
+export function isPinkDetourNumberingPoint(properties) {
+  const props = properties || {};
+  if (props.curated_overlay_role === "pink_offroad_junction") return false;
+  return isPinkDetourPointFeatureType(props.feature_type);
 }
 
 /**
@@ -104,7 +116,7 @@ export function assignPinkNodeDisplayOrders(features) {
     const f = features[i];
     if (!f || f.type !== "Feature" || !f.geometry || f.geometry.type !== "Point") continue;
     const props = f.properties || {};
-    if (!isPinkDetourPointFeatureType(props.feature_type)) continue;
+    if (!isPinkDetourNumberingPoint(props)) continue;
     const c = f.geometry.coordinates;
     if (!Array.isArray(c) || c.length < 2) continue;
     const lng = Number(c[0]);
