@@ -4,7 +4,11 @@
  */
 
 import { UI_CONFIG } from "../config/ui-config.js";
-import { isCuratedPackFullLayerId } from "../shared/gis-layer-filter.js";
+import {
+  collectEnabledCuratedGisFullLayerIds,
+  isCuratedPackFullLayerId,
+  shouldShowLayerOnGisMap,
+} from "../shared/gis-layer-filter.js";
 import { updateMapLegend } from "./map-legend.js";
 import {
   loadCuratedLayerFromAPI as _loadCurated,
@@ -144,10 +148,7 @@ async function loadLayerGroups() {
   const loadPromises = [];
   for (const group of groups) {
     for (const layer of group.layers || []) {
-      if (
-        typeof shouldShowLayerOnGisMap === "function" &&
-        !shouldShowLayerOnGisMap(group.id, layer.id)
-      ) {
+      if (!shouldShowLayerOnGisMap(group.id, layer.id)) {
         continue;
       }
       const fullLayerId = `${group.id}.${layer.id}`;
@@ -185,6 +186,10 @@ function reloadCuratedLayersOnMapIfUpdated(options = {}) {
     ids = allCuratedOnMap.filter((id) => want.has(id));
   } else {
     ids = allCuratedOnMap;
+  }
+  const enabled = collectEnabledCuratedGisFullLayerIds();
+  if (enabled) {
+    ids = ids.filter((id) => enabled.has(id));
   }
   for (const id of ids) {
     void enqueueCuratedForceReload(id);

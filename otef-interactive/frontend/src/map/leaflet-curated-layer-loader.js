@@ -44,6 +44,7 @@ import {
   createLeafletPinkLineParkingGroup,
 } from "../map-utils/pink-line-parking.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
+import { collectEnabledCuratedGisFullLayerIds } from "../shared/gis-layer-filter.js";
 
 let pinkLineBaseLayerInstance = null;
 /** True when the last built pink base layer omitted vertices that overlap `removed` heritage (ghost) segments. */
@@ -333,6 +334,12 @@ function setPinkLineParkingMapVisibility(visible) {
   if (pinkLineParkingMapVisibleIntent) void ensurePinkLineParkingLayer();
 }
 
+function shouldAttachCuratedPackToMapNow(fullLayerId) {
+  const enabled = collectEnabledCuratedGisFullLayerIds();
+  if (!enabled) return true;
+  return enabled.has(fullLayerId);
+}
+
 // ---------------------------------------------------------------------------
 // loadCuratedLayerFromAPI
 // ---------------------------------------------------------------------------
@@ -618,7 +625,9 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
       marker.bindPopup(popupContent, { className: "curated-node-popup" });
       group.addLayer(marker);
     });
-    group.addTo(map);
+    if (shouldAttachCuratedPackToMapNow(fullLayerId)) {
+      group.addTo(map);
+    }
     registerLoadedLayer(fullLayerId, group);
     return;
   }
@@ -641,7 +650,9 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
         }
       });
     }
-    group.addTo(map);
+    if (shouldAttachCuratedPackToMapNow(fullLayerId)) {
+      group.addTo(map);
+    }
     registerLoadedLayer(fullLayerId, group);
     return;
   }
@@ -700,7 +711,9 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
       marker.bindPopup(popupContent, { className: "curated-node-popup" });
       group.addLayer(marker);
     });
-    group.addTo(map);
+    if (shouldAttachCuratedPackToMapNow(fullLayerId)) {
+      group.addTo(map);
+    }
     registerLoadedLayer(fullLayerId, group);
     return;
   }
@@ -722,7 +735,9 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
       ? LayerFactory.createGeoJsonLayer({ fullLayerId, layerConfig, geojson, map })
       : null;
   if (!leafletLayer) return;
-  leafletLayer.addTo(map);
+  if (shouldAttachCuratedPackToMapNow(fullLayerId)) {
+    leafletLayer.addTo(map);
+  }
   registerLoadedLayer(fullLayerId, leafletLayer);
 }
 

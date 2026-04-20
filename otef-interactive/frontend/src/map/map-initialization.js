@@ -17,11 +17,16 @@ import {
 import { syncCuratedMapLayersAfterSupabasePull } from "./map-curated-supabase-sync.js";
 import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
 
-if (typeof window !== "undefined") {
+const _curatedGeojsonSyncRef = { applyLayerGroupsState: null, mapDeps: null };
+
+if (typeof window !== "undefined" && !window._otefCuratedGeojsonRefreshBound) {
+  window._otefCuratedGeojsonRefreshBound = true;
   window.addEventListener("otef-curated-geojson-refresh", () => {
     void syncCuratedMapLayersAfterSupabasePull({
       reloadCuratedOnMap: reloadCuratedLayersOnMapIfUpdated,
       loadLayerFromRegistry,
+      applyLayerGroupsState: _curatedGeojsonSyncRef.applyLayerGroupsState,
+      mapDeps: _curatedGeojsonSyncRef.mapDeps,
     });
   });
 }
@@ -173,6 +178,9 @@ function initializeMap(bounds) {
           typeof updateMapLegend === "function" ? updateMapLegend : () => {},
       };
 
+      _curatedGeojsonSyncRef.applyLayerGroupsState = applyLayerGroupsState;
+      _curatedGeojsonSyncRef.mapDeps = mapDeps;
+
       if (!window._otefUnsubscribeFunctions) {
         window._otefUnsubscribeFunctions = [];
       }
@@ -185,13 +193,13 @@ function initializeMap(bounds) {
         }),
       );
 
-      const initialLayerGroups =
+      const effective =
         typeof LayerStateHelper !== "undefined" &&
         typeof LayerStateHelper.getEffectiveLayerGroups === "function"
           ? LayerStateHelper.getEffectiveLayerGroups()
           : OTEFDataContext.getLayerGroups();
-      if (initialLayerGroups && initialLayerGroups.length > 0) {
-        applyLayerGroupsState(initialLayerGroups, mapDeps);
+      if (Array.isArray(effective)) {
+        applyLayerGroupsState(effective, mapDeps);
       }
 
       window._otefUnsubscribeFunctions.push(
@@ -201,7 +209,7 @@ function initializeMap(bounds) {
             typeof LayerStateHelper.getEffectiveLayerGroups === "function"
               ? LayerStateHelper.getEffectiveLayerGroups()
               : OTEFDataContext.getLayerGroups();
-          if (effective && effective.length > 0) {
+          if (Array.isArray(effective)) {
             applyLayerGroupsState(effective, mapDeps);
           }
         }),
@@ -220,6 +228,8 @@ function initializeMap(bounds) {
             reloadCuratedOnMap: reloadCuratedLayersOnMapIfUpdated,
             loadLayerFromRegistry,
             pullPayload: data,
+            applyLayerGroupsState,
+            mapDeps,
           });
           window.dispatchEvent(
             new CustomEvent("nur-curated-supabase-pull", { detail: { source: "gis" } }),

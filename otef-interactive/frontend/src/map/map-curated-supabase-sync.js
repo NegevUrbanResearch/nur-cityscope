@@ -1,3 +1,5 @@
+import { shouldShowLayerOnGisMap } from "../shared/gis-layer-filter.js";
+
 /**
  * After a curated Supabase pull, refresh API layer groups and sync the GIS map:
  * reload packs already loaded, then load any newly enabled curated ids.
@@ -8,6 +10,8 @@
  *   reloadCuratedOnMap: (opts?: { affectedCuratedFullLayerIds?: string[] }) => void,
  *   loadLayerFromRegistry: (fullLayerId: string) => Promise<void>,
  *   pullPayload?: { affected_curated_full_layer_ids?: string[] } | null,
+ *   applyLayerGroupsState?: (layerGroups: unknown, mapDeps: object) => void,
+ *   mapDeps?: object,
  * }} options
  */
 
@@ -30,6 +34,8 @@ function mergePendingSyncCuratedCalls(calls) {
   const latest = calls[calls.length - 1];
   const reloadCuratedOnMap = latest.reloadCuratedOnMap;
   const loadLayerFromRegistry = latest.loadLayerFromRegistry;
+  const applyLayerGroupsState = latest.applyLayerGroupsState;
+  const mapDeps = latest.mapDeps;
 
   /** @type {Set<string>} */
   const idSet = new Set();
@@ -55,12 +61,16 @@ function mergePendingSyncCuratedCalls(calls) {
     return {
       reloadCuratedOnMap,
       loadLayerFromRegistry,
+      applyLayerGroupsState,
+      mapDeps,
       pullPayload: null,
     };
   }
   return {
     reloadCuratedOnMap,
     loadLayerFromRegistry,
+    applyLayerGroupsState,
+    mapDeps,
     pullPayload: {
       affected_curated_full_layer_ids: [...idSet],
     },
@@ -71,7 +81,13 @@ function mergePendingSyncCuratedCalls(calls) {
  * @param {object | null | undefined} options
  */
 async function runSyncCuratedMapLayersAfterSupabasePull(options) {
-  const { reloadCuratedOnMap, loadLayerFromRegistry, pullPayload } = options || {};
+  const {
+    reloadCuratedOnMap,
+    loadLayerFromRegistry,
+    pullPayload,
+    applyLayerGroupsState,
+    mapDeps,
+  } = options || {};
   if (
     typeof OTEFDataContext !== "undefined" &&
     typeof OTEFDataContext.refreshLayerGroupsFromApi === "function"
@@ -100,15 +116,18 @@ async function runSyncCuratedMapLayersAfterSupabasePull(options) {
       }
       for (const layer of group.layers || []) {
         if (!layer.enabled) continue;
-        if (
-          typeof shouldShowLayerOnGisMap === "function" &&
-          !shouldShowLayerOnGisMap(group.id, layer.id)
-        ) {
-          continue;
-        }
+        if (!shouldShowLayerOnGisMap(group.id, layer.id)) continue;
         void loadLayerFromRegistry(`${group.id}.${layer.id}`);
       }
     }
+  }
+  if (
+    typeof applyLayerGroupsState === "function" &&
+    mapDeps &&
+    typeof LayerStateHelper !== "undefined" &&
+    typeof LayerStateHelper.getEffectiveLayerGroups === "function"
+  ) {
+    applyLayerGroupsState(LayerStateHelper.getEffectiveLayerGroups(), mapDeps);
   }
 }
 
@@ -117,6 +136,8 @@ async function runSyncCuratedMapLayersAfterSupabasePull(options) {
  *   reloadCuratedOnMap: (opts?: { affectedCuratedFullLayerIds?: string[] }) => void,
  *   loadLayerFromRegistry: (fullLayerId: string) => Promise<void>,
  *   pullPayload?: { affected_curated_full_layer_ids?: string[] } | null,
+ *   applyLayerGroupsState?: (layerGroups: unknown, mapDeps: object) => void,
+ *   mapDeps?: object,
  * }} options
  * @returns {Promise<void>}
  */
