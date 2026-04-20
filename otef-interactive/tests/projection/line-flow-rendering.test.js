@@ -35,6 +35,10 @@ function makeViewContext() {
 describe('projection line flow rendering', () => {
   test('drawLine applies lineDashOffset when flow animation enabled', () => {
     const ctx = makeMockCanvasCtx();
+    let lineDashOffsetAtStroke = null;
+    ctx.stroke = vi.fn(() => {
+      lineDashOffsetAtStroke = ctx.lineDashOffset;
+    });
     const drawer = new AdvancedStyleDrawing();
 
     drawer.drawCommands(
@@ -52,6 +56,7 @@ describe('projection line flow rendering', () => {
       makeViewContext(),
     );
 
-    expect(ctx.lineDashOffset).toBe(8);
+    expect(lineDashOffsetAtStroke).toBe(8);
+    expect(ctx.lineDashOffset).toBe(0);
   });
 });

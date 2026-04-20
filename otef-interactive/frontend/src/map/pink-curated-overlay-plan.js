@@ -8,19 +8,56 @@
  */
 
 /**
+ * Polyline ops use `styleKey` for Leaflet style lookup. Proposed path keys: `proposedHalo` (underlay),
+ * optional `proposedSecondary` (dual-stack dashed, no offset), `proposedLine` (primary dashed, may
+ * carry dash offset).
+ *
  * @typedef {{ kind: "polyline"; role: string; latLngs: Array<[number, number]>; styleKey: string }} PinkOverlayPolylineOp
  * @typedef {{ kind: "circleMarker"; role: "offroadJunction"; latLng: [number, number]; styleKey: string }} PinkOverlayCircleMarkerOp
  * @typedef {PinkOverlayPolylineOp | PinkOverlayCircleMarkerOp} PinkOverlayOp
  */
 
 /**
- * Colab unified order: solid → removed (halo, stroke) → proposed (halo, stroke)
- * or dashed planner (halo, stroke) when no stored route → offroad polylines → offroad junction markers.
- * When `hasStoredPinkRoute === true`, dashed planner roles are omitted.
+ * Push one proposed path’s polylines: halo → optional secondary → primary (Colab draw order).
+ * @param {PinkOverlayOp[]} ops
+ * @param {Array<[number, number]>} latLngs
+ * @param {boolean} includeProposedSecondary — when true, host will supply `styles.proposedSecondary`.
+ */
+function pushProposedPathOverlayOps(ops, latLngs, includeProposedSecondary) {
+  if (!Array.isArray(latLngs) || latLngs.length < 2) return;
+  ops.push({
+    kind: "polyline",
+    role: "proposedHalo",
+    latLngs,
+    styleKey: "proposedHalo",
+  });
+  if (includeProposedSecondary) {
+    ops.push({
+      kind: "polyline",
+      role: "proposedSecondary",
+      latLngs,
+      styleKey: "proposedSecondary",
+    });
+  }
+  ops.push({
+    kind: "polyline",
+    role: "proposedStroke",
+    latLngs,
+    styleKey: "proposedLine",
+  });
+}
+
+/**
+ * Colab unified order: solid → removed (halo, stroke) → proposed paths (each: halo → optional
+ * secondary dashed → primary dashed). Stored `pink_line_route` geometry and the no-stored-route
+ * integrated `dashedPlanner` segments use the **same** op sequence (dual-stack parity).
+ * When `hasStoredPinkRoute === true`, planner detour segments are not drawn as proposed here;
+ * offroad connectors and junction markers follow proposed paths.
  *
  * @param {{
  *   hasDetourPoints: boolean;
  *   hasStoredPinkRoute: boolean;
+ *   includeProposedSecondary?: boolean;
  *   solid?: Array<Array<[number, number]>>;
  *   removed?: Array<Array<[number, number]>>;
  *   dashedPlanner?: Array<Array<[number, number]>>;
@@ -34,6 +71,7 @@ export function planPinkCuratedOverlayLayers(input) {
   const {
     hasDetourPoints,
     hasStoredPinkRoute,
+    includeProposedSecondary = false,
     solid = [],
     removed = [],
     dashedPlanner = [],
@@ -78,19 +116,7 @@ export function planPinkCuratedOverlayLayers(input) {
 
   if (hasStoredPinkRoute) {
     for (const latLngs of proposedPathsLatLng) {
-      if (!Array.isArray(latLngs) || latLngs.length < 2) continue;
-      ops.push({
-        kind: "polyline",
-        role: "proposedHalo",
-        latLngs,
-        styleKey: "proposedHalo",
-      });
-      ops.push({
-        kind: "polyline",
-        role: "proposedStroke",
-        latLngs,
-        styleKey: "proposedLine",
-      });
+      pushProposedPathOverlayOps(ops, latLngs, includeProposedSecondary);
     }
     for (const latLngs of offroadSegmentsLatLng) {
       if (!Array.isArray(latLngs) || latLngs.length < 2) continue;
@@ -113,19 +139,7 @@ export function planPinkCuratedOverlayLayers(input) {
     }
   } else {
     for (const latLngs of dashedPlanner) {
-      if (!Array.isArray(latLngs) || latLngs.length < 2) continue;
-      ops.push({
-        kind: "polyline",
-        role: "dashedPlannerHalo",
-        latLngs,
-        styleKey: "dashedPlannerHalo",
-      });
-      ops.push({
-        kind: "polyline",
-        role: "dashedPlannerStroke",
-        latLngs,
-        styleKey: "dashedPlannerStroke",
-      });
+      pushProposedPathOverlayOps(ops, latLngs, includeProposedSecondary);
     }
   }
 

@@ -3,7 +3,11 @@
  * palette resolution, off-road segment detection). Kept importable without Leaflet.
  */
 
-const VALID_CSS_HEX_6 = /^#[0-9A-Fa-f]{6}$/;
+import {
+  CSS_HEX_6_RE,
+  isAllowedSubmissionDisplayColor,
+  normalizeSubmissionDisplayColorHex,
+} from "../map-utils/submission-display-color.js";
 
 /**
  * @param {string | null | undefined} displayColorHex
@@ -12,12 +16,14 @@ const VALID_CSS_HEX_6 = /^#[0-9A-Fa-f]{6}$/;
 export function sanitizeDisplayColorHex(displayColorHex) {
   if (displayColorHex == null) return null;
   const raw = String(displayColorHex).trim();
-  if (!VALID_CSS_HEX_6.test(raw)) return null;
+  if (!CSS_HEX_6_RE.test(raw)) return null;
   return `#${raw.slice(1).toUpperCase()}`;
 }
 
 /**
- * First feature in the collection with a palette-valid `display_color`.
+ * First feature in the collection with an allowlisted submission `display_color`
+ * (24-slot palette). Valid arbitrary CSS `#RRGGBB` outside the palette yields null so
+ * callers fall back to default pinks (Colab proposed tint parity).
  * Colab parity: this hex tints **proposed** route / halo and node fills only;
  * solid heritage and removed (`old` / `oldHalo`) use fixed tokens from
  * `routeLineStylesForDisplayColor(null)` — callers should merge proposed
@@ -29,8 +35,11 @@ export function sanitizeDisplayColorHex(displayColorHex) {
 export function resolveFirstDisplayColorFromGeojson(geojson) {
   if (!geojson?.features) return null;
   for (const f of geojson.features) {
-    const h = sanitizeDisplayColorHex((f.properties || {}).display_color);
-    if (h) return h;
+    const dc = (f.properties || {}).display_color;
+    if (dc == null) continue;
+    const raw = String(dc);
+    if (!isAllowedSubmissionDisplayColor(raw)) continue;
+    return normalizeSubmissionDisplayColorHex(raw);
   }
   return null;
 }

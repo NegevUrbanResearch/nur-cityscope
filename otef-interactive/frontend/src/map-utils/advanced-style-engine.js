@@ -12,6 +12,17 @@ class AdvancedStyleEngine {
   /** @type {WeakMap<Object, Map<string, Object>>} */
   static _uniqueValueSymbolMapCache = new WeakMap();
 
+  /** @param {unknown} v */
+  static _parseDashOffsetNumber(v) {
+    if (v == null) return null;
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") {
+      const n = Number(String(v).trim());
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+
   static _getUniqueValueSymbolMap(styleConfig) {
     if (AdvancedStyleEngine._uniqueValueSymbolMapCache.has(styleConfig)) {
       return AdvancedStyleEngine._uniqueValueSymbolMapCache.get(styleConfig);
@@ -147,7 +158,7 @@ class AdvancedStyleEngine {
       : null;
 
     if (strokeColor != null || strokeWidth != null) {
-      layers.push({
+      const strokeLayer = {
         type: "stroke",
         color: strokeColor || "#000000",
         width: strokeWidth || 1.0,
@@ -156,7 +167,18 @@ class AdvancedStyleEngine {
             ? strokeOpacity
             : 1.0,
         dash: dashArray ? { array: dashArray } : null,
-      });
+      };
+      if (typeof simpleStyle.lineCap === "string" && simpleStyle.lineCap) {
+        strokeLayer.lineCap = simpleStyle.lineCap;
+      }
+      if (typeof simpleStyle.lineJoin === "string" && simpleStyle.lineJoin) {
+        strokeLayer.lineJoin = simpleStyle.lineJoin;
+      }
+      const dashOffset = this._parseDashOffsetNumber(simpleStyle.dashOffset);
+      if (dashOffset != null) {
+        strokeLayer.dashOffset = dashOffset;
+      }
+      layers.push(strokeLayer);
     }
 
     // Optional icon marker support for point features. When simpleStyle comes

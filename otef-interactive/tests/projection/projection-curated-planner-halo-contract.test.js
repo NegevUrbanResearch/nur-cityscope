@@ -32,7 +32,7 @@ describe("projection planner halo + stroke (Colab parity)", () => {
       ],
     };
     const styles = routeLineStylesForDisplayColor(null);
-    const out = buildColabAlignedCuratedOverlayGeoJSON(basePaths, geojson, "#FF69B4");
+    const out = buildColabAlignedCuratedOverlayGeoJSON(basePaths, geojson, "#F472B6");
     expect(out).toBeTruthy();
     const lines = (out.features || []).filter((f) => f?.geometry?.type === "LineString");
     const weights = lines.map((f) => f.properties?._curatedStyle?.weight).filter((w) => w != null);

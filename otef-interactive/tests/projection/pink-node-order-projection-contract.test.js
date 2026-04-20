@@ -45,7 +45,7 @@ describe("pink node order on projection overlay", () => {
         },
       ],
     };
-    const out = buildColabAlignedCuratedOverlayGeoJSON(basePaths, geojson, "#FF69B4");
+    const out = buildColabAlignedCuratedOverlayGeoJSON(basePaths, geojson, "#F472B6");
     expect(out).toBeTruthy();
     const nodes = (out.features || []).filter(
       (f) =>

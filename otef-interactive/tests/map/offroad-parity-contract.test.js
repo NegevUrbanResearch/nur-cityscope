@@ -42,7 +42,7 @@ describe("off-road parity contract", () => {
     const out = buildColabAlignedCuratedOverlayGeoJSON(
       [],
       geojson,
-      "#FF69B4",
+      "#F472B6",
     );
     const junctions = (out.features || []).filter(
       (f) =>

@@ -40,7 +40,7 @@ describe("buildColabAlignedCuratedOverlayGeoJSON off-road", () => {
       ],
     };
     const basePaths = [[[31, 34], [31.05, 34.05], [32, 35.5]]];
-    const out = buildColabAlignedCuratedOverlayGeoJSON(basePaths, geojson, "#FF69B4");
+    const out = buildColabAlignedCuratedOverlayGeoJSON(basePaths, geojson, "#F472B6");
     const off = (out.features || []).filter(
       (f) => f?.properties?.curated_overlay_role === "pink_offroad_segment",
     );

@@ -220,6 +220,17 @@
         flex-shrink: 0;
         box-sizing: border-box;
       }
+      .curation-submission-swatch-dot {
+        --submission-swatch-split-dir: right;
+        background: linear-gradient(
+          to var(--submission-swatch-split-dir),
+          var(--swatch-primary) 50%,
+          var(--swatch-secondary) 50%
+        );
+      }
+      [dir="rtl"] .curation-submission-swatch-dot {
+        --submission-swatch-split-dir: left;
+      }
       .curation-published-layer-tags {
         display: flex;
         flex-wrap: wrap;

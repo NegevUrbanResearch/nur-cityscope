@@ -3,7 +3,13 @@
  * Numeric tokens from nur-colab-map `mapLineStyles.ts` and off-road from `pinkDetourLeaflet.ts`.
  */
 
-/** @typedef {{ color?: string; weight?: number; opacity?: number; dashArray?: string; lineCap?: string; lineJoin?: string; pane?: string }} LeafletPolylineLike */
+import {
+  normalizeSubmissionDisplayColorHex,
+  isAllowedSubmissionDisplayColor,
+  secondaryHexForPrimaryNormalized,
+} from "./submission-display-color.js";
+
+/** @typedef {{ color?: string; weight?: number; opacity?: number; dashArray?: string; dashOffset?: string; lineCap?: string; lineJoin?: string; pane?: string }} LeafletPolylineLike */
 
 /** Colab `OFFICIAL_NETWORK_GAP_METERS`: used only after **Google-routed** legs vs chord targets in `pinkLineRoute.ts`. */
 export const OFFICIAL_NETWORK_GAP_METERS = 28;
@@ -16,17 +22,16 @@ export const OFFICIAL_NETWORK_GAP_METERS = 28;
  */
 export const STORED_PINK_ROUTE_OFFROAD_GAP_METERS = 3500;
 
-const VALID_CSS_HEX_6 = /^#[0-9A-Fa-f]{6}$/;
+/** Colab `PROPOSED_DASH` */
+const PROPOSED_DASH = "10 8";
+/** Colab `PROPOSED_DASH_OFFSET_PRIMARY` — primary proposed polyline only. */
+const PROPOSED_DASH_OFFSET_PRIMARY = "9";
+
+/** Colab dual-stack caps for proposed primary + secondary. */
+const PROPOSED_DUAL_CAP = "butt";
+const PROPOSED_DUAL_JOIN = "miter";
 
 const PROPOSED_DEFAULT_COLOR = "#ff587b";
-
-/** @param {string | null | undefined} displayColorHex */
-function normalizedSixDigitHex(displayColorHex) {
-  if (displayColorHex == null) return null;
-  const raw = String(displayColorHex).trim();
-  if (!VALID_CSS_HEX_6.test(raw)) return null;
-  return `#${raw.slice(1).toUpperCase()}`;
-}
 
 /** @type {LeafletPolylineLike} */
 const SOLID_LINE = {
@@ -41,34 +46,42 @@ const SOLID_LINE = {
 const OLD_LINE = {
   color: "#ff69b4",
   weight: 4.5,
-  opacity: 0.4,
+  opacity: 0.5,
   lineCap: "round",
   lineJoin: "round",
 };
 
-/** @type {LeafletPolylineLike} */
+/**
+ * Colab `oldLineHaloStyle`.
+ * @type {LeafletPolylineLike}
+ */
 const OLD_HALO = {
   color: "#ffffff",
-  weight: 6.5,
-  opacity: 0.32,
-  lineCap: "round",
-  lineJoin: "round",
-};
-
-/** @type {LeafletPolylineLike} */
-const PROPOSED_HALO = {
-  color: "#ffffff",
-  weight: 7,
+  weight: 6,
   opacity: 0.22,
   lineCap: "round",
   lineJoin: "round",
 };
 
-/** @type {Omit<LeafletPolylineLike, "color">} */
-const PROPOSED_LINE_BASE = {
+/**
+ * Colab `proposedLineHaloStyle`.
+ * @type {LeafletPolylineLike}
+ */
+const PROPOSED_HALO = {
+  color: "#e8eef5",
+  weight: 8,
+  opacity: 0.32,
+  lineCap: "round",
+  lineJoin: "round",
+};
+
+/** Colab `proposedLineStyle` — invalid/missing display color (no `proposedSecondary`). */
+/** @type {LeafletPolylineLike} */
+const PROPOSED_LINE_DEFAULT = {
+  color: PROPOSED_DEFAULT_COLOR,
   weight: 6,
   opacity: 0.95,
-  dashArray: "3 7",
+  dashArray: PROPOSED_DASH,
   lineCap: "round",
   lineJoin: "round",
 };
@@ -85,7 +98,11 @@ const OFFROAD_LINE = {
 
 /**
  * Leaflet-style stroke options for solid heritage, ghosted removed segments, proposed detour,
- * and off-road connectors. Proposed stroke color follows a valid 6-digit CSS `#` hex when given.
+ * and off-road connectors. Proposed stroke uses palette-valid `display_color` with Colab dual
+ * dashes; otherwise default proposed pink (`proposedLineStyle`).
+ *
+ * When `proposedSecondary` is present, draw order is halo → secondary dashed → primary dashed
+ * (primary uses `dashOffset` for interleave).
  *
  * @param {string | null | undefined} displayColorHex
  * @returns {{
@@ -94,20 +111,54 @@ const OFFROAD_LINE = {
  *   oldLine: LeafletPolylineLike;
  *   proposedHalo: LeafletPolylineLike;
  *   proposedLine: LeafletPolylineLike;
+ *   proposedSecondary?: LeafletPolylineLike;
  *   offroadLine: LeafletPolylineLike;
  * }}
  */
 export function routeLineStylesForDisplayColor(displayColorHex) {
-  const hex = normalizedSixDigitHex(displayColorHex);
-  return {
+  const base = {
     solidLine: { ...SOLID_LINE },
     oldHalo: { ...OLD_HALO },
     oldLine: { ...OLD_LINE },
     proposedHalo: { ...PROPOSED_HALO },
-    proposedLine: {
-      ...PROPOSED_LINE_BASE,
-      color: hex ?? PROPOSED_DEFAULT_COLOR,
-    },
     offroadLine: { ...OFFROAD_LINE },
   };
+
+  if (!isAllowedSubmissionDisplayColor(displayColorHex)) {
+    return {
+      ...base,
+      proposedLine: { ...PROPOSED_LINE_DEFAULT },
+    };
+  }
+
+  const c = normalizeSubmissionDisplayColorHex(displayColorHex);
+  const secondaryHex = secondaryHexForPrimaryNormalized(c);
+  const proposedSecondary =
+    secondaryHex != null
+      ? {
+          color: secondaryHex,
+          weight: PROPOSED_LINE_DEFAULT.weight,
+          opacity: 0.88,
+          dashArray: PROPOSED_DASH,
+          lineCap: PROPOSED_DUAL_CAP,
+          lineJoin: PROPOSED_DUAL_JOIN,
+        }
+      : undefined;
+
+  const out = {
+    ...base,
+    proposedLine: {
+      color: c,
+      weight: PROPOSED_LINE_DEFAULT.weight,
+      opacity: PROPOSED_LINE_DEFAULT.opacity,
+      dashArray: PROPOSED_DASH,
+      dashOffset: PROPOSED_DASH_OFFSET_PRIMARY,
+      lineCap: PROPOSED_DUAL_CAP,
+      lineJoin: PROPOSED_DUAL_JOIN,
+    },
+  };
+  if (proposedSecondary != null) {
+    out.proposedSecondary = { ...proposedSecondary };
+  }
+  return out;
 }

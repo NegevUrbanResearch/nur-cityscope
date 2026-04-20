@@ -3,6 +3,10 @@
  */
 
 import { sanitizeCssColor } from "./curation-color-utils.js";
+import {
+  normalizeSubmissionDisplayColorHex,
+  secondaryHexForPrimaryNormalized,
+} from "../map-utils/submission-display-color.js";
 
 /** Normalize submission UUID strings (API / GeoJSON casing may differ). */
 function normSubmissionId(id) {
@@ -13,6 +17,26 @@ function escapeHtml(s) {
   const div = document.createElement("div");
   div.textContent = s == null ? "" : String(s);
   return div.innerHTML;
+}
+
+/**
+ * Split-circle gradient when `colorCss` normalizes to an allowlisted palette primary; otherwise solid fill.
+ * @param {string | null | undefined} colorCss
+ * @param {string} baseClasses space-separated classes on the swatch span (e.g. option vs selected)
+ * @returns {string} HTML for one swatch span, or "" when no color
+ */
+export function buildCurationColorSwatchHtml(colorCss, baseClasses) {
+  if (colorCss == null) return "";
+  const normalizedPrimary = normalizeSubmissionDisplayColorHex(colorCss);
+  const secondary =
+    normalizedPrimary != null
+      ? secondaryHexForPrimaryNormalized(normalizedPrimary)
+      : null;
+  if (normalizedPrimary != null && secondary != null) {
+    const partner = secondary || "#94A3B8";
+    return `<span class="${baseClasses} curation-submission-swatch-dot" style="--swatch-primary:${escapeHtml(normalizedPrimary)};--swatch-secondary:${escapeHtml(partner)};" title="Submission color" aria-hidden="true"></span>`;
+  }
+  return `<span class="${baseClasses}" style="background-color:${escapeHtml(colorCss)}" title="Submission color" aria-hidden="true"></span>`;
 }
 
 /**
@@ -190,10 +214,10 @@ export function createSubmissionsPanel(deps) {
       input?.removeAttribute("aria-describedby");
       return;
     }
-    const colorDot =
-      selectedSubmission.colorCss != null
-        ? `<span class="curation-submission-selected-swatch" style="background-color:${escapeHtml(selectedSubmission.colorCss)}" title="Submission color" aria-hidden="true"></span>`
-        : "";
+    const colorDot = buildCurationColorSwatchHtml(
+      selectedSubmission.colorCss,
+      "curation-submission-selected-swatch",
+    );
     tagsEl.innerHTML = colorDot + renderOptionChipsHtml(selectedSubmission);
     field.classList.add("has-selected-tags");
     if (listOpen) {
@@ -231,10 +255,10 @@ export function createSubmissionsPanel(deps) {
         const selected = row.id === selectedId ? " curation-submission-option--active" : "";
         const active = row.id === selectedId ? "true" : "false";
         const chips = renderOptionChipsHtml(row);
-        const colorDot =
-          row.colorCss != null
-            ? `<span class="curation-submission-option-swatch" style="background-color:${escapeHtml(row.colorCss)}" title="Submission color" aria-hidden="true"></span>`
-            : "";
+        const colorDot = buildCurationColorSwatchHtml(
+          row.colorCss,
+          "curation-submission-option-swatch",
+        );
         return `<button type="button" role="option" class="curation-submission-option${selected}" data-submission-id="${escapeHtml(row.id)}" aria-selected="${active}">
           <span class="curation-submission-option-head">
             ${colorDot}

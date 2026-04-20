@@ -63,9 +63,9 @@ function createLeafletPinkLineParkingGroup(L, geojson, iconUrl) {
   if (!L || !geojson || !Array.isArray(geojson.features)) return null;
   const icon = L.icon({
     iconUrl,
-    iconSize: [36, 36],
-    iconAnchor: [18, 18],
-    popupAnchor: [0, -18],
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -14],
     className: "pink-line-parking-marker-icon",
   });
   const group = L.layerGroup();
@@ -104,7 +104,7 @@ function enrichParkingGeojsonForProjection(geojson, iconUrl) {
       geometry: { type: "Point", coordinates: [g.coordinates[0], g.coordinates[1]] },
       properties: {
         ...(f.properties || {}),
-        _curatedStyle: { _iconUrl: iconUrl, _iconSize: 36 },
+        _curatedStyle: { _iconUrl: iconUrl, _iconSize: 28 },
       },
     });
   }

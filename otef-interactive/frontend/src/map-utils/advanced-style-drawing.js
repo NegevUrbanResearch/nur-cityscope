@@ -125,7 +125,17 @@ class AdvancedStyleDrawing {
     for (const sl of strokeLayers) {
       const dashArray =
         sl.dash && Array.isArray(sl.dash.array) ? sl.dash.array.slice() : null;
-      const styleForDraw = { hatch: null, dashArray, flow: flowAnimation };
+      const styleForDraw = {
+        hatch: null,
+        dashArray,
+        flow: flowAnimation,
+        lineCap: typeof sl.lineCap === "string" ? sl.lineCap : null,
+        lineJoin: typeof sl.lineJoin === "string" ? sl.lineJoin : null,
+        dashOffset:
+          typeof sl.dashOffset === "number" && Number.isFinite(sl.dashOffset)
+            ? sl.dashOffset
+            : null,
+      };
 
       for (const line of lines) {
         this._drawLineString(
@@ -563,7 +573,20 @@ class AdvancedStyleDrawing {
     // Build pixel path once for modes that need length or reuse
     const pts = coords.map((c) => viewContext.coordToPixel(c));
 
-    if (flow && flow.enabled && flow.mode === "reveal") {
+    const prevCap = ctx.lineCap;
+    const prevJoin = ctx.lineJoin;
+    const prevDashOffset = ctx.lineDashOffset;
+    try {
+      if (style) {
+        if (typeof style.lineCap === "string" && style.lineCap) {
+          ctx.lineCap = style.lineCap;
+        }
+        if (typeof style.lineJoin === "string" && style.lineJoin) {
+          ctx.lineJoin = style.lineJoin;
+        }
+      }
+
+      if (flow && flow.enabled && flow.mode === "reveal") {
       // Solid line that draws along the path (no dashes). Stroke only from start
       // up to (phasePx % totalLength) so the line "reveals" over time.
       const totalLength = this._pathLength(pts);
@@ -675,7 +698,10 @@ class AdvancedStyleDrawing {
       ctx.lineDashOffset = phasePx;
     } else if (style.dashArray && Array.isArray(style.dashArray)) {
       ctx.setLineDash(style.dashArray);
-      ctx.lineDashOffset = 0;
+      ctx.lineDashOffset =
+        style.dashOffset != null && Number.isFinite(style.dashOffset)
+          ? style.dashOffset
+          : 0;
     } else {
       ctx.setLineDash([]);
       ctx.lineDashOffset = 0;
@@ -689,6 +715,11 @@ class AdvancedStyleDrawing {
     ctx.globalAlpha = prevAlpha;
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
+    } finally {
+      ctx.lineCap = prevCap;
+      ctx.lineJoin = prevJoin;
+      ctx.lineDashOffset = prevDashOffset;
+    }
   }
 
   _pathLength(pts) {

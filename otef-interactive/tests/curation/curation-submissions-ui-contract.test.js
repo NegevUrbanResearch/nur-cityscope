@@ -135,6 +135,10 @@ describe("curation submissions list UI (HTML + source contracts)", () => {
     expect(src.includes("curation-submission-option-head")).toBe(true);
     expect(src.includes("curation-submission-option-swatch")).toBe(true);
     expect(src.includes("curation-submission-selected-swatch")).toBe(true);
+    expect(src.includes("curation-submission-swatch-dot")).toBe(true);
+    expect(src.includes("buildCurationColorSwatchHtml")).toBe(true);
+    expect(src.includes("normalizeSubmissionDisplayColorHex")).toBe(true);
+    expect(src.includes("secondaryHexForPrimaryNormalized")).toBe(true);
     expect(src.includes("submission_color")).toBe(true);
     expect(src.includes("getSubmissionDisplayName")).toBe(true);
     expect(src.includes("getSubmissionColorCss")).toBe(true);

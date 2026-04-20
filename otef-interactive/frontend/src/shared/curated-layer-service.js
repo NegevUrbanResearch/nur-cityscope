@@ -24,6 +24,10 @@ import {
   resolveFirstDisplayColorFromGeojson,
   sanitizeDisplayColorHex,
 } from "../map/leaflet-curated-pink-helpers.js";
+import {
+  isAllowedSubmissionDisplayColor,
+  normalizeSubmissionDisplayColorHex,
+} from "../map-utils/submission-display-color.js";
 import { assignPinkNodeDisplayOrders } from "../map-utils/pink-route-optimizer.js";
 import AdvancedStyleEngine from "../map-utils/advanced-style-engine.js";
 import layerRegistry from "./layer-registry.js";
@@ -500,6 +504,17 @@ function parseDashArrayToNumbers(value) {
   return null;
 }
 
+/** @param {unknown} value */
+function parseDashOffsetToNumber(value) {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(String(value).trim());
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 /**
  * @param {Record<string, unknown>} leafletLike
  * @returns {Record<string, unknown>}
@@ -513,6 +528,10 @@ function leafletPolylineLikeToCuratedCanvas(leafletLike) {
   };
   const dash = parseDashArrayToNumbers(leafletLike.dashArray);
   if (dash) out.dashArray = dash;
+  if (leafletLike.lineCap != null) out.lineCap = leafletLike.lineCap;
+  if (leafletLike.lineJoin != null) out.lineJoin = leafletLike.lineJoin;
+  const dashOffset = parseDashOffsetToNumber(leafletLike.dashOffset);
+  if (dashOffset != null) out.dashOffset = dashOffset;
   return out;
 }
 
@@ -528,8 +547,10 @@ function pushCuratedLineWgs84(features, ptsLatLng, curatedStyle, extraProperties
 
 /**
  * Projection canvas is composited over imagery with transparency; faint white halos
- * (0.22 opacity) read as dark gaps under dashed proposed strokes. Boost halo + ghost
- * opacities so projector matches GIS legibility (Colab `mapLineStyles` tokens).
+ * (0.22 opacity) read as dark gaps under dashed strokes. Boost removed-route halo and
+ * ghost line opacities so the projector matches GIS legibility (Colab `mapLineStyles`).
+ * Proposed halo (`pink_proposed_halo`) is not altered — boosting its wide `#e8eef5`
+ * underlay made a visible grey rim on the projector; base Colab token opacity is kept.
  *
  * @param {Object|null|undefined} geojsonWgs84
  */
@@ -542,7 +563,7 @@ function applyProjectionCuratedOverlayContrast(geojsonWgs84) {
     const st = props._curatedStyle;
     if (!st || typeof st !== "object") continue;
     let newOpacity;
-    if (role === "pink_removed_halo" || role === "pink_proposed_halo") {
+    if (role === "pink_removed_halo") {
       const o = typeof st.opacity === "number" ? st.opacity : 0.32;
       newOpacity = Math.min(1, Math.max(0.58, o * 2.15));
     } else if (role === "pink_removed_line") {
@@ -565,7 +586,7 @@ function applyProjectionCuratedOverlayContrast(geojsonWgs84) {
  *
  * @param {Array} basePaths - pink-line base paths [[lat,lng], …]; may be `[]` (see above)
  * @param {Object} geojsonWgs84 - published submission FeatureCollection (WGS84)
- * @param {string|null|undefined} fallbackDisplayColorHex - UI / layer card color when GeoJSON has none
+ * @param {string|null|undefined} fallbackDisplayColorHex - Allowlisted submission primary when GeoJSON has none (e.g. `UI_CONFIG.getSubmissionDisplayPrimaryForCuratedLayer`)
  * @param {{ useAllPointsAsDetourWhenEmpty?: boolean }} [options]
  * @returns {Object|null}
  */
@@ -600,24 +621,58 @@ function buildColabAlignedCuratedOverlayGeoJSON(
     userPointsDetour,
   );
   const fromGeoColor = resolveFirstDisplayColorFromGeojson(geojsonWgs84);
-  const submissionHex =
-    fromGeoColor ?? sanitizeDisplayColorHex(fallbackDisplayColorHex) ?? undefined;
+  const normalizedFallback =
+    fallbackDisplayColorHex != null &&
+    fallbackDisplayColorHex !== "" &&
+    isAllowedSubmissionDisplayColor(fallbackDisplayColorHex)
+      ? normalizeSubmissionDisplayColorHex(fallbackDisplayColorHex)
+      : undefined;
+  const submissionHex = fromGeoColor ?? normalizedFallback ?? undefined;
   const baseStyles = routeLineStylesForDisplayColor(null);
   const proposedTint = routeLineStylesForDisplayColor(submissionHex);
   const styles = {
     ...baseStyles,
     proposedHalo: proposedTint.proposedHalo,
     proposedLine: proposedTint.proposedLine,
+    ...(proposedTint.proposedSecondary
+      ? { proposedSecondary: proposedTint.proposedSecondary }
+      : {}),
   };
   const nodeFillHex =
-    fromGeoColor ??
-    sanitizeDisplayColorHex(fallbackDisplayColorHex) ??
-    styles.proposedLine.color;
+    fromGeoColor ?? normalizedFallback ?? styles.proposedLine.color;
 
   const { pathsLatLng } = parsePinkLineRouteFromGeojson(geojsonWgs84);
   const hasStoredPinkRoute = pathsLatLng.some((p) => p.length >= 2);
 
   const features = [];
+
+  /**
+   * Proposed paths: GeoJSON feature order is canvas draw order — halo (bottom),
+   * optional `pink_proposed_secondary` dual dash, then `pink_proposed_line` (top).
+   */
+  function pushProposedPinkStack(ptsLatLng) {
+    if (!ptsLatLng || ptsLatLng.length < 2) return;
+    pushCuratedLineWgs84(
+      features,
+      ptsLatLng,
+      leafletPolylineLikeToCuratedCanvas(styles.proposedHalo),
+      { curated_overlay_role: "pink_proposed_halo" },
+    );
+    if (styles.proposedSecondary) {
+      pushCuratedLineWgs84(
+        features,
+        ptsLatLng,
+        leafletPolylineLikeToCuratedCanvas(styles.proposedSecondary),
+        { curated_overlay_role: "pink_proposed_secondary" },
+      );
+    }
+    pushCuratedLineWgs84(
+      features,
+      ptsLatLng,
+      leafletPolylineLikeToCuratedCanvas(styles.proposedLine),
+      { curated_overlay_role: "pink_proposed_line" },
+    );
+  }
 
   solid.forEach((pts) => {
     pushCuratedLineWgs84(
@@ -655,18 +710,7 @@ function buildColabAlignedCuratedOverlayGeoJSON(
         : pathsLatLng;
     for (const path of proposedOverlayPaths) {
       if (path.length < 2) continue;
-      pushCuratedLineWgs84(
-        features,
-        path,
-        leafletPolylineLikeToCuratedCanvas(styles.proposedHalo),
-        { curated_overlay_role: "pink_proposed_halo" },
-      );
-      pushCuratedLineWgs84(
-        features,
-        path,
-        leafletPolylineLikeToCuratedCanvas(styles.proposedLine),
-        { curated_overlay_role: "pink_proposed_line" },
-      );
+      pushProposedPinkStack(path);
     }
     if (offroadEnabled) {
       const segs = findOffroadTwoPointSegments(
@@ -700,18 +744,7 @@ function buildColabAlignedCuratedOverlayGeoJSON(
     }
   } else {
     dashed.forEach((pts) => {
-      pushCuratedLineWgs84(
-        features,
-        pts,
-        leafletPolylineLikeToCuratedCanvas(styles.proposedHalo),
-        { curated_overlay_role: "pink_proposed_halo" },
-      );
-      pushCuratedLineWgs84(
-        features,
-        pts,
-        leafletPolylineLikeToCuratedCanvas(styles.proposedLine),
-        { curated_overlay_role: "pink_proposed_line" },
-      );
+      pushProposedPinkStack(pts);
     });
   }
 
@@ -727,10 +760,10 @@ function buildColabAlignedCuratedOverlayGeoJSON(
         ? {
             _iconUrl: memorialIcon,
             _memorialAccentHex: accentHex,
-            _memorialOuterPx: 44,
-            _memorialImgPx: 36,
+            _memorialOuterPx: 38,
+            _memorialImgPx: 28,
           }
-        : { _iconUrl: memorialIcon, _iconSize: 40 };
+        : { _iconUrl: memorialIcon, _iconSize: 36 };
     } else {
       curatedStyle = {
         fillColor: nodeFillHex,

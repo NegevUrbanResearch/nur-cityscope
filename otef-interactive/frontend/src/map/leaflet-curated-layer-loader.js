@@ -46,12 +46,31 @@ let pinkLineParkingLayerInstance = null;
 let pinkLineParkingAttachGeneration = 0;
 let pinkLineParkingMapVisibleIntent = false;
 const getCuratedLayerColor = UI_CONFIG.getCuratedColor;
+const getSubmissionDisplayPrimaryForCuratedLayer =
+  UI_CONFIG.getSubmissionDisplayPrimaryForCuratedLayer;
 
 // Colab parity: Hebrew label for off-road junction tooltips (single source).
 const PINK_OFFROAD_JUNCTION_TOOLTIP = "מחבר";
 
 /** Dev-only: avoid spamming console when published GeoJSON has no stored route. */
 const noStoredPinkRouteLoggedIds = new Set();
+
+/**
+ * One SVG renderer per Leaflet map for the dual proposed stack. Canvas paths ignore
+ * `dashOffset` when `preferCanvas: true`, so the primary stroke covers the secondary;
+ * SVG respects dash offset so both colors remain visible.
+ */
+const dualProposedSvgByMap = new WeakMap();
+
+function rendererForDualProposedStack(mapInstance) {
+  if (!mapInstance || typeof L === "undefined" || typeof L.svg !== "function") return null;
+  let r = dualProposedSvgByMap.get(mapInstance);
+  if (!r) {
+    r = L.svg({ padding: 0.5 });
+    dualProposedSvgByMap.set(mapInstance, r);
+  }
+  return r;
+}
 
 // ---------------------------------------------------------------------------
 // Tooltip / popup formatters
@@ -108,22 +127,12 @@ function resolvePinkOverlayPolylineStyle(styleKey, styles, offroadPaneName) {
   if (styleKey === "oldHalo") return { ...styles.oldHalo };
   if (styleKey === "oldLine") return { ...styles.oldLine };
   if (styleKey === "proposedHalo") return { ...styles.proposedHalo };
+  if (styleKey === "proposedSecondary") return { ...styles.proposedSecondary };
   if (styleKey === "proposedLine") return { ...styles.proposedLine };
   if (styleKey === "offroadLine") {
     const line = { ...styles.offroadLine };
     if (offroadPaneName) line.pane = offroadPaneName;
     return line;
-  }
-  if (styleKey === "dashedPlannerHalo") return { ...styles.proposedHalo };
-  if (styleKey === "dashedPlannerStroke") {
-    return {
-      color: styles.proposedLine.color,
-      weight: 5,
-      opacity: 0.9,
-      dashArray: "10, 10",
-      lineCap: "round",
-      lineJoin: "round",
-    };
   }
   return { ...styles.solidLine };
 }
@@ -349,20 +358,21 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
     const { solid, removed, dashed } = buildIntegratedRoute(basePaths, routingLatLng);
 
     const fromGeoColor = resolveFirstDisplayColorFromGeojson(geojson);
-    const fallbackCurated = getCuratedLayerColor(fullLayerId, layerData);
     const submissionHex =
-      fromGeoColor ?? sanitizeDisplayColorHex(fallbackCurated) ?? undefined;
+      fromGeoColor ??
+      getSubmissionDisplayPrimaryForCuratedLayer(fullLayerId, layerData) ??
+      undefined;
     const baseStyles = routeLineStylesForDisplayColor(null);
     const proposedTint = routeLineStylesForDisplayColor(submissionHex);
     const styles = {
       ...baseStyles,
       proposedHalo: proposedTint.proposedHalo,
       proposedLine: proposedTint.proposedLine,
+      ...(proposedTint.proposedSecondary != null
+        ? { proposedSecondary: proposedTint.proposedSecondary }
+        : {}),
     };
-    const nodeFillHex =
-      fromGeoColor ??
-      sanitizeDisplayColorHex(fallbackCurated) ??
-      styles.proposedLine.color;
+    const nodeFillHex = fromGeoColor ?? submissionHex ?? styles.proposedLine.color;
 
     const { pathsLatLng } = parsePinkLineRouteFromGeojson(geojson);
     const hasStoredPinkRoute = pathsLatLng.some((p) => p.length >= 2);
@@ -407,6 +417,7 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
     const overlayOps = planPinkCuratedOverlayLayers({
       hasDetourPoints: routingLatLng.length > 0,
       hasStoredPinkRoute,
+      includeProposedSecondary: proposedTint.proposedSecondary != null,
       solid,
       removed,
       dashedPlanner: dashed,
@@ -417,7 +428,16 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
 
     for (const op of overlayOps) {
       if (op.kind === "polyline") {
-        const lineOpts = resolvePinkOverlayPolylineStyle(op.styleKey, styles, offroadPaneName);
+        let lineOpts = resolvePinkOverlayPolylineStyle(op.styleKey, styles, offroadPaneName);
+        if (
+          styles.proposedSecondary != null &&
+          (op.styleKey === "proposedHalo" ||
+            op.styleKey === "proposedSecondary" ||
+            op.styleKey === "proposedLine")
+        ) {
+          const svgRenderer = rendererForDualProposedStack(map);
+          if (svgRenderer) lineOpts = { ...lineOpts, renderer: svgRenderer };
+        }
         group.addLayer(L.polyline(op.latLngs, lineOpts));
       } else if (op.kind === "circleMarker") {
         if (op.role === "offroadJunction") {
@@ -456,17 +476,17 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
             icon: L.divIcon({
               className: "curation-memorial-marker-root",
               html: `<div class="curation-memorial-marker-shell curation-memorial-marker-accent" style="--memorial-accent:${accentHex}"><img class="curation-memorial-marker-img" src="${memorialIconUrl}" alt="" /></div>`,
-              iconSize: [44, 44],
-              iconAnchor: [22, 22],
-              popupAnchor: [0, -22],
+              iconSize: [38, 38],
+              iconAnchor: [19, 19],
+              popupAnchor: [0, -19],
             }),
           });
         } else {
           const icon = L.icon({
             iconUrl: memorialIconUrl,
-            iconSize: [36, 36],
-            iconAnchor: [18, 18],
-            popupAnchor: [0, -18],
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+            popupAnchor: [0, -14],
             className: "curation-memorial-marker-icon",
           });
           marker = L.marker(latlng, { icon });
@@ -539,17 +559,17 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
             icon: L.divIcon({
               className: "curation-memorial-marker-root",
               html: `<div class="curation-memorial-marker-shell curation-memorial-marker-accent" style="--memorial-accent:${accentHex}"><img class="curation-memorial-marker-img" src="${memorialIconUrl}" alt="" /></div>`,
-              iconSize: [44, 44],
-              iconAnchor: [22, 22],
-              popupAnchor: [0, -22],
+              iconSize: [38, 38],
+              iconAnchor: [19, 19],
+              popupAnchor: [0, -19],
             }),
           });
         } else {
           const icon = L.icon({
             iconUrl: memorialIconUrl,
-            iconSize: [36, 36],
-            iconAnchor: [18, 18],
-            popupAnchor: [0, -18],
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+            popupAnchor: [0, -14],
             className: "curation-memorial-marker-icon",
           });
           marker = L.marker(latlng, { icon });

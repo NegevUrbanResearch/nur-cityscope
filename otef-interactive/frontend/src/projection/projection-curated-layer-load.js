@@ -11,6 +11,7 @@ export async function loadProjectionCuratedLayerFromAPI(deps, fullLayerId) {
     applyProjectionCuratedOverlayContrast,
     getMemorialIconForFeature,
     getCuratedLayerColorForProjection,
+    getSubmissionDisplayPrimaryForCuratedLayer,
     ensureProjectionPinkLineBaseLayer,
     renderLayerFromGeojson,
     buildIntegratedRoute,
@@ -42,11 +43,15 @@ export async function loadProjectionCuratedLayerFromAPI(deps, fullLayerId) {
   const { basePaths } = await fetchPinkLinePaths();
   if (basePaths.length > 0 && hasRouteUtils && pointFeatures.length > 0) {
     await ensureProjectionPinkLineBaseLayer();
-    const layerColor = getCuratedLayerColorForProjection(fullLayerId, layerData);
+    const submissionPrimary = getSubmissionDisplayPrimaryForCuratedLayer(
+      fullLayerId,
+      layerData,
+    );
+    // Three-layer proposed stack matches Colab/leaflet curated overlay (buildColabAlignedCuratedOverlayGeoJSON).
     builtGeojson = buildColabAlignedCuratedOverlayGeoJSON(
       basePaths,
       wgs84Geojson,
-      layerColor,
+      submissionPrimary,
       { useAllPointsAsDetourWhenEmpty: true },
     );
   }

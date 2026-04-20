@@ -22,7 +22,7 @@ function projectionLabelSizeScale() {
 export function drawPinkNodeOrderLabels(ctx, aboveLayerEntries, coordToPixel) {
   if (!ctx || typeof coordToPixel !== "function") return;
   const labelScale = projectionLabelSizeScale();
-  const sizePx = Math.max(7, 9 * labelScale);
+  const sizePx = Math.max(10, 44 * labelScale);
   ctx.save();
   ctx.font = `700 ${sizePx}px Arial, sans-serif`;
   ctx.textAlign = "center";

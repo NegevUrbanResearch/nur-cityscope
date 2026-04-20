@@ -231,6 +231,8 @@ function updateWmtsVisibility(fullLayerId, visible) {
         applyProjectionCuratedOverlayContrast,
         getMemorialIconForFeature,
         getCuratedLayerColorForProjection,
+        getSubmissionDisplayPrimaryForCuratedLayer:
+          UI_CONFIG.getSubmissionDisplayPrimaryForCuratedLayer,
         ensureProjectionPinkLineBaseLayer,
         renderLayerFromGeojson,
         buildIntegratedRoute,

@@ -101,6 +101,7 @@ function createProjectionPinkLineCanvasController(options) {
       if (!loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
       if (!projectionPinkLineBaseVisibleIntent || !projectionPinkLineParkingVisibleIntent) return;
       if (loadedLayers[PINK_LINE_CANVAS_PARKING_LAYER_ID]) return;
+      // #888: intentional fallback when parking feature has no curated style (not a parity bug).
       const customStyleFunction = (feature) =>
         feature.properties && feature.properties._curatedStyle
           ? feature.properties._curatedStyle

@@ -3,7 +3,11 @@
  */
 
 import { sanitizeCssColor } from "./curation-color-utils.js";
-import { chipClassForTag, getSubmissionTagLabels } from "./curation-submissions.js";
+import {
+  buildCurationColorSwatchHtml,
+  chipClassForTag,
+  getSubmissionTagLabels,
+} from "./curation-submissions.js";
 
 export function extractSubmissionIdsFromLayerData(layerData) {
   const ids = new Set();
@@ -232,9 +236,13 @@ export function createPublishedCuratedLayersPanel(deps) {
           submissionId && getSubmissionColorCss ? getSubmissionColorCss(submissionId) : null;
         // Prefer Supabase submission list color (submission_batches.display_color); GeoJSON may omit stroke.
         const safeColor = listColor ?? geoColor ?? null;
+        const swatchInner = buildCurationColorSwatchHtml(
+          safeColor,
+          "curation-published-layer-swatch",
+        );
         const swatch =
-          safeColor != null
-            ? `<span class="curation-published-layer-color" title="Submission color"><span class="curation-published-layer-swatch" style="background-color:${escapeHtml(safeColor)}"></span></span>`
+          swatchInner !== ""
+            ? `<span class="curation-published-layer-color" title="Submission color">${swatchInner}</span>`
             : "";
         const chips = renderTagChips(layer.infoTags);
         const subName = submissionId ? String(getSubmissionDisplayName(submissionId) || "").trim() : "";

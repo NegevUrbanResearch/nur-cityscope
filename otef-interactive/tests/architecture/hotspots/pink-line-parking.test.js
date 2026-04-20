@@ -45,7 +45,7 @@ describe("pink-line-parking", () => {
     expect(out.features).toHaveLength(1);
     expect(out.features[0].properties._curatedStyle).toEqual({
       _iconUrl: "https://example.com/icon.png",
-      _iconSize: 36,
+      _iconSize: 28,
     });
     expect(out.features[0].geometry.coordinates).toEqual([34.5, 31.6]);
   });

@@ -14,19 +14,34 @@ describe("pink-route-map-styles", () => {
     expect(STORED_PINK_ROUTE_OFFROAD_GAP_METERS).toBe(3500);
   });
 
-  test("routeLineStylesForDisplayColor: valid 6-digit # hex sets proposedLine.color (normalized uppercase)", () => {
-    const { proposedLine } = routeLineStylesForDisplayColor("#00ffaa");
-    expect(proposedLine.color).toBe("#00FFAA");
+  test("routeLineStylesForDisplayColor: palette allowlist sets proposedLine + proposedSecondary (Colab dual stack)", () => {
+    const styles = routeLineStylesForDisplayColor("#16a34a");
+    const { proposedLine, proposedSecondary } = styles;
+    expect(proposedLine.color).toBe("#16A34A");
     expect(proposedLine.weight).toBe(6);
     expect(proposedLine.opacity).toBe(0.95);
-    expect(proposedLine.dashArray).toBe("3 7");
-    expect(proposedLine.lineCap).toBe("round");
-    expect(proposedLine.lineJoin).toBe("round");
+    expect(proposedLine.dashArray).toBe("10 8");
+    expect(proposedLine.dashOffset).toBe("9");
+    expect(proposedLine.lineCap).toBe("butt");
+    expect(proposedLine.lineJoin).toBe("miter");
+    expect(proposedSecondary).toBeDefined();
+    expect(proposedSecondary.color).toBe("#9333EA");
+    expect(proposedSecondary.weight).toBe(6);
+    expect(proposedSecondary.opacity).toBe(0.88);
+    expect(proposedSecondary.dashArray).toBe("10 8");
+    expect(proposedSecondary.dashOffset).toBeUndefined();
+    expect(proposedSecondary.lineCap).toBe("butt");
+    expect(proposedSecondary.lineJoin).toBe("miter");
   });
 
-  test("routeLineStylesForDisplayColor: invalid or missing hex uses default proposed pink", () => {
-    for (const bad of [null, undefined, "", "  ", "#gg0000", "#fff", "red", "#00ffaa00"]) {
-      expect(routeLineStylesForDisplayColor(bad).proposedLine.color).toBe("#ff587b");
+  test("routeLineStylesForDisplayColor: invalid or missing hex uses default proposed pink (no proposedSecondary)", () => {
+    for (const bad of [null, undefined, "", "  ", "#gg0000", "#fff", "red", "#00ffaa00", "#00ffaa"]) {
+      const s = routeLineStylesForDisplayColor(bad);
+      expect(s.proposedLine.color).toBe("#ff587b");
+      expect(s.proposedLine.dashArray).toBe("10 8");
+      expect(s.proposedLine.lineCap).toBe("round");
+      expect(s.proposedLine.lineJoin).toBe("round");
+      expect(s.proposedSecondary).toBeUndefined();
     }
   });
 
@@ -42,21 +57,21 @@ describe("pink-route-map-styles", () => {
     expect(styles.oldLine).toMatchObject({
       color: "#ff69b4",
       weight: 4.5,
-      opacity: 0.4,
+      opacity: 0.5,
       lineCap: "round",
       lineJoin: "round",
     });
     expect(styles.oldHalo).toMatchObject({
       color: "#ffffff",
-      weight: 6.5,
-      opacity: 0.32,
+      weight: 6,
+      opacity: 0.22,
       lineCap: "round",
       lineJoin: "round",
     });
     expect(styles.proposedHalo).toMatchObject({
-      color: "#ffffff",
-      weight: 7,
-      opacity: 0.22,
+      color: "#e8eef5",
+      weight: 10,
+      opacity: 0.32,
       lineCap: "round",
       lineJoin: "round",
     });
@@ -75,10 +90,13 @@ describe("pink-route-map-styles", () => {
   });
 
   test("returns independent objects per call", () => {
-    const a = routeLineStylesForDisplayColor("#ABCDEF");
-    const b = routeLineStylesForDisplayColor("#ABCDEF");
+    const a = routeLineStylesForDisplayColor("#16A34A");
+    const b = routeLineStylesForDisplayColor("#16A34A");
     expect(a.proposedLine).not.toBe(b.proposedLine);
+    expect(a.proposedSecondary).not.toBe(b.proposedSecondary);
     a.proposedLine.weight = 99;
+    a.proposedSecondary.weight = 88;
     expect(b.proposedLine.weight).toBe(6);
+    expect(b.proposedSecondary.weight).toBe(6);
   });
 });

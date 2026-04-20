@@ -54,7 +54,7 @@ describe("planPinkCuratedOverlayLayers", () => {
     expect(polylineRoles(ops)).toEqual(["solid"]);
   });
 
-  it("detour + no stored route: solid, removed halo/stroke, dashed planner halo/stroke", () => {
+  it("detour + no stored route: solid, removed halo/stroke, proposed halo + stroke (planner segments)", () => {
     const ops = planPinkCuratedOverlayLayers({
       hasDetourPoints: true,
       hasStoredPinkRoute: false,
@@ -67,19 +67,39 @@ describe("planPinkCuratedOverlayLayers", () => {
       "solid",
       "removedHalo",
       "removedStroke",
-      "dashedPlannerHalo",
-      "dashedPlannerStroke",
+      "proposedHalo",
+      "proposedStroke",
     ]);
   });
 
-  it("detour + stored route: no dashed planner; proposed + offroad + junction", () => {
+  it("includeProposedSecondary: extra proposedSecondary between halo and primary", () => {
+    const ops = planPinkCuratedOverlayLayers({
+      hasDetourPoints: true,
+      hasStoredPinkRoute: false,
+      includeProposedSecondary: true,
+      ...base,
+      proposedPathsLatLng: [],
+      offroadSegmentsLatLng: [],
+      offroadJunctionsLatLng: [],
+    });
+    expect(polylineRoles(ops)).toEqual([
+      "solid",
+      "removedHalo",
+      "removedStroke",
+      "proposedHalo",
+      "proposedSecondary",
+      "proposedStroke",
+    ]);
+  });
+
+  it("detour + stored route: no planner duplicate; proposed + offroad + junction", () => {
     const ops = planPinkCuratedOverlayLayers({
       hasDetourPoints: true,
       hasStoredPinkRoute: true,
       ...base,
     });
     const roles = polylineRoles(ops);
-    expect(roles.some((r) => r.startsWith("dashedPlanner"))).toBe(false);
+    expect(roles.filter((r) => r === "proposedHalo").length).toBe(1);
     expect(roles).toContain("proposedHalo");
     expect(roles).toContain("proposedStroke");
     expect(roles).toContain("offroad");
@@ -87,5 +107,23 @@ describe("planPinkCuratedOverlayLayers", () => {
       (o) => o.kind === "circleMarker" && o.role === "offroadJunction",
     );
     expect(junctions.length).toBeGreaterThan(0);
+  });
+
+  it("detour + stored route + includeProposedSecondary: halo → secondary → primary before offroad", () => {
+    const ops = planPinkCuratedOverlayLayers({
+      hasDetourPoints: true,
+      hasStoredPinkRoute: true,
+      includeProposedSecondary: true,
+      ...base,
+    });
+    const roles = polylineRoles(ops);
+    const iHalo = roles.indexOf("proposedHalo");
+    const iSec = roles.indexOf("proposedSecondary");
+    const iStroke = roles.indexOf("proposedStroke");
+    const iOff = roles.indexOf("offroad");
+    expect(iHalo).toBeGreaterThanOrEqual(0);
+    expect(iSec).toBe(iHalo + 1);
+    expect(iStroke).toBe(iSec + 1);
+    expect(iOff).toBeGreaterThan(iStroke);
   });
 });

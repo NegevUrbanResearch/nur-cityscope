@@ -62,15 +62,26 @@ describe("leaflet-curated-pink-helpers", () => {
     expect(pathsLatLng[0][0]).toEqual([0, 0]);
   });
 
-  it("resolveFirstDisplayColorFromGeojson picks first sanitized display_color", () => {
+  it("resolveFirstDisplayColorFromGeojson picks first allowlisted palette display_color", () => {
     const fc = {
       type: "FeatureCollection",
       features: [
         { type: "Feature", properties: { display_color: "nope" }, geometry: { type: "Point", coordinates: [0, 0] } },
         { type: "Feature", properties: { display_color: "#aabbcc" }, geometry: { type: "Point", coordinates: [1, 1] } },
+        { type: "Feature", properties: { display_color: "#dc2626" }, geometry: { type: "Point", coordinates: [2, 2] } },
       ],
     };
-    expect(resolveFirstDisplayColorFromGeojson(fc)).toBe("#AABBCC");
+    expect(resolveFirstDisplayColorFromGeojson(fc)).toBe("#DC2626");
+  });
+
+  it("resolveFirstDisplayColorFromGeojson ignores valid hex outside submission palette", () => {
+    const fc = {
+      type: "FeatureCollection",
+      features: [
+        { type: "Feature", properties: { display_color: "#aabbcc" }, geometry: { type: "Point", coordinates: [0, 0] } },
+      ],
+    };
+    expect(resolveFirstDisplayColorFromGeojson(fc)).toBe(null);
   });
 
   it("sanitizeDisplayColorHex normalizes valid 6-digit hex", () => {
