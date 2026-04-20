@@ -1,6 +1,19 @@
 /**
  * Colab-aligned Leaflet polyline options for curated pink routes.
  * Numeric tokens from nur-colab-map `mapLineStyles.ts` and off-road from `pinkDetourLeaflet.ts`.
+ *
+ * **Multiple pink strokes are intentional** (GIS + projector both stack these):
+ * 1. **Regional axis** — `resolvePinkLinePackStyleBundle` / `pink_line_base`; full-opacity pack styling
+ *    merged from `axisPackLine` (`PINK_AXIS_PACK_LINE`), **not** overlay `solidLine`.
+ * 2. **Kept heritage** — `solidLine` (`SOLID_LINE`): hot pink ~0.9 opacity on segments that **stay** on the
+ *    published axis after detour integration. **Not** controlled by `GHOST_REMOVED_*`.
+ * 3. **Replaced heritage (ghost)** — `oldHalo` + `oldLine`: white fringe + softer pink; **only** on
+ *    `integrated_route.removed` / `buildIntegratedRoute.removed`. **`GHOST_REMOVED_*` applies here only.**
+ * 4. **Proposed detour** — `proposedHalo` / `proposedLine` / optional secondary: dashed route, often **bright**
+ *    pink (`#ff587b` or submission `display_color`). Also **not** `GHOST_REMOVED_*`.
+ *
+ * If you zero out ghost opacity and still see a strong pink, you are almost certainly looking at
+ * **(2) kept solid** and/or **(4) proposed**, not the removed ghost stroke.
  */
 
 import {
@@ -33,7 +46,30 @@ const PROPOSED_DUAL_JOIN = "miter";
 
 const PROPOSED_DEFAULT_COLOR = "#ff587b";
 
-/** @type {LeafletPolylineLike} */
+/**
+ * Ghosted “removed heritage” stroke opacities — **only** the replaced / superseded segments
+ * drawn as `oldHalo` + `oldLine` in the curated overlay (`planPinkCuratedOverlayLayers` /
+ * `buildColabAlignedCuratedOverlayGeoJSON`).
+ *
+ * **These constants do not control:**
+ * - **Kept** heritage segments in the overlay (`solidLine`).
+ * - **Regional axis** pack merge (`axisPackLine` / `PINK_AXIS_PACK_LINE`).
+ * - **Proposed** detour strokes (`proposedHalo` / `proposedLine` / …).
+ *
+ * The **regional pink axis** (`pink_line_base`) uses `axisPackLine` via `resolvePinkLinePackStyleBundle`
+ * when there is **no** removed heritage. When there **is** `removed` heritage, CityScope **omits**
+ * `pink_line_base` (Colab MapPage never draws a full pack under integrated solid/removed) and only
+ * the overlay draws `solidLine` on kept segments plus ghost strokes — so the ghost can read at
+ * `GHOST_REMOVED_*` opacity over the basemap.
+ */
+export const GHOST_REMOVED_LINE_OPACITY = 0.5;
+export const GHOST_REMOVED_HALO_OPACITY = 0.22;
+
+/**
+ * Kept heritage overlay segments (`planPinkCuratedOverlayLayers`). **Not** `GHOST_REMOVED_*`.
+ * Independent from `PINK_AXIS_PACK_LINE` so tuning overlay solid does not affect the regional axis pack.
+ * @type {LeafletPolylineLike}
+ */
 const SOLID_LINE = {
   color: "#FF69B4",
   weight: 5,
@@ -42,23 +78,40 @@ const SOLID_LINE = {
   lineJoin: "round",
 };
 
+/**
+ * Regional network axis / pack merge (`resolvePinkLinePackStyleBundle` → `pink_line_base`).
+ * Same default numbers as {@link SOLID_LINE} (Colab parity) but a **separate** object reference.
+ * @type {LeafletPolylineLike}
+ */
+const PINK_AXIS_PACK_LINE = { ...SOLID_LINE };
+
+/**
+ * Heritage “removed route” stack — same structure as Colab `mapLineStyles.ts`
+ * (`oldLineStyle` / `oldLineHaloStyle`): wide white underlay, then softer pink on top.
+ * Values here are **more ghostly** than Colab’s defaults (0.5 / 0.22): see `GHOST_REMOVED_*`
+ * constants so replaced segments read clearly as background, not competing with solid pink.
+ * Legibility is **two Leaflet polylines** (no CSS shadow). Projection canvas adds a **white**
+ * stroke fringe on the pink line only (see `_removedPinkStrokeShadow` in curated-layer-service).
+ */
+
 /** @type {LeafletPolylineLike} */
 const OLD_LINE = {
   color: "#ff69b4",
   weight: 4.5,
-  opacity: 0.5,
+  opacity: GHOST_REMOVED_LINE_OPACITY,
   lineCap: "round",
   lineJoin: "round",
 };
 
 /**
- * Colab `oldLineHaloStyle`.
+ * Soft white fringe under the ghost pink (Colab `oldLineHaloStyle` pattern; slightly wider
+ * at lower alpha so the halo still separates from the basemap).
  * @type {LeafletPolylineLike}
  */
 const OLD_HALO = {
   color: "#ffffff",
-  weight: 6,
-  opacity: 0.22,
+  weight: 5,
+  opacity: GHOST_REMOVED_HALO_OPACITY,
   lineCap: "round",
   lineJoin: "round",
 };
@@ -107,6 +160,7 @@ const OFFROAD_LINE = {
  * @param {string | null | undefined} displayColorHex
  * @returns {{
  *   solidLine: LeafletPolylineLike;
+ *   axisPackLine: LeafletPolylineLike;
  *   oldHalo: LeafletPolylineLike;
  *   oldLine: LeafletPolylineLike;
  *   proposedHalo: LeafletPolylineLike;
@@ -118,6 +172,7 @@ const OFFROAD_LINE = {
 export function routeLineStylesForDisplayColor(displayColorHex) {
   const base = {
     solidLine: { ...SOLID_LINE },
+    axisPackLine: { ...PINK_AXIS_PACK_LINE },
     oldHalo: { ...OLD_HALO },
     oldLine: { ...OLD_LINE },
     proposedHalo: { ...PROPOSED_HALO },

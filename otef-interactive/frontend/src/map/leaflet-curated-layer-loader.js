@@ -17,6 +17,11 @@ import {
   resolvePinkLinePackStyleBundle,
 } from "../shared/curated-layer-service.js";
 import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
+import {
+  colabBundleHasDetourPaint,
+  colabBundleHasRenderableGeometry,
+  parseColabRouteGeometryBundle,
+} from "../map-utils/colab-route-geometry-bundle.js";
 import { assignPinkNodeDisplayOrders } from "../map-utils/pink-route-optimizer.js";
 import {
   STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
@@ -41,6 +46,8 @@ import {
 import MapProjectionConfig from "../shared/map-projection-config.js";
 
 let pinkLineBaseLayerInstance = null;
+/** True when the last built pink base layer omitted vertices that overlap `removed` heritage (ghost) segments. */
+let pinkLineBaseLayerIsClipped = false;
 let pinkLineParkingLayerInstance = null;
 /** Bumped whenever pink-line parking is detached; invalidates in-flight parking fetches. */
 let pinkLineParkingAttachGeneration = 0;
@@ -171,23 +178,68 @@ function resolvePinkOverlayCircleMarkerStyle(styleKey, styles, offroadPaneName) 
 
 /**
  * Ensure the shared pink-line base layer is added to the Leaflet map.
- * Delegates data fetching to the shared CuratedLayerService.
+ *
+ * **Colab parity (`nur-colab-map` MapPage):** the live map does **not** draw a separate full
+ * heritage-pack polyline under the integrated overlay. It only draws `solid` + `removed` + detour
+ * from `buildIntegratedRoute*`. When a curated submission has `removed` heritage, we **omit**
+ * `pink_line_base` entirely and rely on overlay `solidLine` for kept segments — otherwise clipped
+ * pack geometry can still mismatch bundle vertices and read as a full-opacity line under the ghost.
+ *
+ * @param {{ removedPaths?: Array<Array<[number, number]>> }} [options]
  */
-async function ensurePinkLineBaseLayer() {
-  if (pinkLineBaseLayerInstance && map.hasLayer(pinkLineBaseLayerInstance)) return;
+async function ensurePinkLineBaseLayer(options = {}) {
+  const removedPaths = options.removedPaths;
+  const clip =
+    Array.isArray(removedPaths) &&
+    removedPaths.some((p) => Array.isArray(p) && p.length >= 2);
   try {
+    if (clip) {
+      if (pinkLineBaseLayerInstance && typeof map !== "undefined" && map) {
+        try {
+          if (map.hasLayer(pinkLineBaseLayerInstance)) {
+            map.removeLayer(pinkLineBaseLayerInstance);
+          }
+        } catch (_) {}
+        pinkLineBaseLayerInstance = null;
+      }
+      pinkLineBaseLayerIsClipped = true;
+      return;
+    }
     const [{ basePaths }, styleBundle] = await Promise.all([
       fetchPinkLinePaths(),
       resolvePinkLinePackStyleBundle(),
     ]);
     if (basePaths.length === 0) return;
+    const pathsToDraw = basePaths;
+    if (
+      pinkLineBaseLayerInstance &&
+      typeof map !== "undefined" &&
+      map &&
+      map.hasLayer(pinkLineBaseLayerInstance) &&
+      !pinkLineBaseLayerIsClipped
+    ) {
+      return;
+    }
+    if (pinkLineBaseLayerInstance && typeof map !== "undefined" && map) {
+      try {
+        if (map.hasLayer(pinkLineBaseLayerInstance)) {
+          map.removeLayer(pinkLineBaseLayerInstance);
+        }
+      } catch (_) {}
+      pinkLineBaseLayerInstance = null;
+    }
+    if (!pathsToDraw.length) {
+      pinkLineBaseLayerIsClipped = false;
+      return;
+    }
     const group = L.layerGroup();
     const baseStyle = styleBundle.leafletPolylineOptions;
-    basePaths.forEach((path) => {
+    pathsToDraw.forEach((path) => {
       group.addLayer(L.polyline(path, baseStyle));
     });
     group.addTo(map);
     pinkLineBaseLayerInstance = group;
+    pinkLineBaseLayerIsClipped = false;
   } catch (_) {}
 }
 
@@ -348,15 +400,20 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
       (f.geometry.type === "LineString" || f.geometry.type === "MultiLineString"),
   );
   const hasRouteUtils = typeof buildIntegratedRoute === "function";
+  const parsedBundle = parseColabRouteGeometryBundle(geojson.colab_route_geometry_bundle);
+  const bundleRenderable = colabBundleHasRenderableGeometry(parsedBundle);
+  // Allow pink overlay when Django enrich supplies a renderable `colab_route_geometry_bundle`
+  // even if the pink-line base pack is empty and there are no detour routing points.
   const usePinkLineProjection =
-    basePaths.length > 0 &&
-    (routingLatLng.length > 0 || hasAnyLineGeometryInGeojson);
+    hasRouteUtils &&
+    (bundleRenderable ||
+      (basePaths.length > 0 &&
+        (routingLatLng.length > 0 || hasAnyLineGeometryInGeojson)));
 
   // --- Leaflet-specific rendering ---
-  if (usePinkLineProjection && routingLatLng.length > 0 && hasRouteUtils) {
-    await ensurePinkLineBaseLayer();
-    const { solid, removed, dashed } = buildIntegratedRoute(basePaths, routingLatLng);
-
+  const canRunPinkOverlay =
+    usePinkLineProjection && (routingLatLng.length > 0 || bundleRenderable);
+  if (canRunPinkOverlay) {
     const fromGeoColor = resolveFirstDisplayColorFromGeojson(geojson);
     const submissionHex =
       fromGeoColor ??
@@ -374,48 +431,99 @@ async function loadCuratedLayerFromAPI(fullLayerId, loadedLayersMap, registerLoa
     };
     const nodeFillHex = fromGeoColor ?? submissionHex ?? styles.proposedLine.color;
 
-    const { pathsLatLng } = parsePinkLineRouteFromGeojson(geojson);
-    const hasStoredPinkRoute = pathsLatLng.some((p) => p.length >= 2);
+    let solid;
+    let removed;
+    let dashed = [];
+    let proposedPathsForOverlay = [];
+    let offroadSegmentsLatLng = [];
+    let offroadJunctionsLatLng = [];
+    let hasStoredPinkRoute = false;
 
-    if (!hasStoredPinkRoute) {
-      const isDev =
-        typeof import.meta !== "undefined" &&
-        import.meta.env &&
-        import.meta.env.DEV &&
-        import.meta.env.MODE !== "test";
-      if (isDev && !noStoredPinkRouteLoggedIds.has(fullLayerId)) {
-        noStoredPinkRouteLoggedIds.add(fullLayerId);
-        console.debug(
-          "[CuratedLayer] No pink_line_route LineString/MultiLineString; proposed route uses integrated dashed segments from buildIntegratedRoute.",
+    if (bundleRenderable) {
+      // Colab bundle path: geometry only from enrich bundle (no buildIntegratedRoute /
+      // parsePinkLineRouteFromGeojson offroad heuristics). Draw order matches
+      // `planPinkCuratedOverlayLayers` — see `docs/colab-export-detour-paint-handoff.md`.
+      solid = parsedBundle.integratedRoute.solid;
+      removed = parsedBundle.integratedRoute.removed;
+      proposedPathsForOverlay = parsedBundle.detourPaint.road.filter((p) => p.length >= 2);
+      offroadSegmentsLatLng = parsedBundle.detourPaint.offroad.map(({ roadEnd, target }) => [
+        roadEnd,
+        target,
+      ]);
+      hasStoredPinkRoute = true; // Same planPinkCuratedOverlayLayers branch as stored-route stacking (proposed paths + offroad + junctions), not “GeoJSON has pink_line_route”.
+      if (parsedBundle.detourPaint.junctions.length > 0) {
+        offroadJunctionsLatLng = parsedBundle.detourPaint.junctions.filter(
+          (p) => Array.isArray(p) && p.length === 2,
+        );
+      } else {
+        const seen = new Set();
+        offroadJunctionsLatLng = [];
+        for (const { roadEnd } of parsedBundle.detourPaint.offroad) {
+          const key = `${roadEnd[0]},${roadEnd[1]}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          offroadJunctionsLatLng.push(roadEnd);
+        }
+      }
+    } else {
+      const built = buildIntegratedRoute(basePaths, routingLatLng);
+      solid = built.solid;
+      removed = built.removed;
+      dashed = built.dashed;
+
+      const { pathsLatLng } = parsePinkLineRouteFromGeojson(geojson);
+      hasStoredPinkRoute = pathsLatLng.some((p) => p.length >= 2);
+
+      if (!hasStoredPinkRoute) {
+        const isDev =
+          typeof import.meta !== "undefined" &&
+          import.meta.env &&
+          import.meta.env.DEV &&
+          import.meta.env.MODE !== "test";
+        if (isDev && !noStoredPinkRouteLoggedIds.has(fullLayerId)) {
+          noStoredPinkRouteLoggedIds.add(fullLayerId);
+          console.debug(
+            "[CuratedLayer] No pink_line_route LineString/MultiLineString; proposed route uses integrated dashed segments from buildIntegratedRoute.",
+          );
+        }
+      }
+
+      const offroadEnabled = MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
+      proposedPathsForOverlay = pathsLatLng;
+      if (hasStoredPinkRoute && offroadEnabled) {
+        offroadSegmentsLatLng = findOffroadTwoPointSegments(
+          pathsLatLng,
+          STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
+        );
+        offroadJunctionsLatLng = collectOffroadJunctionLatLngs(offroadSegmentsLatLng);
+        proposedPathsForOverlay = clipProposedPathsLatLngExcludingOffroadGaps(
+          pathsLatLng,
+          STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
         );
       }
     }
 
-    const group = L.layerGroup();
-
-    const offroadEnabled = MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
-    let offroadSegmentsLatLng = [];
-    let offroadJunctionsLatLng = [];
-    let proposedPathsForOverlay = pathsLatLng;
-    if (hasStoredPinkRoute && offroadEnabled) {
-      offroadSegmentsLatLng = findOffroadTwoPointSegments(
-        pathsLatLng,
-        STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
-      );
-      offroadJunctionsLatLng = collectOffroadJunctionLatLngs(offroadSegmentsLatLng);
-      proposedPathsForOverlay = clipProposedPathsLatLngExcludingOffroadGaps(
-        pathsLatLng,
-        STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
+    if (basePaths.length > 0) {
+      const clipRemoved =
+        Array.isArray(removed) &&
+        removed.some((p) => Array.isArray(p) && p.length >= 2);
+      await ensurePinkLineBaseLayer(
+        clipRemoved ? { removedPaths: removed } : {},
       );
     }
+
+    const group = L.layerGroup();
 
     const offroadPaneName =
       offroadSegmentsLatLng.length > 0 && typeof map !== "undefined" && map
         ? ensureCuratedPinkOffroadPane(map)
         : "";
 
+    const hasDetourPoints =
+      routingLatLng.length > 0 || colabBundleHasDetourPaint(parsedBundle);
+
     const overlayOps = planPinkCuratedOverlayLayers({
-      hasDetourPoints: routingLatLng.length > 0,
+      hasDetourPoints,
       hasStoredPinkRoute,
       includeProposedSecondary: proposedTint.proposedSecondary != null,
       solid,

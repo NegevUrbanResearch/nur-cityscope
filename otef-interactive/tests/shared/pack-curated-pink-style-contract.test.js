@@ -18,15 +18,15 @@ import { resolvePinkLinePackStyleBundle } from "../../frontend/src/shared/curate
 import { routeLineStylesForDisplayColor } from "../../frontend/src/map-utils/pink-route-map-styles.js";
 
 describe("pack vs curated pink symbology", () => {
-  it("MATCH: pack primary stroke matches curated solidLine tokens", async () => {
+  it("MATCH: pack primary stroke matches curated axisPackLine tokens", async () => {
     const bundle = await resolvePinkLinePackStyleBundle();
     const curated = routeLineStylesForDisplayColor(null);
     expect(bundle.leafletPolylineOptions.color.toUpperCase()).toBe(
-      curated.solidLine.color.toUpperCase(),
+      curated.axisPackLine.color.toUpperCase(),
     );
-    expect(bundle.leafletPolylineOptions.weight).toBe(curated.solidLine.weight);
-    expect(bundle.leafletPolylineOptions.opacity).toBe(curated.solidLine.opacity);
-    expect(bundle.leafletPolylineOptions.lineCap).toBe(curated.solidLine.lineCap);
-    expect(bundle.leafletPolylineOptions.lineJoin).toBe(curated.solidLine.lineJoin);
+    expect(bundle.leafletPolylineOptions.weight).toBe(curated.axisPackLine.weight);
+    expect(bundle.leafletPolylineOptions.opacity).toBe(curated.axisPackLine.opacity);
+    expect(bundle.leafletPolylineOptions.lineCap).toBe(curated.axisPackLine.lineCap);
+    expect(bundle.leafletPolylineOptions.lineJoin).toBe(curated.axisPackLine.lineJoin);
   });
 });

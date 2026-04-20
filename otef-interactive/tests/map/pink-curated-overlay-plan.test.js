@@ -54,6 +54,23 @@ describe("planPinkCuratedOverlayLayers", () => {
     expect(polylineRoles(ops)).toEqual(["solid"]);
   });
 
+  it("no detour-points flag but non-empty removed: still emits ghost halo/stroke (not proposed)", () => {
+    const ops = planPinkCuratedOverlayLayers({
+      hasDetourPoints: false,
+      hasStoredPinkRoute: true,
+      solid: base.solid,
+      removed: base.removed,
+      proposedPathsLatLng: base.proposedPathsLatLng,
+      offroadSegmentsLatLng: base.offroadSegmentsLatLng,
+      offroadJunctionsLatLng: base.offroadJunctionsLatLng,
+    });
+    expect(polylineRoles(ops)).toEqual([
+      "solid",
+      "removedHalo",
+      "removedStroke",
+    ]);
+  });
+
   it("detour + no stored route: solid, removed halo/stroke, proposed halo + stroke (planner segments)", () => {
     const ops = planPinkCuratedOverlayLayers({
       hasDetourPoints: true,

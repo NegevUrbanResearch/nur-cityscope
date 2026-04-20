@@ -13,6 +13,10 @@ import {
   buildIntegratedRoute,
 } from "../map-utils/pink-line-route.js";
 import {
+  colabBundleHasRenderableGeometry,
+  parseColabRouteGeometryBundle,
+} from "../map-utils/colab-route-geometry-bundle.js";
+import {
   routeLineStylesForDisplayColor,
   STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
 } from "../map-utils/pink-route-map-styles.js";
@@ -124,9 +128,10 @@ function leafletPropsToPolylineOptions(leafletProps) {
  * uses for `future_development` line layers (priority matches GeoJSON fetch).
  *
  * MATCH (curated parity): **color**, **weight**, **opacity**, **lineCap**, and **lineJoin**
- * align to `routeLineStylesForDisplayColor(null).solidLine`. **`dashArray`** is taken from the
- * pack / raw style only when the raw style provides it (spread raw first, then overlay solid
- * tokens) so dashed pack lines stay dashed while the default pink axis stays solid.
+ * align to `routeLineStylesForDisplayColor(null).axisPackLine` (regional axis pack line, not overlay
+ * `solidLine`). **`dashArray`** is taken from the pack / raw style only when the raw style provides
+ * it (spread raw first, then overlay axis-pack tokens) so dashed pack lines stay dashed while the
+ * default pink axis stays solid.
  *
  * @returns {Promise<{
  *   styleConfigForProjection: { style: Object },
@@ -177,16 +182,16 @@ async function resolvePinkLinePackStyleBundle() {
       ? AdvancedStyleEngine.getLeafletStyleFunction(layerConfigForEngine)
       : () => ({ color: "#ff7f7f", weight: 1.3333333333333333, opacity: 1 });
 
-  const curatedSolidLine = routeLineStylesForDisplayColor(null).solidLine;
+  const curatedAxisPackLine = routeLineStylesForDisplayColor(null).axisPackLine;
   const styleFunction = (feature) => {
     const s = rawStyleFunction(feature) || {};
     return {
       ...s,
-      color: curatedSolidLine.color,
-      weight: curatedSolidLine.weight,
-      opacity: curatedSolidLine.opacity,
-      lineCap: curatedSolidLine.lineCap,
-      lineJoin: curatedSolidLine.lineJoin,
+      color: curatedAxisPackLine.color,
+      weight: curatedAxisPackLine.weight,
+      opacity: curatedAxisPackLine.opacity,
+      lineCap: curatedAxisPackLine.lineCap,
+      lineJoin: curatedAxisPackLine.lineJoin,
     };
   };
 
@@ -533,34 +538,21 @@ function pushCuratedLineWgs84(features, ptsLatLng, curatedStyle, extraProperties
 }
 
 /**
- * Projection canvas is composited over imagery with transparency; faint white halos
- * (0.22 opacity) read as dark gaps under dashed strokes. Boost removed-route halo and
- * ghost line opacities so the projector matches GIS legibility (Colab `mapLineStyles`).
- * Proposed halo (`pink_proposed_halo`) is not altered — boosting its wide `#e8eef5`
- * underlay made a visible grey rim on the projector; base Colab token opacity is kept.
+ * Legacy hook kept for call sites (`projection-curated-layer-load`, `projection-layer-manager`).
+ *
+ * **Previously** this function **rewrote** `_curatedStyle.opacity` on `pink_removed_halo` /
+ * `pink_removed_line` features with `Math.max` floors (e.g. minimum ~0.32 on the pink ghost
+ * line). That meant edits to ghost opacity in `pink-route-map-styles.js` (`GHOST_REMOVED_*`)
+ * had **no effect on the projector** — opacity looked “stuck” while GIS could still change.
+ *
+ * Ghost stroke opacity is now **only** whatever `leafletPolylineLikeToCuratedCanvas` copies
+ * from `routeLineStylesForDisplayColor` (same tokens as Leaflet). Tune **`GHOST_REMOVED_LINE_OPACITY`**
+ * and **`GHOST_REMOVED_HALO_OPACITY`** in `pink-route-map-styles.js` for both surfaces.
  *
  * @param {Object|null|undefined} geojsonWgs84
  */
 function applyProjectionCuratedOverlayContrast(geojsonWgs84) {
-  if (!geojsonWgs84 || !Array.isArray(geojsonWgs84.features)) return;
-  for (const f of geojsonWgs84.features) {
-    const props = f.properties;
-    if (!props || typeof props !== "object") continue;
-    const role = props.curated_overlay_role;
-    const st = props._curatedStyle;
-    if (!st || typeof st !== "object") continue;
-    let newOpacity;
-    if (role === "pink_removed_halo") {
-      const o = typeof st.opacity === "number" ? st.opacity : 0.32;
-      newOpacity = Math.min(1, Math.max(0.58, o * 2.15));
-    } else if (role === "pink_removed_line") {
-      const o = typeof st.opacity === "number" ? st.opacity : 0.4;
-      newOpacity = Math.min(1, Math.max(0.6, o * 1.32));
-    } else {
-      continue;
-    }
-    f.properties = { ...props, _curatedStyle: { ...st, opacity: newOpacity } };
-  }
+  void geojsonWgs84;
 }
 
 /**
@@ -568,8 +560,9 @@ function applyProjectionCuratedOverlayContrast(geojsonWgs84) {
  * for canvas projection — mirrors the GIS `leaflet-curated-layer-loader` stack.
  *
  * `basePaths` may be an empty array when the overlay is driven by detour points only
- * (planner branch) or when tests pass `[]` for parity; `buildIntegratedRoute` still
- * runs with no base segments in those cases.
+ * (planner branch), by `colab_route_geometry_bundle` (Django enrich), or when tests pass
+ * `[]` for parity. Without a renderable bundle, `buildIntegratedRoute` still runs with no
+ * base segments when detour points exist.
  *
  * @param {Array} basePaths - pink-line base paths [[lat,lng], …]; may be `[]` (see above)
  * @param {Object} geojsonWgs84 - published submission FeatureCollection (WGS84)
@@ -594,6 +587,10 @@ function buildColabAlignedCuratedOverlayGeoJSON(
   /** When no pink detour nodes, use non-memorial Point coordinates for `buildIntegratedRoute` (projection workshop edge cases). */
   const useAllPointsAsDetourWhenEmpty = opts.useAllPointsAsDetourWhenEmpty === true;
   const basePathsResolved = Array.isArray(basePaths) ? basePaths : [];
+  const parsedColabBundle = parseColabRouteGeometryBundle(
+    geojsonWgs84.colab_route_geometry_bundle,
+  );
+
   const detourPointItems = extractPinkDetourPointFeatures(geojsonWgs84);
   let userPointsDetour = detourPointItems.map((x) => x.latlng);
   if (userPointsDetour.length === 0 && useAllPointsAsDetourWhenEmpty) {
@@ -601,12 +598,13 @@ function buildColabAlignedCuratedOverlayGeoJSON(
       .filter((x) => !getMemorialIconForFeature(x.feature.properties || {}))
       .map((x) => x.latlng);
   }
-  if (userPointsDetour.length === 0) return null;
+  if (
+    userPointsDetour.length === 0 &&
+    !colabBundleHasRenderableGeometry(parsedColabBundle)
+  ) {
+    return null;
+  }
 
-  const { solid, removed, dashed } = buildIntegratedRoute(
-    basePathsResolved,
-    userPointsDetour,
-  );
   const fromGeoColor = resolveFirstDisplayColorFromGeojson(geojsonWgs84);
   const normalizedFallback =
     fallbackDisplayColorHex != null &&
@@ -628,14 +626,13 @@ function buildColabAlignedCuratedOverlayGeoJSON(
   const nodeFillHex =
     fromGeoColor ?? normalizedFallback ?? styles.proposedLine.color;
 
-  const { pathsLatLng } = parsePinkLineRouteFromGeojson(geojsonWgs84);
-  const hasStoredPinkRoute = pathsLatLng.some((p) => p.length >= 2);
-
   const features = [];
 
   /**
    * Proposed paths: GeoJSON feature order is canvas draw order — halo (bottom),
    * optional `pink_proposed_secondary` dual dash, then `pink_proposed_line` (top).
+   * Draw order matches `planPinkCuratedOverlayLayers` / Colab: see
+   * `docs/colab-export-detour-paint-handoff.md`.
    */
   function pushProposedPinkStack(ptsLatLng) {
     if (!ptsLatLng || ptsLatLng.length < 2) return;
@@ -661,78 +658,165 @@ function buildColabAlignedCuratedOverlayGeoJSON(
     );
   }
 
-  solid.forEach((pts) => {
-    pushCuratedLineWgs84(
-      features,
-      pts,
-      leafletPolylineLikeToCuratedCanvas(styles.solidLine),
-      { curated_overlay_role: "pink_axis_solid" },
-    );
-  });
-  removed.forEach((pts) => {
-    pushCuratedLineWgs84(
-      features,
-      pts,
-      leafletPolylineLikeToCuratedCanvas(styles.oldHalo),
-      { curated_overlay_role: "pink_removed_halo" },
-    );
-  });
-  removed.forEach((pts) => {
-    pushCuratedLineWgs84(
-      features,
-      pts,
-      leafletPolylineLikeToCuratedCanvas(styles.oldLine),
-      { curated_overlay_role: "pink_removed_line" },
-    );
-  });
-
-  if (hasStoredPinkRoute) {
-    const offroadEnabled = MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
-    const proposedOverlayPaths =
-      offroadEnabled && pathsLatLng.length > 0
-        ? clipProposedPathsLatLngExcludingOffroadGaps(
-            pathsLatLng,
-            STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
-          )
-        : pathsLatLng;
-    for (const path of proposedOverlayPaths) {
+  if (parsedColabBundle.ok && colabBundleHasRenderableGeometry(parsedColabBundle)) {
+    const { solid, removed } = parsedColabBundle.integratedRoute;
+    const { detourPaint } = parsedColabBundle;
+    solid.forEach((pts) => {
+      if (!pts || pts.length < 2) return;
+      pushCuratedLineWgs84(
+        features,
+        pts,
+        leafletPolylineLikeToCuratedCanvas(styles.solidLine),
+        { curated_overlay_role: "pink_axis_solid" },
+      );
+    });
+    removed.forEach((pts) => {
+      if (!pts || pts.length < 2) return;
+      pushCuratedLineWgs84(
+        features,
+        pts,
+        leafletPolylineLikeToCuratedCanvas(styles.oldHalo),
+        { curated_overlay_role: "pink_removed_halo" },
+      );
+    });
+    removed.forEach((pts) => {
+      if (!pts || pts.length < 2) return;
+      pushCuratedLineWgs84(
+        features,
+        pts,
+        {
+          ...leafletPolylineLikeToCuratedCanvas(styles.oldLine),
+          _removedPinkStrokeShadow: true,
+        },
+        { curated_overlay_role: "pink_removed_line" },
+      );
+    });
+    for (const path of detourPaint.road) {
       if (path.length < 2) continue;
       pushProposedPinkStack(path);
     }
-    if (offroadEnabled) {
-      const segs = findOffroadTwoPointSegments(
-        pathsLatLng,
-        STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
-      );
-      const offStyle = leafletPolylineLikeToCuratedCanvas(styles.offroadLine);
-      segs.forEach((seg) => {
-        pushCuratedLineWgs84(features, seg, offStyle, {
-          curated_overlay_role: "pink_offroad_segment",
-        });
+    const offStyle = leafletPolylineLikeToCuratedCanvas(styles.offroadLine);
+    detourPaint.offroad.forEach(({ roadEnd, target }) => {
+      pushCuratedLineWgs84(features, [roadEnd, target], offStyle, {
+        curated_overlay_role: "pink_offroad_segment",
       });
-      for (const [lat, lng] of collectOffroadJunctionLatLngs(segs)) {
-        features.push({
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [lng, lat] },
-          properties: {
-            curated_overlay_role: "pink_offroad_junction",
-            _curatedStyle: {
-              fillColor: styles.offroadLine.color,
-              color: "#fff",
-              weight: 2,
-              fillOpacity: 0.95,
-              opacity: 1,
-              radius: 11,
-              _offroadJunctionCanvas: true,
-            },
-          },
-        });
+    });
+    let junctionLatLngs = detourPaint.junctions.filter(
+      (p) => Array.isArray(p) && p.length === 2,
+    );
+    if (junctionLatLngs.length === 0) {
+      const seen = new Set();
+      junctionLatLngs = [];
+      for (const { roadEnd } of detourPaint.offroad) {
+        const key = `${roadEnd[0]},${roadEnd[1]}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        junctionLatLngs.push(roadEnd);
       }
     }
+    for (const [lat, lng] of junctionLatLngs) {
+      features.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [lng, lat] },
+        properties: {
+          curated_overlay_role: "pink_offroad_junction",
+          _curatedStyle: {
+            fillColor: styles.offroadLine.color,
+            color: "#fff",
+            weight: 2,
+            fillOpacity: 0.95,
+            opacity: 1,
+            radius: 11,
+            _offroadJunctionCanvas: true,
+          },
+        },
+      });
+    }
   } else {
-    dashed.forEach((pts) => {
-      pushProposedPinkStack(pts);
+    const { solid, removed, dashed } = buildIntegratedRoute(
+      basePathsResolved,
+      userPointsDetour,
+    );
+
+    const { pathsLatLng } = parsePinkLineRouteFromGeojson(geojsonWgs84);
+    const hasStoredPinkRoute = pathsLatLng.some((p) => p.length >= 2);
+
+    solid.forEach((pts) => {
+      pushCuratedLineWgs84(
+        features,
+        pts,
+        leafletPolylineLikeToCuratedCanvas(styles.solidLine),
+        { curated_overlay_role: "pink_axis_solid" },
+      );
     });
+    removed.forEach((pts) => {
+      pushCuratedLineWgs84(
+        features,
+        pts,
+        leafletPolylineLikeToCuratedCanvas(styles.oldHalo),
+        { curated_overlay_role: "pink_removed_halo" },
+      );
+    });
+    removed.forEach((pts) => {
+      pushCuratedLineWgs84(
+        features,
+        pts,
+        {
+          ...leafletPolylineLikeToCuratedCanvas(styles.oldLine),
+          _removedPinkStrokeShadow: true,
+        },
+        { curated_overlay_role: "pink_removed_line" },
+      );
+    });
+
+    if (hasStoredPinkRoute) {
+      const offroadEnabled = MapProjectionConfig.ENABLE_CURATED_OFFROAD_SPLIT === true;
+      const proposedOverlayPaths =
+        offroadEnabled && pathsLatLng.length > 0
+          ? clipProposedPathsLatLngExcludingOffroadGaps(
+              pathsLatLng,
+              STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
+            )
+          : pathsLatLng;
+      for (const path of proposedOverlayPaths) {
+        if (path.length < 2) continue;
+        pushProposedPinkStack(path);
+      }
+      if (offroadEnabled) {
+        const segs = findOffroadTwoPointSegments(
+          pathsLatLng,
+          STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
+        );
+        const offSegStyle = leafletPolylineLikeToCuratedCanvas(styles.offroadLine);
+        segs.forEach((seg) => {
+          pushCuratedLineWgs84(features, seg, offSegStyle, {
+            curated_overlay_role: "pink_offroad_segment",
+          });
+        });
+        for (const [lat, lng] of collectOffroadJunctionLatLngs(segs)) {
+          features.push({
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [lng, lat] },
+            properties: {
+              curated_overlay_role: "pink_offroad_junction",
+              _curatedStyle: {
+                fillColor: styles.offroadLine.color,
+                color: "#fff",
+                weight: 2,
+                fillOpacity: 0.95,
+                opacity: 1,
+                radius: 11,
+                _offroadJunctionCanvas: true,
+              },
+            },
+          });
+        }
+      }
+    } else {
+      dashed.forEach((pts) => {
+        pushProposedPinkStack(pts);
+      });
+    }
   }
 
   const pointItems = extractPointFeatures(geojsonWgs84);

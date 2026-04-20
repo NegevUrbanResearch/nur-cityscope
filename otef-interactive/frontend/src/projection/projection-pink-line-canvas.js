@@ -27,17 +27,52 @@ function createProjectionPinkLineCanvasController(options) {
   let projectionPinkParkingAttachGeneration = 0;
   let projectionPinkLineBaseVisibleIntent = true;
   let projectionPinkLineParkingVisibleIntent = true;
+  /** True when the last registered pink base omitted vertices overlapping removed heritage. */
+  let projectionPinkLineBaseIsClipped = false;
 
-  async function ensureProjectionPinkLineBaseLayer() {
-    if (loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
+  /**
+   * Same contract as GIS `ensurePinkLineBaseLayer`: when `removedPaths` is non-empty, **omit** the
+   * regional pack base (Colab MapPage does not draw a full axis under integrated solid/removed).
+   *
+   * @param {{ removedPaths?: Array<Array<[number, number]>> }} [options]
+   */
+  async function ensureProjectionPinkLineBaseLayer(options = {}) {
+    const removedPaths = options.removedPaths;
+    const clip =
+      Array.isArray(removedPaths) &&
+      removedPaths.some((p) => Array.isArray(p) && p.length >= 2);
     const canvasRenderer = getCanvasRenderer();
     try {
+      if (clip) {
+        if (loadedLayers[PINK_LINE_BASE_LAYER_ID]) {
+          delete loadedLayers[PINK_LINE_BASE_LAYER_ID];
+          if (canvasRenderer && typeof canvasRenderer.removeLayer === "function") {
+            canvasRenderer.removeLayer(PINK_LINE_BASE_LAYER_ID);
+          }
+        }
+        projectionPinkLineBaseIsClipped = true;
+        return;
+      }
       const [{ basePaths }, styleBundle] = await Promise.all([
         fetchPinkLinePaths(),
         resolvePinkLinePackStyleBundle(),
       ]);
       if (basePaths.length === 0) return;
-      const features = basePaths.map((path) => ({
+      const pathsToDraw = basePaths;
+      if (loadedLayers[PINK_LINE_BASE_LAYER_ID] && !projectionPinkLineBaseIsClipped) {
+        return;
+      }
+      if (loadedLayers[PINK_LINE_BASE_LAYER_ID]) {
+        delete loadedLayers[PINK_LINE_BASE_LAYER_ID];
+        if (canvasRenderer && typeof canvasRenderer.removeLayer === "function") {
+          canvasRenderer.removeLayer(PINK_LINE_BASE_LAYER_ID);
+        }
+      }
+      if (pathsToDraw.length === 0) {
+        projectionPinkLineBaseIsClipped = false;
+        return;
+      }
+      const features = pathsToDraw.map((path) => ({
         type: "Feature",
         geometry: {
           type: "LineString",
@@ -69,6 +104,7 @@ function createProjectionPinkLineCanvasController(options) {
       if (projectionPinkLineParkingVisibleIntent) {
         await ensureProjectionPinkLineParkingLayer();
       }
+      projectionPinkLineBaseIsClipped = false;
     } catch (err) {
       if (
         typeof MapProjectionConfig !== "undefined" &&

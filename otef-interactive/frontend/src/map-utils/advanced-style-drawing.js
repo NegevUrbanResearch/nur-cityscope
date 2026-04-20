@@ -136,6 +136,18 @@ class AdvancedStyleDrawing {
             ? sl.dashOffset
             : null,
       };
+      if (
+        typeof sl.shadowBlur === "number" &&
+        sl.shadowBlur > 0 &&
+        sl.shadowColor
+      ) {
+        styleForDraw.shadowBlur = sl.shadowBlur;
+        styleForDraw.shadowColor = sl.shadowColor;
+        styleForDraw.shadowOffsetX =
+          typeof sl.shadowOffsetX === "number" ? sl.shadowOffsetX : 0;
+        styleForDraw.shadowOffsetY =
+          typeof sl.shadowOffsetY === "number" ? sl.shadowOffsetY : 1;
+      }
 
       for (const line of lines) {
         this._drawLineString(
@@ -560,9 +572,27 @@ class AdvancedStyleDrawing {
     viewContext,
   ) {
     if (!coords || coords.length < 2) return;
+    // Avoid drawing (and canvas shadow) when stroke is fully transparent — otherwise some
+    // browsers still show `shadowBlur` fringe for “invisible” strokes.
+    if (
+      !(typeof lineWidth === "number" && lineWidth > 0) ||
+      !(typeof strokeOpacity === "number" && strokeOpacity > 0)
+    ) {
+      return;
+    }
 
     const flow = style && style.flow;
     const phasePx = Number(flow?.phasePx) || 0;
+    const skipLineShadowForFlow =
+      flow &&
+      flow.enabled &&
+      (flow.mode === "reveal" || flow.mode === "trail");
+    const useLineShadow =
+      style &&
+      !skipLineShadowForFlow &&
+      typeof style.shadowBlur === "number" &&
+      style.shadowBlur > 0 &&
+      style.shadowColor;
 
     // Build pixel path once for modes that need length or reuse
     const pts = coords.map((c) => viewContext.coordToPixel(c));
@@ -705,7 +735,20 @@ class AdvancedStyleDrawing {
     if (flow && flow.enabled && typeof flow.opacity === "number") {
       ctx.globalAlpha = prevAlpha * flow.opacity;
     }
+    // Stroke shadow: full path only. Skipped for reveal/trail (partial geometry / moving head).
+    if (useLineShadow) {
+      ctx.save();
+      ctx.shadowColor = style.shadowColor;
+      ctx.shadowBlur = style.shadowBlur;
+      ctx.shadowOffsetX =
+        typeof style.shadowOffsetX === "number" ? style.shadowOffsetX : 0;
+      ctx.shadowOffsetY =
+        typeof style.shadowOffsetY === "number" ? style.shadowOffsetY : 0;
+    }
     ctx.stroke();
+    if (useLineShadow) {
+      ctx.restore();
+    }
     ctx.globalAlpha = prevAlpha;
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;

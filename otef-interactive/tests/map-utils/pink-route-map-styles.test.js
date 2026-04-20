@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  GHOST_REMOVED_HALO_OPACITY,
+  GHOST_REMOVED_LINE_OPACITY,
   OFFICIAL_NETWORK_GAP_METERS,
   STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
   routeLineStylesForDisplayColor,
@@ -45,6 +47,20 @@ describe("pink-route-map-styles", () => {
     }
   });
 
+  test("solidLine and axisPackLine share default numbers but are distinct objects", () => {
+    for (const hex of [null, "#16A34A"]) {
+      const styles = routeLineStylesForDisplayColor(hex);
+      expect(styles.solidLine).not.toBe(styles.axisPackLine);
+      expect(styles.axisPackLine).toMatchObject({
+        color: styles.solidLine.color,
+        weight: styles.solidLine.weight,
+        opacity: styles.solidLine.opacity,
+        lineCap: styles.solidLine.lineCap,
+        lineJoin: styles.solidLine.lineJoin,
+      });
+    }
+  });
+
   test("solid and ghost strokes stay Colab fixed pinks regardless of display hex", () => {
     const styles = routeLineStylesForDisplayColor("#16A34A");
     expect(styles.solidLine).toMatchObject({
@@ -54,17 +70,24 @@ describe("pink-route-map-styles", () => {
       lineCap: "round",
       lineJoin: "round",
     });
+    expect(styles.axisPackLine).toMatchObject({
+      color: "#FF69B4",
+      weight: 5,
+      opacity: 0.9,
+      lineCap: "round",
+      lineJoin: "round",
+    });
     expect(styles.oldLine).toMatchObject({
       color: "#ff69b4",
       weight: 4.5,
-      opacity: 0.5,
+      opacity: GHOST_REMOVED_LINE_OPACITY,
       lineCap: "round",
       lineJoin: "round",
     });
     expect(styles.oldHalo).toMatchObject({
       color: "#ffffff",
-      weight: 6,
-      opacity: 0.22,
+      weight: 7,
+      opacity: GHOST_REMOVED_HALO_OPACITY,
       lineCap: "round",
       lineJoin: "round",
     });
@@ -94,6 +117,8 @@ describe("pink-route-map-styles", () => {
     const b = routeLineStylesForDisplayColor("#16A34A");
     expect(a.proposedLine).not.toBe(b.proposedLine);
     expect(a.proposedSecondary).not.toBe(b.proposedSecondary);
+    expect(a.solidLine).not.toBe(b.solidLine);
+    expect(a.axisPackLine).not.toBe(b.axisPackLine);
     a.proposedLine.weight = 99;
     a.proposedSecondary.weight = 88;
     expect(b.proposedLine.weight).toBe(6);

@@ -1,12 +1,19 @@
 // Curated projection layers: API load + listing enabled ids + Supabase reload.
 // projection-layer-manager builds `deps` and calls into this module.
 
+import {
+  colabBundleHasRenderableGeometry,
+  parseColabRouteGeometryBundle,
+} from "../map-utils/colab-route-geometry-bundle.js";
+
 export async function loadProjectionCuratedLayerFromAPI(deps, fullLayerId) {
   const {
     CoordUtils,
     loadedLayers,
     fetchCuratedLayerData,
     fetchPinkLinePaths,
+    extractPointFeatures,
+    extractPinkDetourPointFeatures,
     buildColabAlignedCuratedOverlayGeoJSON,
     applyProjectionCuratedOverlayContrast,
     getMemorialIconForFeature,
@@ -33,21 +40,60 @@ export async function loadProjectionCuratedLayerFromAPI(deps, fullLayerId) {
     wgs84Geojson = CoordUtils.transformGeojsonToWgs84(geojson);
   }
 
-  const pointFeatures = (wgs84Geojson.features || []).filter(
-    (f) => f.geometry && f.geometry.type === "Point" && f.geometry.coordinates,
+  const pointItems = extractPointFeatures(wgs84Geojson);
+
+  const { basePaths } = await fetchPinkLinePaths();
+  const hasRouteUtils = typeof buildIntegratedRoute === "function";
+  const parsedBundle = parseColabRouteGeometryBundle(
+    wgs84Geojson.colab_route_geometry_bundle,
+  );
+  const bundleRenderable = colabBundleHasRenderableGeometry(parsedBundle);
+  const hasAnyLineGeometryInGeojson = (wgs84Geojson.features || []).some(
+    (f) =>
+      f.geometry &&
+      (f.geometry.type === "LineString" || f.geometry.type === "MultiLineString"),
   );
 
-  const hasRouteUtils = typeof buildIntegratedRoute === "function";
+  const detourPointItems = extractPinkDetourPointFeatures(wgs84Geojson);
+  let routingLatLng = detourPointItems.map((x) => x.latlng);
+  if (routingLatLng.length === 0 && pointItems.length > 0) {
+    routingLatLng = pointItems
+      .filter(({ feature }) => !getMemorialIconForFeature(feature.properties || {}))
+      .map((x) => x.latlng);
+  }
+
+  /** Mirrors `leaflet-curated-layer-loader.js` `usePinkLineProjection` + `canRunPinkOverlay`. */
+  const usePinkLineProjection =
+    hasRouteUtils &&
+    (bundleRenderable ||
+      (basePaths.length > 0 &&
+        (routingLatLng.length > 0 || hasAnyLineGeometryInGeojson)));
+  const canRunPinkOverlay =
+    usePinkLineProjection && (routingLatLng.length > 0 || bundleRenderable);
+
+  /** Same `removed` heritage as GIS overlay — used to clip regional axis under ghost segments. */
+  let removedForBaseClip = [];
+  if (bundleRenderable) {
+    removedForBaseClip = parsedBundle.integratedRoute?.removed || [];
+  } else if (basePaths.length > 0) {
+    const br = buildIntegratedRoute(basePaths, routingLatLng);
+    removedForBaseClip = br.removed;
+  }
 
   let builtGeojson = null;
-  const { basePaths } = await fetchPinkLinePaths();
-  if (basePaths.length > 0 && hasRouteUtils && pointFeatures.length > 0) {
-    await ensureProjectionPinkLineBaseLayer();
+  if (canRunPinkOverlay) {
+    if (basePaths.length > 0) {
+      const clipRemoved =
+        Array.isArray(removedForBaseClip) &&
+        removedForBaseClip.some((p) => Array.isArray(p) && p.length >= 2);
+      await ensureProjectionPinkLineBaseLayer(
+        clipRemoved ? { removedPaths: removedForBaseClip } : {},
+      );
+    }
     const submissionPrimary = getSubmissionDisplayPrimaryForCuratedLayer(
       fullLayerId,
       layerData,
     );
-    // Three-layer proposed stack matches Colab/leaflet curated overlay (buildColabAlignedCuratedOverlayGeoJSON).
     builtGeojson = buildColabAlignedCuratedOverlayGeoJSON(
       basePaths,
       wgs84Geojson,
@@ -77,8 +123,8 @@ export async function loadProjectionCuratedLayerFromAPI(deps, fullLayerId) {
     return;
   }
 
-  if (pointFeatures.length > 0) {
-    const features = pointFeatures.map((f) => {
+  if (pointItems.length > 0) {
+    const features = pointItems.map(({ feature: f }) => {
       const c = f.geometry.coordinates;
       const props = f.properties || {};
       const iconUrl = getMemorialIconForFeature(props);

@@ -7,6 +7,8 @@ import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
 import {
   fetchCuratedLayerData,
   fetchPinkLinePaths,
+  extractPointFeatures,
+  extractPinkDetourPointFeatures,
   buildColabAlignedCuratedOverlayGeoJSON,
   applyProjectionCuratedOverlayContrast,
   getMemorialIconForFeature,
@@ -227,6 +229,8 @@ function updateWmtsVisibility(fullLayerId, visible) {
         loadedLayers,
         fetchCuratedLayerData,
         fetchPinkLinePaths,
+        extractPointFeatures,
+        extractPinkDetourPointFeatures,
         buildColabAlignedCuratedOverlayGeoJSON,
         applyProjectionCuratedOverlayContrast,
         getMemorialIconForFeature,

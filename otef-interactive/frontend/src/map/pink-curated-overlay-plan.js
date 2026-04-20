@@ -51,6 +51,9 @@ function pushProposedPathOverlayOps(ops, latLngs, includeProposedSecondary) {
  * Colab unified order: solid → removed (halo, stroke) → proposed paths (each: halo → optional
  * secondary dashed → primary dashed). Stored `pink_line_route` geometry and the no-stored-route
  * integrated `dashedPlanner` segments use the **same** op sequence (dual-stack parity).
+ * Removed ghost polylines are emitted whenever `removed` has drawable segments — **not** gated
+ * by `hasDetourPoints` (bundle-only workflows may have no routing points but still carry
+ * `integrated_route.removed`). Proposed / dashedPlanner / offroad **are** gated by `hasDetourPoints`.
  * When `hasStoredPinkRoute === true`, planner detour segments are not drawn as proposed here;
  * offroad connectors and junction markers follow proposed paths.
  *
@@ -94,10 +97,9 @@ export function planPinkCuratedOverlayLayers(input) {
     }
   }
 
-  if (!hasDetourPoints) {
-    return ops;
-  }
-
+  // Ghost stack (`oldHalo` / `oldLine`) must not depend on `hasDetourPoints`. Bundle-only or
+  // point-free workflows can still supply `integrated_route.removed`; previously we returned
+  // before this block when `hasDetourPoints` was false, so `GHOST_REMOVED_*` never applied.
   for (const latLngs of removed) {
     if (!Array.isArray(latLngs) || latLngs.length < 2) continue;
     ops.push({
@@ -112,6 +114,10 @@ export function planPinkCuratedOverlayLayers(input) {
       latLngs,
       styleKey: "oldLine",
     });
+  }
+
+  if (!hasDetourPoints) {
+    return ops;
   }
 
   if (hasStoredPinkRoute) {

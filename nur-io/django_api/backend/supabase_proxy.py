@@ -132,6 +132,48 @@ def _fetch_submission_geojson_fc(submission_id):
     return _rows_to_geojson_feature_collection(rows), None
 
 
+def _normalize_colab_route_geometry_bundle_value(raw):
+    """
+    Parse/normalize submission_batches.colab_route_geometry_bundle for GeoJSON merge.
+
+    The Colab bundle is always a top-level JSON object. Returns a JSON-serializable
+    dict, or None when absent, empty string, invalid JSON, or when the value is not
+    an object (e.g. a JSON array, primitive, or a Python list).
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, list):
+        return None
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return None
+        try:
+            parsed = json.loads(s)
+        except (TypeError, ValueError):
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+        return None
+    return None
+
+
+def _submission_batches_sync_fetch_err_is_schema_retryable(err):
+    """True when PostgREST likely failed due to a missing optional submission_batches column."""
+    msg_l = str(err or "").lower()
+    if not msg_l:
+        return False
+    if "display_color" in msg_l:
+        return True
+    if "colab_route_geometry_bundle" in msg_l:
+        return True
+    if "column" in msg_l and "does not exist" in msg_l:
+        return True
+    return False
+
+
 def enrich_feature_collection_with_submission_batch(fc, submission_id, batch_row):
     """
     Merge submission_batches display_color (sanitized) and submission_name into every
@@ -145,6 +187,12 @@ def enrich_feature_collection_with_submission_batch(fc, submission_id, batch_row
     every feature. When the batch value is empty or invalid, do not add or change
     properties["display_color"] (omit the key here) so unsafe strings never overwrite
     existing safe GeoJSON properties.
+
+    FeatureCollection foreign member (RFC 7946): when the matched batch row carries a
+    usable ``colab_route_geometry_bundle`` (JSONB or JSON string), a single normalized
+    copy is attached on the **root** FeatureCollection as ``fc["colab_route_geometry_bundle"]``
+    for frontend consumers (e.g. curated sync persists the whole FC in ``GISLayer.data``).
+    The bundle is not duplicated onto individual features.
     """
     if batch_row is None:
         return fc
@@ -190,6 +238,13 @@ def enrich_feature_collection_with_submission_batch(fc, submission_id, batch_row
             props["display_color"] = display_color
         props["submission_name"] = submission_name
 
+    normalized_bundle = _normalize_colab_route_geometry_bundle_value(
+        row.get("colab_route_geometry_bundle")
+    )
+    if normalized_bundle is not None:
+        # Large JSONB increases GISLayer.data and downstream API payload size.
+        fc["colab_route_geometry_bundle"] = normalized_bundle
+
     return fc
 
 
@@ -202,34 +257,37 @@ def _fetch_submission_batch_row_for_sync(submission_id):
     if not sid:
         return None
 
-    rows, err = _get(
-        "/submission_batches",
-        params={
-            "submission_id": f"eq.{sid}",
-            "select": "submission_id,submission_name,display_color,updated_at",
-            "order": "updated_at.desc",
-            "limit": "1",
-        },
+    # Multi-step select: optional columns (display_color, colab_route_geometry_bundle)
+    # may be absent on older PostgREST schemas — retry with reduced projections like the
+    # legacy display_color-only fallback, extended for the Colab bundle column.
+    select_attempts = (
+        "submission_id,submission_name,display_color,colab_route_geometry_bundle,updated_at",
+        "submission_id,submission_name,display_color,updated_at",
+        "submission_id,submission_name,colab_route_geometry_bundle,updated_at",
+        "submission_id,submission_name,updated_at",
     )
+
+    rows, err = None, None
+    for sel in select_attempts:
+        rows, err = _get(
+            "/submission_batches",
+            params={
+                "submission_id": f"eq.{sid}",
+                "select": sel,
+                "order": "updated_at.desc",
+                "limit": "1",
+            },
+        )
+        if not err:
+            break
+        if not _submission_batches_sync_fetch_err_is_schema_retryable(err):
+            break
+
     if err:
-        msg_l = str(err).lower()
-        if "display_color" in msg_l or (
-            "column" in msg_l and "does not exist" in msg_l
-        ):
-            rows, err = _get(
-                "/submission_batches",
-                params={
-                    "submission_id": f"eq.{sid}",
-                    "select": "submission_id,submission_name,updated_at",
-                    "order": "updated_at.desc",
-                    "limit": "1",
-                },
-            )
-        if err:
-            logger.info(
-                "submission_batches fetch skipped for sync enrich: %s", err
-            )
-            return None
+        logger.info(
+            "submission_batches fetch skipped for sync enrich: %s", err
+        )
+        return None
     if not isinstance(rows, list) or not rows:
         return None
     first = rows[0]

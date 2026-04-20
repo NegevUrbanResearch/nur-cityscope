@@ -178,6 +178,14 @@ class AdvancedStyleEngine {
       if (dashOffset != null) {
         strokeLayer.dashOffset = dashOffset;
       }
+      if (simpleStyle._removedPinkStrokeShadow === true) {
+        // Canvas-only: soft **white** fringe under the pink stroke (Colab’s second polyline
+        // is a white halo — this approximates that glow on a single stroke for projection).
+        strokeLayer.shadowBlur = 8;
+        strokeLayer.shadowColor = "rgba(255,255,255,0.5)";
+        strokeLayer.shadowOffsetX = 0;
+        strokeLayer.shadowOffsetY = 1;
+      }
       layers.push(strokeLayer);
     }
 
