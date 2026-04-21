@@ -53,6 +53,22 @@ class OTEFDataContextClass {
     return this._initializingPromise;
   }
 
+  /**
+   * Re-fetch layer groups from the API (e.g. after workshop autopublish or pull)
+   * so clients see new curated_* ids without waiting for WS timing.
+   */
+  async refreshLayerGroupsFromApi() {
+    if (!this._tableName) return;
+    try {
+      const state = await OTEF_API.getState(this._tableName);
+      if (state && state.layerGroups) {
+        this._setLayerGroups(state.layerGroups);
+      }
+    } catch (err) {
+      getLogger().error("[OTEFDataContext] refreshLayerGroupsFromApi failed:", err);
+    }
+  }
+
   async _doInit(tableName) {
     this._tableName = tableName;
     try {

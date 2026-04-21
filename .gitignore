@@ -98,6 +98,7 @@ setup-config.csv
 
 # Project specific folders and files
 external_files/
+docs/superpowers/plans/
 
 # Data directories - Ignore all data directories and their contents
 data/

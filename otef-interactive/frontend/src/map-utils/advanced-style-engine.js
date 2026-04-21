@@ -12,6 +12,17 @@ class AdvancedStyleEngine {
   /** @type {WeakMap<Object, Map<string, Object>>} */
   static _uniqueValueSymbolMapCache = new WeakMap();
 
+  /** @param {unknown} v */
+  static _parseDashOffsetNumber(v) {
+    if (v == null) return null;
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") {
+      const n = Number(String(v).trim());
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+
   static _getUniqueValueSymbolMap(styleConfig) {
     if (AdvancedStyleEngine._uniqueValueSymbolMapCache.has(styleConfig)) {
       return AdvancedStyleEngine._uniqueValueSymbolMapCache.get(styleConfig);
@@ -147,7 +158,7 @@ class AdvancedStyleEngine {
       : null;
 
     if (strokeColor != null || strokeWidth != null) {
-      layers.push({
+      const strokeLayer = {
         type: "stroke",
         color: strokeColor || "#000000",
         width: strokeWidth || 1.0,
@@ -156,7 +167,26 @@ class AdvancedStyleEngine {
             ? strokeOpacity
             : 1.0,
         dash: dashArray ? { array: dashArray } : null,
-      });
+      };
+      if (typeof simpleStyle.lineCap === "string" && simpleStyle.lineCap) {
+        strokeLayer.lineCap = simpleStyle.lineCap;
+      }
+      if (typeof simpleStyle.lineJoin === "string" && simpleStyle.lineJoin) {
+        strokeLayer.lineJoin = simpleStyle.lineJoin;
+      }
+      const dashOffset = this._parseDashOffsetNumber(simpleStyle.dashOffset);
+      if (dashOffset != null) {
+        strokeLayer.dashOffset = dashOffset;
+      }
+      if (simpleStyle._removedPinkStrokeShadow === true) {
+        // Canvas-only: soft **white** fringe under the pink stroke (Colab’s second polyline
+        // is a white halo — this approximates that glow on a single stroke for projection).
+        strokeLayer.shadowBlur = 8;
+        strokeLayer.shadowColor = "rgba(255,255,255,0.5)";
+        strokeLayer.shadowOffsetX = 0;
+        strokeLayer.shadowOffsetY = 1;
+      }
+      layers.push(strokeLayer);
     }
 
     // Optional icon marker support for point features. When simpleStyle comes
@@ -164,15 +194,25 @@ class AdvancedStyleEngine {
     // symbol layer so the canvas renderer can draw an image instead of a
     // circle marker.
     if (simpleStyle._iconUrl) {
-      const size =
-        typeof simpleStyle._iconSize === "number" && simpleStyle._iconSize > 0
-          ? simpleStyle._iconSize
-          : 24;
+      const outer =
+        typeof simpleStyle._memorialOuterPx === "number" &&
+        simpleStyle._memorialOuterPx > 0
+          ? simpleStyle._memorialOuterPx
+          : typeof simpleStyle._iconSize === "number" && simpleStyle._iconSize > 0
+            ? simpleStyle._iconSize
+            : 24;
+      const imgPx =
+        typeof simpleStyle._memorialImgPx === "number" &&
+        simpleStyle._memorialImgPx > 0
+          ? simpleStyle._memorialImgPx
+          : outer;
       layers.push({
         type: "markerPoint",
         marker: {
-          size,
+          size: outer,
           iconUrl: simpleStyle._iconUrl,
+          memorialAccentHex: simpleStyle._memorialAccentHex || null,
+          memorialImgPx: imgPx,
         },
       });
     } else if (
@@ -187,6 +227,7 @@ class AdvancedStyleEngine {
         type: "markerPoint",
         marker: {
           size,
+          offroadJunctionCanvas: simpleStyle._offroadJunctionCanvas === true,
         },
       });
     }

@@ -1,0 +1,37 @@
+{
+  "_meta": {
+    "source": "Vectors from nur-colab-map src/utils/pinkLineRoute.ts buildIntegratedRoute (tsx snapshot 2026-04-18); Cityscope must match at 6 decimals after norm() in test"
+  },
+  "cases": [
+    {
+      "name": "no_user_points",
+      "basePaths": [[[0, 0], [0, 0.01], [0, 0.02]]],
+      "userPoints": [],
+      "expected": {
+        "solid": [[[0, 0], [0, 0.01], [0, 0.02]]],
+        "removed": [],
+        "dashed": []
+      }
+    },
+    {
+      "name": "one_detour",
+      "basePaths": [[[0, 0], [0, 0.02], [0, 0.04]]],
+      "userPoints": [[0, 0.02]],
+      "expected": {
+        "solid": [[[0, 0.02], [0, 0.04]]],
+        "removed": [[[0, 0], [0, 0.02]]],
+        "dashed": [[[0, 0], [0, 0.02], [0, 0.02]]]
+      }
+    },
+    {
+      "name": "two_points_same_run",
+      "basePaths": [[[0, 0], [0, 0.05]]],
+      "userPoints": [[0, 0.02], [0, 0.04]],
+      "expected": {
+        "solid": [],
+        "removed": [],
+        "dashed": []
+      }
+    }
+  ]
+}

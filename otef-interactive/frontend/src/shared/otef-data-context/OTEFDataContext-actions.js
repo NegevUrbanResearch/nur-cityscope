@@ -1,5 +1,9 @@
 import { OTEF_API } from "../api-client.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
+import {
+  applyMoreshetParkingCoherenceToLayerGroups,
+  ensurePinkLineParkingRowInMoreshetAxisGroup,
+} from "../../map-utils/curated-pink-axis-state.js";
 import { OTEFDataContextInternals } from "./index.js";
 
 function fallbackLogger() {
@@ -203,8 +207,9 @@ async function toggleLayer(ctx, layerId, enabled) {
 }
 
 async function toggleLayerInGroups(ctx, layerId, enabled) {
-  const previous = JSON.parse(JSON.stringify(ctx._layerGroups || []));
-  const next = previous.map((group) => ({
+  const rawSnapshot = JSON.parse(JSON.stringify(ctx._layerGroups || []));
+  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(rawSnapshot);
+  let next = previous.map((group) => ({
     ...group,
     layers: group.layers.map((layer) => {
       const fullId = `${group.id}.${layer.id}`;
@@ -212,14 +217,18 @@ async function toggleLayerInGroups(ctx, layerId, enabled) {
       return layer;
     }),
   }));
+  next = applyMoreshetParkingCoherenceToLayerGroups(next);
 
   ctx._setLayerGroups(next);
   try {
-    await OTEF_API.updateLayerGroups(ctx._tableName, next);
+    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next);
+    if (updated && Array.isArray(updated.layerGroups)) {
+      ctx._setLayerGroups(updated.layerGroups);
+    }
     return { ok: true };
   } catch (err) {
     getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
-    ctx._setLayerGroups(previous);
+    ctx._setLayerGroups(rawSnapshot);
     return { ok: false, error: err };
   }
 }
@@ -230,8 +239,9 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled) {
   }
 
   const idSet = new Set(fullLayerIds);
-  const previous = JSON.parse(JSON.stringify(ctx._layerGroups || []));
-  const next = previous.map((group) => ({
+  const rawSnapshot = JSON.parse(JSON.stringify(ctx._layerGroups || []));
+  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(rawSnapshot);
+  let next = previous.map((group) => ({
     ...group,
     layers: group.layers.map((layer) => {
       const fullId = `${group.id}.${layer.id}`;
@@ -239,14 +249,18 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled) {
       return layer;
     }),
   }));
+  next = applyMoreshetParkingCoherenceToLayerGroups(next);
 
   ctx._setLayerGroups(next);
   try {
-    await OTEF_API.updateLayerGroups(ctx._tableName, next);
+    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next);
+    if (updated && Array.isArray(updated.layerGroups)) {
+      ctx._setLayerGroups(updated.layerGroups);
+    }
     return { ok: true };
   } catch (err) {
     getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
-    ctx._setLayerGroups(previous);
+    ctx._setLayerGroups(rawSnapshot);
     return { ok: false, error: err };
   }
 }
@@ -255,20 +269,25 @@ async function toggleGroup(ctx, groupId, enabled) {
   if (!ctx._tableName || !groupId) return { ok: false, error: "Missing groupId" };
   if (!ctx._layerGroups) return { ok: false, error: "Layer groups not available" };
 
-  const previous = JSON.parse(JSON.stringify(ctx._layerGroups || []));
-  const next = previous.map((group) => {
+  const rawSnapshot = JSON.parse(JSON.stringify(ctx._layerGroups || []));
+  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(rawSnapshot);
+  let next = previous.map((group) => {
     if (group.id !== groupId) return group;
     const layers = group.layers.map((layer) => ({ ...layer, enabled: !!enabled }));
     return { ...group, enabled: !!enabled, layers };
   });
+  next = applyMoreshetParkingCoherenceToLayerGroups(next);
 
   ctx._setLayerGroups(next);
   try {
-    await OTEF_API.updateLayerGroups(ctx._tableName, next);
+    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next);
+    if (updated && Array.isArray(updated.layerGroups)) {
+      ctx._setLayerGroups(updated.layerGroups);
+    }
     return { ok: true };
   } catch (err) {
     getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
-    ctx._setLayerGroups(previous);
+    ctx._setLayerGroups(rawSnapshot);
     return { ok: false, error: err };
   }
 }

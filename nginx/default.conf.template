@@ -58,8 +58,10 @@ server {
         index index.html;
         try_files $uri $uri/ =404;
         
-        # Cache static assets
-        location ~* \.(png|jpg|jpeg|gif|ico|svg|js|css|woff|woff2|ttf|eot)$ {
+        # Cache static assets only — NOT app source .js / .css: OTEF serves native ES modules
+        # from ./src/*.js with no content hashes; immutable 7d caching makes browsers keep
+        # stale bundles forever after code changes or container restarts.
+        location ~* \.(png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
             expires 7d;
             add_header Cache-Control "public, immutable";
         }

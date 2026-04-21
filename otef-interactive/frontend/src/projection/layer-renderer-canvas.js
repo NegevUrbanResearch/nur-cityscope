@@ -3,6 +3,7 @@
 
 import AdvancedStyleEngine from "../map-utils/advanced-style-engine.js";
 import AdvancedStyleDrawing from "../map-utils/advanced-style-drawing.js";
+import { drawPinkNodeOrderLabels } from "./canvas-pink-node-labels.js";
 
 /**
  * CanvasLayerRenderer - Renders GeoJSON layers to Canvas for fast display
@@ -137,6 +138,16 @@ class CanvasLayerRenderer {
   }
 
   /**
+   * Remove a layer from the canvas pipeline (e.g. before reloading curated GeoJSON).
+   */
+  removeLayer(layerId) {
+    if (this.layers[layerId]) {
+      delete this.layers[layerId];
+      this._scheduleRender();
+    }
+  }
+
+  /**
    * Debounced render to prevent excessive re-renders
    */
   _renderScheduled = false;
@@ -158,7 +169,10 @@ class CanvasLayerRenderer {
     const isBase = id.startsWith("projector_base.");
     const typeRank = { polygon: 0, line: 1, point: 2 };
     const geomRank = typeRank[layer.geometryType] ?? 0;
-    return [isBlackBg ? 0 : 1, isSea ? 0 : 1, isBase ? 0 : 1, geomRank, id];
+    // Tie-break: pink_line_base under curated_* so overlay halos/strokes paint on top (lexicographic id alone inverted that order).
+    const pinkCuratedZ =
+      id === "pink_line_base" ? 0 : id.startsWith("curated_") ? 2 : 1;
+    return [isBlackBg ? 0 : 1, isSea ? 0 : 1, isBase ? 0 : 1, geomRank, pinkCuratedZ, id];
   }
 
   render() {
@@ -234,6 +248,12 @@ class CanvasLayerRenderer {
     for (const [, layer] of labelLayers) {
       this._renderLabelLayer(layer.geojson, layer.styleConfig, this.ctxLabels);
     }
+
+    drawPinkNodeOrderLabels(
+      this.ctxLabels,
+      aboveNonLabel,
+      (coord) => this._coordToPixel(coord),
+    );
 
     const elapsed = performance.now() - startTime;
     if (elapsed > 2000) {
@@ -398,14 +418,16 @@ class CanvasLayerRenderer {
 
     const style = styleConfig && styleConfig.style;
 
-    // Prefer style-config-based resolution (symbol IR from styles.json) so that
-    // per-symbol opacity (e.g. uniqueValue fill opacity) is preserved. Using
-    // styleFunction would convert symbol → bag → _symbolFromSimpleStyle → symbol
-    // and can lose or alter opacity. When style has defaultSymbol or uniqueValues,
-    // resolve from config to match GIS behavior and correct projection opacity.
-    const useConfigResolution =
+    // Prefer style-config-based resolution when there is no per-layer styleFunction.
+    // When styleFunction is provided (e.g. pink_line_base curated/pack merge), it must
+    // win over raw pack defaultSymbol — otherwise projection keeps pack colors and
+    // diverges from GIS, which uses leafletPolylineOptions from the same merge.
+    const hasConfigSymbols =
       style &&
-      (style.defaultSymbol || (style.uniqueValues && style.uniqueValues.classes?.length));
+      (style.defaultSymbol ||
+        (style.uniqueValues && style.uniqueValues.classes?.length));
+    const useConfigResolution =
+      typeof styleFunction !== "function" && hasConfigSymbols;
     const commands = AdvancedStyleEngine.computeCommands(
       features,
       style,
@@ -416,7 +438,7 @@ class CanvasLayerRenderer {
       layerId,
       style && style.animation,
     );
-    if (flowCfg) {
+    if (flowCfg && !(typeof layerId === "string" && layerId.startsWith("curated_"))) {
       let enabled = !!flowCfg.enabledByDefault;
       if (
         typeof OTEFDataContext !== "undefined" &&

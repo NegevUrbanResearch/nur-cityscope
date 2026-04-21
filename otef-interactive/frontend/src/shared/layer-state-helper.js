@@ -1,6 +1,21 @@
 // Helper functions for reading layer state from OTEFDataContext.
 // Centralizes the pattern of resolving a fullLayerId ("group.layer")
 // into its group + layer objects and enabled flag.
+//
+// Effective vs raw layer groups (important for the Moreshet axis + parking companion):
+// - getEffectiveLayerGroups() is the merged view for map init, remote sheet, and projection
+//   sync: registry defaults + API state, curated* coalesced into curated_moresht_axis, and
+//   finalizeMoreshetAxisPackForRemote() injects the synthetic parking toggle row when there
+//   is at least one published curated layer (see curated-pink-axis-state.js).
+// - resolveLayerState() / getLayerState() read ctx.getLayerGroups() as given — typically the
+//   raw OTEF API payload. The parking companion appears there only after the server stores
+//   curated_moresht_axis.pink_line_parking; until then, effective groups may still show the
+//   row (default-on) for UI while GIS/parking visibility uses effective groups elsewhere.
+
+import {
+  finalizeMoreshetAxisPackForRemote,
+  PINK_LINE_PARKING_LAYER_ID,
+} from "../map-utils/curated-pink-axis-state.js";
 
 /**
  * Parse fullLayerId into groupId and layerId using "first dot" split.
@@ -39,6 +54,9 @@ function getLayerIdOnly(fullLayerId) {
 
 /**
  * Resolve a full layer id like "groupId.layerId" against the given context.
+ * Uses the layer list returned by ctx.getLayerGroups() only (not getEffectiveLayerGroups).
+ * For curated_moresht_axis.pink_line_parking, the row exists in state only when persisted
+ * on the server; the remote UI may still list parking from the effective merge.
  *
  * @param {Object} ctx - OTEFDataContext or compatible object with getLayerGroups()
  * @param {string} fullLayerId - e.g. "map_3_future.mimushim"
@@ -100,6 +118,11 @@ function getLayerState(fullLayerId) {
 /**
  * Effective layer groups: registry groups merged with API/context state.
  * When context has no state for a group, applies defaults so projection/map/remote show and load registry layers.
+ *
+ * After coalescing curated* into curated_moresht_axis, finalizeMoreshetAxisPackForRemote()
+ * drops the pack when there are no published content layers and appends the synthetic
+ * pink_line_parking companion row when there are — that row is a UI/state toggle, not a
+ * registry GeoJSON layer (GIS loads parking via pink-line modules; see gis-layer-filter).
  *
  * @returns {Array<{id: string, name?: string, enabled: boolean, layers: Array<{id: string, name?: string, enabled: boolean}>}>}
  */
@@ -189,7 +212,7 @@ function getEffectiveLayerGroups() {
     });
   }
 
-  return coalesceCuratedGroups(groups);
+  return finalizeMoreshetAxisPackForRemote(coalesceCuratedGroups(groups));
 }
 
 function coalesceCuratedGroups(groups) {
@@ -230,6 +253,16 @@ function coalesceCuratedGroups(groups) {
       const existing = mergedLayerMap.get(key);
       if (!existing || group.id === "curated_moresht_axis") {
         mergedLayerMap.set(key, candidate);
+      } else if (existing && key === PINK_LINE_PARKING_LAYER_ID) {
+        const nextFullLayerIds = new Set([
+          ...(Array.isArray(existing.fullLayerIds) ? existing.fullLayerIds : []),
+          ...candidate.fullLayerIds,
+        ]);
+        mergedLayerMap.set(key, {
+          ...existing,
+          enabled: !!(existing.enabled && candidate.enabled),
+          fullLayerIds: Array.from(nextFullLayerIds),
+        });
       } else if (existing) {
         const nextFullLayerIds = new Set([
           ...(Array.isArray(existing.fullLayerIds) ? existing.fullLayerIds : []),
@@ -242,6 +275,10 @@ function coalesceCuratedGroups(groups) {
     }
   }
   const mergedLayers = Array.from(mergedLayerMap.values());
+
+  if (mergedLayers.length === 0) {
+    return nonCuratedGroups;
+  }
 
   const mergedCuratedGroup = {
     id: "curated_moresht_axis",

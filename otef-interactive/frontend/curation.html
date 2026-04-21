@@ -9,10 +9,6 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <title>OTEF Curation</title>
     <link rel="stylesheet" href="css/remote-styles.css" />
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    />
     <style>
       .curation-layout {
         display: flex;
@@ -46,108 +42,49 @@
       .curation-body {
         flex: 1;
         min-height: 0;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-      }
-      .curation-map-wrap {
-        order: 0;
-        flex: 1;
-        min-height: 260px;
-        display: flex;
-        flex-direction: column;
-        position: relative;
+        overflow-y: auto;
       }
       .curation-sidebar {
-        order: 1;
-        flex: 0 0 auto;
-        overflow-y: auto;
-        padding: var(--spacing-unit);
-        border-top: 1px solid var(--border-color);
-        max-height: 50vh;
-      }
-      @media (min-width: 900px) {
-        .curation-body {
-          flex-direction: row;
-        }
-        .curation-map-wrap {
-          order: 1;
-          min-height: 400px;
-        }
-        .curation-sidebar {
-          order: 0;
-          width: 360px;
-          max-height: none;
-          border-top: none;
-          border-right: 1px solid var(--border-color);
-        }
-      }
-      @media (min-width: 900px) {
-        .curation-map-wrap {
-          min-height: 400px;
-        }
-      }
-      #curationMap {
-        flex: 1;
-        min-height: 280px;
         width: 100%;
-        border-radius: 0;
+        max-width: 640px;
+        margin: 0 auto;
+        padding: var(--spacing-unit);
+        box-sizing: border-box;
       }
-      @media (min-width: 900px) {
-        #curationMap {
-          min-height: 400px;
-        }
-      }
-      .curation-map-legend {
-        position: absolute;
-        z-index: 500;
-        left: 10px;
-        bottom: 10px;
-        max-width: min(260px, calc(100% - 20px));
-        padding: 8px 10px;
-        border-radius: 4px;
-        background: rgba(15, 22, 32, 0.88);
-        color: #e8eef5;
-        font-size: 11px;
-        line-height: 1.35;
-        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-        pointer-events: none;
-      }
-      .curation-map-legend__title {
-        margin: 0 0 6px;
-        font-size: 10px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        color: #b8c5d6;
-      }
-      .curation-map-legend__list {
-        margin: 0;
-        padding: 0;
-        list-style: none;
-      }
-      .curation-map-legend__item {
+      .curation-section-head {
         display: flex;
         align-items: center;
+        justify-content: space-between;
+        gap: var(--spacing-unit);
+        margin-bottom: 6px;
+      }
+      .curation-section-head-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .curation-workshop-label {
+        display: inline-flex;
+        align-items: center;
         gap: 8px;
-        margin-top: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
       }
-      .curation-map-legend__item:first-child {
-        margin-top: 0;
+      .curation-workshop-label input {
+        margin: 0;
+        cursor: pointer;
       }
-      .curation-map-legend__item svg {
-        flex: 0 0 56px;
-        height: 14px;
-        display: block;
+      .curation-section-head h2 {
+        margin-bottom: 0;
       }
-      .curation-map-legend__item line {
-        stroke-linecap: round;
-        stroke-linejoin: round;
-        fill: none;
-      }
-      .curation-map-legend__label {
-        flex: 1;
-        min-width: 0;
+      .curation-publish-actions {
+        margin-top: 8px;
       }
       .curation-section {
         margin-bottom: var(--spacing-unit);
@@ -183,72 +120,126 @@
         border-radius: var(--border-radius);
         background: var(--bg-tertiary);
       }
+      @media (max-width: 899px) {
+        .curation-published-layers.curation-features {
+          max-height: none;
+          overflow-y: visible;
+        }
+      }
       @media (min-width: 900px) {
         .curation-features {
           max-height: 240px;
         }
       }
-      .curation-feature-row {
+      .curation-published-layers {
         display: flex;
-        align-items: flex-start;
+        flex-direction: column;
+        gap: 0;
+        padding: 0;
+      }
+      .curation-published-layers > .curation-status {
+        padding: 10px 12px;
+      }
+      .curation-published-layer-card {
+        display: flex;
+        align-items: stretch;
+        gap: 10px;
         padding: 10px 12px;
         border-bottom: 1px solid var(--border-color);
-        gap: 10px;
-        cursor: pointer;
-        transition: background-color 0.15s ease, border-color 0.15s ease;
+        text-align: start;
+        transition: background-color 0.12s ease;
       }
-      .curation-feature-row:last-child {
+      .curation-published-layer-card:last-child {
         border-bottom: none;
       }
-      .curation-feature-row:hover {
+      .curation-published-layer-card:hover {
         background: var(--bg-secondary);
       }
-      .curation-feature-row.highlighted {
-        background: var(--bg-secondary);
-        border-left: 3px solid var(--accent-primary);
-      }
-      .curation-feature-row.curation-feature-row--history {
-        opacity: 0.62;
-      }
-      .curation-feature-row input[type="checkbox"] {
-        margin-top: 3px;
-        flex-shrink: 0;
-        cursor: pointer;
-      }
-      .curation-feature-icon {
-        width: 20px;
-        height: 20px;
-        margin-top: 2px;
-        flex-shrink: 0;
-      }
-      .curation-feature-content {
+      .curation-published-layer-body {
         flex: 1;
         min-width: 0;
+        display: flex;
+        flex-direction: row;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
       }
-      .curation-feature-title {
-        font-size: 14px;
-        font-weight: 500;
-        color: var(--text-primary);
+      .curation-published-layer-main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      button.curation-published-layer-main {
+        border: none;
+        background: transparent;
+        padding: 0;
+        margin: 0;
+        font: inherit;
+        color: inherit;
+        text-align: inherit;
         cursor: pointer;
+        width: 100%;
+        align-items: stretch;
       }
-      .curation-feature-meta {
+      button.curation-published-layer-main:focus-visible {
+        outline: 2px solid var(--accent, #00d4ff);
+        outline-offset: 2px;
+      }
+      .curation-published-layer-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+        line-height: 1.35;
+        word-break: break-word;
+      }
+      .curation-published-layer-meta-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 10px;
         font-size: 12px;
         color: var(--text-muted);
-        margin-top: 2px;
-        line-height: 1.35;
       }
-      .curation-name-input {
-        width: 100%;
-        padding: 10px 12px;
+      .curation-published-layer-updated {
+        font-variant-numeric: tabular-nums;
+      }
+      .curation-published-layer-color {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+      .curation-published-layer-swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
         border: 1px solid var(--border-color);
-        border-radius: var(--border-radius);
-        background: var(--bg-tertiary);
-        color: var(--text-primary);
-        font-size: 14px;
+        flex-shrink: 0;
+        box-sizing: border-box;
       }
-      .curation-name-input:focus {
-        outline: none;
-        border-color: var(--accent-primary);
+      .curation-submission-swatch-dot {
+        --submission-swatch-split-dir: right;
+        background: linear-gradient(
+          to var(--submission-swatch-split-dir),
+          var(--swatch-primary) 50%,
+          var(--swatch-secondary) 50%
+        );
+      }
+      [dir="rtl"] .curation-submission-swatch-dot {
+        --submission-swatch-split-dir: left;
+      }
+      .curation-published-layer-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .curation-published-layer-remove {
+        flex-shrink: 0;
+        margin-top: 2px;
       }
       .curation-publish-btn {
         padding: 12px 16px;
@@ -266,43 +257,6 @@
       }
       .curation-publish-btn:disabled {
         opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .curation-publish-save-row {
-        margin-top: 8px;
-        width: 100%;
-      }
-      .curation-publish-save-row button {
-        flex: 1;
-        min-width: 0;
-        padding: 11px 8px;
-        font-size: 12px;
-        font-weight: 600;
-        line-height: 1.25;
-        white-space: normal;
-        text-align: center;
-      }
-      .curation-publish-save-row .curation-segment-publish {
-        background: var(--accent-primary);
-        color: var(--bg-primary);
-      }
-      .curation-publish-save-row .curation-segment-publish:hover:not(:disabled) {
-        filter: brightness(1.08);
-      }
-      .curation-publish-save-row .curation-segment-publish:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-      .curation-publish-save-row .curation-segment-save {
-        background: transparent;
-        color: var(--text-primary);
-      }
-      .curation-publish-save-row .curation-segment-save:hover:not(:disabled) {
-        color: var(--accent-primary);
-        background: var(--bg-secondary);
-      }
-      .curation-publish-save-row .curation-segment-save:disabled {
-        opacity: 0.45;
         cursor: not-allowed;
       }
       .curation-status {
@@ -338,124 +292,6 @@
       a.curation-header-btn {
         text-decoration: none;
         display: inline-block;
-      }
-      .curation-modal-overlay {
-        display: none;
-        position: fixed;
-        inset: 0;
-        background: rgba(0,0,0,0.6);
-        z-index: 9998;
-        align-items: center;
-        justify-content: center;
-        padding: var(--spacing-unit);
-      }
-      .curation-modal-overlay.open {
-        display: flex;
-      }
-      .curation-modal {
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
-        border-radius: var(--border-radius);
-        max-width: 400px;
-        width: 100%;
-        max-height: 90vh;
-        overflow-y: auto;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-      }
-      .curation-modal h3 {
-        font-size: 16px;
-        padding: var(--spacing-unit);
-        border-bottom: 1px solid var(--border-color);
-        margin: 0;
-      }
-      .curation-modal .curation-modal-body {
-        padding: var(--spacing-unit);
-      }
-      .curation-modal .curation-modal-actions {
-        padding: var(--spacing-unit);
-        border-top: 1px solid var(--border-color);
-        display: flex;
-        gap: 8px;
-        justify-content: flex-end;
-      }
-      .curation-modal label {
-        display: block;
-        font-size: 12px;
-        color: var(--text-secondary);
-        margin-bottom: 4px;
-      }
-      .curation-modal input[type="text"],
-      .curation-modal textarea {
-        width: 100%;
-        padding: 10px 12px;
-        border: 1px solid var(--border-color);
-        border-radius: var(--border-radius);
-        background: var(--bg-tertiary);
-        color: var(--text-primary);
-        font-size: 14px;
-        margin-bottom: 12px;
-      }
-      .curation-modal textarea {
-        min-height: 80px;
-        resize: vertical;
-      }
-      .curation-modal-field-label {
-        display: block;
-        font-size: 12px;
-        color: var(--text-secondary);
-        margin-bottom: 8px;
-      }
-      .curation-segmented {
-        display: flex;
-        width: 100%;
-        border-radius: var(--border-radius);
-        border: 1px solid var(--border-color);
-        overflow: hidden;
-        background: var(--bg-tertiary);
-      }
-      .curation-segmented button {
-        flex: 1;
-        margin: 0;
-        padding: 10px 12px;
-        font-size: 13px;
-        font-weight: 600;
-        border: none;
-        background: transparent;
-        color: var(--text-secondary);
-        cursor: pointer;
-        transition: background-color 0.15s ease, color 0.15s ease;
-      }
-      .curation-segmented button + button {
-        border-left: 1px solid var(--border-color);
-      }
-      .curation-segmented button:hover {
-        color: var(--text-primary);
-        background: var(--bg-secondary);
-      }
-      .curation-segmented button[aria-pressed="true"] {
-        background: var(--accent-primary);
-        color: var(--bg-primary);
-      }
-      .curation-segmented button[aria-pressed="true"]:hover {
-        filter: brightness(1.05);
-        color: var(--bg-primary);
-      }
-      .curation-publish-mode-segmented {
-        margin-bottom: 0;
-      }
-      .curation-feature-row .curation-feature-edit {
-        flex-shrink: 0;
-        padding: 6px 10px;
-        font-size: 12px;
-        border-radius: var(--border-radius);
-        border: 1px solid var(--border-color);
-        background: var(--bg-tertiary);
-        color: var(--text-primary);
-        cursor: pointer;
-      }
-      .curation-feature-row .curation-feature-edit:hover {
-        border-color: var(--accent-primary);
-        color: var(--accent-primary);
       }
       .curation-submission-combo {
         position: relative;
@@ -504,59 +340,53 @@
         padding: 0;
         border-top: none;
       }
-      /* Closed combobox: tag chips on the left, submission name (search) on the right */
+      /* Closed combobox: type tags on first row, full submission name wraps below (no ellipsis) */
       .curation-submission-combo:not(.curation-submission-combo--open)
         .curation-submission-combo-field.has-selected-tags {
-        flex-direction: row-reverse;
-        align-items: center;
-        flex-wrap: nowrap;
-        gap: 4px;
-        padding: 6px 8px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+        padding: 8px 10px;
       }
       .curation-submission-combo:not(.curation-submission-combo--open)
         .curation-submission-combo-field.has-selected-tags
         .curation-submission-search {
-        flex: 1 1 auto;
-        min-width: 84px;
-        width: auto;
-        padding: 6px 0;
-        direction: rtl;
-        text-align: end;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        flex: 0 0 auto;
+        width: 100%;
+        min-width: 0;
+        padding: 2px 0 0;
+        order: 2;
+        white-space: normal;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        overflow: visible;
+        text-overflow: clip;
+        text-align: start;
       }
       .curation-submission-combo:not(.curation-submission-combo--open)
         .curation-submission-combo-field.has-selected-tags
         .curation-submission-selected-tags {
         display: flex;
-        flex-wrap: nowrap;
-        flex: 0 1 calc(100% - 84px);
+        flex-wrap: wrap;
+        flex: 0 0 auto;
+        width: 100%;
+        max-width: none;
         min-width: 0;
-        max-width: calc(100% - 84px);
-        gap: 3px;
+        order: 1;
+        gap: 4px;
         justify-content: flex-start;
-        overflow-x: auto;
-        overflow-y: hidden;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: thin;
+        align-items: center;
+        overflow: visible;
       }
       .curation-submission-combo:not(.curation-submission-combo--open)
         .curation-submission-combo-field.has-selected-tags
         .curation-submission-selected-tags
         .curation-chip {
         flex-shrink: 0;
-        padding: 2px 5px;
-        font-size: 9.5px;
+        padding: 2px 6px;
+        font-size: 10px;
         font-weight: 600;
         line-height: 1.15;
-      }
-      @media (min-width: 900px) {
-        .curation-submission-combo:not(.curation-submission-combo--open)
-          .curation-submission-combo-field.has-selected-tags
-          .curation-submission-selected-tags {
-          max-width: calc(100% - 140px);
-        }
       }
       .curation-submission-combo--open .curation-submission-selected-tags {
         display: none !important;
@@ -612,10 +442,32 @@
         border-left: 3px solid var(--accent-primary);
         padding-left: 9px;
       }
+      .curation-submission-option-head {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        width: 100%;
+        min-width: 0;
+      }
+      .curation-submission-option-swatch,
+      .curation-submission-selected-swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 1px solid var(--border-color);
+        flex-shrink: 0;
+        margin-top: 3px;
+        box-sizing: border-box;
+      }
+      .curation-submission-selected-swatch {
+        margin-top: 1px;
+      }
       .curation-submission-option-title {
         font-weight: 500;
         line-height: 1.3;
         word-break: break-word;
+        flex: 1;
+        min-width: 0;
       }
       .curation-submission-option-chips,
       .curation-submission-summary-chips {
@@ -655,78 +507,6 @@
         border-color: rgba(255, 200, 0, 0.35);
         background: rgba(255, 200, 0, 0.12);
         color: #ffe999;
-      }
-      .curation-filter-row {
-        margin-top: 8px;
-      }
-      .curation-filter-row .curation-segmented {
-        max-width: 100%;
-      }
-      .leaflet-label-icon {
-        background: transparent;
-        border: none;
-      }
-      .leaflet-label-icon .curation-marker-label {
-        background: rgba(10, 10, 15, 0.9);
-        color: var(--text-primary);
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-size: 12px;
-        white-space: nowrap;
-        max-width: 200px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        border: 1px solid var(--border-color);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-      }
-      /* Pink line curated layer: node markers (no numbers), tooltip on hover */
-      .pink-line-node-marker {
-        background: transparent;
-        border: none;
-      }
-      .pink-line-node {
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        background: currentColor;
-        border: 2px solid #fff;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-      }
-      .curated-node-tooltip {
-        font-size: 13px;
-        padding: 6px 10px;
-        white-space: nowrap;
-        max-width: 240px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .curation-marker-highlight {
-        width: 18px;
-        height: 18px;
-        margin-left: -9px;
-        margin-top: -9px;
-        border-radius: 50%;
-        border: 2px solid #ffffff;
-        background: var(--accent-primary);
-        box-shadow: 0 0 0 0 rgba(255, 102, 163, 0.9);
-        animation: curation-glow 1.2s ease-out infinite;
-      }
-      @keyframes curation-glow {
-        0% {
-          box-shadow: 0 0 0 0 rgba(255, 102, 163, 0.9);
-          opacity: 1;
-          transform: scale(1);
-        }
-        70% {
-          box-shadow: 0 0 0 14px rgba(255, 102, 163, 0);
-          opacity: 0.9;
-          transform: scale(1.05);
-        }
-        100% {
-          box-shadow: 0 0 0 0 rgba(255, 102, 163, 0);
-          opacity: 0.8;
-          transform: scale(1);
-        }
       }
     </style>
   </head>
@@ -779,171 +559,45 @@
           </section>
 
           <section class="curation-section">
-            <h2>Features (toggle to include)</h2>
-            <div class="curation-filter-row">
-              <div
-                id="curationHistoryFilter"
-                class="curation-segmented"
-                role="group"
-                aria-label="Which revisions to load"
-              >
-                <button
-                  type="button"
-                  id="curationHistoryFilterCurrent"
-                  aria-pressed="true"
-                >
-                  Current only
-                </button>
-                <button
-                  type="button"
-                  id="curationHistoryFilterWithHistory"
-                  aria-pressed="false"
-                >
-                  With history
-                </button>
-              </div>
-            </div>
-            <div id="curationFeatures" class="curation-features">
-              <div class="curation-status">Select a submission to list features.</div>
-            </div>
-          </section>
-
-          <section class="curation-section">
-            <h2>Layer name</h2>
-            <input
-              type="text"
-              id="curationLayerName"
-              class="curation-name-input"
-              placeholder="e.g. My curated layer"
-              aria-label="Layer name"
-            />
-            <div
-              id="curationPublishSaveGroup"
-              class="curation-segmented curation-publish-save-row"
-              role="group"
-              aria-label="Publish layer and save geometry edits"
-            >
+            <h2>Publish</h2>
+            <div class="curation-publish-actions">
               <button
                 type="button"
                 id="curationPublish"
-                class="curation-segment-publish"
+                class="curation-publish-btn"
                 disabled
               >
                 Publish as OTEF layer
-              </button>
-              <button type="button" id="curationSaveEdits" class="curation-segment-save" disabled>
-                Save source edits
               </button>
             </div>
             <div id="curationStatus" class="curation-status"></div>
           </section>
 
           <section class="curation-section">
-            <h2>Published layers on remote</h2>
-            <div id="curationPublishedLayers" class="curation-features">
+            <div class="curation-section-head">
+              <h2>Published layers on remote</h2>
+              <div class="curation-section-head-actions">
+                <label class="curation-workshop-label">
+                  <input
+                    type="checkbox"
+                    id="curationWorkshopAutoPublish"
+                    aria-label="Workshop auto-publish"
+                  />
+                  Workshop auto-publish
+                </label>
+                <button type="button" id="curationUnpublishAll" class="curation-header-btn">
+                  Unpublish all
+                </button>
+              </div>
+            </div>
+            <div id="curationPublishedLayers" class="curation-published-layers curation-features">
               <div class="curation-status">Loading published curated layers…</div>
             </div>
           </section>
         </aside>
-
-        <div class="curation-map-wrap">
-          <div id="curationMap"></div>
-          <div
-            class="curation-map-legend"
-            role="group"
-            aria-labelledby="curationMapLegendTitle"
-          >
-            <p id="curationMapLegendTitle" class="curation-map-legend__title">
-              Map lines
-            </p>
-            <ul class="curation-map-legend__list">
-              <li class="curation-map-legend__item">
-                <svg viewBox="0 0 56 14" width="56" height="14" aria-hidden="true" focusable="false">
-                  <line
-                    id="curationLegendCurrentLine"
-                    x1="2"
-                    y1="7"
-                    x2="54"
-                    y2="7"
-                  />
-                </svg>
-                <span class="curation-map-legend__label">Current revision route</span>
-              </li>
-              <li class="curation-map-legend__item">
-                <svg viewBox="0 0 56 14" width="56" height="14" aria-hidden="true" focusable="false">
-                  <line
-                    id="curationLegendHistoryLine"
-                    x1="2"
-                    y1="7"
-                    x2="54"
-                    y2="7"
-                  />
-                </svg>
-                <span class="curation-map-legend__label"
-                  >Historical revision (faded; offset when overlapping)</span>
-              </li>
-            </ul>
-          </div>
-        </div>
       </div>
     </div>
 
-    <div id="curationModalPublish" class="curation-modal-overlay" aria-hidden="true">
-      <div class="curation-modal" role="dialog" aria-labelledby="curationModalPublishTitle">
-        <h3 id="curationModalPublishTitle">Publish layer</h3>
-        <div class="curation-modal-body">
-          <span id="curationPublishModeLabel" class="curation-modal-field-label">Include in published layer</span>
-          <div
-            class="curation-segmented curation-publish-mode-segmented"
-            role="radiogroup"
-            aria-labelledby="curationPublishModeLabel"
-          >
-            <button
-              type="button"
-              id="curationPublishModeCurrent"
-              data-publish-mode="current_only"
-              aria-pressed="true"
-            >
-              Current only
-            </button>
-            <button
-              type="button"
-              id="curationPublishModeHistory"
-              data-publish-mode="current_plus_history"
-              aria-pressed="false"
-            >
-              Current + history
-            </button>
-          </div>
-        </div>
-        <div class="curation-modal-actions">
-          <button type="button" id="curationModalPublishCancel" class="curation-header-btn">Cancel</button>
-          <button type="button" id="curationModalPublishConfirm" class="curation-publish-btn" style="margin-top: 0;">Publish</button>
-        </div>
-      </div>
-    </div>
-
-    <div id="curationModalFeature" class="curation-modal-overlay" aria-hidden="true">
-      <div class="curation-modal" role="dialog" aria-labelledby="curationModalFeatureTitle">
-        <h3 id="curationModalFeatureTitle">Edit feature metadata</h3>
-        <div class="curation-modal-body">
-          <label for="curationModalFeatureName">Name</label>
-          <input type="text" id="curationModalFeatureName" />
-          <label for="curationModalFeatureReason">Reason</label>
-          <input type="text" id="curationModalFeatureReason" placeholder="Reason entered" />
-          <label for="curationModalFeatureDescription">Description</label>
-          <textarea id="curationModalFeatureDescription" placeholder="Description"></textarea>
-          <label for="curationModalFeatureNote">Note</label>
-          <textarea id="curationModalFeatureNote" placeholder="Note"></textarea>
-        </div>
-        <div class="curation-modal-actions">
-          <button type="button" id="curationModalFeatureCancel" class="curation-header-btn">Cancel</button>
-          <button type="button" id="curationModalFeatureSave" class="curation-publish-btn" style="margin-top: 0;">Save</button>
-        </div>
-      </div>
-    </div>
-
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/proj4@2.9.0/dist/proj4.js"></script>
     <script type="module" src="./src/entries/curation-main.js"></script>
   </body>

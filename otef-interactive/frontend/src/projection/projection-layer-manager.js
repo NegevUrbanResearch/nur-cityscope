@@ -3,11 +3,14 @@
 
 import { UI_CONFIG } from "../config/ui-config.js";
 import { CanvasLayerRenderer } from "./layer-renderer-canvas.js";
+import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
 import {
   fetchCuratedLayerData,
-  extractPointFeatures,
   fetchPinkLinePaths,
-  buildCuratedRouteGeoJSON,
+  extractPointFeatures,
+  extractPinkDetourPointFeatures,
+  buildColabAlignedCuratedOverlayGeoJSON,
+  applyProjectionCuratedOverlayContrast,
   getMemorialIconForFeature,
 } from "../shared/curated-layer-service.js";
 import {
@@ -15,6 +18,18 @@ import {
   startAnimationLoop,
   stopAnimationLoop,
 } from "./projection-animation-loop.js";
+import {
+  MORESHET_AXIS_GROUP_ID,
+  computePinkLineBaseLayerVisible,
+  computePinkLineParkingOverlayVisible,
+  isPinkLineParkingLayerId,
+} from "../map-utils/curated-pink-axis-state.js";
+import { createProjectionPinkLineCanvasController } from "./projection-pink-line-canvas.js";
+import {
+  loadProjectionCuratedLayerFromAPI as loadProjectionCuratedLayerFromAPIImpl,
+  listCuratedFullLayerIdsToReload as listCuratedFullLayerIdsToReloadImpl,
+  reloadProjectionCuratedLayersFromSupabase as reloadProjectionCuratedLayersFromSupabaseImpl,
+} from "./projection-curated-layer-load.js";
 
 let getModelBounds = null;
 let getDisplayedImageBounds = null;
@@ -174,196 +189,60 @@ function updateWmtsVisibility(fullLayerId, visible) {
     for (const group of layerGroups) {
       for (const layer of group.layers || []) {
         if (!layer.enabled) continue;
+        if (
+          group.id === MORESHET_AXIS_GROUP_ID &&
+          isPinkLineParkingLayerId(String(layer.id || ""))
+        ) {
+          continue;
+        }
         const fullLayerId = `${group.id}.${layer.id}`;
         await loadProjectionLayerFromRegistry(fullLayerId);
       }
     }
   }
 
-  const PINK_LINE_BASE_LAYER_ID = "pink_line_base";
   const getCuratedLayerColorForProjection = UI_CONFIG.getCuratedColor;
 
-  async function ensureProjectionPinkLineBaseLayer() {
-    if (loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
-    try {
-      const { basePaths } = await fetchPinkLinePaths();
-      if (basePaths.length === 0) return;
-      const features = basePaths.map((path) => ({
-        type: "Feature",
-        geometry: {
-          type: "LineString",
-          coordinates: path.map(([lat, lng]) => [lng, lat]),
-        },
-        properties: {},
-      }));
-      const wgs84Geojson = { type: "FeatureCollection", features };
-      const itmGeojson = CoordUtils.transformGeojsonToItm(wgs84Geojson);
-      const layerConfig = {
-        style: {
-          type: "simple",
-          defaultStyle: { color: "#ff69b4", weight: 5, opacity: 1 },
-        },
-      };
-      const styleFunction = () => ({ color: "#ff69b4", weight: 5, opacity: 1 });
-      loadedLayers[PINK_LINE_BASE_LAYER_ID] = {
-        originalGeojson: itmGeojson,
-        styleFunction,
-        styleConfig: layerConfig,
-        geometryType: "line",
-      };
-      if (canvasRenderer) {
-        canvasRenderer.setLayer(
-          PINK_LINE_BASE_LAYER_ID,
-          itmGeojson,
-          styleFunction,
-          "line",
-          layerConfig,
-        );
-        canvasRenderer.setLayerVisibility(PINK_LINE_BASE_LAYER_ID, true);
-      }
-    } catch (_) {}
+  const pinkLineCanvas = createProjectionPinkLineCanvasController({
+    getCanvasRenderer: () => canvasRenderer,
+    loadedLayers,
+  });
+  const {
+    ensureProjectionPinkLineBaseLayer,
+    ensureProjectionPinkLineParkingLayer,
+    setProjectionPinkLineAxisGlyphsVisible,
+  } = pinkLineCanvas;
+
+  function getLayerGroupsForCuratedReload() {
+    return typeof LayerStateHelper !== "undefined" &&
+      typeof LayerStateHelper.getEffectiveLayerGroups === "function"
+      ? LayerStateHelper.getEffectiveLayerGroups()
+      : typeof OTEFDataContext !== "undefined"
+        ? OTEFDataContext.getLayerGroups()
+        : null;
   }
 
-  /**
-   * Toggle visibility of the shared pink-line base layer in the projection.
-   * This allows the base line to disappear when all curated layers are disabled.
-   */
-  function setProjectionPinkLineBaseVisibility(visible) {
-    if (!canvasRenderer || !loadedLayers[PINK_LINE_BASE_LAYER_ID]) return;
-    canvasRenderer.setLayerVisibility(PINK_LINE_BASE_LAYER_ID, visible);
-  }
-
-  /**
-   * Load a curated layer for Canvas projection display.
-   * Data fetching / route building is delegated to the shared CuratedLayerService;
-   * this function handles only the Canvas-specific rendering.
-   */
   async function loadProjectionCuratedLayerFromAPI(fullLayerId) {
-    if (loadedLayers[fullLayerId]) return;
-
-    // --- Shared data fetch ---
-    const result = await fetchCuratedLayerData(fullLayerId);
-    if (!result) return;
-    let { geojson, layerData } = result;
-
-    // CRS normalisation (projection needs ITM, so first get to WGS-84 if needed)
-    let wgs84Geojson = geojson;
-    const firstCoord = CoordUtils.getFirstCoordinate(geojson);
-    const looksLikeWgs84 =
-      firstCoord &&
-      Math.abs(firstCoord[0]) < 1000 &&
-      Math.abs(firstCoord[1]) < 1000;
-    if (!looksLikeWgs84 && firstCoord && Math.abs(firstCoord[0]) >= 1000) {
-      wgs84Geojson = CoordUtils.transformGeojsonToWgs84(geojson);
-    }
-
-    // --- Shared point extraction ---
-    const pointFeatures = (wgs84Geojson.features || []).filter(
-      (f) => f.geometry && f.geometry.type === "Point" && f.geometry.coordinates,
-    );
-
-    const userPoints = pointFeatures.map((f) => {
-      const c = f.geometry.coordinates;
-      return [c[1], c[0]];
-    });
-
-    // --- Shared route building ---
-    let builtGeojson = null;
-    if (userPoints.length > 0) {
-      const { basePaths } = await fetchPinkLinePaths();
-      if (basePaths.length > 0) {
-        await ensureProjectionPinkLineBaseLayer();
-        const layerColor = getCuratedLayerColorForProjection(fullLayerId, layerData);
-        builtGeojson = buildCuratedRouteGeoJSON(
-          basePaths,
-          userPoints,
-          layerColor,
-          pointFeatures,
-        );
-      }
-    }
-
-    // --- Canvas-specific rendering ---
-    if (builtGeojson) {
-      const itmGeojson = CoordUtils.transformGeojsonToItm(builtGeojson);
-      const layerColor = getCuratedLayerColorForProjection(fullLayerId, layerData);
-      const customStyleFunction = (feature) =>
-        feature.properties && feature.properties._curatedStyle
-          ? feature.properties._curatedStyle
-          : { color: layerColor, weight: 4, opacity: 0.85, fillColor: layerColor, fillOpacity: 0.8, radius: 5 };
-      const layerConfig = { style: { type: "simple" } };
-      await renderLayerFromGeojson(
-        itmGeojson,
-        fullLayerId,
-        layerConfig,
-        "line",
-        { customStyleFunction },
-      );
-      return;
-    }
-
-    // When pink-line base data is unavailable, still render memorial/non-memorial
-    // point markers with curated styling instead of falling back to plain GeoJSON.
-    if (pointFeatures.length > 0) {
-      const features = pointFeatures.map((f) => {
-        const c = f.geometry.coordinates;
-        const props = f.properties || {};
-        const iconUrl = getMemorialIconForFeature(props);
-        return {
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [c[0], c[1]] },
-          properties: {
-            ...props,
-            _curatedStyle: iconUrl
-              ? { _iconUrl: iconUrl, _iconSize: 32 }
-              : {
-                  fillColor: getCuratedLayerColorForProjection(fullLayerId, layerData),
-                  color: "#fff",
-                  weight: 1,
-                  fillOpacity: 0.9,
-                  opacity: 1,
-                  radius: 6,
-                },
-          },
-        };
-      });
-      const fallbackPointGeojson = { type: "FeatureCollection", features };
-      const itmGeojson = CoordUtils.transformGeojsonToItm(fallbackPointGeojson);
-      const customStyleFunction = (feature) =>
-        feature.properties && feature.properties._curatedStyle
-          ? feature.properties._curatedStyle
-          : {
-              fillColor: "#e76f51",
-              color: "#fff",
-              weight: 1,
-              fillOpacity: 0.9,
-              opacity: 1,
-              radius: 6,
-            };
-      const layerConfig = { style: { type: "simple" } };
-      await renderLayerFromGeojson(itmGeojson, fullLayerId, layerConfig, "Point", {
-        customStyleFunction,
-      });
-      return;
-    }
-
-    // Fallback: plain GeoJSON rendering
-    const itmGeojson = looksLikeWgs84
-      ? CoordUtils.transformGeojsonToItm(geojson)
-      : geojson;
-    const layerConfig = {
-      style: {
-        type: "simple",
-        defaultStyle: {
-          fillColor: "#00d4ff",
-          fillOpacity: 0.4,
-          strokeColor: "#00a8cc",
-          strokeWidth: 2,
-        },
+    return loadProjectionCuratedLayerFromAPIImpl(
+      {
+        CoordUtils,
+        loadedLayers,
+        fetchCuratedLayerData,
+        fetchPinkLinePaths,
+        extractPointFeatures,
+        extractPinkDetourPointFeatures,
+        buildColabAlignedCuratedOverlayGeoJSON,
+        applyProjectionCuratedOverlayContrast,
+        getMemorialIconForFeature,
+        getCuratedLayerColorForProjection,
+        getSubmissionDisplayPrimaryForCuratedLayer:
+          UI_CONFIG.getSubmissionDisplayPrimaryForCuratedLayer,
+        ensureProjectionPinkLineBaseLayer,
+        renderLayerFromGeojson,
+        buildIntegratedRoute,
       },
-    };
-    const geometryType = itmGeojson.features[0]?.geometry?.type || "Polygon";
-    await renderLayerFromGeojson(itmGeojson, fullLayerId, layerConfig, geometryType);
+      fullLayerId,
+    );
   }
 
   /**
@@ -566,7 +445,6 @@ function updateWmtsVisibility(fullLayerId, visible) {
     // Process each group - individual layer.enabled is the source of truth for visibility.
     // Curated groups are allowed even when the registry is not yet initialized;
     // non-curated (registry-backed) groups are deferred until registryReady.
-    let hasEnabledCuratedLayer = false;
 
     for (const group of layerGroups) {
       const isCurated = group.id.startsWith("curated");
@@ -583,6 +461,13 @@ function updateWmtsVisibility(fullLayerId, visible) {
           typeof fullLayerId === "string" &&
           fullLayerId.startsWith("curated");
         const isCurated = isCuratedGroup || isCuratedLayer;
+
+        if (
+          group.id === MORESHET_AXIS_GROUP_ID &&
+          isPinkLineParkingLayerId(String(layer.id || ""))
+        ) {
+          continue;
+        }
 
         // Handle model_base image layer specially
         if (fullLayerId === "projector_base.model_base") {
@@ -619,9 +504,6 @@ function updateWmtsVisibility(fullLayerId, visible) {
         }
 
         if (layer.enabled) {
-          if (isCurated) {
-            hasEnabledCuratedLayer = true;
-          }
           if (!loadedLayers[fullLayerId]) {
             loadProjectionLayerFromRegistry(fullLayerId)
               .then(() => {
@@ -642,10 +524,11 @@ function updateWmtsVisibility(fullLayerId, visible) {
       }
     }
 
-    // When no curated layers are enabled, hide the shared pink-line base layer.
-    // When at least one curated layer is enabled, ensure it is visible.
     try {
-      setProjectionPinkLineBaseVisibility(hasEnabledCuratedLayer);
+      setProjectionPinkLineAxisGlyphsVisible(
+        computePinkLineBaseLayerVisible(layerGroups),
+        computePinkLineParkingOverlayVisible(layerGroups),
+      );
     } catch (_) {
       // Non-fatal; base pink-line visibility is a visual enhancement.
     }
@@ -755,6 +638,38 @@ function updateWmtsVisibility(fullLayerId, visible) {
     startAnimationLoop();
   }
 
+  function listCuratedFullLayerIdsToReload() {
+    return listCuratedFullLayerIdsToReloadImpl({
+      getLayerGroups: getLayerGroupsForCuratedReload,
+      MORESHET_AXIS_GROUP_ID,
+      isPinkLineParkingLayerId,
+    });
+  }
+
+  /**
+   * @param {{ affectedCuratedFullLayerIds?: string[] }} [options]
+   */
+  async function reloadProjectionCuratedLayersFromSupabase(options) {
+    return reloadProjectionCuratedLayersFromSupabaseImpl(
+      {
+        loadedLayers,
+        inFlightLayerLoads,
+        canvasRenderer,
+        loadProjectionLayerFromRegistry,
+        updateLayerVisibility,
+        getLayerGroups: getLayerGroupsForCuratedReload,
+        MORESHET_AXIS_GROUP_ID,
+        isPinkLineParkingLayerId,
+        refreshLayerGroupsBeforeReload:
+          typeof OTEFDataContext !== "undefined" &&
+          typeof OTEFDataContext.refreshLayerGroupsFromApi === "function"
+            ? () => OTEFDataContext.refreshLayerGroupsFromApi()
+            : undefined,
+      },
+      options && typeof options === "object" ? options : {},
+    );
+  }
+
   export {
     configure,
     initializeLayers,
@@ -762,4 +677,5 @@ function updateWmtsVisibility(fullLayerId, visible) {
     handleResize,
     requestAnimationFrameForAnimations,
     stopAnimationLoop,
+    reloadProjectionCuratedLayersFromSupabase,
   };

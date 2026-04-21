@@ -1,3 +1,8 @@
+import {
+  createGeoJsonLayer,
+  createPmtilesLayer,
+} from "../../frontend/src/map-utils/layer-factory.js";
+
 describe('layer-factory: createGeoJsonLayer', () => {
   beforeEach(() => {
     global.L = {
@@ -40,8 +45,6 @@ describe('layer-factory: createGeoJsonLayer', () => {
     const geojson = { type: 'FeatureCollection', features: [] };
     const map = {}; // not used in this simple test
 
-    const { createGeoJsonLayer } = require('../../frontend/src/map-utils/layer-factory');
-
     const layer = createGeoJsonLayer({
       fullLayerId: 'group.layer',
       layerConfig,
@@ -68,8 +71,6 @@ describe('layer-factory: createGeoJsonLayer', () => {
     };
     const geojson = { type: 'FeatureCollection', features: [] };
     const map = {};
-
-    const { createGeoJsonLayer } = require('../../frontend/src/map-utils/layer-factory');
 
     const layer = createGeoJsonLayer({
       fullLayerId: 'group.layer',
@@ -98,7 +99,6 @@ describe('layer-factory: createGeoJsonLayer', () => {
     const geojson = { type: 'FeatureCollection', features: [] };
     const map = {};
 
-    const { createGeoJsonLayer } = require('../../frontend/src/map-utils/layer-factory');
     const layer = createGeoJsonLayer({
       fullLayerId: 'october_7th.חדירה_לישוב-ציר',
       layerConfig: cfg,
@@ -143,8 +143,6 @@ describe('layer-factory: createPmtilesLayer', () => {
       style: {}
     };
 
-    const { createPmtilesLayer } = require('../../frontend/src/map-utils/layer-factory');
-
     const layer = createPmtilesLayer({
       fullLayerId: 'group.layer',
       layerConfig,
@@ -161,8 +159,6 @@ describe('layer-factory: createPmtilesLayer', () => {
       createAdvancedPmtilesLayer: vi.fn(() => fakeAdvancedLayer)
     };
     global.protomapsL = { leafletLayer: vi.fn((opts) => ({ opts })) };
-
-    const { createPmtilesLayer } = require('../../frontend/src/map-utils/layer-factory');
 
     const layer = createPmtilesLayer({
       fullLayerId: 'group.land_use',
@@ -183,8 +179,6 @@ describe('layer-factory: createPmtilesLayer', () => {
       createAdvancedPmtilesLayer: vi.fn(() => ({ _advanced: true })),
     };
     global.protomapsL = { leafletLayer: vi.fn((opts) => ({ opts })) };
-
-    const { createPmtilesLayer } = require('../../frontend/src/map-utils/layer-factory');
 
     const layer = createPmtilesLayer({
       fullLayerId: 'october_7th.חדירה_לישוב-ציר',

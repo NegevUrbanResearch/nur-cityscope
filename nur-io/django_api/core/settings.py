@@ -88,7 +88,13 @@ WSGI_APPLICATION = "core.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-DATABASES = {"default": dj_database_url.config(default=os.getenv("DATABASE_URL"))}
+# When DATABASE_URL is unset, dj_database_url.config(default=None) yields an invalid config
+# (dummy engine). Default to in-memory SQLite for local tests and bare-metal dev.
+DATABASES = {
+    "default": dj_database_url.config(
+        default=os.getenv("DATABASE_URL") or "sqlite:///:memory:"
+    )
+}
 
 
 # Password validation

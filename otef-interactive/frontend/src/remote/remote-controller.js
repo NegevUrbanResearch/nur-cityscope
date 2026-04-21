@@ -3,6 +3,7 @@
 // Uses centralized OTEFDataContext for shared state (viewport, layers, animations, connection)
 
 import { rotateViewerVectorToItm } from "../shared/orientation-transform.js";
+import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
 
 // Current UI state (synced from API)
 let currentState = {
@@ -98,6 +99,22 @@ async function initialize() {
 
   // Initial UI render with whatever state DataContext has
   updateUI();
+
+  const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
+    table: TABLE_NAME,
+    onUpdated: async () => {
+      if (
+        typeof OTEFDataContext.refreshLayerGroupsFromApi === "function"
+      ) {
+        await OTEFDataContext.refreshLayerGroupsFromApi();
+      }
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("otef-curated-geojson-refresh"));
+      }
+      updateUI();
+    },
+  });
+  unsubscribeFunctions.push(stopCuratedHeartbeat);
 }
 
 /**

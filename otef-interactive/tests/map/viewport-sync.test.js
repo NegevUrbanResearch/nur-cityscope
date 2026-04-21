@@ -1,6 +1,6 @@
-const {
+import {
   createViewportApplyScheduler,
-} = require("../../frontend/src/map/viewport-sync-scheduler");
+} from "../../frontend/src/map/viewport-sync-scheduler.js";
 
 describe("viewport-sync scheduler", () => {
   test("coalesces rapid updates and applies latest viewport once", () => {

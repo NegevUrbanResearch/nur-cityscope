@@ -1,5 +1,5 @@
-const { computeZoomRange } = require('../../frontend/src/map-utils/visibility-utils');
-const { shouldLayerBeVisible } = require('../../frontend/src/map-utils/visibility-controller');
+import { computeZoomRange } from "../../frontend/src/map-utils/visibility-utils.js";
+import { shouldLayerBeVisible } from "../../frontend/src/map-utils/visibility-controller.js";
 
 describe('visibility-controller integration-style behavior', () => {
   function makeLayerStateHelper(enabledIds) {

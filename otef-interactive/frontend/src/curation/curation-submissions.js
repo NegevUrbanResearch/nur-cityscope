@@ -2,6 +2,17 @@
  * Searchable submissions combobox (Supabase all-submissions API).
  */
 
+import { sanitizeCssColor } from "./curation-color-utils.js";
+import {
+  normalizeSubmissionDisplayColorHex,
+  secondaryHexForPrimaryNormalized,
+} from "../map-utils/submission-display-color.js";
+
+/** Normalize submission UUID strings (API / GeoJSON casing may differ). */
+function normSubmissionId(id) {
+  return String(id ?? "").trim().toLowerCase();
+}
+
 function escapeHtml(s) {
   const div = document.createElement("div");
   div.textContent = s == null ? "" : String(s);
@@ -9,17 +20,39 @@ function escapeHtml(s) {
 }
 
 /**
- * @param {string} tagLabel
+ * Split-circle gradient when `colorCss` normalizes to an allowlisted palette primary; otherwise solid fill.
+ * @param {string | null | undefined} colorCss
+ * @param {string} baseClasses space-separated classes on the swatch span (e.g. option vs selected)
+ * @returns {string} HTML for one swatch span, or "" when no color
  */
-function chipClassForTag(tagLabel) {
-  const t = String(tagLabel || "").toLowerCase();
-  if (t === "history") return "curation-chip curation-chip-history";
-  if (t === "memorials") return "curation-chip curation-chip-type type-memorial";
-  return "curation-chip curation-chip-type type-moreshet";
+export function buildCurationColorSwatchHtml(colorCss, baseClasses) {
+  if (colorCss == null) return "";
+  const normalizedPrimary = normalizeSubmissionDisplayColorHex(colorCss);
+  const secondary =
+    normalizedPrimary != null
+      ? secondaryHexForPrimaryNormalized(normalizedPrimary)
+      : null;
+  if (normalizedPrimary != null && secondary != null) {
+    const partner = secondary || "#94A3B8";
+    return `<span class="${baseClasses} curation-submission-swatch-dot" style="--swatch-primary:${escapeHtml(normalizedPrimary)};--swatch-secondary:${escapeHtml(partner)};" title="Submission color" aria-hidden="true"></span>`;
+  }
+  return `<span class="${baseClasses}" style="background-color:${escapeHtml(colorCss)}" title="Submission color" aria-hidden="true"></span>`;
 }
 
 /**
- * Multiple tags per row: Tkuma Line / Memorials / History when applicable.
+ * CSS classes for submission/layer type chips. Only known axis labels use type-moreshet;
+ * arbitrary labels stay on the neutral base chip.
+ * @param {string} tagLabel
+ */
+export function chipClassForTag(tagLabel) {
+  const t = String(tagLabel || "").trim().toLowerCase();
+  if (t === "memorials") return "curation-chip curation-chip-type type-memorial";
+  if (t === "tkuma line") return "curation-chip curation-chip-type type-moreshet";
+  return "curation-chip";
+}
+
+/**
+ * Multiple tags per row: Tkuma Line / Memorials when applicable.
  * @param {ReturnType<normalizeSubmissionRow>} row
  * @returns {string[]}
  */
@@ -33,19 +66,33 @@ export function getSubmissionTagLabels(row) {
   } else {
     tags.push("Tkuma Line");
   }
-  if (row?.hasHistory) tags.push("History");
   return tags;
 }
 
 function normalizeSubmissionRow(raw) {
-  const id = String(raw?.id ?? raw?.submission_id ?? "").trim();
+  const id = normSubmissionId(raw?.id ?? raw?.submission_id ?? "");
   const name =
     raw?.name != null && String(raw.name).trim() !== ""
       ? String(raw.name).trim()
       : id.slice(0, 8) + (id.length > 8 ? "…" : "");
   const typeLabel = String(raw?.type_label ?? "Mixed").trim() || "Mixed";
   const hasHistory = Boolean(raw?.has_history);
-  return { id, name, typeLabel, hasHistory, raw };
+  const colorCandidates = [
+    raw?.submission_color,
+    raw?.submissionColor,
+    raw?.display_color,
+    raw?.displayColor,
+    raw?.color,
+  ];
+  let colorRaw = "";
+  for (const c of colorCandidates) {
+    if (c != null && String(c).trim() !== "") {
+      colorRaw = String(c).trim();
+      break;
+    }
+  }
+  const colorCss = colorRaw ? sanitizeCssColor(colorRaw) : null;
+  return { id, name, typeLabel, hasHistory, colorRaw, colorCss, raw };
 }
 
 function renderOptionChipsHtml(row) {
@@ -69,8 +116,9 @@ function renderOptionChipsHtml(row) {
  * @param {() => HTMLInputElement | null} deps.getSelectedIdInput
  * @param {Map<string, string>} deps.submissionTypeById
  * @param {(msg: string, type?: string) => void} deps.setStatus
- * @param {() => void} deps.updateSaveEditsState
+ * @param {() => void} [deps.updateSaveEditsState]
  * @param {(submissionId: string) => void} [deps.onSelectionChange]
+ * @param {() => void} [deps.onSubmissionsLoaded] runs after each submissions fetch settles (success or handled error)
  */
 export function createSubmissionsPanel(deps) {
   const {
@@ -83,8 +131,9 @@ export function createSubmissionsPanel(deps) {
     getSelectedIdInput,
     submissionTypeById,
     setStatus,
-    updateSaveEditsState,
+    updateSaveEditsState = () => {},
     onSelectionChange,
+    onSubmissionsLoaded,
   } = deps;
 
   /** @type {ReturnType<normalizeSubmissionRow>[]} */
@@ -100,8 +149,28 @@ export function createSubmissionsPanel(deps) {
   }
 
   function hasSubmissionId(id) {
-    const k = String(id || "").trim();
+    const k = normSubmissionId(id);
     return submissions.some((s) => s.id === k);
+  }
+
+  function getSubmissionDisplayName(id) {
+    const k = normSubmissionId(id);
+    const row = submissions.find((s) => s.id === k);
+    return row?.name != null ? String(row.name).trim() : "";
+  }
+
+  function getSubmissionColorCss(id) {
+    const k = normSubmissionId(id);
+    const row = submissions.find((s) => s.id === k);
+    return row?.colorCss ?? null;
+  }
+
+  /** Match curated GIS display_name to the submissions list row (GeoJSON may omit submission_id). */
+  function findSubmissionIdByDisplayName(displayName) {
+    const t = String(displayName || "").trim().toLowerCase();
+    if (!t) return null;
+    const row = submissions.find((s) => String(s.name || "").trim().toLowerCase() === t);
+    return row ? row.id : null;
   }
 
   function matchesFilter(row, q) {
@@ -145,7 +214,11 @@ export function createSubmissionsPanel(deps) {
       input?.removeAttribute("aria-describedby");
       return;
     }
-    tagsEl.innerHTML = renderOptionChipsHtml(selectedSubmission);
+    const colorDot = buildCurationColorSwatchHtml(
+      selectedSubmission.colorCss,
+      "curation-submission-selected-swatch",
+    );
+    tagsEl.innerHTML = colorDot + renderOptionChipsHtml(selectedSubmission);
     field.classList.add("has-selected-tags");
     if (listOpen) {
       tagsEl.setAttribute("aria-hidden", "true");
@@ -176,14 +249,21 @@ export function createSubmissionsPanel(deps) {
         "</div>";
       return;
     }
-    const selectedId = String(getSelectedIdInput()?.value || "").trim();
+    const selectedId = normSubmissionId(getSelectedIdInput()?.value || "");
     list.innerHTML = rows
       .map((row) => {
         const selected = row.id === selectedId ? " curation-submission-option--active" : "";
         const active = row.id === selectedId ? "true" : "false";
         const chips = renderOptionChipsHtml(row);
+        const colorDot = buildCurationColorSwatchHtml(
+          row.colorCss,
+          "curation-submission-option-swatch",
+        );
         return `<button type="button" role="option" class="curation-submission-option${selected}" data-submission-id="${escapeHtml(row.id)}" aria-selected="${active}">
-          <span class="curation-submission-option-title">${escapeHtml(row.name)}</span>
+          <span class="curation-submission-option-head">
+            ${colorDot}
+            <span class="curation-submission-option-title">${escapeHtml(row.name)}</span>
+          </span>
           <span class="curation-submission-option-chips">${chips}</span>
         </button>`;
       })
@@ -193,7 +273,7 @@ export function createSubmissionsPanel(deps) {
         e.preventDefault();
       });
       btn.addEventListener("click", () => {
-        const id = String(btn.getAttribute("data-submission-id") || "").trim();
+        const id = normSubmissionId(btn.getAttribute("data-submission-id") || "");
         selectSubmissionById(id, { notify: true });
         filterText = "";
         setListOpen(false);
@@ -209,7 +289,7 @@ export function createSubmissionsPanel(deps) {
    */
   function selectSubmissionById(id, opts = {}) {
     const notify = opts.notify !== false;
-    const k = String(id || "").trim();
+    const k = normSubmissionId(id);
     const input = getSelectedIdInput();
     if (!input) return;
     if (k && !hasSubmissionId(k)) return;
@@ -286,7 +366,7 @@ export function createSubmissionsPanel(deps) {
       ? {
           submissions: submissions.slice(),
           selectedSubmission,
-          inputValue: String(getSelectedIdInput()?.value || "").trim(),
+          inputValue: normSubmissionId(getSelectedIdInput()?.value || ""),
           typeEntries: Array.from(submissionTypeById.entries()),
         }
       : null;
@@ -294,7 +374,7 @@ export function createSubmissionsPanel(deps) {
     const list = getListContainer();
     const input = getSelectedIdInput();
     if (!list || !input) return;
-    const prev = String(input.value || "").trim();
+    const prev = normSubmissionId(input.value || "");
     list.innerHTML = '<div class="curation-status">Loading submissions…</div>';
     submissionTypeById.clear();
     try {
@@ -348,6 +428,8 @@ export function createSubmissionsPanel(deps) {
         if (onSelectionChange) onSelectionChange("");
         setListOpen(false);
       }
+    } finally {
+      if (typeof onSubmissionsLoaded === "function") onSubmissionsLoaded();
     }
   }
 
@@ -356,5 +438,8 @@ export function createSubmissionsPanel(deps) {
     selectSubmissionById,
     getSelectedSubmission,
     hasSubmissionId,
+    getSubmissionDisplayName,
+    getSubmissionColorCss,
+    findSubmissionIdByDisplayName,
   };
 }

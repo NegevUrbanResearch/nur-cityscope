@@ -1,4 +1,12 @@
 /**
+ * @param {unknown} order
+ * @returns {string}
+ */
+export function formatPinkNodeLabel(order) {
+  return String(Math.floor(Number(order)));
+}
+
+/**
  * AdvancedStyleDrawing
  *
  * Canvas only. Draws commands using viewContext (must include tileOrigin for
@@ -117,7 +125,29 @@ class AdvancedStyleDrawing {
     for (const sl of strokeLayers) {
       const dashArray =
         sl.dash && Array.isArray(sl.dash.array) ? sl.dash.array.slice() : null;
-      const styleForDraw = { hatch: null, dashArray, flow: flowAnimation };
+      const styleForDraw = {
+        hatch: null,
+        dashArray,
+        flow: flowAnimation,
+        lineCap: typeof sl.lineCap === "string" ? sl.lineCap : null,
+        lineJoin: typeof sl.lineJoin === "string" ? sl.lineJoin : null,
+        dashOffset:
+          typeof sl.dashOffset === "number" && Number.isFinite(sl.dashOffset)
+            ? sl.dashOffset
+            : null,
+      };
+      if (
+        typeof sl.shadowBlur === "number" &&
+        sl.shadowBlur > 0 &&
+        sl.shadowColor
+      ) {
+        styleForDraw.shadowBlur = sl.shadowBlur;
+        styleForDraw.shadowColor = sl.shadowColor;
+        styleForDraw.shadowOffsetX =
+          typeof sl.shadowOffsetX === "number" ? sl.shadowOffsetX : 0;
+        styleForDraw.shadowOffsetY =
+          typeof sl.shadowOffsetY === "number" ? sl.shadowOffsetY : 1;
+      }
 
       for (const line of lines) {
         this._drawLineString(
@@ -228,6 +258,7 @@ class AdvancedStyleDrawing {
     let strokeApplied = false;
     let markerHasVisibleFill = false;
     let iconLayer = null;
+    let offroadJunctionCanvas = false;
 
     for (const layer of symbolLayers) {
       if (layer.type === "fill") {
@@ -265,6 +296,9 @@ class AdvancedStyleDrawing {
             ? layer.marker.size
             : radius * 2;
         radius = sizePx / 2;
+        if (layer.marker.offroadJunctionCanvas === true) {
+          offroadJunctionCanvas = true;
+        }
         if (layer.marker.iconUrl) {
           iconLayer = layer;
         }
@@ -288,6 +322,9 @@ class AdvancedStyleDrawing {
       strokeOpacity = 1.0;
     }
     const styleForDraw = { hatch: null, dashArray: null };
+    if (offroadJunctionCanvas) {
+      styleForDraw.offroadJunctionCanvas = true;
+    }
 
     // Icon marker support: when a markerPoint layer includes marker.iconUrl,
     // delegate image loading to helpers.getIcon and draw the icon instead of
@@ -300,20 +337,33 @@ class AdvancedStyleDrawing {
           typeof iconLayer.marker.size === "number"
             ? iconLayer.marker.size
             : radius * 2;
-        const width = sizePx;
-        const height = sizePx;
+        const accentHex = iconLayer.marker.memorialAccentHex || null;
+        const imgDrawPx =
+          typeof iconLayer.marker.memorialImgPx === "number" &&
+          iconLayer.marker.memorialImgPx > 0
+            ? iconLayer.marker.memorialImgPx
+            : sizePx;
 
         const drawAt = (coords) => {
           if (!coords || coords.length < 2) return;
           const pt = viewContext.coordToPixel(coords);
           ctx.save();
           ctx.globalAlpha = 1;
+          if (accentHex) {
+            // Hug the drawn bitmap (memorialImgPx may differ from marker.size); do not use sizePx/2.
+            const ringR = imgDrawPx / 2 - 2;
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, ringR, 0, Math.PI * 2);
+            ctx.strokeStyle = accentHex;
+            ctx.lineWidth = 3;
+            ctx.stroke();
+          }
           ctx.drawImage(
             entry.img,
-            pt.x - width / 2,
-            pt.y - height / 2,
-            width,
-            height,
+            pt.x - imgDrawPx / 2,
+            pt.y - imgDrawPx / 2,
+            imgDrawPx,
+            imgDrawPx,
           );
           ctx.restore();
         };
@@ -425,6 +475,7 @@ class AdvancedStyleDrawing {
         strokeOpacity,
         lineWidth,
         radius,
+        style,
         viewContext,
       );
     } else if (type === "MultiPoint") {
@@ -438,6 +489,7 @@ class AdvancedStyleDrawing {
           strokeOpacity,
           lineWidth,
           radius,
+          style,
           viewContext,
         );
       }
@@ -520,14 +572,45 @@ class AdvancedStyleDrawing {
     viewContext,
   ) {
     if (!coords || coords.length < 2) return;
+    // Avoid drawing (and canvas shadow) when stroke is fully transparent — otherwise some
+    // browsers still show `shadowBlur` fringe for “invisible” strokes.
+    if (
+      !(typeof lineWidth === "number" && lineWidth > 0) ||
+      !(typeof strokeOpacity === "number" && strokeOpacity > 0)
+    ) {
+      return;
+    }
 
     const flow = style && style.flow;
     const phasePx = Number(flow?.phasePx) || 0;
+    const skipLineShadowForFlow =
+      flow &&
+      flow.enabled &&
+      (flow.mode === "reveal" || flow.mode === "trail");
+    const useLineShadow =
+      style &&
+      !skipLineShadowForFlow &&
+      typeof style.shadowBlur === "number" &&
+      style.shadowBlur > 0 &&
+      style.shadowColor;
 
     // Build pixel path once for modes that need length or reuse
     const pts = coords.map((c) => viewContext.coordToPixel(c));
 
-    if (flow && flow.enabled && flow.mode === "reveal") {
+    const prevCap = ctx.lineCap;
+    const prevJoin = ctx.lineJoin;
+    const prevDashOffset = ctx.lineDashOffset;
+    try {
+      if (style) {
+        if (typeof style.lineCap === "string" && style.lineCap) {
+          ctx.lineCap = style.lineCap;
+        }
+        if (typeof style.lineJoin === "string" && style.lineJoin) {
+          ctx.lineJoin = style.lineJoin;
+        }
+      }
+
+      if (flow && flow.enabled && flow.mode === "reveal") {
       // Solid line that draws along the path (no dashes). Stroke only from start
       // up to (phasePx % totalLength) so the line "reveals" over time.
       const totalLength = this._pathLength(pts);
@@ -639,7 +722,10 @@ class AdvancedStyleDrawing {
       ctx.lineDashOffset = phasePx;
     } else if (style.dashArray && Array.isArray(style.dashArray)) {
       ctx.setLineDash(style.dashArray);
-      ctx.lineDashOffset = 0;
+      ctx.lineDashOffset =
+        style.dashOffset != null && Number.isFinite(style.dashOffset)
+          ? style.dashOffset
+          : 0;
     } else {
       ctx.setLineDash([]);
       ctx.lineDashOffset = 0;
@@ -649,10 +735,28 @@ class AdvancedStyleDrawing {
     if (flow && flow.enabled && typeof flow.opacity === "number") {
       ctx.globalAlpha = prevAlpha * flow.opacity;
     }
+    // Stroke shadow: full path only. Skipped for reveal/trail (partial geometry / moving head).
+    if (useLineShadow) {
+      ctx.save();
+      ctx.shadowColor = style.shadowColor;
+      ctx.shadowBlur = style.shadowBlur;
+      ctx.shadowOffsetX =
+        typeof style.shadowOffsetX === "number" ? style.shadowOffsetX : 0;
+      ctx.shadowOffsetY =
+        typeof style.shadowOffsetY === "number" ? style.shadowOffsetY : 0;
+    }
     ctx.stroke();
+    if (useLineShadow) {
+      ctx.restore();
+    }
     ctx.globalAlpha = prevAlpha;
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
+    } finally {
+      ctx.lineCap = prevCap;
+      ctx.lineJoin = prevJoin;
+      ctx.lineDashOffset = prevDashOffset;
+    }
   }
 
   _pathLength(pts) {
@@ -698,11 +802,43 @@ class AdvancedStyleDrawing {
     strokeOpacity,
     lineWidth,
     radius,
+    style,
     viewContext,
   ) {
     if (!coords || coords.length < 2) return;
 
     const pt = viewContext.coordToPixel(coords);
+    const junctionShadow = style && style.offroadJunctionCanvas === true;
+
+    if (junctionShadow) {
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.35)";
+      ctx.shadowBlur = 5;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 2;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+      if (fillOpacity > 0) {
+        ctx.globalAlpha = fillOpacity;
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+      }
+      ctx.restore();
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.shadowOffsetX = 0;
+      if (strokeOpacity > 0 && lineWidth > 0) {
+        ctx.globalAlpha = strokeOpacity;
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = lineWidth;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
 
     ctx.beginPath();
     ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);

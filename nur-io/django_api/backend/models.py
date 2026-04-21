@@ -263,6 +263,33 @@ class GISLayer(models.Model):
         return f"{self.table.name}{project_part}/{self.display_name}"
 
 
+class WorkshopAutopublishSuppression(models.Model):
+    """
+    Records manual unpublish of a curated workshop layer so autopublish can skip
+    re-publishing until an explicit publish clears the row.
+    submission_id is stored normalized (see supabase_proxy._norm_submission_id_key).
+    """
+
+    table = models.ForeignKey(
+        Table,
+        on_delete=models.CASCADE,
+        related_name="workshop_autopublish_suppressions",
+    )
+    submission_id = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["table", "submission_id"],
+                name="uniq_workshop_suppression_per_submission",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.table.name}/{self.submission_id}"
+
+
 class CurationEditRevision(models.Model):
     """
     Append-only history of curation geometry edits.
@@ -360,7 +387,39 @@ class OTEFViewportState(models.Model):
 
     viewer_angle_deg = models.FloatField(default=0.0)
 
+    workshop_auto_publish = models.BooleanField(default=False)
+    workshop_autopublish_started_at = models.DateTimeField(null=True, blank=True)
+
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        """
+        When workshop_auto_publish turns on, record the transition time.
+        Covers ModelViewSet PATCH/partial_update as well as by_table and admin.
+        """
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            update_fields = set(update_fields)
+
+        set_started_at = False
+        if self.pk:
+            prev_wap = (
+                self.__class__.objects.filter(pk=self.pk)
+                .values_list("workshop_auto_publish", flat=True)
+                .first()
+            )
+            if prev_wap is not None and not prev_wap and self.workshop_auto_publish:
+                self.workshop_autopublish_started_at = timezone.now()
+                set_started_at = True
+        elif self.workshop_auto_publish:
+            self.workshop_autopublish_started_at = timezone.now()
+            set_started_at = True
+
+        if update_fields is not None and set_started_at:
+            update_fields.add("workshop_autopublish_started_at")
+            kwargs["update_fields"] = list(update_fields)
+
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"State for {self.table.name}"

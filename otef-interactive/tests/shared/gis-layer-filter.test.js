@@ -1,7 +1,24 @@
-const {
+import {
   shouldShowLayerOnGisMap,
   filterGroupsForGisMap,
-} = require("../../frontend/src/shared/gis-layer-filter");
+  isCuratedPackFullLayerId,
+} from "../../frontend/src/shared/gis-layer-filter.js";
+
+describe("gis-layer-filter: isCuratedPackFullLayerId", () => {
+  test("accepts curated_moresht_axis pack ids (underscore group)", () => {
+    expect(isCuratedPackFullLayerId("curated_moresht_axis.42")).toBe(true);
+  });
+
+  test("accepts legacy curated.<pk> ids", () => {
+    expect(isCuratedPackFullLayerId("curated.7")).toBe(true);
+  });
+
+  test("rejects non-curated full layer ids", () => {
+    expect(isCuratedPackFullLayerId("map_3_future.mimushim")).toBe(false);
+    expect(isCuratedPackFullLayerId("curated_no_dot")).toBe(false);
+    expect(isCuratedPackFullLayerId(null)).toBe(false);
+  });
+});
 
 describe("gis-layer-filter: shouldShowLayerOnGisMap", () => {
   test("returns false for projector_base when layer is not Tkuma_Area_LIne", () => {
@@ -21,6 +38,12 @@ describe("gis-layer-filter: shouldShowLayerOnGisMap", () => {
     expect(shouldShowLayerOnGisMap("map_3_future", "mimushim")).toBe(true);
     expect(shouldShowLayerOnGisMap("land_use", "parcels")).toBe(true);
     expect(shouldShowLayerOnGisMap("other_group", "any_layer")).toBe(true);
+  });
+
+  test("returns false for synthetic pink-line parking companion layer", () => {
+    expect(shouldShowLayerOnGisMap("curated_moresht_axis", "pink_line_parking")).toBe(
+      false,
+    );
   });
 });
 

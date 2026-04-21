@@ -271,7 +271,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'table': table_name,
                     }
                 }
-            elif field == 'layers' or field == 'layerGroups':
+            elif (
+                field == 'layers'
+                or field == 'layerGroups'
+                or field == 'workshop_auto_publish'
+            ):
                 message = {
                     'type': 'broadcast_message',
                     'message': {
@@ -374,6 +378,16 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     )
                 changed_fields.append('viewer_angle_deg')
 
+            if 'workshop_auto_publish' in request.data:
+                wap = request.data['workshop_auto_publish']
+                if not isinstance(wap, bool):
+                    return Response(
+                        {'error': 'workshop_auto_publish must be a boolean'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                state.workshop_auto_publish = wap
+                changed_fields.append('workshop_auto_publish')
+
             state.save()
 
             # Broadcast notifications for each changed field
@@ -390,6 +404,12 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'animations': state.get_animations_with_defaults(),
             'bounds_polygon': state.get_bounds_polygon(),
             'viewer_angle_deg': state.viewer_angle_deg,
+            'workshop_auto_publish': state.workshop_auto_publish,
+            'workshop_autopublish_started_at': (
+                state.workshop_autopublish_started_at.isoformat()
+                if state.workshop_autopublish_started_at
+                else None
+            ),
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -462,6 +482,10 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 # For curated groups (project-scoped), attach displayName to layers
                 # by looking up the corresponding GISLayer row.
                 if str(group.group_id).startswith("curated"):
+                    if layer_id == "pink_line_parking":
+                        layer_item["displayName"] = "Parking lots"
+                        layers.append(layer_item)
+                        continue
                     try:
                         gid = int(layer_id)
                     except (ValueError, TypeError):
@@ -534,7 +558,47 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     )
                 result = list(grouped.values())
 
-        return self._coalesce_curated_groups(result)
+        coalesced = self._coalesce_curated_groups(result)
+        self._ensure_pink_line_parking_toggle_in_moreshet_group(table, coalesced)
+        return coalesced
+
+    def _ensure_pink_line_parking_toggle_in_moreshet_group(self, table, groups):
+        """
+        When the merged Moreshet axis pack lists published content but no parking
+        LayerState row exists yet, expose an explicit pink_line_parking layer so
+        clients never infer default-ON from a missing row (fixes toggle snap-back).
+        """
+        if not isinstance(groups, list):
+            return
+        for g in groups:
+            if not isinstance(g, dict) or g.get("id") != "curated_moresht_axis":
+                continue
+            layers = list(g.get("layers") or [])
+            has_published_content = any(
+                isinstance(x, dict) and str(x.get("id", "")) != "pink_line_parking"
+                for x in layers
+            )
+            if not has_published_content:
+                continue
+            if any(
+                isinstance(x, dict) and str(x.get("id", "")) == "pink_line_parking"
+                for x in layers
+            ):
+                continue
+            st = LayerState.objects.filter(
+                table=table, layer_id="curated_moresht_axis.pink_line_parking"
+            ).first()
+            layers.append(
+                {
+                    "id": "pink_line_parking",
+                    "enabled": bool(st.enabled) if st else True,
+                    "displayName": "Parking lots",
+                }
+            )
+            g["layers"] = layers
+            g["enabled"] = layers and all(
+                isinstance(x, dict) and x.get("enabled", False) is True for x in layers
+            )
 
     def _coalesce_curated_groups(self, groups):
         """
@@ -594,6 +658,18 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 # Prefer canonical moresht-axis rows when duplicates exist.
                 if existing is None or group.get("id") == "curated_moresht_axis":
                     merged_layers_map[layer_id] = candidate
+                elif layer_id == "pink_line_parking":
+                    # Synthetic parking toggle: any curated group turning it OFF must win
+                    # over another group's stale ON (legacy multi-group LayerGroup rows).
+                    merged_layers_map[layer_id] = {
+                        "id": layer_id,
+                        "enabled": bool(existing.get("enabled"))
+                        and bool(candidate.get("enabled")),
+                        "displayName": existing.get("displayName")
+                        or candidate.get("displayName", layer_id),
+                        "project_name": existing.get("project_name")
+                        or candidate.get("project_name", ""),
+                    }
 
         merged_layers = list(merged_layers_map.values())
 
@@ -1999,18 +2075,27 @@ def _slugify_project(name):
     return slug or "default"
 
 
-_PINK_LINE_CANDIDATES = [
-    # Docker / production mount (see import_otef_data.py)
-    Path("/app/public/processed/otef/layers/filled-pink-line.geojson"),
-    # Docker / production mount for Django public data (mounted as /app/public_idistrict)
-    Path("/app/public_idistrict/processed/otef/layers/filled-pink-line.geojson"),
+_PINK_LINE_PACK_CANDIDATES = [
+    # OTEF processed layer pack (Docker: ./otef-interactive/public -> /app/public)
+    Path(
+        "/app/public/processed/layers/future_development/"
+        "הציר_הורוד_חדש.geojson",
+    ),
+    Path(
+        "/app/public/processed/layers/future_development/"
+        "הקו_הורוד.geojson",
+    ),
 ]
 
 
 @require_GET
 def pink_line_geojson(request):
-    """Serve the base filled-pink-line GeoJSON (WGS84) for integrated route display."""
-    path = next((p for p in _PINK_LINE_CANDIDATES if p.exists()), None)
+    """Serve pink-line GeoJSON (WGS84) from the OTEF processed layer pack only.
+
+    Same files as nginx under ``/otef-interactive/public/processed/layers/``.
+    Returns 404 if neither pack asset exists on disk.
+    """
+    path = next((p for p in _PINK_LINE_PACK_CANDIDATES if p.exists()), None)
     if not path:
         return HttpResponse("Pink line data not found", status=404)
     try:

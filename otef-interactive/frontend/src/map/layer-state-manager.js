@@ -1,4 +1,11 @@
-import { setPinkLineBaseVisibility } from "./leaflet-curated-layer-loader.js";
+import {
+  setPinkLineBaseVisibility,
+  setPinkLineParkingMapVisibility,
+} from "./leaflet-curated-layer-loader.js";
+import {
+  computePinkLineBaseLayerVisible,
+  computePinkLineParkingOverlayVisible,
+} from "../map-utils/curated-pink-axis-state.js";
 
 /**
  * Layer visibility state management for the Leaflet GIS map.
@@ -65,24 +72,20 @@ function applyLayerGroupsState(layerGroups, deps) {
   const registry = deps.layerRegistry || null;
   const registryReady = !!(registry && registry._initialized);
 
-  // Determine whether any curated layer is currently enabled.
-  // If none are, we should hide the shared pink-line base layer on the GIS map.
-  let hasEnabledCuratedLayer = false;
-  for (const group of layerGroups) {
-    if (!group || !Array.isArray(group.layers)) continue;
-    const isCuratedGroup =
-      typeof group.id === "string" && group.id.startsWith("curated");
-    if (!isCuratedGroup) continue;
-    if (group.layers.some((layer) => layer && layer.enabled)) {
-      hasEnabledCuratedLayer = true;
-      break;
-    }
-  }
+  const pinkBaseVisible = computePinkLineBaseLayerVisible(layerGroups);
+  const pinkParkingVisible = computePinkLineParkingOverlayVisible(layerGroups);
   if (typeof setPinkLineBaseVisibility === "function") {
     try {
-      setPinkLineBaseVisibility(hasEnabledCuratedLayer);
+      setPinkLineBaseVisibility(pinkBaseVisible);
     } catch (_) {
       // Non-fatal; base pink-line visibility is a visual enhancement.
+    }
+  }
+  if (typeof setPinkLineParkingMapVisibility === "function") {
+    try {
+      setPinkLineParkingMapVisibility(pinkParkingVisible);
+    } catch (_) {
+      // Non-fatal
     }
   }
 

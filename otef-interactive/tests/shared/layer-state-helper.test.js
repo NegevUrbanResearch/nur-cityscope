@@ -1,9 +1,13 @@
-const {
+import {
   resolveLayerState,
   parseFullLayerId,
   getLayerIdOnly,
   getEffectiveLayerGroups,
-} = require("../../frontend/src/shared/layer-state-helper");
+  coalesceCuratedGroups,
+} from "../../frontend/src/shared/layer-state-helper.js";
+import {
+  PINK_LINE_PARKING_LAYER_ID,
+} from "../../frontend/src/map-utils/curated-pink-axis-state.js";
 
 describe("layer-state-helper: parseFullLayerId", () => {
   test("returns null for invalid or missing dot", () => {
@@ -164,7 +168,30 @@ describe("layer-state-helper: curated group display names", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].id).toBe("curated_moresht_axis");
     expect(groups[0].name).toBe("Moreshet Axis");
-    expect(groups[0].layers.map((l) => l.id)).toEqual(["10", "11"]);
+    expect(groups[0].layers.map((l) => l.id)).toEqual(["10", "11", "pink_line_parking"]);
+  });
+
+  test("coalesceCuratedGroups: parking OFF in a secondary curated group wins over axis ON", () => {
+    const merged = coalesceCuratedGroups([
+      {
+        id: "curated_moresht_axis",
+        enabled: true,
+        layers: [
+          { id: "10", enabled: true },
+          { id: PINK_LINE_PARKING_LAYER_ID, enabled: true },
+        ],
+      },
+      {
+        id: "curated_legacy_slug",
+        enabled: true,
+        layers: [{ id: PINK_LINE_PARKING_LAYER_ID, enabled: false }],
+      },
+    ]);
+    const axis = merged.find((g) => g.id === "curated_moresht_axis");
+    expect(axis).toBeDefined();
+    const parking = axis.layers.find((l) => l.id === PINK_LINE_PARKING_LAYER_ID);
+    expect(parking).toBeDefined();
+    expect(parking.enabled).toBe(false);
   });
 });
 

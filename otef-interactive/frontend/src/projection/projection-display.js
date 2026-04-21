@@ -7,7 +7,29 @@ import {
   syncLayerGroupsFromState,
   handleResize as layerManagerResize,
   requestAnimationFrameForAnimations,
+  reloadProjectionCuratedLayersFromSupabase,
 } from "./projection-layer-manager.js";
+import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
+
+function projectionReloadOptsFromCuratedPayload(detail) {
+  const d =
+    detail && typeof detail === "object" ? detail : {};
+  const raw = d.affected_curated_full_layer_ids;
+  const ids = Array.isArray(raw)
+    ? raw.filter((id) => typeof id === "string" && id.length > 0)
+    : [];
+  return ids.length > 0 ? { affectedCuratedFullLayerIds: ids } : {};
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("otef-curated-geojson-refresh", (ev) => {
+    if (typeof reloadProjectionCuratedLayersFromSupabase !== "function") {
+      return;
+    }
+    const opts = projectionReloadOptsFromCuratedPayload(ev && ev.detail);
+    void reloadProjectionCuratedLayersFromSupabase(opts);
+  });
+}
 
 // Load model bounds
 let modelBounds;
@@ -94,6 +116,24 @@ fetch("data/model-bounds.json")
             requestAnimationFrameForAnimations();
           }),
         );
+
+        const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
+          table: TABLE_NAME,
+          onUpdated: async (pullPayload) => {
+            const opts = projectionReloadOptsFromCuratedPayload(
+              pullPayload && typeof pullPayload === "object" ? pullPayload : {},
+            );
+            await reloadProjectionCuratedLayersFromSupabase(opts);
+            window.dispatchEvent(
+              new CustomEvent("nur-curated-supabase-pull", {
+                detail: { source: "projection" },
+              }),
+            );
+          },
+        });
+        window._otefUnsubscribeFunctions.push(() => {
+          stopCuratedHeartbeat();
+        });
 
       });
     }

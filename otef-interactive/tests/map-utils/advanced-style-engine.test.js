@@ -1,10 +1,8 @@
-const AdvancedStyleEngineModule = require('../../frontend/src/map-utils/advanced-style-engine');
-const AdvancedStyleEngine =
-  AdvancedStyleEngineModule.default || AdvancedStyleEngineModule;
+import AdvancedStyleEngine from "../../frontend/src/map-utils/advanced-style-engine.js";
+import styles from "../../public/processed/layers/october_7th/styles.json";
 
 describe('AdvancedStyleEngine', () => {
   test('october_7th line style contains flow animation metadata', () => {
-    const styles = require('../../public/processed/layers/october_7th/styles.json');
     const style = Object.values(styles).find(
       (entry) => entry && entry.type === 'line' && entry.animation?.type === 'flow',
     );

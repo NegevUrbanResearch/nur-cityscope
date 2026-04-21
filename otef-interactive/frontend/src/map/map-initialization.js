@@ -7,7 +7,29 @@ import { buildMapOptions } from "./map-options.js";
 import { applyViewportFromAPI } from "./viewport-sync.js";
 import { applyLayerGroupsState } from "./layer-state-manager.js";
 import { updateMapLegend } from "./map-legend.js";
-import { loadGeoJSONLayers, getMapLayerLoaderAPI, pmtilesLayersWithConfigs } from "./leaflet-control-with-basemap.js";
+import {
+  loadGeoJSONLayers,
+  getMapLayerLoaderAPI,
+  reloadCuratedLayersOnMapIfUpdated,
+  loadLayerFromRegistry,
+  pmtilesLayersWithConfigs,
+} from "./leaflet-control-with-basemap.js";
+import { syncCuratedMapLayersAfterSupabasePull } from "./map-curated-supabase-sync.js";
+import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
+
+const _curatedGeojsonSyncRef = { applyLayerGroupsState: null, mapDeps: null };
+
+if (typeof window !== "undefined" && !window._otefCuratedGeojsonRefreshBound) {
+  window._otefCuratedGeojsonRefreshBound = true;
+  window.addEventListener("otef-curated-geojson-refresh", () => {
+    void syncCuratedMapLayersAfterSupabasePull({
+      reloadCuratedOnMap: reloadCuratedLayersOnMapIfUpdated,
+      loadLayerFromRegistry,
+      applyLayerGroupsState: _curatedGeojsonSyncRef.applyLayerGroupsState,
+      mapDeps: _curatedGeojsonSyncRef.mapDeps,
+    });
+  });
+}
 
 // Define EPSG:2039 projection for transformation
 proj4.defs(
@@ -156,6 +178,9 @@ function initializeMap(bounds) {
           typeof updateMapLegend === "function" ? updateMapLegend : () => {},
       };
 
+      _curatedGeojsonSyncRef.applyLayerGroupsState = applyLayerGroupsState;
+      _curatedGeojsonSyncRef.mapDeps = mapDeps;
+
       if (!window._otefUnsubscribeFunctions) {
         window._otefUnsubscribeFunctions = [];
       }
@@ -168,13 +193,13 @@ function initializeMap(bounds) {
         }),
       );
 
-      const initialLayerGroups =
+      const effective =
         typeof LayerStateHelper !== "undefined" &&
         typeof LayerStateHelper.getEffectiveLayerGroups === "function"
           ? LayerStateHelper.getEffectiveLayerGroups()
           : OTEFDataContext.getLayerGroups();
-      if (initialLayerGroups && initialLayerGroups.length > 0) {
-        applyLayerGroupsState(initialLayerGroups, mapDeps);
+      if (Array.isArray(effective)) {
+        applyLayerGroupsState(effective, mapDeps);
       }
 
       window._otefUnsubscribeFunctions.push(
@@ -184,7 +209,7 @@ function initializeMap(bounds) {
             typeof LayerStateHelper.getEffectiveLayerGroups === "function"
               ? LayerStateHelper.getEffectiveLayerGroups()
               : OTEFDataContext.getLayerGroups();
-          if (effective && effective.length > 0) {
+          if (Array.isArray(effective)) {
             applyLayerGroupsState(effective, mapDeps);
           }
         }),
@@ -195,6 +220,25 @@ function initializeMap(bounds) {
           updateConnectionStatus(!!connected);
         }),
       );
+
+      const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
+        table: "otef",
+        onUpdated: async (data) => {
+          await syncCuratedMapLayersAfterSupabasePull({
+            reloadCuratedOnMap: reloadCuratedLayersOnMapIfUpdated,
+            loadLayerFromRegistry,
+            pullPayload: data,
+            applyLayerGroupsState,
+            mapDeps,
+          });
+          window.dispatchEvent(
+            new CustomEvent("nur-curated-supabase-pull", { detail: { source: "gis" } }),
+          );
+        },
+      });
+      window._otefUnsubscribeFunctions.push(() => {
+        stopCuratedHeartbeat();
+      });
       });
   }
 

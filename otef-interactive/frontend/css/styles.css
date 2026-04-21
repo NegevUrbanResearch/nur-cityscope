@@ -416,12 +416,28 @@ body {
 }
 
 .pink-line-node {
-  width: 14px;
-  height: 14px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: currentColor;
   border: 2px solid #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+}
+
+/* Colab-style off-road connector junction (GIS divIcon); color from route off-road stroke */
+.pink-offroad-junction-marker-root {
+  background: transparent;
+  border: none;
+}
+
+.pink-offroad-junction-node {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: var(--pink-offroad-junction-color, #c62828);
+  border: 2px solid #fff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
 }
 
 .curated-node-tooltip {
@@ -431,6 +447,38 @@ body {
   max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Curated memorial markers: divIcon shell + PNG, submission-color ring when display_color validates */
+.curation-memorial-marker-root {
+  background: transparent;
+  border: none;
+}
+
+.curation-memorial-marker-shell {
+  width: 33px;
+  height: 33px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 100%;
+}
+
+.curation-memorial-marker-accent {
+  box-shadow: 0 0 0 2px var(--memorial-accent, transparent);
+}
+
+.curation-memorial-marker-img {
+  width: 38px;
+  height: 38px;
+  display: block;
+  object-fit: contain;
+  border-radius: 50%;
+}
+
+.memorial-inspect-html {
+  text-align: right;
 }
 
 /* Mobile optimization */

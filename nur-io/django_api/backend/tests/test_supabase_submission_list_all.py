@@ -263,3 +263,214 @@ class SupabaseSubmissionListAllTests(SimpleTestCase):
         self.assertEqual(row["name"], "Joined by submission_id")
         self.assertIn("type_tags", row)
         self.assertIn("type_label", row)
+
+    @patch("backend.supabase_proxy._get")
+    @patch("backend.supabase_proxy._supabase_headers")
+    def test_submissions_all_includes_submission_color_from_geo_features(
+        self, mock_headers, mock_get
+    ):
+        """submission_color is derived from geo_features rows (GeoJSON Feature props or flat columns)."""
+        mock_headers.return_value = ("https://example.supabase.co", "secret-key", None)
+
+        def getter(path, params=None):
+            if path == "/submission_batches":
+                return (
+                    [
+                        {
+                            "id": BATCH_PK_A,
+                            "submission_id": SID_A,
+                            "submission_name": "Alpha batch",
+                            "updated_at": "2024-06-15T00:00:00+00:00",
+                        }
+                    ],
+                    None,
+                )
+            if path == "/projects":
+                return ([], None)
+            if path == "/geo_features":
+                return (
+                    [
+                        {
+                            "submission_id": SID_A,
+                            "project_id": PID_1,
+                            "is_current": True,
+                            "updated_at": "2024-06-01T00:00:00+00:00",
+                            "feature_type": None,
+                            "geom": {
+                                "type": "Feature",
+                                "properties": {"stroke": "#00aa11"},
+                                "geometry": {
+                                    "type": "LineString",
+                                    "coordinates": [[34.0, 31.0], [34.1, 31.1]],
+                                },
+                            },
+                        },
+                    ],
+                    None,
+                )
+            return None, f"unexpected path {path}"
+
+        mock_get.side_effect = getter
+
+        resp = self.client.get("/api/supabase/submissions/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+        row = resp.data[0]
+        self.assertEqual(row["id"], SID_A)
+        self.assertEqual(row["submission_color"], "#00aa11")
+
+    @patch("backend.supabase_proxy._get")
+    @patch("backend.supabase_proxy._supabase_headers")
+    def test_submissions_all_prefers_submission_batch_display_color_over_geo(
+        self, mock_headers, mock_get
+    ):
+        """submission_batches.display_color wins over stroke parsed from geo_features."""
+        mock_headers.return_value = ("https://example.supabase.co", "secret-key", None)
+
+        def getter(path, params=None):
+            if path == "/submission_batches":
+                return (
+                    [
+                        {
+                            "id": BATCH_PK_A,
+                            "submission_id": SID_A,
+                            "submission_name": "Alpha batch",
+                            "updated_at": "2024-06-15T00:00:00+00:00",
+                            "display_color": "#ff0000",
+                        }
+                    ],
+                    None,
+                )
+            if path == "/projects":
+                return ([], None)
+            if path == "/geo_features":
+                return (
+                    [
+                        {
+                            "submission_id": SID_A,
+                            "project_id": PID_1,
+                            "is_current": True,
+                            "updated_at": "2024-06-01T00:00:00+00:00",
+                            "feature_type": None,
+                            "geom": {
+                                "type": "Feature",
+                                "properties": {"stroke": "#00aa11"},
+                                "geometry": {
+                                    "type": "LineString",
+                                    "coordinates": [[34.0, 31.0], [34.1, 31.1]],
+                                },
+                            },
+                        },
+                    ],
+                    None,
+                )
+            return None, f"unexpected path {path}"
+
+        mock_get.side_effect = getter
+
+        resp = self.client.get("/api/supabase/submissions/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["submission_color"], "#ff0000")
+
+    @patch("backend.supabase_proxy._get")
+    @patch("backend.supabase_proxy._supabase_headers")
+    def test_submissions_all_uses_display_color_when_geo_has_no_color(
+        self, mock_headers, mock_get
+    ):
+        mock_headers.return_value = ("https://example.supabase.co", "secret-key", None)
+
+        def getter(path, params=None):
+            if path == "/submission_batches":
+                return (
+                    [
+                        {
+                            "id": BATCH_PK_A,
+                            "submission_id": SID_A,
+                            "submission_name": "Alpha batch",
+                            "updated_at": "2024-06-15T00:00:00+00:00",
+                            "display_color": "rgb(10, 20, 30)",
+                        }
+                    ],
+                    None,
+                )
+            if path == "/projects":
+                return ([], None)
+            if path == "/geo_features":
+                return (
+                    [
+                        {
+                            "submission_id": SID_A,
+                            "project_id": PID_1,
+                            "is_current": True,
+                            "updated_at": "2024-06-01T00:00:00+00:00",
+                            "feature_type": None,
+                            "geom": {
+                                "type": "LineString",
+                                "coordinates": [[34.0, 31.0], [34.1, 31.1]],
+                            },
+                        },
+                    ],
+                    None,
+                )
+            return None, f"unexpected path {path}"
+
+        mock_get.side_effect = getter
+
+        resp = self.client.get("/api/supabase/submissions/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["submission_color"], "rgb(10, 20, 30)")
+
+    @patch("backend.supabase_proxy._get")
+    @patch("backend.supabase_proxy._supabase_headers")
+    def test_submissions_all_matches_batch_display_color_when_uuid_casing_differs(
+        self, mock_headers, mock_get
+    ):
+        """PostgREST may return mixed-case UUIDs; join must still pick up display_color."""
+        mock_headers.return_value = ("https://example.supabase.co", "secret-key", None)
+        sid_geo = "e85913be-db41-4af5-adc1-0cf2ff6614a6"
+        sid_batch = "E85913BE-DB41-4AF5-ADC1-0CF2FF6614A6"
+
+        def getter(path, params=None):
+            if path == "/submission_batches":
+                return (
+                    [
+                        {
+                            "id": BATCH_PK_A,
+                            "submission_id": sid_batch,
+                            "submission_name": "Case batch",
+                            "updated_at": "2024-06-15T00:00:00+00:00",
+                            "display_color": "#00aa11",
+                        }
+                    ],
+                    None,
+                )
+            if path == "/projects":
+                return ([], None)
+            if path == "/geo_features":
+                return (
+                    [
+                        {
+                            "submission_id": sid_geo,
+                            "project_id": PID_1,
+                            "is_current": True,
+                            "updated_at": "2024-06-01T00:00:00+00:00",
+                            "feature_type": None,
+                            "geom": {
+                                "type": "LineString",
+                                "coordinates": [[34.0, 31.0], [34.1, 31.1]],
+                            },
+                        },
+                    ],
+                    None,
+                )
+            return None, f"unexpected path {path}"
+
+        mock_get.side_effect = getter
+
+        resp = self.client.get("/api/supabase/submissions/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+        self.assertEqual(resp.data[0]["id"], sid_geo)
+        self.assertEqual(resp.data[0]["submission_color"], "#00aa11")

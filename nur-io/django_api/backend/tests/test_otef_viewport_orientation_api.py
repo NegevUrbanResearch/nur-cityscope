@@ -37,3 +37,18 @@ class ViewportOrientationApiTests(TestCase):
         )
         self.assertEqual(res.status_code, 400)
         self.assertIn("error", res.data)
+
+    def test_workshop_auto_publish_persists_across_patch_and_get(self):
+        table = Table.objects.create(name="otef", display_name="OTEF")
+        OTEFViewportState.objects.create(table=table, workshop_auto_publish=False)
+        client = APIClient()
+        patch_res = client.patch(
+            "/api/otef_viewport/by-table/otef/",
+            {"workshop_auto_publish": True},
+            format="json",
+        )
+        self.assertEqual(patch_res.status_code, 200)
+        self.assertTrue(patch_res.data["workshop_auto_publish"])
+        get_res = client.get("/api/otef_viewport/by-table/otef/")
+        self.assertEqual(get_res.status_code, 200)
+        self.assertTrue(get_res.data["workshop_auto_publish"])

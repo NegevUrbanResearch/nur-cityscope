@@ -68,4 +68,13 @@ class CuratedLayersCombinedGroupTests(TestCase):
         self.assertEqual(len(groups), 1)
         self.assertEqual(groups[0].get("id"), "curated_moresht_axis")
         self.assertEqual(groups[0].get("name"), "Moreshet Axis")
-        self.assertEqual(len(groups[0].get("layers") or []), 2)
+        layers = groups[0].get("layers") or []
+        self.assertEqual(len(layers), 3)
+        parking = next(
+            (L for L in layers if str(L.get("id", "")) == "pink_line_parking"), None
+        )
+        self.assertIsNotNone(parking)
+        curated_numeric = [
+            L for L in layers if str(L.get("id", "")) not in ("pink_line_parking",)
+        ]
+        self.assertEqual(len(curated_numeric), 2)

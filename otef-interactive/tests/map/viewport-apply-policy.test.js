@@ -1,6 +1,6 @@
-const {
+import {
   getRemoteViewportSetViewOptions,
-} = require("../../frontend/src/map/viewport-apply-policy");
+} from "../../frontend/src/map/viewport-apply-policy.js";
 
 describe("viewport-apply-policy", () => {
   test("uses non-animated setView by default", () => {

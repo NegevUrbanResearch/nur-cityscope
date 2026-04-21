@@ -4,8 +4,15 @@
  */
 
 import { UI_CONFIG } from "../config/ui-config.js";
+import {
+  collectEnabledCuratedGisFullLayerIds,
+  isCuratedPackFullLayerId,
+  shouldShowLayerOnGisMap,
+} from "../shared/gis-layer-filter.js";
 import { updateMapLegend } from "./map-legend.js";
-import { loadCuratedLayerFromAPI as _loadCurated } from "./leaflet-curated-layer-loader.js";
+import {
+  loadCuratedLayerFromAPI as _loadCurated,
+} from "./leaflet-curated-layer-loader.js";
 import { loadGeoJSONLayer } from "./map-geojson-layer-loader.js";
 import { loadPMTilesLayer } from "./map-pmtiles-layer-loader.js";
 
@@ -13,6 +20,44 @@ import { loadPMTilesLayer } from "./map-pmtiles-layer-loader.js";
 const loadedLayersMap = new Map();
 const pendingLayerLoads = new Map();
 const missingLayerConfigs = new Set();
+
+/** Max concurrent force-reloads after Supabase pull (curated packs only). */
+const CURATED_FORCE_RELOAD_CONCURRENCY = 3;
+let curatedForceReloadActive = 0;
+/** @type {Array<() => void>} */
+const curatedForceReloadQueue = [];
+
+function drainCuratedForceReloadQueue() {
+  while (
+    curatedForceReloadActive < CURATED_FORCE_RELOAD_CONCURRENCY &&
+    curatedForceReloadQueue.length > 0
+  ) {
+    const start = curatedForceReloadQueue.shift();
+    start();
+  }
+}
+
+/**
+ * Enqueue a forced curated reload; at most CURATED_FORCE_RELOAD_CONCURRENCY run at once.
+ * @param {string} fullLayerId
+ * @returns {Promise<void>}
+ */
+function enqueueCuratedForceReload(fullLayerId) {
+  return new Promise((resolve, reject) => {
+    curatedForceReloadQueue.push(() => {
+      curatedForceReloadActive++;
+      void Promise.resolve(
+        _loadCurated(fullLayerId, loadedLayersMap, registerLoadedLayer, { force: true }),
+      )
+        .then(resolve, reject)
+        .finally(() => {
+          curatedForceReloadActive--;
+          drainCuratedForceReloadQueue();
+        });
+    });
+    drainCuratedForceReloadQueue();
+  });
+}
 
 // Store PMTiles layers with their configs for feature picking
 const pmtilesLayersWithConfigs = new Map();
@@ -103,10 +148,7 @@ async function loadLayerGroups() {
   const loadPromises = [];
   for (const group of groups) {
     for (const layer of group.layers || []) {
-      if (
-        typeof shouldShowLayerOnGisMap === "function" &&
-        !shouldShowLayerOnGisMap(group.id, layer.id)
-      ) {
+      if (!shouldShowLayerOnGisMap(group.id, layer.id)) {
         continue;
       }
       const fullLayerId = `${group.id}.${layer.id}`;
@@ -122,6 +164,36 @@ async function loadLayerGroups() {
  */
 async function loadCuratedLayerFromAPI(fullLayerId) {
   return _loadCurated(fullLayerId, loadedLayersMap, registerLoadedLayer);
+}
+
+/**
+ * Force reload curated pack layers already on the map (after Supabase pull).
+ * Matches `curated_moresht_axis.<pk>` and legacy `curated.<pk>` keys in `loadedLayersMap`.
+ *
+ * @param {{ affectedCuratedFullLayerIds?: string[] }} [options]
+ * When `affectedCuratedFullLayerIds` is a non-empty array, only those ids that are
+ * already in `loadedLayersMap` and are curated packs are reloaded; otherwise all
+ * curated packs on the map (previous behavior). Reloads are capped at 3 concurrent.
+ */
+function reloadCuratedLayersOnMapIfUpdated(options = {}) {
+  const affected = options.affectedCuratedFullLayerIds;
+  const allCuratedOnMap = [...loadedLayersMap.keys()].filter((id) =>
+    isCuratedPackFullLayerId(id),
+  );
+  let ids;
+  if (Array.isArray(affected) && affected.length > 0) {
+    const want = new Set(affected.filter((id) => typeof id === "string"));
+    ids = allCuratedOnMap.filter((id) => want.has(id));
+  } else {
+    ids = allCuratedOnMap;
+  }
+  const enabled = collectEnabledCuratedGisFullLayerIds();
+  if (enabled) {
+    ids = ids.filter((id) => enabled.has(id));
+  }
+  for (const id of ids) {
+    void enqueueCuratedForceReload(id);
+  }
 }
 
 /**
@@ -298,4 +370,5 @@ export {
   getMapLayerLoaderAPI,
   loadedLayersMap,
   pmtilesLayersWithConfigs,
+  reloadCuratedLayersOnMapIfUpdated,
 };

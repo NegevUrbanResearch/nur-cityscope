@@ -1,4 +1,4 @@
-const { UI_CONFIG } = require("../../frontend/src/config/ui-config.js");
+import { UI_CONFIG } from "../../frontend/src/config/ui-config.js";
 
 describe("ui-config curated color assignment", () => {
   test("uses the same color for revised layers of the same proposal family", () => {
