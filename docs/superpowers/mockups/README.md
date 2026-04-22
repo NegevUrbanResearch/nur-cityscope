@@ -5,6 +5,10 @@
 | File | Role |
 |------|------|
 | `otef-remote-mockup.html` | One page: **Navigation** (single phone), **Layers** (wider block with **two** adjacent phone shells — pack overview + focused pack), **Workshop** (single phone). Frames sit side-by-side when the viewport is wide and wrap on narrow screens. |
+| `otef-remote-layers-mockups.html` | **Hub** that embeds the chosen **Layers** mockup (**Variant C**) in one iframe; intro links to the UX follow-up plan. Open from the `mockups/` folder so sibling relative paths resolve. |
+| `otef-remote-layers-variant-c.html` | **Variant C (chosen)** — **Sharpened** static comp: horizontal **pack strip** (edge fades, **no** visible scrollbar), **responsive layer tile grid**, **one bulk visibility toggle**, tile-level **animation** control, **per-pack + header counts**, **RTL + LTR** shells. Exploratory variants **A** and **B** were removed after selection. |
+
+**Layers shell follow-up (2026-04-22):** UX follow-up plan: [`../plans/2026-04-22-otef-remote-ux-followup.md`](../plans/2026-04-22-otef-remote-ux-followup.md) (Variant **C** + hub above).
 
 ## What each screen demonstrates
 

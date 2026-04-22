@@ -1,10 +1,9 @@
 /**
  * Layer list controller (Layers tab)
  *
- * Overview: pack list with active counts, pack on/off, open/drill, pack-level Flow
- * (when the pack has animatable layers) — separate from per-row animation chips.
- * Focused: one pack with row toggles, pack controls, and row- / pack-level animation
- * as in the previous sheet implementation. Syncs with OTEFDataContext.
+ * **Sharpened Variant C:** pack chip strip (single selection) + per-pack count row +
+ * one bulk-visibility control for the selected pack + tile grid (per-layer on/off, animation
+ * icon button on tile only). Syncs with OTEFDataContext.
  */
 
 import {
@@ -12,7 +11,14 @@ import {
   normalizeLayerBaseName,
   parseLayerNameWithGeometrySuffix,
 } from "../shared/layer-name-utils.js";
-import { LOCALE_EVENT, applyRemoteChromeI18n, formatActiveLayerCount, t } from "./remote-locale.js";
+import {
+  LOCALE_EVENT,
+  applyRemoteChromeI18n,
+  formatActiveLayerCount,
+  getLocale,
+  t,
+} from "./remote-locale.js";
+import { getPackDisplayLabel } from "./layer-pack-display-names.js";
 
 function groupLayersByNameForSheet(layers, groupId) {
   const groups = new Map();
@@ -106,6 +112,12 @@ function getRowAnimatableFullLayerIds(row, groupId) {
 function layerGroupTitle(group) {
   const id = group && group.id;
   const name = group && group.name;
+  if (id) {
+    const packLabel = getPackDisplayLabel(String(id), getLocale());
+    if (typeof packLabel === "string" && packLabel.trim() !== "") {
+      return packLabel;
+    }
+  }
   if (id === "curated" || name === "Curated") {
     return t("curatedGroupLabel");
   }
@@ -128,6 +140,24 @@ function encAttrId(id) {
   return encodeURIComponent(String(id));
 }
 
+/** @param {string} value @param {string} fallback */
+function clampPreviewColor(value, fallback = "#808080") {
+  if (typeof value !== "string" || !/^#[0-9a-fA-F]{6}$/.test(value.trim())) {
+    return fallback;
+  }
+  return value.trim();
+}
+
+/**
+ * Stable key for comparing tile identity (order-independent).
+ * @param {string[] | undefined} fullLayerIds
+ * @returns {string | null}
+ */
+function layerIdsToPrimaryKey(fullLayerIds) {
+  if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) return null;
+  return JSON.stringify([...fullLayerIds].map(String).sort());
+}
+
 function renderLayerRow(row, options = {}) {
   const groupId = options.groupId || "";
   const checked =
@@ -139,10 +169,15 @@ function renderLayerRow(row, options = {}) {
   const rawLabel =
     row.displayLabel ?? row.baseName ?? row.layers[0]?.name ?? row.layers[0]?.id ?? "";
   const label = formatLayerLabelForDisplay(rawLabel);
-  const preview = options.stylePreview || {
+  const previewRaw = options.stylePreview || {
     fillColor: "#808080",
     fillOpacity: 0.7,
     strokeColor: "#000000",
+  };
+  const preview = {
+    ...previewRaw,
+    fillColor: clampPreviewColor(previewRaw.fillColor),
+    strokeColor: clampPreviewColor(previewRaw.strokeColor),
   };
   const animatableIds = getRowAnimatableFullLayerIds(row, groupId);
   const hasAnimationToggle = animatableIds.length > 0;
@@ -157,29 +192,39 @@ function renderLayerRow(row, options = {}) {
     enabledAnimationCount > 0 &&
     enabledAnimationCount < animatableIds.length;
 
+  const stateClass = checked ? "is-on" : "is-off";
+  const rowKey = layerIdsToPrimaryKey(row.fullLayerIds);
+  const isPrimary =
+    checked &&
+    options.primaryTileIdsJson != null &&
+    rowKey === options.primaryTileIdsJson;
+  const primaryClass = isPrimary ? " layer-tile--primary" : "";
+  const visibleClass =
+    checked && !isPrimary ? " is-visible" : "";
+  const animStateClass = `${animationEnabled ? "active" : ""} ${
+    animationMixed ? "mixed" : ""
+  }`.trim();
+  const playIcon = `<svg class="anim-btn__glyph" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>`;
+  const animControl = hasAnimationToggle
+    ? `<button
+        type="button"
+        class="anim-btn ${animStateClass}"
+        data-animation-toggle
+        data-animation-layer-ids="${animIdsAttr}"
+        data-i18n-aria="ariaLayerAnimationToggle"
+      >${playIcon}</button>`
+    : `<span class="anim-btn anim-btn--absent" aria-hidden="true"></span>`;
   return `
-    <div class="layer-item">
-      <div class="layer-preview" style="background-color: ${preview.fillColor}; opacity: ${preview.fillOpacity}; border-color: ${preview.strokeColor};"></div>
-      <label class="group-toggle" onclick="event.stopPropagation()">
-        <input
-          type="checkbox"
-          data-layer-ids="${layerIdsAttr}"
-          ${checked ? "checked" : ""}
-          onchange="layerSheetController.toggleLayerRow(JSON.parse(this.getAttribute('data-layer-ids')), this.checked); event.stopPropagation();"
-        />
-        <span class="toggle-indicator"></span>
-      </label>
-      <span class="layer-label">${escapeHtmlSafe(label)}</span>
-      ${
-        hasAnimationToggle
-          ? `<button
-              type="button"
-              class="animation-chip ${animationEnabled ? "active" : ""} ${animationMixed ? "mixed" : ""}"
-              data-animation-toggle
-              data-animation-layer-ids="${animIdsAttr}"
-            >${escapeHtmlSafe(t("flowLabel"))}</button>`
-          : ""
-      }
+    <div
+      class="layer-tile ${stateClass}${visibleClass}${primaryClass}"
+      tabindex="0"
+      aria-pressed="${checked ? "true" : "false"}"
+      aria-label="${escapeHtmlSafe(label)}"
+      data-layer-ids="${layerIdsAttr}"
+    >
+      <div class="layer-tile__preview" style="background-color: ${preview.fillColor}; opacity: ${preview.fillOpacity}; border-color: ${preview.strokeColor};"></div>
+      <span class="layer-tile__label">${escapeHtmlSafe(label)}</span>
+      ${animControl}
     </div>
   `;
 }
@@ -194,6 +239,8 @@ class LayerSheetController {
     this.isOpen = false;
     /** @type {string | null} */
     this.focusedGroupId = null;
+    /** @type {string | null} last-focused tile in focused pack (sorted `fullLayerIds` JSON) */
+    this.primaryTileIdsJson = null;
 
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", () => {
@@ -235,6 +282,7 @@ class LayerSheetController {
   setupEventListeners() {
     const back = document.getElementById("layerPanelBack");
     if (back) {
+      // Clears primary-tile emphasis only; selected pack stays (see `clearLayerFocus`).
       back.addEventListener("click", (e) => {
         e.preventDefault();
         this.clearLayerFocus();
@@ -244,12 +292,21 @@ class LayerSheetController {
     const content = this.sheet.querySelector(".sheet-content");
     if (!content) return;
 
+    content.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      if (!(e.target instanceof Element) || !e.target.matches(".layer-tile")) {
+        return;
+      }
+      e.preventDefault();
+      void this.runLayerTileToggleFromElement(e.target);
+    });
+
     content.addEventListener("click", (e) => {
-      const openBtn = e.target.closest("[data-layers-open-pack]");
-      if (openBtn) {
+      const selectPack = e.target.closest("[data-layers-select-pack]");
+      if (selectPack) {
         e.preventDefault();
         e.stopPropagation();
-        const enc = openBtn.getAttribute("data-layers-open-pack");
+        const enc = selectPack.getAttribute("data-layers-select-pack");
         if (!enc) return;
         try {
           this.focusOnGroup(decodeURIComponent(enc));
@@ -259,25 +316,33 @@ class LayerSheetController {
         return;
       }
 
-      const chip = e.target.closest("[data-animation-toggle]");
-      if (!chip) return;
-      e.preventDefault();
-      e.stopPropagation();
-      let ids = [];
-      try {
-        ids = JSON.parse(chip.getAttribute("data-animation-layer-ids") || "[]");
-      } catch {
-        ids = [];
+      const animBtn = e.target.closest("[data-animation-toggle]");
+      if (animBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        let ids = [];
+        try {
+          ids = JSON.parse(animBtn.getAttribute("data-animation-layer-ids") || "[]");
+        } catch {
+          ids = [];
+        }
+        if (!Array.isArray(ids) || ids.length === 0) return;
+        const nextEnabled = !animBtn.classList.contains("active");
+        this.toggleLayerRowAnimations(ids, nextEnabled);
+        return;
       }
-      if (!Array.isArray(ids) || ids.length === 0) return;
-      const nextEnabled = !chip.classList.contains("active");
-      this.toggleLayerRowAnimations(ids, nextEnabled);
+
+      const layerTile = e.target.closest(".layer-tile");
+      if (layerTile) {
+        e.preventDefault();
+        void this.runLayerTileToggleFromElement(layerTile);
+      }
     });
 
     content.addEventListener("change", (e) => {
       const t = e.target;
       if (!(t instanceof HTMLInputElement)) return;
-      if (t.matches("input[data-layers-group-toggle]")) {
+      if (t.matches("input[data-layers-bulk-visibility]")) {
         e.stopPropagation();
         const enc = t.getAttribute("data-layers-enc-gid");
         if (enc == null) return;
@@ -293,8 +358,8 @@ class LayerSheetController {
   }
 
   /**
-   * Leaving Layers tab: mark sheet not open. Drill-down (`focusedGroupId`) is kept
-   * so returning to Layers restores the same pack view; use Back in-panel for overview.
+   * Leaving Layers tab: mark sheet not open. Selected pack (`focusedGroupId`) is kept
+   * so returning to Layers restores the same strip + grid state.
    */
   onLayersTabHidden() {
     this.isOpen = false;
@@ -310,12 +375,41 @@ class LayerSheetController {
   }
 
   focusOnGroup(groupId) {
+    this.primaryTileIdsJson = null;
     this.focusedGroupId = String(groupId);
     this.render();
   }
 
+  /**
+   * Drop primary-tile highlight (`primaryTileIdsJson`). Does not change the selected
+   * pack; `render()` keeps a valid pack via `resolveSelectedPackId`.
+   */
   clearLayerFocus() {
-    this.focusedGroupId = null;
+    this.primaryTileIdsJson = null;
+    this.render();
+  }
+
+  /**
+   * @param {Element} layerTile
+   */
+  async runLayerTileToggleFromElement(layerTile) {
+    const raw = layerTile.getAttribute("data-layer-ids") || "[]";
+    let fullLayerIds = [];
+    try {
+      fullLayerIds = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) return;
+    const isOn = layerTile.classList.contains("is-on");
+    const result = await this.toggleLayerRow(fullLayerIds, !isOn);
+    if (!result || !result.ok) return;
+    const key = layerIdsToPrimaryKey(fullLayerIds);
+    if (!isOn) {
+      this.primaryTileIdsJson = key;
+    } else if (this.primaryTileIdsJson === key) {
+      this.primaryTileIdsJson = null;
+    }
     this.render();
   }
 
@@ -360,18 +454,14 @@ class LayerSheetController {
     }
   }
 
-  async toggleLayer(layerId, enabled) {
-    if (typeof OTEFDataContext !== "undefined") {
-      await OTEFDataContext.toggleLayer(layerId, enabled);
-    }
-  }
-
   async toggleLayerRow(fullLayerIds, enabled) {
-    if (!Array.isArray(fullLayerIds)) return;
-    if (fullLayerIds.length === 0) return;
-    if (typeof OTEFDataContext !== "undefined") {
-      await OTEFDataContext.setLayersEnabled(fullLayerIds, enabled);
+    if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) {
+      return { ok: false };
     }
+    if (typeof OTEFDataContext !== "undefined") {
+      return await OTEFDataContext.setLayersEnabled(fullLayerIds, enabled);
+    }
+    return { ok: false };
   }
 
   async toggleLayerRowAnimations(fullLayerIds, enabled) {
@@ -477,6 +567,7 @@ class LayerSheetController {
           groupId: group.id,
           stylePreview: style,
           animations: anims,
+          primaryTileIdsJson: this.primaryTileIdsJson,
         });
       })
       .join("");
@@ -506,122 +597,91 @@ class LayerSheetController {
   }
 
   /**
-   * @param {object} group
-   * @param {Record<string, boolean>} animations
-   * @returns {string}
+   * @param {Array} groups
+   * @returns {string | null}
    */
-  renderPackOverviewCard(group, animations) {
-    const enabledLayers = (group.layers || []).filter((l) => l.enabled).length;
-    const totalLayers = (group.layers || []).length;
-    const packAnimatableLayerIds = (group.layers || [])
-      .filter((layer) => isLayerAnimatable(layer, group.id))
-      .map((layer) => `${group.id}.${layer.id}`);
-    const packHasAnimatable = packAnimatableLayerIds.length > 0;
-    const enabledPackAnimations = packHasAnimatable
-      ? packAnimatableLayerIds.filter((id) => !!animations[id]).length
-      : 0;
-    const packAnimationEnabled = packHasAnimatable && enabledPackAnimations > 0;
-    const packAnimationMixed =
-      packHasAnimatable &&
-      enabledPackAnimations > 0 &&
-      enabledPackAnimations < packAnimatableLayerIds.length;
-    const packAnimLayerIdsAttr = JSON.stringify(packAnimatableLayerIds).replace(
-      /"/g,
-      "&quot;",
-    );
-    const enc = encAttrId(group.id);
-    return `
-    <div class="layer-pack-card" data-group-id="${enc}">
-      <div class="layer-pack-card__top">
-        <span class="layer-pack-card__title">${escapeHtmlSafe(layerGroupTitle(group))}</span>
-        <span class="group-count" aria-hidden="true">${enabledLayers}/${totalLayers}</span>
-      </div>
-      <div class="layer-pack-card__actions">
-        ${
-          packHasAnimatable
-            ? `<button
-                type="button"
-                class="animation-chip ${packAnimationEnabled ? "active" : ""} ${packAnimationMixed ? "mixed" : ""}"
-                data-animation-toggle
-                data-animation-layer-ids="${packAnimLayerIdsAttr}"
-              >${escapeHtmlSafe(t("flowLabel"))}</button>`
-            : ""
-        }
-        <label class="group-toggle" onclick="event.stopPropagation()">
-          <input
-            type="checkbox"
-            data-layers-group-toggle
-            data-layers-enc-gid="${enc}"
-            ${group.enabled ? "checked" : ""}
-          />
-          <span class="toggle-indicator"></span>
-        </label>
-        <button
-          type="button"
-          class="layer-pack-open"
-          data-layers-open-pack="${enc}"
-          data-i18n-aria="ariaLayersOpenPack"
-        >${escapeHtmlSafe(t("layersOpenPack"))}</button>
-      </div>
-    </div>`;
+  resolveSelectedPackId(groups) {
+    if (!groups || groups.length === 0) return null;
+    if (
+      this.focusedGroupId &&
+      groups.some((g) => g.id === this.focusedGroupId)
+    ) {
+      return this.focusedGroupId;
+    }
+    return String(groups[0].id);
   }
 
   /**
-   * @param {object} group
+   * @param {Array} groups
    * @param {Record<string, boolean>} animations
    * @returns {string}
    */
-  renderFocusedPack(group, animations) {
-    const enabledLayers = (group.layers || []).filter((l) => l.enabled).length;
-    const totalLayers = (group.layers || []).length;
-    const packAnimatableLayerIds = (group.layers || [])
-      .filter((layer) => isLayerAnimatable(layer, group.id))
-      .map((layer) => `${group.id}.${layer.id}`);
-    const packHasAnimatable = packAnimatableLayerIds.length > 0;
-    const enabledPackAnimations = packHasAnimatable
-      ? packAnimatableLayerIds.filter((id) => !!animations[id]).length
-      : 0;
-    const packAnimationEnabled = packHasAnimatable && enabledPackAnimations > 0;
-    const packAnimationMixed =
-      packHasAnimatable &&
-      enabledPackAnimations > 0 &&
-      enabledPackAnimations < packAnimatableLayerIds.length;
-    const packAnimLayerIdsAttr = JSON.stringify(packAnimatableLayerIds).replace(
-      /"/g,
-      "&quot;",
-    );
+  renderLayersTabContent(groups, animations) {
+    const selectedId = this.focusedGroupId;
+    const selected = groups.find((g) => g.id === selectedId);
+    if (!selected) {
+      return `<div class="sheet-empty">${escapeHtmlSafe(t("layerEmpty"))}</div>`;
+    }
+    const enabledLayers = (selected.layers || []).filter((l) => l.enabled).length;
+    const totalLayers = (selected.layers || []).length;
+    const encGid = encAttrId(selected.id);
+    const packCountText = t("layersPackActiveCount", {
+      e: enabledLayers,
+      t: totalLayers,
+    });
+
+    const chips = groups
+      .map((g) => {
+        const enc = encAttrId(g.id);
+        const isSel = g.id === selectedId;
+        const currentAttr = isSel ? ' aria-current="true"' : "";
+        return `<button
+          type="button"
+          class="pack-chip${isSel ? " pack-chip--selected" : ""}"
+          data-layers-select-pack="${enc}"${currentAttr}
+        >${escapeHtmlSafe(layerGroupTitle(g))}</button>`;
+      })
+      .join("");
 
     return `
-    <div class="layer-group layer-group--focus" data-group-id="${encAttrId(group.id)}">
-      <div class="group-header group-header--focus">
-        <div class="group-title-row">
-          <span class="group-title">${escapeHtmlSafe(layerGroupTitle(group))}</span>
-          <span class="group-count">${enabledLayers}/${totalLayers}</span>
+    <div class="layers-variant-c">
+      <div
+        class="layers-pack-strip-wrap"
+        role="region"
+        data-i18n-aria="ariaLayersPackStrip"
+      >
+        <div class="layers-pack-head">
+          <p class="layers-pack-head__label" data-i18n="layersPackStripLabel">${escapeHtmlSafe(t("layersPackStripLabel"))}</p>
+          <span class="group-count" aria-hidden="true">${escapeHtmlSafe(packCountText)}</span>
         </div>
-        <div class="group-controls">
-          ${
-            packHasAnimatable
-              ? `<button
-                  type="button"
-                  class="animation-chip ${packAnimationEnabled ? "active" : ""} ${packAnimationMixed ? "mixed" : ""}"
-                  data-animation-toggle
-                  data-animation-layer-ids="${packAnimLayerIdsAttr}"
-                >${escapeHtmlSafe(t("flowLabel"))}</button>`
-              : ""
-          }
-          <label class="group-toggle" onclick="event.stopPropagation()">
-            <input
-              type="checkbox"
-              data-layers-group-toggle
-              data-layers-enc-gid="${encAttrId(group.id)}"
-              ${group.enabled ? "checked" : ""}
-            />
-            <span class="toggle-indicator"></span>
-          </label>
+        <div class="layers-pack-strip">
+          <div class="layers-pack-strip__viewport">
+            <div class="layers-pack-strip__edge layers-pack-strip__edge--start" aria-hidden="true"></div>
+            <div class="layers-pack-strip__edge layers-pack-strip__edge--end" aria-hidden="true"></div>
+            <div class="layers-pack-strip__scroller">
+              ${chips}
+            </div>
+          </div>
         </div>
       </div>
-      <div class="group-layers group-layers--expanded">
-        ${this.buildLayerRowsHtml(group, animations)}
+      <p class="layers-pack-scroll-hint" data-i18n="layersPackScrollHint">${escapeHtmlSafe(t("layersPackScrollHint"))}</p>
+      <div class="focused-pack-toolbar">
+        <span class="focused-pack-toolbar__label" data-i18n="layersBulkVisibility">${escapeHtmlSafe(t("layersBulkVisibility"))}</span>
+        <label class="group-toggle layer-bulk-visibility">
+          <input
+            type="checkbox"
+            data-layers-bulk-visibility
+            data-layers-enc-gid="${encGid}"
+            data-i18n-aria="ariaLayersBulkVisibility"
+            ${selected.enabled ? "checked" : ""}
+          />
+          <span class="toggle-indicator"></span>
+        </label>
+      </div>
+      <div class="group-layers group-layers--expanded group-layers--tiles">
+        <div class="layer-tile-grid">
+        ${this.buildLayerRowsHtml(selected, animations)}
+        </div>
       </div>
     </div>
   `;
@@ -639,22 +699,10 @@ class LayerSheetController {
     }
 
     const back = document.getElementById("layerPanelBack");
+    if (back) back.hidden = true;
     const titleEl = document.getElementById("layerPanelTitle");
-    if (this.focusedGroupId) {
-      if (back) back.hidden = false;
-      const fg = groups.find((g) => g.id === this.focusedGroupId);
-      if (titleEl && fg) {
-        titleEl.removeAttribute("data-i18n");
-        titleEl.textContent = layerGroupTitle(fg);
-      } else if (titleEl) {
-        titleEl.removeAttribute("data-i18n");
-        titleEl.textContent = t("layerSheetTitle");
-      }
-    } else {
-      if (back) back.hidden = true;
-      if (titleEl) {
-        titleEl.setAttribute("data-i18n", "layerSheetTitle");
-      }
+    if (titleEl) {
+      titleEl.setAttribute("data-i18n", "layerSheetTitle");
     }
   }
 
@@ -663,6 +711,12 @@ class LayerSheetController {
     if (!content) return;
 
     const groups = this.getEffectiveGroupsForView();
+    if (groups.length === 0) {
+      this.focusedGroupId = null;
+    } else {
+      this.focusedGroupId = this.resolveSelectedPackId(groups);
+    }
+
     this.updatePanelChrome(groups);
 
     const animations =
@@ -671,21 +725,21 @@ class LayerSheetController {
         ? OTEFDataContext.getAnimations() || {}
         : {};
 
-    if (this.focusedGroupId) {
-      const group = groups.find((g) => g.id === this.focusedGroupId);
-      if (!group) {
-        this.focusedGroupId = null;
-        this.render();
-        return;
-      }
-      content.innerHTML = this.renderFocusedPack(group, animations);
-    } else if (groups.length === 0) {
+    if (groups.length === 0) {
       content.innerHTML = `<div class="sheet-empty">${escapeHtmlSafe(t("layerEmpty"))}</div>`;
     } else {
-      const cards = groups
-        .map((g) => this.renderPackOverviewCard(g, animations))
-        .join("");
-      content.innerHTML = `<div class="layers-overview">${cards}</div>`;
+      content.innerHTML = this.renderLayersTabContent(groups, animations);
+      const selectedId = this.focusedGroupId;
+      const selected = groups.find((g) => g.id === selectedId);
+      if (selected) {
+        const layers = selected.layers || [];
+        const anyOn = layers.some((l) => l.enabled);
+        const anyOff = layers.some((l) => !l.enabled);
+        const bulkInput = content.querySelector("input[data-layers-bulk-visibility]");
+        if (bulkInput instanceof HTMLInputElement) {
+          bulkInput.indeterminate = anyOn && anyOff;
+        }
+      }
     }
     applyRemoteChromeI18n();
   }

@@ -61,6 +61,6 @@ describe("curation simplified UI (HTML + orchestration contracts)", () => {
     expect(js.includes("setPublishModeSegmentState")).toBe(false);
     expect(js.includes("publishSelectedCuratedLayer")).toBe(true);
     expect(js.includes("remote controller Layers sheet")).toBe(false);
-    expect(js.includes('Published "')).toBe(true);
+    expect(js.includes("curationPublishedSuccess")).toBe(true);
   });
 });

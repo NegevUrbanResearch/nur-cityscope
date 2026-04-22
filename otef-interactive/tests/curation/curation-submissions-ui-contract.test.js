@@ -119,6 +119,21 @@ describe("curation submissions list UI (HTML + source contracts)", () => {
     expect(html.includes('id="curationSubmissionSummary"')).toBe(false);
   });
 
+  test("submissions refresh is on combo row, not in title toolbar", () => {
+    const html = readCurationHtml();
+    expect(html.includes('class="curation-submission-combo-row"')).toBe(true);
+    const bodyIdx = html.indexOf("<body");
+    const fromBody = bodyIdx >= 0 ? html.slice(bodyIdx) : html;
+    const rowIdx = fromBody.indexOf("curation-submission-combo-row");
+    expect(rowIdx).toBeGreaterThan(0);
+    const rowSlice = fromBody.slice(rowIdx, rowIdx + 2000);
+    expect(rowSlice.includes("curationSubmissionComboField")).toBe(true);
+    expect(rowSlice.includes("curationSubmissionsRefresh")).toBe(true);
+    const toolbarIdx = fromBody.indexOf("curation-submissions-toolbar");
+    const toolbarSlice = fromBody.slice(toolbarIdx, toolbarIdx + 500);
+    expect(toolbarSlice.includes("curationSubmissionsRefresh")).toBe(false);
+  });
+
   test("submissions module renders type chips (Tkuma Line / Memorials), not History", () => {
     const src = readCurationSubmissionsSource();
     expect(src.includes("curation-chip-type")).toBe(true);

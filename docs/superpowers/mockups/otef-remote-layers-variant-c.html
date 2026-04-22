@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="he">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>שכבות — וריאנט C (מחודד): קרוסלת חבילות + רשת אריחי שכבות</title>
+    <style>
+      :root {
+        /* Tokens aligned with otef-remote-mockup.html */
+        --color-primary: #c17f4a;
+        --color-canvas: #12100e;
+        --color-surface: #1c1917;
+        --color-surface-raised: #262320;
+        --color-ink: #f5f0ea;
+        --color-ink-muted: #bfb6ab;
+        --color-ink-subtle: #8c847a;
+        --color-on-primary: #141210;
+        --color-border: #3d3834;
+        --color-border-strong: #4a4540;
+        --color-success: #7a9b7a;
+        --r-sm: 8px;
+        --r-md: 12px;
+        --r-pill: 9999px;
+        --space-xs: 8px;
+        --space-sm: 12px;
+        --space-md: 16px;
+        --header-safe: max(12px, env(safe-area-inset-top, 0px));
+        --font-ui: system-ui, "Segoe UI", "SF Pro Text", "Helvetica Neue", "Noto Sans Hebrew", sans-serif;
+        --shadow-soft: 0 8px 24px rgba(10, 8, 6, 0.35);
+        --focus-ring: 2px solid rgba(193, 127, 74, 0.85);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: var(--space-md);
+        background: var(--color-canvas);
+        color: var(--color-ink-muted);
+        font-family: var(--font-ui);
+        line-height: 1.5;
+      }
+      .page-hint {
+        max-width: 520px;
+        margin: 0 auto var(--space-md);
+        font-size: 0.76rem;
+        color: var(--color-ink-muted);
+        text-align: center;
+      }
+      .phones {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--space-md);
+        margin-bottom: var(--space-sm);
+      }
+      .phone-label {
+        width: 100%;
+        max-width: 360px;
+        margin: 0 auto;
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--color-ink-subtle);
+        padding-inline: 4px;
+      }
+      .phone {
+        max-width: 360px;
+        margin: 0 auto;
+        border-radius: 28px;
+        padding: 10px;
+        background: linear-gradient(145deg, #2a2622, #1a1816);
+        box-shadow: var(--shadow-soft);
+      }
+      .phone-notch {
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 4px;
+      }
+      .phone-notch::before {
+        content: "";
+        width: 96px;
+        height: 22px;
+        background: #0a0908;
+        border-radius: 12px;
+      }
+      .screen {
+        border-radius: 20px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        min-height: 620px;
+        max-height: 760px;
+        background: var(--color-canvas);
+        border: 1px solid var(--color-border);
+      }
+      .screen[dir="rtl"] {
+        direction: rtl;
+      }
+      .screen[dir="ltr"] {
+        direction: ltr;
+      }
+      .app-header {
+        background: var(--color-surface);
+        padding: calc(10px + var(--header-safe)) var(--space-md) var(--space-sm);
+        border-bottom: 1px solid var(--color-border);
+        flex-shrink: 0;
+      }
+      .app-header-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: var(--space-sm);
+      }
+      .app-header__title-block {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+        min-width: 0;
+      }
+      .app-header__layer-total {
+        font-size: 0.6rem;
+        font-weight: 500;
+        color: var(--color-ink-subtle);
+        line-height: 1.2;
+        letter-spacing: 0.02em;
+      }
+      .header-end {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+      .app-title {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--color-ink);
+        margin: 0;
+      }
+      .status-pip .connection-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--color-success);
+        box-shadow: 0 0 0 2px rgba(122, 155, 122, 0.35);
+      }
+      .locale-toggle {
+        display: inline-flex;
+        border: 1px solid var(--color-border);
+        border-radius: var(--r-md);
+        overflow: hidden;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+      .locale-toggle button {
+        border: none;
+        padding: 8px 10px;
+        min-height: 44px;
+        min-width: 44px;
+        background: var(--color-surface-raised);
+        color: var(--color-ink-muted);
+        cursor: default;
+        font: inherit;
+      }
+      .locale-toggle button.active {
+        background: var(--color-primary);
+        color: var(--color-on-primary);
+      }
+      .pack-strip-wrap {
+        padding-block-start: var(--space-xs);
+        padding-inline: var(--space-sm);
+        padding-block-end: 4px;
+        border-bottom: 1px solid var(--color-border);
+        background: var(--color-canvas);
+        flex-shrink: 0;
+      }
+      .pack-strip-wrap__head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        margin-block-end: 6px;
+        margin-inline: 2px;
+      }
+      .pack-strip-wrap__label {
+        font-size: 0.59rem;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--color-ink-muted);
+        margin: 0;
+      }
+      .pack-strip-wrap__pack-count {
+        font-size: 0.6rem;
+        font-weight: 600;
+        color: var(--color-ink-subtle);
+        white-space: nowrap;
+      }
+      .pack-strip {
+        display: block;
+      }
+      .pack-strip__viewport {
+        position: relative;
+        margin-inline: -4px;
+        padding-inline: 4px;
+        overflow: hidden;
+      }
+      .pack-strip__edge {
+        position: absolute;
+        inset-block: 0;
+        width: 22px;
+        z-index: 1;
+        pointer-events: none;
+      }
+      .pack-strip__edge--start {
+        inset-inline-start: 0;
+      }
+      .pack-strip__edge--end {
+        inset-inline-end: 0;
+      }
+      .screen[dir="ltr"] .pack-strip__edge--start {
+        background: linear-gradient(90deg, var(--color-canvas) 0%, rgba(18, 16, 14, 0) 100%);
+      }
+      .screen[dir="ltr"] .pack-strip__edge--end {
+        background: linear-gradient(270deg, var(--color-canvas) 0%, rgba(18, 16, 14, 0) 100%);
+      }
+      .screen[dir="rtl"] .pack-strip__edge--start {
+        background: linear-gradient(270deg, var(--color-canvas) 0%, rgba(18, 16, 14, 0) 100%);
+      }
+      .screen[dir="rtl"] .pack-strip__edge--end {
+        background: linear-gradient(90deg, var(--color-canvas) 0%, rgba(18, 16, 14, 0) 100%);
+      }
+      .pack-strip__scroller {
+        display: flex;
+        min-width: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        gap: 8px;
+        padding-block-start: 4px;
+        padding-inline-end: 12px;
+        padding-block-end: 8px;
+        padding-inline-start: 6px;
+        scroll-snap-type: x mandatory;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+      }
+      .pack-strip__scroller::-webkit-scrollbar {
+        display: none;
+      }
+      .pack-strip__hint {
+        margin-block-start: 0;
+        margin-inline: 2px;
+        margin-block-end: 2px;
+        font-size: 0.62rem;
+        color: var(--color-ink-muted);
+        letter-spacing: 0.03em;
+        text-align: center;
+        line-height: 1.3;
+      }
+      .pack-chip {
+        flex: 0 0 auto;
+        scroll-snap-align: start;
+        padding: 8px 14px;
+        border-radius: var(--r-pill);
+        border: 1px solid var(--color-border-strong);
+        background: var(--color-surface-raised);
+        color: var(--color-ink-muted);
+        font-size: 0.78rem;
+        font-weight: 600;
+        white-space: nowrap;
+        cursor: default;
+        font: inherit;
+        line-height: 1.25;
+      }
+      .pack-chip--selected {
+        background: var(--color-primary);
+        color: var(--color-on-primary);
+        border-color: var(--color-primary);
+        box-shadow: 0 0 0 1px rgba(193, 127, 74, 0.4);
+      }
+      .bulk-visibility {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px 12px;
+        padding: 8px var(--space-sm) 10px;
+        border-bottom: 1px solid var(--color-border);
+        background: var(--color-canvas);
+        flex-shrink: 0;
+        margin-bottom: 12px;
+      }
+      .bulk-visibility__micro {
+        font-size: 0.59rem;
+        color: var(--color-ink-muted);
+        letter-spacing: 0.04em;
+        flex: 0 0 auto;
+      }
+      .bulk-visibility__pack-toggle {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .bulk-visibility__state-label {
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: var(--color-ink);
+        line-height: 1.2;
+        text-align: start;
+        max-width: 60%;
+      }
+      .bulk-visibility__microcopy {
+        flex: 0 0 100%;
+        margin: 0;
+        font-size: 0.62rem;
+        line-height: 1.3;
+        color: var(--color-ink-muted);
+        text-align: start;
+        padding-inline: 1px 2px;
+        margin-block-start: 2px;
+      }
+      .bulk-toggle {
+        position: relative;
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        padding: 0;
+        border: none;
+        background: none;
+        cursor: default;
+        font: inherit;
+        min-width: 52px;
+        min-height: 44px;
+        justify-content: center;
+        padding-inline: 6px;
+      }
+      .bulk-toggle__track {
+        position: relative;
+        display: block;
+        width: 48px;
+        height: 28px;
+        border-radius: 9999px;
+        background: var(--color-surface-raised);
+        box-shadow: inset 0 0 0 1px var(--color-border-strong);
+        transition: background 0.15s;
+      }
+      .bulk-toggle.is-pressed .bulk-toggle__track {
+        background: rgba(122, 155, 122, 0.28);
+        box-shadow: inset 0 0 0 1px rgba(122, 155, 122, 0.55);
+      }
+      .bulk-toggle__thumb {
+        position: absolute;
+        top: 3px;
+        inset-inline-start: 3px;
+        inset-inline-end: auto;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: var(--color-ink-muted);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+        transition: background 0.15s;
+      }
+      .bulk-toggle.is-pressed .bulk-toggle__thumb {
+        inset-inline-start: auto;
+        inset-inline-end: 3px;
+        background: var(--color-ink);
+      }
+      .grid-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        padding: 6px 12px 6px;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+      .grid-head h2 {
+        margin: 0;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--color-ink);
+      }
+      .grid-head span {
+        font-size: 0.65rem;
+        color: var(--color-ink-subtle);
+        white-space: nowrap;
+      }
+      .layer-selection-legend {
+        margin: 0;
+        padding: 0 12px 8px;
+        font-size: 0.6rem;
+        line-height: 1.4;
+        color: var(--color-ink-subtle);
+        border-bottom: 1px solid var(--color-border);
+        flex-shrink: 0;
+      }
+      .app-main {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 6px 10px 14px;
+        -webkit-overflow-scrolling: touch;
+      }
+      .layer-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+        gap: 8px;
+      }
+      .layer-tile {
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        min-height: 64px;
+        padding-block-start: 6px;
+        padding-inline-end: 50px;
+        padding-block-end: 50px;
+        padding-inline-start: 8px;
+        background: var(--color-surface-raised);
+        border-radius: var(--r-sm);
+        border: 1px dashed var(--color-ink-subtle);
+        color: var(--color-ink-subtle);
+        font-size: 0.78rem;
+        font-weight: 600;
+        line-height: 1.25;
+        text-align: start;
+        cursor: default;
+        outline: none;
+        opacity: 0.58;
+      }
+      .layer-tile.is-visible,
+      .layer-tile.is-active {
+        opacity: 1;
+        color: var(--color-ink);
+      }
+      .layer-tile.is-active {
+        border-style: solid;
+        border-color: var(--color-primary);
+        box-shadow: 0 0 0 2px rgba(193, 127, 74, 0.45);
+        background: rgba(193, 127, 74, 0.16);
+      }
+      .layer-tile.is-visible:not(.is-active) {
+        border-style: solid;
+        border-color: rgba(122, 155, 122, 0.65);
+        box-shadow: 0 0 0 1px rgba(122, 155, 122, 0.35);
+        background: rgba(122, 155, 122, 0.09);
+        color: var(--color-ink);
+      }
+      .layer-tile:not(.is-visible):not(.is-active) {
+        color: var(--color-ink-subtle);
+      }
+      .layer-tile:not(:has(.anim-btn:not(.anim-btn--absent))) {
+        align-items: center;
+        min-height: 48px;
+        padding-block-start: 8px;
+        padding-inline-end: 10px;
+        padding-block-end: 10px;
+        padding-inline-start: 8px;
+      }
+      .layer-tile:focus-visible {
+        outline: var(--focus-ring);
+        outline-offset: 2px;
+      }
+      .layer-tile__name {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .anim-btn {
+        position: absolute;
+        bottom: 6px;
+        inset-inline-end: 6px;
+        top: auto;
+        width: 44px;
+        height: 44px;
+        min-width: 44px;
+        min-height: 44px;
+        border-radius: 10px;
+        border: 1px solid var(--color-border-strong);
+        background: var(--color-surface);
+        color: var(--color-ink-subtle);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: default;
+        font: inherit;
+        padding: 0;
+        line-height: 1;
+        box-sizing: border-box;
+        margin: 0;
+      }
+      .anim-btn::before {
+        content: "▶";
+        font-size: 0.6rem;
+        opacity: 0.65;
+      }
+      .anim-btn.is-on {
+        border-color: rgba(193, 127, 74, 0.65);
+        background: rgba(193, 127, 74, 0.2);
+        color: var(--color-primary);
+      }
+      .anim-btn.is-on::before {
+        opacity: 1;
+      }
+      .anim-btn--absent {
+        display: none;
+      }
+      .footnote {
+        max-width: 520px;
+        margin: var(--space-md) auto 0;
+        padding: var(--space-sm);
+        font-size: 0.7rem;
+        color: var(--color-ink-subtle);
+        border-top: 1px solid var(--color-border);
+        line-height: 1.45;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <p class="page-hint">
+      וריאנט C (מחודד) — מסלול חבילות אופקי ללא פס גלילה/חצים; קצוות־החשכה, רמז “גלילה אופקית” / Swipe, רשת אריחים,
+      מצב הסתר/הצגה מרוכז = מתג יחיד, אנימציה בפינה תחתית־הקצה. ללא JavaScript.
+    </p>
+
+    <div class="phones">
+      <p class="phone-label" lang="he">עברית — RTL</p>
+      <div class="phone">
+        <div class="phone-notch" aria-hidden="true"></div>
+        <div class="screen" lang="he" dir="rtl">
+          <header class="app-header">
+            <div class="app-header-top">
+              <div class="app-header__title-block">
+                <h1 class="app-title">שכבות</h1>
+                <p class="app-header__layer-total" lang="he">12 שכבות פעילות</p>
+              </div>
+              <div class="header-end">
+                <span class="status-pip"><span class="connection-dot" aria-hidden="true"></span></span>
+                <div class="locale-toggle" role="group" aria-label="שפה">
+                  <button type="button" class="active" disabled>עב</button>
+                  <button type="button" disabled>en</button>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <div class="pack-strip-wrap" role="region" aria-label="בחירת חבילת שכבות">
+            <div class="pack-strip-wrap__head">
+              <p class="pack-strip-wrap__label">חבילה</p>
+              <span class="pack-strip-wrap__pack-count" lang="he">4/7 פעילות</span>
+            </div>
+            <div class="pack-strip">
+              <div class="pack-strip__viewport">
+                <div class="pack-strip__edge pack-strip__edge--start" aria-hidden="true"></div>
+                <div class="pack-strip__edge pack-strip__edge--end" aria-hidden="true"></div>
+                <div class="pack-strip__scroller">
+                  <button type="button" class="pack-chip" disabled>הפניה מהירה</button>
+                  <button type="button" class="pack-chip" disabled>שטח פעולה</button>
+                  <button type="button" class="pack-chip pack-chip--selected" disabled>אוצרות</button>
+                  <button type="button" class="pack-chip" disabled>מקרן בסיס</button>
+                  <button type="button" class="pack-chip" disabled>7 באוקטובר</button>
+                </div>
+              </div>
+            </div>
+            <p class="pack-strip__hint" lang="he">גלילה אופקית · <span dir="ltr" lang="en">Swipe horizontally</span></p>
+          </div>
+
+          <div class="bulk-visibility" aria-label="הצגה או הסתרה מרוכזת לכל שכבות החבילה">
+            <span class="bulk-visibility__micro" lang="he">בחבילה זו</span>
+            <div class="bulk-visibility__pack-toggle">
+              <span class="bulk-visibility__state-label" id="he-bulk-lbl" lang="he">כל השכבות בחבילה מוצגות</span>
+              <button
+                type="button"
+                class="bulk-toggle is-pressed"
+                aria-pressed="true"
+                disabled
+                aria-labelledby="he-bulk-lbl he-bulk-hint"
+                title="הקש לכיבוי כל השכבות"
+              >
+                <span class="bulk-toggle__track" aria-hidden="true">
+                  <span class="bulk-toggle__thumb"></span>
+                </span>
+              </button>
+            </div>
+            <p class="bulk-visibility__microcopy" id="he-bulk-hint" lang="he">מתג בודד · אנימציה בפינת האריח.</p>
+          </div>
+
+          <div class="grid-head">
+            <h2>שכבות — אוצרות</h2>
+            <span lang="he">רשת שכבות בחבילה</span>
+          </div>
+          <p class="layer-selection-legend" lang="he">
+            <strong>נבחר (ראשי):</strong> מסגרת חומה (אריח אחד) · <strong>מוצג במפה:</strong> מסגרת ירוקה — לשכבות
+            נוספות שאינן הנבחר
+          </p>
+
+          <main class="app-main" aria-label="רשת שכבות לחבילה הנבחרת">
+            <div class="layer-grid">
+              <div
+                class="layer-tile is-active is-visible"
+                tabindex="0"
+                aria-label="יישובים — שכבה נבחרת (מוצגת במפה)"
+              >
+                <span class="layer-tile__name">יישובים</span>
+                <button
+                  type="button"
+                  class="anim-btn is-on"
+                  tabindex="-1"
+                  title="אנימציה: פועלת"
+                  aria-label="אנימציה פועלת"
+                  disabled
+                ></button>
+              </div>
+              <div class="layer-tile" tabindex="0" aria-label="גבולות מנהליים">
+                <span class="layer-tile__name">גבולות מנהליים</span>
+                <button
+                  type="button"
+                  class="anim-btn"
+                  tabindex="-1"
+                  title="אנימציה: כבויה"
+                  aria-label="אנימציה כבויה"
+                  disabled
+                ></button>
+              </div>
+              <div class="layer-tile is-visible" tabindex="0" aria-label="שטחי אימון — מוצג במפה">
+                <span class="layer-tile__name">שטחי אימון</span>
+                <span class="anim-btn anim-btn--absent" aria-hidden="true"></span>
+              </div>
+              <div class="layer-tile is-visible" tabindex="0" aria-label="מסלולי טיסה — מוצג במפה">
+                <span class="layer-tile__name">מסלולי טיסה</span>
+                <button
+                  type="button"
+                  class="anim-btn is-on"
+                  tabindex="-1"
+                  title="אנימציה: פועלת"
+                  aria-label="אנימציה פועלת"
+                  disabled
+                ></button>
+              </div>
+              <div class="layer-tile" tabindex="0" aria-label="נקודות עניין">
+                <span class="layer-tile__name">נקודות עניין</span>
+                <span class="anim-btn anim-btn--absent" aria-hidden="true"></span>
+              </div>
+              <div class="layer-tile" tabindex="0" aria-label="תצ״א">
+                <span class="layer-tile__name">תצ״א</span>
+                <button
+                  type="button"
+                  class="anim-btn"
+                  tabindex="-1"
+                  title="אנימציה: כבויה"
+                  aria-label="אנימציה כבויה"
+                  disabled
+                ></button>
+              </div>
+              <div class="layer-tile is-visible" tabindex="0" aria-label="תשתיות — מוצג במפה">
+                <span class="layer-tile__name">תשתיות</span>
+                <span class="anim-btn anim-btn--absent" aria-hidden="true"></span>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+
+      <p class="phone-label" lang="en">English — LTR mirror</p>
+      <div class="phone">
+        <div class="phone-notch" aria-hidden="true"></div>
+        <div class="screen" lang="en" dir="ltr">
+          <header class="app-header">
+            <div class="app-header-top">
+              <div class="app-header__title-block">
+                <h1 class="app-title">Layers</h1>
+                <p class="app-header__layer-total" lang="en">12 layers on</p>
+              </div>
+              <div class="header-end">
+                <span class="status-pip"><span class="connection-dot" aria-hidden="true"></span></span>
+                <div class="locale-toggle" role="group" aria-label="Language">
+                  <button type="button" disabled>HE</button>
+                  <button type="button" class="active" disabled>EN</button>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <div class="pack-strip-wrap" role="region" aria-label="Layer pack picker">
+            <div class="pack-strip-wrap__head">
+              <p class="pack-strip-wrap__label">Pack</p>
+              <span class="pack-strip-wrap__pack-count" lang="en">4/7 active</span>
+            </div>
+            <div class="pack-strip">
+              <div class="pack-strip__viewport">
+                <div class="pack-strip__edge pack-strip__edge--start" aria-hidden="true"></div>
+                <div class="pack-strip__edge pack-strip__edge--end" aria-hidden="true"></div>
+                <div class="pack-strip__scroller">
+                  <button type="button" class="pack-chip" disabled>Quick ref</button>
+                  <button type="button" class="pack-chip" disabled>Field ops</button>
+                  <button type="button" class="pack-chip pack-chip--selected" disabled>Treasures</button>
+                  <button type="button" class="pack-chip" disabled>Base projector</button>
+                  <button type="button" class="pack-chip" disabled>October 7</button>
+                </div>
+              </div>
+            </div>
+            <p class="pack-strip__hint" lang="en">Swipe horizontally · <span dir="rtl" lang="he">גלילה אופקית</span></p>
+          </div>
+
+          <div class="bulk-visibility" aria-label="Show or hide all layers in the pack (single control)">
+            <span class="bulk-visibility__micro" lang="en">In this pack</span>
+            <div class="bulk-visibility__pack-toggle">
+              <span class="bulk-visibility__state-label" id="en-bulk-lbl" lang="en">All pack layers on</span>
+              <button
+                type="button"
+                class="bulk-toggle is-pressed"
+                aria-pressed="true"
+                disabled
+                aria-labelledby="en-bulk-lbl en-bulk-hint"
+                title="Tap to hide all layers in this pack"
+              >
+                <span class="bulk-toggle__track" aria-hidden="true">
+                  <span class="bulk-toggle__thumb"></span>
+                </span>
+              </button>
+            </div>
+            <p class="bulk-visibility__microcopy" id="en-bulk-hint" lang="en">Single toggle · animation on tile.</p>
+          </div>
+
+          <div class="grid-head">
+            <h2>Layers — Treasures</h2>
+            <span lang="en">Layer grid in this pack</span>
+          </div>
+          <p class="layer-selection-legend" lang="en">
+            <strong>Selected (primary):</strong> amber frame · <strong>On map:</strong> green frame (non-primary
+            only)
+          </p>
+
+          <main class="app-main" aria-label="Layer tiles for selected pack">
+            <div class="layer-grid">
+              <div
+                class="layer-tile is-active is-visible"
+                tabindex="0"
+                aria-label="Settlements — selected layer, visible on map"
+              >
+                <span class="layer-tile__name">Settlements</span>
+                <button
+                  type="button"
+                  class="anim-btn is-on"
+                  tabindex="-1"
+                  title="Animation: on"
+                  aria-label="Animation on"
+                  disabled
+                ></button>
+              </div>
+              <div class="layer-tile" tabindex="0" aria-label="Administrative boundaries">
+                <span class="layer-tile__name">Administrative boundaries</span>
+                <button
+                  type="button"
+                  class="anim-btn"
+                  tabindex="-1"
+                  title="Animation: off"
+                  aria-label="Animation off"
+                  disabled
+                ></button>
+              </div>
+              <div class="layer-tile is-visible" tabindex="0" aria-label="Training areas — visible on map">
+                <span class="layer-tile__name">Training areas</span>
+                <span class="anim-btn anim-btn--absent" aria-hidden="true"></span>
+              </div>
+              <div class="layer-tile is-visible" tabindex="0" aria-label="Flight paths — visible on map">
+                <span class="layer-tile__name">Flight paths</span>
+                <button
+                  type="button"
+                  class="anim-btn is-on"
+                  tabindex="-1"
+                  title="Animation: on"
+                  aria-label="Animation on"
+                  disabled
+                ></button>
+              </div>
+              <div class="layer-tile" tabindex="0" aria-label="Points of interest">
+                <span class="layer-tile__name">Points of interest</span>
+                <span class="anim-btn anim-btn--absent" aria-hidden="true"></span>
+              </div>
+              <div class="layer-tile" tabindex="0" aria-label="Aerial photo (TSA)">
+                <span class="layer-tile__name">Aerial imagery</span>
+                <button
+                  type="button"
+                  class="anim-btn"
+                  tabindex="-1"
+                  title="Animation: off"
+                  aria-label="Animation off"
+                  disabled
+                ></button>
+              </div>
+              <div class="layer-tile is-visible" tabindex="0" aria-label="Infrastructure — visible on map">
+                <span class="layer-tile__name">Infrastructure</span>
+                <span class="anim-btn anim-btn--absent" aria-hidden="true"></span>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+
+    <p class="footnote" lang="en">
+      <strong>Engineering:</strong> pack id <code>curated</code> · e.g. <code>otef-interactive/public/processed/snapshot.json</code> (<code>public/processed</code> may be gitignored) · static mockup, no JavaScript.
+    </p>
+  </body>
+</html>

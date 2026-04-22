@@ -15,6 +15,8 @@ function ensureItmProjection() {
 async function boot() {
   ensureItmProjection();
   await import("../map-utils/coordinate-utils.js");
+  const { initLocale } = await import("../remote/remote-locale.js");
+  initLocale();
   // `?embed=1`: parent remote-controller owns heartbeat; `startCuratedSupabaseHeartbeat` no-ops when `curation-embed` detects embed mode.
   await import("../curation/curation.js");
 }

@@ -71,3 +71,20 @@ test("remote-controller shell: Hebrew default, tab regions, and stable mount ids
   expect(remote).toMatch(/\bid="zoomSlider"/);
   expect(remote).toMatch(/\bid="joystickZone"/);
 });
+
+test("remote-controller locale toggle contract (delta)", () => {
+  const remote = fs.readFileSync(
+    path.resolve(__dirname, "../../frontend/remote-controller.html"),
+    "utf8",
+  );
+
+  const toggleRegion = remote.match(
+    /class="remote-locale-toggle"[\s\S]*?\bid="remoteLocaleToggle"/i,
+  );
+  expect(toggleRegion).toBeTruthy();
+  expect(toggleRegion[0]).toMatch(/role="group"/);
+  expect(toggleRegion[0]).toMatch(/data-i18n-aria="localeGroupAria"/);
+
+  expect(remote).toMatch(/id="remoteLocaleHe"[^>]*>[\s\S]*?עב/);
+  expect(remote).toMatch(/id="remoteLocaleEn"[^>]*>[\s\S]*?\ben\b/);
+});

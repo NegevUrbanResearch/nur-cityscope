@@ -47,9 +47,30 @@ test("submission list loads from all-submissions API (searchable list, no projec
   expect(subs.includes("has_history")).toBe(true);
 });
 
-test("curation sidebar title is plain submissions", () => {
+test("curation.html embed flag in inline script; submissions refresh i18n or static a11y", () => {
   const html = readCurationHtml();
-  expect(html.includes("<h2>Submissions</h2>")).toBe(true);
+  const inlineBodies = [
+    ...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi),
+  ].map((m) => m[1]);
+  expect(inlineBodies.some((body) => body.includes("curation-embed"))).toBe(true);
+  expect(html.includes('id="curationSubmissionsRefresh"')).toBe(true);
+  const btnOpen = html.match(/<button\b[\s\S]*?\bid="curationSubmissionsRefresh"[\s\S]*?>/);
+  expect(btnOpen).toBeTruthy();
+  const tag = btnOpen[0];
+  const hasI18n =
+    tag.includes('data-i18n-title="curationSubmissionsRefreshTitle"') &&
+    tag.includes('data-i18n-aria="curationSubmissionsRefreshAria"');
+  const hasStatic = /\btitle="/i.test(tag) && /\baria-label="/i.test(tag);
+  expect(hasI18n || hasStatic).toBe(true);
+});
+
+test("curation sidebar submissions section, embed class, and refresh control", () => {
+  const html = readCurationHtml();
+  expect(html.includes("curation-embed")).toBe(true);
+  expect(
+    /<\s*h2[^>]*\bdata-i18n="curationSubmissionsHeading"[^>]*>/.test(html),
+  ).toBe(true);
+  expect(html.includes('id="curationSubmissionsRefresh"')).toBe(true);
   expect(html.includes("Submissions (combined)")).toBe(false);
   expect(html.includes('id="curationSubmissionTypeBadge"')).toBe(false);
   expect(html.includes('id="curationSubmissionSelectedTags"')).toBe(true);

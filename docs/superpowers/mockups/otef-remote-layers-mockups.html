@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>מוקאפ שכבות — וריאנט C (נבחר)</title>
+    <style>
+      :root {
+        --color-primary: #c17f4a;
+        --color-canvas: #12100e;
+        --color-surface: #1c1917;
+        --color-surface-raised: #262320;
+        --color-ink: #f5f0ea;
+        --color-ink-muted: #bfb6ab;
+        --color-ink-subtle: #8c847a;
+        --color-border: #3d3834;
+        --r-md: 12px;
+        --r-pill: 9999px;
+        --space-sm: 12px;
+        --space-md: 16px;
+        --space-lg: 24px;
+        --font-ui: system-ui, "Segoe UI", "SF Pro Text", "Helvetica Neue", "Noto Sans Hebrew", sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: var(--space-lg) var(--space-md) calc(var(--space-lg) * 2);
+        background: var(--color-canvas);
+        color: var(--color-ink-muted);
+        font-family: var(--font-ui);
+        line-height: 1.6;
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      h1 {
+        color: var(--color-ink);
+        font-size: 1.35rem;
+        font-weight: 600;
+        margin: 0 0 0.75rem;
+        letter-spacing: -0.02em;
+      }
+      .intro {
+        font-size: 0.9rem;
+        color: var(--color-ink-subtle);
+        margin: 0 0 var(--space-md);
+        max-width: 52rem;
+      }
+      .intro a {
+        color: var(--color-primary);
+        text-decoration: none;
+        border-bottom: 1px solid rgba(193, 127, 74, 0.45);
+      }
+      .intro a:hover {
+        color: var(--color-ink);
+        border-bottom-color: var(--color-ink);
+      }
+      section {
+        margin-bottom: var(--space-lg);
+      }
+      section h2 {
+        color: var(--color-ink);
+        font-size: 1.05rem;
+        font-weight: 600;
+        margin: 0 0 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--color-border);
+      }
+      .frame {
+        width: 100%;
+        min-height: 1580px;
+        border: 1px solid var(--color-border);
+        border-radius: var(--r-md);
+        background: #0a0908;
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>מוקאפ שכבות — וריאנט C (נבחר ומחודד)</h1>
+      <p class="intro">
+        עמוד זה מטמיע את
+        <code>otef-remote-layers-variant-c.html</code>
+        — המוקאפ הסטטי שעליו מבוססים מימוש הלשונית &quot;שכבות&quot;. אין JavaScript. תכנית המשך:
+        <a href="../plans/2026-04-22-otef-remote-ux-followup.md">2026-04-22-otef-remote-ux-followup.md</a>.
+        ניתן לפתוח גם את קובץ ה־HTML של הוריאנט ישירות מאותה תיקייה.
+      </p>
+      <section id="variant-c" aria-labelledby="t-c">
+        <h2 id="t-c">וריאנט C — בורר חבילות + אריחי שכבות (RTL + LTR)</h2>
+        <iframe
+          class="frame"
+          src="otef-remote-layers-variant-c.html"
+          title="מוקאפ שכבות — וריאנט C"
+        ></iframe>
+      </section>
+    </div>
+  </body>
+</html>

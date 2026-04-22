@@ -2,6 +2,7 @@
  * Searchable submissions combobox (Supabase all-submissions API).
  */
 
+import { t } from "../remote/remote-locale.js";
 import { sanitizeCssColor } from "./curation-color-utils.js";
 import {
   normalizeSubmissionDisplayColorHex,
@@ -34,9 +35,9 @@ export function buildCurationColorSwatchHtml(colorCss, baseClasses) {
       : null;
   if (normalizedPrimary != null && secondary != null) {
     const partner = secondary || "#94A3B8";
-    return `<span class="${baseClasses} curation-submission-swatch-dot" style="--swatch-primary:${escapeHtml(normalizedPrimary)};--swatch-secondary:${escapeHtml(partner)};" title="Submission color" aria-hidden="true"></span>`;
+    return `<span class="${baseClasses} curation-submission-swatch-dot" style="--swatch-primary:${escapeHtml(normalizedPrimary)};--swatch-secondary:${escapeHtml(partner)};" title="${escapeHtml(t("curationSubmissionColorTitle"))}" aria-hidden="true"></span>`;
   }
-  return `<span class="${baseClasses}" style="background-color:${escapeHtml(colorCss)}" title="Submission color" aria-hidden="true"></span>`;
+  return `<span class="${baseClasses}" style="background-color:${escapeHtml(colorCss)}" title="${escapeHtml(t("curationSubmissionColorTitle"))}" aria-hidden="true"></span>`;
 }
 
 /**
@@ -45,9 +46,9 @@ export function buildCurationColorSwatchHtml(colorCss, baseClasses) {
  * @param {string} tagLabel
  */
 export function chipClassForTag(tagLabel) {
-  const t = String(tagLabel || "").trim().toLowerCase();
-  if (t === "memorials") return "curation-chip curation-chip-type type-memorial";
-  if (t === "tkuma line") return "curation-chip curation-chip-type type-moreshet";
+  const s = String(tagLabel || "").trim().toLowerCase();
+  if (s === "memorials") return "curation-chip curation-chip-type type-memorial";
+  if (s === "tkuma line") return "curation-chip curation-chip-type type-moreshet";
   return "curation-chip";
 }
 
@@ -95,12 +96,19 @@ function normalizeSubmissionRow(raw) {
   return { id, name, typeLabel, hasHistory, colorRaw, colorCss, raw };
 }
 
+function displayCurationTypeTagForUi(tag) {
+  const s = String(tag);
+  if (s === "Tkuma Line") return t("curationTagTkumaLine");
+  if (s === "Memorials") return t("curationTagMemorials");
+  return s;
+}
+
 function renderOptionChipsHtml(row) {
   const tags = getSubmissionTagLabels(row);
   return tags
     .map((tag) => {
       const cls = chipClassForTag(tag);
-      return `<span class="${cls}">${escapeHtml(tag)}</span>`;
+      return `<span class="${cls}">${escapeHtml(displayCurationTypeTagForUi(tag))}</span>`;
     })
     .join("");
 }
@@ -167,19 +175,19 @@ export function createSubmissionsPanel(deps) {
 
   /** Match curated GIS display_name to the submissions list row (GeoJSON may omit submission_id). */
   function findSubmissionIdByDisplayName(displayName) {
-    const t = String(displayName || "").trim().toLowerCase();
-    if (!t) return null;
-    const row = submissions.find((s) => String(s.name || "").trim().toLowerCase() === t);
+    const nameKey = String(displayName || "").trim().toLowerCase();
+    if (!nameKey) return null;
+    const row = submissions.find((s) => String(s.name || "").trim().toLowerCase() === nameKey);
     return row ? row.id : null;
   }
 
   function matchesFilter(row, q) {
-    const t = String(q || "").trim().toLowerCase();
-    if (!t) return true;
-    if (row.name.toLowerCase().includes(t) || row.id.toLowerCase().includes(t)) {
+    const queryLower = String(q || "").trim().toLowerCase();
+    if (!queryLower) return true;
+    if (row.name.toLowerCase().includes(queryLower) || row.id.toLowerCase().includes(queryLower)) {
       return true;
     }
-    return getSubmissionTagLabels(row).some((tag) => tag.toLowerCase().includes(t));
+    return getSubmissionTagLabels(row).some((tag) => tag.toLowerCase().includes(queryLower));
   }
 
   function setListOpen(open) {
@@ -245,7 +253,9 @@ export function createSubmissionsPanel(deps) {
     if (rows.length === 0) {
       list.innerHTML =
         '<div class="curation-status">' +
-        (submissions.length === 0 ? "No submissions loaded." : "No matching submissions.") +
+        (submissions.length === 0
+          ? t("curationSubmissionsEmpty")
+          : t("curationSubmissionsNoMatch")) +
         "</div>";
       return;
     }
@@ -337,9 +347,9 @@ export function createSubmissionsPanel(deps) {
 
     const onDocPointerDown = (e) => {
       if (!listOpen) return;
-      const t = e.target;
-      if (!t) return;
-      if (root && root.contains(t)) return;
+      const evTarget = e.target;
+      if (!evTarget) return;
+      if (root && root.contains(evTarget)) return;
       setListOpen(false);
       syncInputDisplayFromSelection();
     };
@@ -375,7 +385,7 @@ export function createSubmissionsPanel(deps) {
     const input = getSelectedIdInput();
     if (!list || !input) return;
     const prev = normSubmissionId(input.value || "");
-    list.innerHTML = '<div class="curation-status">Loading submissions…</div>';
+    list.innerHTML = '<div class="curation-status">' + t("curationSubmissionsLoading") + "</div>";
     submissionTypeById.clear();
     try {
       const rawList = await API.submissionsAll();
@@ -419,7 +429,7 @@ export function createSubmissionsPanel(deps) {
         }
       } else {
         submissions = [];
-        setStatus("Could not load submissions: " + (e?.message || String(e)), "error");
+        setStatus(t("curationSubmissionsLoadError", { e: e?.message || String(e) }), "error");
         input.value = "";
         selectedSubmission = null;
         renderList();
@@ -433,6 +443,11 @@ export function createSubmissionsPanel(deps) {
     }
   }
 
+  function rerenderForLocale() {
+    renderList();
+    syncInputDisplayFromSelection();
+  }
+
   return {
     loadSubmissions,
     selectSubmissionById,
@@ -441,5 +456,6 @@ export function createSubmissionsPanel(deps) {
     getSubmissionDisplayName,
     getSubmissionColorCss,
     findSubmissionIdByDisplayName,
+    rerenderForLocale,
   };
 }

@@ -46,6 +46,7 @@ describe('layer sheet animation controls', () => {
       animations: {},
     });
     expect(html2).not.toContain('data-animation-toggle');
+    expect(html2).toContain('anim-btn--absent');
   });
 
   test('layer row animation chip is active when any row animation is enabled', () => {
@@ -81,7 +82,7 @@ describe('layer sheet animation controls', () => {
       },
     });
 
-    expect(html).toContain('animation-chip active mixed');
+    expect(html).toContain('class="anim-btn active mixed"');
   });
 });
 

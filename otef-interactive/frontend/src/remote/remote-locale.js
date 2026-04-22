@@ -20,7 +20,7 @@ const SUPPORTED = /** @type {const} */ (["he", "en"]);
 let _locale = "he";
 
 /**
- * Not translated via MESSAGES: language autonyms on toggle ("עברית", "English");
+ * Not translated via MESSAGES: compact language labels on the toggle ("עב", "en" in markup);
  * product token "OTEF" in page title; layer/group display names from API;
  * `curatedGroupLabel` is the fallback title when the `curated` group has no API name
  * (same English string as the former hard-coded fallback, localized for Hebrew).
@@ -35,6 +35,8 @@ const MESSAGES = {
     navLayers: "שכבות",
     navCuration: "סדנה",
     sectionNavigation: "ניווט",
+    navPanGroupLabel: "הזזה",
+    navZoomGroupLabel: "זום",
     zoomLabel: "זום:",
     statusConnected: "מחובר",
     statusDisconnected: "מנותק",
@@ -56,9 +58,72 @@ const MESSAGES = {
     flowLabel: "זרימה",
     curatedGroupLabel: "אסופה",
     layersOpenPack: "הצג",
+    layersPackStripLabel: "חבילה",
+    layersPackActiveCount: "{{e}}/{{t}} פעילות",
+    layersPackScrollHint: "גלילה אופקית · Swipe horizontally",
+    ariaLayersPackStrip: "בחירת חבילת שכבות",
+    ariaLayerAnimationToggle: "הפעלת או כיבוי אנימציית זרימה לשכבה",
+    layersBulkVisibility: "כל השכבות בחבילה",
+    ariaLayersBulkVisibility: "הפעלת או כיבוי כל השכבות בחבילה שנבחרה",
     layersBack: "רשימת חבילות",
     ariaLayersBack: "חזרה לרשימת חבילות",
     ariaLayersOpenPack: "הצגת שכבות בחבילה",
+    curationSubmissionsRefreshTitle: "רענון רשימת הגשות",
+    curationSubmissionsRefreshAria: "רענון רשימת ההגשות",
+    curationSubmissionsHeading: "הגשות",
+    curationPageTitle: "אצירה",
+    curationBackLink: "בקר",
+    curationBackAria: "פתיחת בקר",
+    curationHeaderRefresh: "רענון",
+    curationHeaderRefreshAria: "רענון",
+    curationDocumentTitle: "OTEF | אצירה",
+    curationPublishHeading: "פרסום",
+    curationPublishButton: "פרסום כשכבת OTEF",
+    curationSelectSubmissionError: "בחרו הגשה לפרסום.",
+    curationMissingGroupError: "חסר שם קבוצה לאסוף.",
+    curationNoFeaturesError: "אין תצוגה נוכחית לפרסום עבור הגשה זו.",
+    curationPublishing: "מפרסמים…",
+    curationPublishedSuccess: "פורסם \"{{e}}\".",
+    curationPublishFailed: "הפרסום נכשל: {{e}}",
+    curationUnpublishAllConfirm: "להסיר את כל שכבות האצירה המפורסמות מהבקר המרוחק?",
+    curationUnpublishAllInProgress: "מסירים את כל שכבות האצירה המפורסמות…",
+    curationUnpublishAllRemovedN: "הוסרו {{n}} שכבה/ות מפורסמות.",
+    curationUnpublishAllSuccess: "הוסרו כל שכבות האצירה המפורסמות.",
+    curationUnpublishAllError: "לא ניתן לבטל את כל הפרסומים: {{e}}",
+    curationLoadWorkshopError: "לא ניתן לטעון מצב סדנה: {{e}}",
+    curationWorkshopOnSuccess: "פרסום אוטומטי לסדנה מופעל: הגשות חדשות עשויות להתפרסם אוטומטית.",
+    curationWorkshopOffSuccess: "פרסום אוטומטי לסדנה כבוי.",
+    curationUpdateWorkshopError: "לא ניתן לעדכן מצב סדנה: {{e}}",
+    curationPublishedHeading: "שכבות מפורסמות בבקר",
+    curationWorkshopAutoPublish: "פרסום אוטומטי לסדנה",
+    curationWorkshopAutoPublishAria: "פרסום אוטומטי לסדנה",
+    curationUnpublishAll: "בטל את כל הפרסומים",
+    curationPublishedLoading: "טוען שכבות אצירה מפורסמות…",
+    curationSubmissionSearchPlaceholder: "חיפוש או בחירת הגשה…",
+    curationSubmissionSearchAria: "חיפוש ובחירת הגשה",
+    curationSubmissionListAria: "הגשות",
+    curationSubmissionsEmpty: "לא נטענו הגשות.",
+    curationSubmissionsNoMatch: "אין תוצאות.",
+    curationSubmissionsLoading: "טוען הגשות…",
+    curationSubmissionsLoadError: "לא ניתן לטעון הגשות: {{e}}",
+    curationNoPublishedLayers: "אין שכבות אצירה מפורסמות.",
+    curationLoadingPublished: "טוען שכבות אצירה מפורסמות…",
+    curationLoadPublishedError: "לא ניתן לטעון שכבות אצירה: {{e}}",
+    curationTagTkumaLine: "קו תקומה",
+    curationTagMemorials: "הנצחה",
+    curationSubmissionColorTitle: "צבע הגשה",
+    curationOpenSubmissionForLayer: "פתח את ההגשה \"{{e}}\" עבור השכבה \"{{n}}\"",
+    curationOpenSubmissionUnnamed: "פתח את ההגשה עבור השכבה \"{{e}}\"",
+    curationPublishedLayerUnknown: "שכבה \"{{e}}\": הגשה לא ידועה (מרובות או חסרה); הודעת מצב",
+    curationLayerUpdatedTitle: "עדכון אחרון לשכבה",
+    curationLayerTypeTagsAria: "תגי סוג לשכבה",
+    curationUnpublishButton: "הסרה",
+    curationUnpublishButtonAria: "הסרת שכבה מן הבקר",
+    curationUnpublishOneConfirm: "להסיר את \"{{e}}\" מרשימת השכבות המפורסמות?",
+    curationUnpublishOneSuccess: "הוסרה \"{{e}}\" מרשימת הפרסומים.",
+    curationUnpublishOneError: "לא ניתן להסיר שכבה: {{e}}",
+    curationMapUnknownSubmissions: "השכבה המפורסמת מתאימה למספר הגשות או אינה ידועה.",
+    curationMapSubmissionNotInList: "ההגשה {{e}} אינה מופיעה ברשימת ההגשות.",
   },
   en: {
     documentTitle: "OTEF",
@@ -68,6 +133,8 @@ const MESSAGES = {
     navLayers: "Layers",
     navCuration: "Workshop",
     sectionNavigation: "Navigation",
+    navPanGroupLabel: "Pan",
+    navZoomGroupLabel: "Zoom",
     zoomLabel: "Zoom:",
     statusConnected: "Connected",
     statusDisconnected: "Disconnected",
@@ -89,9 +156,74 @@ const MESSAGES = {
     flowLabel: "Flow",
     curatedGroupLabel: "Curated",
     layersOpenPack: "View",
+    layersPackStripLabel: "Pack",
+    layersPackActiveCount: "{{e}}/{{t}} active",
+    layersPackScrollHint: "Swipe horizontally — more packs",
+    ariaLayersPackStrip: "Choose a layer pack",
+    ariaLayerAnimationToggle: "Enable or disable flow animation for this layer",
+    layersBulkVisibility: "All layers in pack",
+    ariaLayersBulkVisibility: "Enable or disable every layer in the selected pack",
     layersBack: "All packs",
     ariaLayersBack: "Back to all packs",
     ariaLayersOpenPack: "View layers in this pack",
+    curationSubmissionsRefreshTitle: "Refresh submissions list",
+    curationSubmissionsRefreshAria: "Refresh submissions list",
+    curationSubmissionsHeading: "Submissions",
+    curationPageTitle: "Curation",
+    curationBackLink: "Controller",
+    curationBackAria: "Open controller",
+    curationHeaderRefresh: "Refresh",
+    curationHeaderRefreshAria: "Refresh",
+    curationDocumentTitle: "OTEF | Curation",
+    curationPublishHeading: "Publish",
+    curationPublishButton: "Publish as OTEF layer",
+    curationSelectSubmissionError: "Select a submission to publish.",
+    curationMissingGroupError: "Missing curated group name.",
+    curationNoFeaturesError: "No current features to publish for this submission.",
+    curationPublishing: "Publishing…",
+    curationPublishedSuccess: "Published “{{e}}”.",
+    curationPublishFailed: "Publish failed: {{e}}",
+    curationUnpublishAllConfirm: "Remove all published curated layers from the remote?",
+    curationUnpublishAllInProgress: "Removing all published curated layers…",
+    curationUnpublishAllRemovedN: "Removed {{n}} published layer(s) from remote.",
+    curationUnpublishAllSuccess: "All published curated layers removed from remote.",
+    curationUnpublishAllError: "Could not unpublish all: {{e}}",
+    curationLoadWorkshopError: "Could not load workshop mode: {{e}}",
+    curationWorkshopOnSuccess:
+      "Workshop auto-publish is on: new submissions can publish automatically when eligible.",
+    curationWorkshopOffSuccess: "Workshop auto-publish is off.",
+    curationUpdateWorkshopError: "Could not update workshop mode: {{e}}",
+    curationPublishedHeading: "Published layers on remote",
+    curationWorkshopAutoPublish: "Workshop auto-publish",
+    curationWorkshopAutoPublishAria: "Workshop auto-publish",
+    curationUnpublishAll: "Unpublish all",
+    curationPublishedLoading: "Loading published curated layers…",
+    curationSubmissionSearchPlaceholder: "Search or choose submission…",
+    curationSubmissionSearchAria: "Search and select submission",
+    curationSubmissionListAria: "Submissions",
+    curationSubmissionsEmpty: "No submissions loaded.",
+    curationSubmissionsNoMatch: "No matching submissions.",
+    curationSubmissionsLoading: "Loading submissions…",
+    curationSubmissionsLoadError: "Could not load submissions: {{e}}",
+    curationNoPublishedLayers: "No published curated layers.",
+    curationLoadingPublished: "Loading published curated layers…",
+    curationLoadPublishedError: "Could not load published curated layers: {{e}}",
+    curationTagTkumaLine: "Tkuma Line",
+    curationTagMemorials: "Memorials",
+    curationSubmissionColorTitle: "Submission color",
+    curationOpenSubmissionForLayer: 'Open submission “{{e}}” for published layer “{{n}}”',
+    curationOpenSubmissionUnnamed: 'Open submission for published layer “{{e}}”',
+    curationPublishedLayerUnknown:
+      'Published layer “{{e}}”: submission unavailable (multiple or unknown); shows status',
+    curationLayerUpdatedTitle: "Layer last updated",
+    curationLayerTypeTagsAria: "Layer type tags",
+    curationUnpublishButton: "Remove",
+    curationUnpublishButtonAria: "Remove layer from remote",
+    curationUnpublishOneConfirm: 'Remove “{{e}}” from published remote layers?',
+    curationUnpublishOneSuccess: 'Removed “{{e}}” from published remote layers.',
+    curationUnpublishOneError: "Could not remove published layer: {{e}}",
+    curationMapUnknownSubmissions: "This published layer maps to multiple/unknown submissions.",
+    curationMapSubmissionNotInList: "Submission {{e}} is not available in the submissions list.",
   },
 };
 
@@ -120,6 +252,9 @@ function readStored() {
   }
   return "he";
 }
+
+/** @type {boolean} */
+let _localeStorageListenerBound = false;
 
 function applyDocumentRoot() {
   if (typeof document === "undefined") return;
@@ -167,9 +302,19 @@ export function applyRemoteChromeI18n() {
     if (!key || !isMessageKey(key)) return;
     el.setAttribute("title", t(key));
   });
-  const title = MESSAGES[_locale].documentTitle;
+  if (typeof document.querySelectorAll === "function") {
+    document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+      const key = el.getAttribute("data-i18n-placeholder");
+      if (!key || !isMessageKey(key)) return;
+      if ("placeholder" in el) {
+        el.placeholder = t(key);
+      }
+    });
+  }
   if (typeof document.title === "string") {
-    document.title = title;
+    const isCuration =
+      typeof document.querySelector === "function" && document.querySelector(".curation-layout");
+    document.title = isCuration ? t("curationDocumentTitle") : MESSAGES[_locale].documentTitle;
   }
 }
 
@@ -220,11 +365,25 @@ export function initLocale() {
   } else {
     setLocale(stored, { force: true });
   }
+  if (
+    typeof window !== "undefined" &&
+    typeof window.addEventListener === "function" &&
+    !_localeStorageListenerBound
+  ) {
+    _localeStorageListenerBound = true;
+    window.addEventListener("storage", (e) => {
+      if (e.key !== LOCALE_STORAGE_KEY) return;
+      const v = e.newValue;
+      if (v === "he" || v === "en") {
+        setLocale(/** @type {LocaleId} */ (v), { force: true });
+      }
+    });
+  }
 }
 
 /**
  * @param {string} key
- * @param {{ n?: string | number }} [vars]
+ * @param {{ n?: string | number; e?: string | number; t?: string | number }} [vars]
  * @returns {string}
  */
 export function t(key, vars = {}) {
@@ -236,6 +395,18 @@ export function t(key, vars = {}) {
     text = text.replace(/\{\{n\}\}/g, String(vars.n));
   } else {
     text = text.replace(/\{\{n\}\}/g, "");
+  }
+  if (vars) {
+    if (vars.e != null) {
+      text = text.replace(/\{\{e\}\}/g, String(vars.e));
+    } else {
+      text = text.replace(/\{\{e\}\}/g, "");
+    }
+    if (vars.t != null) {
+      text = text.replace(/\{\{t\}\}/g, String(vars.t));
+    } else {
+      text = text.replace(/\{\{t\}\}/g, "");
+    }
   }
   return text;
 }

@@ -120,7 +120,7 @@ components:
 
 ## Overview
 
-The OTEF Remote Controller is a **mobile-first** phone/tablet UI for the Negev Urban Research Lab wall: pan/zoom, GIS table context, layer visibility and time animation, plus curation. Visual tone is **quiet desert instrumentation**—warm charcoal and stone, **one terracotta** primary (`colors.primary`), matte surfaces, no cyan-on-black or neon glow. **Hebrew is default** (`lang="he"`, `dir="rtl"`); a compact **Hebrew | English** toggle in the header switches locale and mirrored layout (logical CSS). **Three bottom tabs**—Navigation, Layers, Curation—replace scattered entry points; Layers is a **full-height scrollable panel** (not a draggable bottom sheet) with **no loss** of grouping, toggles, animation chips, pack/processed behaviors, or OTEFDataContext wiring. **Curation** embeds same-origin `curation.html` in an iframe; parent owns the **single Supabase heartbeat**; embedded app skips duplicate init when an **embed flag** (e.g. `?embed=1`) is present—see implementation plan Task 7. **Layer row labels** use `formatLayerLabelForDisplay` in **`src/shared/layer-name-utils.js`** (underscores/hyphen noise → spaces for display only; canonical ids and `fullLayerIds` unchanged). **Switching away from the Layers tab** does not clear drill-down: reopening **Layers** shows the same focused pack; the in-panel **Back** control returns to the pack overview.
+The OTEF Remote Controller is a **mobile-first** phone/tablet UI for the Negev Urban Research Lab wall: pan/zoom, GIS table context, layer visibility and time animation, plus curation. Visual tone is **quiet desert instrumentation**—warm charcoal and stone, **one terracotta** primary (`colors.primary`), matte surfaces, no cyan-on-black or neon glow. **Hebrew is default** (`lang="he"`, `dir="rtl"`); a compact **עב / en** header pill (two segments, `role="group"`, `aria-label` from locale) switches locale and mirrored layout (logical CSS). **Three bottom tabs**—Navigation, Layers, Curation—replace scattered entry points; Layers is a **full-height scrollable panel** (not a draggable bottom sheet) with **no loss** of grouping, toggles, animation chips, pack/processed behaviors, or OTEFDataContext wiring. **Curation** embeds same-origin `curation.html` in an iframe; parent owns the **single Supabase heartbeat**; embedded app skips duplicate init when an **embed flag** (e.g. `?embed=1`) is present—see implementation plan Task 7. **Layer row labels** use `formatLayerLabelForDisplay` in **`src/shared/layer-name-utils.js`** (underscores/hyphen noise → spaces for display only; canonical ids and `fullLayerIds` unchanged). **Pack labels / layers:** stable group ids are titled via **`src/remote/layer-pack-display-names.js`** (curated title still comes from `t("curatedGroupLabel")` in locale). **Switching away from the Layers tab** does not clear drill-down: reopening **Layers** shows the same focused pack; the in-panel **Back** control returns to the pack overview.
 
 ## Colors
 
@@ -142,16 +142,32 @@ The OTEF Remote Controller is a **mobile-first** phone/tablet UI for the Negev U
 - **body-md** — Descriptions, status, body UI (16px regular, RTL-friendly line height).
 - **label-sm** — Buttons, chips, counts (~13px medium).
 - **tab-label** — Bottom nav (12px semibold; keep Hebrew strings short).
+- **Locale pill (header)** — Segmented control **עב** (Hebrew) and **en** (English) at **~12px** / medium in **`.remote-locale-btn`**, with **padding** so each segment stays **≥44px** min width/height; group label is localized (`localeGroupAria`), not the short glyphs.
 
 Implementation: **logical properties** (`padding-inline`, `margin-inline`, `inset-inline-*`) so English (`dir="ltr"`) mirrors without one-off overrides.
 
 ## Layout
 
 - **Viewport:** `100dvh`, column flex: **fixed header** → **scrollable `main`** (active tab body) → **fixed bottom nav**; `env(safe-area-inset-*)` on header and nav.
-- **Header:** Title/branding, **locale toggle**, **connection** cluster; **below**, full-width **`#table-switcher`** (existing mount contract unchanged).
+- **Header:** Title/branding, **compact locale pill** (`#remoteLocaleToggle` / `remote-locale-btn`), **connection** cluster; **below**, full-width **`#table-switcher`** (existing mount contract unchanged).
 - **Tab panels:** Three regions, each with **`data-remote-tab`** set to **`navigation`**, **`layers`**, or **`curation`** (exact attribute/value names are CI contracts—keep in sync with `html-entrypoint-contract`). Only one panel visible at a time; **Layers** hosts list + **panel header** (title + **active layer count**). **Curation** panel holds **iframe** (`title` localized); **do not** tear down iframe on tab switches unless memory forces it.
 - **Navigation tab:** D-pad, nipplejs joystick, zoom slider + step controls (existing behavior/throttle preserved).
+
+### Navigation tab panel (controller)
+
+This is the **main-area** body for the Navigation tab (`#remote-panel-navigation` / `#navigationSection`) — not the **footer** tab bar (`bottom-nav`).
+
+- **Panel chrome:** Use `--nav-panel-padding-block-start` and `--nav-panel-padding-block-end` (default 12px / 16px) plus `env(safe-area-inset-bottom)` on the bottom panel padding. Horizontal inset follows `--spacing-unit` (maps from `spacing.md`).
+- **Card inset:** The pan/zoom block uses `--nav-panel-section-padding-block` and `--nav-panel-section-padding-inline` (12px / 16px) so the `control-section` does not add extra vertical air.
+- **Vertical distribution (portrait):** `.navigation-panel-stack` is **`flex: 1`** so it fills the tab body; **`.navigation-group--zoom`** uses **`margin-block-start: auto`** so the pan/joystick cluster stays toward the **top** and the zoom block toward the **bottom**, with spare height absorbed between them (not an empty band below zoom). **`--nav-panel-group-gap`** still sets the minimum step between the two groups; pan/zoom inner groups use **`gap: --space-xs`** for label-to-control rhythm.
+- **Groups:** Pan (D-pad + joystick) and zoom (readout, slider, ±) use compact **section labels** (`navPanGroupLabel` / `navZoomGroupLabel` in `remote-locale.js`, ~11px uppercase muted). `.zoom-controls` does not add a second top margin (gap owns the rhythm).
+- **D-pad size (portrait):** **`--nav-panel-dpad-size`** = `min(max(200px, 42dvh), min(260px, 55dvh))` so the pad grows modestly on tall narrow viewports while staying within the band; scoped to `#navigationSection .dpad` so global responsive `.dpad` tweaks do not fight it. **Short landscape:** **`--nav-panel-dpad-size-landscape-short`** (160px) plus **`margin-block-start: 0`** on the zoom group restores the side-by-side row layout.
+- **D-pad column:** In this tab only, **`#navigationSection .dpad-container`** has **`margin-block: 0`** so spacing comes from group/stack gaps, not duplicate vertical margins on the wrapper.
+- **Landscape (short):** In `@media (orientation: landscape) and (max-height: 500px)`, the stack becomes a **row** (wrap): pan stays compact left/center, zoom flexes in reading direction; navigation D-pad uses **`--nav-panel-dpad-size-landscape-short`**; panel top/bottom padding tightens. Footer tab bar rules are unchanged.
+- **Touch:** D-pad buttons and zoom ± stay at `min-height` / `min-width` from `--touch-target-size` (≥44px, prefer 56px); joystick container keeps a ≥44px minimum hit box.
+
 - **Layers tab:** Full-page list; same actions as current sheet (groups, chevrons, row toggles, pack/processed rows, animation chips).
+  - Superseded for remote layers UX by 'Layers panel (chosen mockup: Variant C sharpened)' until Task 7 aligns implementation.
 - **Touch:** Prefer **`spacing.touch` (56px)** on pad, zoom, and nav targets; 8–16px gaps between hit areas.
 
 ## Elevation & Depth
@@ -178,6 +194,25 @@ Implementation: **logical properties** (`padding-inline`, `margin-inline`, `inse
 - **supporting-text** — Tertiary copy: **`ink-subtle`** + **`label-sm`**.
 
 Map tokens to CSS custom properties (e.g. `--color-canvas`, `--color-primary`, `--nav-height`) in **`css/remote-styles.css`**; markup lives in **`remote-controller.html`** per Tasks 3–4.
+
+## Layers panel (chosen mockup: Variant C sharpened)
+
+Implementation and the refreshed static comp follow **`docs/superpowers/plans/2026-04-22-otef-remote-ux-followup.md`** — **Sharpened Variant C** contract (not the original C mockup alone until aligned).
+
+- **Overview:** pack selection uses **pack cards in a horizontal strip** (hybrid of full cards vs. tiny chips — readable titles and actions, not icon-only slivers).
+- **Primary mockup:** [`../../docs/superpowers/mockups/otef-remote-layers-variant-c.html`](../../docs/superpowers/mockups/otef-remote-layers-variant-c.html) · **Hub:** [`../../docs/superpowers/mockups/otef-remote-layers-mockups.html`](../../docs/superpowers/mockups/otef-remote-layers-mockups.html)
+- **Show/hide all (current pack):** **One** compact control — **switch (track + thumb)** *or* a single state pill (not two buttons) — for **all layers in the selected pack**; keep this row **separate** from the tile grid with **≥12px** gap to the first tile row; do not place the **animation** control beside this row.
+- **Layer tiles:** Focused pack shows layers in a **compact tile grid** (wrap, minimum tile width) for density without an endless vertical list; keep **`layer-row`** / raised-surface language where tiles map to “cards.”
+- **Activation:** **Click the layer tile** toggles/selects the layer; **no** row-level on/off control beside the tile. **Off** (neither on-map nor selected), **on-map (non-primary)**, and **primary selected** are visually distinct: **off** = muted/dashed/lower opacity; **on-map** = solid border + full opacity; **selected** = strongest ring/background. **Animation-capable** layers: **separate** control, **min ~44px** hit target on the control only, **bottom-end** of the tile; mockup shows at least one tile with and one without.
+- **Pack selector:** Titles **compact and readable** — no default **ellipsis** on pack names. **Horizontal** strip: **no visible scrollbar**, **no** prev/next **arrow** buttons; **edge fades** + **touch scroll**; optional “גלילה אופקית” / “Swipe horizontally” hint; **scroll snap** allowed — not a vertical pack list.
+- **Counts (subtle):** **Per pack** (selected pack) **e.g. `4/7` active** near the pack label; **overall** “layers on” **e.g. `12 שכבות פעילות` / `12 layers on`** in the header near title or lamp, muted, not a loud badge.
+- **RTL / LTR:** One static comp should show **two mini phone shells** side-by-side (**HE** `dir="rtl"` + **EN** `dir="ltr"`) so mirroring is reviewable.
+
+**Scroll / shell:** Keep **`#layerSheet`** as the full-height layers host; **pack strip** scrolls horizontally when needed; **layer tile grid** is the primary scroll region inside the focused-pack area (vertical overflow only if the grid exceeds the viewport—prefer density so this is rare). Align `#layerPanelContent` / `.sheet-content` rules in **`remote-styles.css`** with these regions (no footer tab bar changes for layers density).
+
+## Workshop / curation embed
+
+When **`curation.html`** is loaded in an iframe with **`?embed=1`** (or `embed=true`), an inline script adds **`html.curation-embed`**. In that mode the top **`.curation-header`** is hidden so the full chrome stays on the parent remote shell; the standalone page keeps the full header. Submissions has an icon-only **refresh** control (**`#curationSubmissionsRefresh`**) in the section toolbar row (same data reload as **`#curationRefresh`**).
 
 ## Do's and Don'ts
 

@@ -22,6 +22,7 @@ function installLocaleTestEnv(storeInit = {}) {
   const doc = {
     documentElement: root,
     querySelectorAll: () => [],
+    querySelector: () => null,
     get title() {
       return this._title ?? "";
     },
@@ -33,6 +34,7 @@ function installLocaleTestEnv(storeInit = {}) {
   vi.stubGlobal("document", doc);
   vi.stubGlobal("window", {
     dispatchEvent: vi.fn(),
+    addEventListener: vi.fn(),
   });
   return { store, root, doc };
 }
@@ -92,6 +94,33 @@ describe("remote-locale", () => {
     expect(t("navLayers")).toBe("Layers");
   });
 
+  test("curationSubmissionsRefreshTitle and curationSubmissionsRefreshAria exist in t() for both locales", async () => {
+    installLocaleTestEnv();
+    const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    setLocale("he", { force: true });
+    expect(t("curationSubmissionsRefreshTitle")).toBe("רענון רשימת הגשות");
+    expect(t("curationSubmissionsRefreshAria")).toBe("רענון רשימת ההגשות");
+    setLocale("en", { force: true });
+    expect(t("curationSubmissionsRefreshTitle")).toBe("Refresh submissions list");
+    expect(t("curationSubmissionsRefreshAria")).toBe("Refresh submissions list");
+  });
+
+  test("layer pack strip + layer animation aria keys resolve for both locales", async () => {
+    installLocaleTestEnv();
+    const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    const keys = [
+      "layersPackStripLabel",
+      "layersPackActiveCount",
+      "ariaLayersPackStrip",
+      "ariaLayerAnimationToggle",
+    ];
+    setLocale("he", { force: true });
+    const heOk = keys.every((k) => typeof t(k) === "string" && t(k) !== k);
+    setLocale("en", { force: true });
+    const enOk = keys.every((k) => typeof t(k) === "string" && t(k) !== k);
+    expect({ he: heOk, en: enOk }).toEqual({ he: true, en: true });
+  });
+
   test("t(curatedGroupLabel) localizes the curated pack fallback title", async () => {
     installLocaleTestEnv();
     const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
@@ -123,5 +152,23 @@ describe("remote-locale", () => {
     const ev = globalThis.window.dispatchEvent.mock.calls.at(-1)?.[0];
     expect(ev?.type).toBe(LOCALE_EVENT);
     expect(ev?.detail?.locale).toBe("he");
+  });
+
+  test("initLocale registers storage listener at most once", async () => {
+    installLocaleTestEnv();
+    const { initLocale, LOCALE_STORAGE_KEY, setLocale, getLocale } = await import(
+      "../../frontend/src/remote/remote-locale.js"
+    );
+    initLocale();
+    initLocale();
+    expect(globalThis.window.addEventListener).toHaveBeenCalled();
+    const storageCalls = globalThis.window.addEventListener.mock.calls.filter(
+      (c) => c[0] === "storage",
+    );
+    expect(storageCalls.length).toBe(1);
+    const onStorage = storageCalls[0][1];
+    setLocale("he", { force: true });
+    onStorage({ key: LOCALE_STORAGE_KEY, newValue: "en" });
+    expect(getLocale()).toBe("en");
   });
 });

@@ -31,7 +31,7 @@
             data-locale="he"
             aria-pressed="true"
           >
-            עברית
+            עב
           </button>
           <button
             type="button"
@@ -40,7 +40,7 @@
             data-locale="en"
             aria-pressed="false"
           >
-            English
+            en
           </button>
         </div>
         <div class="header-end">
@@ -74,113 +74,125 @@
           aria-labelledby="remote-tab-navigation"
         >
           <section class="control-section" id="navigationSection">
-            <div class="dpad-container">
-              <div class="dpad">
-                <button
-                  class="dpad-button dpad-up"
-                  id="panNorth"
-                  data-i18n-aria="ariaPanNorth"
-                  aria-label="הזזה צפונה"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <polyline points="18 15 12 9 6 15"></polyline>
-                  </svg>
-                </button>
-                <button
-                  class="dpad-button dpad-left"
-                  id="panWest"
-                  data-i18n-aria="ariaPanWest"
-                  aria-label="הזזה מערבה"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <polyline points="15 18 9 12 15 6"></polyline>
-                  </svg>
-                </button>
-                <button
-                  class="dpad-button dpad-right"
-                  id="panEast"
-                  data-i18n-aria="ariaPanEast"
-                  aria-label="הזזה מזרחה"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <polyline points="9 18 15 12 9 6"></polyline>
-                  </svg>
-                </button>
-                <button
-                  class="dpad-button dpad-down"
-                  id="panSouth"
-                  data-i18n-aria="ariaPanSouth"
-                  aria-label="הזזה דרומה"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                </button>
-                <div
-                  class="joystick-container"
-                  id="joystickZone"
-                  data-i18n-aria="joystickAria"
-                  aria-label="מוט כיוון לגרירת המפה"
-                >
-                  <div class="joystick-base"></div>
+            <div class="navigation-panel-stack">
+              <div class="navigation-group navigation-group--pan">
+                <div class="navigation-group-label" data-i18n="navPanGroupLabel">
+                  הזזה
+                </div>
+                <div class="dpad-container">
+                  <div class="dpad">
+                    <button
+                      class="dpad-button dpad-up"
+                      id="panNorth"
+                      data-i18n-aria="ariaPanNorth"
+                      aria-label="הזזה צפונה"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <polyline points="18 15 12 9 6 15"></polyline>
+                      </svg>
+                    </button>
+                    <button
+                      class="dpad-button dpad-left"
+                      id="panWest"
+                      data-i18n-aria="ariaPanWest"
+                      aria-label="הזזה מערבה"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                      </svg>
+                    </button>
+                    <button
+                      class="dpad-button dpad-right"
+                      id="panEast"
+                      data-i18n-aria="ariaPanEast"
+                      aria-label="הזזה מזרחה"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <polyline points="9 18 15 12 9 6"></polyline>
+                      </svg>
+                    </button>
+                    <button
+                      class="dpad-button dpad-down"
+                      id="panSouth"
+                      data-i18n-aria="ariaPanSouth"
+                      aria-label="הזזה דרומה"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </button>
+                    <div
+                      class="joystick-container"
+                      id="joystickZone"
+                      data-i18n-aria="joystickAria"
+                      aria-label="מוט כיוון לגרירת המפה"
+                    >
+                      <div class="joystick-base"></div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div class="zoom-controls">
-              <div class="zoom-display">
-                <span class="zoom-label" data-i18n="zoomLabel">זום:</span>
-                <span class="zoom-value" id="zoomValue">--</span>
-              </div>
-              <div class="zoom-slider-container">
-                <input
-                  type="range"
-                  id="zoomSlider"
-                  class="zoom-slider"
-                  min="10"
-                  max="19"
-                  value="15"
-                  step="1"
-                  data-i18n-aria="ariaZoomLevel"
-                  aria-label="רמת מיקוד"
-                />
-                <div class="zoom-buttons">
-                  <button
-                    class="zoom-button zoom-out"
-                    id="zoomOut"
-                    data-i18n-aria="ariaZoomOut"
-                    aria-label="התרחקות"
-                  >
-                    −
-                  </button>
-                  <button
-                    class="zoom-button zoom-in"
-                    id="zoomIn"
-                    data-i18n-aria="ariaZoomIn"
-                    aria-label="התקרבות"
-                  >
-                    +
-                  </button>
+              <div class="navigation-group navigation-group--zoom">
+                <div class="navigation-group-label" data-i18n="navZoomGroupLabel">
+                  זום
+                </div>
+                <div class="zoom-controls">
+                  <div class="zoom-display">
+                    <span class="zoom-label" data-i18n="zoomLabel">זום:</span>
+                    <span class="zoom-value" id="zoomValue">--</span>
+                  </div>
+                  <div class="zoom-slider-container">
+                    <input
+                      type="range"
+                      id="zoomSlider"
+                      class="zoom-slider"
+                      min="10"
+                      max="19"
+                      value="15"
+                      step="1"
+                      data-i18n-aria="ariaZoomLevel"
+                      aria-label="רמת מיקוד"
+                    />
+                    <div class="zoom-buttons">
+                      <button
+                        class="zoom-button zoom-out"
+                        id="zoomOut"
+                        data-i18n-aria="ariaZoomOut"
+                        aria-label="התרחקות"
+                      >
+                        −
+                      </button>
+                      <button
+                        class="zoom-button zoom-in"
+                        id="zoomIn"
+                        data-i18n-aria="ariaZoomIn"
+                        aria-label="התקרבות"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
