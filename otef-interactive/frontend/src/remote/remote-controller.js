@@ -4,6 +4,13 @@
 
 import { rotateViewerVectorToItm } from "../shared/orientation-transform.js";
 import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
+import {
+  LOCALE_EVENT,
+  getLocale,
+  setLocale,
+  t,
+} from "./remote-locale.js";
+import { shouldReapplyDpadAfterFullControlRefresh } from "./remote-control-refresh-invariants.js";
 
 // Current UI state (synced from API)
 let currentState = {
@@ -28,8 +35,21 @@ const ZOOM_THROTTLE_MS = 100;
 // Table name for this controller
 const TABLE_NAME = "otef";
 
+/** Bottom shell tabs: matches LTR bar order (Workshop | Layers | Nav); arrow key navigation. */
+const REMOTE_TAB_KEYS = ["curation", "layers", "navigation"];
+
+/*
+ * Legacy `#toggleModel` wiring was removed: that checkbox is not part of the remote shell
+ * (Layers are toggled in the Layers tab / layer sheet). If a model quick-toggle is added
+ * to remote-controller.html later, reintroduce a small initializer here — do not reference a
+ * missing id from init (dead listeners).
+ */
+
 // Store unsubscribe functions for cleanup
 let unsubscribeFunctions = [];
+
+/** Last connection cluster state for re-applying translated status after locale change */
+let lastConnectionUiStatus = "connecting";
 
 // Initialize on DOM ready
 if (typeof document !== "undefined") {
@@ -94,8 +114,9 @@ async function initialize() {
   // Initialize UI controls
   initializePanControls();
   initializeZoomControls();
-  initializeLayerControls();
   initializeJoystick();
+  initRemoteShellTabs();
+  initRemoteLocaleControls();
 
   // Initial UI render with whatever state DataContext has
   updateUI();
@@ -118,9 +139,117 @@ async function initialize() {
 }
 
 /**
+ * Tab shell: show one `data-remote-tab` panel, sync `role="tab"` (Task 4; locale in Task 5).
+ */
+function setRemoteTab(activeKey) {
+  if (!REMOTE_TAB_KEYS.includes(activeKey)) return;
+
+  const panels = document.querySelectorAll(".remote-tab-panel[data-remote-tab]");
+  panels.forEach((panel) => {
+    const key = panel.getAttribute("data-remote-tab");
+    const isActive = key === activeKey;
+    panel.hidden = !isActive;
+  });
+
+  const nav = document.getElementById("remoteBottomNav");
+  if (!nav) return;
+
+  nav.querySelectorAll('[role="tab"][data-remote-tab]').forEach((tab) => {
+    const key = tab.getAttribute("data-remote-tab");
+    const isActive = key === activeKey;
+    tab.setAttribute("aria-selected", isActive ? "true" : "false");
+    tab.classList.toggle("is-active", isActive);
+    tab.tabIndex = isActive ? 0 : -1;
+  });
+
+  if (activeKey !== "layers" && window.layerSheetController) {
+    const ctrl = window.layerSheetController;
+    // Preserves focused pack; see LayerSheetController.onLayersTabHidden.
+    if (typeof ctrl.onLayersTabHidden === "function") ctrl.onLayersTabHidden();
+  }
+
+  if (activeKey === "layers" && window.layerSheetController) {
+    const ctrl = window.layerSheetController;
+    if (typeof ctrl.open === "function") ctrl.open();
+  }
+}
+
+/**
+ * Hebrew / English toggle and `otef:locale` → connection line + toggle `aria-pressed`
+ */
+function initRemoteLocaleControls() {
+  const heBtn = document.getElementById("remoteLocaleHe");
+  const enBtn = document.getElementById("remoteLocaleEn");
+
+  const syncToggleFromLocale = () => {
+    const loc = getLocale();
+    if (heBtn) {
+      heBtn.classList.toggle("is-active", loc === "he");
+      heBtn.setAttribute("aria-pressed", loc === "he" ? "true" : "false");
+    }
+    if (enBtn) {
+      enBtn.classList.toggle("is-active", loc === "en");
+      enBtn.setAttribute("aria-pressed", loc === "en" ? "true" : "false");
+    }
+  };
+
+  syncToggleFromLocale();
+
+  if (heBtn) {
+    heBtn.addEventListener("click", () => setLocale("he"));
+  }
+  if (enBtn) {
+    enBtn.addEventListener("click", () => setLocale("en"));
+  }
+
+  if (typeof window !== "undefined") {
+    window.addEventListener(LOCALE_EVENT, () => {
+      syncToggleFromLocale();
+      updateConnectionStatus(lastConnectionUiStatus);
+    });
+  }
+
+  updateConnectionStatus(
+    currentState.isConnected ? "connected" : "disconnected",
+  );
+}
+
+function initRemoteShellTabs() {
+  const nav = document.getElementById("remoteBottomNav");
+  if (!nav) return;
+
+  nav.addEventListener("click", (e) => {
+    const tab = e.target.closest('[role="tab"][data-remote-tab]');
+    if (!tab || !nav.contains(tab)) return;
+    const k = tab.getAttribute("data-remote-tab");
+    if (k) setRemoteTab(k);
+  });
+
+  nav.addEventListener("keydown", (e) => {
+    const el = e.target;
+    if (!el || el.getAttribute("role") !== "tab" || !nav.contains(el)) return;
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault();
+    const key = el.getAttribute("data-remote-tab");
+    const i = REMOTE_TAB_KEYS.indexOf(key);
+    if (i < 0) return;
+    const delta = e.key === "ArrowRight" ? 1 : -1;
+    const next = (i + delta + REMOTE_TAB_KEYS.length) % REMOTE_TAB_KEYS.length;
+    const nextKey = REMOTE_TAB_KEYS[next];
+    setRemoteTab(nextKey);
+    document.getElementById(`remote-tab-${nextKey}`)?.focus();
+  });
+
+  // Single source of truth on load: panels + tablist aria (HTML may omit `hidden` on nav tab)
+  setRemoteTab("navigation");
+}
+
+/**
  * Update connection status UI
  */
 function updateConnectionStatus(status) {
+  lastConnectionUiStatus = status;
+
   const indicator = document.getElementById("statusIndicator");
   const text = document.getElementById("statusText");
   const warning = document.getElementById("warningOverlay");
@@ -128,25 +257,25 @@ function updateConnectionStatus(status) {
   if (!indicator || !text) return;
 
   const statusConfig = {
-    connected: { class: "connected", text: "Connected", showWarning: false },
+    connected: { class: "connected", textKey: "statusConnected", showWarning: false },
     disconnected: {
       class: "disconnected",
-      text: "Disconnected",
+      textKey: "statusDisconnected",
       showWarning: true,
     },
     connecting: {
       class: "connecting",
-      text: "Connecting...",
+      textKey: "statusConnecting",
       showWarning: false,
     },
-    error: { class: "disconnected", text: "Error", showWarning: true },
+    error: { class: "disconnected", textKey: "statusError", showWarning: true },
   };
 
   const config = statusConfig[status] || statusConfig.disconnected;
 
   indicator.classList.remove("connected", "disconnected", "connecting");
   indicator.classList.add(config.class);
-  text.textContent = config.text;
+  text.textContent = t(config.textKey);
 
   currentState.isConnected = status === "connected";
 
@@ -275,47 +404,6 @@ function updateZoomUI(zoom) {
   }
 }
 
-/** Full layer id for the single "model" toggle (projector base). */
-const MODEL_LAYER_FULL_ID = "projector_base.model_base";
-
-/**
- * Initialize layer controls (layerGroups only; model toggle uses full id).
- */
-function initializeLayerControls() {
-  const checkbox = document.getElementById("toggleModel");
-  if (!checkbox) return;
-
-  checkbox.addEventListener("change", async (e) => {
-    if (!currentState.isConnected) {
-      const state =
-        typeof LayerStateHelper !== "undefined"
-          ? LayerStateHelper.getLayerState(MODEL_LAYER_FULL_ID)
-          : null;
-      e.target.checked = state ? !!state.enabled : false;
-      return;
-    }
-
-    try {
-      const result = await OTEFDataContext.toggleLayer(
-        MODEL_LAYER_FULL_ID,
-        e.target.checked,
-      );
-      if (!result || !result.ok) {
-        throw result && result.error
-          ? result.error
-          : new Error("Layer update failed");
-      }
-    } catch (error) {
-      console.error("[Remote] Layer update failed:", error);
-      const state =
-        typeof LayerStateHelper !== "undefined"
-          ? LayerStateHelper.getLayerState(MODEL_LAYER_FULL_ID)
-          : null;
-      e.target.checked = state ? !!state.enabled : false;
-    }
-  });
-}
-
 /**
  * Initialize joystick control
  */
@@ -426,28 +514,12 @@ function enableDPad() {
   });
 }
 
-function updateLayerCheckboxes() {
-  const checkbox = document.getElementById("toggleModel");
-  if (!checkbox) return;
-  const state =
-    typeof LayerStateHelper !== "undefined"
-      ? LayerStateHelper.getLayerState(MODEL_LAYER_FULL_ID)
-      : null;
-  const enabled = state ? !!state.enabled : false;
-  if (checkbox.checked !== enabled) {
-    checkbox.checked = enabled;
-  }
-}
-
 /**
  * Update all UI elements based on current state
  */
 function updateUI() {
   // Update zoom
   updateZoomUI(currentState.viewport.zoom);
-
-  // Update layer checkboxes
-  updateLayerCheckboxes();
 
   // Disable controls if not connected
   const controls = document.querySelectorAll(
@@ -462,6 +534,13 @@ function updateUI() {
       control.style.pointerEvents = "none";
     }
   });
+
+  if (
+    currentState.isConnected &&
+    shouldReapplyDpadAfterFullControlRefresh(activeControl)
+  ) {
+    disableDPad();
+  }
 }
 
 // Cleanup on page unload

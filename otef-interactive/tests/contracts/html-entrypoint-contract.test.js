@@ -29,3 +29,45 @@ test("projection/remote/curation pages load single module entrypoints", () => {
   expect(remote.includes('src="js/remote/remote-controller.js"')).toBe(false);
   expect(curation.includes('src="js/curation/curation.js"')).toBe(false);
 });
+
+test("remote-controller embeds curation workshop iframe with embed heartbeat contract flag", () => {
+  const remote = fs.readFileSync(
+    path.resolve(__dirname, "../../frontend/remote-controller.html"),
+    "utf8",
+  );
+  expect(remote.includes('src="curation.html?embed=1"')).toBe(true);
+  expect(/<iframe\b[^>]*\bid="remoteCurationFrame"/i.test(remote)).toBe(true);
+});
+
+test("remote-controller shell: Hebrew default, tab regions, and stable mount ids", () => {
+  const remote = fs.readFileSync(
+    path.resolve(__dirname, "../../frontend/remote-controller.html"),
+    "utf8",
+  );
+
+  expect(remote).toMatch(/<html[^>]*\blang="he"/i);
+  expect(remote).toMatch(/\bid="table-switcher"/);
+  expect(remote).toMatch(/\bid="warningOverlay"/);
+  expect(remote).toMatch(/\bid="remoteMain"/);
+  expect(remote).toMatch(/\bid="remoteTabPanels"/);
+  expect(remote).toMatch(/\bid="remoteBottomNav"/);
+  expect(remote).toMatch(/\brole="tablist"/);
+
+  expect(remote).toMatch(
+    /data-remote-tab="navigation"[^>]*\bid="remote-panel-navigation"/i,
+  );
+  expect(remote).toMatch(/data-remote-tab="layers"[^>]*\bid="remote-panel-layers"/i);
+  expect(remote).toMatch(/data-remote-tab="curation"[^>]*\bid="remote-panel-curation"/i);
+
+  expect(remote).toMatch(/\bid="remote-tab-navigation"[^>]*\baria-controls="remote-panel-navigation"/i);
+  expect(remote).toMatch(/\bid="remote-tab-layers"[^>]*\baria-controls="remote-panel-layers"/i);
+  expect(remote).toMatch(/\bid="remote-tab-curation"[^>]*\baria-controls="remote-panel-curation"/i);
+
+  expect(remote).toMatch(/\bid="remoteLayerHost"/);
+  expect(remote).toMatch(/\bid="layerSheet"/);
+  expect(remote).toMatch(/\bid="layerPanelContent"/);
+  expect(remote).toMatch(/\bid="remoteLocaleToggle"/);
+  expect(remote).toMatch(/\bid="panNorth"/);
+  expect(remote).toMatch(/\bid="zoomSlider"/);
+  expect(remote).toMatch(/\bid="joystickZone"/);
+});

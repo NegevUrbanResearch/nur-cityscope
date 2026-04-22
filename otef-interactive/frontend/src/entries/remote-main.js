@@ -1,4 +1,5 @@
 import TableSwitcher from "../shared/table-switcher.js";
+import { initLocale } from "../remote/remote-locale.js";
 
 async function bootstrapRemoteRuntime() {
   const modules = [
@@ -49,6 +50,7 @@ function initializeTableSwitcher() {
 }
 
 async function boot() {
+  initLocale();
   const shouldContinue = initializeTableSwitcher();
   if (!shouldContinue) return;
   await bootstrapRemoteRuntime();

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="he">
   <head>
     <meta charset="UTF-8" />
     <meta
@@ -11,159 +11,353 @@
       name="apple-mobile-web-app-status-bar-style"
       content="black-translucent"
     />
-    <title>OTEF Remote Controller</title>
+    <title>OTEF</title>
     <link rel="stylesheet" href="css/remote-styles.css" />
   </head>
-  <body>
-    <!-- Header with connection status -->
+  <body class="otef-remote-shell">
     <header class="remote-header">
-      <div class="header-content">
-        <h1 class="remote-title">Remote</h1>
-        <a href="curation.html" class="curation-link" aria-label="Open Curation">Curation</a>
-        <div class="connection-status" id="connectionStatus">
-          <span class="status-indicator" id="statusIndicator"></span>
-          <span class="status-text" id="statusText">Connecting...</span>
+      <div class="header-top">
+        <div
+          class="remote-locale-toggle"
+          role="group"
+          data-i18n-aria="localeGroupAria"
+          aria-label="בחירת שפה"
+          id="remoteLocaleToggle"
+        >
+          <button
+            type="button"
+            class="remote-locale-btn is-active"
+            id="remoteLocaleHe"
+            data-locale="he"
+            aria-pressed="true"
+          >
+            עברית
+          </button>
+          <button
+            type="button"
+            class="remote-locale-btn"
+            id="remoteLocaleEn"
+            data-locale="en"
+            aria-pressed="false"
+          >
+            English
+          </button>
+        </div>
+        <div class="header-end">
+          <div
+            class="connection-status"
+            id="connectionStatus"
+            dir="ltr"
+          >
+            <span class="status-indicator" id="statusIndicator"></span>
+            <span class="status-text" id="statusText">מתחבר…</span>
+          </div>
         </div>
       </div>
-      <!-- Table Switcher -->
-      <div id="table-switcher" style="padding: 0 16px 8px 16px"></div>
+      <!--
+        Table switcher mount: #table-switcher stays in the DOM (table-switcher.js,
+        redirect/query, curation embed). Deliberately hidden in CSS for this controller
+        shell (Task 4) — not a broken layout; show later by overriding #table-switcher
+        display without removing or renaming the node.
+      -->
+      <div id="table-switcher" aria-hidden="true"></div>
     </header>
 
-    <!-- Main content area -->
-    <main class="remote-main">
-      <!-- Navigation Controls Section -->
-      <section class="control-section" id="navigationSection">
-        <h2 class="section-title">Navigation</h2>
+    <main class="remote-main" id="remoteMain" dir="rtl">
+      <div class="remote-tab-panels" id="remoteTabPanels">
+        <!-- Tab: Navigation — map controls (ids preserved for remote-controller.js) -->
+        <section
+          class="remote-tab-panel"
+          data-remote-tab="navigation"
+          id="remote-panel-navigation"
+          role="tabpanel"
+          aria-labelledby="remote-tab-navigation"
+        >
+          <section class="control-section" id="navigationSection">
+            <div class="dpad-container">
+              <div class="dpad">
+                <button
+                  class="dpad-button dpad-up"
+                  id="panNorth"
+                  data-i18n-aria="ariaPanNorth"
+                  aria-label="הזזה צפונה"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="18 15 12 9 6 15"></polyline>
+                  </svg>
+                </button>
+                <button
+                  class="dpad-button dpad-left"
+                  id="panWest"
+                  data-i18n-aria="ariaPanWest"
+                  aria-label="הזזה מערבה"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                  </svg>
+                </button>
+                <button
+                  class="dpad-button dpad-right"
+                  id="panEast"
+                  data-i18n-aria="ariaPanEast"
+                  aria-label="הזזה מזרחה"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                  </svg>
+                </button>
+                <button
+                  class="dpad-button dpad-down"
+                  id="panSouth"
+                  data-i18n-aria="ariaPanSouth"
+                  aria-label="הזזה דרומה"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </button>
+                <div
+                  class="joystick-container"
+                  id="joystickZone"
+                  data-i18n-aria="joystickAria"
+                  aria-label="מוט כיוון לגרירת המפה"
+                >
+                  <div class="joystick-base"></div>
+                </div>
+              </div>
+            </div>
 
-        <!-- Directional pad -->
-        <div class="dpad-container">
-          <div class="dpad">
-            <button
-              class="dpad-button dpad-up"
-              id="panNorth"
-              aria-label="Pan North"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <polyline points="18 15 12 9 6 15"></polyline>
-              </svg>
-            </button>
-            <button
-              class="dpad-button dpad-left"
-              id="panWest"
-              aria-label="Pan West"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <polyline points="15 18 9 12 15 6"></polyline>
-              </svg>
-            </button>
-            <button
-              class="dpad-button dpad-right"
-              id="panEast"
-              aria-label="Pan East"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <polyline points="9 18 15 12 9 6"></polyline>
-              </svg>
-            </button>
-            <button
-              class="dpad-button dpad-down"
-              id="panSouth"
-              aria-label="Pan South"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <polyline points="6 9 12 15 18 9"></polyline>
-              </svg>
-            </button>
-            <!-- Joystick in center -->
-            <div
-              class="joystick-container"
-              id="joystickZone"
-              aria-label="Virtual joystick for map panning"
-            >
-              <div class="joystick-base"></div>
+            <div class="zoom-controls">
+              <div class="zoom-display">
+                <span class="zoom-label" data-i18n="zoomLabel">זום:</span>
+                <span class="zoom-value" id="zoomValue">--</span>
+              </div>
+              <div class="zoom-slider-container">
+                <input
+                  type="range"
+                  id="zoomSlider"
+                  class="zoom-slider"
+                  min="10"
+                  max="19"
+                  value="15"
+                  step="1"
+                  data-i18n-aria="ariaZoomLevel"
+                  aria-label="רמת מיקוד"
+                />
+                <div class="zoom-buttons">
+                  <button
+                    class="zoom-button zoom-out"
+                    id="zoomOut"
+                    data-i18n-aria="ariaZoomOut"
+                    aria-label="התרחקות"
+                  >
+                    −
+                  </button>
+                  <button
+                    class="zoom-button zoom-in"
+                    id="zoomIn"
+                    data-i18n-aria="ariaZoomIn"
+                    aria-label="התקרבות"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section
+            class="control-section"
+            id="layersSection"
+            hidden
+            aria-hidden="true"
+          >
+            <h2 class="section-title">Layers</h2>
+            <div class="layer-controls">
+              <!-- Legacy layer toggles — compatibility -->
+            </div>
+          </section>
+        </section>
+
+        <!-- Tab: Layers — layer sheet host; Task 6 will align panel + sheet UX -->
+        <section
+          class="remote-tab-panel"
+          data-remote-tab="layers"
+          id="remote-panel-layers"
+          role="tabpanel"
+          aria-labelledby="remote-tab-layers"
+          hidden
+        >
+          <div class="remote-layer-host" id="remoteLayerHost">
+            <!-- #layerSheet — panel root; LayerSheetController (Task 6) -->
+            <div class="layer-panel" id="layerSheet">
+              <div class="layer-panel-header">
+                <button
+                  type="button"
+                  class="layer-panel-back"
+                  id="layerPanelBack"
+                  hidden
+                  data-i18n-aria="ariaLayersBack"
+                >
+                  <svg
+                    class="layer-panel-back__icon"
+                    viewBox="0 0 24 24"
+                    width="20"
+                    height="20"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M15 18l-6-6 6-6" />
+                  </svg>
+                </button>
+                <div class="layer-panel-header__text">
+                  <span
+                    class="sheet-title"
+                    data-i18n="layerSheetTitle"
+                    id="layerPanelTitle"
+                    >שכבות</span>
+                  <span
+                    class="layer-count"
+                    data-i18n="layersActiveCount"
+                    data-i18n-n="0"
+                    id="layerPanelCount"
+                    >0 פעיל</span>
+                </div>
+              </div>
+              <div class="sheet-content" id="layerPanelContent">
+                <!-- Populated by LayerSheetController -->
+              </div>
             </div>
           </div>
-        </div>
+        </section>
 
-        <!-- Zoom controls -->
-        <div class="zoom-controls">
-          <div class="zoom-display">
-            <span class="zoom-label">Zoom:</span>
-            <span class="zoom-value" id="zoomValue">--</span>
+        <!--
+          Tab: Workshop (display) — data-remote-tab=curation for embed + routing contract
+          (Task 7: curation.html iframe, ?embed=1)
+        -->
+        <section
+          class="remote-tab-panel"
+          data-remote-tab="curation"
+          id="remote-panel-curation"
+          role="tabpanel"
+          aria-labelledby="remote-tab-curation"
+          hidden
+        >
+          <div
+            class="remote-curation-surface"
+            id="remoteCurationSurface"
+            data-embed-surface="curation"
+          >
+            <!--
+              Embed contract: parent remote-controller owns startCuratedSupabaseHeartbeat only.
+              Iframe src MUST include ?embed=1 so curation bootstrap skips duplicate heartbeat init
+              (see frontend/src/curation/curation-embed.js).
+            -->
+            <iframe
+              id="remoteCurationFrame"
+              class="remote-curation-frame"
+              title="סדנה"
+              data-i18n-title="curationIframeTitle"
+              src="curation.html?embed=1"
+              loading="lazy"
+            ></iframe>
           </div>
-          <div class="zoom-slider-container">
-            <input
-              type="range"
-              id="zoomSlider"
-              class="zoom-slider"
-              min="10"
-              max="19"
-              value="15"
-              step="1"
-              aria-label="Zoom level"
-            />
-            <div class="zoom-buttons">
-              <button
-                class="zoom-button zoom-out"
-                id="zoomOut"
-                aria-label="Zoom Out"
-              >
-                −
-              </button>
-              <button
-                class="zoom-button zoom-in"
-                id="zoomIn"
-                aria-label="Zoom In"
-              >
-                +
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Layer Controls Section - Legacy (kept for backward compatibility) -->
-      <section class="control-section" id="layersSection" style="display: none">
-        <h2 class="section-title">Layers</h2>
-        <div class="layer-controls">
-          <!-- Legacy layer toggles hidden but kept for compatibility -->
-        </div>
-      </section>
+        </section>
+      </div>
     </main>
 
-    <!-- Layer Bottom Sheet -->
-    <div class="layer-sheet" id="layerSheet">
-      <div class="sheet-handle"></div>
-      <div class="sheet-header">
-        <span class="sheet-title">Layers</span>
-        <span class="layer-count">0 active</span>
-      </div>
-      <div class="sheet-content">
-        <!-- Dynamically populated groups -->
-      </div>
-    </div>
+    <nav
+      class="remote-bottom-nav"
+      id="remoteBottomNav"
+      role="tablist"
+      data-i18n-aria="navTablistAria"
+      aria-label="אזורי בקרה"
+    >
+      <!-- LTR visual: left → Workshop, middle → Layers, right → Nav -->
+      <button
+        type="button"
+        class="remote-bottom-nav__tab"
+        id="remote-tab-curation"
+        role="tab"
+        aria-selected="false"
+        aria-controls="remote-panel-curation"
+        tabindex="-1"
+        data-remote-tab="curation"
+      >
+        <span class="remote-bottom-nav__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M3 9h18M9 21V9" />
+          </svg>
+        </span>
+        <span
+          class="remote-bottom-nav__label"
+          data-curation-surface="workshop"
+          data-i18n="navCuration"
+        >סדנה</span>
+      </button>
+      <button
+        type="button"
+        class="remote-bottom-nav__tab"
+        id="remote-tab-layers"
+        role="tab"
+        aria-selected="false"
+        aria-controls="remote-panel-layers"
+        tabindex="-1"
+        data-remote-tab="layers"
+      >
+        <span class="remote-bottom-nav__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+            <path d="M2 17l10 5 10-5" />
+            <path d="M2 12l10 5 10-5" />
+          </svg>
+        </span>
+        <span class="remote-bottom-nav__label" data-i18n="navLayers">שכבות</span>
+      </button>
+      <button
+        type="button"
+        class="remote-bottom-nav__tab is-active"
+        id="remote-tab-navigation"
+        role="tab"
+        aria-selected="true"
+        aria-controls="remote-panel-navigation"
+        tabindex="0"
+        data-remote-tab="navigation"
+      >
+        <span class="remote-bottom-nav__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="3 11 22 2 13 22 11 13 3 11" />
+          </svg>
+        </span>
+        <span class="remote-bottom-nav__label" data-i18n="navNavigation">ניווט</span>
+      </button>
+    </nav>
 
-    <!-- Warning overlay (shown when GIS map not connected) -->
     <div class="warning-overlay hidden" id="warningOverlay">
       <div class="warning-content">
         <svg
@@ -179,14 +373,13 @@
           <line x1="12" y1="9" x2="12" y2="13"></line>
           <line x1="12" y1="17" x2="12.01" y2="17"></line>
         </svg>
-        <p class="warning-text">GIS map not connected. Controls disabled.</p>
+        <p class="warning-text" data-i18n="warningControlsDisabled">
+          המפה אינה מחוברת. הבקרות אינן פעילות.
+        </p>
       </div>
     </div>
 
-    <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
     <script type="module" src="./src/entries/remote-main.js"></script>
   </body>
 </html>
-
-
