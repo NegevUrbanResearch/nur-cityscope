@@ -67,9 +67,8 @@ test("curation.html embed flag in inline script; submissions refresh i18n or sta
 test("curation sidebar submissions section, embed class, and refresh control", () => {
   const html = readCurationHtml();
   expect(html.includes("curation-embed")).toBe(true);
-  expect(
-    /<\s*h2[^>]*\bdata-i18n="curationSubmissionsHeading"[^>]*>/.test(html),
-  ).toBe(true);
+  expect(html.includes('id="curationSubmissionCombo"')).toBe(true);
+  expect(html.includes('id="curationSubmissionSearch"')).toBe(true);
   expect(html.includes('id="curationSubmissionsRefresh"')).toBe(true);
   expect(html.includes("Submissions (combined)")).toBe(false);
   expect(html.includes('id="curationSubmissionTypeBadge"')).toBe(false);

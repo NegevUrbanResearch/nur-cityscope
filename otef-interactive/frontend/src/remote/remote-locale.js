@@ -35,8 +35,7 @@ const MESSAGES = {
     navLayers: "שכבות",
     navCuration: "סדנה",
     sectionNavigation: "ניווט",
-    navPanGroupLabel: "הזזה",
-    navZoomGroupLabel: "זום",
+    navPanGroupLabel: "",
     zoomLabel: "זום:",
     statusConnected: "מחובר",
     statusDisconnected: "מנותק",
@@ -58,10 +57,7 @@ const MESSAGES = {
     flowLabel: "זרימה",
     curatedGroupLabel: "אסופה",
     layersOpenPack: "הצג",
-    layersPackStripLabel: "חבילה",
-    layersPackActiveCount: "{{e}}/{{t}} פעילות",
-    layersPackScrollHint: "גלילה אופקית · Swipe horizontally",
-    ariaLayersPackStrip: "בחירת חבילת שכבות",
+    layersPackActiveCount: "{{e}}/{{t}}",
     ariaLayerAnimationToggle: "הפעלת או כיבוי אנימציית זרימה לשכבה",
     layersBulkVisibility: "כל השכבות בחבילה",
     ariaLayersBulkVisibility: "הפעלת או כיבוי כל השכבות בחבילה שנבחרה",
@@ -78,7 +74,7 @@ const MESSAGES = {
     curationHeaderRefreshAria: "רענון",
     curationDocumentTitle: "OTEF | אצירה",
     curationPublishHeading: "פרסום",
-    curationPublishButton: "פרסום כשכבת OTEF",
+    curationPublishButton: "פרסם שכבה",
     curationSelectSubmissionError: "בחרו הגשה לפרסום.",
     curationMissingGroupError: "חסר שם קבוצה לאסוף.",
     curationNoFeaturesError: "אין תצוגה נוכחית לפרסום עבור הגשה זו.",
@@ -97,7 +93,7 @@ const MESSAGES = {
     curationPublishedHeading: "שכבות מפורסמות בבקר",
     curationWorkshopAutoPublish: "פרסום אוטומטי לסדנה",
     curationWorkshopAutoPublishAria: "פרסום אוטומטי לסדנה",
-    curationUnpublishAll: "בטל את כל הפרסומים",
+    curationUnpublishAll: "הסר הכל",
     curationPublishedLoading: "טוען שכבות אצירה מפורסמות…",
     curationSubmissionSearchPlaceholder: "חיפוש או בחירת הגשה…",
     curationSubmissionSearchAria: "חיפוש ובחירת הגשה",
@@ -129,12 +125,11 @@ const MESSAGES = {
     documentTitle: "OTEF",
     localeGroupAria: "Language",
     navTablistAria: "Controller areas",
-    navNavigation: "Nav",
+    navNavigation: "Navigation",
     navLayers: "Layers",
     navCuration: "Workshop",
     sectionNavigation: "Navigation",
-    navPanGroupLabel: "Pan",
-    navZoomGroupLabel: "Zoom",
+    navPanGroupLabel: "",
     zoomLabel: "Zoom:",
     statusConnected: "Connected",
     statusDisconnected: "Disconnected",
@@ -156,10 +151,7 @@ const MESSAGES = {
     flowLabel: "Flow",
     curatedGroupLabel: "Curated",
     layersOpenPack: "View",
-    layersPackStripLabel: "Pack",
-    layersPackActiveCount: "{{e}}/{{t}} active",
-    layersPackScrollHint: "Swipe horizontally — more packs",
-    ariaLayersPackStrip: "Choose a layer pack",
+    layersPackActiveCount: "{{e}}/{{t}}",
     ariaLayerAnimationToggle: "Enable or disable flow animation for this layer",
     layersBulkVisibility: "All layers in pack",
     ariaLayersBulkVisibility: "Enable or disable every layer in the selected pack",
@@ -176,7 +168,7 @@ const MESSAGES = {
     curationHeaderRefreshAria: "Refresh",
     curationDocumentTitle: "OTEF | Curation",
     curationPublishHeading: "Publish",
-    curationPublishButton: "Publish as OTEF layer",
+    curationPublishButton: "Publish layer",
     curationSelectSubmissionError: "Select a submission to publish.",
     curationMissingGroupError: "Missing curated group name.",
     curationNoFeaturesError: "No current features to publish for this submission.",
@@ -315,6 +307,12 @@ export function applyRemoteChromeI18n() {
     const isCuration =
       typeof document.querySelector === "function" && document.querySelector(".curation-layout");
     document.title = isCuration ? t("curationDocumentTitle") : MESSAGES[_locale].documentTitle;
+  }
+  if (typeof document.getElementById === "function") {
+    const submissionSearch = document.getElementById("curationSubmissionSearch");
+    if (submissionSearch) {
+      submissionSearch.setAttribute("dir", _locale === "he" ? "rtl" : "ltr");
+    }
   }
 }
 

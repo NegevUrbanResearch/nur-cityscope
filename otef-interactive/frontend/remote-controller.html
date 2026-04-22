@@ -31,7 +31,7 @@
             data-locale="he"
             aria-pressed="true"
           >
-            עב
+            עברית
           </button>
           <button
             type="button"
@@ -40,7 +40,7 @@
             data-locale="en"
             aria-pressed="false"
           >
-            en
+            English
           </button>
         </div>
         <div class="header-end">
@@ -76,9 +76,10 @@
           <section class="control-section" id="navigationSection">
             <div class="navigation-panel-stack">
               <div class="navigation-group navigation-group--pan">
-                <div class="navigation-group-label" data-i18n="navPanGroupLabel">
-                  הזזה
-                </div>
+                <div
+                  class="navigation-group-label"
+                  data-i18n="navPanGroupLabel"
+                ></div>
                 <div class="dpad-container">
                   <div class="dpad">
                     <button
@@ -154,9 +155,6 @@
               </div>
 
               <div class="navigation-group navigation-group--zoom">
-                <div class="navigation-group-label" data-i18n="navZoomGroupLabel">
-                  זום
-                </div>
                 <div class="zoom-controls">
                   <div class="zoom-display">
                     <span class="zoom-label" data-i18n="zoomLabel">זום:</span>
@@ -223,43 +221,6 @@
           <div class="remote-layer-host" id="remoteLayerHost">
             <!-- #layerSheet — panel root; LayerSheetController (Task 6) -->
             <div class="layer-panel" id="layerSheet">
-              <div class="layer-panel-header">
-                <button
-                  type="button"
-                  class="layer-panel-back"
-                  id="layerPanelBack"
-                  hidden
-                  data-i18n-aria="ariaLayersBack"
-                >
-                  <svg
-                    class="layer-panel-back__icon"
-                    viewBox="0 0 24 24"
-                    width="20"
-                    height="20"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M15 18l-6-6 6-6" />
-                  </svg>
-                </button>
-                <div class="layer-panel-header__text">
-                  <span
-                    class="sheet-title"
-                    data-i18n="layerSheetTitle"
-                    id="layerPanelTitle"
-                    >שכבות</span>
-                  <span
-                    class="layer-count"
-                    data-i18n="layersActiveCount"
-                    data-i18n-n="0"
-                    id="layerPanelCount"
-                    >0 פעיל</span>
-                </div>
-              </div>
               <div class="sheet-content" id="layerPanelContent">
                 <!-- Populated by LayerSheetController -->
               </div>

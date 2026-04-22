@@ -2,7 +2,7 @@
  * Published curated layers list: load, render, unpublish, submission click-through.
  */
 
-import { t } from "../remote/remote-locale.js";
+import { getLocale, t } from "../remote/remote-locale.js";
 import { sanitizeCssColor } from "./curation-color-utils.js";
 import {
   buildCurationColorSwatchHtml,
@@ -156,11 +156,10 @@ export function formatUpdatedAtForUi(iso) {
   if (iso == null || String(iso).trim() === "") return "—";
   const d = new Date(String(iso));
   if (Number.isNaN(d.getTime())) return "—";
+  const locale = getLocale() === "he" ? "he-IL" : "en-US";
+  const opts = { dateStyle: "medium", timeStyle: "short", hour12: false };
   try {
-    return d.toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
+    return d.toLocaleString(locale, opts);
   } catch {
     return d.toISOString().slice(0, 16).replace("T", " ");
   }
@@ -168,13 +167,15 @@ export function formatUpdatedAtForUi(iso) {
 
 /**
  * @param {Record<string, unknown> | null | undefined} activeLayer
+ * @returns {{ updatedAtRaw: string; colorRaw: string | null; infoTags: string[] }}
  */
 export function derivePublishedLayerUiFields(activeLayer) {
   const data = getGeojsonDataFromGisLayerRecord(activeLayer);
   const updatedRaw =
     activeLayer && (activeLayer.updated_at ?? activeLayer.updatedAt ?? activeLayer.modified_at);
+  const updatedAtRaw = updatedRaw != null ? String(updatedRaw) : "";
   return {
-    updatedAtLabel: formatUpdatedAtForUi(updatedRaw != null ? String(updatedRaw) : ""),
+    updatedAtRaw,
     colorRaw: extractColorFromGeojsonData(data),
     infoTags: extractInfoTagsFromGeojsonData(data),
   };
@@ -186,7 +187,7 @@ export function derivePublishedLayerUiFields(activeLayer) {
  * @param {() => HTMLElement | null} deps.publishedLayersContainer
  * @param {(s: string) => string} deps.escapeHtml
  * @param {(msg: string, type?: string) => void} deps.setStatus
- * @param {{ current: Array<{ fullLayerId: string; displayName: string; submissionId: string; updatedAtLabel: string; colorRaw: string | null; infoTags: string[] }> }} deps.publishedCuratedLayersRef
+ * @param {{ current: Array<{ fullLayerId: string; displayName: string; submissionId: string; updatedAtRaw: string; colorRaw: string | null; infoTags: string[] }> }} deps.publishedCuratedLayersRef
  * @param {{ current: string | null }} deps.lastPublishedFullLayerIdRef
  * @param {(submissionId: string) => void} deps.selectSubmissionById
  * @param {(submissionId: string) => boolean} deps.submissionExists
@@ -237,7 +238,7 @@ export function createPublishedCuratedLayersPanel(deps) {
           resolveSubmissionIdByDisplayName?.(displayName) || "",
         ).trim().toLowerCase();
         const submissionId = sidFromGeo || sidFromTitle;
-        const updatedAtLabel = String(layer.updatedAtLabel || "—");
+        const updatedAtLabel = formatUpdatedAtForUi(layer.updatedAtRaw);
         const colorRaw = layer.colorRaw != null ? String(layer.colorRaw) : "";
         const geoColor = sanitizeCssColor(colorRaw);
         const listColor =

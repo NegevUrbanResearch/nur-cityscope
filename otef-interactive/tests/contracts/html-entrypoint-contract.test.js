@@ -85,6 +85,6 @@ test("remote-controller locale toggle contract (delta)", () => {
   expect(toggleRegion[0]).toMatch(/role="group"/);
   expect(toggleRegion[0]).toMatch(/data-i18n-aria="localeGroupAria"/);
 
-  expect(remote).toMatch(/id="remoteLocaleHe"[^>]*>[\s\S]*?עב/);
-  expect(remote).toMatch(/id="remoteLocaleEn"[^>]*>[\s\S]*?\ben\b/);
+  expect(remote).toMatch(/id="remoteLocaleHe"[^>]*>[\s\S]*?עברית/);
+  expect(remote).toMatch(/id="remoteLocaleEn"[^>]*>[\s\S]*?English/);
 });

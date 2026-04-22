@@ -40,13 +40,15 @@ describe('layer sheet animation controls', () => {
       animations: {},
     });
     expect(html).toContain('data-animation-toggle');
+    expect(html).toContain('layer-tile--anim');
 
     const html2 = renderLayerRow(makeNonAnimatableLayerRow(), {
       groupId: 'october_7th',
       animations: {},
     });
     expect(html2).not.toContain('data-animation-toggle');
-    expect(html2).toContain('anim-btn--absent');
+    expect(html2).not.toContain('layer-tile--anim');
+    expect(html2).not.toContain('anim-btn');
   });
 
   test('layer row animation chip is active when any row animation is enabled', () => {

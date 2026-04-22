@@ -56,8 +56,9 @@
   /* Portrait navigation D-pad: grows modestly with height (see DESIGN.md). */
   --nav-panel-dpad-size: min(max(200px, 42dvh), min(260px, 55dvh));
   --nav-panel-dpad-size-landscape-short: 160px;
-  --header-padding-block: var(--space-md);
-  --header-padding-inline: var(--space-md);
+  /* T28 / U1: compact header; safe-area still on .remote-header */
+  --header-padding-block: 6px;
+  --header-padding-inline: var(--space-sm);
   --shadow-warm: 0 4px 14px rgba(10, 8, 6, 0.35);
   --shadow-pressed-inset: inset 0 1px 0 rgba(245, 240, 234, 0.06);
   --shadow-pressed-terracotta: inset 0 2px 4px rgba(10, 8, 6, 0.25);
@@ -230,10 +231,10 @@ body.otef-remote-shell {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: var(--space-sm);
+  gap: var(--space-xs);
   max-width: 100%;
   flex-wrap: wrap;
-  row-gap: var(--space-xs);
+  row-gap: 4px;
   width: 100%;
 }
 
@@ -246,16 +247,17 @@ body.otef-remote-shell {
   min-width: 0;
 }
 
-/* Locale toggle: compact עב / en labels; min 44×44 touch targets (padding + min size) */
+/* Locale toggle: compact chrome; each control ≥ 44×44 (touch, WCAG) */
 .remote-locale-toggle {
   display: inline-flex;
   align-items: center;
   border-radius: var(--rounded-pill);
   border: 1px solid var(--color-border);
   background: var(--color-surface-raised);
-  padding: 2px;
+  padding: 0;
   flex-shrink: 0;
   gap: 0;
+  box-sizing: border-box;
 }
 
 .remote-locale-btn {
@@ -267,13 +269,12 @@ body.otef-remote-shell {
   background: transparent;
   color: var(--color-ink-muted);
   font: var(--font-label-sm);
-  /* Slightly smaller than label-sm for compact two-letter / “en” glyphs; padding keeps ≥44px */
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 500;
   line-height: 1.1;
-  letter-spacing: 0.02em;
-  padding-block: 10px;
-  padding-inline: 14px;
+  letter-spacing: 0.01em;
+  padding-block: 4px;
+  padding-inline: 8px;
   min-width: 44px;
   min-height: 44px;
   border-radius: var(--rounded-pill);
@@ -449,7 +450,7 @@ body.otef-remote-shell {
   padding-block-end: calc(var(--spacing-unit) * 2);
 }
 
-/* Navigation tab: fill main; stack pan + zoom with tokenized gaps (no vertical centering dead zone) */
+/* Navigation tab: fill main; pan cluster vertically balanced vs zoom (T23) */
 .remote-tab-panel[data-remote-tab="navigation"]:not([hidden]) {
   display: flex;
   flex-direction: column;
@@ -466,10 +467,16 @@ body.otef-remote-shell {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
+  /* Let inner stack grow; avoid extra slab below zoom (pan/zoom use flex) */
   margin-block-end: 0;
   padding-block: var(--nav-panel-section-padding-block);
   padding-inline: var(--nav-panel-section-padding-inline);
   direction: inherit;
+}
+
+/* T23: don’t use default .control-section bottom margin under nav (adds false “air” below zoom) */
+#remote-panel-navigation #navigationSection.control-section {
+  margin-block-end: 0;
 }
 
 .navigation-panel-stack {
@@ -481,13 +488,24 @@ body.otef-remote-shell {
   min-height: 0;
 }
 
-/* Consume vertical space: pan cluster stays up, zoom sits low (margin absorbs free space). */
+/* T23 / U2: pan group grows above zoom; content centered vertically — no extra band between pan and zoom */
 #remote-panel-navigation .navigation-panel-stack {
   flex: 1 1 auto;
+  min-block-size: 0;
+  justify-content: flex-start;
+}
+
+#remote-panel-navigation .navigation-group--pan {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  margin-block: 0;
+  /* Center D-pad + joystick in the space above the zoom row (only stack gap before zoom) */
+  justify-content: center;
 }
 
 #remote-panel-navigation .navigation-group--zoom {
-  margin-block-start: auto;
+  margin-block-start: 0;
+  flex: 0 0 auto;
 }
 
 .navigation-group--pan {
@@ -519,9 +537,25 @@ body.otef-remote-shell {
   align-self: stretch;
 }
 
+/* No reserved row when pan heading copy is empty (navPanGroupLabel) */
+#remote-panel-navigation
+  .navigation-group--pan
+  .navigation-group-label:empty {
+  display: none;
+}
+
 #remote-panel-navigation #navigationSection .dpad {
   width: var(--nav-panel-dpad-size);
   height: var(--nav-panel-dpad-size);
+}
+
+#remote-panel-navigation .dpad-container,
+#remote-panel-navigation .dpad {
+  direction: ltr;
+}
+
+#remote-panel-navigation .joystick-container {
+  direction: ltr;
 }
 
 #navigationSection .dpad-container {
@@ -1039,6 +1073,47 @@ body.otef-remote-shell {
     width: 180px;
     height: 180px;
   }
+
+  /* Pan cluster: centered in stack; zoom row stays full width */
+  #remote-panel-navigation .navigation-panel-stack {
+    gap: var(--space-sm);
+    align-items: center;
+  }
+
+  #remote-panel-navigation .navigation-group--zoom {
+    align-self: stretch;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  /* Use more horizontal room than a fixed rem cap; still respect shell padding */
+  #remote-panel-navigation .navigation-group--pan {
+    width: 100%;
+    max-width: min(100%, calc(100vw - 2.75rem));
+    margin-inline: auto;
+    align-self: center;
+    gap: 6px;
+  }
+
+  #remote-panel-navigation #navigationSection .dpad-container {
+    width: 100%;
+    max-width: min(100%, calc(100vw - 2.75rem));
+    margin-inline: auto;
+  }
+
+  #remote-panel-navigation #navigationSection .dpad {
+    width: min(
+      var(--nav-panel-dpad-size),
+      calc(100vw - 2.75rem),
+      24rem
+    );
+    height: min(
+      var(--nav-panel-dpad-size),
+      calc(100vw - 2.75rem),
+      24rem
+    );
+    max-width: 100%;
+  }
 }
 
 @media (min-width: 768px) {
@@ -1072,8 +1147,12 @@ body.otef-remote-shell {
     row-gap: var(--space-sm);
   }
 
+  /* T23 / U2: row layout; no flex growth / vertical centering (portrait only) */
   #remote-panel-navigation .navigation-group--pan {
     flex: 0 0 auto;
+    min-height: 0;
+    margin-block: 0;
+    justify-content: flex-start;
   }
 
   #remote-panel-navigation .navigation-group--zoom {
@@ -1113,65 +1192,23 @@ body.otef-remote-shell {
   box-shadow: var(--shadow-warm);
 }
 
-.layer-panel-header {
+/* Global active layer count: directly under pack strip (T24; #layerPanelCount) */
+.layers-active-summary {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: var(--space-sm);
-  padding-block: var(--space-sm) var(--spacing-unit);
-  padding-inline: var(--spacing-unit);
-  border-block-end: 1px solid var(--color-border);
-  flex-shrink: 0;
+  justify-content: flex-end;
+  margin-block-start: var(--space-xs);
+  margin-block-end: var(--space-sm);
+  min-height: 1.25rem;
 }
 
-.layer-panel-back {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-inline-size: var(--touch-target-size);
-  min-block-size: var(--touch-target-size);
-  margin: 0;
-  padding: 0;
-  border: none;
-  border-radius: var(--rounded-sm);
-  background: var(--color-surface-raised);
-  color: var(--color-ink);
-  cursor: pointer;
-  flex-shrink: 0;
-  -webkit-tap-highlight-color: transparent;
-  transition: background var(--transition-speed) ease;
-}
-
-.layer-panel-back:hover {
-  background: var(--color-border);
-}
-
-.layer-panel-back:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-primary);
-}
-
-[dir="ltr"] .layer-panel-back__icon {
-  transform: scaleX(-1);
-}
-
-.layer-panel-header__text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-sm);
-}
-
-.sheet-title {
-  font: var(--font-title-sm);
-  color: var(--color-ink);
+.layers-variant-c--empty .layers-active-summary {
+  margin-block-end: var(--space-md);
 }
 
 .layer-count {
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 500;
   line-height: 1.35;
   color: var(--color-ink-subtle);
@@ -1297,12 +1334,24 @@ body.otef-remote-shell {
   min-width: 0;
 }
 
-/* Layer tile grid (Variant C) */
+/* Layer tiles: CSS grid — short labels first (JS order), compact row height, animation control inset */
 .layer-tile-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
-  gap: var(--space-sm);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: min-content;
+  gap: var(--space-xs);
   width: 100%;
+  direction: inherit;
+  /* Pack rows to the start; stretch items so each row shares one height (avoids empty band in shorter cell). */
+  align-content: start;
+  justify-content: start;
+  align-items: stretch;
+}
+
+@media (min-width: 26rem) {
+  .layer-tile-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .layer-tile {
@@ -1311,57 +1360,94 @@ body.otef-remote-shell {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  min-block-size: 6.5rem;
-  padding: var(--space-sm);
-  padding-block-end: calc(6px + 44px + 4px);
-  padding-inline: var(--space-sm);
+  width: 100%;
+  min-height: 0;
+  min-block-size: 0;
+  box-sizing: border-box;
+  padding-block: 6px;
+  padding-inline: var(--space-xs);
   border-radius: var(--rounded-sm);
   background: var(--color-surface-raised);
   text-align: center;
   cursor: pointer;
   border: 2px solid var(--color-border);
   -webkit-tap-highlight-color: transparent;
-  transition: border-color 0.2s ease, opacity 0.2s ease, background 0.2s ease;
+  transition: border-color 0.2s ease, opacity 0.2s ease, background 0.2s ease,
+    box-shadow 0.2s ease, transform 0.15s ease;
 }
 
+/* Reserve bottom band only when an animation toggle exists (see layer-sheet-controller). */
+.layer-tile--anim {
+  padding-block-end: calc(6px + 40px + 6px);
+}
+
+/* Off: recessed control — same 2px border weight as on */
 .layer-tile.is-off {
-  opacity: 0.7;
-  border-style: dashed;
+  opacity: 1;
+  border: 2px solid var(--color-border-strong);
   color: var(--color-ink-muted);
   background: var(--color-surface);
+  box-shadow: var(--shadow-pressed-terracotta), var(--shadow-pressed-inset),
+    0 1px 0 rgba(245, 240, 234, 0.07);
 }
 
-/* On-map, not primary: green-tint border (Variant C mockup) */
-.layer-tile.is-on.is-visible {
+.layer-tile.is-off:hover {
+  background: var(--color-surface-raised);
+  border-color: var(--color-border);
+  box-shadow: inset 0 2px 5px rgba(10, 8, 6, 0.18),
+    inset 0 1px 0 rgba(245, 240, 234, 0.08), 0 1px 0 rgba(245, 240, 234, 0.09);
+}
+
+.layer-tile.is-off:active:not(:focus-visible) {
+  transform: scale(0.98);
+  box-shadow: inset 0 3px 8px rgba(10, 8, 6, 0.28),
+    inset 0 1px 0 rgba(245, 240, 234, 0.05);
+}
+
+/* On (layer active): green family; visible / primary ramp emphasis below */
+.layer-tile.is-on {
   opacity: 1;
-  border-style: solid;
-  border-color: rgba(122, 155, 122, 0.65);
-  background: rgba(122, 155, 122, 0.09);
+  border: 2px solid rgba(122, 155, 122, 0.5);
+  background: rgba(122, 155, 122, 0.08);
   color: var(--color-ink);
-  box-shadow: 0 0 0 1px rgba(122, 155, 122, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 1px 3px rgba(10, 8, 6, 0.22);
 }
 
-/* Strongest emphasis: primary (last-activated) enabled tile */
+.layer-tile.is-on:hover {
+  background: rgba(122, 155, 122, 0.11);
+  border-color: rgba(122, 155, 122, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 2px 6px rgba(10, 8, 6, 0.2);
+}
+
+.layer-tile.is-on:active:not(:focus-visible) {
+  transform: scale(0.98);
+  box-shadow: inset 0 2px 6px rgba(10, 8, 6, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* On-map visible + last-activated: stronger green (Variant C; no terracotta) */
+.layer-tile.is-on.is-visible,
 .layer-tile.is-on.layer-tile--primary {
-  opacity: 1;
-  border-style: solid;
-  border-width: 2px;
-  border-color: var(--color-primary);
-  background: rgba(193, 127, 74, 0.16);
-  color: var(--color-ink);
-  box-shadow: 0 0 0 1px rgba(193, 127, 74, 0.45), var(--shadow-warm);
+  border-color: rgba(122, 155, 122, 0.72);
+  background: rgba(122, 155, 122, 0.11);
+  box-shadow: 0 0 0 1px rgba(122, 155, 122, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 2px 5px rgba(10, 8, 6, 0.18);
 }
 
-.layer-tile:hover {
-  background: var(--color-surface);
-}
-
-.layer-tile.is-on.is-visible:hover {
-  background: rgba(122, 155, 122, 0.12);
-}
-
+.layer-tile.is-on.is-visible:hover,
 .layer-tile.is-on.layer-tile--primary:hover {
-  background: rgba(193, 127, 74, 0.22);
+  background: rgba(122, 155, 122, 0.14);
+  border-color: rgba(122, 155, 122, 0.78);
+  box-shadow: 0 0 0 1px rgba(122, 155, 122, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 2px 7px rgba(10, 8, 6, 0.2);
+}
+
+.layer-tile.is-on.is-visible:active:not(:focus-visible),
+.layer-tile.is-on.layer-tile--primary:active:not(:focus-visible) {
+  box-shadow: inset 0 2px 8px rgba(10, 8, 6, 0.22),
+    0 0 0 1px rgba(122, 155, 122, 0.28);
 }
 
 .layer-tile:focus-visible {
@@ -1369,33 +1455,42 @@ body.otef-remote-shell {
   box-shadow: var(--focus-ring-primary);
 }
 
-.layer-tile.is-on.layer-tile--primary:focus-visible {
-  box-shadow: var(--focus-ring-primary), 0 0 0 1px rgba(193, 127, 74, 0.45);
+.layer-tile.is-off:focus-visible {
+  box-shadow: var(--focus-ring-primary), var(--shadow-pressed-terracotta),
+    var(--shadow-pressed-inset), 0 1px 0 rgba(245, 240, 234, 0.07);
 }
 
-.layer-tile__preview {
-  inline-size: 32px;
-  block-size: 32px;
-  border-radius: 6px;
-  border: 2px solid;
-  flex-shrink: 0;
-  margin-block-end: var(--space-xs);
+.layer-tile.is-on:focus-visible {
+  box-shadow: var(--focus-ring-primary), inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 1px 3px rgba(10, 8, 6, 0.22);
+}
+
+.layer-tile.is-on.is-visible:focus-visible,
+.layer-tile.is-on.layer-tile--primary:focus-visible {
+  box-shadow: var(--focus-ring-primary), 0 0 0 1px rgba(122, 155, 122, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 2px 5px rgba(10, 8, 6, 0.18);
 }
 
 .layer-tile__label {
-  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
-  font: var(--font-label-sm);
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: var(--font-body-md);
   line-height: 1.3;
   color: inherit;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: clip;
-  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+  text-align: center;
   padding-inline: 2px;
+  min-width: 0;
 }
 
-/* Tile-level animation: icon control only (not “Flow” text) */
+/* Tile-level animation: full-width bar (short height; wide hit area) on .layer-tile--anim only */
 .anim-btn {
   position: absolute;
   inset-block-end: 6px;
@@ -1418,6 +1513,21 @@ body.otef-remote-shell {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.layer-tile--anim .anim-btn {
+  inset-inline-start: 6px;
+  inset-inline-end: 6px;
+  width: auto;
+  height: 40px;
+  min-width: 0;
+  min-height: 40px;
+  border-radius: 8px;
+}
+
+.layer-tile--anim .anim-btn__glyph {
+  width: 16px;
+  height: 16px;
 }
 
 .anim-btn__glyph {
@@ -1445,53 +1555,16 @@ body.otef-remote-shell {
   box-shadow: var(--focus-ring-primary);
 }
 
-/* Inert slot: same footprint as .anim-btn for consistent tile geometry */
-.anim-btn--absent {
-  pointer-events: none;
-  opacity: 0;
-  cursor: default;
-  border: none;
-  background: transparent;
-}
-
 .layer-bulk-visibility {
   flex-shrink: 0;
 }
 
-/* Variant C: one screen — pack head + edge-faded strip + hint + bulk + grid */
+/* Variant C: one screen — edge-faded pack strip + bulk + grid */
 .layers-variant-c {
   display: flex;
   flex-direction: column;
   min-width: 0;
   padding-bottom: 2px;
-}
-
-.layers-pack-head {
-  display: flex;
-  flex-direction: row;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-sm);
-  margin-block-end: 6px;
-  margin-inline: 2px;
-}
-
-.layers-pack-head__label {
-  margin: 0;
-  font: var(--font-label-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--color-ink-muted);
-  font-size: 0.59rem;
-}
-
-.layers-pack-scroll-hint {
-  font-size: 0.62rem;
-  line-height: 1.35;
-  color: var(--color-ink-subtle);
-  margin: 0 2px 8px;
-  text-align: center;
-  letter-spacing: 0.02em;
 }
 
 .layers-pack-strip-wrap {
@@ -1508,15 +1581,23 @@ body.otef-remote-shell {
 }
 
 .layers-pack-strip__viewport {
+  /* ~2 rows of chips: padding + 2× chip row + row gap (see .pack-chip min-block-size) */
+  --pack-strip-chip-min: max(44px, 2.75rem);
+  --pack-strip-1row-h: calc(6px + 10px + var(--pack-strip-chip-min));
+  --pack-strip-viewport-h: calc(
+    6px + 10px + 2 * var(--pack-strip-chip-min) + var(--space-md)
+  );
   position: relative;
   margin-inline: -4px;
   padding-inline: 4px;
   overflow: hidden;
 }
 
+/* Edge fades: stretch to match viewport (1–2 rows or scroll area height) */
 .layers-pack-strip__edge {
   position: absolute;
-  inset-block: 0;
+  inset-block-start: 0;
+  inset-block-end: 0;
   width: 22px;
   z-index: 1;
   pointer-events: none;
@@ -1562,20 +1643,17 @@ body.otef-remote-shell {
   );
 }
 
+/* Two pack rows scroll together horizontally (see .layers-pack-strip__band in JS). */
 .layers-pack-strip__scroller {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: nowrap;
-  gap: var(--space-sm);
   min-width: 0;
+  min-height: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  scroll-snap-type: x mandatory;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   -ms-overflow-style: none;
-  padding-block: 4px 8px 10px;
-  padding-inline: 6px 12px;
+  padding-block: 6px 10px;
+  padding-inline: 8px 14px;
   box-sizing: border-box;
 }
 
@@ -1583,23 +1661,50 @@ body.otef-remote-shell {
   display: none;
 }
 
+.layers-pack-strip__band {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  width: max-content;
+}
+
+.layers-pack-strip__row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-md);
+  width: max-content;
+}
+
 .pack-chip {
+  display: inline-flex;
   flex: 0 0 auto;
-  scroll-snap-align: start;
+  align-items: center;
+  gap: 8px;
   margin: 0;
-  padding: 8px 14px;
+  padding-block: 11px;
+  padding-inline: 18px;
+  min-block-size: 44px;
   border-radius: var(--rounded-pill);
   border: 1px solid var(--color-border-strong);
   background: var(--color-surface-raised);
   color: var(--color-ink-muted);
   font: var(--font-label-sm);
   font-weight: 600;
-  font-size: 0.78rem;
-  line-height: 1.25;
+  font-size: 0.875rem;
+  line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.pack-chip .group-count {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  padding: 1px 6px;
 }
 
 .pack-chip:focus-visible {
@@ -1703,6 +1808,12 @@ body.otef-remote-shell {
   input[type="checkbox"]:checked
   + .toggle-indicator::after {
   transform: translateX(-20px);
+}
+
+/* Bulk pack visibility (focused toolbar only): green when on — not primary orange */
+.focused-pack-toolbar .layer-bulk-visibility input[type="checkbox"]:checked + .toggle-indicator {
+  background: var(--color-success);
+  border-color: var(--color-success);
 }
 
 /* Accessibility */

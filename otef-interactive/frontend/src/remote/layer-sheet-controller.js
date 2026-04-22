@@ -1,16 +1,16 @@
 /**
  * Layer list controller (Layers tab)
  *
- * **Sharpened Variant C:** pack chip strip (single selection) + per-pack count row +
+ * **Sharpened Variant C:** pack chip strip (single selection) + per-pack count on each chip +
  * one bulk-visibility control for the selected pack + tile grid (per-layer on/off, animation
  * icon button on tile only). Syncs with OTEFDataContext.
  */
 
 import {
-  formatLayerLabelForDisplay,
   normalizeLayerBaseName,
   parseLayerNameWithGeometrySuffix,
 } from "../shared/layer-name-utils.js";
+import { getLayerDisplayLabel } from "../shared/layer-display-glossary.js";
 import {
   LOCALE_EVENT,
   applyRemoteChromeI18n,
@@ -140,12 +140,67 @@ function encAttrId(id) {
   return encodeURIComponent(String(id));
 }
 
-/** @param {string} value @param {string} fallback */
-function clampPreviewColor(value, fallback = "#808080") {
-  if (typeof value !== "string" || !/^#[0-9a-fA-F]{6}$/.test(value.trim())) {
-    return fallback;
+const HEB_RANGE_RE = /[\u0590-\u05FF]/;
+
+/**
+ * @param {unknown} s
+ * @returns {boolean}
+ */
+function isLatinPrimaryString(s) {
+  if (s == null) return false;
+  const t = String(s);
+  if (t.trim() === "") return false;
+  return /[A-Za-z]/.test(t) && !HEB_RANGE_RE.test(t);
+}
+
+/**
+ * Raw label for glossary resolution: English UI prefers a Latin-primary name from
+ * `row.layers` when the row-level label is Hebrew-only; Hebrew UI keeps row-level
+ * precedence for Hebrew-friendly copy.
+ *
+ * @param {object} row
+ * @param {"he" | "en"} locale
+ * @returns {string}
+ */
+function pickRawLabelForRow(row, locale) {
+  if (locale === "en" && row && Array.isArray(row.layers)) {
+    for (const layer of row.layers) {
+      if (!layer) continue;
+      const candidates = [layer.displayName, layer.name].filter(
+        (v) => v != null && String(v).trim() !== "",
+      );
+      for (const c of candidates) {
+        if (isLatinPrimaryString(c)) {
+          return String(c);
+        }
+      }
+    }
   }
-  return value.trim();
+  return (
+    row.displayLabel ??
+    row.baseName ??
+    row.layers[0]?.name ??
+    row.layers[0]?.id ??
+    ""
+  );
+}
+
+/**
+ * Label string used for `renderLayerRow` (sorting tile order by length).
+ * @param {object} row
+ * @returns {string}
+ */
+function getRowDisplayLabelForSort(row) {
+  const loc = getLocale();
+  const rawLabel = pickRawLabelForRow(row, loc);
+  return getLayerDisplayLabel(
+    row.fullLayerIds && row.fullLayerIds[0] != null
+      ? String(row.fullLayerIds[0])
+      : "",
+    loc,
+    rawLabel,
+    row.fullLayerIds,
+  );
 }
 
 /**
@@ -166,19 +221,15 @@ function renderLayerRow(row, options = {}) {
     /"/g,
     "&quot;",
   );
-  const rawLabel =
-    row.displayLabel ?? row.baseName ?? row.layers[0]?.name ?? row.layers[0]?.id ?? "";
-  const label = formatLayerLabelForDisplay(rawLabel);
-  const previewRaw = options.stylePreview || {
-    fillColor: "#808080",
-    fillOpacity: 0.7,
-    strokeColor: "#000000",
-  };
-  const preview = {
-    ...previewRaw,
-    fillColor: clampPreviewColor(previewRaw.fillColor),
-    strokeColor: clampPreviewColor(previewRaw.strokeColor),
-  };
+  const rawLabel = pickRawLabelForRow(row, getLocale());
+  const label = getLayerDisplayLabel(
+    row.fullLayerIds && row.fullLayerIds[0] != null
+      ? String(row.fullLayerIds[0])
+      : "",
+    getLocale(),
+    rawLabel,
+    row.fullLayerIds,
+  );
   const animatableIds = getRowAnimatableFullLayerIds(row, groupId);
   const hasAnimationToggle = animatableIds.length > 0;
   const animIdsAttr = JSON.stringify(animatableIds).replace(/"/g, "&quot;");
@@ -201,6 +252,7 @@ function renderLayerRow(row, options = {}) {
   const primaryClass = isPrimary ? " layer-tile--primary" : "";
   const visibleClass =
     checked && !isPrimary ? " is-visible" : "";
+  const animTileClass = hasAnimationToggle ? " layer-tile--anim" : "";
   const animStateClass = `${animationEnabled ? "active" : ""} ${
     animationMixed ? "mixed" : ""
   }`.trim();
@@ -213,16 +265,15 @@ function renderLayerRow(row, options = {}) {
         data-animation-layer-ids="${animIdsAttr}"
         data-i18n-aria="ariaLayerAnimationToggle"
       >${playIcon}</button>`
-    : `<span class="anim-btn anim-btn--absent" aria-hidden="true"></span>`;
+    : "";
   return `
     <div
-      class="layer-tile ${stateClass}${visibleClass}${primaryClass}"
+      class="layer-tile ${stateClass}${visibleClass}${primaryClass}${animTileClass}"
       tabindex="0"
       aria-pressed="${checked ? "true" : "false"}"
       aria-label="${escapeHtmlSafe(label)}"
       data-layer-ids="${layerIdsAttr}"
     >
-      <div class="layer-tile__preview" style="background-color: ${preview.fillColor}; opacity: ${preview.fillOpacity}; border-color: ${preview.strokeColor};"></div>
       <span class="layer-tile__label">${escapeHtmlSafe(label)}</span>
       ${animControl}
     </div>
@@ -280,15 +331,6 @@ class LayerSheetController {
   }
 
   setupEventListeners() {
-    const back = document.getElementById("layerPanelBack");
-    if (back) {
-      // Clears primary-tile emphasis only; selected pack stays (see `clearLayerFocus`).
-      back.addEventListener("click", (e) => {
-        e.preventDefault();
-        this.clearLayerFocus();
-      });
-    }
-
     const content = this.sheet.querySelector(".sheet-content");
     if (!content) return;
 
@@ -383,6 +425,7 @@ class LayerSheetController {
   /**
    * Drop primary-tile highlight (`primaryTileIdsJson`). Does not change the selected
    * pack; `render()` keeps a valid pack via `resolveSelectedPackId`.
+   * (Previously wired to #layerPanelBack; that control was removed — kept for API use.)
    */
   clearLayerFocus() {
     this.primaryTileIdsJson = null;
@@ -560,40 +603,23 @@ class LayerSheetController {
             layers: [layer],
             enabled: layer.enabled,
           }));
+    rows.sort((a, b) => {
+      const la = getRowDisplayLabelForSort(a).length;
+      const lb = getRowDisplayLabelForSort(b).length;
+      if (la !== lb) return la - lb;
+      const ka = layerIdsToPrimaryKey(a.fullLayerIds) || "";
+      const kb = layerIdsToPrimaryKey(b.fullLayerIds) || "";
+      return ka.localeCompare(kb);
+    });
     return rows
-      .map((row) => {
-        const style = this.getLayerStylePreview(row.layers[0]);
-        return renderLayerRow(row, {
+      .map((row) =>
+        renderLayerRow(row, {
           groupId: group.id,
-          stylePreview: style,
           animations: anims,
           primaryTileIdsJson: this.primaryTileIdsJson,
-        });
-      })
+        }),
+      )
       .join("");
-  }
-
-  getLayerStylePreview(layer) {
-    if (!layer) {
-      return {
-        fillColor: "#808080",
-        fillOpacity: 0.7,
-        strokeColor: "#000000",
-      };
-    }
-    if (layer.format === "image" || layer.geometryType === "image") {
-      return {
-        fillColor: "#4a90e2",
-        fillOpacity: 0.8,
-        strokeColor: "#2a5a8a",
-      };
-    }
-
-    return {
-      fillColor: "#808080",
-      fillOpacity: 0.7,
-      strokeColor: "#000000",
-    };
   }
 
   /**
@@ -622,49 +648,53 @@ class LayerSheetController {
     if (!selected) {
       return `<div class="sheet-empty">${escapeHtmlSafe(t("layerEmpty"))}</div>`;
     }
-    const enabledLayers = (selected.layers || []).filter((l) => l.enabled).length;
-    const totalLayers = (selected.layers || []).length;
     const encGid = encAttrId(selected.id);
-    const packCountText = t("layersPackActiveCount", {
-      e: enabledLayers,
-      t: totalLayers,
-    });
 
-    const chips = groups
-      .map((g) => {
-        const enc = encAttrId(g.id);
-        const isSel = g.id === selectedId;
-        const currentAttr = isSel ? ' aria-current="true"' : "";
-        return `<button
+    const chipForGroup = (g) => {
+      const enc = encAttrId(g.id);
+      const isSel = g.id === selectedId;
+      const currentAttr = isSel ? ' aria-current="true"' : "";
+      const en = (g.layers || []).filter((l) => l.enabled).length;
+      const to = (g.layers || []).length;
+      const countStr = t("layersPackActiveCount", { e: en, t: to });
+      const title = layerGroupTitle(g);
+      return `<button
           type="button"
           class="pack-chip${isSel ? " pack-chip--selected" : ""}"
           data-layers-select-pack="${enc}"${currentAttr}
-        >${escapeHtmlSafe(layerGroupTitle(g))}</button>`;
-      })
-      .join("");
+        >${escapeHtmlSafe(title)}<span class="group-count">${escapeHtmlSafe(countStr)}</span></button>`;
+    };
+    const mid = Math.ceil(groups.length / 2);
+    const row1 = groups.slice(0, mid).map(chipForGroup).join("");
+    const row2 = groups.slice(mid).map(chipForGroup).join("");
 
     return `
     <div class="layers-variant-c">
       <div
         class="layers-pack-strip-wrap"
         role="region"
-        data-i18n-aria="ariaLayersPackStrip"
       >
-        <div class="layers-pack-head">
-          <p class="layers-pack-head__label" data-i18n="layersPackStripLabel">${escapeHtmlSafe(t("layersPackStripLabel"))}</p>
-          <span class="group-count" aria-hidden="true">${escapeHtmlSafe(packCountText)}</span>
-        </div>
         <div class="layers-pack-strip">
           <div class="layers-pack-strip__viewport">
             <div class="layers-pack-strip__edge layers-pack-strip__edge--start" aria-hidden="true"></div>
             <div class="layers-pack-strip__edge layers-pack-strip__edge--end" aria-hidden="true"></div>
             <div class="layers-pack-strip__scroller">
-              ${chips}
+              <div class="layers-pack-strip__band">
+                <div class="layers-pack-strip__row">${row1}</div>
+                <div class="layers-pack-strip__row">${row2}</div>
+              </div>
             </div>
           </div>
         </div>
       </div>
-      <p class="layers-pack-scroll-hint" data-i18n="layersPackScrollHint">${escapeHtmlSafe(t("layersPackScrollHint"))}</p>
+      <div class="layers-active-summary" role="status">
+        <span
+          class="layer-count"
+          data-i18n="layersActiveCount"
+          data-i18n-n="0"
+          id="layerPanelCount"
+        ></span>
+      </div>
       <div class="focused-pack-toolbar">
         <span class="focused-pack-toolbar__label" data-i18n="layersBulkVisibility">${escapeHtmlSafe(t("layersBulkVisibility"))}</span>
         <label class="group-toggle layer-bulk-visibility">
@@ -692,17 +722,10 @@ class LayerSheetController {
       return sum + (group.layers || []).filter((l) => l.enabled).length;
     }, 0);
 
-    const countEl = this.sheet.querySelector(".layer-count");
+    const countEl = document.getElementById("layerPanelCount");
     if (countEl) {
       countEl.setAttribute("data-i18n-n", String(totalEnabled));
       countEl.textContent = formatActiveLayerCount(totalEnabled);
-    }
-
-    const back = document.getElementById("layerPanelBack");
-    if (back) back.hidden = true;
-    const titleEl = document.getElementById("layerPanelTitle");
-    if (titleEl) {
-      titleEl.setAttribute("data-i18n", "layerSheetTitle");
     }
   }
 
@@ -717,8 +740,6 @@ class LayerSheetController {
       this.focusedGroupId = this.resolveSelectedPackId(groups);
     }
 
-    this.updatePanelChrome(groups);
-
     const animations =
       typeof OTEFDataContext !== "undefined" &&
       typeof OTEFDataContext.getAnimations === "function"
@@ -726,7 +747,18 @@ class LayerSheetController {
         : {};
 
     if (groups.length === 0) {
-      content.innerHTML = `<div class="sheet-empty">${escapeHtmlSafe(t("layerEmpty"))}</div>`;
+      content.innerHTML = `
+    <div class="layers-variant-c layers-variant-c--empty">
+      <div class="layers-active-summary" role="status">
+        <span
+          class="layer-count"
+          data-i18n="layersActiveCount"
+          data-i18n-n="0"
+          id="layerPanelCount"
+        ></span>
+      </div>
+      <div class="sheet-empty">${escapeHtmlSafe(t("layerEmpty"))}</div>
+    </div>`;
     } else {
       content.innerHTML = this.renderLayersTabContent(groups, animations);
       const selectedId = this.focusedGroupId;
@@ -741,6 +773,8 @@ class LayerSheetController {
         }
       }
     }
+
+    this.updatePanelChrome(groups);
     applyRemoteChromeI18n();
   }
 }

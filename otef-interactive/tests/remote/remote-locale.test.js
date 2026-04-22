@@ -23,6 +23,7 @@ function installLocaleTestEnv(storeInit = {}) {
     documentElement: root,
     querySelectorAll: () => [],
     querySelector: () => null,
+    getElementById: () => null,
     get title() {
       return this._title ?? "";
     },
@@ -70,6 +71,51 @@ describe("remote-locale", () => {
     expect(document.documentElement.setAttribute).toHaveBeenCalledWith("lang", "he");
   });
 
+  test("applyRemoteChromeI18n sets curationSubmissionSearch dir from locale when present", async () => {
+    const searchEl = { setAttribute: vi.fn() };
+    const store = {};
+    const ls = {
+      getItem: (k) => (Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null),
+      setItem: (k, v) => {
+        store[k] = String(v);
+      },
+      removeItem: (k) => {
+        delete store[k];
+      },
+    };
+    const root = {
+      setAttribute: vi.fn(function (name, value) {
+        this[name] = value;
+      }),
+      getAttribute: vi.fn(function (name) {
+        return this[name] ?? null;
+      }),
+    };
+    const doc = {
+      documentElement: root,
+      querySelectorAll: () => [],
+      querySelector: () => null,
+      getElementById: vi.fn((id) => (id === "curationSubmissionSearch" ? searchEl : null)),
+      get title() {
+        return this._title ?? "";
+      },
+      set title(v) {
+        this._title = v;
+      },
+    };
+    vi.stubGlobal("localStorage", ls);
+    vi.stubGlobal("document", doc);
+    vi.stubGlobal("window", {
+      dispatchEvent: vi.fn(),
+      addEventListener: vi.fn(),
+    });
+    const { setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    setLocale("en", { force: true });
+    expect(searchEl.setAttribute).toHaveBeenCalledWith("dir", "ltr");
+    setLocale("he", { force: true });
+    expect(searchEl.setAttribute).toHaveBeenCalledWith("dir", "rtl");
+  });
+
   test("initLocale reads persisted value from localStorage", async () => {
     const key = "otef.remote.locale";
     const preset = { [key]: "en" };
@@ -105,13 +151,11 @@ describe("remote-locale", () => {
     expect(t("curationSubmissionsRefreshAria")).toBe("Refresh submissions list");
   });
 
-  test("layer pack strip + layer animation aria keys resolve for both locales", async () => {
+  test("layer pack counts + layer animation aria keys resolve for both locales", async () => {
     installLocaleTestEnv();
     const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
     const keys = [
-      "layersPackStripLabel",
       "layersPackActiveCount",
-      "ariaLayersPackStrip",
       "ariaLayerAnimationToggle",
     ];
     setLocale("he", { force: true });

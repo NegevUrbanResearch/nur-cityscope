@@ -2,13 +2,29 @@ import { describe, expect, test } from "vitest";
 import {
   REQUIRED_PACK_IDS,
   getPackDisplayLabel,
+  normalizePackId,
 } from "../../frontend/src/remote/layer-pack-display-names.js";
 
 describe("layer-pack-display-names (contract)", () => {
+  test("normalizePackId trims, lowercases, maps spaces and hyphens to underscore", () => {
+    expect(normalizePackId("  Map-3 Future  ")).toBe("map_3_future");
+    expect(normalizePackId("Municipality Transport")).toBe("municipality_transport");
+  });
+
+  test("getPackDisplayLabel matches PACK_LABELS after normalizePackId when direct key misses", () => {
+    expect(getPackDisplayLabel("map-3 future", "en")).toBe("Map 3 — future");
+    expect(getPackDisplayLabel("MUNICIPALITY transport", "he")).toBe("תחבורה מוניציפלית");
+  });
+
   test("REQUIRED_PACK_IDS lists known packs", () => {
     expect(REQUIRED_PACK_IDS).toEqual([
       "october_7th",
       "projector_base",
+      "map_3_future",
+      "curated_moresht_axis",
+      "future_development",
+      "municipality_transport",
+      "municpality_transport",
       "curated",
     ]);
   });
