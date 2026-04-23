@@ -183,6 +183,7 @@ function updateViewportFromUI(ctx, viewport, source = "gis") {
     return { accepted: false, reason: "bounds" };
   }
 
+  ctx._viewportSeq++;
   ctx._currentInteractionSource = source;
   try {
     const payload = { ...viewport, sourceId: ctx._clientId, timestamp: Date.now() };

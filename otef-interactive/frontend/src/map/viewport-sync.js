@@ -1,14 +1,13 @@
 /**
- * Viewport synchronization helpers for the Leaflet GIS map.
- * These functions rely on the global `map`, `proj4`, `isApplyingRemoteState`
- * and `OTEFDataContext` objects defined elsewhere.
+ * Viewport sync for the Leaflet GIS map: apply remote viewports, send local
+ * moveend/zoomend to OTEFDataContext, and avoid echoing remote `setView` back.
+ * Relies on globals: `map`, `proj4`, `OTEFDataContext`, and `window.isApplyingRemoteState`.
  */
 import { createViewportApplyScheduler } from "./viewport-sync-scheduler.js";
 import { getRemoteViewportSetViewOptions } from "./viewport-apply-policy.js";
 
-// Flag and timer to prevent feedback loops (declared in map-initialization.js)
-// But we need to ensure they are accessible or use the ones from there.
-// Since they are defined with 'let' in another file in the same scope, we don't redeclare here.
+/** Snapshot of OTEFDataContext._viewportSeq at the start of a remote setView. */
+let lastAppliedViewportSeq = 0;
 
 const createViewportApplySchedulerRef = createViewportApplyScheduler;
 const getRemoteViewportSetViewOptionsRef = getRemoteViewportSetViewOptions;
@@ -70,6 +69,12 @@ function applyViewportNow(viewport) {
               : 0.12,
         };
 
+  const currentSeq =
+    typeof OTEFDataContext !== "undefined"
+      ? OTEFDataContext._viewportSeq ?? 0
+      : 0;
+  lastAppliedViewportSeq = currentSeq;
+
   // Set flag to prevent feedback loop (don't broadcast this change back)
   window.isApplyingRemoteState = true;
   mapRef.setView([centerLat, centerLng], zoom, setViewOptions);
@@ -78,7 +83,7 @@ function applyViewportNow(viewport) {
   if (window.syncLockTimer) clearTimeout(window.syncLockTimer);
   window.syncLockTimer = setTimeout(() => {
     window.isApplyingRemoteState = false;
-  }, 800);
+  }, 150);
 
   if (
     typeof window !== "undefined" &&
@@ -129,6 +134,32 @@ function sendViewportUpdate() {
   if (window.isApplyingRemoteState) return;
   const mapRef = getMapRef();
   if (!mapRef || typeof OTEFDataContext === "undefined") return;
+  if (
+    OTEFDataContext._viewportSeq > 0 &&
+    OTEFDataContext._viewportSeq === lastAppliedViewportSeq
+  ) {
+    const zoom = mapRef.getZoom();
+    const bounds = mapRef.getBounds();
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    if (typeof proj4 === "undefined") return;
+    const [swX, swY] = proj4("EPSG:4326", "EPSG:2039", [sw.lng, sw.lat]);
+    const [neX, neY] = proj4("EPSG:4326", "EPSG:2039", [ne.lng, ne.lat]);
+    const ctxViewport =
+      typeof OTEFDataContext.getViewport === "function"
+        ? OTEFDataContext.getViewport()
+        : null;
+    const ctxBbox = ctxViewport && Array.isArray(ctxViewport.bbox) ? ctxViewport.bbox : null;
+    const matchesContext =
+      ctxBbox &&
+      ctxBbox.length === 4 &&
+      Math.abs((ctxViewport.zoom ?? zoom) - zoom) <= 0.001 &&
+      Math.abs(ctxBbox[0] - swX) <= 0.01 &&
+      Math.abs(ctxBbox[1] - swY) <= 0.01 &&
+      Math.abs(ctxBbox[2] - neX) <= 0.01 &&
+      Math.abs(ctxBbox[3] - neY) <= 0.01;
+    if (matchesContext) return;
+  }
 
   const zoom = mapRef.getZoom();
   const bounds = mapRef.getBounds();
