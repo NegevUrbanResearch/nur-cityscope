@@ -134,7 +134,8 @@ async function loadGeoJSONLayers() {
 }
 
 /**
- * Load all layers from the new layer groups system.
+ * Load layer groups for the GIS map: GIS-visible layers only, and at startup
+ * only those currently enabled (load-on-enable for the rest; see layer-state-manager).
  */
 async function loadLayerGroups() {
   if (!layerRegistry || !layerRegistry._initialized) {
@@ -144,7 +145,25 @@ async function loadLayerGroups() {
 
   const groups = layerRegistry.getGroups();
 
-  // Load all layers from all groups (GIS-visible only; see gis-layer-filter.js)
+  const layerGroups =
+    typeof LayerStateHelper !== "undefined" &&
+    typeof LayerStateHelper.getEffectiveLayerGroups === "function"
+      ? LayerStateHelper.getEffectiveLayerGroups()
+      : typeof OTEFDataContext !== "undefined"
+        ? OTEFDataContext.getLayerGroups()
+        : null;
+
+  const enabledIds = new Set();
+  if (Array.isArray(layerGroups)) {
+    for (const group of layerGroups) {
+      for (const layer of group.layers || []) {
+        if (layer.enabled) {
+          enabledIds.add(`${group.id}.${layer.id}`);
+        }
+      }
+    }
+  }
+
   const loadPromises = [];
   for (const group of groups) {
     for (const layer of group.layers || []) {
@@ -152,7 +171,9 @@ async function loadLayerGroups() {
         continue;
       }
       const fullLayerId = `${group.id}.${layer.id}`;
-      loadPromises.push(loadLayerFromRegistry(fullLayerId));
+      if (enabledIds.size === 0 || enabledIds.has(fullLayerId)) {
+        loadPromises.push(loadLayerFromRegistry(fullLayerId));
+      }
     }
   }
 
