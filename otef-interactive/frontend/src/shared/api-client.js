@@ -5,14 +5,38 @@ export const OTEF_API = {
   baseUrl: APP_CONFIG.api.viewportBase,
   defaultTable: APP_CONFIG.defaultTable,
   _viewportDebounce: null,
+  _stateInFlight: new Map(),
+  _stateCache: new Map(),
 
-  async getState(tableName = this.defaultTable) {
+  async getState(tableName = this.defaultTable, options = {}) {
+    const forceFresh = !!(options && options.forceFresh);
+    const cacheEntry = this._stateCache.get(tableName);
+    const now = Date.now();
+    if (!forceFresh && cacheEntry && now - cacheEntry.ts < 250) {
+      return cacheEntry.value;
+    }
+    const inFlight = !forceFresh ? this._stateInFlight.get(tableName) : null;
+    if (inFlight) {
+      return inFlight;
+    }
+    const fetchPromise = (async () => {
+      try {
+        const response = await fetch(`${this.baseUrl}/${tableName}/`);
+        if (!response.ok) throw new Error(`Failed to fetch state: ${response.status}`);
+        const value = await response.json();
+        this._stateCache.set(tableName, { ts: Date.now(), value });
+        return value;
+      } catch (error) {
+        getLogger().error("[OTEF API] Error fetching state:", error);
+        throw error;
+      } finally {
+        this._stateInFlight.delete(tableName);
+      }
+    })();
+    this._stateInFlight.set(tableName, fetchPromise);
     try {
-      const response = await fetch(`${this.baseUrl}/${tableName}/`);
-      if (!response.ok) throw new Error(`Failed to fetch state: ${response.status}`);
-      return await response.json();
+      return await fetchPromise;
     } catch (error) {
-      getLogger().error("[OTEF API] Error fetching state:", error);
       throw error;
     }
   },
@@ -25,7 +49,9 @@ export const OTEF_API = {
         body: JSON.stringify(updates),
       });
       if (!response.ok) throw new Error(`Failed to update state: ${response.status}`);
-      return await response.json();
+      const value = await response.json();
+      this._stateCache.delete(tableName);
+      return value;
     } catch (error) {
       getLogger().error("[OTEF API] Error updating state:", error);
       throw error;
@@ -40,7 +66,9 @@ export const OTEF_API = {
         body: JSON.stringify(command),
       });
       if (!response.ok) throw new Error(`Failed to execute command: ${response.status}`);
-      return await response.json();
+      const value = await response.json();
+      this._stateCache.delete(tableName);
+      return value;
     } catch (error) {
       getLogger().error("[OTEF API] Error executing command:", error);
       throw error;
@@ -63,7 +91,7 @@ export const OTEF_API = {
     clearTimeout(this._viewportDebounce);
     this._viewportDebounce = setTimeout(() => {
       this.updateViewport(tableName, viewport);
-    }, 500);
+    }, 120);
   },
 
   async saveBounds(tableName = this.defaultTable, polygon, viewerAngleDeg) {
@@ -80,7 +108,9 @@ export const OTEF_API = {
       });
 
       if (!response.ok) throw new Error(`Failed to save bounds: ${response.status}`);
-      return await response.json();
+      const value = await response.json();
+      this._stateCache.delete(tableName);
+      return value;
     } catch (error) {
       getLogger().error("[OTEF API] Error saving bounds:", error);
       throw error;

@@ -24,7 +24,13 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
     if (state.bounds_polygon || state.bounds) ctx._setBounds(state.bounds_polygon || state.bounds);
     if (typeof state.viewer_angle_deg === "number") ctx._setViewerAngleDeg(state.viewer_angle_deg);
   } else {
-    if (state.viewport) ctx._viewport = state.viewport;
+    if (state.viewport) {
+      ctx._viewport = state.viewport;
+      const incomingSeq = Number.isFinite(state.viewport.seq) ? state.viewport.seq : null;
+      if (incomingSeq !== null && incomingSeq > (ctx._viewportSeq || 0)) {
+        ctx._viewportSeq = incomingSeq;
+      }
+    }
     if (state.layerGroups) ctx._layerGroups = state.layerGroups;
     if (state.animations) ctx._animations = state.animations;
     if (state.bounds_polygon || state.bounds) ctx._bounds = state.bounds_polygon || state.bounds;
@@ -46,14 +52,14 @@ function setupWebSocket(ctx) {
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async (msg) => {
     try {
       if (msg && msg.sourceId === ctx._clientId) return;
-      if (msg && msg.timestamp && msg.timestamp < ctx._lastLocalStateTimestamp - 200) return;
+      if (ctx._isLikelyStaleByTimestamp(msg && msg.timestamp)) return;
 
       if (msg && msg.viewport) {
         ctx._setViewport(msg.viewport);
         return;
       }
 
-      const state = await OTEF_API.getState(ctx._tableName);
+      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
       if (state.viewport) ctx._setViewport(state.viewport);
     } catch (err) {
       getLogger().error("[OTEFDataContext] Failed to refresh viewport after VIEWPORT_CHANGED:", err);
@@ -68,24 +74,39 @@ function setupWebSocket(ctx) {
     }
   });
 
-  // v1: WS `otef_layers_changed` still dispatches a full GIS curated refresh (no affected ids in
-  // the message). The Supabase heartbeat path uses pull JSON `affected_curated_full_layer_ids`
-  // for selective reload; enriching the WS payload is a future optimization.
-  ctx._wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async () => {
-    if (ctx._pendingLayerOps > 0) {
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async (msg = {}) => {
+    const isLocalLayerOpPending =
+      typeof ctx._isLocalLayerOpPending === "function"
+        ? ctx._isLocalLayerOpPending()
+        : ctx._pendingLayerOps > 0;
+    if (isLocalLayerOpPending) {
       getLogger().debug("[OTEFDataContext] Suppressing LAYERS_CHANGED echo (pending local op)");
       return;
     }
+    const affectedCuratedFullLayerIds = Array.isArray(msg.affected_curated_full_layer_ids)
+      ? msg.affected_curated_full_layer_ids.filter((id) => typeof id === "string")
+      : [];
     try {
-      const state = await OTEF_API.getState(ctx._tableName);
-      if (state.layerGroups) {
-        ctx._setLayerGroups(state.layerGroups);
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("otef-curated-geojson-refresh"));
+      if (Array.isArray(msg.layerGroups)) {
+        ctx._setLayerGroups(msg.layerGroups);
+      } else {
+        const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+        if (state.layerGroups) {
+          ctx._setLayerGroups(state.layerGroups);
         }
       }
     } catch (err) {
       getLogger().error("[OTEFDataContext] Failed to refresh layers after LAYERS_CHANGED:", err);
+    } finally {
+      if (typeof window !== "undefined" && affectedCuratedFullLayerIds.length > 0) {
+        window.dispatchEvent(
+          new CustomEvent("otef-curated-geojson-refresh", {
+            detail: {
+              affected_curated_full_layer_ids: affectedCuratedFullLayerIds,
+            },
+          }),
+        );
+      }
     }
   });
 
@@ -95,7 +116,7 @@ function setupWebSocket(ctx) {
       return;
     }
     try {
-      const state = await OTEF_API.getState(ctx._tableName);
+      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
       if (state.animations) {
         ctx._setAnimations(state.animations);
       } else if (msg && msg.layerId && typeof msg.enabled === "boolean") {
@@ -110,7 +131,7 @@ function setupWebSocket(ctx) {
 
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.BOUNDS_CHANGED, async () => {
     try {
-      const state = await OTEF_API.getState(ctx._tableName);
+      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
       if (state.bounds_polygon || state.bounds) ctx._setBounds(state.bounds_polygon || state.bounds);
       if (typeof state.viewer_angle_deg === "number") ctx._setViewerAngleDeg(state.viewer_angle_deg);
     } catch (err) {

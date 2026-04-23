@@ -106,7 +106,7 @@ class OTEFDataContextClass {
   async refreshLayerGroupsFromApi() {
     if (!this._tableName) return;
     try {
-      const state = await OTEF_API.getState(this._tableName);
+      const state = await OTEF_API.getState(this._tableName, { forceFresh: true });
       if (state && state.layerGroups) {
         this._setLayerGroups(state.layerGroups);
       }
@@ -118,7 +118,7 @@ class OTEFDataContextClass {
   async _doInit(tableName) {
     this._tableName = tableName;
     try {
-      const state = await OTEF_API.getState(this._tableName);
+      const state = await OTEF_API.getState(this._tableName, { forceFresh: true });
       this._applyStateFromApi(state, { notify: false });
       this._setupWebSocket();
       this._initialized = true;
@@ -153,9 +153,15 @@ class OTEFDataContextClass {
 
   _setViewport(viewport) {
     if (viewportEqual(this._viewport, viewport)) return;
-    this._viewportSeq++;
-    this._viewport = viewport;
+    const incomingSeq = Number.isFinite(viewport && viewport.seq) ? viewport.seq : null;
+    const nextSeq =
+      incomingSeq !== null && incomingSeq > this._viewportSeq
+        ? incomingSeq
+        : this._viewportSeq + 1;
+    this._viewportSeq = nextSeq;
+    this._viewport = { ...viewport, seq: nextSeq };
     this._notify("viewport", this._viewport);
+    return this._viewport;
   }
 
   _setLayerGroups(layerGroups) {
@@ -173,6 +179,16 @@ class OTEFDataContextClass {
   _setBounds(bounds) {
     this._bounds = bounds;
     this._notify("bounds", this._bounds);
+  }
+
+  _isLikelyStaleByTimestamp(ts) {
+    const normalizedTs = Number(ts);
+    if (!Number.isFinite(normalizedTs)) return false;
+    return normalizedTs < this._lastLocalStateTimestamp - 200;
+  }
+
+  _isLocalLayerOpPending() {
+    return this._pendingLayerOps > 0;
   }
 
   _setViewerAngleDeg(angle) {

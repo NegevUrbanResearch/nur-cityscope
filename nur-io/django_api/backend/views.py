@@ -252,14 +252,22 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(table__name=table_name)
         return queryset
 
-    def _broadcast_state_change(self, table_name, changed_fields):
+    def _broadcast_state_change(self, table_name, changed_fields, metadata=None):
         """Broadcast WebSocket notifications for state changes."""
+        import time
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
 
         channel_layer = get_channel_layer()
         # Must match consumer's room_group_name: f'{channel_type}_channel'
         group_name = 'otef_channel'
+        state = OTEFViewportState.objects.filter(table__name=table_name).first()
+        table = state.table if state else None
+        meta = metadata or {}
+        source_id = meta.get('sourceId')
+        timestamp = meta.get('timestamp')
+        if not isinstance(timestamp, (int, float)):
+            timestamp = int(time.time() * 1000)
 
         for field in changed_fields:
 
@@ -269,6 +277,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     'message': {
                         'type': 'otef_viewport_changed',
                         'table': table_name,
+                        'viewport': state.get_viewport_with_defaults() if state else None,
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
                     }
                 }
             elif (
@@ -276,11 +287,28 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 or field == 'layerGroups'
                 or field == 'workshop_auto_publish'
             ):
+                layer_groups_payload = self._get_layer_groups(table) if table else []
+                affected_curated_full_layer_ids = []
+                for group in layer_groups_payload:
+                    group_id = str(group.get('id', '')) if isinstance(group, dict) else ''
+                    if not group_id.startswith('curated'):
+                        continue
+                    for layer in (group.get('layers', []) if isinstance(group, dict) else []):
+                        if not isinstance(layer, dict):
+                            continue
+                        layer_id = str(layer.get('id', '')).strip()
+                        if not layer_id:
+                            continue
+                        affected_curated_full_layer_ids.append(f"{group_id}.{layer_id}")
                 message = {
                     'type': 'broadcast_message',
                     'message': {
                         'type': 'otef_layers_changed',
                         'table': table_name,
+                        'layerGroups': layer_groups_payload,
+                        'affected_curated_full_layer_ids': affected_curated_full_layer_ids,
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
                     }
                 }
             elif field == 'animations':
@@ -391,7 +419,14 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             state.save()
 
             # Broadcast notifications for each changed field
-            self._broadcast_state_change(table_name, changed_fields)
+            self._broadcast_state_change(
+                table_name,
+                changed_fields,
+                {
+                    'sourceId': request.data.get('sourceId'),
+                    'timestamp': request.data.get('timestamp'),
+                },
+            )
 
         # Return state with defaults applied (for both GET and PATCH)
         response_data = {
@@ -714,14 +749,28 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             delta = float(request.data.get('delta', 0.15))
             state.viewport = state.apply_pan_command(direction, delta)
             state.save()
-            self._broadcast_state_change(table_name, ['viewport'])
+            self._broadcast_state_change(
+                table_name,
+                ['viewport'],
+                {
+                    'sourceId': request.data.get('sourceId'),
+                    'timestamp': request.data.get('timestamp'),
+                },
+            )
 
         elif action == 'zoom':
             level = int(request.data.get('level', 15))
             level = max(10, min(19, level))  # Clamp to valid range
             state.viewport = state.apply_zoom_command(level)
             state.save()
-            self._broadcast_state_change(table_name, ['viewport'])
+            self._broadcast_state_change(
+                table_name,
+                ['viewport'],
+                {
+                    'sourceId': request.data.get('sourceId'),
+                    'timestamp': request.data.get('timestamp'),
+                },
+            )
 
         else:
             return Response(
