@@ -25,6 +25,7 @@ function createProjectionPinkLineCanvasController(options) {
   const loadedLayers = options.loadedLayers;
 
   let projectionPinkParkingAttachGeneration = 0;
+  let projectionPinkBaseAttachGeneration = 0;
   let projectionPinkLineBaseVisibleIntent = true;
   let projectionPinkLineParkingVisibleIntent = true;
   /** True when the last registered pink base omitted vertices overlapping removed heritage. */
@@ -37,6 +38,7 @@ function createProjectionPinkLineCanvasController(options) {
    * @param {{ removedPaths?: Array<Array<[number, number]>> }} [options]
    */
   async function ensureProjectionPinkLineBaseLayer(options = {}) {
+    const attachGen = ++projectionPinkBaseAttachGeneration;
     const removedPaths = options.removedPaths;
     const clip =
       Array.isArray(removedPaths) &&
@@ -61,6 +63,7 @@ function createProjectionPinkLineCanvasController(options) {
         fetchPinkLinePaths(),
         resolvePinkLinePackStyleBundle(),
       ]);
+      if (attachGen !== projectionPinkBaseAttachGeneration) return;
       if (basePaths.length === 0) return;
       const pathsToDraw = basePaths;
       if (loadedLayers[PINK_LINE_BASE_LAYER_ID] && !projectionPinkLineBaseIsClipped) {
@@ -94,6 +97,7 @@ function createProjectionPinkLineCanvasController(options) {
         styleConfig: layerConfig,
         geometryType: styleBundle.geometryType || "line",
       };
+      if (attachGen !== projectionPinkBaseAttachGeneration) return;
       if (canvasRenderer) {
         canvasRenderer.setLayer(
           PINK_LINE_BASE_LAYER_ID,
@@ -108,6 +112,7 @@ function createProjectionPinkLineCanvasController(options) {
       if (projectionPinkLineParkingVisibleIntent) {
         await ensureProjectionPinkLineParkingLayer();
       }
+      if (attachGen !== projectionPinkBaseAttachGeneration) return;
       projectionPinkLineBaseIsClipped = false;
     } catch (err) {
       if (

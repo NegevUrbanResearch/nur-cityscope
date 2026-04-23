@@ -185,7 +185,8 @@ function updateWmtsVisibility(fullLayerId, visible) {
       return;
     }
 
-    // Load only enabled layers to avoid heavy initial transforms
+    // Load only enabled layers to avoid heavy initial transforms (parallel fetches)
+    const loadPromises = [];
     for (const group of layerGroups) {
       for (const layer of group.layers || []) {
         if (!layer.enabled) continue;
@@ -196,9 +197,15 @@ function updateWmtsVisibility(fullLayerId, visible) {
           continue;
         }
         const fullLayerId = `${group.id}.${layer.id}`;
-        await loadProjectionLayerFromRegistry(fullLayerId);
+        loadPromises.push(
+          loadProjectionLayerFromRegistry(fullLayerId).catch((err) => {
+            console.error(`[Projection] Failed to load ${fullLayerId}:`, err);
+          }),
+        );
       }
     }
+
+    await Promise.all(loadPromises);
   }
 
   const getCuratedLayerColorForProjection = UI_CONFIG.getCuratedColor;
