@@ -29,6 +29,7 @@ class CanvasLayerRenderer {
     this._patterns = {}; // Cache for hatch patterns
     this._advancedDrawer = null; // Shared AdvancedStyleDrawing instance
     this._iconCache = {}; // iconUrl -> { img, loaded, failed }
+    this._layerCaches = {}; // layerId -> { canvas, dirty: true }
 
     this._createCanvas();
   }
@@ -98,6 +99,10 @@ class CanvasLayerRenderer {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     this.ctxLabels.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
+    for (const id in this._layerCaches) {
+      this._layerCaches[id].dirty = true;
+    }
+
     this._scheduleRender();
   }
 
@@ -125,6 +130,7 @@ class CanvasLayerRenderer {
       belowWmts: belowWmts,
       isLabelLayer: !!isLabelLayer,
     };
+    this._layerCaches[layerId] = { canvas: null, dirty: true };
   }
 
   /**
@@ -143,6 +149,7 @@ class CanvasLayerRenderer {
   removeLayer(layerId) {
     if (this.layers[layerId]) {
       delete this.layers[layerId];
+      delete this._layerCaches[layerId];
       this._scheduleRender();
     }
   }
@@ -175,6 +182,80 @@ class CanvasLayerRenderer {
     return [isBlackBg ? 0 : 1, isSea ? 0 : 1, isBase ? 0 : 1, geomRank, pinkCuratedZ, id];
   }
 
+  /**
+   * Flow-animated line layers must rebuild each frame; same as pre-cache behavior.
+   */
+  _isLayerFlowAnimated(layerId, layer) {
+    if (typeof layerId === "string" && layerId.startsWith("curated_")) {
+      return false;
+    }
+    const style = layer && layer.styleConfig && layer.styleConfig.style;
+    const flowCfg = this._resolveProjectionFlowConfig(
+      layerId,
+      style && style.animation,
+    );
+    if (!flowCfg) return false;
+    let enabled = !!flowCfg.enabledByDefault;
+    if (
+      typeof OTEFDataContext !== "undefined" &&
+      OTEFDataContext &&
+      typeof OTEFDataContext.getAnimations === "function"
+    ) {
+      const animations = OTEFDataContext.getAnimations() || {};
+      if (Object.prototype.hasOwnProperty.call(animations, layerId)) {
+        enabled = !!animations[layerId];
+      }
+    }
+    return enabled;
+  }
+
+  _markFlowAnimationLayerCachesDirty() {
+    for (const id in this._layerCaches) {
+      const layer = this.layers[id];
+      if (layer && layer.visible && this._isLayerFlowAnimated(id, layer)) {
+        this._layerCaches[id].dirty = true;
+      }
+    }
+  }
+
+  _ensureLayerCache(layerId, layer) {
+    let cache = this._layerCaches[layerId];
+    if (!cache) {
+      cache = { canvas: null, dirty: true };
+      this._layerCaches[layerId] = cache;
+    }
+
+    if (!cache.dirty && cache.canvas) {
+      return cache.canvas;
+    }
+
+    if (!cache.canvas) {
+      cache.canvas = document.createElement("canvas");
+    }
+
+    const dpr = this.dpr || 1;
+    cache.canvas.width = Math.round(this.displayBounds.width * dpr);
+    cache.canvas.height = Math.round(this.displayBounds.height * dpr);
+    const ctx = cache.canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cache.canvas.width, cache.canvas.height);
+
+    if (layer.isLabelLayer) {
+      this._renderLabelLayer(layer.geojson, layer.styleConfig, ctx);
+    } else {
+      this._renderLayer(
+        layerId,
+        layer.geojson,
+        layer.styleFunction,
+        ctx,
+        layer.styleConfig,
+      );
+    }
+
+    cache.dirty = false;
+    return cache.canvas;
+  }
+
   render() {
     if (
       !this.ctx ||
@@ -185,6 +266,7 @@ class CanvasLayerRenderer {
       return;
 
     const startTime = performance.now();
+    this._markFlowAnimationLayerCachesDirty();
 
     const layerEntries = Object.entries(this.layers);
     const below = layerEntries.filter(
@@ -223,7 +305,16 @@ class CanvasLayerRenderer {
       return 0;
     });
     for (const [layerId, layer] of below) {
-      this._renderLayer(layerId, layer.geojson, layer.styleFunction, this.ctxBottom, layer.styleConfig);
+      const cached = this._ensureLayerCache(layerId, layer);
+      if (cached) {
+        this.ctxBottom.drawImage(
+          cached,
+          0,
+          0,
+          this.displayBounds.width,
+          this.displayBounds.height,
+        );
+      }
     }
 
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -236,7 +327,16 @@ class CanvasLayerRenderer {
       return 0;
     });
     for (const [layerId, layer] of aboveNonLabel) {
-      this._renderLayer(layerId, layer.geojson, layer.styleFunction, this.ctx, layer.styleConfig);
+      const cached = this._ensureLayerCache(layerId, layer);
+      if (cached) {
+        this.ctx.drawImage(
+          cached,
+          0,
+          0,
+          this.displayBounds.width,
+          this.displayBounds.height,
+        );
+      }
     }
 
     this.ctxLabels.clearRect(
@@ -245,8 +345,17 @@ class CanvasLayerRenderer {
       this.labelsCanvas.width,
       this.labelsCanvas.height
     );
-    for (const [, layer] of labelLayers) {
-      this._renderLabelLayer(layer.geojson, layer.styleConfig, this.ctxLabels);
+    for (const [layerId, layer] of labelLayers) {
+      const cached = this._ensureLayerCache(layerId, layer);
+      if (cached) {
+        this.ctxLabels.drawImage(
+          cached,
+          0,
+          0,
+          this.displayBounds.width,
+          this.displayBounds.height,
+        );
+      }
     }
 
     drawPinkNodeOrderLabels(
@@ -394,6 +503,9 @@ class CanvasLayerRenderer {
     const entry = { img, loaded: false, failed: false };
     img.onload = () => {
       entry.loaded = true;
+      for (const id in this._layerCaches) {
+        this._layerCaches[id].dirty = true;
+      }
       this._scheduleRender();
     };
     img.onerror = () => {
