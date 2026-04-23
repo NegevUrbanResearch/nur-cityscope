@@ -16,7 +16,6 @@ describe("reloadProjectionCuratedLayersFromSupabase", () => {
       "map_3_future.x": {},
     };
     const loadProjectionLayerFromRegistry = vi.fn().mockResolvedValue();
-    const updateLayerVisibility = vi.fn();
     const getLayerGroups = () => [
       {
         id: "curated_moresht_axis",
@@ -32,7 +31,7 @@ describe("reloadProjectionCuratedLayersFromSupabase", () => {
       inFlightLayerLoads: { "curated_moresht_axis.a": Promise.resolve() },
       canvasRenderer: { removeLayer },
       loadProjectionLayerFromRegistry,
-      updateLayerVisibility,
+      updateLayerVisibility: vi.fn(),
       getLayerGroups,
       MORESHET_AXIS_GROUP_ID,
       isPinkLineParkingLayerId,
@@ -50,10 +49,6 @@ describe("reloadProjectionCuratedLayersFromSupabase", () => {
       "curated_moresht_axis.a",
       "curated_moresht_axis.b",
     ]);
-    expect(updateLayerVisibility.mock.calls).toEqual([
-      ["curated_moresht_axis.a", true],
-      ["curated_moresht_axis.b", true],
-    ]);
   });
 
   test("selective reload refreshes API first, removes only affected curated ids, reloads those enabled", async () => {
@@ -64,7 +59,6 @@ describe("reloadProjectionCuratedLayersFromSupabase", () => {
       "curated_moresht_axis.b": {},
     };
     const loadProjectionLayerFromRegistry = vi.fn().mockResolvedValue();
-    const updateLayerVisibility = vi.fn();
     const getLayerGroups = () => [
       {
         id: "curated_moresht_axis",
@@ -81,7 +75,7 @@ describe("reloadProjectionCuratedLayersFromSupabase", () => {
         inFlightLayerLoads: {},
         canvasRenderer: { removeLayer },
         loadProjectionLayerFromRegistry,
-        updateLayerVisibility,
+        updateLayerVisibility: vi.fn(),
         getLayerGroups,
         MORESHET_AXIS_GROUP_ID,
         isPinkLineParkingLayerId,
@@ -101,13 +95,9 @@ describe("reloadProjectionCuratedLayersFromSupabase", () => {
     expect(loadProjectionLayerFromRegistry).toHaveBeenCalledWith(
       "curated_moresht_axis.a",
     );
-    expect(updateLayerVisibility).toHaveBeenCalledWith(
-      "curated_moresht_axis.a",
-      true,
-    );
   });
 
-  test("empty affectedCuratedFullLayerIds falls back to full wipe", async () => {
+  test("empty affectedCuratedFullLayerIds is treated as selective no-op", async () => {
     const refresh = vi.fn().mockResolvedValue();
     const loadedLayers = { "curated_moresht_axis.a": {} };
     const loadProjectionLayerFromRegistry = vi.fn().mockResolvedValue();
@@ -133,9 +123,133 @@ describe("reloadProjectionCuratedLayersFromSupabase", () => {
       { affectedCuratedFullLayerIds: [] },
     );
 
-    expect(Object.keys(loadedLayers)).toEqual([]);
-    expect(loadProjectionLayerFromRegistry).toHaveBeenCalledWith(
-      "curated_moresht_axis.a",
+    expect(Object.keys(loadedLayers)).toEqual(["curated_moresht_axis.a"]);
+    expect(loadProjectionLayerFromRegistry).not.toHaveBeenCalled();
+  });
+
+  test('malformed affectedCuratedFullLayerIds [""] is treated as selective no-op', async () => {
+    const refresh = vi.fn().mockResolvedValue();
+    const removeLayer = vi.fn();
+    const loadedLayers = {
+      "curated_moresht_axis.a": {},
+      "curated_moresht_axis.b": {},
+    };
+    const loadProjectionLayerFromRegistry = vi.fn().mockResolvedValue();
+    const getLayerGroups = () => [
+      {
+        id: "curated_moresht_axis",
+        layers: [
+          { id: "a", enabled: true },
+          { id: "b", enabled: true },
+        ],
+      },
+    ];
+
+    await reloadProjectionCuratedLayersFromSupabase(
+      {
+        loadedLayers,
+        inFlightLayerLoads: {},
+        canvasRenderer: { removeLayer },
+        loadProjectionLayerFromRegistry,
+        updateLayerVisibility: vi.fn(),
+        getLayerGroups,
+        MORESHET_AXIS_GROUP_ID,
+        isPinkLineParkingLayerId,
+        refreshLayerGroupsBeforeReload: refresh,
+      },
+      { affectedCuratedFullLayerIds: [""] },
     );
+
+    expect(refresh).not.toHaveBeenCalled();
+    expect(removeLayer).not.toHaveBeenCalled();
+    expect(Object.keys(loadedLayers).sort()).toEqual([
+      "curated_moresht_axis.a",
+      "curated_moresht_axis.b",
+    ]);
+    expect(loadProjectionLayerFromRegistry).not.toHaveBeenCalled();
+  });
+
+  test('malformed non-empty affectedCuratedFullLayerIds ["foo", "curated_only_group"] is treated as selective no-op', async () => {
+    const refresh = vi.fn().mockResolvedValue();
+    const removeLayer = vi.fn();
+    const loadedLayers = {
+      "curated_moresht_axis.a": {},
+      "curated_moresht_axis.b": {},
+    };
+    const loadProjectionLayerFromRegistry = vi.fn().mockResolvedValue();
+    const getLayerGroups = () => [
+      {
+        id: "curated_moresht_axis",
+        layers: [
+          { id: "a", enabled: true },
+          { id: "b", enabled: true },
+        ],
+      },
+    ];
+
+    await reloadProjectionCuratedLayersFromSupabase(
+      {
+        loadedLayers,
+        inFlightLayerLoads: {},
+        canvasRenderer: { removeLayer },
+        loadProjectionLayerFromRegistry,
+        updateLayerVisibility: vi.fn(),
+        getLayerGroups,
+        MORESHET_AXIS_GROUP_ID,
+        isPinkLineParkingLayerId,
+        refreshLayerGroupsBeforeReload: refresh,
+      },
+      { affectedCuratedFullLayerIds: ["foo", "curated_only_group"] },
+    );
+
+    expect(refresh).not.toHaveBeenCalled();
+    expect(removeLayer).not.toHaveBeenCalled();
+    expect(Object.keys(loadedLayers).sort()).toEqual([
+      "curated_moresht_axis.a",
+      "curated_moresht_axis.b",
+    ]);
+    expect(loadProjectionLayerFromRegistry).not.toHaveBeenCalled();
+  });
+
+  test('whitespace-only affectedCuratedFullLayerIds ["   "] is treated as selective no-op', async () => {
+    const refresh = vi.fn().mockResolvedValue();
+    const removeLayer = vi.fn();
+    const loadedLayers = {
+      "curated_moresht_axis.a": {},
+      "curated_moresht_axis.b": {},
+    };
+    const loadProjectionLayerFromRegistry = vi.fn().mockResolvedValue();
+    const getLayerGroups = () => [
+      {
+        id: "curated_moresht_axis",
+        layers: [
+          { id: "a", enabled: true },
+          { id: "b", enabled: true },
+        ],
+      },
+    ];
+
+    await reloadProjectionCuratedLayersFromSupabase(
+      {
+        loadedLayers,
+        inFlightLayerLoads: {},
+        canvasRenderer: { removeLayer },
+        loadProjectionLayerFromRegistry,
+        updateLayerVisibility: vi.fn(),
+        getLayerGroups,
+        MORESHET_AXIS_GROUP_ID,
+        isPinkLineParkingLayerId,
+        refreshLayerGroupsBeforeReload: refresh,
+      },
+      { affectedCuratedFullLayerIds: ["   "] },
+    );
+
+    expect(refresh).not.toHaveBeenCalled();
+    expect(removeLayer).not.toHaveBeenCalled();
+    expect(Object.keys(loadedLayers).sort()).toEqual([
+      "curated_moresht_axis.a",
+      "curated_moresht_axis.b",
+    ]);
+    expect(loadProjectionLayerFromRegistry).not.toHaveBeenCalled();
   });
 });

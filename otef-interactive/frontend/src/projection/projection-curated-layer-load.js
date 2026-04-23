@@ -208,6 +208,17 @@ export function listCuratedFullLayerIdsToReload(deps) {
   return ids;
 }
 
+export function computeCuratedReloadTargets(
+  enabledCuratedLayerIds,
+  affectedIds,
+) {
+  if (!Array.isArray(affectedIds) || affectedIds.length === 0) {
+    return enabledCuratedLayerIds;
+  }
+  const affected = new Set(affectedIds);
+  return enabledCuratedLayerIds.filter((id) => affected.has(id));
+}
+
 /**
  * @param {{ affectedCuratedFullLayerIds?: string[] }} [options]
  * When `affectedCuratedFullLayerIds` is a non-empty array of strings, only those curated
@@ -226,16 +237,27 @@ export async function reloadProjectionCuratedLayersFromSupabase(deps, options = 
     isPinkLineParkingLayerId,
   } = deps;
 
-  const affected = options.affectedCuratedFullLayerIds;
-  const want =
-    Array.isArray(affected) && affected.length > 0
-      ? new Set(
-          affected.filter(
-            (id) => typeof id === "string" && id.length > 0,
-          ),
-        )
-      : null;
-  const selective = !!(want && want.size > 0);
+  const hasProvidedAffectedCuratedFullLayerIds = Array.isArray(
+    options.affectedCuratedFullLayerIds,
+  );
+  const normalizedAffectedCuratedFullLayerIds = hasProvidedAffectedCuratedFullLayerIds
+    ? options.affectedCuratedFullLayerIds
+        .filter((id) => typeof id === "string")
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0 && id.includes("."))
+    : [];
+  const selective =
+    hasProvidedAffectedCuratedFullLayerIds &&
+    normalizedAffectedCuratedFullLayerIds.length > 0;
+  if (
+    hasProvidedAffectedCuratedFullLayerIds &&
+    normalizedAffectedCuratedFullLayerIds.length === 0
+  ) {
+    return [];
+  }
+  const want = selective
+    ? new Set(normalizedAffectedCuratedFullLayerIds)
+    : null;
 
   if (selective && typeof deps.refreshLayerGroupsBeforeReload === "function") {
     await deps.refreshLayerGroupsBeforeReload();
@@ -266,20 +288,25 @@ export async function reloadProjectionCuratedLayersFromSupabase(deps, options = 
     isPinkLineParkingLayerId,
   };
   const allEnabledCurated = listCuratedFullLayerIdsToReload(listDeps);
-  const toLoad = selective
-    ? allEnabledCurated.filter((id) => want.has(id))
-    : allEnabledCurated;
-  for (const fullLayerId of toLoad) {
-    try {
-      await loadProjectionLayerFromRegistry(fullLayerId);
-    } catch (err) {
-      console.error(
-        `[Projection] Curated Supabase reload failed for ${fullLayerId}:`,
-        err,
-      );
-    }
+  const toLoad = computeCuratedReloadTargets(
+    allEnabledCurated,
+    normalizedAffectedCuratedFullLayerIds,
+  );
+  const BATCH_SIZE = 4;
+  for (let i = 0; i < toLoad.length; i += BATCH_SIZE) {
+    const batch = toLoad.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(async (fullLayerId) => {
+        try {
+          await loadProjectionLayerFromRegistry(fullLayerId);
+        } catch (err) {
+          console.error(
+            `[Projection] Curated Supabase reload failed for ${fullLayerId}:`,
+            err,
+          );
+        }
+      }),
+    );
   }
-  for (const fullLayerId of toLoad) {
-    updateLayerVisibility(fullLayerId, true);
-  }
+  return toLoad;
 }

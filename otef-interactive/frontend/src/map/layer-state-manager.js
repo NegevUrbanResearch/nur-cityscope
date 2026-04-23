@@ -23,6 +23,46 @@ import {
 let pendingLayerGroupsState = null;
 let layerRegistryInitPromise = null;
 let pendingDeps = null;
+const MAX_GIS_LAYER_LOAD_CONCURRENCY = 2;
+const queuedLayerLoads = new Set();
+const layerLoadQueue = [];
+let activeLayerLoads = 0;
+
+function processLayerLoadQueue() {
+  while (
+    activeLayerLoads < MAX_GIS_LAYER_LOAD_CONCURRENCY &&
+    layerLoadQueue.length > 0
+  ) {
+    const task = layerLoadQueue.shift();
+    if (typeof task !== "function") continue;
+    activeLayerLoads++;
+    task().finally(() => {
+      activeLayerLoads = Math.max(0, activeLayerLoads - 1);
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(processLayerLoadQueue);
+      } else {
+        setTimeout(processLayerLoadQueue, 0);
+      }
+    });
+  }
+}
+
+function enqueueLayerLoad(loadLayer, fullLayerId, onLoaded, onError) {
+  if (typeof loadLayer !== "function" || !fullLayerId) return;
+  if (queuedLayerLoads.has(fullLayerId)) return;
+  queuedLayerLoads.add(fullLayerId);
+  layerLoadQueue.push(async () => {
+    try {
+      await loadLayer(fullLayerId);
+      if (typeof onLoaded === "function") onLoaded();
+    } catch (err) {
+      if (typeof onError === "function") onError(err);
+    } finally {
+      queuedLayerLoads.delete(fullLayerId);
+    }
+  });
+  processLayerLoadQueue();
+}
 
 function isVisibilityBatchingEnabled() {
   if (typeof MapProjectionConfig === "undefined" || !MapProjectionConfig.GIS_PERF) {
@@ -46,6 +86,37 @@ function applyVisibilityIfChanged(
   if (previous === nextVisible) return;
   visibilityCache.set(fullLayerId, nextVisible);
   updateVisibility(fullLayerId, nextVisible);
+}
+
+function getLayerEnabled(effectiveLayerEnabledMap, fullLayerId) {
+  if (!(effectiveLayerEnabledMap instanceof Map)) return false;
+  return effectiveLayerEnabledMap.get(fullLayerId) === true;
+}
+
+function isLayerEnableStateUnchanged(
+  previousEffective,
+  nextEffective,
+  fullLayerId,
+) {
+  const before = getLayerEnabled(previousEffective, fullLayerId);
+  const after = getLayerEnabled(nextEffective, fullLayerId);
+  return before === after;
+}
+
+function buildEffectiveLayerEnabledMap(layerGroups) {
+  const effective = new Map();
+  for (const group of layerGroups || []) {
+    for (const layer of group.layers || []) {
+      if (
+        typeof shouldShowLayerOnGisMap === "function" &&
+        !shouldShowLayerOnGisMap(group.id, layer.id)
+      ) {
+        continue;
+      }
+      effective.set(`${group.id}.${layer.id}`, !!layer.enabled);
+    }
+  }
+  return effective;
 }
 
 /**
@@ -120,8 +191,52 @@ function applyLayerGroupsState(layerGroups, deps) {
       ? deps.updateMapLegend
       : () => {};
   const mapInstance = deps.map || null;
+  const currentZoom =
+    mapInstance && typeof mapInstance.getZoom === "function"
+      ? mapInstance.getZoom()
+      : null;
   const visibilityCache =
     deps._visibilityStateCache || (deps._visibilityStateCache = new Map());
+  const previousEffectiveLayerEnabledMap =
+    deps._previousEffectiveLayerEnabledMap || new Map();
+  const nextEffectiveLayerEnabledMap = buildEffectiveLayerEnabledMap(layerGroups);
+  deps._previousEffectiveLayerEnabledMap = nextEffectiveLayerEnabledMap;
+  const computeAllowedVisibility = (
+    fullLayerId,
+    scaleRange,
+    { requireEnabledState = false } = {},
+  ) => {
+    const zoomNow =
+      mapInstance && typeof mapInstance.getZoom === "function"
+        ? mapInstance.getZoom()
+        : currentZoom;
+    if (
+      zoomNow === null ||
+      typeof VisibilityController === "undefined" ||
+      !VisibilityController ||
+      typeof VisibilityController.shouldLayerBeVisible !== "function"
+    ) {
+      return true;
+    }
+    const allowedByZoom = VisibilityController.shouldLayerBeVisible({
+      fullLayerId,
+      scaleRange,
+      zoom: zoomNow,
+    });
+    if (!allowedByZoom) return false;
+    if (!requireEnabledState) return true;
+    if (
+      typeof LayerStateHelper !== "undefined" &&
+      LayerStateHelper &&
+      typeof LayerStateHelper.getLayerState === "function"
+    ) {
+      const state = LayerStateHelper.getLayerState(fullLayerId);
+      if (state && state.enabled === false) {
+        return false;
+      }
+    }
+    return true;
+  };
 
   // Process each group - individual layer.enabled is the source of truth for visibility.
   // Curated groups are allowed even when the registry is not yet initialized;
@@ -150,35 +265,75 @@ function applyLayerGroupsState(layerGroups, deps) {
       }
 
       if (layer.enabled) {
+        let scaleRange = null;
+        if (registryReady && registry && typeof registry.getLayerConfig === "function") {
+          const cfg = registry.getLayerConfig(fullLayerId);
+          if (cfg && cfg.style && cfg.style.scaleRange) {
+            scaleRange = cfg.style.scaleRange;
+          }
+        }
+        const shouldLoadAtCurrentZoom = computeAllowedVisibility(
+          fullLayerId,
+          scaleRange,
+        );
+        if (!shouldLoadAtCurrentZoom) {
+          applyVisibilityIfChanged(
+            updateVisibility,
+            fullLayerId,
+            false,
+            visibilityCache,
+          );
+          continue;
+        }
+
+        if (
+          loadedMap &&
+          loadedMap.has(fullLayerId) &&
+          isLayerEnableStateUnchanged(
+            previousEffectiveLayerEnabledMap,
+            nextEffectiveLayerEnabledMap,
+            fullLayerId,
+          )
+        ) {
+          continue;
+        }
+
         if (loadLayer) {
           if (loadedMap && loadedMap.has(fullLayerId)) {
             if (updateVisibility) {
               applyVisibilityIfChanged(
                 updateVisibility,
                 fullLayerId,
-                true,
+                computeAllowedVisibility(fullLayerId, scaleRange, {
+                  requireEnabledState: true,
+                }),
                 visibilityCache,
               );
             }
           } else {
-            loadLayer(fullLayerId)
-              .then(() => {
+            enqueueLayerLoad(
+              loadLayer,
+              fullLayerId,
+              () => {
                 if (updateVisibility) {
                   applyVisibilityIfChanged(
                     updateVisibility,
                     fullLayerId,
-                    true,
+                    computeAllowedVisibility(fullLayerId, scaleRange, {
+                      requireEnabledState: true,
+                    }),
                     visibilityCache,
                   );
                 }
                 updateLegend();
-              })
-              .catch((err) => {
+              },
+              (err) => {
                 console.error(
                   `[GIS Map] Failed to load layer ${fullLayerId}:`,
                   err,
                 );
-              });
+              },
+            );
           }
         }
       } else {
@@ -200,11 +355,6 @@ function applyLayerGroupsState(layerGroups, deps) {
       typeof LayerStateHelper !== "undefined" &&
       updateVisibility
     ) {
-      const currentZoom =
-        mapInstance && typeof mapInstance.getZoom === "function"
-          ? mapInstance.getZoom()
-          : null;
-
       if (currentZoom !== null) {
         for (const fullLayerId of loadedMap.keys()) {
           let scaleRange = null;

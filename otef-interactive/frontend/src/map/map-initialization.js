@@ -21,8 +21,9 @@ const _curatedGeojsonSyncRef = { applyLayerGroupsState: null, mapDeps: null };
 
 if (typeof window !== "undefined" && !window._otefCuratedGeojsonRefreshBound) {
   window._otefCuratedGeojsonRefreshBound = true;
-  window.addEventListener("otef-curated-geojson-refresh", () => {
+  window.addEventListener("otef-curated-geojson-refresh", (ev) => {
     void syncCuratedMapLayersAfterSupabasePull({
+      pullPayload: ev && ev.detail ? ev.detail : {},
       reloadCuratedOnMap: reloadCuratedLayersOnMapIfUpdated,
       loadLayerFromRegistry,
       applyLayerGroupsState: _curatedGeojsonSyncRef.applyLayerGroupsState,
@@ -214,6 +215,26 @@ function initializeMap(bounds) {
           }
         }),
       );
+
+      let zoomReconcileRaf = null;
+      const reconcileLayerVisibilityOnZoom = () => {
+        if (zoomReconcileRaf !== null) return;
+        zoomReconcileRaf = requestAnimationFrame(() => {
+          zoomReconcileRaf = null;
+          const effective =
+            typeof LayerStateHelper !== "undefined" &&
+            typeof LayerStateHelper.getEffectiveLayerGroups === "function"
+              ? LayerStateHelper.getEffectiveLayerGroups()
+              : OTEFDataContext.getLayerGroups();
+          if (Array.isArray(effective)) {
+            applyLayerGroupsState(effective, mapDeps);
+          }
+        });
+      };
+      map.on("zoomend", reconcileLayerVisibilityOnZoom);
+      window._otefUnsubscribeFunctions.push(() => {
+        map.off("zoomend", reconcileLayerVisibilityOnZoom);
+      });
 
       window._otefUnsubscribeFunctions.push(
         OTEFDataContext.subscribe("connection", (connected) => {

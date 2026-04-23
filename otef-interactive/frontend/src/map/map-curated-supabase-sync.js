@@ -1,5 +1,3 @@
-import { shouldShowLayerOnGisMap } from "../shared/gis-layer-filter.js";
-
 /**
  * After a curated Supabase pull, refresh API layer groups and sync the GIS map:
  * reload packs already loaded, then load any newly enabled curated ids.
@@ -8,7 +6,6 @@ import { shouldShowLayerOnGisMap } from "../shared/gis-layer-filter.js";
  *
  * @param {{
  *   reloadCuratedOnMap: (opts?: { affectedCuratedFullLayerIds?: string[] }) => void,
- *   loadLayerFromRegistry: (fullLayerId: string) => Promise<void>,
  *   pullPayload?: { affected_curated_full_layer_ids?: string[] } | null,
  *   applyLayerGroupsState?: (layerGroups: unknown, mapDeps: object) => void,
  *   mapDeps?: object,
@@ -24,6 +21,31 @@ let pendingSyncCalls = [];
 let syncWaiters = [];
 
 /**
+ * Returns selective affected ids from a call, or null when call requires full reload.
+ * Supports both `pullPayload.affected_curated_full_layer_ids` and legacy top-level
+ * `affectedCuratedFullLayerIds`.
+ * @param {object} call
+ * @returns {string[] | null}
+ */
+function getSelectiveAffectedIdsFromCall(call) {
+  const payloadIds =
+    call &&
+    call.pullPayload &&
+    Array.isArray(call.pullPayload.affected_curated_full_layer_ids)
+      ? call.pullPayload.affected_curated_full_layer_ids
+      : null;
+  const legacyIds =
+    call && Array.isArray(call.affectedCuratedFullLayerIds)
+      ? call.affectedCuratedFullLayerIds
+      : null;
+  const ids = payloadIds || legacyIds;
+  if (!ids || ids.length === 0) {
+    return null;
+  }
+  return ids.filter((id) => typeof id === "string");
+}
+
+/**
  * Coalesce debounced calls: latest callbacks, union selective ids, or full reload if any call requires it.
  * @param {object[]} calls
  */
@@ -33,7 +55,6 @@ function mergePendingSyncCuratedCalls(calls) {
   }
   const latest = calls[calls.length - 1];
   const reloadCuratedOnMap = latest.reloadCuratedOnMap;
-  const loadLayerFromRegistry = latest.loadLayerFromRegistry;
   const applyLayerGroupsState = latest.applyLayerGroupsState;
   const mapDeps = latest.mapDeps;
 
@@ -41,26 +62,19 @@ function mergePendingSyncCuratedCalls(calls) {
   const idSet = new Set();
   let forceFull = false;
   for (const c of calls) {
-    const pp = c && c.pullPayload;
-    if (
-      !pp ||
-      !Array.isArray(pp.affected_curated_full_layer_ids) ||
-      pp.affected_curated_full_layer_ids.length === 0
-    ) {
+    const selectiveIds = getSelectiveAffectedIdsFromCall(c);
+    if (!selectiveIds) {
       forceFull = true;
       break;
     }
-    for (const id of pp.affected_curated_full_layer_ids) {
-      if (typeof id === "string") {
-        idSet.add(id);
-      }
+    for (const id of selectiveIds) {
+      idSet.add(id);
     }
   }
 
   if (forceFull) {
     return {
       reloadCuratedOnMap,
-      loadLayerFromRegistry,
       applyLayerGroupsState,
       mapDeps,
       pullPayload: null,
@@ -68,7 +82,6 @@ function mergePendingSyncCuratedCalls(calls) {
   }
   return {
     reloadCuratedOnMap,
-    loadLayerFromRegistry,
     applyLayerGroupsState,
     mapDeps,
     pullPayload: {
@@ -83,7 +96,6 @@ function mergePendingSyncCuratedCalls(calls) {
 async function runSyncCuratedMapLayersAfterSupabasePull(options) {
   const {
     reloadCuratedOnMap,
-    loadLayerFromRegistry,
     pullPayload,
     applyLayerGroupsState,
     mapDeps,
@@ -106,22 +118,6 @@ async function runSyncCuratedMapLayersAfterSupabasePull(options) {
     reloadCuratedOnMap();
   }
   if (
-    typeof LayerStateHelper !== "undefined" &&
-    typeof LayerStateHelper.getEffectiveLayerGroups === "function"
-  ) {
-    const groups = LayerStateHelper.getEffectiveLayerGroups();
-    for (const group of groups || []) {
-      if (!group || typeof group.id !== "string" || !group.id.startsWith("curated")) {
-        continue;
-      }
-      for (const layer of group.layers || []) {
-        if (!layer.enabled) continue;
-        if (!shouldShowLayerOnGisMap(group.id, layer.id)) continue;
-        void loadLayerFromRegistry(`${group.id}.${layer.id}`);
-      }
-    }
-  }
-  if (
     typeof applyLayerGroupsState === "function" &&
     mapDeps &&
     typeof LayerStateHelper !== "undefined" &&
@@ -134,7 +130,6 @@ async function runSyncCuratedMapLayersAfterSupabasePull(options) {
 /**
  * @param {{
  *   reloadCuratedOnMap: (opts?: { affectedCuratedFullLayerIds?: string[] }) => void,
- *   loadLayerFromRegistry: (fullLayerId: string) => Promise<void>,
  *   pullPayload?: { affected_curated_full_layer_ids?: string[] } | null,
  *   applyLayerGroupsState?: (layerGroups: unknown, mapDeps: object) => void,
  *   mapDeps?: object,

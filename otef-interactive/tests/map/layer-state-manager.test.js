@@ -157,6 +157,31 @@ describe("layer-state-manager: applyLayerGroupsState", () => {
     );
   });
 
+  test("does not call loadLayer when enabled state is unchanged and already loaded", () => {
+    const loadLayer = vi.fn();
+    const updateVisibility = vi.fn();
+    const loadedLayersMap = new Map([["map_3_future.mimushim", {}]]);
+    const unchangedLayerGroups = [
+      {
+        id: "map_3_future",
+        layers: [{ id: "mimushim", enabled: true }],
+      },
+    ];
+    const deps = {
+      map: { getZoom: () => 12 },
+      layerRegistry: { _initialized: true, getLayerConfig: () => null },
+      loadLayerFromRegistry: loadLayer,
+      updateLayerVisibilityFromRegistry: updateVisibility,
+      loadedLayersMap,
+      updateMapLegend: () => {},
+      _previousEffectiveLayerEnabledMap: new Map([["map_3_future.mimushim", true]]),
+    };
+
+    applyLayerGroupsState(unchangedLayerGroups, deps);
+
+    expect(loadLayer).not.toHaveBeenCalled();
+  });
+
   test("does not re-apply same visibility repeatedly for unchanged state", () => {
     global.LayerStateHelper = { getLayerState: () => ({ enabled: true }) };
     global.VisibilityController = { shouldLayerBeVisible: () => true };

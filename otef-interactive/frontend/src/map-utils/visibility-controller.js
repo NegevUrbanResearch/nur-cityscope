@@ -53,7 +53,13 @@ function shouldLayerBeVisible(options) {
     typeof MapProjectionConfig !== "undefined" &&
     MapProjectionConfig.GIS_PERF &&
     MapProjectionConfig.GIS_PERF.HEAVY_LAYER_MIN_ZOOM
-      ? MapProjectionConfig.GIS_PERF.HEAVY_LAYER_MIN_ZOOM[fullLayerId]
+      ? (
+          MapProjectionConfig.GIS_PERF.HEAVY_LAYER_MIN_ZOOM[fullLayerId] ??
+          MapProjectionConfig.GIS_PERF.HEAVY_LAYER_MIN_ZOOM[
+            String(fullLayerId).split(".").slice(0, 2).join(".")
+          ] ??
+          MapProjectionConfig.GIS_PERF.HEAVY_LAYER_MIN_ZOOM[String(fullLayerId).split(".")[0]]
+        )
       : undefined;
   if (typeof heavyMinZoom === "number" && zoom < heavyMinZoom) {
     return false;

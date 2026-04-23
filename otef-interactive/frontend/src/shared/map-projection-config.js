@@ -83,7 +83,7 @@ const MapProjectionConfig = {
     ANIMATE_REMOTE_VIEWPORT: false,
     REMOTE_ANIMATION_DURATION_S: 0.12,
     PAN_ANIMATION_ENABLED: false,
-    ZOOM_ANIMATION_ENABLED: true,
+    ZOOM_ANIMATION_ENABLED: false,
     ZOOM_ANIMATION_DURATION_S: 0.12,
 
     // Prefer canvas for vector paths to reduce SVG/DOM pressure on dense layers.
@@ -94,10 +94,16 @@ const MapProjectionConfig = {
     ANIMATION_MAX_FPS: 30,
 
     // Optional per-layer low-zoom guardrails for especially heavy packs.
-    // Example: { "map_3_future.greens": 12 }
+    // Supports both exact fullLayerId and group-prefix keys (e.g. "greens").
     HEAVY_LAYER_MIN_ZOOM: {
       "map_3_future.greens": 12,
       "map_3_future.land_use": 12,
+      greens: 12,
+      land_use: 12,
+      "greens.מישורי_הצפה": 13,
+      "map_3_future.מישורי_הצפה": 13,
+      "greens.נחלים": 13,
+      "map_3_future.נחלים": 13,
     },
 
     // Adaptive projector highlight smoothing.

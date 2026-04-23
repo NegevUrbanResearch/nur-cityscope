@@ -185,8 +185,8 @@ function updateWmtsVisibility(fullLayerId, visible) {
       return;
     }
 
-    // Load only enabled layers to avoid heavy initial transforms (parallel fetches)
-    const loadPromises = [];
+    // Load only enabled layers; limit concurrency to reduce main-thread stalls.
+    const queuedLayerIds = [];
     for (const group of layerGroups) {
       for (const layer of group.layers || []) {
         if (!layer.enabled) continue;
@@ -196,16 +196,22 @@ function updateWmtsVisibility(fullLayerId, visible) {
         ) {
           continue;
         }
-        const fullLayerId = `${group.id}.${layer.id}`;
-        loadPromises.push(
-          loadProjectionLayerFromRegistry(fullLayerId).catch((err) => {
-            console.error(`[Projection] Failed to load ${fullLayerId}:`, err);
-          }),
-        );
+        queuedLayerIds.push(`${group.id}.${layer.id}`);
       }
     }
 
-    await Promise.all(loadPromises);
+    const BATCH_SIZE = 2;
+    for (let i = 0; i < queuedLayerIds.length; i += BATCH_SIZE) {
+      const batch = queuedLayerIds.slice(i, i + BATCH_SIZE);
+      await Promise.all(
+        batch.map((fullLayerId) =>
+          loadProjectionLayerFromRegistry(fullLayerId).catch((err) => {
+            console.error(`[Projection] Failed to load ${fullLayerId}:`, err);
+          }),
+        ),
+      );
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
   }
 
   const getCuratedLayerColorForProjection = UI_CONFIG.getCuratedColor;
@@ -219,6 +225,45 @@ function updateWmtsVisibility(fullLayerId, visible) {
     ensureProjectionPinkLineParkingLayer,
     setProjectionPinkLineAxisGlyphsVisible,
   } = pinkLineCanvas;
+  const MAX_SYNC_LAYER_LOAD_CONCURRENCY = 2;
+  const syncLayerLoadQueue = [];
+  const queuedSyncLayerLoads = new Set();
+  let activeSyncLayerLoads = 0;
+
+  function processSyncLayerLoadQueue() {
+    while (
+      activeSyncLayerLoads < MAX_SYNC_LAYER_LOAD_CONCURRENCY &&
+      syncLayerLoadQueue.length > 0
+    ) {
+      const nextTask = syncLayerLoadQueue.shift();
+      if (typeof nextTask !== "function") continue;
+      activeSyncLayerLoads++;
+      nextTask().finally(() => {
+        activeSyncLayerLoads = Math.max(0, activeSyncLayerLoads - 1);
+        if (typeof requestAnimationFrame === "function") {
+          requestAnimationFrame(processSyncLayerLoadQueue);
+        } else {
+          setTimeout(processSyncLayerLoadQueue, 0);
+        }
+      });
+    }
+  }
+
+  function enqueueSyncLayerLoad(fullLayerId, onLoaded, onError) {
+    if (queuedSyncLayerLoads.has(fullLayerId)) return;
+    queuedSyncLayerLoads.add(fullLayerId);
+    syncLayerLoadQueue.push(async () => {
+      try {
+        await loadProjectionLayerFromRegistry(fullLayerId);
+        if (typeof onLoaded === "function") onLoaded();
+      } catch (err) {
+        if (typeof onError === "function") onError(err);
+      } finally {
+        queuedSyncLayerLoads.delete(fullLayerId);
+      }
+    });
+    processSyncLayerLoadQueue();
+  }
 
   function getLayerGroupsForCuratedReload() {
     return typeof LayerStateHelper !== "undefined" &&
@@ -494,16 +539,18 @@ function updateWmtsVisibility(fullLayerId, visible) {
         }
         if (layerConfig && layerConfig.format === "wmts") {
           if (layer.enabled && !loadedLayers[fullLayerId]) {
-            loadProjectionLayerFromRegistry(fullLayerId)
-              .then(() => {
+            enqueueSyncLayerLoad(
+              fullLayerId,
+              () => {
                 updateWmtsVisibility(fullLayerId, true);
-              })
-              .catch((err) => {
+              },
+              (err) => {
                 console.error(
                   `[Projection] Failed to load WMTS layer ${fullLayerId}:`,
                   err,
                 );
-              });
+              },
+            );
           } else {
             updateWmtsVisibility(fullLayerId, layer.enabled);
           }
@@ -512,16 +559,18 @@ function updateWmtsVisibility(fullLayerId, visible) {
 
         if (layer.enabled) {
           if (!loadedLayers[fullLayerId]) {
-            loadProjectionLayerFromRegistry(fullLayerId)
-              .then(() => {
+            enqueueSyncLayerLoad(
+              fullLayerId,
+              () => {
                 updateLayerVisibility(fullLayerId, true);
-              })
-              .catch((err) => {
+              },
+              (err) => {
                 console.error(
                   `[Projection] Failed to load layer ${fullLayerId}:`,
                   err,
                 );
-              });
+              },
+            );
           } else {
             updateLayerVisibility(fullLayerId, true);
           }
@@ -578,7 +627,6 @@ function updateWmtsVisibility(fullLayerId, visible) {
         geometryType,
         loadedLayers[layerName].styleConfig,
       );
-      updateAllRendererPositions(displayBounds, modelBounds);
 
       // Registry layers: individual layer.enabled is the source of truth.
       // Reuse shared LayerStateHelper so projection and map agree on visibility.
@@ -657,13 +705,12 @@ function updateWmtsVisibility(fullLayerId, visible) {
    * @param {{ affectedCuratedFullLayerIds?: string[] }} [options]
    */
   async function reloadProjectionCuratedLayersFromSupabase(options) {
-    return reloadProjectionCuratedLayersFromSupabaseImpl(
+    const reloadedLayerIds = await reloadProjectionCuratedLayersFromSupabaseImpl(
       {
         loadedLayers,
         inFlightLayerLoads,
         canvasRenderer,
         loadProjectionLayerFromRegistry,
-        updateLayerVisibility,
         getLayerGroups: getLayerGroupsForCuratedReload,
         MORESHET_AXIS_GROUP_ID,
         isPinkLineParkingLayerId,
@@ -675,6 +722,12 @@ function updateWmtsVisibility(fullLayerId, visible) {
       },
       options && typeof options === "object" ? options : {},
     );
+    const effectiveLayerGroups = getLayerGroupsForCuratedReload();
+    if (Array.isArray(effectiveLayerGroups) && effectiveLayerGroups.length > 0) {
+      syncLayerGroupsFromState(effectiveLayerGroups);
+    }
+    requestAnimationFrameForAnimations();
+    return reloadedLayerIds;
   }
 
   export {

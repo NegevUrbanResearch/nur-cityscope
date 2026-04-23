@@ -91,43 +91,8 @@ async function loadGeoJSONLayer(fullLayerId, layerConfig, dataUrl, registerLoade
         if (leafletLayer.setZIndex) leafletLayer.setZIndex(1000);
       } catch (e) {}
 
-      // Also handle visibility on zoom change using visibility controller
-      const updateLayerVisibility = () => {
-        const currentZoom = map.getZoom();
-
-        if (
-          typeof VisibilityController !== "undefined" &&
-          typeof LayerStateHelper !== "undefined"
-        ) {
-          const allowed = VisibilityController.shouldLayerBeVisible({
-            fullLayerId,
-            scaleRange,
-            zoom: currentZoom,
-            layerStateHelper: LayerStateHelper,
-          });
-
-          if (!allowed) {
-            if (map.hasLayer(leafletLayer)) {
-              console.log(
-                `[Map] Hiding ${fullLayerId} at zoom ${currentZoom.toFixed(
-                  1,
-                )} (range ${minZoom?.toFixed(1) || "-"} to ${
-                  maxZoom?.toFixed(1) || "-"
-                })`,
-              );
-              map.removeLayer(leafletLayer);
-            }
-          } else if (!map.hasLayer(leafletLayer)) {
-            console.log(
-              `[Map] Showing ${fullLayerId} at zoom ${currentZoom.toFixed(1)}`,
-            );
-            map.addLayer(leafletLayer);
-          }
-        }
-      };
-
-      map.on("zoomend", updateLayerVisibility);
-      updateLayerVisibility(); // Initial check
+      // Layer visibility reconciliation is centralized in layer-state-manager.
+      // Keep only the initial range check here to avoid per-layer zoomend listeners.
     } else {
       // No scale restrictions - use normal visibility logic
       if (typeof LayerStateHelper !== "undefined") {

@@ -56,6 +56,34 @@ describe("syncCuratedMapLayersAfterSupabasePull debounce merge", () => {
     expect(reloadCuratedOnMap.mock.calls[0][0].affectedCuratedFullLayerIds).toHaveLength(2);
   });
 
+  it("keeps selective affected ids when all pending calls are selective", async () => {
+    const reloadCuratedOnMap = vi.fn();
+    const loadLayerFromRegistry = vi.fn().mockResolvedValue(undefined);
+
+    const p1 = syncCuratedMapLayersAfterSupabasePull({
+      reloadCuratedOnMap,
+      loadLayerFromRegistry,
+      pullPayload: { affected_curated_full_layer_ids: ["curated.a"] },
+    });
+    const p2 = syncCuratedMapLayersAfterSupabasePull({
+      reloadCuratedOnMap,
+      loadLayerFromRegistry,
+      pullPayload: { affected_curated_full_layer_ids: ["curated.b"] },
+    });
+
+    await vi.advanceTimersByTimeAsync(400);
+    await Promise.all([p1, p2]);
+
+    expect(reloadCuratedOnMap).toHaveBeenCalledTimes(1);
+    expect(reloadCuratedOnMap).toHaveBeenCalledWith({
+      affectedCuratedFullLayerIds: expect.arrayContaining([
+        "curated.a",
+        "curated.b",
+      ]),
+    });
+    expect(reloadCuratedOnMap.mock.calls[0][0]).toBeTruthy();
+  });
+
   it("forces a full curated reload when any batched call is non-selective (empty affected ids)", async () => {
     const reloadCuratedOnMap = vi.fn();
     const loadLayerFromRegistry = vi.fn().mockResolvedValue(undefined);
