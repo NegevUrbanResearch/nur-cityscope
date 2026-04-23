@@ -18,6 +18,38 @@ import {
 } from "../map-utils/curated-pink-axis-state.js";
 
 /**
+ * Preserve API-only fields needed for remote UI (workshop color swatches, etc.).
+ * Intentionally narrow allowlist — do not spread entire API objects.
+ *
+ * @param {object|null|undefined} src
+ * @returns {Record<string, unknown>}
+ */
+function pickApiLayerOverlayFields(src) {
+  if (!src || typeof src !== "object") return {};
+  const keys = [
+    "displayName",
+    "display_name",
+    "display_color",
+    "submission_color",
+    "displayColor",
+    "submissionColor",
+    "submission_id",
+    "submissionId",
+    "color",
+    "fillColor",
+    "style",
+    "metadata",
+    "properties",
+    "fullLayerIds",
+  ];
+  const out = {};
+  for (const k of keys) {
+    if (src[k] !== undefined) out[k] = src[k];
+  }
+  return out;
+}
+
+/**
  * Parse fullLayerId into groupId and layerId using "first dot" split.
  * Supports layer ids that contain dots (e.g. "map_3.layer.with.dots").
  *
@@ -151,6 +183,7 @@ function getEffectiveLayerGroups() {
           const layerState = state.layers?.find((l) => l.id === layer.id);
           return {
             ...layer,
+            ...pickApiLayerOverlayFields(layerState),
             name: layerState?.displayName ?? layer.name ?? layer.id,
             enabled: layerState ? !!layerState.enabled : defaultLayerEnabled(reg.id, layer.id),
           };
@@ -205,6 +238,7 @@ function getEffectiveLayerGroups() {
       name: explicitName || derivedName,
       enabled: !!cg.enabled,
       layers: (cg.layers || []).map((l) => ({
+        ...pickApiLayerOverlayFields(l),
         id: l.id,
         name: l.displayName || l.id,
         enabled: !!l.enabled,
@@ -282,7 +316,7 @@ function coalesceCuratedGroups(groups) {
 
   const mergedCuratedGroup = {
     id: "curated_moresht_axis",
-    name: "Moreshet Axis",
+    name: "Workshop",
     enabled: allEnabled,
     layers: mergedLayers,
   };

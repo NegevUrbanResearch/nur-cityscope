@@ -39,6 +39,6 @@ describe("curation workshop mode (API + UI contracts)", () => {
   test("curation.html includes workshop auto-publish control", () => {
     const html = readUtf8(CURATION_HTML);
     expect(html.includes('id="curationWorkshopAutoPublish"')).toBe(true);
-    expect(html.includes("Workshop auto-publish")).toBe(true);
+    expect(html.includes('data-i18n="curationWorkshopAutoPublish"')).toBe(true);
   });
 });

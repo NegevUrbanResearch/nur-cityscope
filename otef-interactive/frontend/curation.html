@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="he">
   <head>
     <meta charset="UTF-8" />
     <meta
@@ -8,8 +8,27 @@
     />
     <meta name="mobile-web-app-capable" content="yes" />
     <title>OTEF Curation</title>
+    <script>
+      (function () {
+        try {
+          if (typeof window === "undefined" || typeof document === "undefined") return;
+          var q = (typeof location !== "undefined" && location.search) || "";
+          var p = new URLSearchParams(q);
+          var embed = p.get("embed");
+          if (embed !== "1" && embed !== "true") return;
+          if (window.self !== window.top) {
+            document.documentElement.classList.add("curation-embed");
+          }
+        } catch (e) {
+          /* no-op */
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="css/remote-styles.css" />
     <style>
+      html.curation-embed .curation-header {
+        display: none !important;
+      }
       .curation-layout {
         display: flex;
         flex-direction: column;
@@ -80,11 +99,11 @@
         margin: 0;
         cursor: pointer;
       }
-      .curation-section-head h2 {
+      .curation-section-head .curation-published-heading {
         margin-bottom: 0;
       }
       .curation-publish-actions {
-        margin-top: 8px;
+        margin-top: 0;
       }
       .curation-section {
         margin-bottom: var(--spacing-unit);
@@ -92,7 +111,7 @@
       .curation-section:last-child {
         margin-bottom: 0;
       }
-      .curation-section h2 {
+      .curation-section .curation-published-heading {
         font-size: 11px;
         font-weight: 600;
         color: var(--text-secondary);
@@ -296,6 +315,22 @@
       .curation-submission-combo {
         position: relative;
         width: 100%;
+      }
+      .curation-submission-combo-row {
+        display: flex;
+        flex-direction: row;
+        align-items: stretch;
+        gap: var(--spacing-unit);
+        width: 100%;
+        box-sizing: border-box;
+      }
+      .curation-submission-combo-row .curation-submission-combo-field {
+        flex: 1;
+        min-width: 0;
+      }
+      .curation-submission-combo-row .curation-submissions-refresh {
+        align-self: center;
+        flex-shrink: 0;
       }
       .curation-submission-combo-field {
         position: relative;
@@ -508,16 +543,58 @@
         background: rgba(255, 200, 0, 0.12);
         color: #ffe999;
       }
+      .curation-submissions-refresh {
+        flex-shrink: 0;
+        box-sizing: border-box;
+        min-width: 44px;
+        min-height: 44px;
+        width: 44px;
+        height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        cursor: pointer;
+      }
+      .curation-submissions-refresh:hover {
+        background: var(--bg-secondary);
+      }
+      .curation-submissions-refresh:focus-visible {
+        outline: 2px solid var(--accent, #00d4ff);
+        outline-offset: 2px;
+      }
+      .curation-submissions-refresh svg {
+        display: block;
+        width: 20px;
+        height: 20px;
+      }
     </style>
   </head>
   <body>
     <div class="curation-layout">
       <header class="curation-header">
         <div class="header-content">
-          <a href="remote-controller.html" id="curationBack" class="curation-header-btn back" aria-label="Open controller">Controller</a>
-          <h1 class="remote-title">Curation</h1>
-          <button type="button" id="curationRefresh" class="curation-header-btn">
-            Refresh
+          <a
+            href="remote-controller.html"
+            id="curationBack"
+            class="curation-header-btn back"
+            data-i18n="curationBackLink"
+            data-i18n-aria="curationBackAria"
+            >בקר</a
+          >
+          <h1 class="remote-title" data-i18n="curationPageTitle">אצירה</h1>
+          <button
+            type="button"
+            id="curationRefresh"
+            class="curation-header-btn"
+            data-i18n="curationHeaderRefresh"
+            data-i18n-aria="curationHeaderRefreshAria"
+          >
+            רענון
           </button>
         </div>
       </header>
@@ -525,49 +602,66 @@
       <div class="curation-body">
         <aside class="curation-sidebar">
           <section class="curation-section">
-            <h2>Submissions</h2>
             <div id="curationSubmissionCombo" class="curation-submission-combo">
               <input type="hidden" id="curationSubmission" name="curationSubmission" value="" />
-              <div id="curationSubmissionComboField" class="curation-submission-combo-field">
-                <input
-                  type="search"
-                  id="curationSubmissionSearch"
-                  class="curation-submission-search"
-                  placeholder="Search or choose submission…"
-                  autocomplete="off"
-                  dir="auto"
-                  role="combobox"
-                  aria-expanded="false"
-                  aria-controls="curationSubmissionList"
-                  aria-autocomplete="list"
-                  aria-label="Search and select submission"
-                />
-                <div
-                  id="curationSubmissionSelectedTags"
-                  class="curation-submission-selected-tags"
-                  aria-hidden="true"
-                ></div>
+              <div class="curation-submission-combo-row">
+                <div id="curationSubmissionComboField" class="curation-submission-combo-field">
+                  <input
+                    type="search"
+                    id="curationSubmissionSearch"
+                    class="curation-submission-search"
+                    placeholder="חיפוש או בחירת הגשה…"
+                    data-i18n-placeholder="curationSubmissionSearchPlaceholder"
+                    autocomplete="off"
+                    role="combobox"
+                    aria-expanded="false"
+                    aria-controls="curationSubmissionList"
+                    aria-autocomplete="list"
+                    data-i18n-aria="curationSubmissionSearchAria"
+                    aria-label="חיפוש ובחירת הגשה"
+                  />
+                  <div
+                    id="curationSubmissionSelectedTags"
+                    class="curation-submission-selected-tags"
+                    aria-hidden="true"
+                  ></div>
+                </div>
+                <button
+                  type="button"
+                  id="curationSubmissionsRefresh"
+                  class="curation-submissions-refresh"
+                  data-i18n-title="curationSubmissionsRefreshTitle"
+                  data-i18n-aria="curationSubmissionsRefreshAria"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                    <path d="M21 3v5h-5" />
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                    <path d="M3 21v-5h5" />
+                  </svg>
+                </button>
               </div>
               <div
                 id="curationSubmissionList"
                 class="curation-submission-list"
                 role="listbox"
-                aria-label="Submissions"
+                data-i18n-aria="curationSubmissionListAria"
+                aria-label="הגשות"
                 hidden
               ></div>
             </div>
           </section>
 
           <section class="curation-section">
-            <h2>Publish</h2>
             <div class="curation-publish-actions">
               <button
                 type="button"
                 id="curationPublish"
                 class="curation-publish-btn"
+                data-i18n="curationPublishButton"
                 disabled
               >
-                Publish as OTEF layer
+               פרסם שכבה
               </button>
             </div>
             <div id="curationStatus" class="curation-status"></div>
@@ -575,23 +669,36 @@
 
           <section class="curation-section">
             <div class="curation-section-head">
-              <h2>Published layers on remote</h2>
+              <div
+                class="curation-published-heading"
+                role="heading"
+                aria-level="2"
+                data-i18n="curationPublishedHeading"
+              >
+                שכבות מפורסמות בבקר
+              </div>
               <div class="curation-section-head-actions">
                 <label class="curation-workshop-label">
                   <input
                     type="checkbox"
                     id="curationWorkshopAutoPublish"
-                    aria-label="Workshop auto-publish"
+                    data-i18n-aria="curationWorkshopAutoPublishAria"
+                    aria-label="פרסום אוטומטי לסדנה"
                   />
-                  Workshop auto-publish
+                  <span data-i18n="curationWorkshopAutoPublish">פרסום אוטומטי לסדנה</span>
                 </label>
-                <button type="button" id="curationUnpublishAll" class="curation-header-btn">
-                  Unpublish all
+                <button
+                  type="button"
+                  id="curationUnpublishAll"
+                  class="curation-header-btn"
+                  data-i18n="curationUnpublishAll"
+                >
+                 הסר הכל
                 </button>
               </div>
             </div>
             <div id="curationPublishedLayers" class="curation-published-layers curation-features">
-              <div class="curation-status">Loading published curated layers…</div>
+              <div class="curation-status" data-i18n="curationPublishedLoading">טוען שכבות אצירה מפורסמות…</div>
             </div>
           </section>
         </aside>

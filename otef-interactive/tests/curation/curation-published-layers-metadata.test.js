@@ -1,15 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test } from "vitest";
+import { setLocale } from "../../frontend/src/remote/remote-locale.js";
 import { chipClassForTag } from "../../frontend/src/curation/curation-submissions.js";
 import { sanitizeCssColor } from "../../frontend/src/curation/curation-color-utils.js";
 import {
+  derivePublishedLayerUiFields,
   extractColorFromGeojsonData,
   extractInfoTagsFromGeojsonData,
   formatUpdatedAtForUi,
   getGeojsonDataFromGisLayerRecord,
   normalizeGisLayerGeojsonInput,
+  resolvePublishedLayerInfoTags,
 } from "../../frontend/src/curation/curation-published-layers.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +28,10 @@ describe("chipClassForTag (shared with published layer chips)", () => {
 });
 
 describe("published layer metadata helpers", () => {
+  beforeEach(() => {
+    setLocale("he", { force: true });
+  });
+
   test("extractColorFromGeojsonData reads stroke from first feature", () => {
     const c = extractColorFromGeojsonData({
       type: "FeatureCollection",
@@ -156,10 +163,76 @@ describe("published layer metadata helpers", () => {
     expect(formatUpdatedAtForUi("not-a-date")).toBe("—");
   });
 
-  test("formatUpdatedAtForUi formats ISO timestamps", () => {
+  test("formatUpdatedAtForUi formats ISO timestamps (he-IL, 24h)", () => {
     const s = formatUpdatedAtForUi("2026-04-17T12:30:00.000Z");
     expect(s).not.toBe("—");
     expect(s.length).toBeGreaterThan(6);
+    expect(s).not.toMatch(/\b[AP]M\b/i);
+  });
+
+  test("formatUpdatedAtForUi uses en-US when locale is en", () => {
+    setLocale("en", { force: true });
+    const s = formatUpdatedAtForUi("2026-04-17T12:30:00.000Z");
+    expect(s).not.toBe("—");
+    expect(s).not.toMatch(/\b[AP]M\b/i);
+  });
+
+  test("derivePublishedLayerUiFields returns updatedAtRaw (ISO) not a formatted label", () => {
+    const iso = "2026-04-17T12:30:00.000Z";
+    const ui = derivePublishedLayerUiFields({
+      updated_at: iso,
+      data: { type: "FeatureCollection", features: [] },
+    });
+    expect(ui.updatedAtRaw).toBe(iso);
+    expect(ui).not.toHaveProperty("updatedAtLabel");
+    expect(ui.colorRaw).toBe(null);
+    expect(ui.infoTags).toEqual([]);
+  });
+
+  test("resolvePublishedLayerInfoTags uses submission type_label when id maps to a known row (parity with combobox)", () => {
+    const geoOnlyTkuma = ["Tkuma Line"];
+    const getLabel = (id) => (String(id).toLowerCase() === "abc" ? "Mixed" : null);
+    expect(resolvePublishedLayerInfoTags("abc", geoOnlyTkuma, getLabel)).toEqual([
+      "Tkuma Line",
+      "Memorials",
+    ]);
+  });
+
+  test("resolvePublishedLayerInfoTags falls back to GeoJSON tags when no submission id", () => {
+    expect(
+      resolvePublishedLayerInfoTags("", ["Tkuma Line"], () => "Mixed"),
+    ).toEqual(["Tkuma Line"]);
+  });
+
+  test("resolvePublishedLayerInfoTags falls back to GeoJSON when type_label unknown for id", () => {
+    const geo = ["Memorials"];
+    expect(
+      resolvePublishedLayerInfoTags("not-in-list", geo, () => null),
+    ).toEqual(["Memorials"]);
+  });
+
+  test("resolvePublishedLayerInfoTags single-tag submission matches combobox (Memorials only)", () => {
+    expect(
+      resolvePublishedLayerInfoTags("x", ["Tkuma Line"], () => "Memorials"),
+    ).toEqual(["Memorials"]);
+  });
+
+  test("derivePublishedLayerUiFields uses updatedAt / modified_at fallbacks and empty raw when missing", () => {
+    expect(
+      derivePublishedLayerUiFields({
+        updatedAt: "2026-01-02T00:00:00.000Z",
+        data: { type: "FeatureCollection", features: [] },
+      }).updatedAtRaw,
+    ).toBe("2026-01-02T00:00:00.000Z");
+    expect(
+      derivePublishedLayerUiFields({
+        modified_at: "2026-03-04T00:00:00.000Z",
+        data: { type: "FeatureCollection", features: [] },
+      }).updatedAtRaw,
+    ).toBe("2026-03-04T00:00:00.000Z");
+    expect(derivePublishedLayerUiFields({ data: { type: "FeatureCollection", features: [] } }).updatedAtRaw).toBe(
+      "",
+    );
   });
 });
 

@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OTEF Remote — Task 2 mockups (static): Navigation / Layers (dual) / Workshop</title>
+    <style>
+      /* Tokens derived from otef-interactive/frontend/DESIGN.md (machine YAML + prose) */
+      :root {
+        --color-primary: #c17f4a;
+        --color-canvas: #12100e;
+        --color-surface: #1c1917;
+        --color-surface-raised: #262320;
+        --color-ink: #f5f0ea;
+        --color-ink-muted: #bfb6ab;
+        --color-ink-subtle: #8c847a;
+        --color-on-primary: #141210;
+        --color-border: #3d3834;
+        --color-border-strong: #4a4540;
+        --color-success: #7a9b7a;
+        --color-warning: #d4a85c;
+        --color-danger: #b85c5c;
+        --r-sm: 8px;
+        --r-md: 12px;
+        --r-lg: 16px;
+        --r-pill: 9999px;
+        --space-xs: 8px;
+        --space-sm: 12px;
+        --space-md: 16px;
+        --space-lg: 24px;
+        --touch: 56px; /* DESIGN.md spacing.touch — primary hit target for bottom tabs */
+        --nav-h: 64px; /* DESIGN.md bottom-nav height; tab min-height uses --touch */
+        --header-safe: max(12px, env(safe-area-inset-top, 0px));
+        --font-ui: system-ui, "Segoe UI", "SF Pro Text", "Helvetica Neue", "Noto Sans Hebrew", sans-serif;
+        --shadow-soft: 0 8px 24px rgba(10, 8, 6, 0.35);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: var(--space-lg);
+        background: #0e0c0a;
+        color: var(--color-ink-muted);
+        font-family: var(--font-ui);
+        line-height: 1.5;
+      }
+
+      .doc-title {
+        max-width: 1200px;
+        margin: 0 auto var(--space-lg);
+        padding-inline: var(--space-sm);
+      }
+
+      .doc-title h1 {
+        color: var(--color-ink);
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin: 0 0 0.5rem;
+        letter-spacing: -0.01em;
+      }
+
+      .doc-title p {
+        margin: 0;
+        font-size: 0.875rem;
+        color: var(--color-ink-subtle);
+      }
+
+      .frames {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-lg);
+        justify-content: center;
+        align-items: flex-start;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      .frame-block {
+        flex: 1 1 320px;
+        max-width: 380px;
+      }
+
+      .frame-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--color-ink-subtle);
+        margin: 0 0 var(--space-sm);
+        padding-inline: 4px;
+      }
+
+      /* Phone shell */
+      .phone {
+        width: 100%;
+        max-width: 360px;
+        margin: 0 auto;
+        border-radius: 28px;
+        padding: 10px;
+        background: linear-gradient(145deg, #2a2622, #1a1816);
+        box-shadow: var(--shadow-soft);
+      }
+
+      .phone-notch {
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 4px;
+      }
+
+      .phone-notch::before {
+        content: "";
+        width: 96px;
+        height: 22px;
+        background: #0a0908;
+        border-radius: 12px;
+      }
+
+      .screen {
+        border-radius: 20px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        min-height: 640px;
+        max-height: 720px;
+        background: var(--color-canvas);
+        border: 1px solid var(--color-border);
+      }
+
+      .layers-pair .screen {
+        min-height: 620px;
+        max-height: 720px;
+      }
+
+      .screen[dir="rtl"] {
+        direction: rtl;
+      }
+
+      /* Header (shared) */
+      .app-header {
+        background: var(--color-surface);
+        padding: calc(10px + var(--header-safe)) var(--space-md) var(--space-sm);
+        border-bottom: 1px solid var(--color-border);
+        flex-shrink: 0;
+      }
+
+      .app-header-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-sm);
+        margin-bottom: 0;
+      }
+
+      .header-end {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+
+      .app-title {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--color-ink);
+        margin: 0;
+        line-height: 1.3;
+        letter-spacing: -0.01em;
+      }
+
+      .locale-toggle {
+        display: inline-flex;
+        border: 1px solid var(--color-border);
+        border-radius: var(--r-md);
+        overflow: hidden;
+        font-size: 0.75rem;
+        font-weight: 500;
+      }
+
+      .locale-toggle button {
+        border: none;
+        padding: 8px 10px;
+        min-height: 44px;
+        min-width: 44px;
+        background: var(--color-surface-raised);
+        color: var(--color-ink-muted);
+        cursor: default;
+        font: inherit;
+      }
+
+      .locale-toggle button.active {
+        background: var(--color-primary);
+        color: var(--color-on-primary);
+      }
+
+      /* Compact connection: lamp only (green = live; red = offline — see README) */
+      .status-pip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .status-pip .connection-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--color-success);
+        box-shadow: 0 0 0 2px rgba(122, 155, 122, 0.35);
+      }
+
+      .status-pip.is-off .connection-dot {
+        background: var(--color-danger);
+        box-shadow: 0 0 0 2px rgba(184, 92, 92, 0.35);
+      }
+
+      .connection-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--color-success);
+        box-shadow: 0 0 0 2px rgba(122, 155, 122, 0.35);
+      }
+
+      /* Main scroll region */
+      .app-main {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: var(--space-md);
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .panel-title-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: var(--space-sm);
+        margin-bottom: var(--space-sm);
+        flex-wrap: wrap;
+      }
+
+      .panel-title {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--color-ink);
+      }
+
+      .active-count {
+        font-size: 0.8125rem;
+        font-weight: 500;
+        color: var(--color-primary);
+        background: var(--color-surface-raised);
+        padding: 6px 12px;
+        border-radius: var(--r-pill);
+        border: 1px solid var(--color-border-strong);
+        white-space: nowrap;
+      }
+
+      .en-hint {
+        font-size: 0.65rem;
+        color: var(--color-ink-subtle);
+        font-weight: 500;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+
+      /* Layers: dual-phone artifact — overview (all packs) + focused pack */
+      .frame-block--layers-dual {
+        flex: 1 1 680px;
+        max-width: 820px;
+      }
+
+      .layers-pair {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-lg);
+        justify-content: center;
+        align-items: stretch;
+        width: 100%;
+      }
+
+      .layers-pair .phone {
+        flex: 1 1 312px;
+        max-width: 360px;
+        margin: 0;
+      }
+
+      .app-main--layers-tight {
+        padding: 10px var(--space-sm) var(--space-sm);
+      }
+
+      .pack-grid-overview {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding-bottom: 6px;
+      }
+
+      .pack-tile {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 12px 12px;
+        border-radius: var(--r-md);
+        background: linear-gradient(
+          145deg,
+          rgba(38, 35, 32, 0.94),
+          rgba(22, 20, 18, 0.98)
+        );
+        border: 1px solid var(--color-border);
+        box-shadow:
+          0 4px 18px rgba(0, 0, 0, 0.28),
+          inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+
+      .pack-tile--dim {
+        opacity: 0.76;
+      }
+
+      .pack-tile--peek {
+        border-color: rgba(193, 127, 74, 0.5);
+        box-shadow:
+          0 0 0 1px rgba(193, 127, 74, 0.12),
+          0 6px 22px rgba(10, 8, 6, 0.38);
+      }
+
+      .pack-tile__main {
+        min-width: 0;
+        flex: 1;
+      }
+
+      .pack-tile__actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+
+      .pack-tile__drill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        border-radius: var(--r-sm);
+        border: 1px solid var(--color-border-strong);
+        background: var(--color-surface-raised);
+        color: var(--color-primary);
+        font-size: 1.1rem;
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: -0.06em;
+        cursor: default;
+        font-family: inherit;
+      }
+
+      .pack-tile .pack-master {
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+      }
+
+      .pack-tile .pack-master-label {
+        font-size: 0.55rem;
+      }
+
+      .focus-strip {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 2px 2px 12px;
+        margin-bottom: 6px;
+        border-bottom: 1px solid var(--color-border);
+      }
+
+      .fake-back {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 12px;
+        border-radius: var(--r-sm);
+        border: 1px solid var(--color-border);
+        background: var(--color-surface-raised);
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--color-primary);
+        cursor: default;
+        font-family: inherit;
+      }
+
+      .focus-pack-title {
+        margin: 0;
+        flex: 1;
+        min-width: 0;
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: var(--color-ink);
+        text-align: center;
+      }
+
+      .pack-box--focused {
+        margin-bottom: 0;
+      }
+
+      .pack-box--focused .pack-box__head-main {
+        flex: 1;
+        min-width: 0;
+      }
+
+      /* Pack box (Layers tab): one card per pack — master toggle + expand are separate */
+      .pack-box {
+        margin-bottom: var(--space-md);
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--r-md);
+        overflow: hidden;
+      }
+
+      .pack-box__head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: var(--space-sm);
+        padding: var(--space-sm) var(--space-md);
+        background: var(--color-surface-raised);
+        border-bottom: 1px solid var(--color-border);
+      }
+
+      .pack-box__head-main {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--space-sm);
+        min-width: 0;
+        flex: 1;
+      }
+
+      .pack-name-block {
+        min-width: 0;
+        flex: 1;
+      }
+
+      .pack-title {
+        margin: 0;
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: var(--color-ink);
+        line-height: 1.3;
+      }
+
+      .pack-stat {
+        display: block;
+        margin-top: 4px;
+        font-size: 0.7rem;
+        color: var(--color-ink-subtle);
+        font-weight: 500;
+      }
+
+      .pack-head-trailing {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--space-sm);
+        flex-shrink: 0;
+      }
+
+      .pack-flow-pack {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+
+      .pack-flow-pack button.chip {
+        cursor: default;
+        font: inherit;
+      }
+
+      .pack-master {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+
+      .pack-master-label {
+        font-size: 0.6rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--color-ink-subtle);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .pack-box__rows {
+        padding: var(--space-sm) var(--space-sm) var(--space-md);
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .pack-box__rows[hidden] {
+        display: none;
+      }
+
+      .row-annot {
+        display: block;
+        font-size: 0.62rem;
+        color: var(--color-ink-subtle);
+        margin-top: 2px;
+        line-height: 1.35;
+      }
+
+      .row-grid {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .row-grid.no-anim {
+        grid-template-columns: 1fr auto;
+      }
+
+      .anim-col {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+      }
+
+      .anim-col.muted {
+        opacity: 0.45;
+        pointer-events: none;
+      }
+
+      .anim-skip {
+        font-size: 0.6rem;
+        color: var(--color-ink-subtle);
+        text-align: end;
+        max-width: 6.5rem;
+        line-height: 1.25;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-sm);
+        padding: var(--space-sm);
+        margin-bottom: 6px;
+        background: var(--color-surface-raised);
+        border-radius: var(--r-sm);
+        border: 1px solid var(--color-border);
+        min-height: 52px;
+      }
+
+      .row.row-grid {
+        display: grid;
+        align-items: center;
+      }
+
+      .row-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+        flex: 1;
+      }
+
+      .row-title {
+        font-size: 0.875rem;
+        color: var(--color-ink);
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .row-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        align-items: center;
+      }
+
+      .badge {
+        font-size: 0.65rem;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: var(--r-pill);
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+
+      .badge-flow {
+        background: rgba(193, 127, 74, 0.15);
+        color: var(--color-primary);
+        border: 1px solid var(--color-border-strong);
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: var(--r-pill);
+        background: var(--color-surface);
+        color: var(--color-primary);
+        border: 1px solid var(--color-border-strong);
+        font-size: 0.75rem;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+
+      .chip.muted {
+        color: var(--color-ink-muted);
+        border-color: var(--color-border);
+      }
+
+      .toggle {
+        width: 48px;
+        height: 28px;
+        border-radius: 14px;
+        background: var(--color-border-strong);
+        position: relative;
+        flex-shrink: 0;
+      }
+
+      .toggle::after {
+        content: "";
+        position: absolute;
+        width: 24px;
+        height: 24px;
+        top: 2px;
+        background: var(--color-ink);
+        border-radius: 50%;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+      }
+
+      .screen[dir="rtl"] .toggle::after {
+        right: 2px;
+      }
+
+      .screen[dir="ltr"] .toggle::after,
+      :not([dir="rtl"]) .toggle.on::after {
+        right: 2px;
+        left: auto;
+      }
+
+      .toggle.on {
+        background: var(--color-primary);
+      }
+
+      .screen[dir="rtl"] .toggle.on::after {
+        right: 2px;
+      }
+
+      /* Navigation tab: same affordances as current main controller — controls are primary */
+      .map-sliver {
+        background: linear-gradient(180deg, #1a1816, var(--color-surface));
+        border: 1px solid var(--color-border);
+        border-radius: var(--r-md);
+        padding: var(--space-sm) var(--space-md);
+        min-height: 52px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--color-ink-subtle);
+        font-size: 0.75rem;
+        text-align: center;
+        line-height: 1.35;
+        flex-shrink: 0;
+      }
+
+      .controls-hero {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: var(--space-md);
+        margin-top: var(--space-sm);
+      }
+
+      .nav-main {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        padding: var(--space-md);
+        -webkit-overflow-scrolling: touch;
+        overflow: auto;
+      }
+
+      .controls-row {
+        display: grid;
+        grid-template-columns: 1fr 1.45fr 1fr;
+        gap: var(--space-md);
+        align-items: stretch;
+        min-height: 168px;
+      }
+
+      .dpad {
+        background: var(--color-surface-raised);
+        border-radius: var(--r-md);
+        border: 1px solid var(--color-border);
+        aspect-ratio: 1;
+        min-height: 120px;
+        max-height: 160px;
+        display: grid;
+        place-items: center;
+        place-self: center;
+        width: 100%;
+        color: var(--color-ink-muted);
+        font-size: 1.75rem;
+        font-weight: 300;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+
+      .joystick {
+        background: radial-gradient(
+            circle at 50% 45%,
+            #322e2a 0%,
+            var(--color-surface-raised) 55%
+          );
+        border-radius: 50%;
+        border: 1px solid var(--color-border-strong);
+        min-height: 120px;
+        min-width: 120px;
+        max-height: 150px;
+        max-width: 150px;
+        margin: 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--color-ink-muted);
+        font-size: 0.72rem;
+        text-align: center;
+        padding: 8px;
+        line-height: 1.3;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+      }
+
+      .zoom-block {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .zoom-bar {
+        height: 8px;
+        background: var(--color-border);
+        border-radius: 4px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .zoom-bar::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        width: 60%;
+        background: var(--color-primary);
+        border-radius: 4px;
+      }
+
+      .zoom-btns {
+        display: flex;
+        justify-content: space-between;
+        gap: 6px;
+      }
+
+      .zoom-btns .icon-btn {
+        min-height: 48px;
+        font-size: 1.1rem;
+      }
+
+      .icon-btn {
+        flex: 1;
+        min-height: 44px;
+        border-radius: var(--r-sm);
+        border: 1px solid var(--color-border);
+        background: var(--color-surface);
+        color: var(--color-ink);
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+
+      /* Workshop (same curation embed contract as today; visual refresh only) */
+      .workshop-surface {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        padding: var(--space-sm) var(--space-md) 0;
+        gap: var(--space-sm);
+      }
+
+      .workshop-intro {
+        margin: 0;
+        font-size: 0.8rem;
+        color: var(--color-ink-subtle);
+        line-height: 1.45;
+      }
+
+      .workshop-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .wb {
+        font-size: 0.65rem;
+        font-weight: 600;
+        padding: 4px 10px;
+        border-radius: var(--r-pill);
+        border: 1px solid var(--color-border);
+        color: var(--color-ink-muted);
+        background: var(--color-surface-raised);
+        letter-spacing: 0.03em;
+      }
+
+      .wb-accent {
+        border-color: var(--color-primary);
+        color: var(--color-primary);
+        background: rgba(193, 127, 74, 0.1);
+      }
+
+      .iframe-placeholder {
+        flex: 1;
+        min-height: 200px;
+        margin: 0 0 var(--space-sm);
+        border: 1px solid var(--color-border-strong);
+        border-radius: var(--r-lg);
+        background: linear-gradient(165deg, #232019 0%, #181512 100%);
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: center;
+        padding: var(--space-md);
+        text-align: center;
+        color: var(--color-ink-muted);
+        font-size: 0.875rem;
+        gap: var(--space-sm);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      }
+
+      .iframe-title {
+        color: var(--color-ink);
+        font-weight: 700;
+        font-size: 1rem;
+        letter-spacing: -0.01em;
+      }
+
+      .iframe-url {
+        font-family: ui-monospace, monospace;
+        font-size: 0.7rem;
+        color: var(--color-ink-subtle);
+        word-break: break-all;
+        max-width: 100%;
+      }
+
+      /* Bottom nav */
+      .bottom-nav {
+        flex-shrink: 0;
+        display: flex;
+        align-items: stretch;
+        background: var(--color-surface);
+        border-top: 1px solid var(--color-border);
+        padding: var(--space-sm) var(--space-sm)
+          max(8px, env(safe-area-inset-bottom, 0px));
+        min-height: var(--nav-h);
+        gap: 4px;
+      }
+
+      .nav-tab {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        border: none;
+        background: transparent;
+        color: var(--color-ink-muted);
+        font-family: inherit;
+        font-size: 0.75rem;
+        font-weight: 600;
+        line-height: 1.2;
+        letter-spacing: 0.04em;
+        min-height: var(--touch);
+        min-width: var(--touch);
+        border-radius: var(--r-md);
+        padding: 6px 4px;
+        cursor: default;
+      }
+
+      .nav-tab .nav-ico {
+        font-size: 1.1rem;
+        line-height: 1;
+        opacity: 0.9;
+      }
+
+      .nav-tab.is-active {
+        background: var(--color-surface-raised);
+        color: var(--color-primary);
+      }
+
+      .note-strip {
+        margin: var(--space-lg) auto 0;
+        max-width: 1200px;
+        padding: var(--space-md);
+        border-radius: var(--r-md);
+        border: 1px solid var(--color-border);
+        background: var(--color-surface);
+        font-size: 0.8rem;
+        color: var(--color-ink-muted);
+      }
+
+      .note-strip strong {
+        color: var(--color-ink);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="doc-title">
+      <h1>OTEF Remote — static mockups (Task 2 · iteration)</h1>
+      <p>
+        Negev/terracotta tokens from
+        <code>otef-interactive/frontend/DESIGN.md</code> · Hebrew-default RTL
+        · no JS — Navigation / Layers (dual-phone: overview → focused pack) /
+        Workshop.
+        <span lang="en"
+          ><strong>Task 6 parity:</strong> drill-in from overview to a focused pack
+          is the UX equivalent of the previous in-list group expand/collapse (same
+          model/actions; navigation pattern only changes).</span
+        >
+      </p>
+    </div>
+
+    <div class="frames">
+      <!-- Navigation: primary = D-pad, joystick, zoom (no layers UI; table switcher omitted in mockup) -->
+      <div class="frame-block">
+        <p class="frame-label">1 · Navigation</p>
+        <div class="phone" aria-label="Mockup: Navigation tab">
+          <div class="phone-notch" aria-hidden="true"></div>
+          <div class="screen" dir="rtl" lang="he">
+            <header class="app-header">
+              <div class="app-header-top">
+                <h1 class="app-title">OTEF מרחוק</h1>
+                <div class="header-end">
+                  <span
+                    class="status-pip"
+                    title="מחובר"
+                    aria-label="מצב חיבור: מחובר"
+                  >
+                    <span class="connection-dot" aria-hidden="true"></span>
+                  </span>
+                  <div
+                    class="locale-toggle"
+                    title="Bilingual: Hebrew | English (labels)"
+                    aria-label="החלפת שפה"
+                  >
+                    <button type="button" class="active" lang="he">עברית</button>
+                    <button type="button" lang="en">EN</button>
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            <main class="nav-main" aria-label="ניווט — בקרים">
+              <div class="map-sliver" lang="he">תצוגת שולחן (רקע) — הדגשה בבקרים</div>
+              <div class="controls-hero">
+                <p class="en-hint" style="margin: 0" lang="en">
+                  D-pad · joystick · zoom (main controller)
+                </p>
+                <div class="controls-row" lang="he">
+                  <div class="dpad" aria-hidden="true">+</div>
+                  <div class="joystick">מוט<br />שליטה</div>
+                  <div class="zoom-block">
+                    <div class="zoom-bar" title="רמת זום"></div>
+                    <div class="zoom-btns">
+                      <button type="button" class="icon-btn">−</button>
+                      <button type="button" class="icon-btn">+</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </main>
+
+            <nav class="bottom-nav" role="tablist" aria-label="לשוניות ראשיות">
+              <button type="button" class="nav-tab is-active" aria-selected="true">
+                <span class="nav-ico" aria-hidden="true">◎</span>
+                <span lang="he">ניווט</span>
+              </button>
+              <button type="button" class="nav-tab" aria-selected="false">
+                <span class="nav-ico" aria-hidden="true">◫</span>
+                <span lang="he">שכבות</span>
+              </button>
+              <button type="button" class="nav-tab" aria-selected="false">
+                <span class="nav-ico" aria-hidden="true">✎</span>
+                <span lang="he">סדנה</span>
+              </button>
+            </nav>
+          </div>
+        </div>
+      </div>
+
+      <!-- Layers: overview + focused pack (no endless in-panel scroll in this comp; overflow → bounded scroll — see note-strip) -->
+      <div class="frame-block frame-block--layers-dual">
+        <p class="frame-label">
+          2 · Layers
+          <span class="en-hint" lang="en" style="font-weight: 500; margin-inline-start: 6px"
+            >overview · focused pack</span
+          >
+        </p>
+        <p
+          class="en-hint"
+          style="margin: -6px 0 12px; padding-inline: 4px; text-align: center; line-height: 1.45"
+          lang="he"
+        >
+          שני מצבי מסך סטטיים זה לצד זה — מבט־על על כל החבילות, ומבט מלא אחרי פתיחת חבילה
+          (כאן: <strong style="color: var(--color-ink)">זרימה</strong>).
+        </p>
+
+        <div class="layers-pair" aria-label="הדגמת שכבות: סקירה ומבט ממוקד">
+          <!-- A: pack overview — master toggle ≠ open/drill -->
+          <div class="phone" aria-label="Mockup: Layers — מבט על חבילות">
+            <div class="phone-notch" aria-hidden="true"></div>
+            <div class="screen" dir="rtl" lang="he">
+              <header class="app-header">
+                <div class="app-header-top">
+                  <h1 class="app-title" style="margin: 0">OTEF מרחוק</h1>
+                  <div class="header-end">
+                    <span
+                      class="status-pip"
+                      title="מחובר"
+                      aria-label="מצב חיבור: מחובר"
+                    >
+                      <span class="connection-dot" aria-hidden="true"></span>
+                    </span>
+                    <div class="locale-toggle">
+                      <button type="button" class="active" lang="he">עברית</button>
+                      <button type="button" lang="en">EN</button>
+                    </div>
+                  </div>
+                </div>
+              </header>
+
+              <main class="app-main app-main--layers-tight">
+                <div class="panel-title-row">
+                  <h2 class="panel-title" lang="he">שכבות</h2>
+                  <div
+                    class="active-count"
+                    title="סה״כ שכבות מופעלות (מצטבר לפי ids)"
+                  >
+                    <span lang="he">5 פעילות</span>
+                    <span class="en-hint" lang="en" style="margin-inline-start: 6px"
+                      >· 5 on</span
+                    >
+                  </div>
+                </div>
+
+                <p
+                  class="en-hint"
+                  style="margin: 0 0 10px; font-size: 0.62rem; line-height: 1.45"
+                  lang="en"
+                >
+                  All packs visible in this comp; if real data exceeds the
+                  viewport, use <strong>bounded scroll inside the Layers panel</strong>
+                  (not an endless single flat list). <strong>Open</strong> (drill ››)
+                  is separate from the <strong>pack</strong> master toggle.
+                </p>
+
+                <div class="pack-grid-overview">
+                  <div class="pack-tile" data-mock="pack tile">
+                    <div class="pack-tile__main">
+                      <h3 class="pack-title" style="margin: 0 0 2px" lang="he">יישובים</h3>
+                      <span class="pack-stat" lang="he">2 פעילים · 4 בשכבה</span>
+                    </div>
+                    <div class="pack-tile__actions">
+                      <button
+                        type="button"
+                        class="pack-tile__drill"
+                        title="פתח חבילה — מסך ממוקד (מופרד מהדלקת חבילה)"
+                        aria-label="פתח חבילה"
+                      >
+                        ››
+                      </button>
+                      <div class="pack-master">
+                        <span class="pack-master-label" lang="he">חבילה</span>
+                        <div class="toggle on" title="הפעל/כבה את כל החבילה"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="pack-tile pack-tile--peek" data-mock="pack matching focused demo">
+                    <div class="pack-tile__main">
+                      <h3 class="pack-title" style="margin: 0 0 2px" lang="he">זרימה</h3>
+                      <span class="pack-stat" lang="he"
+                        >1 פעיל · 2 בשכבה · אנימציה בחבילה</span
+                      >
+                      <span class="row-annot" lang="he" style="margin-top: 4px; display: block"
+                        >מסומן — אותה חבילה במבט הממוקד לצד</span
+                      >
+                    </div>
+                    <div class="pack-tile__actions">
+                      <button
+                        type="button"
+                        class="pack-tile__drill"
+                        title="פתוח בהדגמה במסך הממוקד"
+                        aria-label="פתח חבילה"
+                      >
+                        ››
+                      </button>
+                      <div class="pack-master">
+                        <span class="pack-master-label" lang="he">חבילה</span>
+                        <div class="toggle on" title="כל החבילה"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="pack-tile pack-tile--dim">
+                    <div class="pack-tile__main">
+                      <h3 class="pack-title" style="margin: 0 0 2px" lang="he">תשתית</h3>
+                      <span class="pack-stat" lang="he">0 פעילים · 6 בשכבה</span>
+                    </div>
+                    <div class="pack-tile__actions">
+                      <button
+                        type="button"
+                        class="pack-tile__drill"
+                        title="פתח חבילה (גם כשהחבילה כבויה — ניווט בלבד)"
+                        aria-label="פתח חבילה"
+                      >
+                        ››
+                      </button>
+                      <div class="pack-master">
+                        <span class="pack-master-label" lang="he">חבילה</span>
+                        <div class="toggle" title="חבילה כבויה"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="pack-tile">
+                    <div class="pack-tile__main">
+                      <h3 class="pack-title" style="margin: 0 0 2px" lang="he">מגזרים</h3>
+                      <span class="pack-stat" lang="he">2 פעילים · 5 בשכבה</span>
+                    </div>
+                    <div class="pack-tile__actions">
+                      <button
+                        type="button"
+                        class="pack-tile__drill"
+                        title="פתח חבילה"
+                        aria-label="פתח חבילה"
+                      >
+                        ››
+                      </button>
+                      <div class="pack-master">
+                        <span class="pack-master-label" lang="he">חבילה</span>
+                        <div class="toggle on" title="חבילה פעילה"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </main>
+
+              <nav class="bottom-nav" role="tablist" aria-label="לשוניות">
+                <button type="button" class="nav-tab" aria-selected="false">
+                  <span class="nav-ico" aria-hidden="true">◎</span>
+                  <span lang="he">ניווט</span>
+                </button>
+                <button type="button" class="nav-tab is-active" aria-selected="true">
+                  <span class="nav-ico" aria-hidden="true">◫</span>
+                  <span lang="he">שכבות</span>
+                </button>
+                <button type="button" class="nav-tab" aria-selected="false">
+                  <span class="nav-ico" aria-hidden="true">✎</span>
+                  <span lang="he">סדנה</span>
+                </button>
+              </nav>
+            </div>
+          </div>
+
+          <!-- B: focused pack — rows, visibility ≠ animation, mixed anim example -->
+          <div class="phone" aria-label="Mockup: Layers — חבילת זרימה (ממוקד)">
+            <div class="phone-notch" aria-hidden="true"></div>
+            <div class="screen" dir="rtl" lang="he">
+              <header class="app-header">
+                <div class="app-header-top">
+                  <h1 class="app-title" style="margin: 0">OTEF מרחוק</h1>
+                  <div class="header-end">
+                    <span
+                      class="status-pip"
+                      title="מחובר"
+                      aria-label="מצב חיבור: מחובר"
+                    >
+                      <span class="connection-dot" aria-hidden="true"></span>
+                    </span>
+                    <div class="locale-toggle">
+                      <button type="button" class="active" lang="he">עברית</button>
+                      <button type="button" lang="en">EN</button>
+                    </div>
+                  </div>
+                </div>
+              </header>
+
+              <main class="app-main app-main--layers-tight">
+                <div class="focus-strip">
+                  <button type="button" class="fake-back" lang="he">‹ כל החבילות</button>
+                  <h2 class="focus-pack-title" lang="he">זרימה</h2>
+                </div>
+
+                <p
+                  class="en-hint"
+                  style="margin: 0 0 10px; font-size: 0.62rem; line-height: 1.45"
+                  lang="en"
+                >
+                  Focused view: per-row visibility + animation where applicable.
+                  Pack-level Flow stays in the header; rows can show mixed animation.
+                  <strong>Non-flow pack:</strong> omit Flow header + animation column;
+                  visibility-only rows (flow-category chip still OK when relevant).
+                </p>
+
+                <article class="pack-box pack-box--focused" data-mock="focused pack">
+                  <div class="pack-box__head">
+                    <div class="pack-box__head-main">
+                      <div class="pack-name-block">
+                        <span class="pack-stat" lang="he"
+                          >1 פעיל · 2 שכבות · שליטת זרם ברמת חבילה</span
+                        >
+                      </div>
+                    </div>
+                    <div class="pack-head-trailing">
+                      <div
+                        class="pack-flow-pack"
+                        title="שליטת זרם ברמת חבילה — נפרדת משורות"
+                      >
+                        <span class="pack-master-label" lang="he">זרם · חבילה</span>
+                        <button type="button" class="chip" lang="he">זרם · פעיל</button>
+                      </div>
+                      <div class="pack-master">
+                        <span class="pack-master-label" lang="he">חבילה</span>
+                        <div class="toggle on" title="כל החבילה"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="pack-box__rows">
+                    <div class="row row-grid" style="margin: 0">
+                      <div class="row-meta">
+                        <div class="row-title" lang="he">החלקה שנתית</div>
+                        <div class="row-badges">
+                          <span class="badge badge-flow" lang="he">זרם</span>
+                        </div>
+                        <span class="row-annot" lang="he"
+                          >שורה אחת יכולה לייצג מספר מזהי שכבה — בלי תגיות טכניות
+                          רועשות</span
+                        >
+                      </div>
+                      <div class="toggle on" title="מוצג"></div>
+                      <div class="anim-col">
+                        <span class="chip" lang="he">אנימציה · פעיל</span>
+                        <span class="row-annot" lang="he">נפרד מנראות</span>
+                      </div>
+                    </div>
+                    <div class="row row-grid" style="margin: 0">
+                      <div class="row-meta">
+                        <div class="row-title" lang="he">רשת דקה</div>
+                        <div class="row-badges">
+                          <span class="badge badge-flow" lang="he">זרם</span>
+                        </div>
+                      </div>
+                      <div class="toggle" title="מוסתר"></div>
+                      <div class="anim-col">
+                        <span class="chip muted" lang="he">אנימציה · כבוי</span>
+                        <span class="row-annot" lang="he" style="font-size: 0.6rem"
+                          >מצב מעורב באותה חבילה</span
+                        >
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              </main>
+
+              <nav class="bottom-nav" role="tablist" aria-label="לשוניות">
+                <button type="button" class="nav-tab" aria-selected="false">
+                  <span class="nav-ico" aria-hidden="true">◎</span>
+                  <span lang="he">ניווט</span>
+                </button>
+                <button type="button" class="nav-tab is-active" aria-selected="true">
+                  <span class="nav-ico" aria-hidden="true">◫</span>
+                  <span lang="he">שכבות</span>
+                </button>
+                <button type="button" class="nav-tab" aria-selected="false">
+                  <span class="nav-ico" aria-hidden="true">✎</span>
+                  <span lang="he">סדנה</span>
+                </button>
+              </nav>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Workshop: same curation surface as today (iframe embed, parent heartbeat) — visual refresh only -->
+      <div class="frame-block">
+        <p class="frame-label">3 · Workshop (סדנה) <span class="en-hint" lang="en">EN: workshop</span></p>
+        <div class="phone" aria-label="Mockup: Workshop tab">
+          <div class="phone-notch" aria-hidden="true"></div>
+          <div
+            class="screen"
+            dir="rtl"
+            lang="he"
+            style="min-height: 640px; display: flex; flex-direction: column"
+          >
+            <header class="app-header">
+              <div class="app-header-top">
+                <h1 class="app-title" style="margin: 0">OTEF מרחוק</h1>
+                <div class="header-end">
+                  <span
+                    class="status-pip"
+                    title="מחובר"
+                    aria-label="מצב חיבור: מחובר"
+                  >
+                    <span class="connection-dot" aria-hidden="true"></span>
+                  </span>
+                  <div class="locale-toggle">
+                    <button type="button" class="active" lang="he">עברית</button>
+                    <button type="button" lang="en">EN</button>
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            <div
+              class="workshop-surface"
+              data-mock="curation.html embed (unchanged contract)"
+            >
+              <p class="workshop-intro" lang="he">
+                <strong style="color: var(--color-ink)">סדנה</strong>
+                — אותו זרימת אוצרות כמו היום: מסמך מוטמע, ללא לוגיקה נוספת בטאב.
+              </p>
+              <p class="workshop-intro" lang="en" style="font-size: 0.72rem">
+                Same curation experience as the current app; English label
+                for the tab: <strong>workshop</strong>.
+              </p>
+              <div class="workshop-badges" aria-hidden="true">
+                <span class="wb wb-accent" lang="he">הטמעה (iframe)</span>
+                <span class="wb" lang="he">Supabase · parent heartbeat</span>
+                <span class="wb" lang="en">?embed=1</span>
+              </div>
+              <div class="iframe-placeholder" data-mock="curation.html?embed=1">
+                <div class="iframe-title" lang="he">אזור עבודת אוצרות</div>
+                <p lang="he" style="margin: 0; font-size: 0.82rem; line-height: 1.5">
+                  כאן יוצג ה־iframe הקיים. Supabase/heartbeat — רק ביישום המארח, לא
+                  בתוכן הiframe.
+                </p>
+                <code class="iframe-url" dir="ltr" lang="en"
+                  >curation.html?embed=1</code
+                >
+                <p class="en-hint" style="margin: 0" lang="en">
+                  Layout / safe area only — no new capabilities
+                </p>
+              </div>
+            </div>
+
+            <nav
+              class="bottom-nav"
+              role="tablist"
+              style="margin-top: auto"
+              aria-label="לשוניות"
+            >
+              <button type="button" class="nav-tab" aria-selected="false">
+                <span class="nav-ico" aria-hidden="true">◎</span>
+                <span lang="he">ניווט</span>
+              </button>
+              <button type="button" class="nav-tab" aria-selected="false">
+                <span class="nav-ico" aria-hidden="true">◫</span>
+                <span lang="he">שכבות</span>
+              </button>
+              <button type="button" class="nav-tab is-active" aria-selected="true">
+                <span class="nav-ico" aria-hidden="true">✎</span>
+                <span lang="he">סדנה</span>
+              </button>
+            </nav>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="note-strip" lang="en">
+      <p style="margin: 0 0 10px">
+        <strong>Layers model (OTEF behavior — annotations for implementers):</strong>
+        Packs in the app come from the <em>effective layer groups at runtime</em>
+        and may include <em>curated</em> special handling (e.g. merge). Some list
+        rows can represent <em>several</em> full layer ids — without noisy
+        processed/curated/raw-id badges in the UI; a compact
+        <strong>flow-category</strong> indicator (e.g. זרם) is allowed when it
+        clarifies semantics. A row’s
+        <strong>visibility</strong> toggle and its <strong>animation</strong>
+        control are <em>independent</em> where the layer supports animation.
+        <strong>Flow packs</strong> retain <em>pack-level</em> Flow control in the
+        focused pack header (current-behavior parity); <em>row-level</em> animation
+        chips are separate. The mockup shows <em>mixed</em> per-row animation in
+        the adjacent <strong>זרימה</strong> focused phone. Overview uses a
+        <strong>pack master</strong> toggle separate from the <strong>open/drill</strong>
+        control. Overflow: if pack tiles or focused rows exceed the visible area,
+        scroll inside the tab/panel container — the mockup avoids implying a
+        single endless scroll of all layers at once.
+        Table switcher and full connection copy are
+        <strong>omitted from these mockup frames</strong> on purpose; only a
+        green/red <strong>lamp</strong> is shown (offline =
+        <code>status-pip is-off</code> in a future comp).
+      </p>
+      <p style="margin: 0; font-size: 0.75rem; color: #8c847a">
+        Static HTML only. Open this file in a browser for review. See
+        <code>README.md</code> in this folder.
+      </p>
+    </div>
+  </body>
+</html>

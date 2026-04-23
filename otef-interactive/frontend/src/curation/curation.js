@@ -1,3 +1,4 @@
+import { LOCALE_EVENT, t } from "../remote/remote-locale.js";
 import { createCurationApi } from "./curation-api.js";
 import { buildPublishGeojsonFromApiFeatures } from "./curation-publish-geojson.js";
 import { createPublishedCuratedLayersPanel } from "./curation-published-layers.js";
@@ -52,6 +53,8 @@ export { createCurationPreviewState } from "./curation-state.js";
       submissionsCtlRef.current?.getSubmissionDisplayName?.(id) ?? "",
     getSubmissionColorCss: (id) =>
       submissionsCtlRef.current?.getSubmissionColorCss?.(id) ?? null,
+    getSubmissionTypeLabel: (id) =>
+      submissionsCtlRef.current?.getSubmissionTypeLabel?.(id) ?? null,
     resolveSubmissionIdByDisplayName: (displayName) =>
       submissionsCtlRef.current?.findSubmissionIdByDisplayName?.(displayName) ?? null,
   });
@@ -102,13 +105,13 @@ export { createCurationPreviewState } from "./curation-state.js";
     const sid = selectedSubmissionId();
     const name = getPublishLayerNameFromSelection();
     if (!sid || !name) {
-      setStatus("Select a submission to publish.", "error");
+      setStatus(t("curationSelectSubmissionError"), "error");
       return;
     }
 
     const projName = getSelectedProjectName();
     if (!projName) {
-      setStatus("Missing curated group name.", "error");
+      setStatus(t("curationMissingGroupError"), "error");
       return;
     }
 
@@ -133,13 +136,13 @@ export { createCurationPreviewState } from "./curation-state.js";
         Object.keys(featureStamp).length ? featureStamp : undefined,
       );
       if (!selected.features.length) {
-        setStatus("No current features to publish for this submission.", "error");
+        setStatus(t("curationNoFeaturesError"), "error");
         return;
       }
 
       const pb = publishBtn();
       if (pb) pb.disabled = true;
-      setStatus("Publishing…");
+      setStatus(t("curationPublishing"));
 
       let payload = {
         ...selected,
@@ -175,13 +178,13 @@ export { createCurationPreviewState } from "./curation-state.js";
       const result = await API.publish(name, payload, projName);
       lastPublishedFullLayerIdRef.current = result.fullLayerId || null;
       await publishedPanel.loadPublishedCuratedLayers();
-      setStatus('Published "' + (result.displayName || name) + '".', "success");
+      setStatus(t("curationPublishedSuccess", { e: result.displayName || name }), "success");
     } catch (e) {
       const msg = (e && e.message) || (e && typeof e === "object" && e.toString && e.toString()) || String(e) || "Unknown error";
       if (typeof console !== "undefined" && console.error) {
         console.error("[Curation] Publish failed:", e);
       }
-      setStatus("Publish failed: " + msg, "error");
+      setStatus(t("curationPublishFailed", { e: msg }), "error");
     } finally {
       isPublishing = false;
       updatePublishState();
@@ -196,25 +199,25 @@ export { createCurationPreviewState } from "./curation-state.js";
     const ok =
       typeof window === "undefined" || !window.confirm
         ? true
-        : window.confirm("Remove all published curated layers from the remote?");
+        : window.confirm(t("curationUnpublishAllConfirm"));
     if (!ok) return;
     const btn = el("curationUnpublishAll");
     if (btn) btn.disabled = true;
-    setStatus("Removing all published curated layers…");
+    setStatus(t("curationUnpublishAllInProgress"));
     try {
       const body = await API.unpublishAllCuratedLayers({ table: CURATION_TABLE });
       lastPublishedFullLayerIdRef.current = null;
       const n = body.removed_count;
       setStatus(
         typeof n === "number"
-          ? `Removed ${n} published layer(s) from remote.`
-          : "All published curated layers removed from remote.",
+          ? t("curationUnpublishAllRemovedN", { n })
+          : t("curationUnpublishAllSuccess"),
         "success",
       );
       await publishedPanel.loadPublishedCuratedLayers();
       await submissionsCtlRef.current.loadSubmissions({ preserveOnError: true });
     } catch (err) {
-      setStatus("Could not unpublish all: " + (err?.message || String(err)), "error");
+      setStatus(t("curationUnpublishAllError", { e: err?.message || String(err) }), "error");
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -228,7 +231,7 @@ export { createCurationPreviewState } from "./curation-state.js";
       const on = await API.getWorkshopMode(CURATION_TABLE);
       input.checked = on;
     } catch (e) {
-      setStatus("Could not load workshop mode: " + (e?.message || String(e)), "error");
+      setStatus(t("curationLoadWorkshopError", { e: e?.message || String(e) }), "error");
       input.checked = false;
     } finally {
       input.disabled = false;
@@ -243,14 +246,12 @@ export { createCurationPreviewState } from "./curation-state.js";
     try {
       await API.setWorkshopMode(next, CURATION_TABLE);
       setStatus(
-        next
-          ? "Workshop auto-publish is on: new submissions can publish automatically when eligible."
-          : "Workshop auto-publish is off.",
+        next ? t("curationWorkshopOnSuccess") : t("curationWorkshopOffSuccess"),
         "success",
       );
     } catch (e) {
       input.checked = !next;
-      setStatus("Could not update workshop mode: " + (e?.message || String(e)), "error");
+      setStatus(t("curationUpdateWorkshopError", { e: e?.message || String(e) }), "error");
     } finally {
       input.disabled = false;
     }
@@ -281,6 +282,14 @@ export { createCurationPreviewState } from "./curation-state.js";
       void onWorkshopModeToggle();
     });
     refreshBtn()?.addEventListener("click", refresh);
+    el("curationSubmissionsRefresh")?.addEventListener("click", refresh);
+
+    if (typeof window !== "undefined") {
+      window.addEventListener(LOCALE_EVENT, () => {
+        submissionsCtlRef.current?.rerenderForLocale?.();
+        publishedPanel.renderPublishedCuratedLayers();
+      });
+    }
   }
 
   if (typeof document !== "undefined") {

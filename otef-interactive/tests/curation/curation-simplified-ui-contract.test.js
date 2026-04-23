@@ -38,6 +38,33 @@ describe("curation simplified UI (HTML + orchestration contracts)", () => {
     expect(html.includes('id="curationModalPublish"')).toBe(false);
   });
 
+  test("T27: curation.html has no h2 in submissions chrome or publish blocks; combo + publish remain", () => {
+    const html = readUtf8(CURATION_HTML);
+    expect((html.match(/<h2\b/gi) || []).length).toBe(0);
+    expect(html.includes('id="curationSubmissionCombo"')).toBe(true);
+    expect(html.includes('id="curationPublish"')).toBe(true);
+    const bodyIdx = html.indexOf("<body");
+    const fromBody = bodyIdx >= 0 ? html.slice(bodyIdx) : html;
+    const comboIdx = fromBody.indexOf('id="curationSubmissionCombo"');
+    const comboSlice = fromBody.slice(comboIdx, comboIdx + 8000);
+    expect(comboSlice.includes("curation-submissions-toolbar")).toBe(false);
+    expect((comboSlice.match(/<h2\b/gi) || []).length).toBe(0);
+    const pubIdx = fromBody.indexOf('id="curationPublish"');
+    expect(pubIdx).toBeGreaterThan(0);
+    const publishBlock = fromBody.slice(
+      Math.max(0, pubIdx - 400),
+      fromBody.indexOf("</section>", pubIdx) + 12,
+    );
+    expect((publishBlock.match(/<h2\b/gi) || []).length).toBe(0);
+  });
+
+  test("T27: published section label is a div with role=heading (aria-level=2), not h2", () => {
+    const html = readUtf8(CURATION_HTML);
+    expect(html).toMatch(/class="curation-published-heading"[^>]*\brole="heading"/);
+    expect(html).toMatch(/class="curation-published-heading"[^>]*\baria-level="2"/);
+    expect((html.match(/<h2\b/gi) || []).length).toBe(0);
+  });
+
   test("curation.js loads features with current-only revisions and omits map / edit flows", () => {
     const js = readUtf8(CURATION_JS);
     const publishGeojsonJs = readUtf8(CURATION_PUBLISH_GEOJSON_JS);
@@ -61,6 +88,6 @@ describe("curation simplified UI (HTML + orchestration contracts)", () => {
     expect(js.includes("setPublishModeSegmentState")).toBe(false);
     expect(js.includes("publishSelectedCuratedLayer")).toBe(true);
     expect(js.includes("remote controller Layers sheet")).toBe(false);
-    expect(js.includes('Published "')).toBe(true);
+    expect(js.includes("curationPublishedSuccess")).toBe(true);
   });
 });

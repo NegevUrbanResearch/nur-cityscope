@@ -2,12 +2,43 @@
  * Published curated layers list: load, render, unpublish, submission click-through.
  */
 
+import { getLocale, t } from "../remote/remote-locale.js";
 import { sanitizeCssColor } from "./curation-color-utils.js";
 import {
   buildCurationColorSwatchHtml,
   chipClassForTag,
   getSubmissionTagLabels,
 } from "./curation-submissions.js";
+
+/**
+ * When a row resolves to a known submission, use the same type_label → tags path as the combobox.
+ * Otherwise keep GeoJSON-derived tags.
+ * @param {string} resolvedSubmissionId normalized id or ""
+ * @param {string[] | null | undefined} geoInfoTags
+ * @param {(id: string) => string | null | undefined} [getSubmissionTypeLabel]
+ * @returns {string[]}
+ */
+export function resolvePublishedLayerInfoTags(
+  resolvedSubmissionId,
+  geoInfoTags,
+  getSubmissionTypeLabel,
+) {
+  const sid = String(resolvedSubmissionId || "").trim().toLowerCase();
+  const fallback = Array.isArray(geoInfoTags) ? geoInfoTags : [];
+  if (!sid) return fallback.slice();
+  const typeLabel = getSubmissionTypeLabel?.(sid);
+  if (typeLabel != null && String(typeLabel).trim() !== "") {
+    return getSubmissionTagLabels({ typeLabel: String(typeLabel).trim() });
+  }
+  return fallback.slice();
+}
+
+function displayCurationTagForPublishedList(tag) {
+  const s = String(tag);
+  if (s === "Tkuma Line") return t("curationTagTkumaLine");
+  if (s === "Memorials") return t("curationTagMemorials");
+  return s;
+}
 
 export function extractSubmissionIdsFromLayerData(layerData) {
   const ids = new Set();
@@ -71,13 +102,13 @@ export function getGeojsonDataFromGisLayerRecord(activeLayer) {
  * @param {string} merged
  */
 function submissionTypeLabelMergedIsRecognized(merged) {
-  const t = String(merged || "").trim().toLowerCase();
-  if (!t) return false;
-  if (t.includes("mixed") || t.includes("multiple")) return true;
-  if (t.includes("memorial")) return true;
-  if (t.includes("tkuma") || t.includes("moreshet")) return true;
-  if (t.includes("axis") || t.includes("route")) return true;
-  if (/\bline\b/.test(t)) return true;
+  const mergedLower = String(merged || "").trim().toLowerCase();
+  if (!mergedLower) return false;
+  if (mergedLower.includes("mixed") || mergedLower.includes("multiple")) return true;
+  if (mergedLower.includes("memorial")) return true;
+  if (mergedLower.includes("tkuma") || mergedLower.includes("moreshet")) return true;
+  if (mergedLower.includes("axis") || mergedLower.includes("route")) return true;
+  if (/\bline\b/.test(mergedLower)) return true;
   return false;
 }
 
@@ -148,11 +179,10 @@ export function formatUpdatedAtForUi(iso) {
   if (iso == null || String(iso).trim() === "") return "—";
   const d = new Date(String(iso));
   if (Number.isNaN(d.getTime())) return "—";
+  const locale = getLocale() === "he" ? "he-IL" : "en-US";
+  const opts = { dateStyle: "medium", timeStyle: "short", hour12: false };
   try {
-    return d.toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
+    return d.toLocaleString(locale, opts);
   } catch {
     return d.toISOString().slice(0, 16).replace("T", " ");
   }
@@ -160,13 +190,15 @@ export function formatUpdatedAtForUi(iso) {
 
 /**
  * @param {Record<string, unknown> | null | undefined} activeLayer
+ * @returns {{ updatedAtRaw: string; colorRaw: string | null; infoTags: string[] }}
  */
 export function derivePublishedLayerUiFields(activeLayer) {
   const data = getGeojsonDataFromGisLayerRecord(activeLayer);
   const updatedRaw =
     activeLayer && (activeLayer.updated_at ?? activeLayer.updatedAt ?? activeLayer.modified_at);
+  const updatedAtRaw = updatedRaw != null ? String(updatedRaw) : "";
   return {
-    updatedAtLabel: formatUpdatedAtForUi(updatedRaw != null ? String(updatedRaw) : ""),
+    updatedAtRaw,
     colorRaw: extractColorFromGeojsonData(data),
     infoTags: extractInfoTagsFromGeojsonData(data),
   };
@@ -178,12 +210,13 @@ export function derivePublishedLayerUiFields(activeLayer) {
  * @param {() => HTMLElement | null} deps.publishedLayersContainer
  * @param {(s: string) => string} deps.escapeHtml
  * @param {(msg: string, type?: string) => void} deps.setStatus
- * @param {{ current: Array<{ fullLayerId: string; displayName: string; submissionId: string; updatedAtLabel: string; colorRaw: string | null; infoTags: string[] }> }} deps.publishedCuratedLayersRef
+ * @param {{ current: Array<{ fullLayerId: string; displayName: string; submissionId: string; updatedAtRaw: string; colorRaw: string | null; infoTags: string[] }> }} deps.publishedCuratedLayersRef
  * @param {{ current: string | null }} deps.lastPublishedFullLayerIdRef
  * @param {(submissionId: string) => void} deps.selectSubmissionById
  * @param {(submissionId: string) => boolean} deps.submissionExists
  * @param {(submissionId: string) => string} [deps.getSubmissionDisplayName]
  * @param {(submissionId: string) => string | null} [deps.getSubmissionColorCss]
+ * @param {(submissionId: string) => string | null} [deps.getSubmissionTypeLabel] submissions API type_label, same as combobox
  * @param {(displayName: string) => string | null} [deps.resolveSubmissionIdByDisplayName] when GeoJSON lacks submission_id, match card title to submission row name
  */
 export function createPublishedCuratedLayersPanel(deps) {
@@ -198,6 +231,7 @@ export function createPublishedCuratedLayersPanel(deps) {
     submissionExists,
     getSubmissionDisplayName = () => "",
     getSubmissionColorCss = () => null,
+    getSubmissionTypeLabel = () => null,
     resolveSubmissionIdByDisplayName,
   } = deps;
 
@@ -207,7 +241,7 @@ export function createPublishedCuratedLayersPanel(deps) {
     return list
       .map((tag) => {
         const cls = chipClassForTag(tag);
-        return `<span class="${cls}">${escapeHtml(tag)}</span>`;
+        return `<span class="${cls}">${escapeHtml(displayCurationTagForPublishedList(tag))}</span>`;
       })
       .join("");
   }
@@ -217,7 +251,7 @@ export function createPublishedCuratedLayersPanel(deps) {
     if (!container) return;
     const publishedCuratedLayers = publishedCuratedLayersRef.current;
     if (!Array.isArray(publishedCuratedLayers) || publishedCuratedLayers.length === 0) {
-      container.innerHTML = '<div class="curation-status">No published curated layers.</div>';
+      container.innerHTML = '<div class="curation-status">' + t("curationNoPublishedLayers") + "</div>";
       return;
     }
     container.innerHTML = publishedCuratedLayers
@@ -229,7 +263,7 @@ export function createPublishedCuratedLayersPanel(deps) {
           resolveSubmissionIdByDisplayName?.(displayName) || "",
         ).trim().toLowerCase();
         const submissionId = sidFromGeo || sidFromTitle;
-        const updatedAtLabel = String(layer.updatedAtLabel || "—");
+        const updatedAtLabel = formatUpdatedAtForUi(layer.updatedAtRaw);
         const colorRaw = layer.colorRaw != null ? String(layer.colorRaw) : "";
         const geoColor = sanitizeCssColor(colorRaw);
         const listColor =
@@ -242,27 +276,32 @@ export function createPublishedCuratedLayersPanel(deps) {
         );
         const swatch =
           swatchInner !== ""
-            ? `<span class="curation-published-layer-color" title="Submission color">${swatchInner}</span>`
+            ? `<span class="curation-published-layer-color" title="${escapeHtml(t("curationSubmissionColorTitle"))}">${swatchInner}</span>`
             : "";
-        const chips = renderTagChips(layer.infoTags);
+        const infoTags = resolvePublishedLayerInfoTags(
+          submissionId,
+          layer.infoTags,
+          getSubmissionTypeLabel,
+        );
+        const chips = renderTagChips(infoTags);
         const subName = submissionId ? String(getSubmissionDisplayName(submissionId) || "").trim() : "";
         const openLabel = submissionId
           ? subName
-            ? `Open submission ${subName} for published layer ${displayName}`
-            : `Open submission for published layer ${displayName}`
-          : `Published layer ${displayName}: submission unavailable (multiple or unknown); activates status message`;
+            ? t("curationOpenSubmissionForLayer", { e: subName, n: displayName })
+            : t("curationOpenSubmissionUnnamed", { e: displayName })
+          : t("curationPublishedLayerUnknown", { e: displayName });
         return `
           <div class="curation-published-layer-card" data-full-layer-id="${escapeHtml(fullLayerId)}">
             <div class="curation-published-layer-body">
               <button type="button" class="curation-published-layer-main curation-published-layer-select" data-submission-id="${escapeHtml(submissionId)}" aria-label="${escapeHtml(openLabel)}">
                 <div class="curation-published-layer-name">${escapeHtml(displayName)}</div>
                 <div class="curation-published-layer-meta-row">
-                  <span class="curation-published-layer-updated" title="Layer last updated">${escapeHtml(updatedAtLabel)}</span>
+                  <span class="curation-published-layer-updated" title="${escapeHtml(t("curationLayerUpdatedTitle"))}">${escapeHtml(updatedAtLabel)}</span>
                   ${swatch}
                 </div>
-                <div class="curation-published-layer-tags" aria-label="Layer type tags">${chips}</div>
+                <div class="curation-published-layer-tags" aria-label="${escapeHtml(t("curationLayerTypeTagsAria"))}">${chips}</div>
               </button>
-              <button type="button" class="curation-header-btn curation-published-layer-remove curation-unpublish-btn" data-full-layer-id="${escapeHtml(fullLayerId)}" aria-label="Remove layer from remote">Remove</button>
+              <button type="button" class="curation-header-btn curation-published-layer-remove curation-unpublish-btn" data-full-layer-id="${escapeHtml(fullLayerId)}" aria-label="${escapeHtml(t("curationUnpublishButtonAria"))}">${escapeHtml(t("curationUnpublishButton"))}</button>
             </div>
           </div>`;
       })
@@ -274,11 +313,11 @@ export function createPublishedCuratedLayersPanel(deps) {
           .trim()
           .toLowerCase();
         if (!sid) {
-          setStatus("This published layer maps to multiple/unknown submissions.", "error");
+          setStatus(t("curationMapUnknownSubmissions"), "error");
           return;
         }
         if (!submissionExists(sid)) {
-          setStatus(`Submission ${sid} is not available in the submissions list.`, "error");
+          setStatus(t("curationMapSubmissionNotInList", { e: sid }), "error");
           return;
         }
         selectSubmissionById(sid);
@@ -293,7 +332,7 @@ export function createPublishedCuratedLayersPanel(deps) {
         const ok =
           typeof window === "undefined" || !window.confirm
             ? true
-            : window.confirm(`Remove "${fullLayerId}" from published remote layers?`);
+            : window.confirm(t("curationUnpublishOneConfirm", { e: fullLayerId }));
         if (!ok) return;
         btn.disabled = true;
         try {
@@ -304,10 +343,10 @@ export function createPublishedCuratedLayersPanel(deps) {
           if (lastPublishedFullLayerIdRef.current === fullLayerId) {
             lastPublishedFullLayerIdRef.current = null;
           }
-          setStatus(`Removed "${fullLayerId}" from published remote layers.`, "success");
+          setStatus(t("curationUnpublishOneSuccess", { e: fullLayerId }), "success");
           await loadPublishedCuratedLayers();
         } catch (err) {
-          setStatus("Could not remove published layer: " + (err?.message || String(err)), "error");
+          setStatus(t("curationUnpublishOneError", { e: err?.message || String(err) }), "error");
           btn.disabled = false;
         }
       });
@@ -317,7 +356,7 @@ export function createPublishedCuratedLayersPanel(deps) {
   async function loadPublishedCuratedLayers() {
     const container = publishedLayersContainer();
     if (!container) return;
-    container.innerHTML = '<div class="curation-status">Loading published curated layers…</div>';
+    container.innerHTML = '<div class="curation-status">' + t("curationLoadingPublished") + "</div>";
     try {
       const state = await API.layerGroups("otef");
       const activeLayers = await API.activeGisLayers("otef");
@@ -365,7 +404,7 @@ export function createPublishedCuratedLayersPanel(deps) {
       renderPublishedCuratedLayers();
     } catch (err) {
       publishedCuratedLayersRef.current = [];
-      container.innerHTML = `<div class="curation-status error">Could not load published curated layers: ${escapeHtml(err?.message || String(err))}</div>`;
+      container.innerHTML = `<div class="curation-status error">${escapeHtml(t("curationLoadPublishedError", { e: err?.message || String(err) }))}</div>`;
     }
   }
 

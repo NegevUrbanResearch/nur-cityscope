@@ -57,13 +57,30 @@ function parseLayerNameWithGeometrySuffix(name) {
   };
 }
 
+/**
+ * Human-readable label for layer rows and lists. Replaces underscore/hyphen runs
+ * with spaces and collapses whitespace. For UI only; never use for layer ids,
+ * fullLayerIds, or API keys.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+function formatLayerLabelForDisplay(name) {
+  if (name == null || typeof name !== "string") return "";
+  const trimmed = name.trim();
+  if (trimmed === "") return "";
+  return trimmed.replace(/[\s_\-]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
 if (typeof window !== "undefined") {
   window.normalizeLayerBaseName = normalizeLayerBaseName;
   window.parseLayerNameWithGeometrySuffix = parseLayerNameWithGeometrySuffix;
+  window.formatLayerLabelForDisplay = formatLayerLabelForDisplay;
   window.LayerNameUtils = {
     normalizeLayerBaseName,
     parseLayerNameWithGeometrySuffix,
+    formatLayerLabelForDisplay,
   };
 }
 
-export { normalizeLayerBaseName, parseLayerNameWithGeometrySuffix };
+export { normalizeLayerBaseName, parseLayerNameWithGeometrySuffix, formatLayerLabelForDisplay };

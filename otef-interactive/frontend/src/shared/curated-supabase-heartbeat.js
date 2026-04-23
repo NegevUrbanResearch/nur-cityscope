@@ -6,6 +6,7 @@
  * one interval + fetch per table so both surfaces refresh after a pull.
  */
 
+import { isOtefCurationEmbedded } from "../curation/curation-embed.js";
 import { shouldTriggerCuratedReload } from "./curated-supabase-reload-trigger.js";
 
 const DEFAULT_INTERVAL_MS = 20000;
@@ -21,6 +22,10 @@ let sharedHb = null;
  * @returns {() => void} stop function
  */
 export function startCuratedSupabaseHeartbeat(options = {}) {
+  if (typeof window !== "undefined" && isOtefCurationEmbedded()) {
+    return () => {};
+  }
+
   const table = options.table || "otef";
   const intervalMs =
     typeof options.intervalMs === "number" && options.intervalMs >= 5000
