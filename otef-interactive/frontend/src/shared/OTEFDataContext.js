@@ -16,6 +16,49 @@ function getLogger() {
   };
 }
 
+function layerGroupsEqual(a, b) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const ga = a[i],
+      gb = b[i];
+    if (ga === gb) continue;
+    if (ga.id !== gb.id || ga.enabled !== gb.enabled) return false;
+    const la = ga.layers || [],
+      lb = gb.layers || [];
+    if (la.length !== lb.length) return false;
+    for (let j = 0; j < la.length; j++) {
+      if (la[j].id !== lb[j].id || la[j].enabled !== lb[j].enabled) return false;
+    }
+  }
+  return true;
+}
+
+function animationsEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const ka = Object.keys(a),
+    kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
+function viewportEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.zoom !== b.zoom) return false;
+  const ba = a.bbox,
+    bb = b.bbox;
+  if (!ba || !bb || ba.length !== bb.length) return false;
+  for (let i = 0; i < ba.length; i++) {
+    if (Math.abs(ba[i] - bb[i]) > 0.01) return false;
+  }
+  return true;
+}
+
 class OTEFDataContextClass {
   constructor() {
     this._tableName = null;
@@ -44,6 +87,9 @@ class OTEFDataContextClass {
     this._velocity = { vx: 0, vy: 0 };
     this._lastVelocityUpdate = 0;
     this._lastLocalStateTimestamp = 0;
+    this._pendingLayerOps = 0;
+    this._pendingAnimationOps = 0;
+    this._viewportSeq = 0;
   }
 
   async init(tableName = "otef") {
@@ -106,16 +152,20 @@ class OTEFDataContextClass {
   }
 
   _setViewport(viewport) {
+    if (viewportEqual(this._viewport, viewport)) return;
+    this._viewportSeq++;
     this._viewport = viewport;
     this._notify("viewport", this._viewport);
   }
 
   _setLayerGroups(layerGroups) {
+    if (layerGroupsEqual(this._layerGroups, layerGroups)) return;
     this._layerGroups = layerGroups;
     this._notify("layerGroups", this._layerGroups);
   }
 
   _setAnimations(animations) {
+    if (animationsEqual(this._animations, animations)) return;
     this._animations = animations;
     this._notify("animations", this._animations);
   }
