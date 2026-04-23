@@ -10,6 +10,29 @@ import {
   getSubmissionTagLabels,
 } from "./curation-submissions.js";
 
+/**
+ * When a row resolves to a known submission, use the same type_label → tags path as the combobox.
+ * Otherwise keep GeoJSON-derived tags.
+ * @param {string} resolvedSubmissionId normalized id or ""
+ * @param {string[] | null | undefined} geoInfoTags
+ * @param {(id: string) => string | null | undefined} [getSubmissionTypeLabel]
+ * @returns {string[]}
+ */
+export function resolvePublishedLayerInfoTags(
+  resolvedSubmissionId,
+  geoInfoTags,
+  getSubmissionTypeLabel,
+) {
+  const sid = String(resolvedSubmissionId || "").trim().toLowerCase();
+  const fallback = Array.isArray(geoInfoTags) ? geoInfoTags : [];
+  if (!sid) return fallback.slice();
+  const typeLabel = getSubmissionTypeLabel?.(sid);
+  if (typeLabel != null && String(typeLabel).trim() !== "") {
+    return getSubmissionTagLabels({ typeLabel: String(typeLabel).trim() });
+  }
+  return fallback.slice();
+}
+
 function displayCurationTagForPublishedList(tag) {
   const s = String(tag);
   if (s === "Tkuma Line") return t("curationTagTkumaLine");
@@ -193,6 +216,7 @@ export function derivePublishedLayerUiFields(activeLayer) {
  * @param {(submissionId: string) => boolean} deps.submissionExists
  * @param {(submissionId: string) => string} [deps.getSubmissionDisplayName]
  * @param {(submissionId: string) => string | null} [deps.getSubmissionColorCss]
+ * @param {(submissionId: string) => string | null} [deps.getSubmissionTypeLabel] submissions API type_label, same as combobox
  * @param {(displayName: string) => string | null} [deps.resolveSubmissionIdByDisplayName] when GeoJSON lacks submission_id, match card title to submission row name
  */
 export function createPublishedCuratedLayersPanel(deps) {
@@ -207,6 +231,7 @@ export function createPublishedCuratedLayersPanel(deps) {
     submissionExists,
     getSubmissionDisplayName = () => "",
     getSubmissionColorCss = () => null,
+    getSubmissionTypeLabel = () => null,
     resolveSubmissionIdByDisplayName,
   } = deps;
 
@@ -253,7 +278,12 @@ export function createPublishedCuratedLayersPanel(deps) {
           swatchInner !== ""
             ? `<span class="curation-published-layer-color" title="${escapeHtml(t("curationSubmissionColorTitle"))}">${swatchInner}</span>`
             : "";
-        const chips = renderTagChips(layer.infoTags);
+        const infoTags = resolvePublishedLayerInfoTags(
+          submissionId,
+          layer.infoTags,
+          getSubmissionTypeLabel,
+        );
+        const chips = renderTagChips(infoTags);
         const subName = submissionId ? String(getSubmissionDisplayName(submissionId) || "").trim() : "";
         const openLabel = submissionId
           ? subName

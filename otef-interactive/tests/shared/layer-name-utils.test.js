@@ -44,11 +44,62 @@ describe("getLayerDisplayLabel", () => {
     ).toBe("Infiltration into a community — axis");
   });
 
+  test("resolves runtime manifest id with hyphen (october_7th pack)", () => {
+    expect(
+      getLayerDisplayLabel(
+        "october_7th.אזור_הרס-אזור",
+        "en",
+        "אזור_הרס-אזור",
+        ["october_7th.אזור_הרס-אזור"],
+      ),
+    ).toBe("Destruction — area");
+  });
+
   test("falls back to formatLayerLabelForDisplay when id unknown", () => {
     expect(
       getLayerDisplayLabel("unknown_pack.layer", "he", "foo_bar-baz", [
         "unknown_pack.layer",
       ]),
     ).toBe("foo bar baz");
+  });
+
+  test("glossary en for GIS pack layer tiles (land_use, greens, future dev, muni transport)", () => {
+    expect(
+      getLayerDisplayLabel("land_use.מגורים", "en", "מגורים", ["land_use.מגורים"]),
+    ).toBe("Residential");
+    expect(
+      getLayerDisplayLabel("greens.גן_לאומי", "en", "גן לאומי", [
+        "greens.גן_לאומי",
+      ]),
+    ).toBe("National park");
+    expect(
+      getLayerDisplayLabel("future_development.מימושים", "en", "מימושים", [
+        "future_development.מימושים",
+      ]),
+    ).toBe("Zoning build-out");
+    expect(
+      getLayerDisplayLabel("muniplicity_transport.שבילי_אופניים", "en", "שבילי אופניים", [
+        "muniplicity_transport.שבילי_אופניים",
+      ]),
+    ).toBe("Bicycle paths");
+  });
+
+  test("glossary en for runtime ids (muni outline, road exit, land_use fire zone underscore)", () => {
+    expect(
+      getLayerDisplayLabel(
+        "muniplicity_transport.מועצות_אזוריות_מתאר",
+        "en",
+        "מועצות אזוריות מתאר",
+        ["muniplicity_transport.מועצות_אזוריות_מתאר"],
+      ),
+    ).toBe("Regional councils (cartographic outline)");
+    expect(
+      getLayerDisplayLabel("future_development.יציאה_כביש", "en", "יציאה כביש", [
+        "future_development.יציאה_כביש",
+      ]),
+    ).toBe("Road exit");
+    expect(
+      getLayerDisplayLabel("land_use.שטחי_אש_", "en", "שטחי אש", ["land_use.שטחי_אש_"]),
+    ).toBe("Fire zones");
   });
 });

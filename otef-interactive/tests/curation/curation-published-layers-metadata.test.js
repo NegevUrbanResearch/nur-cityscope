@@ -12,6 +12,7 @@ import {
   formatUpdatedAtForUi,
   getGeojsonDataFromGisLayerRecord,
   normalizeGisLayerGeojsonInput,
+  resolvePublishedLayerInfoTags,
 } from "../../frontend/src/curation/curation-published-layers.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -186,6 +187,34 @@ describe("published layer metadata helpers", () => {
     expect(ui).not.toHaveProperty("updatedAtLabel");
     expect(ui.colorRaw).toBe(null);
     expect(ui.infoTags).toEqual([]);
+  });
+
+  test("resolvePublishedLayerInfoTags uses submission type_label when id maps to a known row (parity with combobox)", () => {
+    const geoOnlyTkuma = ["Tkuma Line"];
+    const getLabel = (id) => (String(id).toLowerCase() === "abc" ? "Mixed" : null);
+    expect(resolvePublishedLayerInfoTags("abc", geoOnlyTkuma, getLabel)).toEqual([
+      "Tkuma Line",
+      "Memorials",
+    ]);
+  });
+
+  test("resolvePublishedLayerInfoTags falls back to GeoJSON tags when no submission id", () => {
+    expect(
+      resolvePublishedLayerInfoTags("", ["Tkuma Line"], () => "Mixed"),
+    ).toEqual(["Tkuma Line"]);
+  });
+
+  test("resolvePublishedLayerInfoTags falls back to GeoJSON when type_label unknown for id", () => {
+    const geo = ["Memorials"];
+    expect(
+      resolvePublishedLayerInfoTags("not-in-list", geo, () => null),
+    ).toEqual(["Memorials"]);
+  });
+
+  test("resolvePublishedLayerInfoTags single-tag submission matches combobox (Memorials only)", () => {
+    expect(
+      resolvePublishedLayerInfoTags("x", ["Tkuma Line"], () => "Memorials"),
+    ).toEqual(["Memorials"]);
   });
 
   test("derivePublishedLayerUiFields uses updatedAt / modified_at fallbacks and empty raw when missing", () => {

@@ -15,9 +15,17 @@ function normSubmissionId(id) {
 }
 
 function escapeHtml(s) {
-  const div = document.createElement("div");
-  div.textContent = s == null ? "" : String(s);
-  return div.innerHTML;
+  if (typeof document !== "undefined" && typeof document.createElement === "function") {
+    const div = document.createElement("div");
+    div.textContent = s == null ? "" : String(s);
+    return div.innerHTML;
+  }
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /**
@@ -171,6 +179,18 @@ export function createSubmissionsPanel(deps) {
     const k = normSubmissionId(id);
     const row = submissions.find((s) => s.id === k);
     return row?.colorCss ?? null;
+  }
+
+  /**
+   * Same `type_label` string as the combobox row (for `getSubmissionTagLabels` parity with published list).
+   * @param {string} id
+   * @returns {string | null} null if unknown / not in current list
+   */
+  function getSubmissionTypeLabel(id) {
+    const k = normSubmissionId(id);
+    if (!k) return null;
+    if (!submissionTypeById.has(k)) return null;
+    return submissionTypeById.get(k) ?? null;
   }
 
   /** Match curated GIS display_name to the submissions list row (GeoJSON may omit submission_id). */
@@ -455,6 +475,7 @@ export function createSubmissionsPanel(deps) {
     hasSubmissionId,
     getSubmissionDisplayName,
     getSubmissionColorCss,
+    getSubmissionTypeLabel,
     findSubmissionIdByDisplayName,
     rerenderForLocale,
   };

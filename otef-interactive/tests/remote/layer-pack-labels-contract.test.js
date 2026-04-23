@@ -14,6 +14,10 @@ describe("layer-pack-display-names (contract)", () => {
   test("getPackDisplayLabel matches PACK_LABELS after normalizePackId when direct key misses", () => {
     expect(getPackDisplayLabel("map-3 future", "en")).toBe("Map 3 — future");
     expect(getPackDisplayLabel("MUNICIPALITY transport", "he")).toBe("תחבורה מוניציפלית");
+    // layers/layers-manifest.json pack id (distinct spelling)
+    expect(getPackDisplayLabel("muniplicity_transport", "en")).toBe("Municipal transport");
+    expect(getPackDisplayLabel("greens", "he")).toBe("ירוקים");
+    expect(getPackDisplayLabel("projector_base", "he")).toBe("בסיס מקרן");
   });
 
   test("REQUIRED_PACK_IDS lists known packs", () => {
@@ -23,8 +27,12 @@ describe("layer-pack-display-names (contract)", () => {
       "map_3_future",
       "curated_moresht_axis",
       "future_development",
+      "gaza",
+      "greens",
+      "land_use",
       "municipality_transport",
       "municpality_transport",
+      "muniplicity_transport",
       "curated",
     ]);
   });

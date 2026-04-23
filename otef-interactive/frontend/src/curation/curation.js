@@ -53,6 +53,8 @@ export { createCurationPreviewState } from "./curation-state.js";
       submissionsCtlRef.current?.getSubmissionDisplayName?.(id) ?? "",
     getSubmissionColorCss: (id) =>
       submissionsCtlRef.current?.getSubmissionColorCss?.(id) ?? null,
+    getSubmissionTypeLabel: (id) =>
+      submissionsCtlRef.current?.getSubmissionTypeLabel?.(id) ?? null,
     resolveSubmissionIdByDisplayName: (displayName) =>
       submissionsCtlRef.current?.findSubmissionIdByDisplayName?.(displayName) ?? null,
   });

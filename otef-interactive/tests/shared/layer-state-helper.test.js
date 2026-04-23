@@ -107,7 +107,32 @@ describe("layer-state-helper: curated group display names", () => {
     delete global.layerRegistry;
   });
 
-  test("canonicalizes single curated group to Moreshet Axis name/id", () => {
+  test("preserves API color fields on context-only workshop layers for UI swatches", () => {
+    global.OTEFDataContext = {
+      getLayerGroups: () => [
+        {
+          id: "curated_x",
+          enabled: true,
+          layers: [
+            {
+              id: "7",
+              displayName: "Proposal",
+              enabled: true,
+              display_color: "#c0ffee",
+            },
+          ],
+        },
+      ],
+    };
+    delete global.layerRegistry;
+
+    const groups = getEffectiveLayerGroups();
+    expect(
+      groups[0].layers.some((l) => l && l.display_color === "#c0ffee"),
+    ).toBe(true);
+  });
+
+  test("canonicalizes single curated group to Workshop name/id", () => {
     global.OTEFDataContext = {
       getLayerGroups: () => [
         {
@@ -124,10 +149,10 @@ describe("layer-state-helper: curated group display names", () => {
     const groups = getEffectiveLayerGroups();
     expect(groups).toHaveLength(1);
     expect(groups[0].id).toBe("curated_moresht_axis");
-    expect(groups[0].name).toBe("Moreshet Axis");
+    expect(groups[0].name).toBe("Workshop");
   });
 
-  test("canonicalizes curated slug-only group to Moreshet Axis", () => {
+  test("canonicalizes curated slug-only group to Workshop", () => {
     global.OTEFDataContext = {
       getLayerGroups: () => [
         {
@@ -142,10 +167,10 @@ describe("layer-state-helper: curated group display names", () => {
     const groups = getEffectiveLayerGroups();
     expect(groups).toHaveLength(1);
     expect(groups[0].id).toBe("curated_moresht_axis");
-    expect(groups[0].name).toBe("Moreshet Axis");
+    expect(groups[0].name).toBe("Workshop");
   });
 
-  test("coalesces multiple curated project groups into one Moreshet Axis group", () => {
+  test("coalesces multiple curated project groups into one Workshop group", () => {
     global.OTEFDataContext = {
       getLayerGroups: () => [
         {
@@ -167,7 +192,7 @@ describe("layer-state-helper: curated group display names", () => {
     const groups = getEffectiveLayerGroups();
     expect(groups).toHaveLength(1);
     expect(groups[0].id).toBe("curated_moresht_axis");
-    expect(groups[0].name).toBe("Moreshet Axis");
+    expect(groups[0].name).toBe("Workshop");
     expect(groups[0].layers.map((l) => l.id)).toEqual(["10", "11", "pink_line_parking"]);
   });
 
