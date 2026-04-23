@@ -497,6 +497,12 @@ body {
 
 /* Projection Viewport Highlight Box (Uniform Diffused Light) */
 .highlight-box {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  will-change: transform, width, height;
+  transition: transform 0.08s linear, width 0.08s linear, height 0.08s linear;
   /* Crisp 1px white border */
   border: 1px solid rgba(255, 255, 255, 0.6);
   /* Uniform tint across the whole area */

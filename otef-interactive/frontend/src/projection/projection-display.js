@@ -207,9 +207,6 @@ function getOrCreateHighlightBox() {
   if (!box) {
     box = document.createElement("div");
     box.className = "highlight-box";
-    // REMOVED CSS transition for LERP-based smoothing
-    // Aesthetics are now handled in styles.css
-    box.style.cssText = "position: absolute; pointer-events: none;";
     overlay.querySelector("svg")?.remove();
     overlay.appendChild(box);
 
@@ -220,16 +217,11 @@ function getOrCreateHighlightBox() {
     heading.style.cssText =
       "position:absolute;left:50%;top:8%;width:3px;height:38%;background:rgba(255,200,0,0.95);box-shadow:0 0 10px rgba(255,200,0,0.8);transform:translateX(-50%);display:none;";
     box.appendChild(heading);
-
-    // Initialize smoothing loop
-    startSmoothingLoop(box);
   }
   return box;
 }
 
-// Smoothing state
 let targetHighlight = { x: 0, y: 0, w: 0, h: 0 };
-let currentHighlight = { x: 0, y: 0, w: 0, h: 0 };
 if (typeof window !== "undefined") {
   if (typeof window.rotationEditModeActive === "undefined") {
     window.rotationEditModeActive = false;
@@ -237,41 +229,6 @@ if (typeof window !== "undefined") {
   if (typeof window.rotationPreviewAngleDeg === "undefined") {
     window.rotationPreviewAngleDeg = 0;
   }
-}
-
-function getProjectorSmoothingConfig() {
-  const perfCfg =
-    typeof MapProjectionConfig !== "undefined" &&
-    MapProjectionConfig.GIS_PERF &&
-    MapProjectionConfig.GIS_PERF.PROJECTOR_SMOOTHING
-      ? MapProjectionConfig.GIS_PERF.PROJECTOR_SMOOTHING
-      : null;
-  return (
-    perfCfg || {
-      ENABLE_ADAPTIVE_SMOOTHING: false,
-      BASE_LERP:
-        (typeof MapProjectionConfig !== "undefined" &&
-          MapProjectionConfig.PROJECTION_LERP_FACTOR) ||
-        0.15,
-      FAST_LERP:
-        (typeof MapProjectionConfig !== "undefined" &&
-          MapProjectionConfig.PROJECTION_LERP_FACTOR) ||
-        0.15,
-      SPEED_THRESHOLD_PX: 40,
-    }
-  );
-}
-
-function getLerpFactorForCurrentFrame(speedPx) {
-  const cfg = getProjectorSmoothingConfig();
-  if (
-    typeof window !== "undefined" &&
-    window.HighlightSmoothingPolicy &&
-    typeof window.HighlightSmoothingPolicy.computeLerpFactor === "function"
-  ) {
-    return window.HighlightSmoothingPolicy.computeLerpFactor({ speedPx }, cfg);
-  }
-  return typeof cfg.BASE_LERP === "number" ? cfg.BASE_LERP : 0.15;
 }
 
 function getHighlightAngleDeg(state) {
@@ -282,49 +239,32 @@ function getHighlightAngleDeg(state) {
   return preview;
 }
 
-function startSmoothingLoop(box) {
+function applyHighlightPosition(box) {
   const heading = box.querySelector(".highlight-angle-indicator");
-  const step = () => {
-    const dx = targetHighlight.x - currentHighlight.x;
-    const dy = targetHighlight.y - currentHighlight.y;
-    const driftPx = Math.sqrt(dx * dx + dy * dy);
-    const lerpFactor = getLerpFactorForCurrentFrame(driftPx);
+  const t = targetHighlight;
+  box.style.width = t.w + "px";
+  box.style.height = t.h + "px";
+  box.style.transformOrigin = "center center";
+  const angle = getHighlightAngleDeg({
+    isEditMode:
+      typeof window !== "undefined" && !!window.rotationEditModeActive,
+    previewAngleDeg:
+      typeof window !== "undefined" ? window.rotationPreviewAngleDeg : 0,
+  });
+  box.style.transform =
+    "translate(" + t.x + "px, " + t.y + "px) rotate(" + angle + "deg)";
+  if (heading) {
+    const editModeActive =
+      typeof window !== "undefined" && !!window.rotationEditModeActive;
+    heading.style.display = editModeActive ? "block" : "none";
+  }
+}
 
-    // Linear Interpolation (LERP)
-    currentHighlight.x += dx * lerpFactor;
-    currentHighlight.y += dy * lerpFactor;
-    currentHighlight.w += (targetHighlight.w - currentHighlight.w) * lerpFactor;
-    currentHighlight.h += (targetHighlight.h - currentHighlight.h) * lerpFactor;
-
-    if (
-      typeof window !== "undefined" &&
-      window.MapPerfTelemetry &&
-      typeof window.MapPerfTelemetry.record === "function"
-    ) {
-      window.MapPerfTelemetry.record("syncDriftPx", driftPx);
-    }
-
-    box.style.left = currentHighlight.x + "px";
-    box.style.top = currentHighlight.y + "px";
-    box.style.width = currentHighlight.w + "px";
-    box.style.height = currentHighlight.h + "px";
-    box.style.transformOrigin = "center center";
-    const angle = getHighlightAngleDeg({
-      isEditMode:
-        typeof window !== "undefined" && !!window.rotationEditModeActive,
-      previewAngleDeg:
-        typeof window !== "undefined" ? window.rotationPreviewAngleDeg : 0,
-    });
-    box.style.transform = "rotate(" + angle + "deg)";
-    if (heading) {
-      const editModeActive =
-        typeof window !== "undefined" && !!window.rotationEditModeActive;
-      heading.style.display = editModeActive ? "block" : "none";
-    }
-
-    requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
+function refreshHighlightPositionIfReady() {
+  const overlay = document.getElementById("highlightOverlay");
+  const box = overlay && overlay.querySelector(".highlight-box");
+  if (!box) return;
+  applyHighlightPosition(box);
 }
 
 function updateHighlightQuad(corners) {
@@ -356,7 +296,6 @@ function updateHighlightQuad(corners) {
     if (!sw_px || !se_px || !nw_px || !ne_px) return;
   }
 
-  getOrCreateHighlightBox(); // Ensure loop is running
   const minPX = Math.min(sw_px.x, nw_px.x, se_px.x, ne_px.x);
   const maxPX = Math.max(sw_px.x, nw_px.x, se_px.x, ne_px.x);
   const minPY = Math.min(sw_px.y, nw_px.y, se_px.y, ne_px.y);
@@ -368,6 +307,8 @@ function updateHighlightQuad(corners) {
     w: maxPX - minPX,
     h: maxPY - minPY
   };
+  const box = getOrCreateHighlightBox();
+  applyHighlightPosition(box);
 }
 
 function updateHighlightRect(itmBbox) {
@@ -388,16 +329,23 @@ function updateHighlightRect(itmBbox) {
     if (!sw_px || !ne_px) return;
   }
 
-  getOrCreateHighlightBox(); // Ensure loop is running
   targetHighlight = {
     x: sw_px.x,
     y: ne_px.y,
     w: ne_px.x - sw_px.x,
     h: sw_px.y - ne_px.y
   };
+  const box = getOrCreateHighlightBox();
+  applyHighlightPosition(box);
 }
 
 let lastMessage = null;
+
+if (typeof window !== "undefined") {
+  window.addEventListener("otef-rotation-preview-updated", () => {
+    refreshHighlightPositionIfReady();
+  });
+}
 
 // Debounce resize handler
 let resizeTimeout;
