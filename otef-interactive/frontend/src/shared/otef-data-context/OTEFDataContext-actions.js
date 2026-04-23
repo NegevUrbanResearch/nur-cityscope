@@ -220,6 +220,7 @@ async function toggleLayerInGroups(ctx, layerId, enabled) {
   next = applyMoreshetParkingCoherenceToLayerGroups(next);
 
   ctx._setLayerGroups(next);
+  ctx._pendingLayerOps++;
   try {
     const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next);
     if (updated && Array.isArray(updated.layerGroups)) {
@@ -230,6 +231,8 @@ async function toggleLayerInGroups(ctx, layerId, enabled) {
     getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
     ctx._setLayerGroups(rawSnapshot);
     return { ok: false, error: err };
+  } finally {
+    ctx._pendingLayerOps--;
   }
 }
 
@@ -252,6 +255,7 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled) {
   next = applyMoreshetParkingCoherenceToLayerGroups(next);
 
   ctx._setLayerGroups(next);
+  ctx._pendingLayerOps++;
   try {
     const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next);
     if (updated && Array.isArray(updated.layerGroups)) {
@@ -262,6 +266,8 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled) {
     getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
     ctx._setLayerGroups(rawSnapshot);
     return { ok: false, error: err };
+  } finally {
+    ctx._pendingLayerOps--;
   }
 }
 
@@ -279,6 +285,7 @@ async function toggleGroup(ctx, groupId, enabled) {
   next = applyMoreshetParkingCoherenceToLayerGroups(next);
 
   ctx._setLayerGroups(next);
+  ctx._pendingLayerOps++;
   try {
     const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next);
     if (updated && Array.isArray(updated.layerGroups)) {
@@ -289,6 +296,8 @@ async function toggleGroup(ctx, groupId, enabled) {
     getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
     ctx._setLayerGroups(rawSnapshot);
     return { ok: false, error: err };
+  } finally {
+    ctx._pendingLayerOps--;
   }
 }
 
@@ -299,6 +308,7 @@ async function toggleAnimation(ctx, layerId, enabled) {
   const next = Object.assign({}, previous, { [layerId]: !!enabled });
   ctx._setAnimations(next);
 
+  ctx._pendingAnimationOps++;
   try {
     await OTEF_API.updateAnimations(ctx._tableName, next);
     return { ok: true };
@@ -306,6 +316,8 @@ async function toggleAnimation(ctx, layerId, enabled) {
     getLogger().error("[OTEFDataContext] Failed to update animations:", err);
     ctx._setAnimations(previous);
     return { ok: false, error: err };
+  } finally {
+    ctx._pendingAnimationOps--;
   }
 }
 
@@ -319,6 +331,7 @@ async function setLayerAnimations(ctx, fullLayerIds, enabled) {
   for (const id of fullLayerIds) next[id] = !!enabled;
   ctx._setAnimations(next);
 
+  ctx._pendingAnimationOps++;
   try {
     await OTEF_API.updateAnimations(ctx._tableName, next);
     return { ok: true };
@@ -326,6 +339,8 @@ async function setLayerAnimations(ctx, fullLayerIds, enabled) {
     getLogger().error("[OTEFDataContext] Failed to update animations:", err);
     ctx._setAnimations(previous);
     return { ok: false, error: err };
+  } finally {
+    ctx._pendingAnimationOps--;
   }
 }
 
