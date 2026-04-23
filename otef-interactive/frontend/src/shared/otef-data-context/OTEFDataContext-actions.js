@@ -86,7 +86,7 @@ function startVelocityLoop(ctx) {
     }
 
     const now = Date.now();
-    const dt = Math.min(0.1, (now - ctx._lastVelocityUpdate) / 1000);
+    const dt = Math.min(0.05, (now - ctx._lastVelocityUpdate) / 1000);
     ctx._lastVelocityUpdate = now;
 
     if (ctx._viewport && ctx._viewport.bbox) {
@@ -183,10 +183,13 @@ function updateViewportFromUI(ctx, viewport, source = "gis") {
     return { accepted: false, reason: "bounds" };
   }
 
-  ctx._viewportSeq++;
   ctx._currentInteractionSource = source;
   try {
-    const payload = { ...viewport, sourceId: ctx._clientId, timestamp: Date.now() };
+    const now = Date.now();
+    const nextViewport = { ...viewport, sourceId: ctx._clientId, timestamp: now };
+    const appliedViewport = ctx._setViewport(nextViewport) || ctx._viewport || nextViewport;
+    ctx._lastLocalStateTimestamp = now;
+    const payload = appliedViewport;
     if (typeof OTEF_API.updateViewportDebounced === "function") {
       OTEF_API.updateViewportDebounced(ctx._tableName, payload);
     } else {

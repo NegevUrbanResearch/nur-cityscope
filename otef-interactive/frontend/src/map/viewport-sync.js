@@ -8,6 +8,7 @@ import { getRemoteViewportSetViewOptions } from "./viewport-apply-policy.js";
 
 /** Snapshot of OTEFDataContext._viewportSeq at the start of a remote setView. */
 let lastAppliedViewportSeq = 0;
+let lastAppliedViewportSourceId = null;
 
 const createViewportApplySchedulerRef = createViewportApplyScheduler;
 const getRemoteViewportSetViewOptionsRef = getRemoteViewportSetViewOptions;
@@ -55,7 +56,20 @@ function applyViewportNow(viewport) {
     Math.abs(currentCenter.lng - centerLng);
   const zoomDiff = Math.abs(currentZoom - zoom);
 
-  if (centerDiff <= 0.0005 && zoomDiff <= 0.5) return;
+  const centerDiffThreshold =
+    currentZoom >= 17 ? 0.00003 : currentZoom >= 15 ? 0.00008 : 0.0002;
+  if (centerDiff <= centerDiffThreshold && zoomDiff <= 0.05) return;
+
+  const incomingSeq = Number.isFinite(viewport?.seq) ? viewport.seq : null;
+  const incomingSourceId = viewport && viewport.sourceId != null ? String(viewport.sourceId) : null;
+
+  const canUseSameSourceSeqDedupe =
+    incomingSourceId !== null &&
+    lastAppliedViewportSourceId !== null &&
+    incomingSourceId === lastAppliedViewportSourceId;
+  if (canUseSameSourceSeqDedupe && incomingSeq !== null && incomingSeq < lastAppliedViewportSeq) {
+    return;
+  }
 
   const perf = getGisPerfConfig();
   const setViewOptions =
@@ -69,11 +83,12 @@ function applyViewportNow(viewport) {
               : 0.12,
         };
 
-  const currentSeq =
-    typeof OTEFDataContext !== "undefined"
-      ? OTEFDataContext._viewportSeq ?? 0
-      : 0;
-  lastAppliedViewportSeq = currentSeq;
+  if (incomingSeq !== null) {
+    lastAppliedViewportSeq = incomingSeq;
+  }
+  if (incomingSourceId !== null) {
+    lastAppliedViewportSourceId = incomingSourceId;
+  }
 
   // Set flag to prevent feedback loop (don't broadcast this change back)
   window.isApplyingRemoteState = true;

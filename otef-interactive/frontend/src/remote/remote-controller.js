@@ -31,6 +31,8 @@ let joystickInterval = null; // For continuous pan updates
 // Throttle/debounce timers
 let zoomThrottleTimer = null;
 const ZOOM_THROTTLE_MS = 100;
+let zoomCommandInFlight = false;
+let pendingZoomTarget = null;
 
 // Table name for this controller
 const TABLE_NAME = "otef";
@@ -123,14 +125,19 @@ async function initialize() {
 
   const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
     table: TABLE_NAME,
-    onUpdated: async () => {
+    onUpdated: async (pullPayload) => {
       if (
         typeof OTEFDataContext.refreshLayerGroupsFromApi === "function"
       ) {
         await OTEFDataContext.refreshLayerGroupsFromApi();
       }
       if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("otef-curated-geojson-refresh"));
+        const detail =
+          pullPayload &&
+          Array.isArray(pullPayload.affected_curated_full_layer_ids)
+            ? { affected_curated_full_layer_ids: pullPayload.affected_curated_full_layer_ids }
+            : {};
+        window.dispatchEvent(new CustomEvent("otef-curated-geojson-refresh", { detail }));
       }
       updateUI();
     },
@@ -307,11 +314,11 @@ function initializePanControls() {
       activeControl = "dpad";
       button.classList.add("active");
 
-      const viewport = currentState.viewport;
+      const viewport = getLiveViewport();
       if (!viewport || !viewport.bbox) return;
       const width = viewport.bbox[2] - viewport.bbox[0];
       const height = viewport.bbox[3] - viewport.bbox[1];
-      const speed = 0.5; // 50% of viewport per second
+      const speed = getPanSpeedFactorForZoom(Number(viewport.zoom));
       const viewerVec = {
         dx: vector.vx * width * speed,
         dy: vector.vy * height * speed,
@@ -358,25 +365,93 @@ function initializeZoomControls() {
     // Throttle slider updates
     clearTimeout(zoomThrottleTimer);
     zoomThrottleTimer = setTimeout(() => {
-      sendZoomCommand(zoom);
+      queueZoomCommand(zoom);
     }, ZOOM_THROTTLE_MS);
   });
 
   // Zoom in button
   zoomIn.addEventListener("click", () => {
     if (!currentState.isConnected) return;
-    const newZoom = Math.min(19, currentState.viewport.zoom + 1);
-    sendZoomCommand(newZoom);
-    updateZoomUI(newZoom);
+    const baseZoom = getCurrentZoomForControls();
+    const newZoom = Math.min(19, baseZoom + 1);
+    queueZoomCommand(newZoom);
   });
 
   // Zoom out button
   zoomOut.addEventListener("click", () => {
     if (!currentState.isConnected) return;
-    const newZoom = Math.max(10, currentState.viewport.zoom - 1);
-    sendZoomCommand(newZoom);
-    updateZoomUI(newZoom);
+    const baseZoom = getCurrentZoomForControls();
+    const newZoom = Math.max(10, baseZoom - 1);
+    queueZoomCommand(newZoom);
   });
+}
+
+function getCurrentZoomForControls() {
+  const slider = document.getElementById("zoomSlider");
+  const sliderZoom = slider ? Number.parseInt(slider.value, 10) : NaN;
+  if (Number.isFinite(sliderZoom)) return sliderZoom;
+
+  const liveViewport =
+    typeof OTEFDataContext !== "undefined" &&
+    typeof OTEFDataContext.getViewport === "function"
+      ? OTEFDataContext.getViewport()
+      : null;
+  const liveZoom = Number(liveViewport && liveViewport.zoom);
+  if (Number.isFinite(liveZoom)) return liveZoom;
+
+  const stateZoom = Number(currentState.viewport && currentState.viewport.zoom);
+  return Number.isFinite(stateZoom) ? stateZoom : 15;
+}
+
+function getLiveViewport() {
+  if (
+    typeof OTEFDataContext !== "undefined" &&
+    typeof OTEFDataContext.getViewport === "function"
+  ) {
+    const viewport = OTEFDataContext.getViewport();
+    if (viewport && viewport.bbox) {
+      return viewport;
+    }
+  }
+  return currentState.viewport;
+}
+
+function getPanSpeedFactorForZoom(zoom) {
+  if (!Number.isFinite(zoom)) return 0.32;
+  if (zoom >= 18) return 0.16;
+  if (zoom >= 17) return 0.2;
+  if (zoom >= 16) return 0.24;
+  if (zoom >= 15) return 0.28;
+  return 0.32;
+}
+
+function queueZoomCommand(zoom) {
+  const clampedZoom = Math.max(10, Math.min(19, Number(zoom)));
+  if (!Number.isFinite(clampedZoom)) return;
+
+  pendingZoomTarget = clampedZoom;
+  updateZoomUI(clampedZoom);
+  if (currentState.viewport) {
+    currentState.viewport = { ...currentState.viewport, zoom: clampedZoom };
+  }
+
+  if (!zoomCommandInFlight) {
+    void flushZoomQueue();
+  }
+}
+
+async function flushZoomQueue() {
+  if (zoomCommandInFlight) return;
+  zoomCommandInFlight = true;
+  try {
+    while (pendingZoomTarget !== null) {
+      const targetZoom = pendingZoomTarget;
+      pendingZoomTarget = null;
+      await sendZoomCommand(targetZoom);
+    }
+  } finally {
+    zoomCommandInFlight = false;
+  }
 }
 
 async function sendZoomCommand(zoom) {
@@ -453,7 +528,7 @@ function handleJoystickMove(evt, data) {
   }
 
   const angleRad = data.angle.radian;
-  const viewport = currentState.viewport;
+  const viewport = getLiveViewport();
   if (!viewport || !viewport.bbox) return;
 
   const width = viewport.bbox[2] - viewport.bbox[0];
@@ -461,7 +536,7 @@ function handleJoystickMove(evt, data) {
 
   // Max speed factor: move fraction of viewport per second
   // We use 0.4 (40%) to keep it smooth but responsive
-  const maxSpeedFactor = 0.4;
+  const maxSpeedFactor = getPanSpeedFactorForZoom(Number(viewport.zoom));
   const viewerVec = {
     dx: Math.cos(angleRad) * force * width * maxSpeedFactor,
     dy: Math.sin(angleRad) * force * height * maxSpeedFactor,
