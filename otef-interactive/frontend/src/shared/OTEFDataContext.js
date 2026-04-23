@@ -185,6 +185,13 @@ class OTEFDataContextClass {
   _notify(key, value) {
     const subs = this._subscribers[key];
     if (!subs || subs.size === 0) return;
+    if (
+      typeof window !== "undefined" &&
+      window.MapPerfTelemetry &&
+      typeof window.MapPerfTelemetry.record === "function"
+    ) {
+      window.MapPerfTelemetry.record(`notify_${key}_count`, 1);
+    }
     subs.forEach((cb) => {
       try {
         cb(value);
