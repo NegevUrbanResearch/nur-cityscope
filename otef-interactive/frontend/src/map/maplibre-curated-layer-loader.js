@@ -55,8 +55,6 @@ const getCuratedLayerColor = UI_CONFIG.getCuratedColor;
 const getSubmissionDisplayPrimaryForCuratedLayer =
   UI_CONFIG.getSubmissionDisplayPrimaryForCuratedLayer;
 
-const PINK_OFFROAD_JUNCTION_TOOLTIP = "מחבר";
-
 /** Dev-only: avoid spamming console when published GeoJSON has no stored route. */
 const noStoredPinkRouteLoggedIds = new Set();
 
@@ -216,6 +214,40 @@ function resolveMapLibrePolylineStyle(styleKey, styles) {
   return leafletStyleToMapLibre(leafletStyle || styles.solidLine);
 }
 
+/**
+ * Resolve MapLibre circle paint/layout for overlay circle marker ops.
+ * Task 4 spec: circleMarker ops must materialize as GeoJSON point source + circle layer.
+ * @param {string} styleKey
+ * @param {ReturnType<typeof routeLineStylesForDisplayColor>} styles
+ * @returns {{ paint: object; layout: object }}
+ */
+function resolveMapLibreCircleStyle(styleKey, styles) {
+  if (styleKey === "offroadJunction") {
+    const color = styles.offroadLine?.color || "#c62828";
+    return {
+      layout: {},
+      paint: {
+        "circle-radius": 5,
+        "circle-color": color,
+        "circle-stroke-color": color,
+        "circle-stroke-width": 1,
+        "circle-opacity": 0.85,
+      },
+    };
+  }
+  const color = styles.proposedLine?.color || "#ff587b";
+  return {
+    layout: {},
+    paint: {
+      "circle-radius": 4,
+      "circle-color": color,
+      "circle-stroke-color": color,
+      "circle-stroke-width": 1,
+      "circle-opacity": 0.9,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Geometry helpers
 // ---------------------------------------------------------------------------
@@ -331,24 +363,6 @@ function createNodeMarker(maplibregl, latLng, feature, nodeFillHex, fullLayerId)
   if (tip && el) el.title = tip;
 
   return marker;
-}
-
-/**
- * Create an offroad junction HTML marker.
- * @param {object} maplibregl
- * @param {[number, number]} latLng - [lat, lng]
- * @param {string} lineColor
- * @returns {import("maplibre-gl").Marker}
- */
-function createOffroadJunctionMarker(maplibregl, latLng, lineColor) {
-  const lngLat = [latLng[1], latLng[0]];
-  const el = document.createElement("div");
-  el.className = "pink-offroad-junction-marker-root";
-  el.innerHTML = `<div class="pink-offroad-junction-node" style="--pink-offroad-junction-color:${lineColor};width:22px;height:22px;border-radius:50%;background:${lineColor};opacity:0.85;"></div>`;
-  el.style.cssText = "width:22px;height:22px;cursor:pointer;";
-  el.title = PINK_OFFROAD_JUNCTION_TOOLTIP;
-
-  return new maplibregl.Marker({ element: el }).setLngLat(lngLat);
 }
 
 // ---------------------------------------------------------------------------
@@ -527,8 +541,8 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
     // --- Materialize polyline ops: group by styleKey for efficient source/layer creation ---
     /** @type {Map<string, { features: object[]; styleKey: string }>} */
     const polylineGroups = new Map();
-    /** @type {Array<{ latLng: [number, number]; styleKey: string; role: string }>} */
-    const circleMarkerOps = [];
+    /** @type {Map<string, { features: object[]; styleKey: string }>} */
+    const circleMarkerGroups = new Map();
 
     for (const op of overlayOps) {
       if (op.kind === "polyline") {
@@ -538,7 +552,11 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
         }
         polylineGroups.get(key).features.push(makeLineStringFeature(op.latLngs));
       } else if (op.kind === "circleMarker") {
-        circleMarkerOps.push({ latLng: op.latLng, styleKey: op.styleKey, role: op.role });
+        const key = op.styleKey;
+        if (!circleMarkerGroups.has(key)) {
+          circleMarkerGroups.set(key, { features: [], styleKey: key });
+        }
+        circleMarkerGroups.get(key).features.push(makePointFeature(op.latLng));
       }
     }
 
@@ -574,18 +592,35 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
       registerCuratedLayerIds(map, sourceId, sourceId, [layerId]);
     }
 
-    // Circle marker ops: junction markers as HTML Marker (MapLibre has no built-in circleMarker)
-    if (maplibregl && circleMarkerOps.length > 0) {
-      const markers = htmlMarkersByLayer.get(fullLayerId) || [];
-      for (const op of circleMarkerOps) {
-        if (op.role === "offroadJunction") {
-          const lineColor = styles.offroadLine.color || "#c62828";
-          const marker = createOffroadJunctionMarker(maplibregl, op.latLng, lineColor);
-          marker.addTo(map);
-          markers.push(marker);
-        }
+    // Circle marker ops: GeoJSON point source + circle layer (spec parity).
+    let circleStyleIndex = 0;
+    for (const [styleKey, group] of circleMarkerGroups) {
+      const sourceId = `${fullLayerId}__${styleKey}__circle__src`;
+      const layerId = `${fullLayerId}__${styleKey}__circle__${circleStyleIndex}`;
+      circleStyleIndex++;
+
+      addCuratedGeoJsonSource(map, sourceId, {
+        type: "FeatureCollection",
+        features: group.features,
+      });
+      if (!map.getSource(sourceId)) continue;
+
+      const { paint, layout } = resolveMapLibreCircleStyle(styleKey, styles);
+      try {
+        map.addLayer({
+          id: layerId,
+          type: "circle",
+          source: sourceId,
+          layout,
+          paint,
+        });
+        registeredLayerIds.push(layerId);
+      } catch (err) {
+        console.warn(`[maplibre-curated-layer-loader] Failed to add circle layer ${layerId}`, err);
       }
-      htmlMarkersByLayer.set(fullLayerId, markers);
+
+      // Keep explicit source registration for manager/state-assisted cleanup.
+      registerCuratedLayerIds(map, sourceId, sourceId, [layerId]);
     }
 
     // Node + memorial markers

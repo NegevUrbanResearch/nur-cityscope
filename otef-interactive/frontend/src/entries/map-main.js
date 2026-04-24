@@ -3,7 +3,7 @@ import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import { createGISMap } from "../map/maplibre-map.js";
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
 import { applyLayerGroupsToMap, removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
-import { filterGroupsForGisMap, isCuratedPackFullLayerId } from "../shared/gis-layer-filter.js";
+import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
 import {
@@ -139,35 +139,13 @@ async function bootstrapMapRuntime() {
 
   map.on("load", async () => {
     registerDisposer(setupViewportSync(map, OTEFDataContext));
+    let activeCuratedIds = new Set();
 
     const layerGroups = OTEFDataContext.getLayerGroups();
     const initialGroups = filterGroupsForGisMap(
       Array.isArray(layerGroups) ? layerGroups : Object.values(layerGroups || {}),
     );
     applyLayerGroupsToMap(map, initialGroups);
-
-    // Load enabled curated layers on initial map load.
-    void (async () => {
-      const maplibregl = await resolveMaplibregl();
-      for (const fullId of collectEnabledCuratedIds(initialGroups)) {
-        try {
-          await loadCuratedLayerToMapLibre(map, fullId, { maplibregl });
-        } catch (err) {
-          console.warn(`[map-main] Initial curated layer load failed for ${fullId}`, err);
-        }
-      }
-    })();
-
-    registerDisposer(
-      OTEFDataContext.subscribe("layerGroups", (groups) => {
-        applyLayerGroupsToMap(
-          map,
-          filterGroupsForGisMap(
-            Array.isArray(groups) ? groups : Object.values(groups || {}),
-          ),
-        );
-      }),
-    );
 
     updateConnectionStatus(!!OTEFDataContext.isConnected?.());
     registerDisposer(
@@ -205,8 +183,8 @@ async function bootstrapMapRuntime() {
       }
     }
 
-    const refreshCuratedLayers = async ({ affectedCuratedFullLayerIds } = {}) => {
-      const rawGroups = OTEFDataContext.getLayerGroups();
+    const refreshCuratedLayers = async ({ affectedCuratedFullLayerIds, groupsOverride } = {}) => {
+      const rawGroups = groupsOverride ?? OTEFDataContext.getLayerGroups();
       const groupsAsArray = Array.isArray(rawGroups)
         ? rawGroups
         : Object.values(rawGroups || {});
@@ -216,28 +194,28 @@ async function bootstrapMapRuntime() {
       applyLayerGroupsToMap(map, currentGroups);
 
       // Determine which curated ids to refresh.
-      const enabledCuratedIds = collectEnabledCuratedIds(currentGroups);
+      const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
+      const previousCuratedIds = new Set(activeCuratedIds);
+      activeCuratedIds = enabledCuratedIds;
 
       let toRefresh;
       if (Array.isArray(affectedCuratedFullLayerIds) && affectedCuratedFullLayerIds.length > 0) {
         const affectedSet = new Set(affectedCuratedFullLayerIds.filter((id) => typeof id === "string"));
-        // Remove affected curated layers then re-load enabled ones from that set.
+        // Remove all affected curated layers first, then re-load affected ids that remain enabled.
         for (const fullId of affectedSet) {
           removeCuratedLayersByPrefix(map, fullId);
           removeCuratedHtmlMarkers(fullId);
         }
-        toRefresh = enabledCuratedIds.filter((id) => affectedSet.has(id));
+        toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
       } else {
-        // Full refresh: remove all curated layers, reload all enabled ones.
-        const allCuratedGroups = currentGroups.filter((g) => g.id && g.id.startsWith("curated"));
-        for (const group of allCuratedGroups) {
-          for (const layer of group.layers || []) {
-            const fullId = `${group.id}.${layer.id}`;
+        // Normal layerGroups updates: immediate curated enable/disable reconciliation.
+        for (const fullId of previousCuratedIds) {
+          if (!enabledCuratedIds.has(fullId)) {
             removeCuratedLayersByPrefix(map, fullId);
             removeCuratedHtmlMarkers(fullId);
           }
         }
-        toRefresh = enabledCuratedIds;
+        toRefresh = [...enabledCuratedIds].filter((id) => !previousCuratedIds.has(id));
       }
 
       if (toRefresh.length === 0) return;
@@ -251,6 +229,16 @@ async function bootstrapMapRuntime() {
         }
       }
     };
+
+    // Initial curated load for current layerGroups state.
+    await refreshCuratedLayers({ groupsOverride: initialGroups });
+
+    // layerGroups updates must drive curated lifecycle (not only Supabase heartbeat).
+    registerDisposer(
+      OTEFDataContext.subscribe("layerGroups", (groups) => {
+        void refreshCuratedLayers({ groupsOverride: groups });
+      }),
+    );
 
     // Curated layers (Supabase-synced overlays like annotations, pink line route)
     try {
