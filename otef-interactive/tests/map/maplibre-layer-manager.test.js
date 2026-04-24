@@ -21,7 +21,9 @@ vi.mock("../../frontend/src/shared/layer-registry.js", () => ({
 
 import {
   applyLayerGroupsToMap,
+  buildPmtilesUrl,
   clearAllLayers,
+  getVectorSourceLayerName,
 } from "../../frontend/src/map/maplibre-layer-manager.js";
 
 function createMapMock() {
@@ -127,6 +129,26 @@ describe("maplibre-layer-manager", () => {
     expect(map.removeSource).toHaveBeenCalledTimes(2);
   });
 
+  it("rolls back all style layers for fullId when a later addLayer throws", () => {
+    const map = createMapMock();
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      { id: "group_a.layer_1-fill", type: "fill" },
+      { id: "group_a.layer_1-line", type: "line" },
+    ]);
+    map.addLayer.mockImplementation((def) => {
+      if (def.id === "group_a.layer_1-line") {
+        throw new Error("second layer failed");
+      }
+      map._layers.add(def.id);
+    });
+
+    applyLayerGroupsToMap(map, enabledGroups);
+
+    expect(map.removeLayer).toHaveBeenCalledWith("group_a.layer_1-fill");
+    expect(map.removeSource).toHaveBeenCalledWith("group_a.layer_1");
+    expect(map._layers.has("group_a.layer_1-fill")).toBe(false);
+  });
+
   it("tracks state per map instance (no cross-map leakage)", () => {
     const mapA = createMapMock();
     const mapB = createMapMock();
@@ -137,6 +159,16 @@ describe("maplibre-layer-manager", () => {
 
     expect(mapA.addSource).toHaveBeenCalledTimes(1);
     expect(mapB.addSource).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies layer when layer.enabled=true even if group.enabled=false", () => {
+    const map = createMapMock();
+    bridgeMock.irToMapLibreLayers.mockReturnValue([{ id: "greens.agri-fill", type: "fill" }]);
+    applyLayerGroupsToMap(map, [
+      { id: "greens", enabled: false, layers: [{ id: "agri", enabled: true }] },
+    ]);
+    expect(map.addSource).toHaveBeenCalledWith("greens.agri", expect.any(Object));
+    expect(map.addLayer).toHaveBeenCalled();
   });
 
   it("clearAllLayers removes source even when style layer is already orphaned", () => {
@@ -291,5 +323,130 @@ describe("maplibre-layer-manager", () => {
     applyLayerGroupsToMap(map, imageGroups);
 
     expect(map.addSource).not.toHaveBeenCalled();
+  });
+
+  it("uses explicit sourceLayer from config for PMTiles vector source-layer (GIS/projection path)", () => {
+    const map = createMapMock();
+    const prevWin = globalThis.window;
+    globalThis.window = { location: { origin: "http://localhost" } };
+    try {
+      bridgeMock.irToMapLibreLayers.mockReturnValue([
+        { id: "greens.agri__fill", type: "fill", paint: { "fill-color": "#f00" }, layout: {} },
+      ]);
+      registryMock.getLayerConfig.mockReturnValue({
+        pmtilesFile: "agri.pmtiles",
+        sourceLayer: "agri_tiles",
+        id: "agri",
+        style: {},
+      });
+      registryMock.getLayerPMTilesUrl.mockReturnValue("/processed/layers/greens/agri.pmtiles");
+
+      applyLayerGroupsToMap(map, [
+        { id: "greens", layers: [{ id: "agri", enabled: true }] },
+      ]);
+
+      const added = map.addLayer.mock.calls.find((c) => c[0]?.id === "greens.agri__fill");
+      expect(added).toBeDefined();
+      expect(added[0]["source-layer"]).toBe("agri_tiles");
+    } finally {
+      if (prevWin === undefined) {
+        delete globalThis.window;
+      } else {
+        globalThis.window = prevWin;
+      }
+    }
+  });
+
+  it("uses source_layer snake_case when sourceLayer is absent", () => {
+    expect(
+      getVectorSourceLayerName("g.l", { pmtilesFile: "f.pmtiles", source_layer: "layer_a", id: "l" }),
+    ).toBe("layer_a");
+  });
+
+  it("prioritizes explicit sourceLayer over source_layer", () => {
+    expect(
+      getVectorSourceLayerName("greens.agri", {
+        pmtilesFile: "agri.pmtiles",
+        sourceLayer: "camel_case_wins",
+        source_layer: "snake_case",
+        id: "agri",
+      }),
+    ).toBe("camel_case_wins");
+  });
+
+  it("uses tiling pipeline default source-layer when no explicit sourceLayer is set", () => {
+    expect(getVectorSourceLayerName("greens.agri", { id: "agri" })).toBe("layer");
+  });
+
+  it("buildPmtilesUrl returns null when path is empty", () => {
+    expect(buildPmtilesUrl("")).toBeNull();
+    expect(buildPmtilesUrl(null)).toBeNull();
+  });
+
+  it("buildPmtilesUrl resolves origin from globalThis.location or globalThis.window", () => {
+    const prevLoc = globalThis.location;
+    const prevWin = globalThis.window;
+    try {
+      Object.defineProperty(globalThis, "location", {
+        value: { origin: "https://a.example" },
+        configurable: true,
+      });
+      expect(buildPmtilesUrl("/tiles/x.pmtiles")).toBe("pmtiles://https://a.example/tiles/x.pmtiles");
+      Object.defineProperty(globalThis, "location", {
+        value: undefined,
+        configurable: true,
+      });
+      globalThis.window = { location: { origin: "https://b.example" } };
+      expect(buildPmtilesUrl("/p/y.pmtiles")).toBe("pmtiles://https://b.example/p/y.pmtiles");
+    } finally {
+      Object.defineProperty(globalThis, "location", { value: prevLoc, configurable: true });
+      globalThis.window = prevWin;
+    }
+  });
+
+  it("buildPmtilesUrl returns null when no origin is available (non-browser)", () => {
+    const prevLoc = globalThis.location;
+    const prevWin = globalThis.window;
+    try {
+      Object.defineProperty(globalThis, "location", { value: undefined, configurable: true });
+      globalThis.window = undefined;
+      expect(buildPmtilesUrl("/x.pmtiles")).toBeNull();
+    } finally {
+      Object.defineProperty(globalThis, "location", { value: prevLoc, configurable: true });
+      globalThis.window = prevWin;
+    }
+  });
+
+  it("adds PMTiles vector layer using default source-layer when manifest omits sourceLayer", () => {
+    const map = createMapMock();
+    const prevWin = globalThis.window;
+    globalThis.window = { location: { origin: "http://localhost" } };
+
+    try {
+      bridgeMock.irToMapLibreLayers.mockReturnValue([
+        { id: "g.l-f", type: "fill", paint: {}, layout: {} },
+      ]);
+      registryMock.getLayerConfig.mockReturnValue({
+        pmtilesFile: "x.pmtiles",
+        id: "l",
+      });
+      registryMock.getLayerPMTilesUrl.mockReturnValue("/p/x.pmtiles");
+
+      applyLayerGroupsToMap(map, [{ id: "g", layers: [{ id: "l", enabled: true }] }]);
+
+      expect(map.addSource).toHaveBeenCalledWith(
+        "g.l",
+        expect.objectContaining({ type: "vector", url: "pmtiles://http://localhost/p/x.pmtiles" }),
+      );
+      expect(map.addLayer).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "g.l-f", source: "g.l", "source-layer": "layer" }),
+      );
+    } finally {
+      if (prevWin === undefined) {
+        delete globalThis.window;
+      } else {
+        globalThis.window = prevWin;
+      }
+    }
   });
 });

@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 TIPPECANOE_IMAGE = "ingmapping/tippecanoe"
 PMTILES_IMAGE = "protomaps/go-pmtiles"
+# Keep this aligned with frontend PMTiles source-layer fallback.
+DEFAULT_TIPPECANOE_LAYER_NAME = "layer"
 
 def to_docker_path(path: Path) -> str:
     """Convert path to Docker-compatible format (for Windows/WSL)."""
@@ -45,7 +47,7 @@ def run_tippecanoe(input_file: Path, output_mbtiles: Path, extra_args: List[str]
             "tippecanoe",
             "-o", f"/work/{safe_output_name}",
             f"/work/{safe_input_name}",
-            "--layer=layer",
+            f"--layer={DEFAULT_TIPPECANOE_LAYER_NAME}",
             "--force",
             "--minimum-zoom=9",
             "--maximum-zoom=18",

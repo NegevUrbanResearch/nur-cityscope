@@ -137,6 +137,9 @@ function getOrCreateMapState(map) {
   return state;
 }
 
+// Intentionally per-layer only: a full id is enabled if layer.enabled is truthy.
+// group.enabled is not applied here (unlike resolveLayerState / UI gating) so MapLibre
+// sync stays aligned with registry layers that may still be toggled individually.
 function resolveEnabledFullIds(layerGroups) {
   const enabled = new Set();
   if (!layerGroups) {
@@ -148,7 +151,7 @@ function resolveEnabledFullIds(layerGroups) {
     : Object.values(layerGroups);
 
   for (const group of groups) {
-    if (!group || group.enabled === false) {
+    if (!group) {
       continue;
     }
     const groupId = group.id;
@@ -189,21 +192,52 @@ function removeFullIdFromMap(map, fullId, state) {
   releaseHatchPatternsForFullId(map, fullId, state);
 }
 
-function buildPmtilesUrl(pathFromRegistry) {
+/**
+ * @param {string} pathFromRegistry - Absolute app path, e.g. from the registry
+ * @returns {string|null} PMTiles URL, or null if no origin (SSR, tests, or non-browser)
+ */
+export function buildPmtilesUrl(pathFromRegistry) {
   if (!pathFromRegistry) return null;
-  return `pmtiles://${window.location.origin}${pathFromRegistry}`;
+  const g = typeof globalThis !== "undefined" ? globalThis : undefined;
+  if (!g) return null;
+  const originFromGlobal =
+    g.location && typeof g.location.origin === "string" ? g.location.origin : null;
+  const originFromWindow =
+    g.window && g.window.location && typeof g.window.location.origin === "string"
+      ? g.window.location.origin
+      : null;
+  const origin = originFromGlobal || originFromWindow;
+  if (!origin) return null;
+  return `pmtiles://${origin}${pathFromRegistry}`;
 }
 
-function getVectorSourceLayerName(fullId, layerConfig) {
-  // This fallback chain must be validated against actual PMTiles metadata.
-  // If source-layer mismatches, MapLibre silently renders nothing.
-  return (
-    layerConfig?.sourceLayer ||
-    layerConfig?.source_layer ||
-    layerConfig?.id ||
-    fullId.split(".").slice(1).join(".") ||
-    "default"
-  );
+// Tippecanoe writes PMTiles with `--layer=layer` in this project pipeline.
+const DEFAULT_PMTILES_SOURCE_LAYER = "layer";
+
+/**
+ * Resolves MapLibre `source-layer` for PMTiles vector tiles.
+ * Does not guess from fullId or use a "default" placeholder — a wrong name renders nothing with no error.
+ *
+ * @param {string} fullId - Registry full id (e.g. "greens.agri")
+ * @param {object} layerConfig - Layer config from the registry
+ * @returns {string|null} The vector source layer name, or null if it cannot be determined safely
+ */
+export function getVectorSourceLayerName(fullId, layerConfig) {
+  if (!layerConfig) {
+    console.warn(
+      `[maplibre-layer-manager] Missing layer config; cannot resolve PMTiles source-layer for ${fullId}`,
+    );
+    return null;
+  }
+  const explicit =
+    (typeof layerConfig.sourceLayer === "string" && layerConfig.sourceLayer.trim()) ||
+    (typeof layerConfig.source_layer === "string" && layerConfig.source_layer.trim()) ||
+    "";
+  if (explicit) {
+    return explicit;
+  }
+  // Defaulting to the tiling contract avoids silent empty renders when manifests omit sourceLayer.
+  return DEFAULT_PMTILES_SOURCE_LAYER;
 }
 
 /**
@@ -277,7 +311,12 @@ export function removeCuratedLayersByPrefix(map, prefix) {
         }
       }
     }
-  } catch (_) {}
+  } catch (err) {
+    console.warn(
+      `[maplibre-layer-manager] removeCuratedLayersByPrefix: failed to sweep style for prefix ${prefix}`,
+      err,
+    );
+  }
 }
 
 /**
@@ -335,7 +374,12 @@ function addLayerToMap(map, fullId, state) {
   let hasSource = false;
   let usesVectorSource = false;
 
+  let pmtilesVectorSourceLayer = null;
   if (layerConfig.pmtilesFile) {
+    pmtilesVectorSourceLayer = getVectorSourceLayerName(fullId, layerConfig);
+    if (!pmtilesVectorSourceLayer) {
+      return;
+    }
     const pmPath = layerRegistry.getLayerPMTilesUrl(fullId);
     const pmtilesUrl = buildPmtilesUrl(pmPath);
     if (!pmtilesUrl) {
@@ -402,11 +446,17 @@ function addLayerToMap(map, fullId, state) {
       rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, registeredPatternIds);
       return;
     }
-    const { _hatchPattern, _hatchPatterns, ...styleRest } = styleLayer;
+    const { _hatchPattern, _hatchPatterns, _uniqueValuePointColorFallback, ...styleRest } = styleLayer;
+    if (_uniqueValuePointColorFallback) {
+      console.warn(
+        `[maplibre-layer-manager] uniqueValue point symbol has no resolvable color for ${fullId} ` +
+          `(style layer id=${styleLayer.id}); using #808080. Set marker.fill, marker.fillColor, or marker.color.`,
+      );
+    }
     const layerDef = { ...styleRest, source: sourceId };
 
-    if (usesVectorSource) {
-      layerDef["source-layer"] = getVectorSourceLayerName(fullId, layerConfig);
+    if (usesVectorSource && pmtilesVectorSourceLayer) {
+      layerDef["source-layer"] = pmtilesVectorSourceLayer;
     }
 
     try {
@@ -417,6 +467,8 @@ function addLayerToMap(map, fullId, state) {
         `[maplibre-layer-manager] Failed to add style layer ${layerDef.id}`,
         error,
       );
+      rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, registeredPatternIds);
+      return;
     }
   }
 
