@@ -83,8 +83,88 @@ function getVectorSourceLayerName(fullId, layerConfig) {
   );
 }
 
+/**
+ * Add a curated GeoJSON source directly to the map (bypasses layer registry).
+ * @param {object} map - MapLibre map instance
+ * @param {string} sourceId
+ * @param {object} geojsonData - GeoJSON FeatureCollection or Feature
+ */
+export function addCuratedGeoJsonSource(map, sourceId, geojsonData) {
+  if (!map || !sourceId || !geojsonData) return;
+  if (map.getSource(sourceId)) return;
+  try {
+    map.addSource(sourceId, { type: "geojson", data: geojsonData });
+  } catch (err) {
+    console.warn(`[maplibre-layer-manager] Failed to add curated source ${sourceId}`, err);
+  }
+}
+
+/**
+ * Remove a single curated layer (and its source) by fully-qualified id.
+ * @param {object} map
+ * @param {string} fullId - e.g. "curated.42__solidLine__0"
+ */
+export function removeCuratedLayer(map, fullId) {
+  if (!map || !fullId) return;
+  const state = getOrCreateMapState(map);
+  removeFullIdFromMap(map, fullId, state);
+}
+
+/**
+ * Remove all curated layers whose fullId starts with `prefix`.
+ * Also removes associated sources tracked in map state.
+ * @param {object} map
+ * @param {string} prefix - e.g. "curated.42"
+ */
+export function removeCuratedLayersByPrefix(map, prefix) {
+  if (!map || !prefix) return;
+  const state = getOrCreateMapState(map);
+  const toRemove = [];
+  for (const id of state.loadedLayerIds.keys()) {
+    if (id.startsWith(prefix)) toRemove.push(id);
+  }
+  for (const id of state.loadedSources.keys()) {
+    if (id.startsWith(prefix) && !toRemove.includes(id)) toRemove.push(id);
+  }
+  for (const id of toRemove) {
+    removeFullIdFromMap(map, id, state);
+  }
+  // Also remove any MapLibre layers/sources with matching prefix not tracked in state
+  try {
+    const style = map.getStyle();
+    if (style) {
+      for (const layer of (style.layers || [])) {
+        if (layer.id && layer.id.startsWith(prefix)) {
+          if (map.getLayer(layer.id)) map.removeLayer(layer.id);
+        }
+      }
+      for (const srcId of Object.keys(style.sources || {})) {
+        if (srcId.startsWith(prefix)) {
+          if (map.getSource(srcId)) map.removeSource(srcId);
+        }
+      }
+    }
+  } catch (_) {}
+}
+
+/**
+ * Register curated layer ids and source into the map state for lifecycle tracking.
+ * @param {object} map
+ * @param {string} fullId - logical id (e.g. "curated.42")
+ * @param {string} sourceId - MapLibre source id
+ * @param {string[]} layerIds - MapLibre layer ids added for this curated pack
+ */
+export function registerCuratedLayerIds(map, fullId, sourceId, layerIds) {
+  if (!map || !fullId) return;
+  const state = getOrCreateMapState(map);
+  state.loadedSources.set(fullId, sourceId);
+  state.loadedLayerIds.set(fullId, Array.isArray(layerIds) ? layerIds : []);
+}
+
 function addLayerToMap(map, fullId, state) {
   const { loadedSources, loadedLayerIds } = state;
+  // Curated layer ids are managed by maplibre-curated-layer-loader, not the registry path.
+  if (!layerRegistry.getLayerConfig(fullId) && fullId.startsWith("curated")) return;
   const layerConfig = layerRegistry.getLayerConfig(fullId);
   if (!layerConfig) {
     console.warn(`[maplibre-layer-manager] Missing layer config for ${fullId}`);
