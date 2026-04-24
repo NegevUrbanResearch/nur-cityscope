@@ -270,4 +270,26 @@ describe("maplibre-layer-manager", () => {
     expect(map.removeImage).toHaveBeenCalledWith(firstPattern);
     expect(map._images.has(firstPattern)).toBe(false);
   });
+
+  it("skips format image layers (DOM-backed) and does not retry addSource on each sync", () => {
+    const map = createMapMock();
+    const imageGroups = [{ id: "projector_base", layers: [{ id: "model_base", enabled: true }] }];
+    registryMock.getLayerConfig.mockReturnValue({ format: "image" });
+
+    applyLayerGroupsToMap(map, imageGroups);
+    applyLayerGroupsToMap(map, imageGroups);
+
+    expect(map.addSource).not.toHaveBeenCalled();
+    expect(bridgeMock.irToMapLibreLayers).not.toHaveBeenCalled();
+  });
+
+  it("skips geometryType image layers without MapLibre sources", () => {
+    const map = createMapMock();
+    const imageGroups = [{ id: "g", layers: [{ id: "x", enabled: true }] }];
+    registryMock.getLayerConfig.mockReturnValue({ format: "geojson", geometryType: "image" });
+
+    applyLayerGroupsToMap(map, imageGroups);
+
+    expect(map.addSource).not.toHaveBeenCalled();
+  });
 });

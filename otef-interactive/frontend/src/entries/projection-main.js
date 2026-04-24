@@ -26,6 +26,23 @@ function getEffectiveProjectionLayerGroups() {
   return OTEFDataContext.getLayerGroups();
 }
 
+function updateModelBaseImageVisibility(layerGroups, modelImgEl) {
+  if (!modelImgEl) return;
+  const groups = Array.isArray(layerGroups)
+    ? layerGroups
+    : layerGroups && typeof layerGroups === "object"
+      ? Object.values(layerGroups)
+      : [];
+  const projectorBase = groups.find((g) => g?.id === "projector_base");
+  if (!projectorBase || projectorBase.enabled === false) {
+    modelImgEl.style.opacity = "0";
+    return;
+  }
+  const modelLayer = (projectorBase.layers || []).find((l) => l?.id === "model_base");
+  const enabled = !!(modelLayer && modelLayer.enabled);
+  modelImgEl.style.opacity = enabled ? "1" : "0";
+}
+
 function toggleProjectionFullscreen() {
   const doc = window.document;
   const docElement = doc.documentElement;
@@ -112,7 +129,7 @@ async function bootstrapProjectionRuntime() {
   const modelImgEl = document.getElementById("displayedImage");
   if (modelImgEl && modelImageUrl) {
     modelImgEl.src = modelImageUrl;
-    modelImgEl.style.opacity = "1";
+    updateModelBaseImageVisibility(getEffectiveProjectionLayerGroups(), modelImgEl);
   }
 
   const map = createProjectionMap("projectionMap", modelBounds);
@@ -181,6 +198,8 @@ async function bootstrapProjectionRuntime() {
     } = {}) => {
       const rawGroups = groupsOverride ?? getEffectiveProjectionLayerGroups();
       const currentGroups = asLayerGroupsArray(rawGroups);
+
+      updateModelBaseImageVisibility(rawGroups, modelImgEl);
 
       syncProjectionLayers(map, currentGroups);
 

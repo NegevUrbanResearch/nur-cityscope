@@ -118,6 +118,9 @@ function registerHatchPatternImages(map, styleLayer, state, trackedPatternIds) {
   }
 }
 
+/** MapLibre does not host DOM-backed image layers; tracked so sync does not retry addLayerToMap. */
+const DOM_IMAGE_LAYER_SOURCE_PLACEHOLDER = "__otef_dom_image_layer__";
+
 const mapStateByMap = new WeakMap(); // map -> { loadedSources: Map, loadedLayerIds: Map, hatchPatternIdsByFullId: Map, hatchPatternRefCounts: Map }
 
 function getOrCreateMapState(map) {
@@ -172,8 +175,14 @@ function removeFullIdFromMap(map, fullId, state) {
   }
   loadedLayerIds.delete(fullId);
 
-  const sourceId = loadedSources.get(fullId) || fullId;
-  if (map.getSource(sourceId)) {
+  const storedSourceId = loadedSources.get(fullId);
+  const sourceId =
+    storedSourceId !== undefined ? storedSourceId : fullId;
+  if (
+    sourceId &&
+    sourceId !== DOM_IMAGE_LAYER_SOURCE_PLACEHOLDER &&
+    map.getSource(sourceId)
+  ) {
     map.removeSource(sourceId);
   }
   loadedSources.delete(fullId);
@@ -313,6 +322,12 @@ function addLayerToMap(map, fullId, state) {
   }
 
   if (layerConfig.format === "wmts") {
+    return;
+  }
+
+  if (layerConfig.format === "image" || layerConfig.geometryType === "image") {
+    loadedSources.set(fullId, DOM_IMAGE_LAYER_SOURCE_PLACEHOLDER);
+    loadedLayerIds.set(fullId, []);
     return;
   }
 

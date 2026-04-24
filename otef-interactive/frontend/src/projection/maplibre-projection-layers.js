@@ -20,8 +20,12 @@ function cloneGroupsWithWmtsDisabled(groups) {
     layers: (group.layers || []).map((layer) => {
       const fullId = `${group.id}.${layer.id}`;
       const cfg = layerRegistry.getLayerConfig(fullId);
-      if (cfg?.format !== "wmts") return layer;
-      return { ...layer, enabled: false };
+      if (!cfg) return layer;
+      if (cfg.format === "wmts") return { ...layer, enabled: false };
+      if (cfg.format === "image" || cfg.geometryType === "image") {
+        return { ...layer, enabled: false };
+      }
+      return layer;
     }),
   }));
 }
