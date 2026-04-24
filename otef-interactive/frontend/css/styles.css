@@ -18,6 +18,10 @@ body {
   height: 100%;
 }
 
+.maplibregl-canvas {
+  outline: none;
+}
+
 /* Match OSM tile background to hide subpixel seams between tiles */
 .leaflet-container {
   background-color: #d4d4d4 !important;
