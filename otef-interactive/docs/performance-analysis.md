@@ -384,3 +384,79 @@ When land_use + greens are enabled: ~340 MB of GeoJSON
 ### Implementation Plan
 
 See `docs/superpowers/plans/2026-04-24-maplibre-migration.md`
+
+---
+
+## 8. Post-Migration Status (2026-04-24, evening)
+
+### What Was Implemented (7 commits)
+
+| Commit | What |
+|--------|------|
+| `730e503` | Scaffold MapLibre runtime dependencies and map bootstrap |
+| `5f0fb74` | Style bridge: translate OTEF AdvancedStyleEngine IR → MapLibre style layers |
+| `51d81a5` | GIS layer manager: registry-driven add/remove of MapLibre sources+layers |
+| `72ce376` | Viewport sync: remote viewport → MapLibre `fitBounds`, local move → context |
+| `01d2352` | Wire GIS entrypoint (`map-main.js`) to MapLibre runtime |
+| `bcb5798` | Projection: MapLibre overlay on model image, WMTS raster support |
+| `b5e9675` | Keep legacy references, stabilize Docker runtime |
+
+### What Works
+- MapLibre loads on both GIS and projection pages
+- OSM/satellite basemap on GIS
+- Simple-renderer layers (polygon fill/stroke, line, circle markers) render correctly
+- Viewport sync (remote → GIS pan/zoom) is functional
+- Layer toggle propagation works end-to-end
+- Highlight overlay on projection updates from viewport state
+- PMTiles sources load via `pmtiles://` protocol
+- Layer legend renders
+
+### Active Bugs Found During Testing
+
+1. **Style bridge `undefined` in match expressions** — `buildUniqueValueGroups` indexes by position; when class symbols differ from default composition, wrong default is used → MapLibre rejects `undefined` values in paint expressions. Affects ~7 `land_use` and `future_development` layers.
+
+2. **Projection map moves with viewport** — `updateProjectionViewport` calls `map.fitBounds` on every viewport change. Should be static (full model always visible); only highlight overlay should move.
+
+3. **Projector_base layers visible on GIS** — `map-main.js` doesn't use `filterGroupsForGisMap` from `gis-layer-filter.js`. Layers like רקע_שחור, SEA, model_base, sat imagery show on GIS page.
+
+4. **Curated layers not rendering** — Curated layer IDs (`curated_moresht_axis.*`) not in layer registry → `getLayerConfig` returns null → silently skipped. The old curated pipeline wrote to the Canvas renderer which is now a no-op shim.
+
+5. **Hatch fills render as solid** — `fillType: "hatch"` treated as regular fill. Affects land_use layers with hatch patterns.
+
+6. **Layer propagation latency** — Pre-existing Django HTTP round-trip issue, unchanged by migration.
+
+### Remaining Work for Feature Parity
+
+| Feature | Priority | Complexity | Approach |
+|---------|----------|------------|----------|
+| Fix style bridge undefined bug | **P0** | Low | Sanitize match expression fallbacks in `buildMatchExpr` |
+| Fix projection static viewport | **P0** | Low | Remove `updateProjectionViewport` call from viewport subscription |
+| GIS layer filtering | **P0** | Low | Import and apply `filterGroupsForGisMap` in `map-main.js` |
+| Pink line + curated on GIS | **P0** | High | Create `maplibre-curated-layer-loader.js` — MapLibre port of `leaflet-curated-layer-loader.js`, reusing renderer-agnostic pipeline |
+| Pink line + curated on projection | **P0** | High | Reuse `maplibre-curated-layer-loader.js` + wire Supabase heartbeat |
+| Hatch fill patterns | **P2** | Medium | Generate pattern images, use `fill-pattern` |
+| Flow/trail animations | **P2** | Medium | MapLibre `line-dasharray` + periodic `setPaintProperty` |
+| Marker-along-line | **P3** | Low | MapLibre `symbol` layer with `symbol-placement: line` |
+| Projection bounds editor | **P2** | Low | Verify existing code works with MapLibre overlay |
+| Projection rotation editor | **P2** | Low | Verify existing code works with MapLibre overlay |
+
+### Decision: Animation Approach
+
+Evaluated deck.gl vs MapLibre-native for flow animations:
+- **deck.gl**: Powerful (TripsLayer, PathLayer with animation), but adds ~500KB bundle, second GL context, integration complexity
+- **MapLibre-native**: `line-dasharray` animation via periodic `setPaintProperty` calls from `requestAnimationFrame`. Simpler, no new dependency, sufficient for 2-layer flow animation. Can evaluate deck.gl later if animation complexity grows.
+
+**Decision:** Start with MapLibre-native `line-dasharray` animation. Revisit deck.gl only if more complex animation types are needed.
+
+### Decision: Pink Line Route Overlay (2026-04-24)
+
+The pink line route overlay is **critical for first pass** — it must work like it did before migration, showing the pink line base, proposed routes, old/removed routes correctly, with real-time updates from Supabase via heartbeat and workshop mode.
+
+**Key architectural finding:** The existing data pipeline is already cleanly layered:
+- `planPinkCuratedOverlayLayers()` is renderer-agnostic (returns draw ops, not Leaflet objects)
+- `routeLineStylesForDisplayColor()` returns style objects that map directly to MapLibre paint properties
+- `buildIntegratedRoute()`, `parseColabRouteGeometryBundle()`, etc. are all pure logic
+
+Only the final materialization step (`leaflet-curated-layer-loader.js` → `L.polyline`, `L.marker`, etc.) needs a MapLibre equivalent. The porting creates `maplibre-curated-layer-loader.js` which converts draw ops to MapLibre sources + layers.
+
+**Coordinate system note:** Overlay plan ops use Leaflet `[lat,lng]` format. MapLibre GeoJSON requires `[lng,lat]`. Flipped at materialization boundary.
