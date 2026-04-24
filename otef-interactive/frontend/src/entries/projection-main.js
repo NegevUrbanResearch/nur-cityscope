@@ -8,6 +8,7 @@ import {
 } from "../map/maplibre-curated-layer-loader.js";
 import { removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
 import {
+  applyContextFlowAnimationsToMap,
   startFlowAnimation,
   stopFlowAnimation,
   stopAllFlowAnimations,
@@ -158,11 +159,21 @@ async function bootstrapProjectionRuntime() {
     if (typeof window !== "undefined") {
       window.MapLibreFlowAnimation = {
         startFlowAnimation: (layerId, opts) => startFlowAnimation(map, layerId, opts),
-        stopFlowAnimation,
-        stopAllFlowAnimations,
+        stopFlowAnimation: (layerId) => stopFlowAnimation(map, layerId),
+        stopAllFlowAnimations: () => stopAllFlowAnimations(map),
       };
     }
-    registerDisposer(stopAllFlowAnimations);
+    registerDisposer(() => stopAllFlowAnimations(map));
+
+    const syncContextFlowAnimations = () => {
+      applyContextFlowAnimationsToMap(
+        map,
+        typeof OTEFDataContext.getAnimations === "function"
+          ? OTEFDataContext.getAnimations()
+          : {},
+      );
+    };
+    registerDisposer(OTEFDataContext.subscribe("animations", syncContextFlowAnimations));
 
     let activeCuratedIds = new Set();
 
@@ -202,6 +213,7 @@ async function bootstrapProjectionRuntime() {
       updateModelBaseImageVisibility(rawGroups, modelImgEl);
 
       syncProjectionLayers(map, currentGroups);
+      syncContextFlowAnimations();
 
       const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
       const previousCuratedIds = new Set(activeCuratedIds);
@@ -228,7 +240,10 @@ async function bootstrapProjectionRuntime() {
         toRefresh = [...enabledCuratedIds];
       }
 
-      if (toRefresh.length === 0) return;
+      if (toRefresh.length === 0) {
+        syncContextFlowAnimations();
+        return;
+      }
 
       const maplibregl = await resolveMaplibregl();
       for (const fullId of toRefresh) {
@@ -238,6 +253,7 @@ async function bootstrapProjectionRuntime() {
           console.warn(`[projection-main] Failed to load curated layer ${fullId}`, err);
         }
       }
+      syncContextFlowAnimations();
     };
     let projectionCuratedRefreshChain = Promise.resolve();
     const refreshProjectionCuratedLayers = (options = {}) => {
@@ -295,6 +311,7 @@ async function bootstrapProjectionRuntime() {
                 map,
                 Array.isArray(groups) ? groups : Object.values(groups || {}),
               );
+              syncContextFlowAnimations();
             },
             mapDeps: {},
           });
@@ -317,6 +334,7 @@ async function bootstrapProjectionRuntime() {
                 map,
                 Array.isArray(groups) ? groups : Object.values(groups || {}),
               );
+              syncContextFlowAnimations();
             },
             mapDeps: {},
           });

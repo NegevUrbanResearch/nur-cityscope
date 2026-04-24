@@ -28,8 +28,12 @@ function cloneValue(value) {
   if (Array.isArray(value)) {
     return value.map((item) => cloneValue(item));
   }
-  if (value && typeof value === "object") {
-    return { ...value };
+  if (value !== null && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value)) {
+      out[key] = cloneValue(value[key]);
+    }
+    return out;
   }
   return value;
 }
@@ -124,7 +128,7 @@ function tick(timestamp) {
         continue;
       }
 
-      const offset = phase * (config.speed || 1);
+      const offset = (phase + (config.phaseOffset || 0)) * (config.speed || 1);
       const dashLength = config.dashLength || FLOW_DASH_LENGTH;
       const gapLength = config.gapLength || FLOW_GAP_LENGTH;
       const period = dashLength + gapLength;
@@ -159,7 +163,7 @@ function ensureLoop() {
 /**
  * @param {import('maplibre-gl').Map} map
  * @param {string} layerId
- * @param {{ speed?: number, dashLength?: number, gapLength?: number }} [options]
+ * @param {{ speed?: number, dashLength?: number, gapLength?: number, phaseOffset?: number }} [options]
  */
 export function startFlowAnimation(map, layerId, options = {}) {
   if (!map || typeof layerId !== "string" || !layerId) return;
@@ -182,30 +186,170 @@ export function startFlowAnimation(map, layerId, options = {}) {
     speed: options.speed ?? existing?.speed ?? 1,
     dashLength: options.dashLength ?? existing?.dashLength ?? FLOW_DASH_LENGTH,
     gapLength: options.gapLength ?? existing?.gapLength ?? FLOW_GAP_LENGTH,
+    phaseOffset: options.phaseOffset ?? existing?.phaseOffset ?? 0,
     baselineDash,
   });
   ensureLoop();
 }
 
 /**
+ * @param {import('maplibre-gl').Map} map
  * @param {string} layerId
  */
-export function stopFlowAnimation(layerId) {
+export function stopFlowAnimationOnMap(map, layerId) {
+  if (!map || typeof layerId !== "string" || !layerId) return;
+  removeAnimationForLayer(map, layerId, { restoreDash: true });
+  if (!hasAnimatedLayers()) {
+    cancelLoop();
+  }
+}
+
+/**
+ * Stop flow animation for a layer id on one map, or on all maps if only one string arg is passed.
+ * @param {import('maplibre-gl').Map|string} mapOrLayerId
+ * @param {string} [layerId]
+ */
+export function stopFlowAnimation(mapOrLayerId, layerId) {
+  if (
+    mapOrLayerId &&
+    typeof layerId === "string" &&
+    typeof mapOrLayerId.getLayer === "function"
+  ) {
+    stopFlowAnimationOnMap(mapOrLayerId, layerId);
+    return;
+  }
+  const id = typeof mapOrLayerId === "string" ? mapOrLayerId : layerId;
+  if (typeof id !== "string" || !id) return;
   for (const map of [...animatedMaps]) {
-    removeAnimationForLayer(map, layerId, { restoreDash: true });
+    removeAnimationForLayer(map, id, { restoreDash: true });
   }
   if (!hasAnimatedLayers()) {
     cancelLoop();
   }
 }
 
-export function stopAllFlowAnimations() {
-  for (const map of [...animatedMaps]) {
+/**
+ * @param {import('maplibre-gl').Map} map
+ */
+function getStyleLayersSafe(map) {
+  try {
+    const style = typeof map.getStyle === "function" ? map.getStyle() : null;
+    return Array.isArray(style?.layers) ? style.layers : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * MapLibre line layer ids for a registry fullLayerId (dots→__) and curated prefix (dotted).
+ * @param {import('maplibre-gl').Map} map
+ * @param {string} fullLayerId e.g. "greens.agri" or "curated.42"
+ * @returns {string[]}
+ */
+export function collectLineLayerIdsForFullLayer(map, fullLayerId) {
+  if (!map || typeof fullLayerId !== "string" || !fullLayerId) return [];
+  const dottedPrefix = `${fullLayerId}__`;
+  const slugPrefix = `${fullLayerId.replace(/\./g, "__")}__`;
+  const out = [];
+  for (const layer of getStyleLayersSafe(map)) {
+    if (!layer || layer.type !== "line") continue;
+    const id = layer.id;
+    if (typeof id !== "string") continue;
+    if (id.startsWith(dottedPrefix) || id.startsWith(slugPrefix)) {
+      out.push(id);
+    }
+  }
+  return out;
+}
+
+export function hashLayerIdToPhaseOffset(layerId) {
+  let h = 0;
+  for (let i = 0; i < layerId.length; i += 1) {
+    h = Math.imul(31, h) + layerId.charCodeAt(i);
+  }
+  const u = (Math.abs(h) % 10000) / 10000;
+  return u * 8;
+}
+
+export function resolveSpeedForFullLayer(fullLayerId) {
+  const g = typeof globalThis !== "undefined" ? globalThis : undefined;
+  const overrides = g?.MapProjectionConfig?.PROJECTION_LAYER_ANIMATIONS?.LAYER_OVERRIDES;
+  const cfg = overrides && typeof overrides === "object" ? overrides[fullLayerId] : null;
+  if (cfg && Number.isFinite(cfg.SPEED) && cfg.SPEED > 0) {
+    return cfg.SPEED / 10;
+  }
+  return 1;
+}
+
+/**
+ * Apply OTEFDataContext `animations` record: start/stop flow on all line layers for each fullLayerId.
+ * Safe to call after layer sync so newly added layers pick up enabled animations.
+ * @param {import('maplibre-gl').Map} map
+ * @param {Record<string, boolean>|null|undefined} animState
+ */
+export function applyContextFlowAnimationsToMap(map, animState) {
+  if (!map) return;
+  const state = animState && typeof animState === "object" ? animState : {};
+
+  /** @type {Set<string>} */
+  const desiredAnimatedLineIds = new Set();
+  for (const fullLayerId of Object.keys(state)) {
+    if (!state[fullLayerId]) continue;
+    for (const lid of collectLineLayerIdsForFullLayer(map, fullLayerId)) {
+      desiredAnimatedLineIds.add(lid);
+    }
+  }
+
+  const registry = getMapRegistry(map, false);
+  if (registry) {
+    for (const lid of [...registry.keys()]) {
+      if (!desiredAnimatedLineIds.has(lid)) {
+        stopFlowAnimationOnMap(map, lid);
+      }
+    }
+  }
+
+  for (const fullLayerId of Object.keys(state)) {
+    const lineIds = collectLineLayerIdsForFullLayer(map, fullLayerId);
+    const enabled = !!state[fullLayerId];
+    for (const lid of lineIds) {
+      if (enabled) {
+        startFlowAnimation(map, lid, {
+          speed: resolveSpeedForFullLayer(fullLayerId),
+          phaseOffset: hashLayerIdToPhaseOffset(lid),
+        });
+      } else {
+        stopFlowAnimationOnMap(map, lid);
+      }
+    }
+  }
+}
+
+/**
+ * Clear all flow animations registered for a single map (restores dash baselines).
+ * @param {import('maplibre-gl').Map} [map]
+ */
+export function stopAllFlowAnimations(map) {
+  if (map && typeof map.getLayer === "function") {
     const registry = getMapRegistry(map, false);
+    if (registry) {
+      const layerIds = [...registry.keys()];
+      for (const layerId of layerIds) {
+        removeAnimationForLayer(map, layerId, { restoreDash: true });
+      }
+    }
+    if (!hasAnimatedLayers()) {
+      cancelLoop();
+    }
+    return;
+  }
+
+  for (const m of [...animatedMaps]) {
+    const registry = getMapRegistry(m, false);
     if (!registry) continue;
     const layerIds = [...registry.keys()];
     for (const layerId of layerIds) {
-      removeAnimationForLayer(map, layerId, { restoreDash: true });
+      removeAnimationForLayer(m, layerId, { restoreDash: true });
     }
   }
   cancelLoop();

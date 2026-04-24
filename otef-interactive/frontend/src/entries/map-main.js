@@ -11,6 +11,7 @@ import {
   removeCuratedHtmlMarkers,
 } from "../map/maplibre-curated-layer-loader.js";
 import {
+  applyContextFlowAnimationsToMap,
   startFlowAnimation,
   stopFlowAnimation,
   stopAllFlowAnimations,
@@ -146,11 +147,21 @@ async function bootstrapMapRuntime() {
     if (typeof window !== "undefined") {
       window.MapLibreFlowAnimation = {
         startFlowAnimation: (layerId, opts) => startFlowAnimation(map, layerId, opts),
-        stopFlowAnimation,
-        stopAllFlowAnimations,
+        stopFlowAnimation: (layerId) => stopFlowAnimation(map, layerId),
+        stopAllFlowAnimations: () => stopAllFlowAnimations(map),
       };
     }
-    registerDisposer(stopAllFlowAnimations);
+    registerDisposer(() => stopAllFlowAnimations(map));
+
+    const syncContextFlowAnimations = () => {
+      applyContextFlowAnimationsToMap(
+        map,
+        typeof OTEFDataContext.getAnimations === "function"
+          ? OTEFDataContext.getAnimations()
+          : {},
+      );
+    };
+    registerDisposer(OTEFDataContext.subscribe("animations", syncContextFlowAnimations));
 
     registerDisposer(setupViewportSync(map, OTEFDataContext));
     let activeCuratedIds = new Set();
@@ -160,6 +171,7 @@ async function bootstrapMapRuntime() {
       Array.isArray(layerGroups) ? layerGroups : Object.values(layerGroups || {}),
     );
     applyLayerGroupsToMap(map, initialGroups);
+    syncContextFlowAnimations();
 
     updateConnectionStatus(!!OTEFDataContext.isConnected?.());
     registerDisposer(
@@ -206,6 +218,7 @@ async function bootstrapMapRuntime() {
 
       // Apply non-curated layer changes via registry path.
       applyLayerGroupsToMap(map, currentGroups);
+      syncContextFlowAnimations();
 
       // Determine which curated ids to refresh.
       const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
@@ -235,7 +248,10 @@ async function bootstrapMapRuntime() {
         toRefresh = [...enabledCuratedIds];
       }
 
-      if (toRefresh.length === 0) return;
+      if (toRefresh.length === 0) {
+        syncContextFlowAnimations();
+        return;
+      }
 
       const maplibregl = await resolveMaplibregl();
       for (const fullId of toRefresh) {
@@ -245,6 +261,7 @@ async function bootstrapMapRuntime() {
           console.warn(`[map-main] Failed to load curated layer ${fullId}`, err);
         }
       }
+      syncContextFlowAnimations();
     };
 
     // Initial curated load for current layerGroups state.
@@ -272,13 +289,15 @@ async function bootstrapMapRuntime() {
           void syncCuratedMapLayersAfterSupabasePull({
             pullPayload: ev?.detail || {},
             reloadCuratedOnMap: refreshCuratedLayers,
-            applyLayerGroupsState: (groups) =>
+            applyLayerGroupsState: (groups) => {
               applyLayerGroupsToMap(
                 map,
                 filterGroupsForGisMap(
                   Array.isArray(groups) ? groups : Object.values(groups || {}),
                 ),
-              ),
+              );
+              syncContextFlowAnimations();
+            },
             mapDeps: {},
           });
         };
@@ -295,13 +314,15 @@ async function bootstrapMapRuntime() {
           await syncCuratedMapLayersAfterSupabasePull({
             pullPayload: data,
             reloadCuratedOnMap: refreshCuratedLayers,
-            applyLayerGroupsState: (groups) =>
+            applyLayerGroupsState: (groups) => {
               applyLayerGroupsToMap(
                 map,
                 filterGroupsForGisMap(
                   Array.isArray(groups) ? groups : Object.values(groups || {}),
                 ),
-              ),
+              );
+              syncContextFlowAnimations();
+            },
             mapDeps: {},
           });
           if (typeof window !== "undefined") {
