@@ -94,8 +94,8 @@ export function removeCuratedHtmlMarkers(fullLayerId) {
 // ---------------------------------------------------------------------------
 
 /** Source/layer ids used for the shared pink-line base on this MapLibre map. */
-const PINK_BASE_SOURCE_ID = "curated__pink_line_base__source";
-const PINK_BASE_LAYER_ID = "curated__pink_line_base__layer";
+const PINK_BASE_SOURCE_ID = "pink_line_base";
+const PINK_BASE_LAYER_ID = "pink_line_base__line";
 
 /**
  * Ensure the pink-line base polylines are added to the MapLibre map.
