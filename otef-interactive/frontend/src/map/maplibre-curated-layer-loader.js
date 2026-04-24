@@ -48,6 +48,7 @@ import { readPinkNodeOrder } from "../map-utils/pink-node-order.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
   addCuratedGeoJsonSource,
+  removeCuratedLayersByPrefix,
   registerCuratedLayerIds,
 } from "./maplibre-layer-manager.js";
 
@@ -382,6 +383,12 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
     opts.maplibregl ||
     (typeof window !== "undefined" && window.maplibregl) ||
     null;
+  const force = opts && opts.force === true;
+
+  if (force && map && fullLayerId) {
+    removeCuratedLayersByPrefix(map, fullLayerId);
+    removeCuratedHtmlMarkers(fullLayerId);
+  }
 
   // --- Shared data fetch ---
   const result = await fetchCuratedLayerData(fullLayerId);

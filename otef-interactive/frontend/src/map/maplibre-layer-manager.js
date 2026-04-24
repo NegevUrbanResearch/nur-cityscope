@@ -91,7 +91,17 @@ function getVectorSourceLayerName(fullId, layerConfig) {
  */
 export function addCuratedGeoJsonSource(map, sourceId, geojsonData) {
   if (!map || !sourceId || !geojsonData) return;
-  if (map.getSource(sourceId)) return;
+  const existingSource = map.getSource(sourceId);
+  if (existingSource) {
+    if (typeof existingSource.setData === "function") {
+      try {
+        existingSource.setData(geojsonData);
+      } catch (err) {
+        console.warn(`[maplibre-layer-manager] Failed to update curated source ${sourceId}`, err);
+      }
+    }
+    return;
+  }
   try {
     map.addSource(sourceId, { type: "geojson", data: geojsonData });
   } catch (err) {

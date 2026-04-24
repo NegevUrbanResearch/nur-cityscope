@@ -198,6 +198,14 @@ async function bootstrapMapRuntime() {
       const previousCuratedIds = new Set(activeCuratedIds);
       activeCuratedIds = enabledCuratedIds;
 
+      // Disabled curated IDs must always be detached.
+      for (const fullId of previousCuratedIds) {
+        if (!enabledCuratedIds.has(fullId)) {
+          removeCuratedLayersByPrefix(map, fullId);
+          removeCuratedHtmlMarkers(fullId);
+        }
+      }
+
       let toRefresh;
       if (Array.isArray(affectedCuratedFullLayerIds) && affectedCuratedFullLayerIds.length > 0) {
         const affectedSet = new Set(affectedCuratedFullLayerIds.filter((id) => typeof id === "string"));
@@ -208,14 +216,9 @@ async function bootstrapMapRuntime() {
         }
         toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
       } else {
-        // Normal layerGroups updates: immediate curated enable/disable reconciliation.
-        for (const fullId of previousCuratedIds) {
-          if (!enabledCuratedIds.has(fullId)) {
-            removeCuratedLayersByPrefix(map, fullId);
-            removeCuratedHtmlMarkers(fullId);
-          }
-        }
-        toRefresh = [...enabledCuratedIds].filter((id) => !previousCuratedIds.has(id));
+        // Full refresh semantics: reload all enabled curated layers.
+        // Needed for Supabase pulls that omit affected layer ids.
+        toRefresh = [...enabledCuratedIds];
       }
 
       if (toRefresh.length === 0) return;
@@ -223,7 +226,7 @@ async function bootstrapMapRuntime() {
       const maplibregl = await resolveMaplibregl();
       for (const fullId of toRefresh) {
         try {
-          await loadCuratedLayerToMapLibre(map, fullId, { maplibregl });
+          await loadCuratedLayerToMapLibre(map, fullId, { maplibregl, force: true });
         } catch (err) {
           console.warn(`[map-main] Failed to load curated layer ${fullId}`, err);
         }
