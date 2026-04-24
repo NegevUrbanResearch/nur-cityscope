@@ -10,6 +10,11 @@ import {
   loadCuratedLayerToMapLibre,
   removeCuratedHtmlMarkers,
 } from "../map/maplibre-curated-layer-loader.js";
+import {
+  startFlowAnimation,
+  stopFlowAnimation,
+  stopAllFlowAnimations,
+} from "../shared/maplibre-flow-animation.js";
 
 const DEFAULT_MAP_CENTER = [34.5, 31.4];
 
@@ -138,6 +143,15 @@ async function bootstrapMapRuntime() {
   }
 
   map.on("load", async () => {
+    if (typeof window !== "undefined") {
+      window.MapLibreFlowAnimation = {
+        startFlowAnimation: (layerId, opts) => startFlowAnimation(map, layerId, opts),
+        stopFlowAnimation,
+        stopAllFlowAnimations,
+      };
+    }
+    registerDisposer(stopAllFlowAnimations);
+
     registerDisposer(setupViewportSync(map, OTEFDataContext));
     let activeCuratedIds = new Set();
 

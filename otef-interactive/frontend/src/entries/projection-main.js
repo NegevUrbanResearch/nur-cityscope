@@ -7,6 +7,11 @@ import {
   removeCuratedHtmlMarkers,
 } from "../map/maplibre-curated-layer-loader.js";
 import { removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
+import {
+  startFlowAnimation,
+  stopFlowAnimation,
+  stopAllFlowAnimations,
+} from "../shared/maplibre-flow-animation.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
 
@@ -133,6 +138,15 @@ async function bootstrapProjectionRuntime() {
   }
 
   map.on("load", async () => {
+    if (typeof window !== "undefined") {
+      window.MapLibreFlowAnimation = {
+        startFlowAnimation: (layerId, opts) => startFlowAnimation(map, layerId, opts),
+        stopFlowAnimation,
+        stopAllFlowAnimations,
+      };
+    }
+    registerDisposer(stopAllFlowAnimations);
+
     let activeCuratedIds = new Set();
 
     function asLayerGroupsArray(raw) {
