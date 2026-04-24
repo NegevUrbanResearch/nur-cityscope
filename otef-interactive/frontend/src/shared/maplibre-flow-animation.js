@@ -7,8 +7,10 @@ const FLOW_DASH_LENGTH = 4;
 const FLOW_GAP_LENGTH = 4;
 const FLOW_SPEED = 0.02; // phase units per ms (scaled by per-layer speed)
 
-/** @type {Map<string, { map: import('maplibre-gl').Map, speed: number, dashLength: number, gapLength: number }>} */
-const animatedLayers = new Map();
+/** @type {WeakMap<import('maplibre-gl').Map, Map<string, { speed: number, dashLength: number, gapLength: number, baselineDash: any }>>} */
+const animatedLayersByMap = new WeakMap();
+/** @type {Set<import('maplibre-gl').Map>} */
+const animatedMaps = new Set();
 
 let animationFrameId = null;
 let lastTimestamp = 0;
@@ -22,13 +24,74 @@ function cancelLoop() {
   lastTimestamp = 0;
 }
 
+function cloneValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneValue(item));
+  }
+  if (value && typeof value === "object") {
+    return { ...value };
+  }
+  return value;
+}
+
+function getMapRegistry(map, create = false) {
+  let registry = animatedLayersByMap.get(map);
+  if (!registry && create) {
+    registry = new Map();
+    animatedLayersByMap.set(map, registry);
+    animatedMaps.add(map);
+  }
+  return registry || null;
+}
+
+function hasAnimatedLayers() {
+  for (const map of animatedMaps) {
+    const registry = animatedLayersByMap.get(map);
+    if (!registry || registry.size === 0) {
+      animatedMaps.delete(map);
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+function restoreBaselineDash(map, layerId, baselineDash) {
+  try {
+    if (typeof map.getLayer !== "function" || !map.getLayer(layerId)) return;
+    if (baselineDash === undefined) {
+      map.setPaintProperty(layerId, "line-dasharray", null);
+      return;
+    }
+    map.setPaintProperty(layerId, "line-dasharray", cloneValue(baselineDash));
+  } catch (_) {
+    // Ignore best-effort cleanup errors.
+  }
+}
+
+function removeAnimationForLayer(map, layerId, { restoreDash } = { restoreDash: true }) {
+  const registry = getMapRegistry(map, false);
+  if (!registry) return false;
+  const config = registry.get(layerId);
+  if (!config) return false;
+
+  registry.delete(layerId);
+  if (restoreDash) {
+    restoreBaselineDash(map, layerId, config.baselineDash);
+  }
+  if (registry.size === 0) {
+    animatedMaps.delete(map);
+  }
+  return true;
+}
+
 /**
  * @param {number} timestamp
  */
 function tick(timestamp) {
   animationFrameId = null;
 
-  if (animatedLayers.size === 0) {
+  if (!hasAnimatedLayers()) {
     lastTimestamp = 0;
     return;
   }
@@ -38,40 +101,48 @@ function tick(timestamp) {
   lastTimestamp = timestamp;
   phase += FLOW_SPEED * dt;
 
-  const entries = [...animatedLayers.entries()];
-  for (const [layerId, config] of entries) {
-    if (!animatedLayers.has(layerId)) continue;
-
-    const map = config.map;
-    let layerOk = false;
-    try {
-      layerOk = typeof map.getLayer === "function" && !!map.getLayer(layerId);
-    } catch (_) {
-      layerOk = false;
-    }
-    if (!layerOk) {
-      animatedLayers.delete(layerId);
+  const maps = [...animatedMaps];
+  for (const map of maps) {
+    const registry = getMapRegistry(map, false);
+    if (!registry || registry.size === 0) {
+      animatedMaps.delete(map);
       continue;
     }
 
-    const offset = phase * (config.speed || 1);
-    const dashLength = config.dashLength || FLOW_DASH_LENGTH;
-    const gapLength = config.gapLength || FLOW_GAP_LENGTH;
-    const period = dashLength + gapLength;
-    const shift = ((offset % period) + period) % period;
-    try {
-      map.setPaintProperty(layerId, "line-dasharray", [
-        Math.max(0.1, dashLength - shift),
-        gapLength,
-        shift,
-        0,
-      ]);
-    } catch (_) {
-      animatedLayers.delete(layerId);
+    const entries = [...registry.entries()];
+    for (const [layerId, config] of entries) {
+      if (!registry.has(layerId)) continue;
+
+      let layerOk = false;
+      try {
+        layerOk = typeof map.getLayer === "function" && !!map.getLayer(layerId);
+      } catch (_) {
+        layerOk = false;
+      }
+      if (!layerOk) {
+        removeAnimationForLayer(map, layerId, { restoreDash: false });
+        continue;
+      }
+
+      const offset = phase * (config.speed || 1);
+      const dashLength = config.dashLength || FLOW_DASH_LENGTH;
+      const gapLength = config.gapLength || FLOW_GAP_LENGTH;
+      const period = dashLength + gapLength;
+      const shift = ((offset % period) + period) % period;
+      try {
+        map.setPaintProperty(layerId, "line-dasharray", [
+          Math.max(0.1, dashLength - shift),
+          gapLength,
+          shift,
+          0,
+        ]);
+      } catch (_) {
+        removeAnimationForLayer(map, layerId, { restoreDash: false });
+      }
     }
   }
 
-  if (animatedLayers.size > 0) {
+  if (hasAnimatedLayers()) {
     animationFrameId = requestAnimationFrame(tick);
   } else {
     lastTimestamp = 0;
@@ -79,7 +150,7 @@ function tick(timestamp) {
 }
 
 function ensureLoop() {
-  if (animationFrameId == null && animatedLayers.size > 0) {
+  if (animationFrameId == null && hasAnimatedLayers()) {
     lastTimestamp = 0;
     animationFrameId = requestAnimationFrame(tick);
   }
@@ -93,11 +164,25 @@ function ensureLoop() {
 export function startFlowAnimation(map, layerId, options = {}) {
   if (!map || typeof layerId !== "string" || !layerId) return;
 
-  animatedLayers.set(layerId, {
-    map,
-    speed: options.speed ?? 1,
-    dashLength: options.dashLength ?? FLOW_DASH_LENGTH,
-    gapLength: options.gapLength ?? FLOW_GAP_LENGTH,
+  const registry = getMapRegistry(map, true);
+  const existing = registry.get(layerId);
+
+  let baselineDash = existing?.baselineDash;
+  if (baselineDash === undefined) {
+    try {
+      if (typeof map.getPaintProperty === "function") {
+        baselineDash = cloneValue(map.getPaintProperty(layerId, "line-dasharray"));
+      }
+    } catch (_) {
+      baselineDash = undefined;
+    }
+  }
+
+  registry.set(layerId, {
+    speed: options.speed ?? existing?.speed ?? 1,
+    dashLength: options.dashLength ?? existing?.dashLength ?? FLOW_DASH_LENGTH,
+    gapLength: options.gapLength ?? existing?.gapLength ?? FLOW_GAP_LENGTH,
+    baselineDash,
   });
   ensureLoop();
 }
@@ -106,13 +191,22 @@ export function startFlowAnimation(map, layerId, options = {}) {
  * @param {string} layerId
  */
 export function stopFlowAnimation(layerId) {
-  animatedLayers.delete(layerId);
-  if (animatedLayers.size === 0) {
+  for (const map of [...animatedMaps]) {
+    removeAnimationForLayer(map, layerId, { restoreDash: true });
+  }
+  if (!hasAnimatedLayers()) {
     cancelLoop();
   }
 }
 
 export function stopAllFlowAnimations() {
-  animatedLayers.clear();
+  for (const map of [...animatedMaps]) {
+    const registry = getMapRegistry(map, false);
+    if (!registry) continue;
+    const layerIds = [...registry.keys()];
+    for (const layerId of layerIds) {
+      removeAnimationForLayer(map, layerId, { restoreDash: true });
+    }
+  }
   cancelLoop();
 }

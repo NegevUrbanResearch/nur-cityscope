@@ -35,10 +35,14 @@ describe("maplibre-flow-animation", () => {
     vi.unstubAllGlobals();
   });
 
-  function createMap(layerIds) {
+  function createMap(layerIds, initialDash = undefined) {
     const set = new Set(layerIds);
     return {
       getLayer: vi.fn((id) => (set.has(id) ? { id } : undefined)),
+      getPaintProperty: vi.fn((id, prop) => {
+        if (!set.has(id) || prop !== "line-dasharray") return undefined;
+        return initialDash;
+      }),
       setPaintProperty: vi.fn(),
     };
   }
@@ -67,9 +71,17 @@ describe("maplibre-flow-animation", () => {
   it("stopAllFlowAnimations cancels the loop", () => {
     const map = createMap(["x"]);
     startFlowAnimation(map, "x");
+    globalThis.__flushFlowAnimationFrame();
+    const callsBeforeStop = map.setPaintProperty.mock.calls.length;
     stopAllFlowAnimations();
     globalThis.__flushFlowAnimationFrame();
-    expect(map.setPaintProperty).not.toHaveBeenCalled();
+    const callsAfterStop = map.setPaintProperty.mock.calls.length;
+    expect(callsAfterStop).toBe(callsBeforeStop + 1);
+    expect(map.setPaintProperty).toHaveBeenLastCalledWith(
+      "x",
+      "line-dasharray",
+      null,
+    );
   });
 
   it("removes layer entry when getLayer returns undefined", () => {
@@ -89,5 +101,73 @@ describe("maplibre-flow-animation", () => {
     startFlowAnimation(map, "bad");
     globalThis.__flushFlowAnimationFrame();
     stopAllFlowAnimations();
+  });
+
+  it("restores baseline dash style on stopFlowAnimation", () => {
+    const baseline = [6, 2];
+    const map = createMap(["road"], baseline);
+    startFlowAnimation(map, "road");
+    globalThis.__flushFlowAnimationFrame();
+
+    stopFlowAnimation("road");
+
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      "road",
+      "line-dasharray",
+      baseline,
+    );
+  });
+
+  it("clears dash override on stopAll when no baseline exists", () => {
+    const map = createMap(["road"]);
+    startFlowAnimation(map, "road");
+    globalThis.__flushFlowAnimationFrame();
+
+    stopAllFlowAnimations();
+
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      "road",
+      "line-dasharray",
+      null,
+    );
+  });
+
+  it("supports same layer id on multiple maps without collisions", () => {
+    const mapA = createMap(["shared"], [3, 1]);
+    const mapB = createMap(["shared"], [8, 2]);
+
+    startFlowAnimation(mapA, "shared", { speed: 1 });
+    startFlowAnimation(mapB, "shared", { speed: 2 });
+    globalThis.__flushFlowAnimationFrame();
+
+    const animatedCallsA = mapA.setPaintProperty.mock.calls.filter(
+      ([layerId, prop]) => layerId === "shared" && prop === "line-dasharray",
+    );
+    const animatedCallsB = mapB.setPaintProperty.mock.calls.filter(
+      ([layerId, prop]) => layerId === "shared" && prop === "line-dasharray",
+    );
+    expect(animatedCallsA.length).toBeGreaterThan(0);
+    expect(animatedCallsB.length).toBeGreaterThan(0);
+
+    stopFlowAnimation("shared");
+    expect(mapA.setPaintProperty).toHaveBeenCalledWith(
+      "shared",
+      "line-dasharray",
+      [3, 1],
+    );
+    expect(mapB.setPaintProperty).toHaveBeenCalledWith(
+      "shared",
+      "line-dasharray",
+      [8, 2],
+    );
+  });
+
+  it("handles missing layers safely during stop cleanup", () => {
+    const map = createMap(["ghost"]);
+    startFlowAnimation(map, "ghost");
+    map.getLayer.mockReturnValue(undefined);
+
+    expect(() => stopFlowAnimation("ghost")).not.toThrow();
+    expect(() => stopAllFlowAnimations()).not.toThrow();
   });
 });
