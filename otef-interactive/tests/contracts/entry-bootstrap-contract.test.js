@@ -45,4 +45,8 @@ test("projection entry wires MapLibre curated pipeline and Supabase heartbeat", 
   expect(src.includes("startCuratedSupabaseHeartbeat")).toBe(true);
   expect(src.includes('table: "otef"')).toBe(true);
   expect(src.includes("syncCuratedMapLayersAfterSupabasePull")).toBe(true);
+  expect(src.includes("otef-curated-geojson-refresh")).toBe(true);
+  expect(src.includes("nur-curated-supabase-pull")).toBe(true);
+  expect(src.includes('source: "projection"')).toBe(true);
+  expect(src.includes("projectionCuratedRefreshChain")).toBe(true);
 });

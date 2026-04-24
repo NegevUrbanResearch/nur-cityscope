@@ -161,7 +161,7 @@ async function bootstrapProjectionRuntime() {
       }
     }
 
-    const refreshProjectionCuratedLayers = async ({
+    const runProjectionCuratedRefresh = async ({
       affectedCuratedFullLayerIds,
       groupsOverride,
     } = {}) => {
@@ -206,6 +206,13 @@ async function bootstrapProjectionRuntime() {
         }
       }
     };
+    let projectionCuratedRefreshChain = Promise.resolve();
+    const refreshProjectionCuratedLayers = (options = {}) => {
+      projectionCuratedRefreshChain = projectionCuratedRefreshChain
+        .catch(() => {})
+        .then(() => runProjectionCuratedRefresh(options));
+      return projectionCuratedRefreshChain;
+    };
 
     async function loadProjectionCuratedLayers(targetMap) {
       if (!targetMap) return;
@@ -241,6 +248,30 @@ async function bootstrapProjectionRuntime() {
       const { startCuratedSupabaseHeartbeat } = await import(
         "../shared/curated-supabase-heartbeat.js"
       );
+      if (
+        typeof window !== "undefined" &&
+        !window._otefProjectionCuratedGeojsonRefreshBound
+      ) {
+        window._otefProjectionCuratedGeojsonRefreshBound = true;
+        const onCuratedRefresh = (ev) => {
+          void syncCuratedMapLayersAfterSupabasePull({
+            pullPayload: ev?.detail || {},
+            reloadCuratedOnMap: refreshProjectionCuratedLayers,
+            applyLayerGroupsState: (groups) => {
+              syncProjectionLayers(
+                map,
+                Array.isArray(groups) ? groups : Object.values(groups || {}),
+              );
+            },
+            mapDeps: {},
+          });
+        };
+        window.addEventListener("otef-curated-geojson-refresh", onCuratedRefresh);
+        registerDisposer(() => {
+          window.removeEventListener("otef-curated-geojson-refresh", onCuratedRefresh);
+          window._otefProjectionCuratedGeojsonRefreshBound = false;
+        });
+      }
 
       const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
         table: "otef",
@@ -256,6 +287,13 @@ async function bootstrapProjectionRuntime() {
             },
             mapDeps: {},
           });
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("nur-curated-supabase-pull", {
+                detail: { source: "projection" },
+              }),
+            );
+          }
         },
       });
       registerDisposer(stopCuratedHeartbeat);
