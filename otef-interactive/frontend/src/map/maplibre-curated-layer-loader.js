@@ -709,29 +709,78 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
       marker.addTo(map);
       markers.push(marker);
     }
-    htmlMarkersByLayer.set(fullLayerId, markers);
-    registerCuratedLayerIds(map, fullLayerId, `${fullLayerId}__src`, []);
-    return;
+    if (markers.length > 0) {
+      htmlMarkersByLayer.set(fullLayerId, markers);
+      registerCuratedLayerIds(map, fullLayerId, `${fullLayerId}__src`, []);
+      return;
+    }
   }
 
-  // --- Final fallback: plain GeoJSON layer ---
+  // --- Final fallback: plain GeoJSON rendered with geometry-appropriate layers ---
   const fallbackSourceId = `${fullLayerId}__plain__src`;
-  const fallbackLayerId = `${fullLayerId}__plain__0`;
+  const fallbackFillLayerId = `${fullLayerId}__plain__fill`;
+  const fallbackLineLayerId = `${fullLayerId}__plain__line`;
+  const fallbackCircleLayerId = `${fullLayerId}__plain__circle`;
+  const fallbackColor =
+    resolveFirstDisplayColorFromGeojson(geojson) ??
+    getCuratedLayerColor(fullLayerId, layerData) ??
+    "#00d4ff";
   addCuratedGeoJsonSource(map, fallbackSourceId, geojson);
   if (map.getSource(fallbackSourceId)) {
+    const addedFallbackLayerIds = [];
     try {
       map.addLayer({
-        id: fallbackLayerId,
+        id: fallbackFillLayerId,
         type: "fill",
         source: fallbackSourceId,
+        filter: ["==", ["geometry-type"], "Polygon"],
         paint: {
-          "fill-color": "#00d4ff",
+          "fill-color": fallbackColor,
           "fill-opacity": 0.4,
+          "fill-outline-color": fallbackColor,
         },
       });
-      registerCuratedLayerIds(map, fullLayerId, fallbackSourceId, [fallbackLayerId]);
+      addedFallbackLayerIds.push(fallbackFillLayerId);
     } catch (err) {
-      console.warn(`[maplibre-curated-layer-loader] Plain GeoJSON layer error for ${fullLayerId}`, err);
+      console.warn(`[maplibre-curated-layer-loader] Plain fill layer error for ${fullLayerId}`, err);
+    }
+    try {
+      map.addLayer({
+        id: fallbackLineLayerId,
+        type: "line",
+        source: fallbackSourceId,
+        filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": fallbackColor,
+          "line-width": 3,
+          "line-opacity": 0.9,
+        },
+      });
+      addedFallbackLayerIds.push(fallbackLineLayerId);
+    } catch (err) {
+      console.warn(`[maplibre-curated-layer-loader] Plain line layer error for ${fullLayerId}`, err);
+    }
+    try {
+      map.addLayer({
+        id: fallbackCircleLayerId,
+        type: "circle",
+        source: fallbackSourceId,
+        filter: ["==", ["geometry-type"], "Point"],
+        paint: {
+          "circle-color": fallbackColor,
+          "circle-radius": 5,
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1.25,
+          "circle-opacity": 0.9,
+        },
+      });
+      addedFallbackLayerIds.push(fallbackCircleLayerId);
+    } catch (err) {
+      console.warn(`[maplibre-curated-layer-loader] Plain circle layer error for ${fullLayerId}`, err);
+    }
+    if (addedFallbackLayerIds.length > 0) {
+      registerCuratedLayerIds(map, fullLayerId, fallbackSourceId, addedFallbackLayerIds);
     }
   }
 }
