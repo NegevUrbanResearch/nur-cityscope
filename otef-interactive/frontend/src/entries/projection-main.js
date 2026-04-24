@@ -1,10 +1,6 @@
 import TableSwitcher from "../shared/table-switcher.js";
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
-import {
-  createProjectionMap,
-  updateProjectionViewport,
-  updateHighlightFromViewport,
-} from "../projection/maplibre-projection.js";
+import { createProjectionMap, updateHighlightFromViewport } from "../projection/maplibre-projection.js";
 import { syncProjectionLayers } from "../projection/maplibre-projection-layers.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
@@ -136,7 +132,6 @@ async function bootstrapProjectionRuntime() {
 
     lastViewport = OTEFDataContext.getViewport();
     if (lastViewport) {
-      updateProjectionViewport(map, lastViewport, modelBounds);
       updateHighlightFromViewport(lastViewport, modelBounds, highlightEl);
     }
 
@@ -149,7 +144,6 @@ async function bootstrapProjectionRuntime() {
     registerDisposer(
       OTEFDataContext.subscribe("viewport", (viewport) => {
         lastViewport = viewport;
-        updateProjectionViewport(map, viewport, modelBounds);
         updateHighlightFromViewport(viewport, modelBounds, highlightEl);
       }),
     );
