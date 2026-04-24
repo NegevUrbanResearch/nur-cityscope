@@ -3,6 +3,7 @@ import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import { createGISMap } from "../map/maplibre-map.js";
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
 import { applyLayerGroupsToMap } from "../map/maplibre-layer-manager.js";
+import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
 
@@ -136,11 +137,23 @@ async function bootstrapMapRuntime() {
     registerDisposer(setupViewportSync(map, OTEFDataContext));
 
     const layerGroups = OTEFDataContext.getLayerGroups();
-    applyLayerGroupsToMap(map, layerGroups);
+    applyLayerGroupsToMap(
+      map,
+      filterGroupsForGisMap(
+        Array.isArray(layerGroups)
+          ? layerGroups
+          : Object.values(layerGroups || {}),
+      ),
+    );
 
     registerDisposer(
       OTEFDataContext.subscribe("layerGroups", (groups) => {
-        applyLayerGroupsToMap(map, groups);
+        applyLayerGroupsToMap(
+          map,
+          filterGroupsForGisMap(
+            Array.isArray(groups) ? groups : Object.values(groups || {}),
+          ),
+        );
       }),
     );
 
@@ -152,19 +165,20 @@ async function bootstrapMapRuntime() {
     );
 
     const refreshCuratedLayers = ({ affectedCuratedFullLayerIds } = {}) => {
-      const currentGroups = OTEFDataContext.getLayerGroups();
+      const rawGroups = OTEFDataContext.getLayerGroups();
+      const groupsAsArray = Array.isArray(rawGroups)
+        ? rawGroups
+        : Object.values(rawGroups || {});
+      const currentGroups = filterGroupsForGisMap(groupsAsArray);
       if (!Array.isArray(affectedCuratedFullLayerIds) || affectedCuratedFullLayerIds.length === 0) {
         applyLayerGroupsToMap(map, currentGroups);
         return;
       }
 
-      const groupsAsArray = Array.isArray(currentGroups)
-        ? currentGroups
-        : Object.values(currentGroups || {});
       const affectedSet = new Set(
         affectedCuratedFullLayerIds.filter((id) => typeof id === "string"),
       );
-      const temporaryGroups = groupsAsArray.map((group) => ({
+      const temporaryGroups = currentGroups.map((group) => ({
         ...group,
         layers: (group.layers || []).map((layer) => {
           const fullId = `${group.id}.${layer.id}`;
@@ -193,7 +207,13 @@ async function bootstrapMapRuntime() {
           void syncCuratedMapLayersAfterSupabasePull({
             pullPayload: ev?.detail || {},
             reloadCuratedOnMap: refreshCuratedLayers,
-            applyLayerGroupsState: (groups) => applyLayerGroupsToMap(map, groups),
+            applyLayerGroupsState: (groups) =>
+              applyLayerGroupsToMap(
+                map,
+                filterGroupsForGisMap(
+                  Array.isArray(groups) ? groups : Object.values(groups || {}),
+                ),
+              ),
             mapDeps: {},
           });
         };
@@ -210,7 +230,13 @@ async function bootstrapMapRuntime() {
           await syncCuratedMapLayersAfterSupabasePull({
             pullPayload: data,
             reloadCuratedOnMap: refreshCuratedLayers,
-            applyLayerGroupsState: (groups) => applyLayerGroupsToMap(map, groups),
+            applyLayerGroupsState: (groups) =>
+              applyLayerGroupsToMap(
+                map,
+                filterGroupsForGisMap(
+                  Array.isArray(groups) ? groups : Object.values(groups || {}),
+                ),
+              ),
             mapDeps: {},
           });
           if (typeof window !== "undefined") {
