@@ -5,14 +5,24 @@ function read(p) {
   return fs.readFileSync(path.resolve(__dirname, "../../", p), "utf8");
 }
 
-test("map entry loads map-initialization after map dependency modules", () => {
+test("map entry bootstraps maplibre runtime modules", () => {
   const src = read("frontend/src/entries/map-main.js");
-  const idxInit = src.indexOf('"../map/map-initialization.js"');
-  const idxLeafletLoader = src.indexOf('"../map/leaflet-control-with-basemap.js"');
-  const idxViewportSync = src.indexOf('"../map/viewport-sync.js"');
+  const idxCreateMap = src.indexOf(
+    'import { createGISMap } from "../map/maplibre-map.js";',
+  );
+  const idxViewportSync = src.indexOf(
+    'import { setupViewportSync } from "../map/maplibre-viewport-sync.js";',
+  );
+  const idxLayerManager = src.indexOf(
+    'import { applyLayerGroupsToMap } from "../map/maplibre-layer-manager.js";',
+  );
 
-  expect(idxInit).toBeGreaterThan(idxLeafletLoader);
-  expect(idxInit).toBeGreaterThan(idxViewportSync);
+  expect(idxCreateMap).toBeGreaterThan(-1);
+  expect(idxViewportSync).toBeGreaterThan(-1);
+  expect(idxLayerManager).toBeGreaterThan(-1);
+  expect(src.includes("../map/map-initialization.js")).toBe(false);
+  expect(src.includes("../map/leaflet-control-with-basemap.js")).toBe(false);
+  expect(src.includes("../map/viewport-sync.js")).toBe(false);
   expect(src.includes("loadLegacyScriptChain")).toBe(false);
 });
 

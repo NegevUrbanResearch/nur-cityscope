@@ -2,8 +2,22 @@
  * Creates and manages the MapLibre instance for the projection display.
  * Transparent background, no basemap, overlaid on model image.
  */
-import maplibregl from "maplibre-gl";
-import { Protocol } from "pmtiles";
+const maplibregl =
+  (typeof globalThis !== "undefined" && globalThis.maplibregl) ||
+  (typeof window !== "undefined" && window.maplibregl);
+const Protocol =
+  (typeof globalThis !== "undefined" &&
+    globalThis.pmtiles &&
+    globalThis.pmtiles.Protocol) ||
+  (typeof window !== "undefined" &&
+    window.pmtiles &&
+    window.pmtiles.Protocol);
+
+if (!maplibregl || !Protocol) {
+  throw new Error(
+    "[maplibre-projection] Missing maplibregl/pmtiles globals. Ensure CDN scripts are loaded before projection-main.js.",
+  );
+}
 
 const pmtilesProtocol = new Protocol();
 maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);

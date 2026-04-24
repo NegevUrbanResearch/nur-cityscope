@@ -1,9 +1,9 @@
 const { execSync } = require("child_process");
 
 const HOTSPOT_FILES = [
-  "frontend\\src\\projection\\layer-renderer-canvas.js",
+  "frontend\\src\\projection\\maplibre-projection.js",
   "frontend\\src\\map\\map-legend.js",
-  "frontend\\src\\map\\leaflet-control-with-basemap.js",
+  "frontend\\src\\map\\maplibre-layer-manager.js",
 ];
 
 test("hotspot modules have no window.X = assignments", () => {

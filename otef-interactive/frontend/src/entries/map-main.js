@@ -6,11 +6,75 @@ import { applyLayerGroupsToMap } from "../map/maplibre-layer-manager.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
 
+const DEFAULT_MAP_CENTER = [34.5, 31.4];
+
 function updateConnectionStatus(connected) {
   const el = document.getElementById("connectionStatus");
   if (!el) return;
   el.className = connected ? "status-connected" : "status-disconnected";
   el.title = connected ? "Connected to remote" : "Disconnected";
+}
+
+function itmPointToWgs84(itmX, itmY) {
+  if (
+    typeof proj4 !== "function" ||
+    !Number.isFinite(itmX) ||
+    !Number.isFinite(itmY)
+  ) {
+    return null;
+  }
+  const [lng, lat] = proj4("EPSG:2039", "EPSG:4326", [itmX, itmY]);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+    return null;
+  }
+  return [lng, lat];
+}
+
+function resolveCenterFromBounds(bounds) {
+  if (!bounds) return null;
+
+  if (
+    Number.isFinite(bounds.west) &&
+    Number.isFinite(bounds.east) &&
+    Number.isFinite(bounds.south) &&
+    Number.isFinite(bounds.north)
+  ) {
+    return itmPointToWgs84(
+      (bounds.west + bounds.east) / 2,
+      (bounds.south + bounds.north) / 2,
+    );
+  }
+
+  if (Array.isArray(bounds) && bounds.length > 0) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of bounds) {
+      if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    if (
+      Number.isFinite(minX) &&
+      Number.isFinite(minY) &&
+      Number.isFinite(maxX) &&
+      Number.isFinite(maxY)
+    ) {
+      return itmPointToWgs84((minX + maxX) / 2, (minY + maxY) / 2);
+    }
+  }
+
+  return null;
+}
+
+function resolveCenterFromViewport(viewport) {
+  const bbox = viewport && viewport.bbox;
+  if (!Array.isArray(bbox) || bbox.length !== 4) return null;
+  const [west, south, east, north] = bbox;
+  return itmPointToWgs84((west + east) / 2, (south + north) / 2);
 }
 
 async function bootstrapMapRuntime() {
@@ -34,14 +98,10 @@ async function bootstrapMapRuntime() {
   await OTEFDataContext.init("otef");
   await layerRegistry.init();
 
-  const bounds = OTEFDataContext.getBounds();
   const center =
-    bounds && typeof proj4 !== "undefined"
-      ? proj4("EPSG:2039", "EPSG:4326", [
-          (bounds.west + bounds.east) / 2,
-          (bounds.south + bounds.north) / 2,
-        ])
-      : [34.5, 31.4];
+    resolveCenterFromBounds(OTEFDataContext.getBounds()) ||
+    resolveCenterFromViewport(OTEFDataContext.getViewport()) ||
+    DEFAULT_MAP_CENTER;
 
   const map = createGISMap("map", {
     center,

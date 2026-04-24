@@ -15,14 +15,10 @@ test("table switcher scripts explicitly export browser globals", () => {
   );
 });
 
-test("viewport sync supports deferred map listener attachment", () => {
-  const src = read("frontend/src/map/viewport-sync.js");
-  expect(src.includes("function attachViewportSyncListeners()")).toBe(true);
-  expect(
-    src.includes(
-      "window.attachViewportSyncListeners = attachViewportSyncListeners",
-    ),
-  ).toBe(true);
+test("maplibre viewport sync exports setup function without window globals", () => {
+  const src = read("frontend/src/map/maplibre-viewport-sync.js");
+  expect(src.includes("export function setupViewportSync(")).toBe(true);
+  expect(src.includes("window.attachViewportSyncListeners")).toBe(false);
 });
 
 test("layer name utils keeps direct global function contracts", () => {

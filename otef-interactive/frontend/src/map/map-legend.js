@@ -4,8 +4,7 @@
  */
 
 import { buildLegendModel, getDashBackground } from "./legend-model-builder.js";
-
-// escapeHtml is provided by html-utils.js (loaded via script tag)
+import { escapeHtml } from "../shared/html-utils.js";
 
 // ---------------------------------------------------------------------------
 // renderLegend — paint the legend into the DOM

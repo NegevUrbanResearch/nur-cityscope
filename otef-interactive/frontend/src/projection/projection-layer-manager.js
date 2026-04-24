@@ -2,7 +2,6 @@
 // Handles layer loading and registry integration only (legacy road layers removed)
 
 import { UI_CONFIG } from "../config/ui-config.js";
-import { CanvasLayerRenderer } from "./layer-renderer-canvas.js";
 import { buildIntegratedRoute } from "../map-utils/pink-line-route.js";
 import {
   fetchCuratedLayerData,
@@ -13,11 +12,6 @@ import {
   applyProjectionCuratedOverlayContrast,
   getMemorialIconForFeature,
 } from "../shared/curated-layer-service.js";
-import {
-  configureAnimationRenderer,
-  startAnimationLoop,
-  stopAnimationLoop,
-} from "./projection-animation-loop.js";
 import {
   MORESHET_AXIS_GROUP_ID,
   computePinkLineBaseLayerVisible,
@@ -31,6 +25,17 @@ import {
   reloadProjectionCuratedLayersFromSupabase as reloadProjectionCuratedLayersFromSupabaseImpl,
 } from "./projection-curated-layer-load.js";
 import { recordTraceEvent } from "../shared/otef-trace.js";
+
+// Legacy compatibility shim: projection runtime moved to MapLibre.
+class CanvasLayerRenderer {
+  updatePosition() {}
+  setLayerVisibility() {}
+  setLayer() {}
+}
+
+function configureAnimationRenderer() {}
+function startAnimationLoop() {}
+function stopAnimationLoop() {}
 
 let getModelBounds = null;
 let getDisplayedImageBounds = null;
