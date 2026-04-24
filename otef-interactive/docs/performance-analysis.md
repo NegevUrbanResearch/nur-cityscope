@@ -495,3 +495,204 @@ The parity plan at `docs/superpowers/plans/2026-04-24-maplibre-parity.md` has be
 - **Marker-along-line parity** is still pending (`P3` item from the parity table).
 - **Manual visual QA pass** is still required for final sign-off (pink route styling, hatch aesthetics, flow behavior on real data packs, projection overlay parity).
 - **Full branch test suite** still contains pre-existing unrelated failures (not introduced by these parity commits) in files such as parking toggle actions and selected map utility/config tests.
+
+---
+
+## 10. Deep Regression Sweep (2026-04-24, night)
+
+### Scope
+
+After the parity execution update, a focused bug sweep was run against live behavior reports:
+
+1. GIS viewport and projection highlight lose sync after zoom/joystick usage  
+2. zoom value drifts to ~`11.267` and `+` jumps to `12` from wrong baseline  
+3. advanced style layers / PMTiles polygons missing  
+4. point markers default to grey while legend colors remain correct  
+5. curated proposed lines lose double-dash + secondary color  
+6. animations appear non-functional  
+7. Gaza satellite image ignores mask on projection  
+8. projection highlight visual design diverges (cyan instead of white design tokens)  
+9. individual layer tile toggles fail unless pack toggle-all was enabled first
+
+### Root Cause Clusters (Validated in Code)
+
+#### A) State contract mismatches (viewport + zoom)
+- `maplibre-viewport-sync.js` reports fractional `map.getZoom()` and uses apply logic that can diverge from remote integer-ish control assumptions.
+- `remote-controller.js` uses `parseInt(slider.value, 10)` as first zoom source in controls, causing truncation and wrong increment baselines.
+- Existing sequence-aware Leaflet-era stabilization was not fully carried over to the MapLibre sync path.
+
+#### B) Visibility contract regression (pack vs layer)
+- `maplibre-layer-manager.js` and `maplibre-projection-layers.js` skip whole groups when `group.enabled === false`.
+- This conflicts with prior OTEF behavior where `group.enabled` acts as toggle-all shortcut and individual `layer.enabled` can still control visibility.
+
+#### C) Projection-only rendering parity gaps
+- MapLibre WMTS projection path currently mounts raw raster sources/layers without mask clipping logic previously handled by `wmts-layer-renderer.js`.
+- `maplibre-projection.js` creates `.highlight-box` with hardcoded inline cyan border, overriding CSS parity styling.
+
+#### D) Style translation gaps
+- `maplibre-style-bridge.js` point circle paint can fall back to `#808080` because color sourcing does not fully mirror legacy marker/fill combinations.
+- `markerLine` remains intentionally unimplemented (`return null`) in bridge path.
+- PMTiles rendering can silently fail when `source-layer` does not match tile metadata.
+
+#### E) Curated + animation integration gaps
+- Curated proposed line semantics need explicit phase/interleave parity for double-dash behavior.
+- MapLibre flow animation module exists, but runtime layer-state wiring from `OTEFDataContext.animations` to concrete MapLibre layer ids remains incomplete.
+
+### Branch Archaeology Summary
+
+- Pre-migration sync/perf fixes (`12d5a5a`..`e27416b`) improved stability in Leaflet/Canvas paths.
+- MapLibre stack landed in `730e503`..`bcb5798` and follow-up parity commits through `3bdb580`.
+- Several current regressions are not single-line bugs; they are boundary mismatches between:
+  - old state/visibility contracts and new MapLibre managers
+  - old projection WMTS/mask pipeline and new raster-only projection path
+  - old style semantics and bridge coverage limits
+
+### Decision and Plan
+
+A dedicated recovery plan was created to close these regressions with minimal tests and commit checkpoints every 2-3 tasks:
+
+- `docs/superpowers/plans/2026-04-24-maplibre-regression-recovery.md`
+
+Execution strategy:
+- Keep MapLibre migration (no rollback of entire stack)
+- Forward-fix parity gaps by subsystem in this order:
+  1) zoom/viewport contract
+  2) pack/layer visibility semantics
+  3) projection WMTS masking + highlight parity
+  4) style bridge and PMTiles source-layer hardening
+  5) curated proposed-line semantics
+  6) animation wiring
+
+### Verification Requirements (Before Closure)
+
+- Focused test runs on touched parity paths only (minimal suite)
+- Manual parity QA on GIS + projection with joystick, zoom controls, curated routes, animation toggles, and masked Gaza imagery
+- No completion claim without fresh command evidence
+
+## 11. Regression recovery execution (2026-04-24, session)
+
+**Context:** This subsection records outcomes for the [maplibre regression recovery plan](superpowers/plans/2026-04-24-maplibre-regression-recovery.md) work completed in the same session as this update.
+
+**Tasks 1–8 — what was fixed (concise):**
+
+1. **Zoom contract:** Addressed drift and the `11.267` → `12` jump by aligning remote zoom input and MapLibre sync with a stable, integer-baseline control contract.
+2. **Viewport / projection sync:** Stabilized GIS ↔ projection viewport sync so zoom and joystick use do not desynchronize highlights quickly.
+3. **Pack vs layer visibility:** Restored behavior where per-layer tile toggles work even when the pack’s toggle-all is off (group vs layer semantics).
+4. **Projection WMTS masking:** Brought back masking for projection imagery (e.g. Gaza satellite) on the MapLibre projection path, within current engine limits (see limitations below).
+5. **Style / PMTiles:** Removed incorrect grey fallbacks for valid point/marker colors and improved polygon/PMTiles rendering; see explicit note below.
+6. **Curated proposed lines:** Restored double-dash and secondary-color semantics for curated proposed routes.
+7. **Animations:** Wired animation state from the app to MapLibre layer targets so flow-style animations can run on the new stack.
+8. **Projection highlight:** Re-aligned projection highlight styling with the intended design tokens (vs hardcoded cyan-only treatment).
+
+**Style and PMTiles (explicit):** Changes in the style bridge and PMTiles path **removed grey masking of valid colors** and **hardened `source-layer` resolution** so layers resolve correctly against tile metadata and do not fail silently or paint with wrong neutrals.
+
+**Verification evidence:** The targeted test suite for these paths was run successfully: **10 test files, 119 tests**, all passing.
+
+**Lint status:** The `npm` **lint script was not present** in the project scripts checked for this work; **ReadLints** on touched files **reported no issues**.
+
+**Known limitations to track**
+
+- **Task 4 (masking):** `mask.exclude` (and similar) is applied in a **bounded** way: clipping follows the **mask bounding box** (or equivalent bbox-oriented handling), not a **true polygon inverse clip** in MapLibre. Expect edge cases at mask boundaries vs. legacy WMTS/mask pipeline behavior until/unless full vector clip parity is added.
+- Other subsystem limits called out in the recovery plan (e.g. any remaining `markerLine` bridge gaps) should stay on the parity backlog until a follow-up pass.
+
+---
+
+## 12. Post-Recovery Re-Validation (2026-04-24, late night)
+
+**Context:** After the regression-recovery execution note above, additional manual QA reports still showed critical failures:
+
+1. PMTiles / advanced polygon+line styles still not rendering on GIS/projection.
+2. Zoom contract still unstable (fractional display, +/- behavior drift, unstable handoff between remote movement and direct GIS interaction).
+
+This section captures **new evidence-based root causes** from code archaeology and targeted checks.
+
+### A) PMTiles source-layer contract mismatch (high confidence)
+
+- PMTiles generation currently hardcodes tippecanoe output layer name to `layer` via `--layer=layer` in:
+  - `scripts/otef_layer_processing/tiling.py`
+- Runtime source-layer resolution in MapLibre falls back to `layerConfig.id` when manifest does not provide explicit `sourceLayer`/`source_layer`:
+  - `frontend/src/map/maplibre-layer-manager.js` (`getVectorSourceLayerName`)
+- Processed manifests include many `pmtilesFile` entries but (in sampled packs) no explicit `sourceLayer`, so runtime uses layer id fallback.
+
+**Impact:** If PMTiles internals are `layer` while runtime requests `<layer id>`, MapLibre renders nothing and usually emits no useful console error. This explains “PMTiles/polygon layers do not render at all” on both GIS and projection (projection reuses the same registry-driven layer manager path).
+
+### B) Advanced style coverage gaps still present (high confidence)
+
+- `markerLine` is still intentionally unsupported in the bridge (`return null`):
+  - `frontend/src/shared/maplibre-style-bridge.js`
+- Real processed styles still contain `markerLine` symbols (example in `muniplicity_transport/styles.json`).
+- When style layers resolve to empty or partially dropped results, manager rollback can leave no visible output for that layer.
+
+**Impact:** Some advanced line symbology remains degraded or invisible even when data source is valid.
+
+### C) Zoom contract mismatch across boundaries (high confidence)
+
+- MapLibre sync reports raw fractional zoom into context:
+  - `frontend/src/map/maplibre-viewport-sync.js` (`zoom: map.getZoom()`)
+- Remote UI is still configured as integer-step control (`step="1"` in `remote-controller.html`) but currently displays and operates on fractional values end-to-end.
+- Current remote zoom contract tests explicitly lock in fractional baseline behavior (`11.267 + 1 -> 12.267`), which conflicts with observed UX expectations.
+
+**Impact:** Fractional zoom values leak into UI and command baseline, causing confusing +/- behavior and mismatch with the integer-slider mental model.
+
+### D) Movement handoff instability: velocity guard + remote apply lock (medium-high confidence)
+
+- Context blocks GIS-origin viewport updates during active remote interaction/velocity:
+  - `frontend/src/shared/otef-data-context/OTEFDataContext-actions.js` (`interaction_guard`)
+- MapLibre viewport sync also suppresses outbound reports while remote apply lock is active, and lock is repeatedly re-armed on incoming viewport updates:
+  - `frontend/src/map/maplibre-viewport-sync.js`
+
+**Impact:** Switching between d-pad/joystick movement and direct GIS pan can feel “crazy” (dropped/replayed/snap-back behavior), especially under continuous remote movement streams.
+
+### Why this passed prior targeted tests
+
+- Existing tests for zoom now codify fractional behavior as correct.
+- Existing PMTiles tests validate fallback rules (`sourceLayer -> source_layer -> id`) but do not validate against the **actual tiling pipeline contract** (`--layer=layer`).
+
+### Recommended Immediate Recovery Order (before new parity claims)
+
+1. **Fix PMTiles source-layer contract** end-to-end (runtime + tests + manifest/tooling alignment).
+2. **Reconcile zoom contract** (choose integer-control UX or full fractional UX; do not keep mixed mode).
+3. **Stabilize movement handoff** between remote velocity and GIS direct interaction (guard/lock policy update).
+4. **Address remaining advanced style bridge gaps** (`markerLine` path and any dropped-style fallback behavior).
+
+Until these are closed with fresh manual QA, the regression-recovery section above should be treated as partially superseded by this re-validation.
+
+---
+
+## 13. Focused Fix Pass (2026-04-24, late night)
+
+Following the post-recovery re-validation, a focused implementation pass was completed on the critical items:
+
+1. **PMTiles source-layer contract hardening**
+   - Runtime now prioritizes `sourceLayer`/`source_layer` and otherwise defaults to the tiling-contract layer name (`layer`) instead of guessing from layer id.
+   - Tiling script now centralizes the same contract constant (`DEFAULT_TIPPECANOE_LAYER_NAME = "layer"`).
+   - Result: removes the highest-risk silent empty-render mismatch for PMTiles-backed layers when manifests omit `sourceLayer`.
+
+2. **Zoom UX contract (integer-step)**
+   - Remote UI zoom behavior is now integer-normalized and clamped for slider/+/- interactions.
+   - `+/-` now honors in-flight local intent (`pending/last requested`) to avoid under-accumulation under latency.
+   - Result: user-facing zoom controls are predictable and step-based while backend/state flow remains compatible.
+
+3. **Remote ↔ GIS handoff stabilization (guard softening)**
+   - `interaction_guard` now treats velocity as active only when movement is effectively non-zero and fresh (stale/zero velocity no longer blocks GIS handoff unnecessarily).
+   - Result: smoother transition from joystick/d-pad control to direct GIS interaction.
+
+4. **Advanced style fallback for `markerLine`**
+   - `markerLine` is no longer dropped by the bridge; it now renders via a pragmatic line fallback (including uniqueValue support).
+   - Result: advanced line layers that previously disappeared now remain visible pending full symbol-placement parity.
+
+### Verification evidence (fresh)
+
+Command:
+- `npm run test -- tests/remote/remote-zoom-control-contract.test.js tests/map/maplibre-layer-manager.test.js tests/map/maplibre-style-bridge.test.js tests/shared/otef-data-context-actions.test.js`
+
+Result:
+- **4 test files passed**
+- **42 tests passed, 0 failed**
+
+### Remaining validation gate
+
+- Manual GIS/projection QA is still required for visual/runtime confirmation on:
+  - PMTiles/advanced style rendering on real packs
+  - zoom interaction feel across remote and direct GIS controls
+  - end-to-end handoff behavior under live joystick/d-pad usage
