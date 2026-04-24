@@ -4,6 +4,12 @@ import {
   MORESHET_AXIS_GROUP_ID,
   isPinkLineParkingLayerId,
 } from "../../frontend/src/map-utils/curated-pink-axis-state.js";
+import {
+  leafletStyleToMapLibre,
+  maplibreLineDashWithLeafletOffset,
+  parseLeafletDashOffsetPx,
+} from "../../frontend/src/map/maplibre-curated-layer-loader.js";
+import { routeLineStylesForDisplayColor } from "../../frontend/src/map-utils/pink-route-map-styles.js";
 
 describe("reloadProjectionCuratedLayersFromSupabase", () => {
   test("full reload clears every curated pack in loadedLayers and reloads all enabled", async () => {
@@ -251,5 +257,32 @@ describe("reloadProjectionCuratedLayersFromSupabase", () => {
       "curated_moresht_axis.b",
     ]);
     expect(loadProjectionLayerFromRegistry).not.toHaveBeenCalled();
+  });
+});
+
+/** Task 6: projection/GIS share curated dash translation; reload path must stay aligned with MapLibre helpers. */
+describe("projection curated reload — Task 6 dash parity (MapLibre helpers)", () => {
+  test("parseLeafletDashOffsetPx accepts px-suffixed strings (e.g. Leaflet/CSS style)", () => {
+    expect(parseLeafletDashOffsetPx("9px")).toBe(9);
+    expect(parseLeafletDashOffsetPx(" 12px ")).toBe(12);
+    expect(parseLeafletDashOffsetPx("0px")).toBe(0);
+    expect(parseLeafletDashOffsetPx("9PX")).toBe(9);
+    expect(parseLeafletDashOffsetPx("not-a-number")).toBeNull();
+  });
+
+  test("leafletStyleToMapLibre: dashOffset '9px' matches numeric offset for dual proposed stack", () => {
+    const styles = routeLineStylesForDisplayColor("#16A34A");
+    const { paint: numericPaint } = leafletStyleToMapLibre({
+      ...styles.proposedLine,
+      dashOffset: Number(styles.proposedLine.dashOffset),
+    });
+    const { paint: pxPaint } = leafletStyleToMapLibre({
+      ...styles.proposedLine,
+      dashOffset: `${styles.proposedLine.dashOffset}px`,
+    });
+    expect(pxPaint["line-dasharray"]).toEqual(numericPaint["line-dasharray"]);
+    expect(pxPaint["line-dasharray"]).toEqual(
+      maplibreLineDashWithLeafletOffset([10, 8], 9),
+    );
   });
 });

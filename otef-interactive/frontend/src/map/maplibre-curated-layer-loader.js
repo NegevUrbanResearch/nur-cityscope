@@ -156,7 +156,12 @@ async function ensurePinkLineBaseLayer(map, options = {}) {
         "line-opacity": typeof opts.opacity === "number" ? opts.opacity : 0.9,
       },
     });
-  } catch (_) {}
+  } catch (err) {
+    console.warn(
+      "[maplibre-curated-layer-loader] ensurePinkLineBaseLayer failed",
+      err,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -164,11 +169,128 @@ async function ensurePinkLineBaseLayer(map, options = {}) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Parse Leaflet dash offset (px along stroke) for MapLibre phase translation.
+ * @param {unknown} value
+ * @returns {number | null}
+ */
+export function parseLeafletDashOffsetPx(value) {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    let t = String(value).trim();
+    if (t.length >= 2 && /px$/i.test(t)) {
+      t = t.slice(0, -2).trim();
+    }
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/**
+ * Emulate Canvas/Leaflet `lineDashOffset` for MapLibre, which has no per-layer dash phase.
+ * Returns a new dasharray (same line-space period) shifted by `offsetPx` in screen pixels.
+ * Ref: `pink-route-map-styles.js` — primary `proposedLine` uses `PROPOSED_DASH_OFFSET_PRIMARY` vs
+ * un-offset `proposedSecondary` so the two do not line up to transparent-looking gaps.
+ *
+ * @param {number[]} baseParts - [draw, gap, draw, gap, ...] in px (no offset)
+ * @param {number} offsetPx
+ * @returns {number[]}
+ */
+export function maplibreLineDashWithLeafletOffset(baseParts, offsetPx) {
+  if (!Array.isArray(baseParts) || baseParts.length < 2) return baseParts;
+  if (!Number.isFinite(offsetPx) || offsetPx === 0) return baseParts;
+  const T = baseParts.reduce((a, b) => a + b, 0);
+  if (!Number.isFinite(T) || T <= 0) return baseParts;
+  const o0 = ((offsetPx % T) + T) % T;
+  if (o0 === 0) return baseParts;
+
+  /** @type {{ len: number; isDash: boolean }[]} */
+  const onePeriod = [];
+  for (let i = 0; i < baseParts.length; i++) {
+    onePeriod.push({ len: baseParts[i], isDash: i % 2 === 0 });
+  }
+
+  // Tile the pattern so walking forward from the phased start always has enough
+  // segments to extract one full period T (offset can land near the end of a period).
+  const nRep = 5;
+  /** @type {{ len: number; isDash: boolean }[]} */
+  const flat = [];
+  for (let r = 0; r < nRep; r++) {
+    for (const seg of onePeriod) {
+      flat.push({ ...seg });
+    }
+  }
+
+  let idx = 0;
+  let posInSeg = 0;
+  let rem = o0;
+  while (rem > 0 && idx < flat.length) {
+    const s = flat[idx];
+    const avail = s.len - posInSeg;
+    if (rem >= avail) {
+      rem -= avail;
+      idx += 1;
+      posInSeg = 0;
+    } else {
+      posInSeg += rem;
+      rem = 0;
+    }
+  }
+
+  const chunks = [];
+  let need = T;
+  let curIdx = idx;
+  let inSeg = posInSeg;
+  if (curIdx >= flat.length) {
+    return baseParts;
+  }
+  let cur = flat[curIdx];
+  let curIsDash = cur.isDash;
+  let curRem = cur.len - inSeg;
+  while (need > 0 && curIdx < flat.length) {
+    const take = Math.min(need, curRem);
+    chunks.push({ len: take, isDash: curIsDash });
+    need -= take;
+    curRem -= take;
+    if (curRem <= 0) {
+      curIdx += 1;
+      if (curIdx >= flat.length) break;
+      cur = flat[curIdx];
+      curIsDash = cur.isDash;
+      curRem = cur.len;
+    }
+  }
+
+  if (chunks.length === 0) return baseParts;
+
+  /** @type {{ len: number; isDash: boolean }[]} */
+  const merged = [];
+  for (const ch of chunks) {
+    const last = merged[merged.length - 1];
+    if (last && last.isDash === ch.isDash) last.len += ch.len;
+    else merged.push({ len: ch.len, isDash: ch.isDash });
+  }
+
+  // MapLibre: alternating dash, gap, dash, gap, …; allow leading 0 for phase starting in a gap
+  if (merged[0].isDash) {
+    const out = [];
+    for (const m of merged) out.push(m.len);
+    if (out.length % 2 === 1) out.push(0);
+    return out;
+  }
+  const out = [0];
+  for (const m of merged) out.push(m.len);
+  if (out.length % 2 === 1) out.push(0);
+  return out;
+}
+
+/**
  * Convert a Leaflet polyline-style object to MapLibre line paint + layout.
  * @param {{ color?: string; weight?: number; opacity?: number; dashArray?: string; dashOffset?: string; lineCap?: string; lineJoin?: string }} leafletStyle
  * @returns {{ paint: object; layout: object }}
  */
-function leafletStyleToMapLibre(leafletStyle) {
+export function leafletStyleToMapLibre(leafletStyle) {
   const s = leafletStyle || {};
   const paint = {
     "line-color": s.color || "#FF69B4",
@@ -184,7 +306,9 @@ function leafletStyleToMapLibre(leafletStyle) {
       .map(Number)
       .filter((n) => Number.isFinite(n));
     if (parts.length >= 2) {
-      paint["line-dasharray"] = parts;
+      const o = parseLeafletDashOffsetPx(s.dashOffset);
+      paint["line-dasharray"] =
+        o == null || o === 0 ? parts : maplibreLineDashWithLeafletOffset(parts, o);
     }
   }
 
