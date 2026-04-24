@@ -14,5 +14,9 @@
     "@vitest/coverage-v8": "^4.0.18",
     "vite": "^5.4.19",
     "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "maplibre-gl": "^5.24.0",
+    "pmtiles": "^4.4.1"
   }
 }
