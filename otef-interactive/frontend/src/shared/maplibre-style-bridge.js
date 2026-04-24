@@ -23,10 +23,49 @@ function getMapLibreType(symbolLayer) {
   return null;
 }
 
+/**
+ * Build a stable pattern id and params from AdvancedStyleEngine hatch config.
+ * Same inputs always yield the same patternId so the layer manager can dedupe
+ * via map.hasImage and avoid image leaks on repeated syncs.
+ */
+function buildHatchPatternSpec(hatchConfig) {
+  if (!hatchConfig) return null;
+  const color = hatchConfig.color || "#808080";
+  const rotation = hatchConfig.rotation ?? 0;
+  const separation = hatchConfig.separation ?? 8;
+  const width = hatchConfig.width ?? 1;
+  const patternId = `hatch_${String(color)}_${rotation}_${separation}_${width}`.replace(
+    /[^a-zA-Z0-9_#]/g,
+    "_",
+  );
+  return { patternId, color, rotation, separation, width };
+}
+
+function groupKeyForSymbolLayer(mapLibreType, symbolLayer, i) {
+  if (mapLibreType === "fill") {
+    const fillKind = symbolLayer?.fillType === "hatch" ? "hatch" : "solid";
+    return `fill__${fillKind}__${i}`;
+  }
+  return `${mapLibreType}__${i}`;
+}
+
+function fillKindForSymbolLayer(symbolLayer) {
+  if (getMapLibreType(symbolLayer) !== "fill") return null;
+  return symbolLayer?.fillType === "hatch" ? "hatch" : "solid";
+}
+
 function symbolLayerToMapLibre(symbolLayer, id) {
   if (!symbolLayer || typeof symbolLayer !== "object") return null;
 
   if (symbolLayer.type === "fill") {
+    if (symbolLayer.fillType === "hatch" && symbolLayer.hatch) {
+      const hatchSpec = buildHatchPatternSpec(symbolLayer.hatch);
+      if (hatchSpec) {
+        const paint = { "fill-pattern": hatchSpec.patternId };
+        if (symbolLayer.opacity != null) paint["fill-opacity"] = symbolLayer.opacity;
+        return { id, type: "fill", paint, layout: {}, _hatchPattern: hatchSpec };
+      }
+    }
     const paint = {
       "fill-color": symbolLayer.color || "#808080",
     };
@@ -151,12 +190,13 @@ function buildUniqueValueGroups(uniqueValues, defaultSymbol) {
     const mapLibreType = getMapLibreType(symbolLayer);
     if (!mapLibreType) continue;
 
-    const key = `${mapLibreType}__${i}`;
+    const key = groupKeyForSymbolLayer(mapLibreType, symbolLayer, i);
     groups[key] = {
       type: mapLibreType,
       index: i,
       entries: [],
       sampleSymbolLayer: symbolLayer,
+      fillKind: fillKindForSymbolLayer(symbolLayer),
     };
   }
 
@@ -169,13 +209,14 @@ function buildUniqueValueGroups(uniqueValues, defaultSymbol) {
       const mapLibreType = getMapLibreType(symbolLayer);
       if (!mapLibreType) continue;
 
-      const key = `${mapLibreType}__${i}`;
+      const key = groupKeyForSymbolLayer(mapLibreType, symbolLayer, i);
       if (!groups[key]) {
         groups[key] = {
           type: mapLibreType,
           index: i,
           entries: [],
           sampleSymbolLayer: symbolLayer,
+          fillKind: fillKindForSymbolLayer(symbolLayer),
         };
       }
 
@@ -204,6 +245,15 @@ function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol) {
     let defaultSymbolLayer = atIndex ?? group.sampleSymbolLayer;
     if (atIndex != null && getMapLibreType(atIndex) !== group.type) {
       defaultSymbolLayer = group.sampleSymbolLayer;
+    } else if (
+      atIndex != null &&
+      group.type === "fill" &&
+      group.fillKind != null
+    ) {
+      const atKind = atIndex.fillType === "hatch" ? "hatch" : "solid";
+      if (atKind !== group.fillKind) {
+        defaultSymbolLayer = group.sampleSymbolLayer;
+      }
     }
     const layer = buildMatchLayer(
       `${idBase}__${groupKey}`,
@@ -222,6 +272,55 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer) {
   const paint = {};
 
   if (mapLibreType === "fill") {
+    if (defaultSymbolLayer?.fillType === "hatch") {
+      const defaultSpec = buildHatchPatternSpec(defaultSymbolLayer.hatch);
+      if (defaultSpec) {
+        const allSpecsById = new Map();
+        allSpecsById.set(defaultSpec.patternId, defaultSpec);
+        for (const entry of entries) {
+          if (entry?.value == null) continue;
+          const spec =
+            buildHatchPatternSpec(entry.symbolLayer?.hatch || defaultSymbolLayer.hatch) || defaultSpec;
+          allSpecsById.set(spec.patternId, spec);
+        }
+
+        const entryRows = [];
+        for (const entry of entries) {
+          if (entry?.value == null) continue;
+          const spec =
+            buildHatchPatternSpec(entry.symbolLayer?.hatch || defaultSymbolLayer.hatch) || defaultSpec;
+          entryRows.push({ value: entry.value, patternId: spec.patternId });
+        }
+
+        const fallbackPattern = defaultSpec.patternId;
+        if (entryRows.length === 0) {
+          paint["fill-pattern"] = fallbackPattern;
+        } else {
+          const expression = ["match", ["get", field]];
+          let allMatchFallback = true;
+          for (const { value, patternId } of entryRows) {
+            if (patternId !== fallbackPattern) allMatchFallback = false;
+            expression.push(value, patternId);
+          }
+          expression.push(fallbackPattern);
+          if (allMatchFallback) {
+            paint["fill-pattern"] = fallbackPattern;
+          } else {
+            paint["fill-pattern"] = expression;
+          }
+        }
+
+        const fillOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
+        if (fillOpacity !== undefined) paint["fill-opacity"] = fillOpacity;
+        return {
+          id,
+          type: "fill",
+          paint,
+          layout: {},
+          _hatchPatterns: [...allSpecsById.values()],
+        };
+      }
+    }
     const fillColor = buildMatchExpr(field, entries, defaultSymbolLayer, "color");
     if (fillColor != null) paint["fill-color"] = fillColor;
     else paint["fill-color"] = "#808080";

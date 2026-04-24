@@ -7,6 +7,89 @@
 import { irToMapLibreLayers } from "../shared/maplibre-style-bridge.js";
 import layerRegistry from "../shared/layer-registry.js";
 
+/**
+ * Create a tileable ImageData for MapLibre fill-pattern from a hatch spec.
+ * Tile size is derived from line spacing and rotation so the texture repeats
+ * without visible seams.
+ */
+function generateHatchImage(spec) {
+  const separation = spec.separation ?? 8;
+  const angleDeg = spec.rotation ?? 0;
+  const angleRad = (angleDeg * Math.PI) / 180;
+
+  const absCos = Math.abs(Math.cos(angleRad));
+  const absSin = Math.abs(Math.sin(angleRad));
+  const projX = absCos < 0.01 ? separation : separation / absCos;
+  const projY = absSin < 0.01 ? separation : separation / absSin;
+  const size = Math.max(16, Math.ceil(Math.max(projX, projY)));
+
+  const ctx2d = createCanvas2DContext(size);
+  if (!ctx2d) {
+    throw new Error("[maplibre-layer-manager] Hatch patterns require a 2D canvas (browser only).");
+  }
+  const { ctx, getImageData } = ctx2d;
+
+  ctx.clearRect(0, 0, size, size);
+  ctx.save();
+  ctx.translate(size / 2, size / 2);
+  ctx.rotate(angleRad);
+  ctx.strokeStyle = spec.color || "#808080";
+  ctx.lineWidth = spec.width ?? 1;
+
+  const diagonal = size * Math.SQRT2;
+  for (let offset = -diagonal; offset < diagonal; offset += separation) {
+    ctx.beginPath();
+    ctx.moveTo(-diagonal, offset);
+    ctx.lineTo(diagonal, offset);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  return getImageData();
+}
+
+function createCanvas2DContext(size) {
+  if (typeof document !== "undefined" && document.createElement) {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    return {
+      ctx,
+      getImageData: () => ctx.getImageData(0, 0, size, size),
+    };
+  }
+  if (typeof OffscreenCanvas !== "undefined") {
+    const canvas = new OffscreenCanvas(size, size);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    return {
+      ctx,
+      getImageData: () => ctx.getImageData(0, 0, size, size),
+    };
+  }
+  return null;
+}
+
+function registerHatchPatternImages(map, styleLayer) {
+  const specs = [];
+  if (styleLayer._hatchPattern) {
+    specs.push(styleLayer._hatchPattern);
+  }
+  if (Array.isArray(styleLayer._hatchPatterns)) {
+    for (const s of styleLayer._hatchPatterns) {
+      if (s) specs.push(s);
+    }
+  }
+  for (const spec of specs) {
+    if (!spec?.patternId) continue;
+    if (map.hasImage(spec.patternId)) continue;
+    const image = generateHatchImage(spec);
+    map.addImage(spec.patternId, image);
+  }
+}
+
 const mapStateByMap = new WeakMap(); // map -> { loadedSources: Map, loadedLayerIds: Map }
 
 function getOrCreateMapState(map) {
@@ -245,7 +328,9 @@ function addLayerToMap(map, fullId, state) {
   }
 
   for (const styleLayer of styleLayers || []) {
-    const layerDef = { ...styleLayer, source: sourceId };
+    registerHatchPatternImages(map, styleLayer);
+    const { _hatchPattern, _hatchPatterns, ...styleRest } = styleLayer;
+    const layerDef = { ...styleRest, source: sourceId };
 
     if (usesVectorSource) {
       layerDef["source-layer"] = getVectorSourceLayerName(fullId, layerConfig);

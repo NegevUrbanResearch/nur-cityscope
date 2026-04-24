@@ -38,6 +38,8 @@ function createMapMock() {
     removeSource: vi.fn((sourceId) => {
       sources.delete(sourceId);
     }),
+    hasImage: vi.fn(() => false),
+    addImage: vi.fn(),
     addLayer: vi.fn((layerDef) => {
       layers.add(layerDef.id);
     }),
@@ -101,5 +103,73 @@ describe("maplibre-layer-manager", () => {
     clearAllLayers(map);
 
     expect(map.removeSource).toHaveBeenCalledWith("group_a.layer_1");
+  });
+
+  it("registers hatch pattern images and strips metadata before addLayer", () => {
+    const map = createMapMock();
+    const patternId = "hatch_#f00_0_8_1";
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: "group_a.layer_1__fill",
+        type: "fill",
+        paint: { "fill-pattern": patternId },
+        layout: {},
+        _hatchPattern: {
+          patternId,
+          color: "#f00",
+          rotation: 0,
+          separation: 8,
+          width: 1,
+        },
+      },
+    ]);
+    const prevDoc = globalThis.document;
+    const ctxStub = {
+      clearRect: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      rotate: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      getImageData: (x, y, w, h) => ({
+        width: w,
+        height: h,
+        data: new Uint8ClampedArray(w * h * 4),
+      }),
+    };
+    globalThis.document = {
+      createElement: (tag) => {
+        if (tag !== "canvas") return {};
+        return {
+          width: 0,
+          height: 0,
+          getContext: (t) => (t === "2d" ? ctxStub : null),
+        };
+      },
+    };
+    try {
+      applyLayerGroupsToMap(map, enabledGroups);
+    } finally {
+      if (prevDoc === undefined) {
+        delete globalThis.document;
+      } else {
+        globalThis.document = prevDoc;
+      }
+    }
+
+    expect(map.hasImage).toHaveBeenCalledWith(patternId);
+    expect(map.addImage).toHaveBeenCalledWith(
+      patternId,
+      expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }),
+    );
+    const added = map.addLayer.mock.calls.find(
+      (c) => c[0]?.id === "group_a.layer_1__fill",
+    );
+    expect(added).toBeDefined();
+    expect(added[0]).not.toHaveProperty("_hatchPattern");
+    expect(added[0]).not.toHaveProperty("_hatchPatterns");
   });
 });

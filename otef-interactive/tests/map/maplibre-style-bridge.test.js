@@ -265,10 +265,10 @@ describe("irToMapLibreLayers", () => {
 
     const byId = new Map(result.map((l) => [l.id, l]));
     const line0 = byId.get("landuse__layer__line__0");
-    const fill0 = byId.get("landuse__layer__fill__0");
-    const fill1 = byId.get("landuse__layer__fill__1");
-    const fill2 = byId.get("landuse__layer__fill__2");
-    const fill3 = byId.get("landuse__layer__fill__3");
+    const fill0 = byId.get("landuse__layer__fill__solid__0");
+    const fill1 = byId.get("landuse__layer__fill__solid__1");
+    const fill2 = byId.get("landuse__layer__fill__solid__2");
+    const fill3 = byId.get("landuse__layer__fill__solid__3");
 
     expect(line0).toBeDefined();
     expect(line0.type).toBe("line");
@@ -353,5 +353,145 @@ describe("irToMapLibreLayers", () => {
       "#76b5c5",
       "#808080",
     ]);
+  });
+
+  it("emits fill-pattern and hatch metadata for simple hatch fill", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "fill",
+              fillType: "hatch",
+              hatch: { color: "#000000", rotation: 45, separation: 10, width: 2 },
+              opacity: 0.5,
+            },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.hatch", "test__hatch", layerConfig);
+    const fill = result.find((layer) => layer.type === "fill");
+    expect(fill.paint["fill-pattern"]).toBe("hatch_#000000_45_10_2");
+    expect(fill.paint["fill-color"]).toBeUndefined();
+    expect(fill.paint["fill-opacity"]).toBe(0.5);
+    expect(fill._hatchPattern).toBeDefined();
+    expect(fill._hatchPattern.patternId).toBe("hatch_#000000_45_10_2");
+  });
+
+  it("uses fill-pattern match and _hatchPatterns for uniqueValue hatch", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "kind",
+          classes: [
+            {
+              value: "a",
+              symbol: {
+                symbolLayers: [
+                  {
+                    type: "fill",
+                    fillType: "hatch",
+                    hatch: { color: "#111111", rotation: 0, separation: 8, width: 1 },
+                  },
+                ],
+              },
+            },
+            {
+              value: "b",
+              symbol: {
+                symbolLayers: [
+                  {
+                    type: "fill",
+                    fillType: "hatch",
+                    hatch: { color: "#222222", rotation: 30, separation: 12, width: 2 },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "fill",
+              fillType: "hatch",
+              hatch: { color: "#808080", rotation: 0, separation: 8, width: 1 },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("z.layer", "z__layer", layerConfig);
+    const fill = result.find((layer) => layer.type === "fill");
+    expect(fill.id).toBe("z__layer__fill__hatch__0");
+    expect(fill.paint["fill-color"]).toBeUndefined();
+    expect(fill.paint["fill-pattern"]).toEqual([
+      "match",
+      ["get", "kind"],
+      "a",
+      "hatch_#111111_0_8_1",
+      "b",
+      "hatch_#222222_30_12_2",
+      "hatch_#808080_0_8_1",
+    ]);
+    expect(Array.isArray(fill._hatchPatterns)).toBe(true);
+    const ids = fill._hatchPatterns.map((s) => s.patternId).sort();
+    expect(ids).toEqual([
+      "hatch_#111111_0_8_1",
+      "hatch_#222222_30_12_2",
+      "hatch_#808080_0_8_1",
+    ]);
+  });
+
+  it("splits uniqueValue fill at the same index into solid vs hatch groups", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "t",
+          classes: [
+            {
+              value: "h",
+              symbol: {
+                symbolLayers: [
+                  {
+                    type: "fill",
+                    fillType: "hatch",
+                    hatch: { color: "#ff0000", rotation: 0, separation: 8, width: 1 },
+                  },
+                ],
+              },
+            },
+            {
+              value: "s",
+              symbol: {
+                symbolLayers: [
+                  { type: "fill", fillType: "solid", color: "#00ff00", opacity: 1 },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "fill", fillType: "solid", color: "#808080" }],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("m.layer", "m__layer", layerConfig);
+    const hatchFill = result.find((l) => l.id === "m__layer__fill__hatch__0");
+    const solidFill = result.find((l) => l.id === "m__layer__fill__solid__0");
+    expect(hatchFill).toBeDefined();
+    expect(solidFill).toBeDefined();
+    expect(hatchFill.paint["fill-pattern"]).toBeDefined();
+    expect(solidFill.paint["fill-color"]).toBeDefined();
   });
 });
