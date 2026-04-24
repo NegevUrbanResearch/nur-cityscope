@@ -14,13 +14,37 @@ function getNestedProp(obj, propPath) {
   return current;
 }
 
+/**
+ * Map OTEF symbol layer kinds to a coarse MapLibre family for grouping in uniqueValue.
+ * `markerLine` is mapped to a line-fallback family so advanced line styles remain visible
+ * even when exact marker-placement parity is not yet implemented.
+ */
 function getMapLibreType(symbolLayer) {
   if (!symbolLayer || typeof symbolLayer !== "object") return null;
   if (symbolLayer.type === "fill") return "fill";
   if (symbolLayer.type === "stroke") return "line";
   if (symbolLayer.type === "markerPoint") return "circle";
-  if (symbolLayer.type === "markerLine") return "symbol";
+  if (symbolLayer.type === "markerLine") return "markerLineFallback";
   return null;
+}
+
+function markerLineFallbackColor(symbolLayer) {
+  const marker = symbolLayer?.marker || {};
+  return (
+    marker.stroke ??
+    marker.strokeColor ??
+    marker.fill ??
+    marker.fillColor ??
+    marker.color ??
+    "#000000"
+  );
+}
+
+function markerLineFallbackWidth(symbolLayer) {
+  const marker = symbolLayer?.marker || {};
+  if (typeof marker.strokeWidth === "number" && marker.strokeWidth > 0) return marker.strokeWidth;
+  if (typeof marker.size === "number" && marker.size > 0) return Math.max(1, marker.size / 4);
+  return 1;
 }
 
 /**
@@ -91,9 +115,10 @@ function symbolLayerToMapLibre(symbolLayer, id) {
   if (symbolLayer.type === "markerPoint") {
     const marker = symbolLayer.marker || {};
     const size = marker.size ?? 8;
+    const fill = marker.fill ?? marker.fillColor ?? marker.color;
     const paint = {
       "circle-radius": size / 2,
-      "circle-color": marker.fill || marker.color || "#808080",
+      "circle-color": fill != null && fill !== "" ? fill : "#808080",
       "circle-stroke-color": marker.stroke || marker.strokeColor || "#000000",
       "circle-stroke-width": marker.strokeWidth ?? 1,
     };
@@ -101,7 +126,12 @@ function symbolLayerToMapLibre(symbolLayer, id) {
   }
 
   if (symbolLayer.type === "markerLine") {
-    return null;
+    const paint = {
+      "line-color": markerLineFallbackColor(symbolLayer),
+      "line-width": markerLineFallbackWidth(symbolLayer),
+    };
+    if (symbolLayer.opacity != null) paint["line-opacity"] = symbolLayer.opacity;
+    return { id, type: "line", paint, layout: {}, _markerLineFallback: true };
   }
 
   return null;
@@ -351,9 +381,18 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer) {
   }
 
   if (mapLibreType === "circle") {
-    paint["circle-color"] = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.fill")
-      ?? buildMatchExpr(field, entries, defaultSymbolLayer, "marker.color")
-      ?? "#808080";
+    const fromFill = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.fill");
+    const fromFillColor = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.fillColor");
+    const fromColor = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.color");
+    const chosen = fromFill ?? fromFillColor ?? fromColor;
+    /** Set when falling back to gray; the layer manager may log once (keeps this module free of console I/O). */
+    let uniqueValuePointColorFallback = false;
+    if (chosen != null) {
+      paint["circle-color"] = chosen;
+    } else {
+      uniqueValuePointColorFallback = true;
+      paint["circle-color"] = "#808080";
+    }
     paint["circle-radius"] = buildMatchExpr(
       field,
       entries,
@@ -365,7 +404,38 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer) {
       ?? buildMatchExpr(field, entries, defaultSymbolLayer, "marker.strokeColor")
       ?? "#000000";
     paint["circle-stroke-width"] = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.strokeWidth") ?? 1;
-    return { id, type: "circle", paint, layout: {} };
+    return {
+      id,
+      type: "circle",
+      paint,
+      layout: {},
+      ...(uniqueValuePointColorFallback && { _uniqueValuePointColorFallback: true }),
+    };
+  }
+
+  if (mapLibreType === "markerLineFallback") {
+    const fromStroke = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.stroke");
+    const fromStrokeColor = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.strokeColor");
+    const fromFill = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.fill");
+    const fromFillColor = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.fillColor");
+    const fromColor = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.color");
+    const chosen = fromStroke ?? fromStrokeColor ?? fromFill ?? fromFillColor ?? fromColor;
+    paint["line-color"] = chosen != null ? chosen : "#000000";
+
+    const widthFromStroke = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.strokeWidth");
+    const widthFromSize = buildMatchExpr(
+      field,
+      entries,
+      defaultSymbolLayer,
+      "marker.size",
+      (size) => Math.max(1, size / 4)
+    );
+    paint["line-width"] = widthFromStroke ?? widthFromSize ?? 1;
+
+    const lineOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
+    if (lineOpacity !== undefined) paint["line-opacity"] = lineOpacity;
+
+    return { id, type: "line", paint, layout: {}, _markerLineFallback: true };
   }
 
   return null;

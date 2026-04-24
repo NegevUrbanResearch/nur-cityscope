@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   irToMapLibreLayers,
 } from "../../frontend/src/shared/maplibre-style-bridge.js";
@@ -110,6 +110,97 @@ describe("irToMapLibreLayers", () => {
     expect(circle.paint["circle-color"]).toBe("#a83800");
   });
 
+  it("maps marker fillColor to circle-color when fill is absent (OTEF IR parity)", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "markerPoint", marker: { fillColor: "#e84a5f", size: 10 } },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("g.points", "g__points", layerConfig);
+    const circle = result.find((layer) => layer.type === "circle");
+    expect(circle.paint["circle-color"]).toBe("#e84a5f");
+    expect(circle.paint["circle-radius"]).toBe(5);
+  });
+
+  it("resolves uniqueValue point color from marker.fillColor in match expressions", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "kind",
+          classes: [
+            {
+              value: "a",
+              symbol: {
+                symbolLayers: [
+                  { type: "markerPoint", marker: { fillColor: "#e84a5f", size: 8 } },
+                ],
+              },
+            },
+            {
+              value: "b",
+              symbol: {
+                symbolLayers: [
+                  { type: "markerPoint", marker: { fillColor: "#00ff00", size: 8 } },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "markerPoint", marker: { fillColor: "#999999", size: 8 } },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("t.pts", "t__pts", layerConfig);
+    const circle = result.find((layer) => layer.type === "circle");
+    expect(circle.paint["circle-color"]).toEqual([
+      "match",
+      ["get", "kind"],
+      "a",
+      "#e84a5f",
+      "b",
+      "#00ff00",
+      "#999999",
+    ]);
+  });
+
+  it("uses gray fallback and sets _uniqueValuePointColorFallback when no point color is resolvable (no console in bridge)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "k",
+          classes: [
+            { value: "a", symbol: { symbolLayers: [{ type: "markerPoint", marker: { size: 8 } }] } },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "markerPoint", marker: { size: 8 } }],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("t.nocolor", "t__nocolor", layerConfig);
+    const circle = result.find((layer) => layer.type === "circle");
+    expect(circle.paint["circle-color"]).toBe("#808080");
+    expect(circle._uniqueValuePointColorFallback).toBe(true);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   it("converts a line layer with dash array", () => {
     const layerConfig = {
       geometryType: "line",
@@ -132,6 +223,91 @@ describe("irToMapLibreLayers", () => {
     const result = irToMapLibreLayers("test.dashed", "test__dashed", layerConfig);
     const line = result.find((layer) => layer.type === "line");
     expect(line.paint["line-dasharray"]).toEqual([4, 4]);
+  });
+
+  it("keeps markerLine visible in simple renderer via line fallback", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "markerLine",
+              marker: {
+                strokeColor: "#895a44",
+                strokeWidth: 5.333333333333333,
+              },
+              placement: { mode: "interval", interval: 18 },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.markerline", "test__markerline", layerConfig);
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe("line");
+    expect(result[0].paint["line-color"]).toBe("#895a44");
+    expect(result[0].paint["line-width"]).toBe(5.333333333333333);
+    expect(result[0]._markerLineFallback).toBe(true);
+  });
+
+  it("builds uniqueValue markerLine fallback match expressions", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "kind",
+          classes: [
+            {
+              value: "a",
+              symbol: {
+                symbolLayers: [
+                  { type: "markerLine", marker: { strokeColor: "#ff0000", strokeWidth: 2 } },
+                ],
+              },
+            },
+            {
+              value: "b",
+              symbol: {
+                symbolLayers: [
+                  { type: "markerLine", marker: { strokeColor: "#00ff00", strokeWidth: 4 } },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "markerLine", marker: { strokeColor: "#222222", strokeWidth: 1 } }],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.markerline.unique", "test__markerline__unique", layerConfig);
+    const line = result.find((layer) => layer.type === "line");
+    expect(line).toBeDefined();
+    expect(line.id).toBe("test__markerline__unique__markerLineFallback__0");
+    expect(line.paint["line-color"]).toEqual([
+      "match",
+      ["get", "kind"],
+      "a",
+      "#ff0000",
+      "b",
+      "#00ff00",
+      "#222222",
+    ]);
+    expect(line.paint["line-width"]).toEqual([
+      "match",
+      ["get", "kind"],
+      "a",
+      2,
+      "b",
+      4,
+      1,
+    ]);
+    expect(line._markerLineFallback).toBe(true);
   });
 
   it("emits default stroke layer when classes only override fill", () => {
