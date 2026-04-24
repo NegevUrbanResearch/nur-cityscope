@@ -460,3 +460,38 @@ The pink line route overlay is **critical for first pass** — it must work like
 Only the final materialization step (`leaflet-curated-layer-loader.js` → `L.polyline`, `L.marker`, etc.) needs a MapLibre equivalent. The porting creates `maplibre-curated-layer-loader.js` which converts draw ops to MapLibre sources + layers.
 
 **Coordinate system note:** Overlay plan ops use Leaflet `[lat,lng]` format. MapLibre GeoJSON requires `[lng,lat]`. Flipped at materialization boundary.
+
+---
+
+## 9. Parity Plan Execution Update (2026-04-24, late night)
+
+### Tasks Completed
+
+The parity plan at `docs/superpowers/plans/2026-04-24-maplibre-parity.md` has been executed end-to-end.
+
+| Task | Status | Notes |
+|------|--------|-------|
+| 1. Style bridge undefined fix | ✅ Done | Type-aware defaults + match fallback guards + regression test for index/type mismatch case |
+| 2. Projection static viewport | ✅ Done | Projection map no longer follows GIS viewport; only CSS highlight updates |
+| 3. GIS layer filtering | ✅ Done | `filterGroupsForGisMap` applied to GIS layer application and curated refresh paths |
+| 4. Curated pink line on GIS | ✅ Done | New `maplibre-curated-layer-loader.js`; pink base + overlay ops + markers + cleanup + Supabase flow |
+| 5. Curated pink line on projection | ✅ Done | Reused MapLibre curated loader on projection with heartbeat/reload wiring |
+| 6. Hatch fill patterns | ✅ Done | Deterministic hatch specs + `fill-pattern` generation/registration + lifecycle cleanup/rollback hardening |
+| 7. Flow/trail animations | ✅ Done | New `maplibre-flow-animation.js`, GIS + projection wiring, stop cleanup, map-scoped state |
+| 8. Bounds/rotation editors verification | ✅ Done | Editors confirmed callback/DOM-based (not Leaflet/canvas dependent), shortcut wiring covered |
+| 9. Image layer handling/model base visibility | ✅ Done | Image layers skipped in MapLibre manager; `model_base` opacity now follows layer state |
+| 10. Curated warning suppression | ✅ Absorbed in Task 4 | Curated IDs are skipped in registry path when config is missing |
+
+### Implementation Decisions During Execution
+
+- Curated refresh paths were made consistent across GIS/projection: affected-list reloads and full refresh behavior both remove stale curated artifacts before reload.
+- Pink base IDs were aligned to the plan contract (`pink_line_base`, `pink_line_base__line`) for deterministic integration behavior.
+- For hatch patterns, deterministic pattern IDs are reused and image lifecycle is reference-counted to prevent style-image buildup over repeated toggles.
+- Projection curated sync now mirrors GIS event behavior (`otef-curated-geojson-refresh` handling and `nur-curated-supabase-pull` dispatch), with serialized refreshes to avoid overlap races.
+- Non-pink curated fallback now materializes geometry-appropriate MapLibre layers (`fill`, `line`, `circle`) instead of a fill-only fallback.
+
+### Remaining Gaps / Follow-ups
+
+- **Marker-along-line parity** is still pending (`P3` item from the parity table).
+- **Manual visual QA pass** is still required for final sign-off (pink route styling, hatch aesthetics, flow behavior on real data packs, projection overlay parity).
+- **Full branch test suite** still contains pre-existing unrelated failures (not introduced by these parity commits) in files such as parking toggle actions and selected map utility/config tests.
