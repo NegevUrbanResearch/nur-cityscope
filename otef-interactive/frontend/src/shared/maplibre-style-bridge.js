@@ -104,20 +104,40 @@ function buildMatchExpr(field, entries, defaultSymbolLayer, propPath, transform)
   };
 
   const fallback = toValue(defaultSymbolLayer);
-  const expression = ["match", ["get", field]];
-  let allMatchFallback = true;
 
+  const entryRows = [];
   for (const entry of entries) {
     if (entry?.value == null) continue;
     const entryValue = toValue(entry.symbolLayer);
-    const resolvedValue = entryValue ?? fallback;
-    if (!valuesEqual(resolvedValue, fallback)) allMatchFallback = false;
-    expression.push(entry.value, toExpressionValue(resolvedValue));
+    if (entryValue === undefined) continue;
+    entryRows.push({ value: entry.value, entryValue });
   }
 
-  expression.push(toExpressionValue(fallback));
+  if (fallback === undefined && entryRows.length === 0) return undefined;
 
-  if (expression.length <= 3 || allMatchFallback) return fallback;
+  let effectiveFallback;
+  if (fallback != null) {
+    effectiveFallback = fallback;
+  } else {
+    const firstUsable = entryRows.map((r) => r.entryValue).find((v) => v != null);
+    effectiveFallback = firstUsable !== undefined ? firstUsable : entryRows[0]?.entryValue;
+  }
+
+  if (effectiveFallback == null) return undefined;
+
+  const expression = ["match", ["get", field]];
+  let allMatchFallback = true;
+
+  for (const { value, entryValue } of entryRows) {
+    const resolved = entryValue == null ? effectiveFallback : (entryValue ?? effectiveFallback);
+    if (resolved == null) continue;
+    if (!valuesEqual(resolved, effectiveFallback)) allMatchFallback = false;
+    expression.push(value, toExpressionValue(resolved));
+  }
+
+  expression.push(toExpressionValue(effectiveFallback));
+
+  if (expression.length <= 3 || allMatchFallback) return effectiveFallback;
   return expression;
 }
 
@@ -180,7 +200,11 @@ function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol) {
   const output = [];
 
   for (const [groupKey, group] of Object.entries(groups)) {
-    const defaultSymbolLayer = defaultSymbolLayers[group.index] || group.sampleSymbolLayer;
+    const atIndex = defaultSymbolLayers[group.index];
+    let defaultSymbolLayer = atIndex ?? group.sampleSymbolLayer;
+    if (atIndex != null && getMapLibreType(atIndex) !== group.type) {
+      defaultSymbolLayer = group.sampleSymbolLayer;
+    }
     const layer = buildMatchLayer(
       `${idBase}__${groupKey}`,
       group.type,
@@ -198,15 +222,20 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer) {
   const paint = {};
 
   if (mapLibreType === "fill") {
-    paint["fill-color"] = buildMatchExpr(field, entries, defaultSymbolLayer, "color");
+    const fillColor = buildMatchExpr(field, entries, defaultSymbolLayer, "color");
+    if (fillColor != null) paint["fill-color"] = fillColor;
+    else paint["fill-color"] = "#808080";
     const fillOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
     if (fillOpacity !== undefined) paint["fill-opacity"] = fillOpacity;
     return { id, type: "fill", paint, layout: {} };
   }
 
   if (mapLibreType === "line") {
-    paint["line-color"] = buildMatchExpr(field, entries, defaultSymbolLayer, "color");
-    paint["line-width"] = buildMatchExpr(field, entries, defaultSymbolLayer, "width") ?? 1;
+    const lineColor = buildMatchExpr(field, entries, defaultSymbolLayer, "color");
+    if (lineColor != null) paint["line-color"] = lineColor;
+    else paint["line-color"] = "#000000";
+    const lineWidth = buildMatchExpr(field, entries, defaultSymbolLayer, "width");
+    paint["line-width"] = lineWidth != null ? lineWidth : 1;
     const lineOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
     if (lineOpacity !== undefined) paint["line-opacity"] = lineOpacity;
 

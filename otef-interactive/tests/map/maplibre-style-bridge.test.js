@@ -3,6 +3,13 @@ import {
   irToMapLibreLayers,
 } from "../../frontend/src/shared/maplibre-style-bridge.js";
 
+function assertPaintHasNoNullish(paint) {
+  for (const v of Object.values(paint)) {
+    expect(v).not.toBeUndefined();
+    expect(v).not.toBeNull();
+  }
+}
+
 describe("irToMapLibreLayers", () => {
   it("converts a simple solid-fill polygon layer", () => {
     const layerConfig = {
@@ -210,6 +217,103 @@ describe("irToMapLibreLayers", () => {
       ["literal", [6, 2]],
       ["literal", [1, 1]],
     ]);
+  });
+
+  it("uses class stroke/fill at each index when default order is fill-then-stroke (חניון-style)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "code",
+          classes: [
+            {
+              value: "parking",
+              symbol: {
+                label: "חניון",
+                symbolLayers: [
+                  { type: "stroke", color: "#1a1a1a", width: 1, opacity: 1 },
+                  { type: "fill", color: "#c8c8c8", opacity: 0.4 },
+                  { type: "fill", color: "#b0b0b0", opacity: 0.2 },
+                  { type: "fill", color: "#989898", opacity: 0.1 },
+                ],
+              },
+            },
+            {
+              value: "retail",
+              symbol: {
+                symbolLayers: [
+                  { type: "stroke", color: "#0066cc", width: 1.5, opacity: 1 },
+                  { type: "fill", color: "#e6f0ff", opacity: 0.5 },
+                  { type: "fill", color: "#d0e0f5", opacity: 0.3 },
+                  { type: "fill", color: "#bad4eb", opacity: 0.15 },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "fill", color: "#e0e0e0", opacity: 0.3 },
+            { type: "stroke", color: "#333333", width: 2, opacity: 1 },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("landuse.layer", "landuse__layer", layerConfig);
+
+    const byId = new Map(result.map((l) => [l.id, l]));
+    const line0 = byId.get("landuse__layer__line__0");
+    const fill0 = byId.get("landuse__layer__fill__0");
+    const fill1 = byId.get("landuse__layer__fill__1");
+    const fill2 = byId.get("landuse__layer__fill__2");
+    const fill3 = byId.get("landuse__layer__fill__3");
+
+    expect(line0).toBeDefined();
+    expect(line0.type).toBe("line");
+    expect(fill0).toBeDefined();
+    expect(fill0.type).toBe("fill");
+    expect(fill1?.type).toBe("fill");
+    expect(fill2?.type).toBe("fill");
+    expect(fill3?.type).toBe("fill");
+
+    expect(line0.paint["line-color"]).toEqual([
+      "match",
+      ["get", "code"],
+      "parking",
+      "#1a1a1a",
+      "retail",
+      "#0066cc",
+      "#1a1a1a",
+    ]);
+    expect(line0.paint["line-width"]).toEqual([
+      "match",
+      ["get", "code"],
+      "parking",
+      1,
+      "retail",
+      1.5,
+      1,
+    ]);
+
+    expect(fill1?.paint["fill-color"]).toEqual([
+      "match",
+      ["get", "code"],
+      "parking",
+      "#c8c8c8",
+      "retail",
+      "#e6f0ff",
+      "#c8c8c8",
+    ]);
+
+    for (const layer of result) {
+      assertPaintHasNoNullish(layer.paint);
+      for (const v of Object.values(layer.layout)) {
+        expect(v).not.toBeUndefined();
+        expect(v).not.toBeNull();
+      }
+    }
   });
 
   it("ignores classes with missing value while building expressions", () => {
