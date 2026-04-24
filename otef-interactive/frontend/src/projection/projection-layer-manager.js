@@ -30,6 +30,7 @@ import {
   listCuratedFullLayerIdsToReload as listCuratedFullLayerIdsToReloadImpl,
   reloadProjectionCuratedLayersFromSupabase as reloadProjectionCuratedLayersFromSupabaseImpl,
 } from "./projection-curated-layer-load.js";
+import { recordTraceEvent } from "../shared/otef-trace.js";
 
 let getModelBounds = null;
 let getDisplayedImageBounds = null;
@@ -485,6 +486,19 @@ function updateWmtsVisibility(fullLayerId, visible) {
    * Individual layers can be shown/hidden regardless of group.enabled state.
    */
   function syncLayerGroupsFromState(layerGroups) {
+    const syncStart = Date.now();
+    const activeTrace =
+      typeof OTEFDataContext !== "undefined" &&
+      OTEFDataContext &&
+      typeof OTEFDataContext._getActiveLayerTrace === "function"
+        ? OTEFDataContext._getActiveLayerTrace()
+        : null;
+    const traceId = activeTrace && activeTrace.traceId ? activeTrace.traceId : null;
+    if (traceId) {
+      recordTraceEvent(traceId, "projection.sync_layer_groups.start", {
+        groupCount: Array.isArray(layerGroups) ? layerGroups.length : 0,
+      });
+    }
     if (!layerGroups || !Array.isArray(layerGroups)) {
       console.warn("[Projection] Invalid layer groups state");
       return;
@@ -587,6 +601,15 @@ function updateWmtsVisibility(fullLayerId, visible) {
       );
     } catch (_) {
       // Non-fatal; base pink-line visibility is a visual enhancement.
+    }
+    if (traceId) {
+      const syncMs = Date.now() - syncStart;
+      recordTraceEvent(traceId, "projection.sync_layer_groups.end", { syncMs });
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => {
+          recordTraceEvent(traceId, "projection.visual_frame", {});
+        });
+      }
     }
   }
 

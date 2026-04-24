@@ -252,6 +252,22 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(table__name=table_name)
         return queryset
 
+    def _emit_trace_event(self, trace_id, stage, table_name=None, extra=None):
+        if not isinstance(trace_id, str) or not trace_id.strip():
+            return
+        import json
+        import time
+
+        payload = {
+            "traceId": trace_id,
+            "stage": stage,
+            "table": table_name,
+            "ts_ms": int(time.time() * 1000),
+        }
+        if isinstance(extra, dict):
+            payload.update(extra)
+        print("[OTEF TRACE] " + json.dumps(payload, ensure_ascii=False))
+
     def _broadcast_state_change(self, table_name, changed_fields, metadata=None):
         """Broadcast WebSocket notifications for state changes."""
         import time
@@ -266,6 +282,13 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         meta = metadata or {}
         source_id = meta.get('sourceId')
         timestamp = meta.get('timestamp')
+        trace_id = meta.get('traceId')
+        self._emit_trace_event(
+            trace_id,
+            "django.broadcast.start",
+            table_name=table_name,
+            extra={"fields": list(changed_fields or [])},
+        )
         if not isinstance(timestamp, (int, float)):
             timestamp = int(time.time() * 1000)
 
@@ -280,6 +303,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'viewport': state.get_viewport_with_defaults() if state else None,
                         'sourceId': source_id,
                         'timestamp': int(timestamp),
+                        'traceId': trace_id,
                     }
                 }
             elif (
@@ -309,6 +333,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'affected_curated_full_layer_ids': affected_curated_full_layer_ids,
                         'sourceId': source_id,
                         'timestamp': int(timestamp),
+                        'traceId': trace_id,
                     }
                 }
             elif field == 'animations':
@@ -341,6 +366,12 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             try:
                 if channel_layer:
                     async_to_sync(channel_layer.group_send)(group_name, message)
+                    self._emit_trace_event(
+                        trace_id,
+                        "django.broadcast.sent",
+                        table_name=table_name,
+                        extra={"field": field},
+                    )
             except Exception as e:
                 print(f"[WARN] Broadcast skipped for {field} ({table_name}): {e}")
 
@@ -366,6 +397,12 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         )
 
         if request.method == 'PATCH':
+            trace_id = request.data.get('traceId')
+            self._emit_trace_event(
+                trace_id,
+                "django.patch.received",
+                table_name=table_name,
+            )
             changed_fields = []
 
             # Partial updates for each field
@@ -417,6 +454,12 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 changed_fields.append('workshop_auto_publish')
 
             state.save()
+            self._emit_trace_event(
+                trace_id,
+                "django.patch.saved",
+                table_name=table_name,
+                extra={"fields": list(changed_fields)},
+            )
 
             # Broadcast notifications for each changed field
             self._broadcast_state_change(
@@ -425,6 +468,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 {
                     'sourceId': request.data.get('sourceId'),
                     'timestamp': request.data.get('timestamp'),
+                    'traceId': trace_id,
                 },
             )
 
@@ -738,6 +782,13 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         )
 
         action = request.data.get('action')
+        trace_id = request.data.get('traceId')
+        self._emit_trace_event(
+            trace_id,
+            "django.command.received",
+            table_name=table_name,
+            extra={"action": action},
+        )
 
         # Support base_viewport to prevent snapback during rapid movements
         base_viewport = request.data.get('base_viewport')
@@ -749,12 +800,19 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             delta = float(request.data.get('delta', 0.15))
             state.viewport = state.apply_pan_command(direction, delta)
             state.save()
+            self._emit_trace_event(
+                trace_id,
+                "django.command.saved",
+                table_name=table_name,
+                extra={"action": action},
+            )
             self._broadcast_state_change(
                 table_name,
                 ['viewport'],
                 {
                     'sourceId': request.data.get('sourceId'),
                     'timestamp': request.data.get('timestamp'),
+                    'traceId': trace_id,
                 },
             )
 
@@ -763,12 +821,19 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             level = max(10, min(19, level))  # Clamp to valid range
             state.viewport = state.apply_zoom_command(level)
             state.save()
+            self._emit_trace_event(
+                trace_id,
+                "django.command.saved",
+                table_name=table_name,
+                extra={"action": action},
+            )
             self._broadcast_state_change(
                 table_name,
                 ['viewport'],
                 {
                     'sourceId': request.data.get('sourceId'),
                     'timestamp': request.data.get('timestamp'),
+                    'traceId': trace_id,
                 },
             )
 

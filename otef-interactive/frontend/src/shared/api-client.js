@@ -1,5 +1,6 @@
 import { APP_CONFIG } from "../config/app-config.js";
 import { getLogger } from "./logger.js";
+import { recordTraceEvent } from "./otef-trace.js";
 
 export const OTEF_API = {
   baseUrl: APP_CONFIG.api.viewportBase,
@@ -42,6 +43,12 @@ export const OTEF_API = {
   },
 
   async updateState(tableName = this.defaultTable, updates) {
+    const traceId = updates && typeof updates.traceId === "string" ? updates.traceId : null;
+    if (traceId) {
+      recordTraceEvent(traceId, "api.patch.start", {
+        tableName,
+      });
+    }
     try {
       const response = await fetch(`${this.baseUrl}/${tableName}/`, {
         method: "PATCH",
@@ -51,14 +58,33 @@ export const OTEF_API = {
       if (!response.ok) throw new Error(`Failed to update state: ${response.status}`);
       const value = await response.json();
       this._stateCache.delete(tableName);
+      if (traceId) {
+        recordTraceEvent(traceId, "api.patch.end", {
+          tableName,
+          status: response.status,
+        });
+      }
       return value;
     } catch (error) {
+      if (traceId) {
+        recordTraceEvent(traceId, "api.patch.error", {
+          tableName,
+          message: error && error.message ? error.message : String(error),
+        });
+      }
       getLogger().error("[OTEF API] Error updating state:", error);
       throw error;
     }
   },
 
   async executeCommand(tableName = this.defaultTable, command) {
+    const traceId = command && typeof command.traceId === "string" ? command.traceId : null;
+    if (traceId) {
+      recordTraceEvent(traceId, "api.command.start", {
+        tableName,
+        action: command && command.action,
+      });
+    }
     try {
       const response = await fetch(`${this.baseUrl}/${tableName}/command/`, {
         method: "POST",
@@ -68,15 +94,29 @@ export const OTEF_API = {
       if (!response.ok) throw new Error(`Failed to execute command: ${response.status}`);
       const value = await response.json();
       this._stateCache.delete(tableName);
+      if (traceId) {
+        recordTraceEvent(traceId, "api.command.end", {
+          tableName,
+          status: response.status,
+          action: command && command.action,
+        });
+      }
       return value;
     } catch (error) {
+      if (traceId) {
+        recordTraceEvent(traceId, "api.command.error", {
+          tableName,
+          action: command && command.action,
+          message: error && error.message ? error.message : String(error),
+        });
+      }
       getLogger().error("[OTEF API] Error executing command:", error);
       throw error;
     }
   },
 
-  async updateLayerGroups(tableName = this.defaultTable, layerGroups) {
-    return this.updateState(tableName, { layerGroups });
+  async updateLayerGroups(tableName = this.defaultTable, layerGroups, meta = {}) {
+    return this.updateState(tableName, { layerGroups, ...meta });
   },
 
   async updateAnimations(tableName = this.defaultTable, animations) {

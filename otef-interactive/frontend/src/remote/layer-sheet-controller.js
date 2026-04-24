@@ -22,6 +22,7 @@ import { getPackDisplayLabel } from "./layer-pack-display-names.js";
 import { sanitizeCssColor } from "../curation/curation-color-utils.js";
 import { createCurationApi } from "../curation/curation-api.js";
 import { buildCurationColorSwatchHtml } from "../curation/curation-submissions.js";
+import { generateTraceId, recordTraceEvent } from "../shared/otef-trace.js";
 
 const workshopSubmissionColorById = new Map();
 const workshopSubmissionColorByName = new Map();
@@ -587,7 +588,12 @@ class LayerSheetController {
     }
     if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) return;
     const isOn = layerTile.classList.contains("is-on");
-    const result = await this.toggleLayerRow(fullLayerIds, !isOn);
+    const traceId = generateTraceId("layer");
+    recordTraceEvent(traceId, "remote.layer_toggle_click", {
+      fullLayerIds,
+      nextEnabled: !isOn,
+    });
+    const result = await this.toggleLayerRow(fullLayerIds, !isOn, { traceId });
     if (!result || !result.ok) return;
     const key = layerIdsToPrimaryKey(fullLayerIds);
     if (!isOn) {
@@ -639,12 +645,12 @@ class LayerSheetController {
     }
   }
 
-  async toggleLayerRow(fullLayerIds, enabled) {
+  async toggleLayerRow(fullLayerIds, enabled, options = {}) {
     if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) {
       return { ok: false };
     }
     if (typeof OTEFDataContext !== "undefined") {
-      return await OTEFDataContext.setLayersEnabled(fullLayerIds, enabled);
+      return await OTEFDataContext.setLayersEnabled(fullLayerIds, enabled, options);
     }
     return { ok: false };
   }

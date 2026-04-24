@@ -6,6 +6,7 @@ import {
   computePinkLineBaseLayerVisible,
   computePinkLineParkingOverlayVisible,
 } from "../map-utils/curated-pink-axis-state.js";
+import { recordTraceEvent } from "../shared/otef-trace.js";
 
 /**
  * Layer visibility state management for the Leaflet GIS map.
@@ -131,6 +132,18 @@ function buildEffectiveLayerEnabledMap(layerGroups) {
  */
 function applyLayerGroupsState(layerGroups, deps) {
   const reconcileStart = Date.now();
+  const activeTrace =
+    typeof OTEFDataContext !== "undefined" &&
+    OTEFDataContext &&
+    typeof OTEFDataContext._getActiveLayerTrace === "function"
+      ? OTEFDataContext._getActiveLayerTrace()
+      : null;
+  const traceId = activeTrace && activeTrace.traceId ? activeTrace.traceId : null;
+  if (traceId) {
+    recordTraceEvent(traceId, "gis.apply_layer_groups.start", {
+      groupCount: Array.isArray(layerGroups) ? layerGroups.length : 0,
+    });
+  }
   if (!layerGroups || !Array.isArray(layerGroups)) {
     console.warn("[GIS Map] Invalid layer groups state");
     return;
@@ -401,6 +414,15 @@ function applyLayerGroupsState(layerGroups, deps) {
       "layerReconcileMs",
       Date.now() - reconcileStart,
     );
+  }
+  if (traceId) {
+    const reconcileMs = Date.now() - reconcileStart;
+    recordTraceEvent(traceId, "gis.apply_layer_groups.end", { reconcileMs });
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        recordTraceEvent(traceId, "gis.visual_frame", {});
+      });
+    }
   }
 }
 

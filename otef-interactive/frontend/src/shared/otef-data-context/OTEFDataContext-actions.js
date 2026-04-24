@@ -4,6 +4,7 @@ import {
   applyMoreshetParkingCoherenceToLayerGroups,
   ensurePinkLineParkingRowInMoreshetAxisGroup,
 } from "../../map-utils/curated-pink-axis-state.js";
+import { generateTraceId, recordTraceEvent } from "../otef-trace.js";
 import { OTEFDataContextInternals } from "./index.js";
 
 function fallbackLogger() {
@@ -30,6 +31,8 @@ async function pan(ctx, direction, delta = 0.15) {
   if (candidateViewport && !insideBounds) return;
 
   try {
+    const traceId = generateTraceId("viewport-pan");
+    recordTraceEvent(traceId, "remote.pan.start", { direction, delta });
     ctx._currentInteractionSource = "remote";
     ctx._lastLocalStateTimestamp = Date.now();
     await OTEF_API.executeCommand(ctx._tableName, {
@@ -39,6 +42,7 @@ async function pan(ctx, direction, delta = 0.15) {
       sourceId: ctx._clientId,
       timestamp: ctx._lastLocalStateTimestamp,
       base_viewport: ctx._viewport,
+      traceId,
     });
   } catch (err) {
     getLogger().error("[OTEFDataContext] Pan command failed:", err);
@@ -154,6 +158,8 @@ async function zoom(ctx, newZoom) {
   if (candidateViewport && !ctx._isViewportInsideBounds(candidateViewport)) return;
 
   try {
+    const traceId = generateTraceId("viewport-zoom");
+    recordTraceEvent(traceId, "remote.zoom.start", { level: clampedZoom });
     ctx._currentInteractionSource = "remote";
     ctx._lastLocalStateTimestamp = Date.now();
     await OTEF_API.executeCommand(ctx._tableName, {
@@ -162,6 +168,7 @@ async function zoom(ctx, newZoom) {
       sourceId: ctx._clientId,
       timestamp: ctx._lastLocalStateTimestamp,
       base_viewport: ctx._viewport,
+      traceId,
     });
   } catch (err) {
     getLogger().error("[OTEFDataContext] Zoom command failed:", err);
@@ -210,7 +217,7 @@ async function toggleLayer(ctx, layerId, enabled) {
   return toggleLayerInGroups(ctx, fullLayerId, enabled);
 }
 
-async function toggleLayerInGroups(ctx, layerId, enabled) {
+async function toggleLayerInGroups(ctx, layerId, enabled, options = {}) {
   const rawSnapshot = JSON.parse(JSON.stringify(ctx._layerGroups || []));
   const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(rawSnapshot);
   let next = previous.map((group) => ({
@@ -223,10 +230,27 @@ async function toggleLayerInGroups(ctx, layerId, enabled) {
   }));
   next = applyMoreshetParkingCoherenceToLayerGroups(next);
 
+  const traceId =
+    options && typeof options.traceId === "string"
+      ? options.traceId
+      : generateTraceId("layer");
+  ctx._setActiveLayerTrace({
+    traceId,
+    source: "toggleLayerInGroups",
+    fullLayerIds: [layerId],
+  });
+  recordTraceEvent(traceId, "context.layer.optimistic_set", {
+    fullLayerIds: [layerId],
+    enabled: !!enabled,
+  });
   ctx._setLayerGroups(next);
   ctx._pendingLayerOps++;
   try {
-    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next);
+    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next, {
+      sourceId: ctx._clientId,
+      timestamp: Date.now(),
+      traceId,
+    });
     if (updated && Array.isArray(updated.layerGroups)) {
       ctx._setLayerGroups(updated.layerGroups);
     }
@@ -237,10 +261,13 @@ async function toggleLayerInGroups(ctx, layerId, enabled) {
     return { ok: false, error: err };
   } finally {
     ctx._pendingLayerOps--;
+    if (typeof ctx._clearActiveLayerTrace === "function") {
+      setTimeout(() => ctx._clearActiveLayerTrace(traceId), 1200);
+    }
   }
 }
 
-async function setLayersEnabled(ctx, fullLayerIds, enabled) {
+async function setLayersEnabled(ctx, fullLayerIds, enabled, options = {}) {
   if (!ctx._tableName || !Array.isArray(fullLayerIds) || fullLayerIds.length === 0) {
     return { ok: true };
   }
@@ -258,10 +285,27 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled) {
   }));
   next = applyMoreshetParkingCoherenceToLayerGroups(next);
 
+  const traceId =
+    options && typeof options.traceId === "string"
+      ? options.traceId
+      : generateTraceId("layer");
+  ctx._setActiveLayerTrace({
+    traceId,
+    source: "setLayersEnabled",
+    fullLayerIds,
+  });
+  recordTraceEvent(traceId, "context.layer.optimistic_set", {
+    fullLayerIds,
+    enabled: !!enabled,
+  });
   ctx._setLayerGroups(next);
   ctx._pendingLayerOps++;
   try {
-    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next);
+    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next, {
+      sourceId: ctx._clientId,
+      timestamp: Date.now(),
+      traceId,
+    });
     if (updated && Array.isArray(updated.layerGroups)) {
       ctx._setLayerGroups(updated.layerGroups);
     }
@@ -272,6 +316,9 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled) {
     return { ok: false, error: err };
   } finally {
     ctx._pendingLayerOps--;
+    if (typeof ctx._clearActiveLayerTrace === "function") {
+      setTimeout(() => ctx._clearActiveLayerTrace(traceId), 1200);
+    }
   }
 }
 
@@ -288,10 +335,24 @@ async function toggleGroup(ctx, groupId, enabled) {
   });
   next = applyMoreshetParkingCoherenceToLayerGroups(next);
 
+  const traceId = generateTraceId("group");
+  ctx._setActiveLayerTrace({
+    traceId,
+    source: "toggleGroup",
+    fullLayerIds: [`${groupId}.*`],
+  });
+  recordTraceEvent(traceId, "context.group.optimistic_set", {
+    groupId,
+    enabled: !!enabled,
+  });
   ctx._setLayerGroups(next);
   ctx._pendingLayerOps++;
   try {
-    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next);
+    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next, {
+      sourceId: ctx._clientId,
+      timestamp: Date.now(),
+      traceId,
+    });
     if (updated && Array.isArray(updated.layerGroups)) {
       ctx._setLayerGroups(updated.layerGroups);
     }
@@ -302,6 +363,9 @@ async function toggleGroup(ctx, groupId, enabled) {
     return { ok: false, error: err };
   } finally {
     ctx._pendingLayerOps--;
+    if (typeof ctx._clearActiveLayerTrace === "function") {
+      setTimeout(() => ctx._clearActiveLayerTrace(traceId), 1200);
+    }
   }
 }
 

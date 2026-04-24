@@ -1,6 +1,7 @@
 import { OTEF_API } from "../api-client.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
 import { OTEFWebSocketClient } from "../websocket-client.js";
+import { recordTraceEvent } from "../otef-trace.js";
 import { OTEFDataContextInternals } from "./index.js";
 
 function fallbackLogger() {
@@ -51,16 +52,28 @@ function setupWebSocket(ctx) {
 
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async (msg) => {
     try {
+      const traceId = msg && typeof msg.traceId === "string" ? msg.traceId : null;
+      if (traceId) {
+        recordTraceEvent(traceId, "ws.viewport.received", {
+          sourceId: msg && msg.sourceId ? msg.sourceId : null,
+        });
+      }
       if (msg && msg.sourceId === ctx._clientId) return;
       if (ctx._isLikelyStaleByTimestamp(msg && msg.timestamp)) return;
 
       if (msg && msg.viewport) {
         ctx._setViewport(msg.viewport);
+        if (traceId) {
+          recordTraceEvent(traceId, "context.viewport_from_ws", {});
+        }
         return;
       }
 
       const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
       if (state.viewport) ctx._setViewport(state.viewport);
+      if (traceId) {
+        recordTraceEvent(traceId, "context.viewport_from_api_fallback", {});
+      }
     } catch (err) {
       getLogger().error("[OTEFDataContext] Failed to refresh viewport after VIEWPORT_CHANGED:", err);
     }
@@ -75,6 +88,18 @@ function setupWebSocket(ctx) {
   });
 
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.LAYERS_CHANGED, async (msg = {}) => {
+    const traceId = msg && typeof msg.traceId === "string" ? msg.traceId : null;
+    if (traceId) {
+      recordTraceEvent(traceId, "ws.layers.received", {
+        sourceId: msg.sourceId || null,
+      });
+      if (typeof ctx._setActiveLayerTrace === "function") {
+        ctx._setActiveLayerTrace({
+          traceId,
+          source: "ws_layers_changed",
+        });
+      }
+    }
     const isLocalLayerOpPending =
       typeof ctx._isLocalLayerOpPending === "function"
         ? ctx._isLocalLayerOpPending()
@@ -89,15 +114,28 @@ function setupWebSocket(ctx) {
     try {
       if (Array.isArray(msg.layerGroups)) {
         ctx._setLayerGroups(msg.layerGroups);
+        if (traceId) {
+          recordTraceEvent(traceId, "context.layers_from_ws_payload", {
+            groupCount: msg.layerGroups.length,
+          });
+        }
       } else {
         const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
         if (state.layerGroups) {
           ctx._setLayerGroups(state.layerGroups);
+          if (traceId) {
+            recordTraceEvent(traceId, "context.layers_from_api_fallback", {
+              groupCount: state.layerGroups.length,
+            });
+          }
         }
       }
     } catch (err) {
       getLogger().error("[OTEFDataContext] Failed to refresh layers after LAYERS_CHANGED:", err);
     } finally {
+      if (traceId && typeof ctx._clearActiveLayerTrace === "function") {
+        setTimeout(() => ctx._clearActiveLayerTrace(traceId), 1200);
+      }
       if (typeof window !== "undefined" && affectedCuratedFullLayerIds.length > 0) {
         window.dispatchEvent(
           new CustomEvent("otef-curated-geojson-refresh", {

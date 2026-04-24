@@ -1,5 +1,6 @@
 import { OTEF_API } from "./api-client.js";
 import { OTEFDataContextInternals } from "./otef-data-context/index.js";
+import { recordTraceEvent } from "./otef-trace.js";
 import "./otef-data-context/OTEFDataContext-actions.js";
 import "./otef-data-context/OTEFDataContext-bounds.js";
 import "./otef-data-context/OTEFDataContext-websocket.js";
@@ -90,6 +91,7 @@ class OTEFDataContextClass {
     this._pendingLayerOps = 0;
     this._pendingAnimationOps = 0;
     this._viewportSeq = 0;
+    this._activeLayerTrace = null;
   }
 
   async init(tableName = "otef") {
@@ -167,7 +169,41 @@ class OTEFDataContextClass {
   _setLayerGroups(layerGroups) {
     if (layerGroupsEqual(this._layerGroups, layerGroups)) return;
     this._layerGroups = layerGroups;
+    if (this._activeLayerTrace && this._activeLayerTrace.traceId) {
+      recordTraceEvent(this._activeLayerTrace.traceId, "context.layer_groups_set", {
+        source: this._activeLayerTrace.source || "unknown",
+      });
+    }
     this._notify("layerGroups", this._layerGroups);
+  }
+
+  _setActiveLayerTrace(trace) {
+    if (!trace || !trace.traceId) return;
+    this._activeLayerTrace = {
+      traceId: trace.traceId,
+      source: trace.source || "unknown",
+      startedAt: Date.now(),
+      expiresAt: Date.now() + 4000,
+      fullLayerIds: Array.isArray(trace.fullLayerIds) ? [...trace.fullLayerIds] : [],
+    };
+  }
+
+  _getActiveLayerTrace() {
+    if (
+      this._activeLayerTrace &&
+      Number.isFinite(this._activeLayerTrace.expiresAt) &&
+      Date.now() > this._activeLayerTrace.expiresAt
+    ) {
+      this._activeLayerTrace = null;
+    }
+    return this._activeLayerTrace;
+  }
+
+  _clearActiveLayerTrace(traceId) {
+    if (!this._activeLayerTrace) return;
+    if (!traceId || this._activeLayerTrace.traceId === traceId) {
+      this._activeLayerTrace = null;
+    }
   }
 
   _setAnimations(animations) {
@@ -304,13 +340,13 @@ class OTEFDataContextClass {
     return actions.toggleLayer(this, layerId, enabled);
   }
 
-  async setLayersEnabled(fullLayerIds, enabled) {
+  async setLayersEnabled(fullLayerIds, enabled, options = undefined) {
     const actions = OTEFDataContextInternals.actions;
     if (!actions || typeof actions.setLayersEnabled !== "function") {
       getLogger().error("[OTEFDataContext] Missing action helpers");
       return { ok: false, error: "Missing action helpers" };
     }
-    return actions.setLayersEnabled(this, fullLayerIds, enabled);
+    return actions.setLayersEnabled(this, fullLayerIds, enabled, options);
   }
 
   async _toggleLayerInGroups(layerId, enabled) {
