@@ -111,17 +111,22 @@ export function updateHighlightFromViewport(viewport, modelBounds, highlightEl) 
     return;
   }
 
-  highlightEl.style.display = "";
-
   const container = highlightEl.parentElement;
-  if (!container) return;
-
-  const cw = container.clientWidth;
-  const ch = container.clientHeight;
   const mb = modelBounds.itm;
-  if (!cw || !ch || mb.east === mb.west || mb.north === mb.south) {
+  const cw = container?.clientWidth ?? 0;
+  const ch = container?.clientHeight ?? 0;
+  if (
+    !container ||
+    !cw ||
+    !ch ||
+    mb.east === mb.west ||
+    mb.north === mb.south
+  ) {
+    highlightEl.style.display = "none";
     return;
   }
+
+  highlightEl.style.display = "";
 
   const toPixelX = (itmX) => ((itmX - mb.west) / (mb.east - mb.west)) * cw;
   const toPixelY = (itmY) => ((mb.north - itmY) / (mb.north - mb.south)) * ch;
@@ -140,8 +145,6 @@ export function updateHighlightFromViewport(viewport, modelBounds, highlightEl) 
   if (!box) {
     box = document.createElement("div");
     box.className = "highlight-box";
-    box.style.cssText =
-      "position:absolute;border:3px solid cyan;pointer-events:none;transition:all 0.15s ease-out;";
     highlightEl.appendChild(box);
   }
 

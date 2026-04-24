@@ -170,6 +170,166 @@ describe("maplibre-viewport-sync", () => {
     cleanup();
   });
 
+  it("retries GIS report once after interaction_guard (coalesced, no storm)", () => {
+    let calls = 0;
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const dataContext = createDataContextMock();
+    dataContext.updateViewportFromUI = vi.fn(() => {
+      calls += 1;
+      if (calls === 1) return { accepted: false, reason: "interaction_guard" };
+      return { accepted: true };
+    });
+    const cleanup = setupViewportSync(map, dataContext);
+
+    map.emit("moveend");
+    vi.runOnlyPendingTimers();
+    vi.runOnlyPendingTimers();
+
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledTimes(2);
+
+    cleanup();
+  });
+
+  it("does not loop when interaction_guard persists on the single reconcile attempt", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const dataContext = createDataContextMock();
+    dataContext.updateViewportFromUI = vi.fn(() => ({
+      accepted: false,
+      reason: "interaction_guard",
+    }));
+    const cleanup = setupViewportSync(map, dataContext);
+
+    map.emit("moveend");
+    vi.runOnlyPendingTimers();
+    vi.runOnlyPendingTimers();
+
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledTimes(2);
+
+    cleanup();
+  });
+
+  it("flushes one pending GIS reconcile when remote apply unlocks (idle)", () => {
+    let calls = 0;
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const dataContext = createDataContextMock();
+    dataContext.updateViewportFromUI = vi.fn(() => {
+      calls += 1;
+      if (calls === 1) return { accepted: false, reason: "interaction_guard" };
+      return { accepted: true };
+    });
+    const cleanup = setupViewportSync(map, dataContext);
+
+    map.emit("moveend");
+    vi.runOnlyPendingTimers();
+    expect(calls).toBe(1);
+
+    dataContext.emitViewport({
+      bbox: [2, 2, 12, 12],
+      zoom: 8,
+      seq: 10,
+    });
+    expect(map.listenerCount("idle")).toBeGreaterThan(0);
+
+    map.emit("idle");
+    expect(calls).toBe(2);
+
+    vi.runOnlyPendingTimers();
+
+    cleanup();
+  });
+
+  it("does not call updateViewportFromUI after cleanup (straggling coalesced report)", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    map.emit("moveend");
+    cleanup();
+    vi.runAllTimers();
+
+    expect(dataContext.updateViewportFromUI).not.toHaveBeenCalled();
+  });
+
+  it("accepts viewport after large seq rollback (reconnect) by resetting applied cursor", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    dataContext.emitViewport({
+      bbox: [2, 2, 12, 12],
+      zoom: 7,
+      seq: 100,
+    });
+    const afterFirst = map.fitBoundsCalls.length;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    dataContext.emitViewport({
+      bbox: [4, 4, 14, 14],
+      zoom: 8,
+      seq: 5,
+    });
+    expect(map.fitBoundsCalls.length).toBeGreaterThan(afterFirst);
+    const last = map.fitBoundsCalls[map.fitBoundsCalls.length - 1];
+    const [[w, s], [e, n]] = last.targetBounds;
+    expect(w).toBe(4);
+    expect(s).toBe(4);
+    expect(e).toBe(14);
+    expect(n).toBe(14);
+
+    cleanup();
+  });
+
+  it("ignores stale viewport notifications by monotonic seq", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    dataContext.emitViewport({
+      bbox: [2, 2, 12, 12],
+      zoom: 7,
+      seq: 5,
+    });
+    const n = map.fitBoundsCalls.length;
+
+    dataContext.emitViewport({
+      bbox: [2, 2, 12, 12],
+      zoom: 7,
+      seq: 5,
+    });
+    expect(map.fitBoundsCalls).toHaveLength(n);
+
+    dataContext.emitViewport({
+      bbox: [4, 4, 14, 14],
+      zoom: 8,
+      seq: 6,
+    });
+    expect(map.fitBoundsCalls.length).toBeGreaterThan(n);
+
+    cleanup();
+  });
+
+  it("does not consume seq for invalid viewport payloads", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    dataContext.emitViewport({
+      bbox: [2, 2, Number.NaN, 12],
+      zoom: 7,
+      seq: 20,
+    });
+
+    const before = map.fitBoundsCalls.length;
+    dataContext.emitViewport({
+      bbox: [2, 2, 12, 12],
+      zoom: 7,
+      seq: 20,
+    });
+
+    expect(map.fitBoundsCalls.length).toBeGreaterThan(before);
+    cleanup();
+  });
+
   it("cleans up map listeners and viewport subscription", () => {
     const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
     const dataContext = createDataContextMock();
@@ -203,4 +363,38 @@ describe("maplibre-viewport-sync", () => {
     expect(map.setZoomCalls).toHaveLength(1);
     expect(dataContext.updateViewportFromUI).not.toHaveBeenCalled();
   });
+
+  it("unlocks remote apply lock after timeout when idle never fires, allowing GIS report", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    dataContext.emitViewport({
+      bbox: [2, 2, 12, 12],
+      zoom: 8,
+    });
+
+    map.emit("moveend");
+    map.emit("zoomend");
+    vi.runOnlyPendingTimers();
+    expect(dataContext.updateViewportFromUI).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(500);
+    vi.runOnlyPendingTimers();
+
+    map.emit("moveend");
+    vi.runOnlyPendingTimers();
+
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledTimes(1);
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bbox: [2, 2, 12, 12],
+        zoom: 8,
+      }),
+      "gis",
+    );
+
+    cleanup();
+  });
+
 });
