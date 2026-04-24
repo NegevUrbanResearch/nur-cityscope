@@ -11,6 +11,7 @@ import {
   t,
 } from "./remote-locale.js";
 import { shouldReapplyDpadAfterFullControlRefresh } from "./remote-control-refresh-invariants.js";
+import { computeNextZoomFromLiveState } from "./remote-zoom-control-contract.js";
 
 // Current UI state (synced from API)
 let currentState = {
@@ -33,6 +34,11 @@ let zoomThrottleTimer = null;
 const ZOOM_THROTTLE_MS = 100;
 let zoomCommandInFlight = false;
 let pendingZoomTarget = null;
+let lastRequestedZoom = null;
+
+const MIN_ZOOM = 10;
+const MAX_ZOOM = 19;
+const DEFAULT_ZOOM = 15;
 
 // Table name for this controller
 const TABLE_NAME = "otef";
@@ -52,6 +58,12 @@ let unsubscribeFunctions = [];
 
 /** Last connection cluster state for re-applying translated status after locale change */
 let lastConnectionUiStatus = "connecting";
+
+function normalizeZoomLevel(value, fallback = DEFAULT_ZOOM) {
+  const z = Number(value);
+  if (!Number.isFinite(z)) return fallback;
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(z)));
+}
 
 // Initialize on DOM ready
 if (typeof document !== "undefined") {
@@ -75,8 +87,12 @@ async function initialize() {
   unsubscribeFunctions.push(
     OTEFDataContext.subscribe("viewport", (viewport) => {
       if (!viewport) return;
+      const normalizedZoom = normalizeZoomLevel(viewport.zoom);
       currentState.viewport = viewport;
-      updateZoomUI(viewport.zoom);
+      updateZoomUI(normalizedZoom);
+      if (!zoomCommandInFlight && pendingZoomTarget === null) {
+        lastRequestedZoom = normalizedZoom;
+      }
       updateUI();
     }),
   );
@@ -357,10 +373,14 @@ function initializeZoomControls() {
 
   if (!slider || !zoomIn || !zoomOut || !zoomValue) return;
 
+  slider.min = String(MIN_ZOOM);
+  slider.max = String(MAX_ZOOM);
+  slider.step = "1";
+
   // Slider change
   slider.addEventListener("input", (e) => {
-    const zoom = parseInt(e.target.value);
-    zoomValue.textContent = zoom;
+    const zoom = normalizeZoomLevel(e.target.value);
+    updateZoomUI(zoom);
 
     // Throttle slider updates
     clearTimeout(zoomThrottleTimer);
@@ -372,35 +392,38 @@ function initializeZoomControls() {
   // Zoom in button
   zoomIn.addEventListener("click", () => {
     if (!currentState.isConnected) return;
-    const baseZoom = getCurrentZoomForControls();
-    const newZoom = Math.min(19, baseZoom + 1);
+    const liveViewport =
+      typeof OTEFDataContext !== "undefined" &&
+      typeof OTEFDataContext.getViewport === "function"
+        ? OTEFDataContext.getViewport()
+        : null;
+    const newZoom = computeNextZoomFromLiveState({
+      sliderValue: slider.value,
+      liveViewportZoom: liveViewport?.zoom,
+      stateZoom: currentState.viewport?.zoom,
+      pendingZoom: lastRequestedZoom,
+      delta: 1,
+    });
     queueZoomCommand(newZoom);
   });
 
   // Zoom out button
   zoomOut.addEventListener("click", () => {
     if (!currentState.isConnected) return;
-    const baseZoom = getCurrentZoomForControls();
-    const newZoom = Math.max(10, baseZoom - 1);
+    const liveViewport =
+      typeof OTEFDataContext !== "undefined" &&
+      typeof OTEFDataContext.getViewport === "function"
+        ? OTEFDataContext.getViewport()
+        : null;
+    const newZoom = computeNextZoomFromLiveState({
+      sliderValue: slider.value,
+      liveViewportZoom: liveViewport?.zoom,
+      stateZoom: currentState.viewport?.zoom,
+      pendingZoom: lastRequestedZoom,
+      delta: -1,
+    });
     queueZoomCommand(newZoom);
   });
-}
-
-function getCurrentZoomForControls() {
-  const slider = document.getElementById("zoomSlider");
-  const sliderZoom = slider ? Number.parseInt(slider.value, 10) : NaN;
-  if (Number.isFinite(sliderZoom)) return sliderZoom;
-
-  const liveViewport =
-    typeof OTEFDataContext !== "undefined" &&
-    typeof OTEFDataContext.getViewport === "function"
-      ? OTEFDataContext.getViewport()
-      : null;
-  const liveZoom = Number(liveViewport && liveViewport.zoom);
-  if (Number.isFinite(liveZoom)) return liveZoom;
-
-  const stateZoom = Number(currentState.viewport && currentState.viewport.zoom);
-  return Number.isFinite(stateZoom) ? stateZoom : 15;
 }
 
 function getLiveViewport() {
@@ -426,10 +449,11 @@ function getPanSpeedFactorForZoom(zoom) {
 }
 
 function queueZoomCommand(zoom) {
-  const clampedZoom = Math.max(10, Math.min(19, Number(zoom)));
+  const clampedZoom = normalizeZoomLevel(zoom);
   if (!Number.isFinite(clampedZoom)) return;
 
   pendingZoomTarget = clampedZoom;
+  lastRequestedZoom = clampedZoom;
   updateZoomUI(clampedZoom);
   if (currentState.viewport) {
     currentState.viewport = { ...currentState.viewport, zoom: clampedZoom };
@@ -451,6 +475,9 @@ async function flushZoomQueue() {
     }
   } finally {
     zoomCommandInFlight = false;
+    if (pendingZoomTarget === null && currentState.viewport) {
+      lastRequestedZoom = normalizeZoomLevel(currentState.viewport.zoom);
+    }
   }
 }
 
@@ -470,12 +497,13 @@ async function sendZoomCommand(zoom) {
 function updateZoomUI(zoom) {
   const slider = document.getElementById("zoomSlider");
   const zoomValue = document.getElementById("zoomValue");
+  const normalized = normalizeZoomLevel(zoom);
 
   if (slider) {
-    slider.value = zoom;
+    slider.value = String(normalized);
   }
   if (zoomValue) {
-    zoomValue.textContent = zoom;
+    zoomValue.textContent = String(normalized);
   }
 }
 

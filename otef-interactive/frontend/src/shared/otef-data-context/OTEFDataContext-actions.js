@@ -17,6 +17,22 @@ function fallbackLogger() {
 }
 
 const getLogger = OTEFDataContextInternals.getLogger || fallbackLogger;
+const VELOCITY_STOP_EPSILON = 1e-3;
+const VELOCITY_STALE_MS = 120;
+
+function isVelocityEffectivelyMoving(ctx) {
+  if (!ctx || !ctx._velocity) return false;
+  const vx = Number(ctx._velocity.vx) || 0;
+  const vy = Number(ctx._velocity.vy) || 0;
+  const speed = Math.hypot(vx, vy);
+  if (speed <= VELOCITY_STOP_EPSILON) return false;
+
+  const ageMs =
+    typeof ctx._lastVelocityUpdate === "number"
+      ? Date.now() - ctx._lastVelocityUpdate
+      : 0;
+  return ageMs <= VELOCITY_STALE_MS;
+}
 
 async function pan(ctx, direction, delta = 0.15) {
   if (!ctx._tableName || !ctx._isConnected || !direction) return;
@@ -182,7 +198,9 @@ function updateViewportFromUI(ctx, viewport, source = "gis") {
     return false;
   }
 
-  if (source === "gis" && (ctx._velocityLoopActive || ctx._currentInteractionSource === "remote")) {
+  const remoteInteractionActive = ctx._currentInteractionSource === "remote";
+  const movingNow = isVelocityEffectivelyMoving(ctx);
+  if (source === "gis" && (remoteInteractionActive || movingNow)) {
     return { accepted: false, reason: "interaction_guard" };
   }
 

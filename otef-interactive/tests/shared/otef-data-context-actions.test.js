@@ -1,5 +1,6 @@
 let setLayerAnimations;
 let zoom;
+let updateViewportFromUI;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -11,6 +12,7 @@ beforeEach(async () => {
   const mod = await import('../../frontend/src/shared/otef-data-context/OTEFDataContext-actions.js');
   setLayerAnimations = mod.setLayerAnimations;
   zoom = mod.zoom;
+  updateViewportFromUI = mod.updateViewportFromUI;
 });
 
 afterEach(() => {
@@ -68,5 +70,38 @@ describe('OTEFDataContext actions', () => {
     const requestBody = JSON.parse(global.fetch.mock.calls[0][1].body);
     expect(requestBody.action).toBe('zoom');
     expect(requestBody.base_viewport).toEqual(viewport);
+  });
+
+  test('updateViewportFromUI allows GIS handoff when velocity loop is stale/stopped', () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    const setViewport = vi.fn((next) => next);
+    const ctx = {
+      _tableName: 'otef',
+      _clientId: 'test-client',
+      _velocityLoopActive: true,
+      _velocity: { vx: 0, vy: 0 },
+      _lastVelocityUpdate: 9_000,
+      _currentInteractionSource: null,
+      _isViewportInsideBounds: () => true,
+      _setViewport: setViewport,
+      _viewport: null,
+      _lastLocalStateTimestamp: 0,
+    };
+    const viewport = {
+      bbox: [100, 100, 200, 200],
+      zoom: 14,
+      corners: {
+        sw: { x: 100, y: 100 },
+        se: { x: 200, y: 100 },
+        nw: { x: 100, y: 200 },
+        ne: { x: 200, y: 200 },
+      },
+    };
+
+    const result = updateViewportFromUI(ctx, viewport, 'gis');
+
+    expect(result).toEqual({ accepted: true });
+    expect(setViewport).toHaveBeenCalled();
+    nowSpy.mockRestore();
   });
 });
