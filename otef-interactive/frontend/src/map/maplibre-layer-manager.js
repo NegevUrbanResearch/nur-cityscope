@@ -72,7 +72,30 @@ function createCanvas2DContext(size) {
   return null;
 }
 
-function registerHatchPatternImages(map, styleLayer) {
+function releaseHatchPatternsForFullId(map, fullId, state) {
+  const ids = state.hatchPatternIdsByFullId.get(fullId);
+  if (!Array.isArray(ids) || ids.length === 0) {
+    state.hatchPatternIdsByFullId.delete(fullId);
+    return;
+  }
+
+  for (const patternId of ids) {
+    const prevCount = state.hatchPatternRefCounts.get(patternId) || 0;
+    const nextCount = prevCount - 1;
+    if (nextCount <= 0) {
+      state.hatchPatternRefCounts.delete(patternId);
+      if (typeof map.removeImage === "function" && map.hasImage(patternId)) {
+        map.removeImage(patternId);
+      }
+    } else {
+      state.hatchPatternRefCounts.set(patternId, nextCount);
+    }
+  }
+
+  state.hatchPatternIdsByFullId.delete(fullId);
+}
+
+function registerHatchPatternImages(map, styleLayer, state, trackedPatternIds) {
   const specs = [];
   if (styleLayer._hatchPattern) {
     specs.push(styleLayer._hatchPattern);
@@ -84,13 +107,18 @@ function registerHatchPatternImages(map, styleLayer) {
   }
   for (const spec of specs) {
     if (!spec?.patternId) continue;
-    if (map.hasImage(spec.patternId)) continue;
-    const image = generateHatchImage(spec);
-    map.addImage(spec.patternId, image);
+    if (trackedPatternIds.has(spec.patternId)) continue;
+    if (!map.hasImage(spec.patternId)) {
+      const image = generateHatchImage(spec);
+      map.addImage(spec.patternId, image);
+    }
+    trackedPatternIds.add(spec.patternId);
+    const currentRefCount = state.hatchPatternRefCounts.get(spec.patternId) || 0;
+    state.hatchPatternRefCounts.set(spec.patternId, currentRefCount + 1);
   }
 }
 
-const mapStateByMap = new WeakMap(); // map -> { loadedSources: Map, loadedLayerIds: Map }
+const mapStateByMap = new WeakMap(); // map -> { loadedSources: Map, loadedLayerIds: Map, hatchPatternIdsByFullId: Map, hatchPatternRefCounts: Map }
 
 function getOrCreateMapState(map) {
   let state = mapStateByMap.get(map);
@@ -98,6 +126,8 @@ function getOrCreateMapState(map) {
     state = {
       loadedSources: new Map(), // fullId -> sourceId
       loadedLayerIds: new Map(), // fullId -> string[]
+      hatchPatternIdsByFullId: new Map(), // fullId -> string[]
+      hatchPatternRefCounts: new Map(), // patternId -> number
     };
     mapStateByMap.set(map, state);
   }
@@ -147,6 +177,7 @@ function removeFullIdFromMap(map, fullId, state) {
     map.removeSource(sourceId);
   }
   loadedSources.delete(fullId);
+  releaseHatchPatternsForFullId(map, fullId, state);
 }
 
 function buildPmtilesUrl(pathFromRegistry) {
@@ -254,6 +285,23 @@ export function registerCuratedLayerIds(map, fullId, sourceId, layerIds) {
   state.loadedLayerIds.set(fullId, Array.isArray(layerIds) ? layerIds : []);
 }
 
+function rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, registeredPatternIds) {
+  for (const layerId of addedLayerIds) {
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+  }
+  if (map.getSource(sourceId)) {
+    map.removeSource(sourceId);
+  }
+  state.loadedLayerIds.delete(fullId);
+  state.loadedSources.delete(fullId);
+  if (registeredPatternIds.size > 0) {
+    state.hatchPatternIdsByFullId.set(fullId, [...registeredPatternIds]);
+    releaseHatchPatternsForFullId(map, fullId, state);
+  }
+}
+
 function addLayerToMap(map, fullId, state) {
   const { loadedSources, loadedLayerIds } = state;
   // Curated layer ids are managed by maplibre-curated-layer-loader, not the registry path.
@@ -311,6 +359,7 @@ function addLayerToMap(map, fullId, state) {
   }
 
   const addedLayerIds = [];
+  const registeredPatternIds = new Set();
   let styleLayers;
   try {
     styleLayers = irToMapLibreLayers(fullId, sourceId, layerConfig);
@@ -328,7 +377,16 @@ function addLayerToMap(map, fullId, state) {
   }
 
   for (const styleLayer of styleLayers || []) {
-    registerHatchPatternImages(map, styleLayer);
+    try {
+      registerHatchPatternImages(map, styleLayer, state, registeredPatternIds);
+    } catch (error) {
+      console.warn(
+        `[maplibre-layer-manager] Failed to register hatch patterns for ${fullId}`,
+        error,
+      );
+      rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, registeredPatternIds);
+      return;
+    }
     const { _hatchPattern, _hatchPatterns, ...styleRest } = styleLayer;
     const layerDef = { ...styleRest, source: sourceId };
 
@@ -349,16 +407,17 @@ function addLayerToMap(map, fullId, state) {
 
   if (addedLayerIds.length === 0) {
     // No layer was added successfully, so rollback source and state for retry.
-    if (map.getSource(sourceId)) {
-      map.removeSource(sourceId);
-    }
-    loadedLayerIds.delete(fullId);
-    loadedSources.delete(fullId);
+    rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, registeredPatternIds);
     return;
   }
 
   loadedSources.set(fullId, sourceId);
   loadedLayerIds.set(fullId, addedLayerIds);
+  if (registeredPatternIds.size > 0) {
+    state.hatchPatternIdsByFullId.set(fullId, [...registeredPatternIds]);
+  } else {
+    state.hatchPatternIdsByFullId.delete(fullId);
+  }
 }
 
 export function applyLayerGroupsToMap(map, layerGroups) {
@@ -395,4 +454,6 @@ export function clearAllLayers(map) {
   }
   state.loadedSources.clear();
   state.loadedLayerIds.clear();
+  state.hatchPatternIdsByFullId.clear();
+  state.hatchPatternRefCounts.clear();
 }
