@@ -2,6 +2,11 @@ import TableSwitcher from "../shared/table-switcher.js";
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import { createProjectionMap, updateHighlightFromViewport } from "../projection/maplibre-projection.js";
 import { syncProjectionLayers } from "../projection/maplibre-projection-layers.js";
+import {
+  loadCuratedLayerToMapLibre,
+  removeCuratedHtmlMarkers,
+} from "../map/maplibre-curated-layer-loader.js";
+import { removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
 
@@ -127,17 +132,98 @@ async function bootstrapProjectionRuntime() {
     window.addEventListener("beforeunload", cleanup, { once: true });
   }
 
-  map.on("load", () => {
-    syncProjectionLayers(map, getEffectiveProjectionLayerGroups());
+  map.on("load", async () => {
+    let activeCuratedIds = new Set();
+
+    function asLayerGroupsArray(raw) {
+      if (Array.isArray(raw)) return raw;
+      if (raw && typeof raw === "object") return Object.values(raw);
+      return [];
+    }
+
+    function collectEnabledCuratedIds(groups) {
+      const ids = [];
+      for (const group of groups || []) {
+        if (!group || !group.id || !group.id.startsWith("curated")) continue;
+        for (const layer of group.layers || []) {
+          if (layer && layer.enabled) ids.push(`${group.id}.${layer.id}`);
+        }
+      }
+      return ids;
+    }
+
+    async function resolveMaplibregl() {
+      if (typeof window !== "undefined" && window.maplibregl) return window.maplibregl;
+      try {
+        return (await import("maplibre-gl")).default;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    const refreshProjectionCuratedLayers = async ({
+      affectedCuratedFullLayerIds,
+      groupsOverride,
+    } = {}) => {
+      const rawGroups = groupsOverride ?? getEffectiveProjectionLayerGroups();
+      const currentGroups = asLayerGroupsArray(rawGroups);
+
+      syncProjectionLayers(map, currentGroups);
+
+      const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
+      const previousCuratedIds = new Set(activeCuratedIds);
+      activeCuratedIds = enabledCuratedIds;
+
+      for (const fullId of previousCuratedIds) {
+        if (!enabledCuratedIds.has(fullId)) {
+          removeCuratedLayersByPrefix(map, fullId);
+          removeCuratedHtmlMarkers(fullId);
+        }
+      }
+
+      let toRefresh;
+      if (Array.isArray(affectedCuratedFullLayerIds) && affectedCuratedFullLayerIds.length > 0) {
+        const affectedSet = new Set(
+          affectedCuratedFullLayerIds.filter((id) => typeof id === "string"),
+        );
+        for (const fullId of affectedSet) {
+          removeCuratedLayersByPrefix(map, fullId);
+          removeCuratedHtmlMarkers(fullId);
+        }
+        toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
+      } else {
+        toRefresh = [...enabledCuratedIds];
+      }
+
+      if (toRefresh.length === 0) return;
+
+      const maplibregl = await resolveMaplibregl();
+      for (const fullId of toRefresh) {
+        try {
+          await loadCuratedLayerToMapLibre(map, fullId, { maplibregl, force: true });
+        } catch (err) {
+          console.warn(`[projection-main] Failed to load curated layer ${fullId}`, err);
+        }
+      }
+    };
+
+    async function loadProjectionCuratedLayers(targetMap) {
+      if (!targetMap) return;
+      await refreshProjectionCuratedLayers({
+        groupsOverride: getEffectiveProjectionLayerGroups(),
+      });
+    }
 
     lastViewport = OTEFDataContext.getViewport();
     if (lastViewport) {
       updateHighlightFromViewport(lastViewport, modelBounds, highlightEl);
     }
 
+    await loadProjectionCuratedLayers(map);
+
     registerDisposer(
-      OTEFDataContext.subscribe("layerGroups", () => {
-        syncProjectionLayers(map, getEffectiveProjectionLayerGroups());
+      OTEFDataContext.subscribe("layerGroups", (groups) => {
+        void refreshProjectionCuratedLayers({ groupsOverride: groups });
       }),
     );
 
@@ -147,6 +233,35 @@ async function bootstrapProjectionRuntime() {
         updateHighlightFromViewport(viewport, modelBounds, highlightEl);
       }),
     );
+
+    try {
+      const { syncCuratedMapLayersAfterSupabasePull } = await import(
+        "../map/map-curated-supabase-sync.js"
+      );
+      const { startCuratedSupabaseHeartbeat } = await import(
+        "../shared/curated-supabase-heartbeat.js"
+      );
+
+      const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
+        table: "otef",
+        onUpdated: async (data) => {
+          await syncCuratedMapLayersAfterSupabasePull({
+            pullPayload: data,
+            reloadCuratedOnMap: refreshProjectionCuratedLayers,
+            applyLayerGroupsState: (groups) => {
+              syncProjectionLayers(
+                map,
+                Array.isArray(groups) ? groups : Object.values(groups || {}),
+              );
+            },
+            mapDeps: {},
+          });
+        },
+      });
+      registerDisposer(stopCuratedHeartbeat);
+    } catch (e) {
+      console.warn("[projection-main] Curated layer modules not available:", e);
+    }
   });
 
   await import("../projection/projection-bounds-editor.js");
