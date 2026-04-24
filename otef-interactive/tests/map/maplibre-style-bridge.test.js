@@ -78,13 +78,83 @@ describe("irToMapLibreLayers", () => {
     const fill = result.find((layer) => layer.type === "fill");
     expect(fill.paint["fill-color"]).toEqual([
       "match",
-      ["get", "mimush"],
+      [
+        "to-string",
+        ["coalesce", ["get", "MIMUSH"], ["get", "Mimush"], ["get", "mimush"], ""],
+      ],
       "0",
       "#d76e89",
       "1",
       "#76b5c5",
       "#808080",
     ]);
+  });
+
+  it("uniqueValue fill-color uses coalesce+to-string for mixed-case field names", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "Zone",
+          classes: [
+            {
+              value: "a",
+              symbol: {
+                symbolLayers: [{ type: "fill", fillType: "solid", color: "#ff0000", opacity: 1 }],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "fill", fillType: "solid", color: "#808080", opacity: 1 }],
+        },
+      },
+    };
+
+    const fill = irToMapLibreLayers("test.case", "test__case", layerConfig).find((l) => l.type === "fill");
+    const fillColor = fill.paint["fill-color"];
+    expect(fillColor[0]).toBe("match");
+    const input = fillColor[1];
+    expect(input[0]).toBe("to-string");
+    expect(input[1][0]).toBe("coalesce");
+    const coReads = input[1].slice(1, -1);
+    expect(coReads).toEqual([
+      ["get", "ZONE"],
+      ["get", "Zone"],
+      ["get", "zone"],
+    ]);
+    expect(fillColor).toEqual(["match", input, "a", "#ff0000", "#808080"]);
+  });
+
+  it("uniqueValue stringifies numeric class values for match labels", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "k",
+          classes: [
+            {
+              value: 1,
+              symbol: {
+                symbolLayers: [{ type: "fill", fillType: "solid", color: "#111111", opacity: 1 }],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "fill", fillType: "solid", color: "#999999", opacity: 1 }],
+        },
+      },
+    };
+    const fill = irToMapLibreLayers("test.num", "test__num", layerConfig).find((l) => l.type === "fill");
+    const fillColor = fill.paint["fill-color"];
+    expect(fillColor[0]).toBe("match");
+    expect(fillColor[1]).toEqual(["to-string", ["coalesce", ["get", "K"], ["get", "k"], ""]]);
+    expect(fillColor[2]).toBe("1");
+    expect(fillColor[3]).toBe("#111111");
+    expect(fillColor[4]).toBe("#999999");
   });
 
   it("converts a circle marker layer", () => {
@@ -167,7 +237,7 @@ describe("irToMapLibreLayers", () => {
     const circle = result.find((layer) => layer.type === "circle");
     expect(circle.paint["circle-color"]).toEqual([
       "match",
-      ["get", "kind"],
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
       "a",
       "#e84a5f",
       "b",
@@ -291,7 +361,7 @@ describe("irToMapLibreLayers", () => {
     expect(line.id).toBe("test__markerline__unique__markerLineFallback__0");
     expect(line.paint["line-color"]).toEqual([
       "match",
-      ["get", "kind"],
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
       "a",
       "#ff0000",
       "b",
@@ -300,7 +370,7 @@ describe("irToMapLibreLayers", () => {
     ]);
     expect(line.paint["line-width"]).toEqual([
       "match",
-      ["get", "kind"],
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
       "a",
       2,
       "b",
@@ -386,7 +456,7 @@ describe("irToMapLibreLayers", () => {
 
     expect(line.paint["line-dasharray"]).toEqual([
       "match",
-      ["get", "kind"],
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
       "primary",
       ["literal", [2, 1]],
       "secondary",
@@ -456,7 +526,7 @@ describe("irToMapLibreLayers", () => {
 
     expect(line0.paint["line-color"]).toEqual([
       "match",
-      ["get", "code"],
+      ["to-string", ["coalesce", ["get", "CODE"], ["get", "Code"], ["get", "code"], ""]],
       "parking",
       "#1a1a1a",
       "retail",
@@ -465,7 +535,7 @@ describe("irToMapLibreLayers", () => {
     ]);
     expect(line0.paint["line-width"]).toEqual([
       "match",
-      ["get", "code"],
+      ["to-string", ["coalesce", ["get", "CODE"], ["get", "Code"], ["get", "code"], ""]],
       "parking",
       1,
       "retail",
@@ -475,7 +545,7 @@ describe("irToMapLibreLayers", () => {
 
     expect(fill1?.paint["fill-color"]).toEqual([
       "match",
-      ["get", "code"],
+      ["to-string", ["coalesce", ["get", "CODE"], ["get", "Code"], ["get", "code"], ""]],
       "parking",
       "#c8c8c8",
       "retail",
@@ -524,7 +594,10 @@ describe("irToMapLibreLayers", () => {
 
     expect(fill.paint["fill-color"]).toEqual([
       "match",
-      ["get", "mimush"],
+      [
+        "to-string",
+        ["coalesce", ["get", "MIMUSH"], ["get", "Mimush"], ["get", "mimush"], ""],
+      ],
       "1",
       "#76b5c5",
       "#808080",
@@ -610,7 +683,7 @@ describe("irToMapLibreLayers", () => {
     expect(fill.paint["fill-color"]).toBeUndefined();
     expect(fill.paint["fill-pattern"]).toEqual([
       "match",
-      ["get", "kind"],
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
       "a",
       "hatch_#111111_0_8_1",
       "b",

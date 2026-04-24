@@ -14,6 +14,32 @@ function getNestedProp(obj, propPath) {
   return current;
 }
 
+function fieldNameCaseVariants(field) {
+  if (!field || typeof field !== "string") return [field];
+  const out = new Set();
+  out.add(field);
+  out.add(field.toLowerCase());
+  out.add(field.toUpperCase());
+  if (field.length > 1) {
+    out.add(field.charAt(0).toUpperCase() + field.slice(1).toLowerCase());
+  }
+  return [...out].sort();
+}
+
+function uniqueValueClassificationInputExpression(field) {
+  const variants = fieldNameCaseVariants(field);
+  if (variants.length === 1) {
+    return ["to-string", ["get", variants[0]]];
+  }
+  const reads = variants.map((v) => ["get", v]);
+  return ["to-string", ["coalesce", ...reads, ""]];
+}
+
+function normalizeUniqueValueMatchKey(value) {
+  if (value === undefined || value === null) return null;
+  return String(value);
+}
+
 /**
  * Map OTEF symbol layer kinds to a coarse MapLibre family for grouping in uniqueValue.
  * `markerLine` is mapped to a line-fallback family so advanced line styles remain visible
@@ -194,14 +220,16 @@ function buildMatchExpr(field, entries, defaultSymbolLayer, propPath, transform)
 
   if (effectiveFallback == null) return undefined;
 
-  const expression = ["match", ["get", field]];
+  const expression = ["match", uniqueValueClassificationInputExpression(field)];
   let allMatchFallback = true;
 
   for (const { value, entryValue } of entryRows) {
     const resolved = entryValue == null ? effectiveFallback : (entryValue ?? effectiveFallback);
     if (resolved == null) continue;
+    const normalizedMatchKey = normalizeUniqueValueMatchKey(value);
+    if (normalizedMatchKey == null) continue;
     if (!valuesEqual(resolved, effectiveFallback)) allMatchFallback = false;
-    expression.push(value, toExpressionValue(resolved));
+    expression.push(normalizedMatchKey, toExpressionValue(resolved));
   }
 
   expression.push(toExpressionValue(effectiveFallback));
@@ -326,11 +354,13 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer) {
         if (entryRows.length === 0) {
           paint["fill-pattern"] = fallbackPattern;
         } else {
-          const expression = ["match", ["get", field]];
+          const expression = ["match", uniqueValueClassificationInputExpression(field)];
           let allMatchFallback = true;
           for (const { value, patternId } of entryRows) {
+            const normalizedMatchKey = normalizeUniqueValueMatchKey(value);
+            if (normalizedMatchKey == null) continue;
             if (patternId !== fallbackPattern) allMatchFallback = false;
-            expression.push(value, patternId);
+            expression.push(normalizedMatchKey, patternId);
           }
           expression.push(fallbackPattern);
           if (allMatchFallback) {

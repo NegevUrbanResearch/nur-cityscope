@@ -696,3 +696,97 @@ Result:
   - PMTiles/advanced style rendering on real packs
   - zoom interaction feel across remote and direct GIS controls
   - end-to-end handoff behavior under live joystick/d-pad usage
+
+---
+
+## 14. MapLibre alignment — multi-value layers & projection geometry (2026-04-24, analysis)
+
+**Status:** Root-cause analysis and discussion only — **no implementation claims** in this section. Evidence is from the current `otef-interactive` tree plus read-only exploration subagents and prior Codex rollout threads under `C:\Users\tuval\.codex\sessions\2026\04\24\` (parent `rollout-2026-04-24T23-09-47-019dc11c-ddb4-75e1-96ac-b80bfec12078`, explorers `019dc11e-20c9-72c0-bde3-3b9498bb808d` multi-value, `019dc11e-2111-7da2-affa-c6153885135a` projection).
+
+### 14.1 Issue — “Multiple values” / oct7 combined or sister layers: only some classes render
+
+**Symptom:** After PMTiles/polygons started rendering again, layers with **unique value** styling still show only a subset of classes on GIS and projection (including packs such as `october_7th` where “sister” or paired layers exist in product language).
+
+**Architectural fact:** GIS and projection both use the same stack: `irToMapLibreLayers` in `frontend/src/shared/maplibre-style-bridge.js` and `applyLayerGroupsToMap` in `frontend/src/map/maplibre-layer-manager.js` (projection reuses it via `maplibre-projection-layers.js`). So a classification bug is **shared**, not GIS-only.
+
+**Root-cause hypotheses (ranked by plausibility from code):**
+
+1. **Case-sensitive `["get", field]` vs legacy case-insensitive property resolution**  
+   MapLibre paint uses `["match", ["get", field], ...]` with the style JSON field name verbatim (`maplibre-style-bridge.js` around the `buildMatchExpr` loop). The legacy Canvas path in `AdvancedStyleEngine._resolveStyleSymbol` resolves the same field with a **case-insensitive** key search on feature properties. If PMTiles or GeoJSON uses `Field` vs `field`, legacy could style correctly while MapLibre always falls through to the default branch.
+
+2. **Entries dropped when a class symbol omits a paint path**  
+   `buildMatchExpr` skips any class whose `toValue(entry.symbolLayer)` is `undefined` (see the `entryValue === undefined` guard). Those attribute values never receive a `match` arm and collapse to the fallback — visually “only some values” match the legend.
+
+3. **Per-`groupKey` gaps when class `symbolLayers` do not mirror `defaultSymbol` slots**  
+   `buildUniqueValueGroups` seeds groups from `defaultSymbol.symbolLayers`, then only pushes class entries for symbol layers that exist **on that class**. A category that only defines stroke on one slot may never register on the fill group’s `match`, so fills show default for that category while another slot looks correct.
+
+4. **Type / string mismatch on the classification field**  
+   `match` compares feature property values to class `value` as provided. Number vs string vs null in tiles vs `styles.json` causes silent fallthrough to default for non-matching types.
+
+5. **Duplicate class keys**  
+   Legacy `_getUniqueValueSymbolMap` uses `Map.set` (last writer wins). MapLibre `match` is first-label-wins for duplicate labels. Inconsistent ordering between engines can make “which value wins” differ.
+
+6. **Whole-layer rollback** (less often “partial classes,” but worth ruling out)  
+   If any `map.addLayer` throws, `maplibre-layer-manager` rolls back the entire `fullId` add. That tends to drop a whole layer, not a subset of attribute values.
+
+**October 7th “combined” rows (geometry siblings):** The product merges layers that share the same **base name** and differ only by Hebrew **geometry suffix** — polygon `אזור`, point `נקודה`, line `ציר` — see `parseLayerNameWithGeometrySuffix` in `frontend/src/shared/layer-name-utils.js`. The **remote sheet** (`layer-sheet-controller.js` `groupLayersByNameForSheet`) and **GIS legend** (`legend-model-builder.js` `groupLayersByName`) concatenate `fullLayerIds` / legend **items** into one UI row. The **map** still loads each `october_7th.<layerId>` separately (`maplibre-layer-manager.js`). So missing “types” (line vs point) usually means **one sibling failed to mount** (no PMTiles URL, source-layer resolution, GeoJSON URL, or `addLayer` rollback), not a single broken `match`. Missing “values” within one geometry is more often **style bridge / tile property** alignment (same as other packs). Hyphen vs underscore **id** variants (glossary + manifest) are separate from suffix merging.
+
+### 14.2 Issue — Projection skew vs model base; highlight vs GIS viewport drift that grows with pan/zoom
+
+**Symptom (two parts):** (a) Map content feels **slightly skewed** relative to the physical model base image. (b) The **CSS highlight** rectangle vs what the GIS MapLibre map shows diverges, and the gap **grows** as the user pans and zooms — feels unlike classic WS lag.
+
+**How the two surfaces compute “the viewport”:**
+
+- **GIS MapLibre camera:** Remote ITM bbox `[west, south, east, north]` is converted to WGS84 using **only the SW and NE ITM corners** via proj4, then `map.fitBounds([[west,south],[east,north]])`, and when zoom is explicit, **`setZoom` is applied after `fitBounds`** because `fitBounds` alone may pick a different zoom (`maplibre-viewport-sync.js`).
+
+- **Projection highlight:** The shipped `projection.html` path uses `updateHighlightFromViewport` in `maplibre-projection.js`, which maps the **same ITM bbox** linearly to **CSS pixels** of the overlay container using `modelBounds.itm` extents — **no** Web Mercator, **no** four-corner hull, **no** rotation on the highlight box.
+
+- **Projection MapLibre stack:** The vector overlay map is initialized with `fitBounds(modelBounds.bounds)` in WGS84 and can carry **`bearing`** from `viewer_angle_deg` (`createProjectionMap` / `projection-main.js`). Vectors rotate with the map; the model photograph and the axis-aligned highlight do not.
+
+**Root-cause hypotheses (ranked):**
+
+1. **`fitBounds` + subsequent `setZoom` decouples the visible extent from the stored ITM bbox**  
+   Stored state still describes one geographic rectangle, but the camera after `setZoom` may show a **different** ground footprint than that rectangle. The highlight faithfully follows **stored** bbox, so error **accumulates with zoom** — this matches “not just sync lag.”
+
+2. **ITM axis-aligned box → two-corner proj4 → axis-aligned lon/lat `fitBounds` is geometrically approximate**  
+   For a rectangle aligned in EPSG:2039, projecting only SW and NE corners to WGS84 and taking min/max does not generally equal the hull of **all four** corners in geographic coordinates. That introduces a **small systematic skew** vs pure ITM linear mapping (what the highlight uses).
+
+3. **Bearing / `object-fit: fill` vs linear ITM scaling**  
+   Non-zero **bearing** on the projection MapLibre map rotates rendered vectors relative to the model image; the highlight is a non-rotated `div`. **`object-fit: fill`** on the model image can stretch the photograph if its aspect ratio does not match the ITM aspect implied by `model-bounds.json`, producing a **constant** “skew” between photo and geometry even when highlight math is self-consistent.
+
+4. **Zoom semantics: ITM half-width scaling in actions vs MapLibre zoom**  
+   Remote zoom updates scale the ITM bbox in meters with `2^(-Δzoom)` in context actions; MapLibre zoom is tied to Web Mercator pyramid levels. Combined with (1), bbox and camera can drift apart as zoom changes.
+
+**Legacy note:** `projection-display.js` contains alternate highlight/quad logic; the current entrypoint contract tests expect `projection-main.js` + MapLibre projection — do not assume legacy paths run on the shipped page.
+
+### 14.3 Perspective ensemble (decision support)
+
+#### Panel A — Council
+
+- **Data contract vs renderer:** Unique-value styling is extremely sensitive to field names, types, and per-class symbol completeness. Fixing “missing classes” is as much **manifest/style QA** as it is bridge code.
+- **Single source of truth for viewport:** Today, highlight uses ITM-linear pixels while GIS uses ITM→two-point WGS84→`fitBounds`→optional `setZoom`. Unifying on **one** transform (e.g. four-corner ITM→lngLat hull + single camera update, or drive highlight from `map.getBounds()` after apply) reduces permanent drift.
+- **Photo vs map:** Separating “model image stretch” from “map projection” avoids chasing the wrong fix — measure aspect ratio of `model-bounds` ITM span vs image native ratio before changing geodesy.
+- **Ship vs rigor:** A quick guard (`coalesce`, `to-string` in expressions, or normalizing property keys at tile build) may restore classes fast; a full fix may require tippecanoe/postprocess to emit consistent property schemas.
+
+#### Panel B — Adversarial (red cell)
+
+- **Attack target:** The assumption that `fitBounds`+`setZoom` preserves equality between `viewport.bbox` and the GIS camera footprint.
+- **Vector — silent class collapse:** If `allMatchFallback` becomes true in `buildMatchExpr`, the bridge returns a **constant** paint — every feature looks like one class while the UI still lists many; debugging looks like “random missing values.”
+- **Vector — bearing without highlight rotation:** Operators calibrate on the highlight; if vectors rotate under `bearing` but the highlight does not, reports will always say “skew” no matter how good sync is.
+- **Vector — two-corner bbox:** An adversarial GIS viewport could be rotated in the future; the two-corner shortcut becomes arbitrarily wrong — today it is a latent footgun.
+
+**Strongest line of attack:** For growing mismatch, **`setZoom` after `fitBounds` without updating stored bbox to the camera’s true ground bounds** guarantees divergence between highlight (bbox-driven) and GIS (camera-driven). That is structural, not network jitter.
+
+**Falsifiers / cheap tests**
+
+- **Multi-value:** Log `Object.keys(feature.properties)` for one affected tile layer vs `uniqueValues.field`; dump `classes[].value` types. If case or type mismatches appear, hypothesis (1)/(4) is confirmed.
+- **Projection:** Temporarily **disable** post-`fitBounds` `setZoom` on GIS and see if highlight-vs-map divergence stops growing with zoom.
+- **Projection:** Set `bearing` to 0 and replace `object-fit: fill` with `contain` temporarily — if “skew” disappears, it is (3) not geodesy.
+
+### 14.4 Recommended discussion order before coding
+
+1. Confirm on a failing layer: **property key case**, **types**, and whether **each class** defines all `symbolLayers` slots present on `defaultSymbol`.
+2. Decide viewport contract: either **remove `setZoom` override** when bbox is authoritative, **recompute bbox from `map.getBounds()`** after camera settle, or **project four ITM corners** to WGS84 for `fitBounds`.
+3. Decide visual contract: should the **highlight rotate** with `viewer_angle_deg`, or should **bearing** be forced to 0 for projection MapLibre when aligning to a static table model?
+
+**Verification reminder (per project rule):** Any future fix PR must attach **fresh** test or manual evidence; this section does not assert that tests were run for these hypotheses.

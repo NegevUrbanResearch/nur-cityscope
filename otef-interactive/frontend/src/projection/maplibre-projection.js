@@ -2,6 +2,8 @@
  * Creates and manages the MapLibre instance for the projection display.
  * Transparent background, no basemap, overlaid on model image.
  */
+import { itmBboxToWgs84SwNe } from "../map-utils/itm-bbox-to-wgs84-bounds.js";
+
 const maplibregl =
   (typeof globalThis !== "undefined" && globalThis.maplibregl) ||
   (typeof window !== "undefined" && window.maplibregl);
@@ -85,13 +87,34 @@ export function updateProjectionViewport(map, viewport, modelBounds) {
 }
 
 function bboxToWGS84(bbox) {
-  if (typeof proj4 !== "function") {
+  const hull = itmBboxToWgs84SwNe(bbox);
+  if (!hull) {
     return [NaN, NaN, NaN, NaN];
   }
+  return hull;
+}
 
-  const sw = proj4("EPSG:2039", "EPSG:4326", [bbox[0], bbox[1]]);
-  const ne = proj4("EPSG:2039", "EPSG:4326", [bbox[2], bbox[3]]);
-  return [sw[0], sw[1], ne[0], ne[1]];
+function isFinitePoint(point) {
+  return (
+    point &&
+    typeof point === "object" &&
+    Number.isFinite(point.x) &&
+    Number.isFinite(point.y)
+  );
+}
+
+function getValidCorners(corners) {
+  if (!corners || typeof corners !== "object") {
+    return null;
+  }
+  const sw = corners.sw;
+  const se = corners.se;
+  const ne = corners.ne;
+  const nw = corners.nw;
+  if (!isFinitePoint(sw) || !isFinitePoint(se) || !isFinitePoint(ne) || !isFinitePoint(nw)) {
+    return null;
+  }
+  return [sw, se, ne, nw];
 }
 
 export function updateHighlightFromViewport(viewport, modelBounds, highlightEl) {
@@ -108,6 +131,9 @@ export function updateHighlightFromViewport(viewport, modelBounds, highlightEl) 
   const fullExtent = isFullExtent(viewport.bbox, modelBounds);
   if (fullExtent) {
     highlightEl.style.display = "none";
+    if (highlightEl.dataset) {
+      highlightEl.dataset.highlightShape = "hidden_full_extent";
+    }
     return;
   }
 
@@ -123,6 +149,9 @@ export function updateHighlightFromViewport(viewport, modelBounds, highlightEl) 
     mb.north === mb.south
   ) {
     highlightEl.style.display = "none";
+    if (highlightEl.dataset) {
+      highlightEl.dataset.highlightShape = "hidden_invalid_container";
+    }
     return;
   }
 
@@ -130,6 +159,45 @@ export function updateHighlightFromViewport(viewport, modelBounds, highlightEl) 
 
   const toPixelX = (itmX) => ((itmX - mb.west) / (mb.east - mb.west)) * cw;
   const toPixelY = (itmY) => ((mb.north - itmY) / (mb.north - mb.south)) * ch;
+
+  let box = highlightEl.querySelector(".highlight-box");
+  if (!box) {
+    box = document.createElement("div");
+    box.className = "highlight-box";
+    highlightEl.appendChild(box);
+  }
+
+  const corners = getValidCorners(viewport.corners);
+  if (corners) {
+    const points = corners.map((corner) => ({
+      x: toPixelX(corner.x),
+      y: toPixelY(corner.y),
+    }));
+    const allPointsFinite = points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+    if (allPointsFinite) {
+      const minX = Math.min(...points.map((point) => point.x));
+      const maxX = Math.max(...points.map((point) => point.x));
+      const minY = Math.min(...points.map((point) => point.y));
+      const maxY = Math.max(...points.map((point) => point.y));
+      const width = maxX - minX;
+      const height = maxY - minY;
+      if (width > 0 && height > 0) {
+        box.style.left = `${minX}px`;
+        box.style.top = `${minY}px`;
+        box.style.width = `${width}px`;
+        box.style.height = `${height}px`;
+        const polygon = points
+          .map((point) => `${point.x - minX}px ${point.y - minY}px`)
+          .join(", ");
+        box.style.clipPath = `polygon(${polygon})`;
+        box.style.webkitClipPath = `polygon(${polygon})`;
+        if (highlightEl.dataset) {
+          highlightEl.dataset.highlightShape = "quad";
+        }
+        return;
+      }
+    }
+  }
 
   const x1 = toPixelX(viewport.bbox[0]);
   const x2 = toPixelX(viewport.bbox[2]);
@@ -140,18 +208,15 @@ export function updateHighlightFromViewport(viewport, modelBounds, highlightEl) 
   const y = Math.min(y1, y2);
   const w = Math.abs(x2 - x1);
   const h = Math.abs(y2 - y1);
-
-  let box = highlightEl.querySelector(".highlight-box");
-  if (!box) {
-    box = document.createElement("div");
-    box.className = "highlight-box";
-    highlightEl.appendChild(box);
-  }
-
   box.style.left = `${x}px`;
   box.style.top = `${y}px`;
   box.style.width = `${w}px`;
   box.style.height = `${h}px`;
+  box.style.clipPath = "";
+  box.style.webkitClipPath = "";
+  if (highlightEl.dataset) {
+    highlightEl.dataset.highlightShape = "bbox";
+  }
 }
 
 function isFullExtent(bbox, modelBounds) {

@@ -20,6 +20,7 @@ function createProjectionDomElement(size) {
   });
   const el = {
     className: "",
+    dataset: {},
     parentElement: null,
     _kids: [],
     _cw: size?.w ?? 0,
@@ -104,6 +105,17 @@ test("projection entry loads editors, injects MapLibre-safe callbacks, and wires
   expect(src).toContain("ProjectionRotationEditor.toggle");
 });
 
+test("projection entry keeps ResizeObserver reflow with window resize fallback", () => {
+  const src = read("frontend/src/entries/projection-main.js");
+
+  expect(src).toContain("typeof ResizeObserver !== \"undefined\"");
+  expect(src).toContain("new ResizeObserver(() => onResize(\"observer\"))");
+  expect(src).toContain("window.addEventListener(\"resize\", handleWindowResize)");
+  expect(src).toContain("window.removeEventListener(\"resize\", handleWindowResize)");
+  expect(src).toContain("map.resize();");
+  expect(src).toContain("window.requestAnimationFrame(() => {");
+});
+
 test("MapLibre projection highlight: updateHighlightFromViewport creates .highlight-box without border or cssText", async () => {
   const { updateHighlightFromViewport } = await loadProjectionHighlightModule();
 
@@ -120,6 +132,75 @@ test("MapLibre projection highlight: updateHighlightFromViewport creates .highli
   const box = highlightEl.querySelector(".highlight-box");
   expect(box).toBeTruthy();
   expect(box.style.border).toBe("");
+});
+
+test("MapLibre projection highlight: uses corners-first quad when valid corners exist", async () => {
+  const { updateHighlightFromViewport } = await loadProjectionHighlightModule();
+
+  const itm = { west: 0, south: 0, east: 1000, north: 800 };
+  const modelBounds = { itm };
+  const container = createProjectionDomElement({ w: 1000, h: 800 });
+  const highlightEl = createProjectionDomElement({ w: 0, h: 0 });
+  container.appendChild(highlightEl);
+
+  const viewport = {
+    bbox: [100, 100, 700, 700],
+    corners: {
+      sw: { x: 120, y: 120 },
+      se: { x: 640, y: 90 },
+      ne: { x: 710, y: 690 },
+      nw: { x: 140, y: 720 },
+    },
+  };
+  updateHighlightFromViewport(viewport, modelBounds, highlightEl);
+
+  const box = highlightEl.querySelector(".highlight-box");
+  expect(box).toBeTruthy();
+  expect(box.style.clipPath).toContain("polygon(");
+  expect(highlightEl.dataset.highlightShape).toBe("quad");
+});
+
+test("MapLibre projection highlight: bbox rectangle fallback remains when corners are missing", async () => {
+  const { updateHighlightFromViewport } = await loadProjectionHighlightModule();
+
+  const itm = { west: 0, south: 0, east: 1000, north: 800 };
+  const modelBounds = { itm };
+  const container = createProjectionDomElement({ w: 1000, h: 800 });
+  const highlightEl = createProjectionDomElement({ w: 0, h: 0 });
+  container.appendChild(highlightEl);
+
+  const viewport = { bbox: [100, 150, 600, 550] };
+  updateHighlightFromViewport(viewport, modelBounds, highlightEl);
+
+  const box = highlightEl.querySelector(".highlight-box");
+  expect(box).toBeTruthy();
+  expect(box.style.clipPath).toBe("");
+  expect(highlightEl.dataset.highlightShape).toBe("bbox");
+});
+
+test("MapLibre projection highlight: invalid corners fall back safely to bbox rectangle", async () => {
+  const { updateHighlightFromViewport } = await loadProjectionHighlightModule();
+
+  const itm = { west: 0, south: 0, east: 1000, north: 800 };
+  const modelBounds = { itm };
+  const container = createProjectionDomElement({ w: 1000, h: 800 });
+  const highlightEl = createProjectionDomElement({ w: 0, h: 0 });
+  container.appendChild(highlightEl);
+
+  const viewport = {
+    bbox: [100, 150, 600, 550],
+    corners: {
+      sw: { x: 100, y: 150 },
+      se: { x: 600, y: 150 },
+      nw: { x: 100, y: 550 },
+    },
+  };
+  updateHighlightFromViewport(viewport, modelBounds, highlightEl);
+
+  const box = highlightEl.querySelector(".highlight-box");
+  expect(box).toBeTruthy();
+  expect(box.style.clipPath).toBe("");
+  expect(highlightEl.dataset.highlightShape).toBe("bbox");
 });
 
 test("MapLibre projection highlight: full extent keeps overlay hidden", async () => {

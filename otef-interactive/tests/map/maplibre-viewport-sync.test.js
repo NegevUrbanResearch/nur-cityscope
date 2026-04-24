@@ -7,7 +7,9 @@ function createBounds(west, south, east, north) {
     getSouth: () => south,
     getEast: () => east,
     getNorth: () => north,
+    getNorthWest: () => ({ lng: west, lat: north }),
     getSouthWest: () => ({ lng: west, lat: south }),
+    getSouthEast: () => ({ lng: east, lat: south }),
     getNorthEast: () => ({ lng: east, lat: north }),
   };
 }
@@ -15,6 +17,7 @@ function createBounds(west, south, east, north) {
 function createMapMock({ bounds, zoom, fitBoundsZoom }) {
   let currentBounds = createBounds(bounds[0], bounds[1], bounds[2], bounds[3]);
   let currentZoom = zoom;
+  const container = { clientWidth: 1200, clientHeight: 800 };
   const listeners = new Map();
   const fitBoundsCalls = [];
   const setZoomCalls = [];
@@ -30,6 +33,7 @@ function createMapMock({ bounds, zoom, fitBoundsZoom }) {
     setZoomCalls,
     getBounds: () => currentBounds,
     getZoom: () => currentZoom,
+    getContainer: () => container,
     fitBounds: (targetBounds, options) => {
       fitBoundsCalls.push({ targetBounds, options });
       const [[west, south], [east, north]] = targetBounds;
@@ -90,6 +94,32 @@ function createDataContextMock() {
   };
 }
 
+function installResizeObserverMock() {
+  const instances = [];
+  class ResizeObserverMock {
+    constructor(callback) {
+      this.callback = callback;
+      this.observedTargets = [];
+      this.observe = vi.fn((target) => {
+        this.observedTargets.push(target);
+      });
+      this.disconnect = vi.fn();
+      instances.push(this);
+    }
+  }
+
+  globalThis.ResizeObserver = ResizeObserverMock;
+
+  return {
+    triggerAll: () => {
+      for (const instance of instances) {
+        const entries = instance.observedTargets.map((target) => ({ target }));
+        instance.callback(entries);
+      }
+    },
+  };
+}
+
 describe("maplibre-viewport-sync", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -104,6 +134,7 @@ describe("maplibre-viewport-sync", () => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
     delete globalThis.proj4;
+    delete globalThis.ResizeObserver;
   });
 
   it("applies remote zoom when bounds are unchanged", () => {
@@ -122,7 +153,7 @@ describe("maplibre-viewport-sync", () => {
     cleanup();
   });
 
-  it("re-applies explicit zoom after fitBounds changes zoom", () => {
+  it("enforces explicit remote zoom after fitBounds to prevent drift", () => {
     const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 8, fitBoundsZoom: 5 });
     const dataContext = createDataContextMock();
     const cleanup = setupViewportSync(map, dataContext);
@@ -134,6 +165,78 @@ describe("maplibre-viewport-sync", () => {
 
     expect(map.fitBoundsCalls).toHaveLength(1);
     expect(map.setZoomCalls).toEqual([{ zoom: 8, options: { animate: false } }]);
+
+    cleanup();
+  });
+
+  it("queues viewport updates during active resize churn and applies latest once on settle", () => {
+    const resizeObserver = installResizeObserverMock();
+    const debugLogger = vi.fn();
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext, debugLogger);
+
+    resizeObserver.triggerAll();
+    resizeObserver.triggerAll();
+
+    dataContext.emitViewport({
+      bbox: [2, 2, 12, 12],
+      zoom: 7,
+      seq: 1,
+    });
+    dataContext.emitViewport({
+      bbox: [4, 4, 14, 14],
+      zoom: 8,
+      seq: 2,
+    });
+
+    expect(map.fitBoundsCalls).toHaveLength(0);
+    expect(map.setZoomCalls).toHaveLength(0);
+
+    vi.advanceTimersByTime(199);
+    expect(map.fitBoundsCalls).toHaveLength(0);
+
+    vi.advanceTimersByTime(1);
+    expect(map.fitBoundsCalls).toHaveLength(1);
+    expect(map.fitBoundsCalls[0].targetBounds).toEqual([
+      [4, 4],
+      [14, 14],
+    ]);
+    expect(map.setZoomCalls).toEqual([{ zoom: 8, options: { animate: false } }]);
+    expect(debugLogger).toHaveBeenCalledWith(
+      "context_viewport_queued_resize_active",
+      expect.any(Object),
+    );
+    expect(debugLogger).toHaveBeenCalledWith(
+      "context_viewport_apply_deferred_resize_settle",
+      expect.any(Object),
+    );
+
+    cleanup();
+  });
+
+  it("suppresses GIS report emissions while resize is active", () => {
+    const resizeObserver = installResizeObserverMock();
+    const debugLogger = vi.fn();
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext, debugLogger);
+
+    resizeObserver.triggerAll();
+    map.emit("moveend");
+    vi.runOnlyPendingTimers();
+
+    expect(dataContext.updateViewportFromUI).not.toHaveBeenCalled();
+    expect(debugLogger).toHaveBeenCalledWith(
+      "gis_report_suppressed_resize_active",
+      expect.any(Object),
+    );
+
+    vi.advanceTimersByTime(200);
+    map.emit("moveend");
+    vi.runOnlyPendingTimers();
+
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledTimes(1);
 
     cleanup();
   });
@@ -360,7 +463,7 @@ describe("maplibre-viewport-sync", () => {
     vi.runOnlyPendingTimers();
 
     expect(map.fitBoundsCalls).toHaveLength(1);
-    expect(map.setZoomCalls).toHaveLength(1);
+    expect(map.setZoomCalls).toEqual([{ zoom: 7, options: { animate: false } }]);
     expect(dataContext.updateViewportFromUI).not.toHaveBeenCalled();
   });
 

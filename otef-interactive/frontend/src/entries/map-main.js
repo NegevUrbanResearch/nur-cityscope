@@ -16,6 +16,11 @@ import {
   stopFlowAnimation,
   stopAllFlowAnimations,
 } from "../shared/maplibre-flow-animation.js";
+import {
+  captureElementMetrics,
+  captureMapSnapshot,
+  createViewportDebugPanel,
+} from "../shared/viewport-debug-panel.js";
 
 const DEFAULT_MAP_CENTER = [34.5, 31.4];
 
@@ -118,6 +123,15 @@ async function bootstrapMapRuntime() {
     center,
     zoom: 11,
   });
+  const debugPanel = createViewportDebugPanel({ pageId: "gis" });
+
+  const getLayoutMetrics = () => {
+    const mapContainer = typeof map.getContainer === "function" ? map.getContainer() : null;
+    return {
+      container: captureElementMetrics(document.documentElement),
+      mapContainer: captureElementMetrics(mapContainer),
+    };
+  };
 
   if (typeof window !== "undefined") {
     window._maplibreMap = map;
@@ -143,6 +157,23 @@ async function bootstrapMapRuntime() {
     window.addEventListener("beforeunload", runDisposers, { once: true });
   }
 
+  debugPanel.log("gis_runtime_bootstrapped", {
+    viewport: OTEFDataContext.getViewport?.(),
+    dimensions: getLayoutMetrics(),
+    mapSnapshot: captureMapSnapshot(map),
+  });
+
+  const onResizeDebug = () => {
+    debugPanel.log("window_resize", {
+      viewport: OTEFDataContext.getViewport?.(),
+      dimensions: getLayoutMetrics(),
+      mapSnapshot: captureMapSnapshot(map),
+    });
+  };
+  window.addEventListener("resize", onResizeDebug);
+  registerDisposer(() => window.removeEventListener("resize", onResizeDebug));
+  registerDisposer(() => debugPanel.destroy());
+
   map.on("load", async () => {
     if (typeof window !== "undefined") {
       window.MapLibreFlowAnimation = {
@@ -163,7 +194,11 @@ async function bootstrapMapRuntime() {
     };
     registerDisposer(OTEFDataContext.subscribe("animations", syncContextFlowAnimations));
 
-    registerDisposer(setupViewportSync(map, OTEFDataContext));
+    registerDisposer(
+      setupViewportSync(map, OTEFDataContext, (eventName, payload) => {
+        debugPanel.log(eventName, payload);
+      }),
+    );
     let activeCuratedIds = new Set();
 
     const layerGroups = OTEFDataContext.getLayerGroups();
