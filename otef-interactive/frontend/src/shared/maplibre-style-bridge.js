@@ -2,7 +2,10 @@
  * Translate OTEF AdvancedStyleEngine IR (symbolLayers)
  * into MapLibre style layer definitions.
  */
-import { projectionHatchRasterParams } from "./hatch-projection-presentation.js";
+import {
+  projectionHatchRasterParams,
+  PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
+} from "./hatch-projection-presentation.js";
 
 function getNestedProp(obj, propPath) {
   if (!obj || !propPath) return undefined;
@@ -13,6 +16,54 @@ function getNestedProp(obj, propPath) {
     current = current[part];
   }
   return current;
+}
+
+/**
+ * Dirt roads used for projection calibration: processed style can add a synthetic black stroke
+ * under a brown fill; fill-before-stroke sort would paint that stroke on top and wash the layer
+ * out. Keep legacy line-over-fill ordering here only.
+ */
+const FULL_LAYER_IDS_SKIP_FILL_BEFORE_STROKE_SORT = new Set(["muniplicity_transport.דרכי_עפר"]);
+
+function isLineGeometryType(geometryType) {
+  if (!geometryType) return false;
+  const g = String(geometryType).toLowerCase().replace(/_/g, "");
+  return (
+    g === "line" ||
+    g === "multilinestring" ||
+    g === "esrigeometrypolyline" ||
+    g === "esrigeometryline" ||
+    g === "esrigeometrymultilinestring"
+  );
+}
+
+/**
+ * @param {string} fullLayerId
+ * @param {string|undefined} geometryType - from layer manifest / registry
+ */
+function shouldSortFillsBeforeStrokesForPackLayer(fullLayerId, geometryType) {
+  if (FULL_LAYER_IDS_SKIP_FILL_BEFORE_STROKE_SORT.has(String(fullLayerId || "").trim())) {
+    return false;
+  }
+  return !isLineGeometryType(geometryType);
+}
+
+/**
+ * @param {{ applyProjectionHatchPresentation?: boolean }} hatchPresentation
+ * @param {number|Array|undefined} lineWidth
+ */
+function scaleLineWidthPaintForProjection(lineWidth, hatchPresentation) {
+  if (!hatchPresentation?.applyProjectionHatchPresentation) return lineWidth;
+  const scale = Number(PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE);
+  if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return lineWidth;
+  if (lineWidth == null) return Math.max(0, scale);
+  if (typeof lineWidth === "number" && Number.isFinite(lineWidth)) {
+    return Math.max(0, lineWidth * scale);
+  }
+  if (Array.isArray(lineWidth)) {
+    return ["*", scale, lineWidth];
+  }
+  return lineWidth;
 }
 
 function fieldNameCaseVariants(field) {
@@ -408,7 +459,10 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
   if (symbolLayer.type === "stroke") {
     const paint = {
       "line-color": symbolLayer.color || "#000000",
-      "line-width": symbolLayer.width ?? 1,
+      "line-width": scaleLineWidthPaintForProjection(
+        symbolLayer.width ?? 1,
+        hatchPresentation,
+      ),
     };
     if (symbolLayer.opacity != null) paint["line-opacity"] = symbolLayer.opacity;
     if (Array.isArray(symbolLayer?.dash?.array)) paint["line-dasharray"] = symbolLayer.dash.array;
@@ -436,7 +490,10 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
   if (symbolLayer.type === "markerLine") {
     const paint = {
       "line-color": markerLineFallbackColor(symbolLayer),
-      "line-width": markerLineFallbackWidth(symbolLayer),
+      "line-width": scaleLineWidthPaintForProjection(
+        markerLineFallbackWidth(symbolLayer),
+        hatchPresentation,
+      ),
     };
     if (symbolLayer.opacity != null) paint["line-opacity"] = symbolLayer.opacity;
     return { id, type: "line", paint, layout: {}, _markerLineFallback: true };
@@ -445,7 +502,31 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
   return null;
 }
 
-function buildSimpleLayers(idBase, symbol, hatchPresentation) {
+/**
+ * MapLibre draws later style layers above earlier ones. ArcGIS / canvas paint fill then stroke
+ * on the same path, so outlines stay visible. Emit all `fill` layers before `line` / `circle`
+ * (and any other types) so polygon strokes are not covered by opaque fills — Leaflet PMTiles
+ * canvas parity.
+ *
+ * Preserves relative order within the fill group and within the non-fill group. Layer ids
+ * still reflect source symbol index (`__${i}` / unique-value group keys), not array position.
+ *
+ * @param {Array<{ type?: string }>} layers
+ * @returns {typeof layers}
+ */
+function sortMaplibreStyleLayersFillBeforeStroke(layers) {
+  if (!Array.isArray(layers) || layers.length <= 1) return layers;
+  const fills = [];
+  const rest = [];
+  for (const layer of layers) {
+    if (layer && layer.type === "fill") fills.push(layer);
+    else rest.push(layer);
+  }
+  if (fills.length === 0 || rest.length === 0) return layers;
+  return [...fills, ...rest];
+}
+
+function buildSimpleLayers(idBase, symbol, hatchPresentation, sortFillBeforeStroke) {
   const symbolLayers = Array.isArray(symbol?.symbolLayers) ? symbol.symbolLayers : [];
   const output = [];
 
@@ -454,7 +535,7 @@ function buildSimpleLayers(idBase, symbol, hatchPresentation) {
     if (mapLibreLayer) output.push(mapLibreLayer);
   }
 
-  return output;
+  return sortFillBeforeStroke ? sortMaplibreStyleLayersFillBeforeStroke(output) : output;
 }
 
 function buildMatchExpr(field, entries, defaultSymbolLayer, propPath, transform) {
@@ -572,9 +653,9 @@ function buildUniqueValueGroups(uniqueValues, defaultSymbol) {
   return groups;
 }
 
-function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation) {
+function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation, sortFillBeforeStroke) {
   const field = uniqueValues?.field;
-  if (!field) return buildSimpleLayers(idBase, defaultSymbol, hatchPresentation);
+  if (!field) return buildSimpleLayers(idBase, defaultSymbol, hatchPresentation, sortFillBeforeStroke);
 
   const defaultSymbolLayers = Array.isArray(defaultSymbol?.symbolLayers) ? defaultSymbol.symbolLayers : [];
   const groups = buildUniqueValueGroups(uniqueValues, defaultSymbol);
@@ -606,7 +687,7 @@ function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresen
     if (layer) output.push(layer);
   }
 
-  return output;
+  return sortFillBeforeStroke ? sortMaplibreStyleLayersFillBeforeStroke(output) : output;
 }
 
 function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, hatchPresentation) {
@@ -683,7 +764,10 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
     if (lineColor != null) paint["line-color"] = lineColor;
     else paint["line-color"] = "#000000";
     const lineWidth = buildMatchExpr(field, entries, defaultSymbolLayer, "width");
-    paint["line-width"] = lineWidth != null ? lineWidth : 1;
+    paint["line-width"] = scaleLineWidthPaintForProjection(
+      lineWidth != null ? lineWidth : 1,
+      hatchPresentation,
+    );
     const lineOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
     if (lineOpacity !== undefined) paint["line-opacity"] = lineOpacity;
 
@@ -749,7 +833,10 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
       "marker.size",
       (size) => Math.max(1, size / 4)
     );
-    paint["line-width"] = widthFromStroke ?? widthFromSize ?? 1;
+    paint["line-width"] = scaleLineWidthPaintForProjection(
+      widthFromStroke ?? widthFromSize ?? 1,
+      hatchPresentation,
+    );
 
     const lineOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
     if (lineOpacity !== undefined) paint["line-opacity"] = lineOpacity;
@@ -802,10 +889,21 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
     applyProjectionHatchPresentation: Boolean(styleOptions.applyProjectionHatchPresentation),
   };
 
+  const sortFillBeforeStroke = shouldSortFillsBeforeStrokesForPackLayer(
+    fullLayerId,
+    layerConfig?.geometryType,
+  );
+
   const baseLayers =
     renderer === "uniqueValue" && uniqueValues
-      ? buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation)
-      : buildSimpleLayers(idBase, defaultSymbol, hatchPresentation);
+      ? buildUniqueValueLayers(
+          idBase,
+          uniqueValues,
+          defaultSymbol,
+          hatchPresentation,
+          sortFillBeforeStroke,
+        )
+      : buildSimpleLayers(idBase, defaultSymbol, hatchPresentation, sortFillBeforeStroke);
 
   const passMapLabels = shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId);
   const leaderLineLayers = passMapLabels

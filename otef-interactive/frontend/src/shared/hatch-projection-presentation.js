@@ -24,6 +24,13 @@ export const PROJECTION_HATCH_WIDTH_MULTIPLIER = 0.6;
 export const PROJECTION_HATCH_PIXEL_RATIO = 2;
 
 /**
+ * Multiplies IR-derived **`line` layer** `line-width` (polygon outlines, dashed strokes, etc.)
+ * on the projection MapLibre map when `applyProjectionHatchPresentation` is true. GIS stays at
+ * scale 1. Tune down if outlines read heavier on the fixed projection camera than on GIS.
+ */
+export const PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE = 0.3;
+
+/**
  * @param {number} scaledSeparation - after density multiplier, before quantize
  * @returns {number} whole px, >= 1
  */

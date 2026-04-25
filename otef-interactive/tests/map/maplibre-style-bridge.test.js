@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE } from "../../frontend/src/shared/hatch-projection-presentation.js";
 import {
   irToMapLibreLayers,
 } from "../../frontend/src/shared/maplibre-style-bridge.js";
@@ -38,6 +39,91 @@ describe("irToMapLibreLayers", () => {
     expect(line).toBeDefined();
     expect(line.paint["line-color"]).toBe("#000000");
     expect(line.paint["line-width"]).toBe(1.0);
+  });
+
+  it("does not reorder fill/line for line geometry (synthetic stroke must stay under fill)", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#000000", width: 1, opacity: 1 },
+            { type: "fill", fillType: "solid", color: "#895a44", opacity: 1 },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("muniplicity_transport.דרכים", "muniplicity_transport__דרכים", layerConfig);
+    expect(result).toHaveLength(2);
+    expect(result[0].type).toBe("line");
+    expect(result[1].type).toBe("fill");
+  });
+
+  it("skips fill-before-stroke sort for projection calibration dirt roads full id", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#000000", width: 1, opacity: 1 },
+            { type: "fill", fillType: "solid", color: "#895a44", opacity: 1 },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers(
+      "muniplicity_transport.דרכי_עפר",
+      "muniplicity_transport__דרכי_עפר",
+      layerConfig,
+    );
+    expect(result[0].type).toBe("line");
+    expect(result[1].type).toBe("fill");
+  });
+
+  it("orders fill style layers before line layers when lyrx symbol order is stroke-then-fill", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#003fff", width: 1.2, opacity: 1.0 },
+            { type: "fill", fillType: "solid", color: "#bfff00", opacity: 1.0 },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("greens.test", "greens__test", layerConfig);
+    expect(result).toHaveLength(2);
+    expect(result[0].type).toBe("fill");
+    expect(result[1].type).toBe("line");
+    expect(result[0].paint["fill-color"]).toBe("#bfff00");
+    expect(result[1].paint["line-color"]).toBe("#003fff");
+  });
+
+  it("scales stroke line-width on projection when applyProjectionHatchPresentation is set", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#112233", width: 2, opacity: 1 },
+            { type: "fill", fillType: "solid", color: "#eeddcc", opacity: 1 },
+          ],
+        },
+      },
+    };
+    const gis = irToMapLibreLayers("pack.layer", "pack__layer", layerConfig);
+    const proj = irToMapLibreLayers("pack.layer", "pack__layer", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    const lineG = gis.find((l) => l.type === "line");
+    const lineP = proj.find((l) => l.type === "line");
+    expect(lineG.paint["line-width"]).toBe(2);
+    expect(lineP.paint["line-width"]).toBeCloseTo(2 * PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE);
   });
 
   it("converts a uniqueValue renderer with match expression", () => {
@@ -523,6 +609,10 @@ describe("irToMapLibreLayers", () => {
     expect(fill1?.type).toBe("fill");
     expect(fill2?.type).toBe("fill");
     expect(fill3?.type).toBe("fill");
+
+    const fillIdx = result.map((l, i) => (l.type === "fill" ? i : -1)).filter((i) => i >= 0);
+    const lineIdx = result.map((l, i) => (l.type === "line" ? i : -1)).filter((i) => i >= 0);
+    expect(Math.max(...fillIdx)).toBeLessThan(Math.min(...lineIdx));
 
     expect(line0.paint["line-color"]).toEqual([
       "match",

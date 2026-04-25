@@ -2,20 +2,24 @@ import { describe, expect, it } from "vitest";
 import {
   PROJECTION_HATCH_SEPARATION_MULTIPLIER,
   PROJECTION_HATCH_WIDTH_MULTIPLIER,
+  PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
   projectionHatchRasterParams,
   quantizeProjectionHatchSeparation,
   quantizeProjectionHatchWidth,
 } from "../frontend/src/shared/hatch-projection-presentation.js";
 
 describe("hatch-projection-presentation (projection MapLibre only)", () => {
-  it("uses separation multiplier 0.8 and width multiplier 1.0 for explicit tuning", () => {
-    expect(PROJECTION_HATCH_SEPARATION_MULTIPLIER).toBe(0.8);
-    expect(PROJECTION_HATCH_WIDTH_MULTIPLIER).toBe(1.0);
+  it("exports hatch + outline tuning constants", () => {
+    expect(PROJECTION_HATCH_SEPARATION_MULTIPLIER).toBe(0.875);
+    expect(PROJECTION_HATCH_WIDTH_MULTIPLIER).toBe(0.6);
+    expect(typeof PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE).toBe("number");
+    expect(PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE).toBeGreaterThan(0);
+    expect(PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE).toBeLessThanOrEqual(1);
   });
 
   it("rounds separation and width to whole pixels (avoids subpixel antialiased stripes)", () => {
     const p = projectionHatchRasterParams({ separation: 10, width: 2 });
-    expect(p.separation).toBe(8);
+    expect(p.separation).toBe(18);
     expect(p.width).toBe(2);
   });
 
