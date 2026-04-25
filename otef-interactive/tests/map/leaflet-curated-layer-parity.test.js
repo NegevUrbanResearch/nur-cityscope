@@ -109,11 +109,11 @@ describe("map-projection-config curated off-road default", () => {
   });
 });
 
-describe("leaflet-curated-layer-loader Task 5 wiring", () => {
+describe("maplibre-curated-layer-loader Task 5 wiring", () => {
   it("loader imports Colab stack symbols and supports opts.force", async () => {
-    const mod = await import("../../frontend/src/map/leaflet-curated-layer-loader.js");
-    expect(typeof mod.loadCuratedLayerFromAPI).toBe("function");
-    const src = readFileSync("frontend/src/map/leaflet-curated-layer-loader.js", "utf8");
+    const mod = await import("../../frontend/src/map/maplibre-curated-layer-loader.js");
+    expect(typeof mod.loadCuratedLayerToMapLibre).toBe("function");
+    const src = readFileSync("frontend/src/map/maplibre-curated-layer-loader.js", "utf8");
     expect(src).toContain("extractPinkDetourPointFeatures");
     expect(src).toContain("routeLineStylesForDisplayColor");
     expect(src).toContain("STORED_PINK_ROUTE_OFFROAD_GAP_METERS");

@@ -5,11 +5,11 @@ import { describe, it, expect } from "vitest";
 const REPO = path.resolve(__dirname, "../..");
 const loaderPath = path.join(
   REPO,
-  "frontend/src/map/leaflet-curated-layer-loader.js",
+  "frontend/src/map/maplibre-curated-layer-loader.js",
 );
 const layerStatePath = path.join(
   REPO,
-  "frontend/src/map/layer-state-manager.js",
+  "frontend/src/map/maplibre-layer-manager.js",
 );
 
 describe("pack vs curated coexistence (no auto-disable)", () => {

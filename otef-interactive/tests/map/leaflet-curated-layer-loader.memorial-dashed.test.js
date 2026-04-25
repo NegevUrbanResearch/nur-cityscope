@@ -2,7 +2,7 @@ const fs = require("fs");
 
 test("leaflet curated loader does not short-circuit memorial point layers before dashed route integration", () => {
   const src = fs.readFileSync(
-    "frontend/src/map/leaflet-curated-layer-loader.js",
+    "frontend/src/map/maplibre-curated-layer-loader.js",
     "utf8",
   );
 
@@ -13,7 +13,7 @@ test("leaflet curated loader does not short-circuit memorial point layers before
 
 test("pink-line parking attach is not gated on pink base layer presence", () => {
   const src = fs.readFileSync(
-    "frontend/src/map/leaflet-curated-layer-loader.js",
+    "frontend/src/map/maplibre-curated-layer-loader.js",
     "utf8",
   );
   expect(src).not.toContain(

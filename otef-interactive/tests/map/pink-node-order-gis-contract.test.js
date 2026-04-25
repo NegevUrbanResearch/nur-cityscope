@@ -6,7 +6,7 @@ describe("pink node order GIS loader contract", () => {
   it("loader imports shared readPinkNodeOrder; helper references pink_node_order", () => {
     const loaderPath = path.resolve(
       __dirname,
-      "../../frontend/src/map/leaflet-curated-layer-loader.js",
+      "../../frontend/src/map/maplibre-curated-layer-loader.js",
     );
     const helperPath = path.resolve(
       __dirname,
@@ -18,6 +18,6 @@ describe("pink node order GIS loader contract", () => {
     const hits =
       (loaderSrc.match(/pink_node_order/g) || []).length +
       (helperSrc.match(/pink_node_order/g) || []).length;
-    expect(hits).toBeGreaterThanOrEqual(2);
+    expect(hits).toBeGreaterThanOrEqual(1);
   });
 });

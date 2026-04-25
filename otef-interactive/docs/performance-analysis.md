@@ -2,15 +2,27 @@
 
 **Date:** 2026-04-24
 **Branch:** `sync_and_layers_performance` (11 commits beyond `main`)
-**Status:** Investigation — root cause analysis before next moves
+**Status:** Historical investigation snapshot (many action items below were already completed)
 
 ---
 
 ## Executive Summary
 
-The three symptoms — slow layer state changes, layer-loading freezes, and viewport de-sync — share a common root cause that the current branch has been circling without addressing head-on: **the app is asking Leaflet and Canvas 2D to do work that only a WebGL-based renderer can handle at this data scale, and the sync architecture amplifies the pain by serializing everything through a single-threaded HTTP→Django→Redis→WS round-trip for every state change.**
+This document captures a pre-parity analysis from the migration period. It still contains branch archaeology and legacy comparisons that are useful for context, but it should not be treated as the current architecture source of truth.
+
+The core conclusion still stands: the old Leaflet/canvas path could not sustain OTEF data scale, and moving both GIS and projection rendering to MapLibre/WebGL was the right direction.
 
 The 11 commits on this branch are individually sound but collectively form a pattern of **symptom-chasing**: deduplication, echo suppression, offscreen caches, batched loads — all of which reduce the *frequency* or *redundancy* of expensive operations, but none of which reduce the *cost* of the operations themselves.
+
+---
+
+## Current Runtime Snapshot (MapLibre)
+
+- GIS entrypoint: `frontend/src/entries/map-main.js`
+- Projection entrypoint: `frontend/src/entries/projection-main.js`
+- GIS runtime modules: `frontend/src/map/maplibre-map.js`, `frontend/src/map/maplibre-layer-manager.js`, `frontend/src/map/maplibre-curated-layer-loader.js`, `frontend/src/map/maplibre-viewport-sync.js`
+- Projection runtime modules: `frontend/src/projection/maplibre-projection.js`, `frontend/src/projection/maplibre-projection-layers.js`
+- Legacy Leaflet/canvas implementation files mentioned later in this document were removed from runtime during cleanup.
 
 ---
 
@@ -37,7 +49,7 @@ The 11 commits on this branch are individually sound but collectively form a pat
 
 **Key finding:** Loading `land_use` means fetching **~165 MB** of GeoJSON. Loading `greens` means **~175 MB**. Loading both simultaneously means **~340 MB of raw GeoJSON** hitting the browser's main thread for parsing, then being rendered into Leaflet layers AND Canvas 2D projection overlays.
 
-Even with PMTiles available for some layers, the **projection Canvas renderer does not support PMTiles** (confirmed in code comment). So the projection side always fetches and parses raw GeoJSON.
+This was true during the legacy canvas phase. Current projection runtime is MapLibre-based.
 
 ### Why This Matters More Than Sync Tuning
 
@@ -265,7 +277,7 @@ Without changing the rendering engine:
 
 ---
 
-## Appendix: Architecture Diagram (Current)
+## Appendix: Architecture Diagram (Historical pre-MapLibre baseline)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -701,7 +713,7 @@ Result:
 
 ## 14. MapLibre alignment — multi-value layers & projection geometry (2026-04-24, analysis)
 
-**Status:** Root-cause analysis and discussion only — **no implementation claims** in this section. Evidence is from the current `otef-interactive` tree plus read-only exploration subagents and prior Codex rollout threads under `C:\Users\tuval\.codex\sessions\2026\04\24\` (parent `rollout-2026-04-24T23-09-47-019dc11c-ddb4-75e1-96ac-b80bfec12078`, explorers `019dc11e-20c9-72c0-bde3-3b9498bb808d` multi-value, `019dc11e-2111-7da2-affa-c6153885135a` projection).
+**Status:** Root-cause analysis and discussion only — **no implementation claims** in this section. Evidence comes from codebase inspection and read-only exploration during the migration period.
 
 ### 14.1 Issue — “Multiple values” / oct7 combined or sister layers: only some classes render
 
