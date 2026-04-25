@@ -267,7 +267,7 @@ async function bootstrapMapRuntime() {
     // Initial curated load for current layerGroups state.
     await refreshCuratedLayers({ groupsOverride: initialGroups });
 
-    // layerGroups updates must drive curated lifecycle (not only Supabase heartbeat).
+    // layerGroups updates must drive curated lifecycle (WebSocket + manual workshop refresh).
     registerDisposer(
       OTEFDataContext.subscribe("layerGroups", (groups) => {
         void refreshCuratedLayers({ groupsOverride: groups });
@@ -278,9 +278,6 @@ async function bootstrapMapRuntime() {
     try {
       const { syncCuratedMapLayersAfterSupabasePull } = await import(
         "../map/map-curated-supabase-sync.js"
-      );
-      const { startCuratedSupabaseHeartbeat } = await import(
-        "../shared/curated-supabase-heartbeat.js"
       );
 
       if (typeof window !== "undefined" && !window._otefCuratedGeojsonRefreshBound) {
@@ -307,32 +304,6 @@ async function bootstrapMapRuntime() {
           window._otefCuratedGeojsonRefreshBound = false;
         });
       }
-
-      const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
-        table: "otef",
-        onUpdated: async (data) => {
-          await syncCuratedMapLayersAfterSupabasePull({
-            pullPayload: data,
-            reloadCuratedOnMap: refreshCuratedLayers,
-            applyLayerGroupsState: (groups) => {
-              applyLayerGroupsToMap(
-                map,
-                filterGroupsForGisMap(
-                  Array.isArray(groups) ? groups : Object.values(groups || {}),
-                ),
-              );
-              syncContextFlowAnimations();
-            },
-            mapDeps: {},
-          });
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(
-              new CustomEvent("nur-curated-supabase-pull", { detail: { source: "gis" } }),
-            );
-          }
-        },
-      });
-      registerDisposer(stopCuratedHeartbeat);
     } catch (e) {
       console.warn("[map-main] Curated layer modules not available:", e);
     }

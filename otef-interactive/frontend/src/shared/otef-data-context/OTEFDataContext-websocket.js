@@ -113,7 +113,7 @@ function setupWebSocket(ctx) {
       : [];
     try {
       if (Array.isArray(msg.layerGroups)) {
-        ctx._setLayerGroups(msg.layerGroups);
+        ctx._setLayerGroups(msg.layerGroups, { bypassEquality: true });
         if (traceId) {
           recordTraceEvent(traceId, "context.layers_from_ws_payload", {
             groupCount: msg.layerGroups.length,
@@ -122,7 +122,7 @@ function setupWebSocket(ctx) {
       } else {
         const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
         if (state.layerGroups) {
-          ctx._setLayerGroups(state.layerGroups);
+          ctx._setLayerGroups(state.layerGroups, { bypassEquality: true });
           if (traceId) {
             recordTraceEvent(traceId, "context.layers_from_api_fallback", {
               groupCount: state.layerGroups.length,

@@ -110,7 +110,7 @@ class OTEFDataContextClass {
     try {
       const state = await OTEF_API.getState(this._tableName, { forceFresh: true });
       if (state && state.layerGroups) {
-        this._setLayerGroups(state.layerGroups);
+        this._setLayerGroups(state.layerGroups, { bypassEquality: true });
       }
     } catch (err) {
       getLogger().error("[OTEFDataContext] refreshLayerGroupsFromApi failed:", err);
@@ -166,8 +166,16 @@ class OTEFDataContextClass {
     return this._viewport;
   }
 
-  _setLayerGroups(layerGroups) {
-    if (layerGroupsEqual(this._layerGroups, layerGroups)) return;
+  /**
+   * @param {unknown} layerGroups
+   * @param {{ bypassEquality?: boolean }} [options]
+   * When `bypassEquality` is true, notify subscribers even if ids/enabled match (e.g. after
+   * otef_layers_changed: server-side curated GeoJSON changed but the layerGroups API is still shallow).
+   */
+  _setLayerGroups(layerGroups, options = {}) {
+    if (!options.bypassEquality && layerGroupsEqual(this._layerGroups, layerGroups)) {
+      return;
+    }
     this._layerGroups = layerGroups;
     if (this._activeLayerTrace && this._activeLayerTrace.traceId) {
       recordTraceEvent(this._activeLayerTrace.traceId, "context.layer_groups_set", {

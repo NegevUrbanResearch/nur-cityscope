@@ -294,9 +294,6 @@ async function bootstrapProjectionRuntime() {
       const { syncCuratedMapLayersAfterSupabasePull } = await import(
         "../map/map-curated-supabase-sync.js"
       );
-      const { startCuratedSupabaseHeartbeat } = await import(
-        "../shared/curated-supabase-heartbeat.js"
-      );
       if (
         typeof window !== "undefined" &&
         !window._otefProjectionCuratedGeojsonRefreshBound
@@ -322,32 +319,6 @@ async function bootstrapProjectionRuntime() {
           window._otefProjectionCuratedGeojsonRefreshBound = false;
         });
       }
-
-      const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
-        table: "otef",
-        onUpdated: async (data) => {
-          await syncCuratedMapLayersAfterSupabasePull({
-            pullPayload: data,
-            reloadCuratedOnMap: refreshProjectionCuratedLayers,
-            applyLayerGroupsState: (groups) => {
-              syncProjectionLayers(
-                map,
-                Array.isArray(groups) ? groups : Object.values(groups || {}),
-              );
-              syncContextFlowAnimations();
-            },
-            mapDeps: {},
-          });
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(
-              new CustomEvent("nur-curated-supabase-pull", {
-                detail: { source: "projection" },
-              }),
-            );
-          }
-        },
-      });
-      registerDisposer(stopCuratedHeartbeat);
     } catch (e) {
       console.warn("[projection-main] Curated layer modules not available:", e);
     }

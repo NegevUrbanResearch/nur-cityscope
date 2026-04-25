@@ -15,7 +15,6 @@ import {
   pmtilesLayersWithConfigs,
 } from "./leaflet-control-with-basemap.js";
 import { syncCuratedMapLayersAfterSupabasePull } from "./map-curated-supabase-sync.js";
-import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
 
 const _curatedGeojsonSyncRef = { applyLayerGroupsState: null, mapDeps: null };
 
@@ -242,24 +241,6 @@ function initializeMap(bounds) {
         }),
       );
 
-      const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
-        table: "otef",
-        onUpdated: async (data) => {
-          await syncCuratedMapLayersAfterSupabasePull({
-            reloadCuratedOnMap: reloadCuratedLayersOnMapIfUpdated,
-            loadLayerFromRegistry,
-            pullPayload: data,
-            applyLayerGroupsState,
-            mapDeps,
-          });
-          window.dispatchEvent(
-            new CustomEvent("nur-curated-supabase-pull", { detail: { source: "gis" } }),
-          );
-        },
-      });
-      window._otefUnsubscribeFunctions.push(() => {
-        stopCuratedHeartbeat();
-      });
       });
   }
 

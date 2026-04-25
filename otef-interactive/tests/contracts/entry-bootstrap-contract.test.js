@@ -5,6 +5,11 @@ function read(p) {
   return fs.readFileSync(path.resolve(__dirname, "../../", p), "utf8");
 }
 
+test("map entry does not poll Supabase curated heartbeat", () => {
+  const src = read("frontend/src/entries/map-main.js");
+  expect(src.includes("startCuratedSupabaseHeartbeat")).toBe(false);
+});
+
 test("map entry bootstraps maplibre runtime modules", () => {
   const src = read("frontend/src/entries/map-main.js");
   const idxCreateMap = src.indexOf(
@@ -35,18 +40,16 @@ test("entrypoints do not require window.TableSwitcher constructor", () => {
   expect(projectionEntry.includes("window.TableSwitcher")).toBe(false);
 });
 
-test("projection entry wires MapLibre curated pipeline and Supabase heartbeat", () => {
+test("projection entry wires MapLibre curated pipeline (manual Supabase sync via workshop)", () => {
   const src = read("frontend/src/entries/projection-main.js");
   expect(src.includes("loadCuratedLayerToMapLibre")).toBe(true);
   expect(src.includes("removeCuratedHtmlMarkers")).toBe(true);
   expect(src.includes("removeCuratedLayersByPrefix")).toBe(true);
   expect(src.includes("refreshProjectionCuratedLayers")).toBe(true);
   expect(src.includes("loadProjectionCuratedLayers")).toBe(true);
-  expect(src.includes("startCuratedSupabaseHeartbeat")).toBe(true);
-  expect(src.includes('table: "otef"')).toBe(true);
+  expect(src.includes("startCuratedSupabaseHeartbeat")).toBe(false);
+  expect(src.includes('OTEFDataContext.init("otef")')).toBe(true);
   expect(src.includes("syncCuratedMapLayersAfterSupabasePull")).toBe(true);
   expect(src.includes("otef-curated-geojson-refresh")).toBe(true);
-  expect(src.includes("nur-curated-supabase-pull")).toBe(true);
-  expect(src.includes('source: "projection"')).toBe(true);
   expect(src.includes("projectionCuratedRefreshChain")).toBe(true);
 });

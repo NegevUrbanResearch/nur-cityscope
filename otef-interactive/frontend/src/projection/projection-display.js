@@ -9,7 +9,6 @@ import {
   requestAnimationFrameForAnimations,
   reloadProjectionCuratedLayersFromSupabase,
 } from "./projection-layer-manager.js";
-import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
 
 function projectionReloadOptsFromCuratedPayload(detail) {
   const d =
@@ -116,24 +115,6 @@ fetch("data/model-bounds.json")
             requestAnimationFrameForAnimations();
           }),
         );
-
-        const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
-          table: TABLE_NAME,
-          onUpdated: async (pullPayload) => {
-            const opts = projectionReloadOptsFromCuratedPayload(
-              pullPayload && typeof pullPayload === "object" ? pullPayload : {},
-            );
-            await reloadProjectionCuratedLayersFromSupabase(opts);
-            window.dispatchEvent(
-              new CustomEvent("nur-curated-supabase-pull", {
-                detail: { source: "projection" },
-              }),
-            );
-          },
-        });
-        window._otefUnsubscribeFunctions.push(() => {
-          stopCuratedHeartbeat();
-        });
 
       });
     }
