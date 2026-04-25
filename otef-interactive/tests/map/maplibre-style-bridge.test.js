@@ -789,7 +789,9 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const result = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig);
+    const result = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
     expect(result).toHaveLength(1);
     const sym = result.find((L) => L.type === "symbol");
     expect(sym).toBeDefined();
@@ -815,7 +817,9 @@ describe("irToMapLibreLayers", () => {
         labels: { field: "TextString", size: 12, color: "#000000", offsetEm: [0.4, -0.25] },
       },
     };
-    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
     expect(sym.layout["text-offset"]).toEqual(["literal", [0.4, -0.25]]);
   });
 
@@ -828,7 +832,9 @@ describe("irToMapLibreLayers", () => {
         labels: { field: "TextString", size: 12, color: "#000000", offset: [0.1, 0.2] },
       },
     };
-    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
     expect(sym.layout["text-offset"]).toEqual(["literal", [0.1, 0.2]]);
   });
 
@@ -850,7 +856,9 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const sym = irToMapLibreLayers("ann", "ann", layerConfig).find((L) => L.type === "symbol");
+    const sym = irToMapLibreLayers("ann", "ann", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
     const to = sym.layout["text-offset"];
     expect(to).toEqual([
       "array",
@@ -898,7 +906,9 @@ describe("irToMapLibreLayers", () => {
         labels: { field: "TextString", size: 12, color: "#000000" },
       },
     };
-    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
     const tf = sym.layout["text-field"];
     expect(tf).toEqual([
       "to-string",
@@ -939,7 +949,9 @@ describe("irToMapLibreLayers", () => {
         labels: { field: "TextString", size: 10, color: "#111111" },
       },
     };
-    const result = irToMapLibreLayers("uv.label", "uv__label", layerConfig);
+    const result = irToMapLibreLayers("uv.label", "uv__label", layerConfig, {
+      renderMapLabelsFromStyle: true,
+    });
     const fill = result.find((layer) => layer.type === "fill");
     const sym = result.find((layer) => layer.type === "symbol");
     expect(fill).toBeDefined();
@@ -968,6 +980,30 @@ describe("irToMapLibreLayers", () => {
     expect(result[0].type).toBe("line");
   });
 
+  it("does not emit map labels from incidental ArcGIS labels on projection non-settlement layers", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [{ type: "fill", fillType: "solid", color: "#abdbe3", opacity: 1.0 }],
+        },
+        labels: {
+          field: "Id",
+          font: "Tahoma",
+          size: 10,
+          color: "#000000",
+          haloSize: 1,
+        },
+      },
+    };
+    const result = irToMapLibreLayers("projector_base.SEA", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    expect(result.find((L) => L.type === "symbol")).toBeUndefined();
+    expect(result.find((L) => L.type === "fill")).toBeDefined();
+  });
+
   it("emits line and symbol when style.labels.leaderLine is true (point-like)", () => {
     const layerConfig = {
       geometryType: "point",
@@ -987,7 +1023,9 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const result = irToMapLibreLayers("projector_base._leader_test_point", "src", layerConfig);
+    const result = irToMapLibreLayers("projector_base._leader_test_point", "src", layerConfig, {
+      renderMapLabelsFromStyle: true,
+    });
     const line = result.find((L) => L.type === "line" && L._labelLeader);
     const sym = result.find((L) => L.type === "symbol" && L._labelSymbol);
     expect(line).toBeDefined();
@@ -1024,7 +1062,9 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const result = irToMapLibreLayers("ann.poly", "ann__poly", layerConfig);
+    const result = irToMapLibreLayers("ann.poly", "ann__poly", layerConfig, {
+      renderMapLabelsFromStyle: true,
+    });
     expect(result).toHaveLength(2);
     expect(result[0].type).toBe("line");
     expect(result[0].id).toBe("ann__poly__leader");
@@ -1050,7 +1090,9 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const line = irToMapLibreLayers("x.y", "x__y", layerConfig).find((L) => L._labelLeader);
+    const line = irToMapLibreLayers("x.y", "x__y", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L._labelLeader,
+    );
     expect(line.paint["line-color"]).toBe("#aa1122");
   });
 
@@ -1068,7 +1110,9 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
     expect(sym.layout["text-font"]).toEqual(["Guttman Hatzvi", "Noto Sans Regular"]);
   });
 
@@ -1086,7 +1130,9 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
     expect(sym.layout["text-font"]).toEqual(["Noto Sans Regular"]);
   });
 
@@ -1103,7 +1149,9 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
     const tf = sym.layout["text-field"];
     expect(tf[0]).not.toBe("concat");
     expect(tf[0]).toBe("to-string");
@@ -1124,9 +1172,9 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const sym = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig).find(
-      (L) => L.type === "symbol",
-    );
+    const sym = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    }).find((L) => L.type === "symbol");
     expect(sym.layout["text-rotate"]).toEqual([
       "to-number",
       [
@@ -1168,7 +1216,9 @@ describe("irToMapLibreLayers", () => {
     const labels = layerConfig.style.labels;
     expect(labels.hebrewBidiWrap).toBe(false);
     expect(labels.leaderLine).toBeUndefined();
-    const sym = irToMapLibreLayers("pack.שמות_יישובים", "src", layerConfig).find((L) => L.type === "symbol");
+    const sym = irToMapLibreLayers("pack.שמות_יישובים", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    }).find((L) => L.type === "symbol");
     const tf = sym.layout["text-field"];
     expect(tf[0]).toBe("to-string");
     expect(tf[1][0]).toBe("coalesce");
@@ -1192,7 +1242,9 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
     expect(sym.layout["text-writing-mode"]).toEqual(["literal", ["horizontal"]]);
   });
 });

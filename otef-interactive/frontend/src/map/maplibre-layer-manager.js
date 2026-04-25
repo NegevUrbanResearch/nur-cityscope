@@ -307,8 +307,11 @@ function rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, register
 }
 
 /**
- * @param {{ applyProjectionHatchPresentation?: boolean }} [layerStyleOptions] - projection passes
- *   `{ applyProjectionHatchPresentation: true }` for denser MapLibre hatch rasters; GIS omits.
+ * @param {{
+ *   applyProjectionHatchPresentation?: boolean,
+ *   renderMapLabelsFromStyle?: boolean,
+ * }} [layerStyleOptions] - projection passes `{ applyProjectionHatchPresentation: true }` for
+ *   denser hatch rasters and to scope `style.labels` → symbol layers to שמות_יישובים only; GIS omits.
  */
 function addLayerToMap(map, fullId, state, layerStyleOptions) {
   const { loadedSources, loadedLayerIds } = state;
@@ -448,8 +451,11 @@ function addLayerToMap(map, fullId, state, layerStyleOptions) {
 }
 
 /**
- * @param {{ applyProjectionHatchPresentation?: boolean }} [layerStyleOptions] - set on projection
- *   map so hatch fill-pattern rasters use presentation multipliers; GIS callers omit.
+ * @param {{
+ *   applyProjectionHatchPresentation?: boolean,
+ *   renderMapLabelsFromStyle?: boolean,
+ * }} [layerStyleOptions] - projection sets `applyProjectionHatchPresentation` for hatch density
+ *   and settlement-name-only map labels; GIS callers omit.
  */
 export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
   const state = getOrCreateMapState(map);

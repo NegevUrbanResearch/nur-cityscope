@@ -761,9 +761,32 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
 }
 
 /**
+ * ArcGIS-derived `style.labels` exists on many processed layers as metadata (class fields like
+ * `Id`, `Shape_Length`, `Name`) and must not become MapLibre text layers by default.
+ *
+ * - GIS / default: no map labels from `style.labels`.
+ * - Projection (`applyProjectionHatchPresentation`): only the settlement-names layer stem.
+ * - Unit tests / explicit opt-in: `renderMapLabelsFromStyle: true`.
+ *
+ * @param {{ applyProjectionHatchPresentation?: boolean, renderMapLabelsFromStyle?: boolean }} [styleOptions]
+ * @param {string} [fullLayerId] e.g. `projector_base.שמות_יישובים`
+ */
+function shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId) {
+  if (styleOptions?.renderMapLabelsFromStyle === true) return true;
+  if (styleOptions?.applyProjectionHatchPresentation === true) {
+    const s = String(fullLayerId || "");
+    return /\.שמות_יישובים$/.test(s);
+  }
+  return false;
+}
+
+/**
  * @param {object} [layerConfig]
- * @param {{ applyProjectionHatchPresentation?: boolean }} [styleOptions] - set by projection
- *   `applyLayerGroupsToMap` so hatch rasters are denser/thinner; omit on GIS.
+ * @param {{
+ *   applyProjectionHatchPresentation?: boolean,
+ *   renderMapLabelsFromStyle?: boolean,
+ * }} [styleOptions] - projection sets `applyLayerGroupsToMap` with `applyProjectionHatchPresentation`
+ *   for hatch density; that flag also scopes label rendering to שמות_יישובים only.
  */
 export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styleOptions = {}) {
   void sourceLayerId;
@@ -784,8 +807,11 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
       ? buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation)
       : buildSimpleLayers(idBase, defaultSymbol, hatchPresentation);
 
-  const leaderLineLayers = buildLabelLeaderLineLayer(idBase, style, layerConfig?.geometryType);
-  const labelLayers = buildLabelSymbolLayer(idBase, style, layerConfig?.geometryType);
+  const passMapLabels = shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId);
+  const leaderLineLayers = passMapLabels
+    ? buildLabelLeaderLineLayer(idBase, style, layerConfig?.geometryType)
+    : [];
+  const labelLayers = passMapLabels ? buildLabelSymbolLayer(idBase, style, layerConfig?.geometryType) : [];
   return [...baseLayers, ...leaderLineLayers, ...labelLayers];
 }
 
