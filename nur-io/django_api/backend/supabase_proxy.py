@@ -56,21 +56,33 @@ def _slugify_project(name):
     return slug or "default"
 
 
-def _broadcast_otef_layers_changed(table_name):
+def _broadcast_otef_layers_changed(
+    table_name, affected_curated_full_layer_ids=None
+):
+    """
+    Notify OTEF clients. Optional `affected_curated_full_layer_ids` (e.g. curated_moresht_axis.12)
+    lets GIS/projection run targeted otef-curated-geojson-refresh; shallow layer list alone
+    does not include embedded GeoJSON, so the ids path matters for map sync.
+    """
     try:
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
 
         channel_layer = get_channel_layer()
         if channel_layer:
+            message = {
+                "type": "otef_layers_changed",
+                "table": table_name,
+            }
+            if affected_curated_full_layer_ids:
+                message["affected_curated_full_layer_ids"] = list(
+                    affected_curated_full_layer_ids
+                )
             async_to_sync(channel_layer.group_send)(
                 "otef_channel",
                 {
                     "type": "broadcast_message",
-                    "message": {
-                        "type": "otef_layers_changed",
-                        "table": table_name,
-                    },
+                    "message": message,
                 },
             )
     except Exception:
@@ -131,6 +143,146 @@ def _fetch_submission_geojson_fc(submission_id):
     if not isinstance(rows, list):
         return {"type": "FeatureCollection", "features": []}, None
     return _rows_to_geojson_feature_collection(rows), None
+
+
+# PostgREST projection only — no geometry — to compare against Django-stored FC before full pull.
+_GEO_FEATURES_FINGERPRINT_SELECT = "id,updated_at,is_current,feature_type"
+
+
+def _fetch_submission_geo_features_lightweight(submission_id):
+    """Load geo_features metadata rows for a submission (small egress vs select=*)."""
+    sid = str(submission_id or "").strip()
+    if not sid:
+        return None, "missing submission_id"
+    return _get(
+        "/geo_features",
+        params={
+            "submission_id": f"eq.{sid}",
+            "select": _GEO_FEATURES_FINGERPRINT_SELECT,
+        },
+    )
+
+
+def _geo_features_rows_fingerprint(rows):
+    """
+    Stable fingerprint for current-revision rows only (matches FC build: skip is_current False).
+    Returns None if a row is missing id (caller should fall back to full fetch).
+    """
+    if not isinstance(rows, list):
+        return None
+    tuples = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("is_current") is False:
+            continue
+        rid = row.get("id")
+        if rid is None:
+            return None
+        tuples.append(
+            (
+                str(rid),
+                str(row.get("updated_at") or ""),
+                str(row.get("feature_type") or ""),
+            )
+        )
+    tuples.sort(key=lambda t: t[0])
+    try:
+        return json.dumps(tuples, sort_keys=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _stored_feature_collection_geo_fingerprint(fc):
+    """Fingerprint from GISLayer.data FeatureCollection (feature properties)."""
+    if not isinstance(fc, dict):
+        return None
+    features = fc.get("features")
+    if not isinstance(features, list):
+        return None
+    tuples = []
+    for feat in features:
+        if not isinstance(feat, dict):
+            continue
+        props = feat.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+        if props.get("is_current") is False:
+            continue
+        rid = props.get("id")
+        if rid is None:
+            return None
+        tuples.append(
+            (
+                str(rid),
+                str(props.get("updated_at") or ""),
+                str(props.get("feature_type") or ""),
+            )
+        )
+    tuples.sort(key=lambda t: t[0])
+    try:
+        return json.dumps(tuples, sort_keys=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _batch_row_fingerprint(batch_row):
+    """Semantic fields that affect enrich_feature_collection_with_submission_batch."""
+    row = batch_row
+    if isinstance(batch_row, list):
+        row = batch_row[0] if batch_row else None
+    if not isinstance(row, dict):
+        payload = {
+            "submission_name": "",
+            "display_color": None,
+            "colab_route_geometry_bundle": _normalize_colab_route_geometry_bundle_value(
+                None
+            ),
+        }
+    else:
+        payload = {
+            "submission_name": str(row.get("submission_name") or "").strip(),
+            "display_color": row.get("display_color"),
+            "colab_route_geometry_bundle": _normalize_colab_route_geometry_bundle_value(
+                row.get("colab_route_geometry_bundle")
+            ),
+        }
+    try:
+        return json.dumps(payload, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return None
+
+
+def _batch_fp_from_enriched_fc(fc):
+    """Match _batch_row_fingerprint using enriched FeatureCollection root + feature props."""
+    if not isinstance(fc, dict):
+        return None
+    bundle = _normalize_colab_route_geometry_bundle_value(
+        fc.get("colab_route_geometry_bundle")
+    )
+    submission_name = ""
+    display_color = None
+    for feat in fc.get("features") or []:
+        if not isinstance(feat, dict):
+            continue
+        props = feat.get("properties")
+        if not isinstance(props, dict):
+            continue
+        if props.get("is_current") is False:
+            continue
+        if "submission_name" in props:
+            submission_name = str(props.get("submission_name") or "").strip()
+        if "display_color" in props:
+            display_color = props.get("display_color")
+    payload = {
+        "submission_name": submission_name,
+        "display_color": display_color,
+        "colab_route_geometry_bundle": bundle,
+    }
+    try:
+        return json.dumps(payload, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_colab_route_geometry_bundle_value(raw):
@@ -352,8 +504,8 @@ def _clear_workshop_autopublish_suppression_for_geojson(table, geojson):
 def pull_published_curated_layers_from_supabase(table, table_name):
     """
     Refresh each active published curated GISLayer from Supabase geo_features
-    when the FeatureCollection payload differs. Used by the public pull endpoint
-    and periodic frontend heartbeat (replaces Colab → sync-submission POST).
+    when the FeatureCollection payload differs. Used by the workshop pull endpoint.
+    Uses a lightweight PostgREST select first to skip full geometry fetch when unchanged.
     """
     from .models import GISLayer, WorkshopAutopublishSuppression
 
@@ -383,13 +535,31 @@ def pull_published_curated_layers_from_supabase(table, table_name):
             errors.append({"layer_id": layer.id, "error": "no submission_id in geojson"})
             continue
         checked += 1
+        batch_row = _fetch_submission_batch_row_for_sync(sid)
+        lite_rows, lite_err = _fetch_submission_geo_features_lightweight(sid)
+        skip_full_geo = False
+        if not lite_err and isinstance(lite_rows, list):
+            local_geo_fp = _stored_feature_collection_geo_fingerprint(data)
+            remote_geo_fp = _geo_features_rows_fingerprint(lite_rows)
+            local_batch_fp = _batch_fp_from_enriched_fc(data)
+            remote_batch_fp = _batch_row_fingerprint(batch_row)
+            if (
+                local_geo_fp is not None
+                and remote_geo_fp is not None
+                and local_batch_fp is not None
+                and remote_batch_fp is not None
+                and local_geo_fp == remote_geo_fp
+                and local_batch_fp == remote_batch_fp
+            ):
+                skip_full_geo = True
+        if skip_full_geo:
+            continue
         features_fc, fetch_err = _fetch_submission_geojson_fc(sid)
         if fetch_err:
             errors.append(
                 {"layer_id": layer.id, "submission_id": sid, "error": str(fetch_err)}
             )
             continue
-        batch_row = _fetch_submission_batch_row_for_sync(sid)
         enrich_feature_collection_with_submission_batch(features_fc, sid, batch_row)
         try:
             old_sig = json.dumps(data, sort_keys=True, default=str)
@@ -403,7 +573,12 @@ def pull_published_curated_layers_from_supabase(table, table_name):
             updated += 1
             updated_layer_ids.append(layer.id)
     if updated:
-        _broadcast_otef_layers_changed(table_name)
+        _broadcast_otef_layers_changed(
+            table_name,
+            affected_curated_full_layer_ids=sorted(
+                {f"{curated_group_id}.{pk}" for pk in updated_layer_ids}
+            ),
+        )
 
     def _pull_curated_response_payload():
         affected = sorted(
@@ -496,7 +671,13 @@ def pull_published_curated_layers_from_supabase(table, table_name):
             errors.append({"submission_id": sid, "error": str(e)})
 
     if autopublished:
-        _broadcast_otef_layers_changed(table_name)
+        _broadcast_otef_layers_changed(
+            table_name,
+            affected_curated_full_layer_ids=sorted(
+                {f"{curated_group_id}.{pk}" for pk in updated_layer_ids}
+                | {f"{curated_group_id}.{pk}" for pk in autopublished_layer_ids}
+            ),
+        )
 
     return {
         "checked": checked,

@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import timedelta
 from unittest.mock import patch
@@ -34,6 +35,7 @@ def _assert_pull_response_task5_contract(out, expect_autopublished_ids_in_affect
 
 def _line_row(submission_id, project_id, feature_type="pink_line_route"):
     return {
+        "id": f"gf-{submission_id}",
         "submission_id": submission_id,
         "project_id": project_id,
         "is_current": True,
@@ -44,6 +46,19 @@ def _line_row(submission_id, project_id, feature_type="pink_line_route"):
             "coordinates": [[34.0, 32.0], [34.01, 32.01]],
         },
     }
+
+
+def _geo_features_response_rows(full_rows, params):
+    """Mirror PostgREST select= projection for geo_features mocks."""
+    params = params or {}
+    sel = (params.get("select") or "*").strip()
+    if sel == "*":
+        return list(full_rows)
+    keys = [k.strip() for k in sel.split(",") if k.strip()]
+    out = []
+    for r in full_rows:
+        out.append({k: r.get(k) for k in keys})
+    return out
 
 
 @pytest.mark.django_db
@@ -85,12 +100,14 @@ def test_pull_autopublishes_new_submission_when_workshop_on():
             return [], None
         if path == "/geo_features":
             if params.get("project_id") == f"eq.{project_id}":
-                return [row_existing, row_new], None
+                return _geo_features_response_rows(
+                    [row_existing, row_new], params
+                ), None
             sub = params.get("submission_id") or ""
             if sub == f"eq.{existing_sid}":
-                return [row_existing], None
+                return _geo_features_response_rows([row_existing], params), None
             if sub == f"eq.{new_sid}":
-                return [row_new], None
+                return _geo_features_response_rows([row_new], params), None
         return None, f"unexpected supabase path {path} {params}"
 
     with patch("backend.supabase_proxy._get", side_effect=fake_get):
@@ -143,7 +160,7 @@ def test_pull_workshop_skips_when_no_project_id_on_published_layers():
         if path == "/submission_batches":
             return [], None
         if path == "/geo_features":
-            return [], None
+            return _geo_features_response_rows([], params), None
         return None, "unexpected"
 
     with patch("backend.supabase_proxy._get", side_effect=fake_get):
@@ -211,14 +228,18 @@ def test_pull_autopublish_fallback_project_id_from_pink_geo_features():
             return [], None
         if path == "/geo_features":
             if params.get("feature_type") == "like.pink_%":
-                return [row_existing, row_new], None
+                return _geo_features_response_rows(
+                    [row_existing, row_new], params
+                ), None
             if params.get("project_id") == f"eq.{project_id}":
-                return [row_existing, row_new], None
+                return _geo_features_response_rows(
+                    [row_existing, row_new], params
+                ), None
             sub = params.get("submission_id") or ""
             if sub == f"eq.{existing_sid}":
-                return [row_existing], None
+                return _geo_features_response_rows([row_existing], params), None
             if sub == f"eq.{new_sid}":
-                return [row_new], None
+                return _geo_features_response_rows([row_new], params), None
         return None, f"unexpected supabase path {path} {params}"
 
     with patch("backend.supabase_proxy._get", side_effect=fake_get):
@@ -279,13 +300,13 @@ def test_pull_second_tick_autopublishes_new_pink_submission():
         if path == "/geo_features":
             if params.get("project_id") == f"eq.{project_id}":
                 if pull_round["n"] <= 1:
-                    return [row_a], None
-                return [row_a, row_b], None
+                    return _geo_features_response_rows([row_a], params), None
+                return _geo_features_response_rows([row_a, row_b], params), None
             sub = params.get("submission_id") or ""
             if sub == f"eq.{sid_a}":
-                return [row_a], None
+                return _geo_features_response_rows([row_a], params), None
             if sub == f"eq.{sid_b}":
-                return [row_b], None
+                return _geo_features_response_rows([row_b], params), None
         return None, f"unexpected supabase path {path} {params}"
 
     with patch("backend.supabase_proxy._get", side_effect=fake_get):
@@ -381,14 +402,16 @@ def test_pull_skips_autopublish_for_pink_submission_before_workshop_start():
             return [], None
         if path == "/geo_features":
             if params.get("project_id") == f"eq.{project_id}":
-                return [row_old, row_before, row_after], None
+                return _geo_features_response_rows(
+                    [row_old, row_before, row_after], params
+                ), None
             sub = params.get("submission_id") or ""
             if sub == f"eq.{old_sid}":
-                return [row_old], None
+                return _geo_features_response_rows([row_old], params), None
             if sub == f"eq.{sid_before}":
-                return [row_before], None
+                return _geo_features_response_rows([row_before], params), None
             if sub == f"eq.{sid_after}":
-                return [row_after], None
+                return _geo_features_response_rows([row_after], params), None
         return None, f"unexpected supabase path {path} {params}"
 
     with patch("backend.supabase_proxy._get", side_effect=fake_get):
@@ -473,12 +496,14 @@ def test_pull_does_not_autopublish_after_suppression_recorded():
             return [], None
         if path == "/geo_features":
             if params.get("project_id") == f"eq.{project_id}":
-                return [row_existing, row_new], None
+                return _geo_features_response_rows(
+                    [row_existing, row_new], params
+                ), None
             sub = params.get("submission_id") or ""
             if sub == f"eq.{existing_sid}":
-                return [row_existing], None
+                return _geo_features_response_rows([row_existing], params), None
             if sub == f"eq.{new_sid}":
-                return [row_new], None
+                return _geo_features_response_rows([row_new], params), None
         return None, f"unexpected supabase path {path} {params}"
 
     with patch("backend.supabase_proxy._get", side_effect=fake_get):
@@ -488,3 +513,102 @@ def test_pull_does_not_autopublish_after_suppression_recorded():
     assert out["autopublished"] == 0
     assert out["autopublished_layer_ids"] == []
     assert _find_active_curated_layer_for_submission(table, new_sid) is None
+
+
+@pytest.mark.django_db
+def test_pull_skips_full_geo_fetch_when_fingerprints_unchanged():
+    """Lightweight select matches stored layer + batch — no select=* on geo_features."""
+    project_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    sid = "11111111-1111-1111-1111-111111111111"
+    table = Table.objects.create(
+        name=f"ws_skipfull_{uuid.uuid4().hex[:10]}",
+        display_name="Skip full geo",
+    )
+    OTEFViewportState.objects.create(
+        table=table,
+        workshop_auto_publish=False,
+        viewport=OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+        layers=OTEFViewportState.DEFAULT_LAYERS.copy(),
+    )
+    row = _line_row(sid, project_id)
+    published_fc = _rows_to_geojson_feature_collection([row])
+    GISLayer.objects.create(
+        table=table,
+        name="curated_skip_full",
+        display_name="Pub",
+        project_name="Moreshet Axis",
+        layer_type="geojson",
+        data=published_fc,
+        style_config={},
+        is_active=True,
+        order=1,
+    )
+
+    def fake_get(path, params=None):
+        params = params or {}
+        if path == "/submission_batches":
+            return [], None
+        if path == "/geo_features":
+            sub = params.get("submission_id") or ""
+            if sub == f"eq.{sid}":
+                return _geo_features_response_rows([row], params), None
+        return None, f"unexpected supabase path {path} {params}"
+
+    with patch("backend.supabase_proxy._get", side_effect=fake_get):
+        with patch(
+            "backend.supabase_proxy._fetch_submission_geojson_fc"
+        ) as mock_full:
+            out = pull_published_curated_layers_from_supabase(table, table.name)
+
+    assert out["updated"] == 0
+    mock_full.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_pull_runs_full_geo_when_lightweight_timestamp_changes():
+    project_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    sid = "11111111-1111-1111-1111-111111111111"
+    table = Table.objects.create(
+        name=f"ws_fullgeo_{uuid.uuid4().hex[:10]}",
+        display_name="Full geo on change",
+    )
+    OTEFViewportState.objects.create(
+        table=table,
+        workshop_auto_publish=False,
+        viewport=OTEFViewportState.DEFAULT_VIEWPORT.copy(),
+        layers=OTEFViewportState.DEFAULT_LAYERS.copy(),
+    )
+    row_stale = _line_row(sid, project_id)
+    published_fc = _rows_to_geojson_feature_collection([row_stale])
+    GISLayer.objects.create(
+        table=table,
+        name="curated_full_geo",
+        display_name="Pub",
+        project_name="Moreshet Axis",
+        layer_type="geojson",
+        data=published_fc,
+        style_config={},
+        is_active=True,
+        order=1,
+    )
+    row_remote = dict(row_stale)
+    row_remote["updated_at"] = "2099-06-15T12:00:00+00:00"
+
+    def fake_get(path, params=None):
+        params = params or {}
+        if path == "/submission_batches":
+            return [], None
+        if path == "/geo_features":
+            sub = params.get("submission_id") or ""
+            if sub == f"eq.{sid}":
+                return _geo_features_response_rows([row_remote], params), None
+        return None, f"unexpected supabase path {path} {params}"
+
+    with patch("backend.supabase_proxy._get", side_effect=fake_get):
+        with patch("backend.supabase_proxy._broadcast_otef_layers_changed") as mock_bc:
+            out = pull_published_curated_layers_from_supabase(table, table.name)
+
+    assert out["updated"] == 1
+    mock_bc.assert_called()
+    layer = GISLayer.objects.get(pk=out["updated_layer_ids"][0])
+    assert "2099-06-15" in json.dumps(layer.data)
