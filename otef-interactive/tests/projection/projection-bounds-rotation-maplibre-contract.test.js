@@ -40,6 +40,9 @@ function createProjectionDomElement(size) {
       if (sel === ".highlight-box") {
         return this._kids.find((c) => c.className === "highlight-box") ?? null;
       }
+      if (sel === ".highlight-box-fill") {
+        return this._kids.find((c) => c.className === "highlight-box-fill") ?? null;
+      }
       return null;
     },
   };
@@ -109,11 +112,22 @@ test("projection entry keeps ResizeObserver reflow with window resize fallback",
   const src = read("frontend/src/entries/projection-main.js");
 
   expect(src).toContain("typeof ResizeObserver !== \"undefined\"");
-  expect(src).toContain("new ResizeObserver(() => onResize(\"observer\"))");
+  expect(src).toContain("new ResizeObserver(() => onResize())");
   expect(src).toContain("window.addEventListener(\"resize\", handleWindowResize)");
   expect(src).toContain("window.removeEventListener(\"resize\", handleWindowResize)");
-  expect(src).toContain("map.resize();");
-  expect(src).toContain("window.requestAnimationFrame(() => {");
+  expect(src).toContain("map.resize()");
+  expect(src).toContain("pendingResizeIdleHandler");
+  expect(src).toContain("map.off(\"idle\", pendingResizeIdleHandler)");
+  expect(src).toContain("map.once(\"idle\", pendingResizeIdleHandler)");
+  expect(src).toContain("requestAnimationFrame(syncHighlight)");
+  const onResizeStart = src.indexOf("const onResize = () => {");
+  const onResizeSlice =
+    onResizeStart >= 0
+      ? src.slice(onResizeStart, src.indexOf("const handleWindowResize", onResizeStart))
+      : "";
+  expect(onResizeSlice.indexOf("map.resize()")).toBeLessThan(
+    onResizeSlice.indexOf("map.once("),
+  );
 });
 
 test("MapLibre projection highlight: updateHighlightFromViewport creates .highlight-box without border or cssText", async () => {
@@ -126,7 +140,7 @@ test("MapLibre projection highlight: updateHighlightFromViewport creates .highli
   container.appendChild(highlightEl);
 
   const viewport = { bbox: [100, 150, 600, 550] };
-  updateHighlightFromViewport(viewport, modelBounds, highlightEl);
+  updateHighlightFromViewport(null, viewport, modelBounds, highlightEl);
 
   expect(highlightEl.style.display).not.toBe("none");
   const box = highlightEl.querySelector(".highlight-box");
@@ -152,11 +166,13 @@ test("MapLibre projection highlight: uses corners-first quad when valid corners 
       nw: { x: 140, y: 720 },
     },
   };
-  updateHighlightFromViewport(viewport, modelBounds, highlightEl);
+  updateHighlightFromViewport(null, viewport, modelBounds, highlightEl);
 
   const box = highlightEl.querySelector(".highlight-box");
   expect(box).toBeTruthy();
-  expect(box.style.clipPath).toContain("polygon(");
+  const fill = box.querySelector(".highlight-box-fill");
+  expect(fill).toBeTruthy();
+  expect(fill.style.clipPath).toContain("polygon(");
   expect(highlightEl.dataset.highlightShape).toBe("quad");
 });
 
@@ -170,11 +186,13 @@ test("MapLibre projection highlight: bbox rectangle fallback remains when corner
   container.appendChild(highlightEl);
 
   const viewport = { bbox: [100, 150, 600, 550] };
-  updateHighlightFromViewport(viewport, modelBounds, highlightEl);
+  updateHighlightFromViewport(null, viewport, modelBounds, highlightEl);
 
   const box = highlightEl.querySelector(".highlight-box");
   expect(box).toBeTruthy();
-  expect(box.style.clipPath).toBe("");
+  const fill = box.querySelector(".highlight-box-fill");
+  expect(fill).toBeTruthy();
+  expect(fill.style.clipPath).toBe("");
   expect(highlightEl.dataset.highlightShape).toBe("bbox");
 });
 
@@ -195,11 +213,13 @@ test("MapLibre projection highlight: invalid corners fall back safely to bbox re
       nw: { x: 100, y: 550 },
     },
   };
-  updateHighlightFromViewport(viewport, modelBounds, highlightEl);
+  updateHighlightFromViewport(null, viewport, modelBounds, highlightEl);
 
   const box = highlightEl.querySelector(".highlight-box");
   expect(box).toBeTruthy();
-  expect(box.style.clipPath).toBe("");
+  const fill = box.querySelector(".highlight-box-fill");
+  expect(fill).toBeTruthy();
+  expect(fill.style.clipPath).toBe("");
   expect(highlightEl.dataset.highlightShape).toBe("bbox");
 });
 
@@ -214,7 +234,7 @@ test("MapLibre projection highlight: full extent keeps overlay hidden", async ()
   container.appendChild(highlightEl);
 
   const viewport = { bbox: [0, 0, 1000, 800] };
-  updateHighlightFromViewport(viewport, modelBounds, highlightEl);
+  updateHighlightFromViewport(null, viewport, modelBounds, highlightEl);
 
   expect(highlightEl.style.display).toBe("none");
 });
@@ -230,7 +250,67 @@ test("MapLibre projection highlight: invalid container geometry hides overlay (n
   container.appendChild(highlightEl);
 
   const viewport = { bbox: [100, 150, 600, 550] };
-  updateHighlightFromViewport(viewport, modelBounds, highlightEl);
+  updateHighlightFromViewport(null, viewport, modelBounds, highlightEl);
 
   expect(highlightEl.style.display).toBe("none");
+});
+
+test("MapLibre projection highlight: uses map.project when map is provided", async () => {
+  globalThis.proj4 = vi.fn((from, to, xy) => {
+    void from;
+    void to;
+    return [xy[0] / 1000, xy[1] / 1000];
+  });
+  const { updateHighlightFromViewport } = await loadProjectionHighlightModule();
+
+  const projectSpy = vi.fn((lngLat) => {
+    const lng = Array.isArray(lngLat) ? lngLat[0] : lngLat.lng;
+    const lat = Array.isArray(lngLat) ? lngLat[1] : lngLat.lat;
+    return { x: lng * 400 + 10, y: lat * 400 + 20 };
+  });
+  const mockMap = {
+    project: projectSpy,
+    getContainer: () => ({
+      clientWidth: 800,
+      clientHeight: 600,
+      getBoundingClientRect: () => ({
+        left: 5,
+        top: 7,
+        width: 800,
+        height: 600,
+      }),
+    }),
+  };
+
+  const itm = { west: 0, south: 0, east: 1000, north: 800 };
+  const modelBounds = { itm };
+  const container = createProjectionDomElement({ w: 800, h: 600 });
+  const highlightEl = createProjectionDomElement({ w: 0, h: 0 });
+  container.appendChild(highlightEl);
+  container.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    width: 800,
+    height: 600,
+  });
+
+  const viewport = {
+    bbox: [100, 100, 700, 700],
+    corners: {
+      sw: { x: 100, y: 100 },
+      se: { x: 700, y: 100 },
+      ne: { x: 700, y: 700 },
+      nw: { x: 100, y: 700 },
+    },
+  };
+  updateHighlightFromViewport(mockMap, viewport, modelBounds, highlightEl);
+
+  expect(projectSpy).toHaveBeenCalled();
+  const box = highlightEl.querySelector(".highlight-box");
+  expect(box).toBeTruthy();
+  const fill = box.querySelector(".highlight-box-fill");
+  expect(fill).toBeTruthy();
+  expect(highlightEl.dataset.highlightShape).toBe("quad");
+  expect(fill.style.clipPath).toContain("polygon(");
+  delete globalThis.proj4;
 });

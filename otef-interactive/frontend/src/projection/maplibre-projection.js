@@ -117,7 +117,86 @@ function getValidCorners(corners) {
   return [sw, se, ne, nw];
 }
 
-export function updateHighlightFromViewport(viewport, modelBounds, highlightEl) {
+/**
+ * ITM easting/northing → WGS84 for MapLibre.project (uses global proj4).
+ * @returns {{ lng: number, lat: number } | null}
+ */
+function itmPointToLngLat(itmX, itmY) {
+  if (typeof proj4 === "undefined") {
+    return null;
+  }
+  const out = proj4("EPSG:2039", "EPSG:4326", [itmX, itmY]);
+  if (
+    !Array.isArray(out) ||
+    out.length < 2 ||
+    !Number.isFinite(out[0]) ||
+    !Number.isFinite(out[1])
+  ) {
+    return null;
+  }
+  return { lng: out[0], lat: out[1] };
+}
+
+/**
+ * MapLibre map pixel space → offset into highlight overlay parent (sibling layout safe).
+ */
+function projectItmToOverlayPoint(map, highlightEl, itmX, itmY) {
+  if (!map || typeof map.project !== "function" || typeof map.getContainer !== "function") {
+    return null;
+  }
+  const lngLat = itmPointToLngLat(itmX, itmY);
+  if (!lngLat) {
+    return null;
+  }
+  let mapPoint;
+  try {
+    mapPoint = map.project([lngLat.lng, lngLat.lat]);
+  } catch {
+    return null;
+  }
+  if (!mapPoint || !Number.isFinite(mapPoint.x) || !Number.isFinite(mapPoint.y)) {
+    return null;
+  }
+  const mapEl = map.getContainer();
+  if (!mapEl || !highlightEl) {
+    return null;
+  }
+  if (
+    typeof mapEl.getBoundingClientRect !== "function" ||
+    typeof highlightEl.getBoundingClientRect !== "function"
+  ) {
+    return { x: mapPoint.x, y: mapPoint.y };
+  }
+  const mr = mapEl.getBoundingClientRect();
+  const hr = highlightEl.getBoundingClientRect();
+  return {
+    x: mapPoint.x + (mr.left - hr.left),
+    y: mapPoint.y + (mr.top - hr.top),
+  };
+}
+
+function tryHighlightPointsFromMapProject(map, highlightEl, itmPoints) {
+  if (!map || !Array.isArray(itmPoints) || itmPoints.length === 0) {
+    return null;
+  }
+  const points = [];
+  for (const p of itmPoints) {
+    const xy = projectItmToOverlayPoint(map, highlightEl, p.x, p.y);
+    if (!xy) {
+      return null;
+    }
+    points.push(xy);
+  }
+  return points;
+}
+
+/**
+ * @param {object | null} map MapLibre Map; when null, uses legacy linear ITM→overlay (tests only).
+ * @param {object} viewport
+ * @param {object} modelBounds
+ * @param {HTMLElement} highlightEl
+ */
+export function updateHighlightFromViewport(map, viewport, modelBounds, highlightEl) {
   if (
     !viewport ||
     !Array.isArray(viewport.bbox) ||
@@ -139,8 +218,9 @@ export function updateHighlightFromViewport(viewport, modelBounds, highlightEl) 
 
   const container = highlightEl.parentElement;
   const mb = modelBounds.itm;
-  const cw = container?.clientWidth ?? 0;
-  const ch = container?.clientHeight ?? 0;
+  const mapEl = map && typeof map.getContainer === "function" ? map.getContainer() : null;
+  const cw = mapEl?.clientWidth ?? container?.clientWidth ?? 0;
+  const ch = mapEl?.clientHeight ?? container?.clientHeight ?? 0;
   if (
     !container ||
     !cw ||
@@ -166,37 +246,79 @@ export function updateHighlightFromViewport(viewport, modelBounds, highlightEl) 
     box.className = "highlight-box";
     highlightEl.appendChild(box);
   }
+  let fill = box.querySelector(".highlight-box-fill");
+  if (!fill) {
+    fill = document.createElement("div");
+    fill.className = "highlight-box-fill";
+    box.appendChild(fill);
+  }
+
+  const applyBoxFromPoints = (points, shape) => {
+    const minX = Math.min(...points.map((point) => point.x));
+    const maxX = Math.max(...points.map((point) => point.x));
+    const minY = Math.min(...points.map((point) => point.y));
+    const maxY = Math.max(...points.map((point) => point.y));
+    const width = maxX - minX;
+    const height = maxY - minY;
+    if (width <= 0 || height <= 0) {
+      return false;
+    }
+    box.style.left = `${minX}px`;
+    box.style.top = `${minY}px`;
+    box.style.width = `${width}px`;
+    box.style.height = `${height}px`;
+    fill.style.left = "0";
+    fill.style.top = "0";
+    fill.style.width = "100%";
+    fill.style.height = "100%";
+    if (shape === "quad") {
+      const polygon = points
+        .map((point) => `${point.x - minX}px ${point.y - minY}px`)
+        .join(", ");
+      fill.style.clipPath = `polygon(${polygon})`;
+      fill.style.webkitClipPath = `polygon(${polygon})`;
+    } else {
+      fill.style.clipPath = "";
+      fill.style.webkitClipPath = "";
+    }
+    if (highlightEl.dataset) {
+      highlightEl.dataset.highlightShape = shape;
+    }
+    return true;
+  };
 
   const corners = getValidCorners(viewport.corners);
   if (corners) {
+    const mapPoints = tryHighlightPointsFromMapProject(
+      map,
+      highlightEl,
+      corners.map((c) => ({ x: c.x, y: c.y })),
+    );
+    if (mapPoints) {
+      if (applyBoxFromPoints(mapPoints, "quad")) {
+        return;
+      }
+    }
     const points = corners.map((corner) => ({
       x: toPixelX(corner.x),
       y: toPixelY(corner.y),
     }));
     const allPointsFinite = points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
-    if (allPointsFinite) {
-      const minX = Math.min(...points.map((point) => point.x));
-      const maxX = Math.max(...points.map((point) => point.x));
-      const minY = Math.min(...points.map((point) => point.y));
-      const maxY = Math.max(...points.map((point) => point.y));
-      const width = maxX - minX;
-      const height = maxY - minY;
-      if (width > 0 && height > 0) {
-        box.style.left = `${minX}px`;
-        box.style.top = `${minY}px`;
-        box.style.width = `${width}px`;
-        box.style.height = `${height}px`;
-        const polygon = points
-          .map((point) => `${point.x - minX}px ${point.y - minY}px`)
-          .join(", ");
-        box.style.clipPath = `polygon(${polygon})`;
-        box.style.webkitClipPath = `polygon(${polygon})`;
-        if (highlightEl.dataset) {
-          highlightEl.dataset.highlightShape = "quad";
-        }
-        return;
-      }
+    if (allPointsFinite && applyBoxFromPoints(points, "quad")) {
+      return;
     }
+  }
+
+  const [minE, minN, maxE, maxN] = viewport.bbox;
+  const bboxCornersItm = [
+    { x: minE, y: minN },
+    { x: maxE, y: minN },
+    { x: maxE, y: maxN },
+    { x: minE, y: maxN },
+  ];
+  const bboxMapPoints = tryHighlightPointsFromMapProject(map, highlightEl, bboxCornersItm);
+  if (bboxMapPoints && applyBoxFromPoints(bboxMapPoints, "bbox")) {
+    return;
   }
 
   const x1 = toPixelX(viewport.bbox[0]);
@@ -212,8 +334,12 @@ export function updateHighlightFromViewport(viewport, modelBounds, highlightEl) 
   box.style.top = `${y}px`;
   box.style.width = `${w}px`;
   box.style.height = `${h}px`;
-  box.style.clipPath = "";
-  box.style.webkitClipPath = "";
+  fill.style.left = "0";
+  fill.style.top = "0";
+  fill.style.width = "100%";
+  fill.style.height = "100%";
+  fill.style.clipPath = "";
+  fill.style.webkitClipPath = "";
   if (highlightEl.dataset) {
     highlightEl.dataset.highlightShape = "bbox";
   }

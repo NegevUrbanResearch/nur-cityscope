@@ -356,8 +356,8 @@ class OTEFViewportState(models.Model):
         "parcels": False,
         "majorRoads": False,
         "smallRoads": False,
-        "projector_base.SEA": True,
-        "projector_base.רקע_שחור": True,
+        "projector_base.SEA": False,
+        "projector_base.רקע_שחור": False,
     }
 
     # Default viewport (EPSG:2039 ITM coordinates for Otef area)

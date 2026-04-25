@@ -159,13 +159,8 @@ class Command(BaseCommand):
                     # Full layer ID format: "group_id.layer_id"
                     full_layer_id = f"{pack_id}.{layer_id}"
 
-                    # Default specific layers to enabled
+                    # New LayerState rows default to disabled (incl. SEA, רקע_שחור, model_base)
                     layer_enabled = False
-                    if full_layer_id in ['projector_base.SEA', 'projector_base.רקע_שחור']:
-                        layer_enabled = True
-                    # model_base defaults to disabled
-                    if full_layer_id == 'projector_base.model_base':
-                        layer_enabled = False
 
                     # Create or update LayerState
                     layer_state, layer_created = LayerState.objects.get_or_create(

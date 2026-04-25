@@ -79,50 +79,7 @@ function applyViewportToMap(map, viewport, startRemoteApplyLock) {
   return true;
 }
 
-function mapDimensionsSnapshot(map) {
-  const mapContainer = typeof map?.getContainer === "function" ? map.getContainer() : null;
-  const root = typeof document !== "undefined" ? document.documentElement : null;
-  return {
-    container: {
-      width: Number.isFinite(root?.clientWidth) ? root.clientWidth : null,
-      height: Number.isFinite(root?.clientHeight) ? root.clientHeight : null,
-    },
-    mapContainer: mapContainer
-      ? {
-          width: Number.isFinite(mapContainer.clientWidth) ? mapContainer.clientWidth : null,
-          height: Number.isFinite(mapContainer.clientHeight) ? mapContainer.clientHeight : null,
-        }
-      : null,
-  };
-}
-
-function mapStateSnapshot(map) {
-  if (!map) return null;
-  const snapshot = {};
-  if (typeof map.getBounds === "function") {
-    const bounds = map.getBounds();
-    if (bounds) {
-      snapshot.bounds = {
-        west: bounds.getWest(),
-        south: bounds.getSouth(),
-        east: bounds.getEast(),
-        north: bounds.getNorth(),
-      };
-    }
-  }
-  if (typeof map.getCenter === "function") {
-    const center = map.getCenter();
-    if (center) {
-      snapshot.center = { lng: center.lng, lat: center.lat };
-    }
-  }
-  if (typeof map.getZoom === "function") {
-    snapshot.zoom = map.getZoom();
-  }
-  return snapshot;
-}
-
-export function setupViewportSync(map, dataContext, debugLogger = null) {
+export function setupViewportSync(map, dataContext) {
   if (!map || !dataContext || typeof dataContext.subscribe !== "function") {
     return () => {};
   }
@@ -142,11 +99,13 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
   let usingWindowResizeFallback = false;
   let handleWindowResize = null;
   let syncActive = true;
-  const logDebug = (eventName, payload = {}) => {
-    if (typeof debugLogger === "function") {
-      debugLogger(eventName, payload);
-    }
-  };
+  /** Skips the next moveend/zoomend-driven report (used after a post-resize sync report). */
+  let suppressNextGisMapChange = false;
+  /** While true, `moveend`/`zoomend` reports are ignored until the post-resize `idle` callback runs. */
+  let postResizeGisSyncPending = false;
+  /** If resize settle wanted a context report but remote apply was active, flush on unlock. */
+  let pendingPostResizeContextReport = false;
+  let postResizeIdleHandler = null;
 
   const clearRemoteUnlockTimer = () => {
     if (!remoteUnlockTimer) return;
@@ -183,6 +142,13 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
     clearRemoteUnlockTimer();
     clearRemoteUnlockHandlers();
     isApplyingRemote = false;
+  };
+
+  const clearPostResizeIdleRegistration = () => {
+    if (postResizeIdleHandler && typeof map.off === "function") {
+      map.off("idle", postResizeIdleHandler);
+    }
+    postResizeIdleHandler = null;
   };
 
   const reportToContext = (onInteractionGuard) => {
@@ -232,17 +198,6 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
       },
       "gis",
     );
-    logDebug("gis_report_to_context", {
-      viewport: {
-        source: "gis",
-        bbox,
-        zoom: map.getZoom(),
-        corners,
-      },
-      reportResult: result,
-      dimensions: mapDimensionsSnapshot(map),
-      mapSnapshot: mapStateSnapshot(map),
-    });
 
     if (
       typeof onInteractionGuard === "function" &&
@@ -280,24 +235,30 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
     }
   };
 
+  const runPostResizeContextReport = () => {
+    if (!syncActive) return;
+    if (isApplyingRemote) {
+      pendingPostResizeContextReport = true;
+      return;
+    }
+    suppressNextGisMapChange = true;
+    reportToContext(null);
+  };
+
   const finishRemoteApplyUnlock = () => {
     clearRemoteApplyLockOnly();
-    logDebug("remote_apply_unlock", {
-      dimensions: mapDimensionsSnapshot(map),
-      mapSnapshot: mapStateSnapshot(map),
-    });
     if (syncActive) {
       flushGISReportRetry();
+      if (pendingPostResizeContextReport) {
+        pendingPostResizeContextReport = false;
+        runPostResizeContextReport();
+      }
     }
   };
 
   const startRemoteApplyLock = () => {
     clearRemoteApplyLockOnly();
     isApplyingRemote = true;
-    logDebug("remote_apply_lock", {
-      dimensions: mapDimensionsSnapshot(map),
-      mapSnapshot: mapStateSnapshot(map),
-    });
 
     const handleUnlockEvent = () => {
       finishRemoteApplyUnlock();
@@ -317,13 +278,6 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
   const applyAcceptedViewport = (viewport, options = {}) => {
     const seq = viewport && viewport.seq;
     const handled = applyViewportToMap(map, viewport, startRemoteApplyLock);
-    logDebug("context_viewport_applied", {
-      viewport,
-      handled,
-      deferredFromResizeSettle: options.deferredFromResizeSettle === true,
-      dimensions: mapDimensionsSnapshot(map),
-      mapSnapshot: mapStateSnapshot(map),
-    });
     if (handled && Number.isFinite(seq)) {
       lastAppliedViewportSeq = seq;
     }
@@ -333,28 +287,37 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
     if (!queuedViewportDuringResize) return;
     const queuedViewport = queuedViewportDuringResize;
     resetResizeQueue();
-    logDebug("context_viewport_apply_deferred_resize_settle", {
-      viewport: queuedViewport,
-      dimensions: mapDimensionsSnapshot(map),
-      mapSnapshot: mapStateSnapshot(map),
-    });
     applyAcceptedViewport(queuedViewport, { deferredFromResizeSettle: true });
   };
 
+  const schedulePostResizeGisContextSync = () => {
+    clearPostResizeIdleRegistration();
+    postResizeGisSyncPending = true;
+    const onIdle = () => {
+      postResizeIdleHandler = null;
+      postResizeGisSyncPending = false;
+      runPostResizeContextReport();
+    };
+    postResizeIdleHandler = onIdle;
+    if (typeof map.once === "function") {
+      map.once("idle", onIdle);
+    } else {
+      requestAnimationFrame(() => {
+        postResizeIdleHandler = null;
+        postResizeGisSyncPending = false;
+        onIdle();
+      });
+    }
+    if (typeof map.resize === "function") {
+      map.resize();
+    }
+  };
+
   const markResizeActivity = (origin) => {
+    void origin;
     if (!syncActive) return;
     if (!isResizeActive) {
       isResizeActive = true;
-      logDebug("map_resize_active_started", {
-        origin,
-        dimensions: mapDimensionsSnapshot(map),
-        mapSnapshot: mapStateSnapshot(map),
-      });
-    } else {
-      logDebug("map_resize_active_tick", {
-        origin,
-        dimensions: mapDimensionsSnapshot(map),
-      });
     }
 
     clearResizeSettleTimer();
@@ -362,13 +325,8 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
       resizeSettleTimer = null;
       if (!syncActive) return;
       isResizeActive = false;
-      logDebug("map_resize_active_settled", {
-        origin,
-        hadQueuedViewport: Boolean(queuedViewportDuringResize),
-        dimensions: mapDimensionsSnapshot(map),
-        mapSnapshot: mapStateSnapshot(map),
-      });
       maybeApplyQueuedViewportAfterResize();
+      schedulePostResizeGisContextSync();
     }, VIEWPORT_RESIZE_SETTLE_DEBOUNCE_MS);
   };
 
@@ -387,19 +345,10 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
     ) {
       lastAppliedViewportSeq = -1;
       resetResizeQueue();
-      logDebug("context_viewport_seq_cursor_reset_reconnect", {
-        viewport,
-        previousSeqCursor: seqCursor,
-      });
       return true;
     }
 
     if (seq <= seqCursor) {
-      logDebug("context_viewport_ignored_stale_seq", {
-        viewport,
-        lastAppliedViewportSeq,
-        queuedViewportSeqDuringResize,
-      });
       return false;
     }
 
@@ -410,20 +359,9 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
     queuedViewportDuringResize = viewport;
     queuedViewportSeqDuringResize =
       viewport && Number.isFinite(viewport.seq) ? viewport.seq : null;
-    logDebug("context_viewport_queued_resize_active", {
-      viewport,
-      queuedViewportSeqDuringResize,
-      dimensions: mapDimensionsSnapshot(map),
-      mapSnapshot: mapStateSnapshot(map),
-    });
   };
 
   const unsubscribeViewport = dataContext.subscribe("viewport", (viewport) => {
-    logDebug("context_viewport_received", {
-      viewport,
-      dimensions: mapDimensionsSnapshot(map),
-      mapSnapshot: mapStateSnapshot(map),
-    });
     if (!evaluateViewportSeqAcceptance(viewport)) {
       return;
     }
@@ -437,20 +375,19 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
   });
 
   const handleMapChange = () => {
-    logDebug("map_change_event", {
-      dimensions: mapDimensionsSnapshot(map),
-      mapSnapshot: mapStateSnapshot(map),
-    });
+    if (suppressNextGisMapChange) {
+      suppressNextGisMapChange = false;
+      return;
+    }
+    if (postResizeGisSyncPending) {
+      return;
+    }
     if (pendingReportTimer) return;
     pendingReportTimer = setTimeout(() => {
       pendingReportTimer = null;
       if (!syncActive) return;
       if (isApplyingRemote) return;
       if (isResizeActive) {
-        logDebug("gis_report_suppressed_resize_active", {
-          dimensions: mapDimensionsSnapshot(map),
-          mapSnapshot: mapStateSnapshot(map),
-        });
         return;
       }
       reportToContext(onGISReportInteractionGuard);
@@ -476,6 +413,7 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
 
   return () => {
     syncActive = false;
+    clearPostResizeIdleRegistration();
     if (typeof unsubscribeViewport === "function") unsubscribeViewport();
     map.off("moveend", handleMapChange);
     map.off("zoomend", handleMapChange);
@@ -487,6 +425,9 @@ export function setupViewportSync(map, dataContext, debugLogger = null) {
     clearResizeSettleTimer();
     resetResizeQueue();
     gisReportBlockedPending = false;
+    pendingPostResizeContextReport = false;
+    postResizeGisSyncPending = false;
+    suppressNextGisMapChange = false;
     clearRemoteApplyLockOnly();
     if (resizeObserver) {
       resizeObserver.disconnect();

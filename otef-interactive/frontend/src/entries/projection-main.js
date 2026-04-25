@@ -15,11 +15,6 @@ import {
 } from "../shared/maplibre-flow-animation.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
-import {
-  captureElementMetrics,
-  captureMapSnapshot,
-  createViewportDebugPanel,
-} from "../shared/viewport-debug-panel.js";
 
 function getEffectiveProjectionLayerGroups() {
   if (
@@ -140,32 +135,7 @@ async function bootstrapProjectionRuntime() {
 
   const map = createProjectionMap("projectionMap", modelBounds);
   const highlightEl = document.getElementById("highlightOverlay");
-  const debugPanel = createViewportDebugPanel({ pageId: "projection" });
   let lastViewport = null;
-
-  const getHighlightMetrics = () => {
-    const box = highlightEl?.querySelector?.(".highlight-box");
-    return {
-      visible: !!(highlightEl && highlightEl.style.display !== "none"),
-      shape: highlightEl?.dataset?.highlightShape || null,
-      overlay: captureElementMetrics(highlightEl),
-      box: captureElementMetrics(box),
-      boxClipPath:
-        box && box.style
-          ? box.style.clipPath || box.style.webkitClipPath || null
-          : null,
-    };
-  };
-
-  const getLayoutMetrics = () => {
-    const mapContainer = typeof map.getContainer === "function" ? map.getContainer() : null;
-    const displayContainer = document.getElementById("displayContainer");
-    return {
-      container: captureElementMetrics(document.documentElement),
-      displayContainer: captureElementMetrics(displayContainer),
-      mapContainer: captureElementMetrics(mapContainer),
-    };
-  };
 
   const disposers = [];
   const registerDisposer = (fn) => {
@@ -184,14 +154,6 @@ async function bootstrapProjectionRuntime() {
   if (typeof window !== "undefined") {
     window.addEventListener("beforeunload", cleanup, { once: true });
   }
-  registerDisposer(() => debugPanel.destroy());
-
-  debugPanel.log("projection_runtime_bootstrapped", {
-    viewport: OTEFDataContext.getViewport?.(),
-    dimensions: getLayoutMetrics(),
-    highlight: getHighlightMetrics(),
-    mapSnapshot: captureMapSnapshot(map),
-  });
 
   map.on("load", async () => {
     if (typeof window !== "undefined") {
@@ -310,13 +272,7 @@ async function bootstrapProjectionRuntime() {
 
     lastViewport = OTEFDataContext.getViewport();
     if (lastViewport) {
-      updateHighlightFromViewport(lastViewport, modelBounds, highlightEl);
-      debugPanel.log("projection_initial_highlight_update", {
-        viewport: lastViewport,
-        dimensions: getLayoutMetrics(),
-        highlight: getHighlightMetrics(),
-        mapSnapshot: captureMapSnapshot(map),
-      });
+      updateHighlightFromViewport(map, lastViewport, modelBounds, highlightEl);
     }
 
     await loadProjectionCuratedLayers(map);
@@ -330,13 +286,7 @@ async function bootstrapProjectionRuntime() {
     registerDisposer(
       OTEFDataContext.subscribe("viewport", (viewport) => {
         lastViewport = viewport;
-        updateHighlightFromViewport(viewport, modelBounds, highlightEl);
-        debugPanel.log("projection_viewport_applied", {
-          viewport,
-          dimensions: getLayoutMetrics(),
-          highlight: getHighlightMetrics(),
-          mapSnapshot: captureMapSnapshot(map),
-        });
+        updateHighlightFromViewport(map, viewport, modelBounds, highlightEl);
       }),
     );
 
@@ -450,29 +400,38 @@ async function bootstrapProjectionRuntime() {
   }
 
   let resizeTimer = null;
-  const onResize = (trigger = "window") => {
+  let pendingResizeIdleHandler = null;
+  const onResize = () => {
     if (resizeTimer) {
       window.clearTimeout(resizeTimer);
     }
     resizeTimer = window.setTimeout(() => {
-      map.resize();
-      window.requestAnimationFrame(() => {
-        map.resize();
-        if (lastViewport) {
-          updateHighlightFromViewport(lastViewport, modelBounds, highlightEl);
-        }
-        debugPanel.log("projection_resize_reflow", {
-          trigger,
-          viewport: lastViewport,
-          dimensions: getLayoutMetrics(),
-          highlight: getHighlightMetrics(),
-          mapSnapshot: captureMapSnapshot(map),
-        });
-      });
       resizeTimer = null;
+      const syncHighlight = () => {
+        if (lastViewport) {
+          updateHighlightFromViewport(map, lastViewport, modelBounds, highlightEl);
+        }
+      };
+      if (typeof map.resize === "function") {
+        map.resize();
+      }
+      if (typeof map.once === "function") {
+        if (pendingResizeIdleHandler) {
+          map.off("idle", pendingResizeIdleHandler);
+        }
+        pendingResizeIdleHandler = () => {
+          pendingResizeIdleHandler = null;
+          syncHighlight();
+        };
+        map.once("idle", pendingResizeIdleHandler);
+      } else {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(syncHighlight);
+        });
+      }
     }, 120);
   };
-  const handleWindowResize = () => onResize("window");
+  const handleWindowResize = () => onResize();
   window.addEventListener("resize", handleWindowResize);
 
   let resizeObserver = null;
@@ -484,7 +443,7 @@ async function bootstrapProjectionRuntime() {
       resizeObserver.observe(target);
     };
 
-    resizeObserver = new ResizeObserver(() => onResize("observer"));
+    resizeObserver = new ResizeObserver(() => onResize());
     observeTarget(document.getElementById("displayContainer"));
     observeTarget(document.getElementById("projectionMap"));
     observeTarget(highlightEl?.parentElement || null);
@@ -494,6 +453,10 @@ async function bootstrapProjectionRuntime() {
     if (resizeTimer) {
       window.clearTimeout(resizeTimer);
       resizeTimer = null;
+    }
+    if (pendingResizeIdleHandler && typeof map.off === "function") {
+      map.off("idle", pendingResizeIdleHandler);
+      pendingResizeIdleHandler = null;
     }
     if (resizeObserver) {
       resizeObserver.disconnect();

@@ -28,7 +28,7 @@ function createMapMock({ bounds, zoom, fitBoundsZoom }) {
     listeners.set(eventName, eventListeners);
   };
 
-  return {
+  const map = {
     fitBoundsCalls,
     setZoomCalls,
     getBounds: () => currentBounds,
@@ -72,6 +72,12 @@ function createMapMock({ bounds, zoom, fitBoundsZoom }) {
     },
     listenerCount: (eventName) => (listeners.get(eventName) || []).length,
   };
+  map.resize = vi.fn(() => {
+    setTimeout(() => {
+      map.emit("idle");
+    }, 0);
+  });
+  return map;
 }
 
 function createDataContextMock() {
@@ -171,10 +177,9 @@ describe("maplibre-viewport-sync", () => {
 
   it("queues viewport updates during active resize churn and applies latest once on settle", () => {
     const resizeObserver = installResizeObserverMock();
-    const debugLogger = vi.fn();
     const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
     const dataContext = createDataContextMock();
-    const cleanup = setupViewportSync(map, dataContext, debugLogger);
+    const cleanup = setupViewportSync(map, dataContext);
 
     resizeObserver.triggerAll();
     resizeObserver.triggerAll();
@@ -203,34 +208,21 @@ describe("maplibre-viewport-sync", () => {
       [14, 14],
     ]);
     expect(map.setZoomCalls).toEqual([{ zoom: 8, options: { animate: false } }]);
-    expect(debugLogger).toHaveBeenCalledWith(
-      "context_viewport_queued_resize_active",
-      expect.any(Object),
-    );
-    expect(debugLogger).toHaveBeenCalledWith(
-      "context_viewport_apply_deferred_resize_settle",
-      expect.any(Object),
-    );
 
     cleanup();
   });
 
   it("suppresses GIS report emissions while resize is active", () => {
     const resizeObserver = installResizeObserverMock();
-    const debugLogger = vi.fn();
     const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
     const dataContext = createDataContextMock();
-    const cleanup = setupViewportSync(map, dataContext, debugLogger);
+    const cleanup = setupViewportSync(map, dataContext);
 
     resizeObserver.triggerAll();
     map.emit("moveend");
     vi.runOnlyPendingTimers();
 
     expect(dataContext.updateViewportFromUI).not.toHaveBeenCalled();
-    expect(debugLogger).toHaveBeenCalledWith(
-      "gis_report_suppressed_resize_active",
-      expect.any(Object),
-    );
 
     vi.advanceTimersByTime(200);
     map.emit("moveend");
