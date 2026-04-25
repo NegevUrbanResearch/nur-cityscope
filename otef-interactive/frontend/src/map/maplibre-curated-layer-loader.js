@@ -32,6 +32,7 @@ import {
 import { assignPinkNodeDisplayOrders } from "../map-utils/pink-route-optimizer.js";
 import {
   STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
+  pinkProjectionFallbackLineStyle,
   routeLineStylesForDisplayColor,
 } from "../map-utils/pink-route-map-styles.js";
 import {
@@ -286,15 +287,37 @@ export function maplibreLineDashWithLeafletOffset(baseParts, offsetPx) {
 }
 
 /**
+ * Leaflet/Canvas `dashArray` and `lineDashOffset` are in **screen pixels** along the stroke.
+ * MapLibre `line-dasharray` is in **line-width** multiples (visually, dash length is
+ * `dasharray[i] * lineWidth` in px). Convert px-intent to MapLibre by dividing by line width.
+ *
+ * @param {number} lineWidthPx
+ * @param {number[]} dashPartsPx
+ * @param {number | null} offsetPx
+ * @returns {number[]}
+ */
+export function maplibreLineDashFromLeafletPx(lineWidthPx, dashPartsPx, offsetPx) {
+  const w =
+    Number.isFinite(lineWidthPx) && lineWidthPx > 0
+      ? lineWidthPx
+      : 1;
+  const norm = dashPartsPx.map((p) => p / w);
+  if (offsetPx == null || offsetPx === 0) return norm;
+  if (!Number.isFinite(offsetPx)) return norm;
+  return maplibreLineDashWithLeafletOffset(norm, offsetPx / w);
+}
+
+/**
  * Convert a Leaflet polyline-style object to MapLibre line paint + layout.
  * @param {{ color?: string; weight?: number; opacity?: number; dashArray?: string; dashOffset?: string; lineCap?: string; lineJoin?: string }} leafletStyle
  * @returns {{ paint: object; layout: object }}
  */
 export function leafletStyleToMapLibre(leafletStyle) {
   const s = leafletStyle || {};
+  const lineWidthPx = typeof s.weight === "number" ? s.weight : 4;
   const paint = {
     "line-color": s.color || "#FF69B4",
-    "line-width": typeof s.weight === "number" ? s.weight : 4,
+    "line-width": lineWidthPx,
     "line-opacity": typeof s.opacity === "number" ? s.opacity : 1,
   };
 
@@ -307,8 +330,7 @@ export function leafletStyleToMapLibre(leafletStyle) {
       .filter((n) => Number.isFinite(n));
     if (parts.length >= 2) {
       const o = parseLeafletDashOffsetPx(s.dashOffset);
-      paint["line-dasharray"] =
-        o == null || o === 0 ? parts : maplibreLineDashWithLeafletOffset(parts, o);
+      paint["line-dasharray"] = maplibreLineDashFromLeafletPx(lineWidthPx, parts, o);
     }
   }
 
@@ -799,6 +821,8 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
     if (lineFeatures.length > 0) {
       const sourceId = `${fullLayerId}__fallback__src`;
       const layerId = `${fullLayerId}__fallback__0`;
+      const projectionFallbackStroke = pinkProjectionFallbackLineStyle(layerColor || "#00d4ff");
+      const { paint, layout } = leafletStyleToMapLibre(projectionFallbackStroke);
       addCuratedGeoJsonSource(map, sourceId, { type: "FeatureCollection", features: lineFeatures });
       if (map.getSource(sourceId)) {
         try {
@@ -806,13 +830,8 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
             id: layerId,
             type: "line",
             source: sourceId,
-            layout: { "line-cap": "round", "line-join": "round" },
-            paint: {
-              "line-color": layerColor || "#00d4ff",
-              "line-width": 4,
-              "line-opacity": 0.9,
-              "line-dasharray": [10, 10],
-            },
+            layout,
+            paint,
           });
           registerCuratedLayerIds(map, fullLayerId, sourceId, [layerId]);
         } catch (err) {
