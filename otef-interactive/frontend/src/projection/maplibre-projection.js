@@ -24,6 +24,45 @@ if (!maplibregl || !Protocol) {
 const pmtilesProtocol = new Protocol();
 maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);
 
+/**
+ * Hebrew (and other RTL) labels need MapLibre’s optional RTL text plugin. Without it,
+ * line breaking and glyph order are wrong even with good fonts. Uses the published
+ * `@mapbox/mapbox-gl-rtl-text` worker (npm BSD-2-Clause); not proprietary fonts.
+ * @see https://maplibre.org/maplibre-gl-js/docs/examples/display-html-clusters-with-custom-properties/
+ */
+const MAPLIBRE_RTL_TEXT_PLUGIN_URL =
+  "https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.2.3/mapbox-gl-rtl-text.js";
+
+function ensureMapLibreRTLTextPlugin() {
+  if (!maplibregl || typeof maplibregl.setRTLTextPlugin !== "function") {
+    return;
+  }
+  if (typeof maplibregl.getRTLTextPluginStatus === "function") {
+    const status = maplibregl.getRTLTextPluginStatus();
+    if (status === "loaded" || status === "loading") {
+      return;
+    }
+  }
+  try {
+    // Second arg is error callback; third is lazy/deferred init (load before first shaping).
+    maplibregl.setRTLTextPlugin(MAPLIBRE_RTL_TEXT_PLUGIN_URL, null, true);
+  } catch (err) {
+    console.warn(
+      "[maplibre-projection] setRTLTextPlugin failed; Hebrew labels may render incorrectly",
+      err,
+    );
+  }
+}
+
+ensureMapLibreRTLTextPlugin();
+
+/**
+ * Projection map intentionally omits style.glyphs (MapLibre GL JS 5.11+): text-font is
+ * resolved locally (TinySDF + web fonts). That avoids demotiles 404s for stacks like
+ * "Guttman Hatzvi,Noto Sans Regular" and matches @font-face on projection.html. RTL
+ * shaping still uses setRTLTextPlugin above.
+ */
+
 const DEFAULT_FULL_EXTENT_TOLERANCE = 10;
 
 export function createProjectionMap(containerId, modelBounds) {

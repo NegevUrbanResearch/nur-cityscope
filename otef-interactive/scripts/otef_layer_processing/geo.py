@@ -16,6 +16,7 @@ def transform_to_wgs84(input_path: Path, output_path: Path) -> bool:
     """
     Transform a GeoJSON file to WGS84 (EPSG:4326) using pyogrio for high performance.
     """
+    tmp_path = output_path.with_name(output_path.name + ".tmp")
     try:
         # Detect source CRS
         meta = pyogrio.read_info(input_path)
@@ -42,12 +43,19 @@ def transform_to_wgs84(input_path: Path, output_path: Path) -> bool:
             )
             df = df.to_crs("EPSG:4326")
 
-        # Write silently if possible
-        pyogrio.write_dataframe(df, output_path, driver="GeoJSON")
+        # Temp in same directory + replace so readers never see a partial GeoJSON
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        pyogrio.write_dataframe(df, tmp_path, driver="GeoJSON")
+        os.replace(tmp_path, output_path)
         return True
 
     except Exception as e:
         logger.error(f"Failed to transform {input_path}: {e}")
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
         return False
 
 

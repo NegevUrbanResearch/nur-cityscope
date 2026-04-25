@@ -772,4 +772,427 @@ describe("irToMapLibreLayers", () => {
     expect(hatchFill.paint["fill-pattern"]).toBeDefined();
     expect(solidFill.paint["fill-color"]).toBeDefined();
   });
+
+  it("emits a symbol layer from TextString when style.labels is set (polygon annotation geometry)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 11,
+          color: "#202020",
+          haloColor: "#fafafa",
+          haloSize: 1.2,
+          colorOpacity: 1,
+        },
+      },
+    };
+    const result = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig);
+    expect(result).toHaveLength(1);
+    const sym = result.find((L) => L.type === "symbol");
+    expect(sym).toBeDefined();
+    expect(sym.id).toBe("projector_base__שמות_יישובים__labels");
+    expect(sym._labelSymbol).toBe(true);
+    expect(sym.layout["text-field"][0]).toBe("to-string");
+    const tf = sym.layout["text-field"];
+    expect(tf[1][0]).toBe("coalesce");
+    expect(JSON.stringify(tf)).toMatch(/TextString/i);
+    expect(sym.layout["text-size"]).toBe(11);
+    expect(sym.layout["text-justify"]).toBe("auto");
+    expect(sym.paint["text-color"]).toBe("#202020");
+    expect(sym.paint["text-halo-color"]).toBe("#fafafa");
+    expect(sym.paint["text-halo-width"]).toBe(1.2);
+  });
+
+  it("uses labels.offsetEm literal when offsetEmFromProperties is not set", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: { field: "TextString", size: 12, color: "#000000", offsetEm: [0.4, -0.25] },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    expect(sym.layout["text-offset"]).toEqual(["literal", [0.4, -0.25]]);
+  });
+
+  it("falls back to labels.offset when offsetEm is absent", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: { field: "TextString", size: 12, color: "#000000", offset: [0.1, 0.2] },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    expect(sym.layout["text-offset"]).toEqual(["literal", [0.1, 0.2]]);
+  });
+
+  it("uses property-driven text-offset when offsetEmFromProperties is true", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 11,
+          color: "#000000",
+          offsetEm: [0, 0],
+          offsetEmFromProperties: true,
+          offsetEmFieldX: "XOffset",
+          offsetEmFieldY: "YOffset",
+          offsetEmDivisor: 11,
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("ann", "ann", layerConfig).find((L) => L.type === "symbol");
+    const to = sym.layout["text-offset"];
+    expect(to).toEqual([
+      "array",
+      "number",
+      2,
+      [
+        "/",
+        [
+          "to-number",
+          [
+            "coalesce",
+            ["get", "XOFFSET"],
+            ["get", "XOffset"],
+            ["get", "Xoffset"],
+            ["get", "xoffset"],
+            "0",
+          ],
+        ],
+        11,
+      ],
+      [
+        "/",
+        [
+          "to-number",
+          [
+            "coalesce",
+            ["get", "YOFFSET"],
+            ["get", "YOffset"],
+            ["get", "Yoffset"],
+            ["get", "yoffset"],
+            "0",
+          ],
+        ],
+        11,
+      ],
+    ]);
+  });
+
+  it("resolves label text field via case-variant coalesce (TextString path)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: { field: "TextString", size: 12, color: "#000000" },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    const tf = sym.layout["text-field"];
+    expect(tf).toEqual([
+      "to-string",
+      [
+        "coalesce",
+        ["get", "TEXTSTRING"],
+        ["get", "TextString"],
+        ["get", "Textstring"],
+        ["get", "textstring"],
+        "",
+      ],
+    ]);
+  });
+
+  it("appends label symbol for uniqueValue renderer when labels are set (after fill match layers)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "mimush",
+          classes: [
+            {
+              value: "0",
+              symbol: {
+                symbolLayers: [
+                  { type: "fill", fillType: "solid", color: "#d76e89", opacity: 1.0 },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "fill", fillType: "solid", color: "#808080", opacity: 1.0 },
+          ],
+        },
+        labels: { field: "TextString", size: 10, color: "#111111" },
+      },
+    };
+    const result = irToMapLibreLayers("uv.label", "uv__label", layerConfig);
+    const fill = result.find((layer) => layer.type === "fill");
+    const sym = result.find((layer) => layer.type === "symbol");
+    expect(fill).toBeDefined();
+    expect(sym).toBeDefined();
+    expect(sym.id).toBe("uv__label__labels");
+    expect(result.indexOf(sym)).toBeGreaterThan(result.indexOf(fill));
+    expect(sym.layout["text-font"]).toEqual(["Noto Sans Regular"]);
+  });
+
+  it("does not emit text symbol from style.labels for line-only geometry", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#ff0000", width: 2, opacity: 1.0 },
+          ],
+        },
+        labels: { field: "Name", size: 12, color: "#000000" },
+      },
+    };
+    const result = irToMapLibreLayers("line.labels", "line__labels", layerConfig);
+    expect(result.find((L) => L.type === "symbol")).toBeUndefined();
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe("line");
+  });
+
+  it("emits line and symbol when style.labels.leaderLine is true (point-like)", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          leaderLine: true,
+          leaderColor: "#c86464",
+          leaderWidth: 1.33,
+          size: 11,
+          color: "#202020",
+          haloColor: "#fafafa",
+          haloSize: 1.2,
+          colorOpacity: 1,
+        },
+      },
+    };
+    const result = irToMapLibreLayers("projector_base._leader_test_point", "src", layerConfig);
+    const line = result.find((L) => L.type === "line" && L._labelLeader);
+    const sym = result.find((L) => L.type === "symbol" && L._labelSymbol);
+    expect(line).toBeDefined();
+    expect(sym).toBeDefined();
+    expect(sym.layout["text-allow-overlap"]).toBe(true);
+    expect(sym.layout["text-ignore-placement"]).toBe(true);
+    expect(sym.filter).toEqual([
+      "!",
+      ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString"]]],
+    ]);
+    expect(line.id).not.toBe(sym.id);
+    expect(line.filter).toEqual(["==", ["get", "otef_label_leader"], true]);
+    // Stale processed styles used #c86464 as a placeholder; bridge maps to white leaders.
+    expect(line.paint["line-color"]).toBe("#ffffff");
+    expect(sym.layout["text-field"]).toBeDefined();
+    expect("source" in line).toBe(false);
+    expect("source" in sym).toBe(false);
+    expect(line.id).toBe("projector_base___leader_test_point__leader");
+    expect(sym.id).toBe("projector_base___leader_test_point__labels");
+    expect(result.indexOf(line)).toBeLessThan(result.indexOf(sym));
+  });
+
+  it("emits leader line then symbol for polygon when leaderLine is true (annotation envelope)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          leaderLine: true,
+          size: 10,
+          color: "#000000",
+        },
+      },
+    };
+    const result = irToMapLibreLayers("ann.poly", "ann__poly", layerConfig);
+    expect(result).toHaveLength(2);
+    expect(result[0].type).toBe("line");
+    expect(result[0].id).toBe("ann__poly__leader");
+    expect(result[1].type).toBe("symbol");
+    expect(result[1].filter).toEqual([
+      "!",
+      ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString"]]],
+    ]);
+  });
+
+  it("passes through non-legacy leaderColor unchanged", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          leaderLine: true,
+          leaderColor: "#aa1122",
+          size: 10,
+          color: "#000000",
+        },
+      },
+    };
+    const line = irToMapLibreLayers("x.y", "x__y", layerConfig).find((L) => L._labelLeader);
+    expect(line.paint["line-color"]).toBe("#aa1122");
+  });
+
+  it("keeps Guttman Hatzvi in font stack with Noto fallback for MapLibre shaping", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 12,
+          color: "#000000",
+          font: ["Guttman Hatzvi", "Noto Sans Regular"],
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    expect(sym.layout["text-font"]).toEqual(["Guttman Hatzvi", "Noto Sans Regular"]);
+  });
+
+  it("maps Noto Sans Hebrew Regular stacks to Noto Sans Regular for demotiles glyph URLs", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 12,
+          color: "#000000",
+          font: ["Noto Sans Hebrew Regular", "Noto Sans Regular"],
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    expect(sym.layout["text-font"]).toEqual(["Noto Sans Regular"]);
+  });
+
+  it("does not wrap text-field in RLE; Hebrew order is left to setRTLTextPlugin + natural text", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 12,
+          color: "#000000",
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    const tf = sym.layout["text-field"];
+    expect(tf[0]).not.toBe("concat");
+    expect(tf[0]).toBe("to-string");
+  });
+
+  it("uses data-driven text-rotate from Angle when labels.angleFromProperties is true", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 11,
+          color: "#202020",
+          angleFromProperties: true,
+          angleProperty: "Angle",
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig).find(
+      (L) => L.type === "symbol",
+    );
+    expect(sym.layout["text-rotate"]).toEqual([
+      "to-number",
+      [
+        "coalesce",
+        ["get", "ANGLE"],
+        ["get", "Angle"],
+        ["get", "Angle".toLowerCase()],
+        "0",
+      ],
+    ]);
+    expect(sym.layout["text-rotation-alignment"]).toBe("map");
+    expect(sym.layout["text-pitch-alignment"]).toBe("map");
+    expect(sym.layout["text-writing-mode"]).toBeUndefined();
+  });
+
+  it("matches שמות-style label layout: Noto, offsets, no RLE, no hebrew bidi wrap (RTL plugin contract)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          font: ["Guttman Hatzvi", "Noto Sans Regular"],
+          size: 11,
+          color: "#202020",
+          haloColor: "#fafafa",
+          haloSize: 1,
+          colorOpacity: 1,
+          offsetEm: [0, 0],
+          offsetEmFromProperties: true,
+          offsetEmFieldX: "XOffset",
+          offsetEmFieldY: "YOffset",
+          offsetEmDivisor: 11,
+          hebrewBidiWrap: false,
+        },
+      },
+    };
+    const labels = layerConfig.style.labels;
+    expect(labels.hebrewBidiWrap).toBe(false);
+    expect(labels.leaderLine).toBeUndefined();
+    const sym = irToMapLibreLayers("pack.שמות_יישובים", "src", layerConfig).find((L) => L.type === "symbol");
+    const tf = sym.layout["text-field"];
+    expect(tf[0]).toBe("to-string");
+    expect(tf[1][0]).toBe("coalesce");
+    expect(sym.layout["text-rotate"]).toBeUndefined();
+    expect(sym.layout["text-rotation-alignment"]).toBeUndefined();
+    expect(sym.layout["text-allow-overlap"]).toBeUndefined();
+    expect(sym.layout["text-font"]).toEqual(["Guttman Hatzvi", "Noto Sans Regular"]);
+  });
+
+  it("sets text-writing-mode horizontal only when labels.textWritingModeHorizontal is true", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 12,
+          color: "#000000",
+          textWritingModeHorizontal: true,
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig).find((L) => L.type === "symbol");
+    expect(sym.layout["text-writing-mode"]).toEqual(["literal", ["horizontal"]]);
+  });
 });

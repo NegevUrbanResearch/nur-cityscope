@@ -49,10 +49,38 @@ function createProjectionDomElement(size) {
   return el;
 }
 
+const EXPECTED_RTL_PLUGIN_URL =
+  "https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.2.3/mapbox-gl-rtl-text.js";
+
 async function loadProjectionHighlightModule() {
   vi.resetModules();
   globalThis.maplibregl = {
     addProtocol: vi.fn(),
+    getRTLTextPluginStatus: vi.fn(() => "unavailable"),
+    setRTLTextPlugin: vi.fn(),
+  };
+  globalThis.pmtiles = {
+    Protocol: class {
+      constructor() {
+        this.tile = vi.fn();
+      }
+    },
+  };
+  globalThis.document = {
+    createElement() {
+      return createProjectionDomElement({ w: 0, h: 0 });
+    },
+  };
+  return import("../../frontend/src/projection/maplibre-projection.js");
+}
+
+/** @param {string} status value from getRTLTextPluginStatus (e.g. unavailable, loaded) */
+async function loadProjectionModuleWithRtlStatus(status) {
+  vi.resetModules();
+  globalThis.maplibregl = {
+    addProtocol: vi.fn(),
+    getRTLTextPluginStatus: vi.fn(() => status),
+    setRTLTextPlugin: vi.fn(),
   };
   globalThis.pmtiles = {
     Protocol: class {
@@ -313,4 +341,22 @@ test("MapLibre projection highlight: uses map.project when map is provided", asy
   expect(highlightEl.dataset.highlightShape).toBe("quad");
   expect(fill.style.clipPath).toContain("polygon(");
   delete globalThis.proj4;
+});
+
+test("MapLibre projection: RTL text plugin is set once with URL, null callback, and lazy third arg", async () => {
+  await loadProjectionHighlightModule();
+  const set = globalThis.maplibregl.setRTLTextPlugin;
+  expect(set).toHaveBeenCalledTimes(1);
+  expect(set).toHaveBeenCalledWith(EXPECTED_RTL_PLUGIN_URL, null, true);
+});
+
+test("MapLibre projection: skips setRTLTextPlugin when getRTLTextPluginStatus is loaded", async () => {
+  await loadProjectionModuleWithRtlStatus("loaded");
+  const set = globalThis.maplibregl.setRTLTextPlugin;
+  expect(set).not.toHaveBeenCalled();
+});
+
+test("MapLibre projection: skips setRTLTextPlugin when getRTLTextPluginStatus is loading", async () => {
+  await loadProjectionModuleWithRtlStatus("loading");
+  expect(globalThis.maplibregl.setRTLTextPlugin).not.toHaveBeenCalled();
 });

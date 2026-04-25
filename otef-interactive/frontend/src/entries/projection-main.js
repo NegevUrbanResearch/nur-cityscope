@@ -134,6 +134,14 @@ async function bootstrapProjectionRuntime() {
     updateModelBaseImageVisibility(getEffectiveProjectionLayerGroups(), modelImgEl);
   }
 
+  if (typeof document !== "undefined" && document.fonts && typeof document.fonts.load === "function") {
+    try {
+      await document.fonts.load("11px 'Guttman Hatzvi'");
+    } catch (err) {
+      console.warn("[projection-main] Guttman Hatzvi font preload failed; labels may flash", err);
+    }
+  }
+
   const map = createProjectionMap("projectionMap", modelBounds);
   const highlightEl = document.getElementById("highlightOverlay");
   let lastViewport = null;
@@ -281,8 +289,13 @@ async function bootstrapProjectionRuntime() {
     await loadProjectionCuratedLayers(map);
 
     registerDisposer(
-      OTEFDataContext.subscribe("layerGroups", (groups) => {
-        void refreshProjectionCuratedLayers({ groupsOverride: groups });
+      OTEFDataContext.subscribe("layerGroups", () => {
+        // Raw `groups` from the event omit LayerStateHelper merge rules (e.g. שמות_יישובים
+        // + Locations_Lines → one row with fullLayerIds). Sync must use the same effective
+        // groups as loadProjectionCuratedLayers or Locations_Lines never loads on toggle.
+        void refreshProjectionCuratedLayers({
+          groupsOverride: getEffectiveProjectionLayerGroups(),
+        });
       }),
     );
 

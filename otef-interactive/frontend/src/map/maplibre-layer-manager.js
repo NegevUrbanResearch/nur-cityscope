@@ -80,7 +80,10 @@ function getOrCreateMapState(map) {
 // Intentionally per-layer only: a full id is enabled if layer.enabled is truthy.
 // group.enabled is not applied here (unlike resolveLayerState / UI gating) so MapLibre
 // sync stays aligned with registry layers that may still be toggled individually.
-function resolveEnabledFullIds(layerGroups) {
+//
+// When a row carries `fullLayerIds` (e.g. projector_base שמות_יישובים merged with
+// Locations_Lines, or coalesced curated rows), all listed full ids are enabled together.
+export function getEnabledMapFullLayerIds(layerGroups) {
   const enabled = new Set();
   if (!layerGroups) {
     return enabled;
@@ -99,7 +102,20 @@ function resolveEnabledFullIds(layerGroups) {
       continue;
     }
     for (const layer of group.layers || []) {
-      if (layer?.enabled) {
+      if (!layer?.enabled) {
+        continue;
+      }
+      const extra =
+        Array.isArray(layer.fullLayerIds) && layer.fullLayerIds.length > 0
+          ? layer.fullLayerIds
+          : null;
+      if (extra) {
+        for (const fid of extra) {
+          if (fid != null && String(fid).trim() !== "") {
+            enabled.add(String(fid).trim());
+          }
+        }
+      } else {
         enabled.add(`${groupId}.${layer.id}`);
       }
     }
@@ -438,7 +454,7 @@ function addLayerToMap(map, fullId, state, layerStyleOptions) {
 export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
   const state = getOrCreateMapState(map);
   const { loadedSources, loadedLayerIds } = state;
-  const enabledFullIds = resolveEnabledFullIds(layerGroups);
+  const enabledFullIds = getEnabledMapFullLayerIds(layerGroups);
   const trackedFullIds = new Set([
     ...loadedLayerIds.keys(),
     ...loadedSources.keys(),

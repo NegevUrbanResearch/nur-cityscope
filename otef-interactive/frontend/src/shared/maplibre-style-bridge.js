@@ -36,6 +36,268 @@ function uniqueValueClassificationInputExpression(field) {
   return ["to-string", ["coalesce", ...reads, ""]];
 }
 
+/**
+ * Text label field: same case-variant + coalesce strategy as unique-value classification,
+ * for GeoJSON property names that differ only by case (e.g. TextString).
+ */
+function labelTextFieldExpression(field) {
+  return uniqueValueClassificationInputExpression(field);
+}
+
+/** Old pipeline placeholder; MapLibre should use white leaders like ArcGIS callouts. */
+const LEGACY_LEADER_COLOR = /^#c86464$/i;
+
+function resolveLeaderLineColor(labels) {
+  const raw =
+    labels && labels.leaderColor != null && String(labels.leaderColor).trim() !== ""
+      ? String(labels.leaderColor).trim()
+      : "";
+  if (raw && LEGACY_LEADER_COLOR.test(raw)) return "#ffffff";
+  return raw || "#ffffff";
+}
+
+function isLabelSymbolGeometry(geometryType) {
+  if (!geometryType) return false;
+  const g = String(geometryType).toLowerCase().replace(/_/g, "");
+  return (
+    g === "point" ||
+    g === "multipoint" ||
+    g === "esrigeometrypoint" ||
+    g === "esrigeometrymultipoint" ||
+    g === "polygon" ||
+    g === "multipolygon" ||
+    g === "esrigeometrypolygon" ||
+    g === "esrigeometrymultipolygon"
+  );
+}
+
+const NOTO_SANS_REGULAR = "Noto Sans Regular";
+
+function buildLabelFontStack(labels) {
+  const fallback = [NOTO_SANS_REGULAR];
+  if (Array.isArray(labels?.font) && labels.font.length > 0) {
+    const faces = labels.font.map((f) => String(f).trim()).filter((s) => s.length > 0);
+    if (faces.some((n) => n === "Noto Sans Hebrew Regular")) {
+      return fallback;
+    }
+    if (faces.length > 0) {
+      const hasNoto = faces.some((n) => String(n).includes("Noto Sans"));
+      if (hasNoto) {
+        return faces;
+      }
+      return [...faces, NOTO_SANS_REGULAR];
+    }
+    return fallback;
+  }
+  if (typeof labels?.font === "string" && labels.font.trim() !== "") {
+    const s = labels.font.trim();
+    if (s.includes("Noto Sans")) {
+      return [s];
+    }
+    return [s, NOTO_SANS_REGULAR];
+  }
+  return fallback;
+}
+
+/**
+ * Numeric GeoJSON property by name, with the same case-variant + coalesce strategy
+ * as label text / text-rotate (e.g. XOffset / xoffset).
+ */
+function buildLabelOffsetEmPropertyNumber(field) {
+  const name = field && String(field).trim() !== "" ? String(field).trim() : "XOffset";
+  const variants = fieldNameCaseVariants(name);
+  if (variants.length === 1) {
+    return ["to-number", ["get", variants[0]]];
+  }
+  return ["to-number", ["coalesce", ...variants.map((v) => ["get", v]), "0"]];
+}
+
+/**
+ * MapLibre layout text-offset (ems). When offsetEmFromProperties is true, prefers
+ * When offsetEmFieldX + offsetEmFieldY are set, [x/d, y/d] with case-agnostic property reads
+ * (divisor: offsetEmDivisor, else labels.size, else 11).
+ * We do not coalesce `otef_text_offset_em` here: some GeoJSON exports set it to a scalar,
+ * which makes MapLibre expect `array<number,2>` for text-offset and throws in the worker.
+ * otherwise static labels.offsetEm, then labels.offset, else [0,0].
+ */
+function buildLabelTextOffset(labels) {
+  if (labels.offsetEmFromProperties === true) {
+    const fieldX = labels.offsetEmFieldX;
+    const fieldY = labels.offsetEmFieldY;
+    const hasXY =
+      fieldX != null &&
+      String(fieldX).trim() !== "" &&
+      fieldY != null &&
+      String(fieldY).trim() !== "";
+
+    const size = Number(labels.size);
+    const divFromSize = size > 0 ? size : 11;
+    const divExplicit = Number(labels.offsetEmDivisor);
+    const divisorRaw =
+      Number.isFinite(divExplicit) && divExplicit > 0 ? divExplicit : divFromSize;
+    const divisor = Number.isFinite(divisorRaw) && divisorRaw > 0 ? divisorRaw : 11;
+
+    if (hasXY) {
+      const xExpr = buildLabelOffsetEmPropertyNumber(String(fieldX).trim());
+      const yExpr = buildLabelOffsetEmPropertyNumber(String(fieldY).trim());
+      // Style-spec: ["array", type, N, ...] — N must be a positive integer literal.
+      return [
+        "array",
+        "number",
+        2,
+        ["/", xExpr, divisor],
+        ["/", yExpr, divisor],
+      ];
+    }
+
+    return ["literal", [0, 0]];
+  }
+
+  if (Array.isArray(labels.offsetEm) && labels.offsetEm.length >= 2) {
+    return ["literal", [Number(labels.offsetEm[0]) || 0, Number(labels.offsetEm[1]) || 0]];
+  }
+
+  if (Array.isArray(labels.offset) && labels.offset.length >= 2) {
+    return ["literal", [Number(labels.offset[0]) || 0, Number(labels.offset[1]) || 0]];
+  }
+
+  return ["literal", [0, 0]];
+}
+
+/**
+ * Data-driven `text-rotate` (degrees) from a GeoJSON numeric property, with
+ * case-agnostic property names (e.g. Angle / angle) — same as label field resolution.
+ * Missing values default to 0.
+ */
+function buildLabelTextRotateFromProperty(propertyName) {
+  const name = propertyName && String(propertyName).trim() !== "" ? String(propertyName) : "Angle";
+  const variants = fieldNameCaseVariants(name);
+  if (variants.length === 1) {
+    return ["to-number", ["get", variants[0]]];
+  }
+  return ["to-number", ["coalesce", ...variants.map((v) => ["get", v]), "0"]];
+}
+
+/** @returns {number|Array|undefined} MapLibre text-rotate static number, expression, or unset */
+function buildLabelTextRotateValue(labels) {
+  if (labels?.angleFromProperties === true) {
+    return buildLabelTextRotateFromProperty(labels.angleProperty);
+  }
+  if (labels?.angle != null && Number.isFinite(Number(labels.angle))) {
+    return Number(labels.angle);
+  }
+  return undefined;
+}
+
+/** @returns {object[]} 0 or 1 MapLibre layer object(s) */
+function buildLabelSymbolLayer(idBase, style, geometryType) {
+  if (!isLabelSymbolGeometry(geometryType)) return [];
+  const labels = style && style.labels;
+  if (!labels || typeof labels !== "object") return [];
+
+  const field = labels.field != null && labels.field !== "" ? labels.field : "TextString";
+  const textField = labelTextFieldExpression(field);
+  const size = Number(labels.size);
+  const haloW = Number(labels.haloSize);
+  const textRotate = buildLabelTextRotateValue(labels);
+
+  const layout = {
+    "text-field": textField,
+    "text-size": size > 0 ? size : 12,
+    "text-font": buildLabelFontStack(labels),
+    "text-offset": buildLabelTextOffset(labels),
+    "text-anchor": labels.textAnchor != null ? String(labels.textAnchor) : "center",
+    "text-justify":
+      labels.textJustify != null && String(labels.textJustify) !== ""
+        ? String(labels.textJustify)
+        : "auto",
+    // Omit default text-writing-mode: forcing ["horizontal"] can interact badly with bidi/Hebrew;
+    // MapLibre 5.x defaults are sufficient; use `labels.textWritingModeHorizontal: true` to opt in.
+  };
+  if (labels.forceVisible === true) {
+    layout["text-allow-overlap"] = true;
+    layout["text-ignore-placement"] = true;
+    layout["text-optional"] = false;
+  } else if (labels.leaderLine === true) {
+    // Callout labels share one GeoJSON source; default collision hiding drops many names
+    // while leader lines still draw, which looks like missing/misaligned text vs lines.
+    layout["text-allow-overlap"] = true;
+    layout["text-ignore-placement"] = true;
+  }
+  if (labels.textWritingModeHorizontal === true) {
+    layout["text-writing-mode"] = ["literal", ["horizontal"]];
+  }
+  if (textRotate !== undefined) {
+    layout["text-rotate"] = textRotate;
+  }
+  if (labels.angleFromProperties === true) {
+    // ArcGIS annotation angles are in map space; keep glyphs aligned to the map (not the viewport).
+    layout["text-rotation-alignment"] = "map";
+    layout["text-pitch-alignment"] = "map";
+  }
+
+  const paint = {
+    "text-color": labels.color != null && labels.color !== "" ? labels.color : "#000000",
+    "text-halo-color": labels.haloColor != null && labels.haloColor !== "" ? labels.haloColor : "#ffffff",
+    "text-halo-width": haloW > 0 ? haloW : 0,
+    "text-opacity": labels.colorOpacity != null ? Number(labels.colorOpacity) : 1,
+  };
+
+  /** Leader GeoJSON mixes LineString callouts with point/polygon anchors; skip lines for symbols. */
+  const labelGeometryFilter =
+    labels.leaderLine === true
+      ? [
+          "!",
+          ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString"]]],
+        ]
+      : undefined;
+
+  return [
+    {
+      id: `${idBase}__labels`,
+      type: "symbol",
+      layout,
+      paint,
+      ...(labelGeometryFilter ? { filter: labelGeometryFilter } : {}),
+      _labelSymbol: true,
+    },
+  ];
+}
+
+/**
+ * When labels.leaderLine is true, render connector lines from processed GeoJSON features
+ * with property otef_label_leader: true. Placed under symbol labels
+ * in the layer list so text draws on top.
+ * @returns {object[]} 0 or 1 MapLibre line layer(s)
+ */
+function buildLabelLeaderLineLayer(idBase, style, geometryType) {
+  if (!isLabelSymbolGeometry(geometryType)) return [];
+  const labels = style && style.labels;
+  if (!labels || typeof labels !== "object" || !labels.leaderLine) return [];
+
+  const color = resolveLeaderLineColor(labels);
+  const w = Number(labels.leaderWidth);
+  const op = labels.leaderOpacity != null ? Number(labels.leaderOpacity) : 1;
+  const paint = {
+    "line-color": color,
+    "line-width": w > 0 ? w : 1.3333333333333333,
+  };
+  if (Number.isFinite(op) && op < 1) {
+    paint["line-opacity"] = op;
+  }
+
+  return [
+    {
+      id: `${idBase}__leader`,
+      type: "line",
+      filter: ["==", ["get", "otef_label_leader"], true],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint,
+      _labelLeader: true,
+    },
+  ];
+}
+
 function normalizeUniqueValueMatchKey(value) {
   if (value === undefined || value === null) return null;
   return String(value);
@@ -517,11 +779,14 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
     applyProjectionHatchPresentation: Boolean(styleOptions.applyProjectionHatchPresentation),
   };
 
-  if (renderer === "uniqueValue" && uniqueValues) {
-    return buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation);
-  }
+  const baseLayers =
+    renderer === "uniqueValue" && uniqueValues
+      ? buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation)
+      : buildSimpleLayers(idBase, defaultSymbol, hatchPresentation);
 
-  return buildSimpleLayers(idBase, defaultSymbol, hatchPresentation);
+  const leaderLineLayers = buildLabelLeaderLineLayer(idBase, style, layerConfig?.geometryType);
+  const labelLayers = buildLabelSymbolLayer(idBase, style, layerConfig?.geometryType);
+  return [...baseLayers, ...leaderLineLayers, ...labelLayers];
 }
 
 export { buildMatchLayer };

@@ -52,4 +52,12 @@ test("projection entry wires MapLibre curated pipeline (manual Supabase sync via
   expect(src.includes("syncCuratedMapLayersAfterSupabasePull")).toBe(true);
   expect(src.includes("otef-curated-geojson-refresh")).toBe(true);
   expect(src.includes("projectionCuratedRefreshChain")).toBe(true);
+  const idxSubscribe = src.indexOf('OTEFDataContext.subscribe("layerGroups"');
+  expect(idxSubscribe).toBeGreaterThan(-1);
+  const subSlice = src.slice(idxSubscribe, idxSubscribe + 800);
+  expect(subSlice.includes("getEffectiveProjectionLayerGroups()")).toBe(true);
+  expect(
+    subSlice.includes("groupsOverride: groups") &&
+      /subscribe\(\s*["']layerGroups["']\s*,\s*\(\s*groups\s*\)/.test(subSlice),
+  ).toBe(false);
 });

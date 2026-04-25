@@ -132,7 +132,7 @@ server {
     location ^~ /otef-interactive/public/ {
         alias /usr/share/nginx/html/otef-interactive/public/;
         add_header Access-Control-Allow-Origin *;
-        add_header Content-Type application/json;
+        # Do not force Content-Type: GeoJSON, PMTiles, fonts, etc. need correct MIME from nginx.types
         expires 1h;
     }
 

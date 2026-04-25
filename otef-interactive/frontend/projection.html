@@ -9,6 +9,15 @@
     <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
     <script src="https://unpkg.com/pmtiles@4.4.1/dist/pmtiles.js"></script>
     <style>
+      /* Settlement names (שמות_יישובים): same-origin under /otef-interactive/ (nginx alias).
+         Source: https://github.com/lo-mityaesh/hebrewfonts */
+      @font-face {
+        font-family: "Guttman Hatzvi";
+        src: url("./fonts/Guttman-Hatzvi.ttf") format("truetype");
+        font-weight: normal;
+        font-style: normal;
+        font-display: block;
+      }
       * {
         margin: 0;
         padding: 0;

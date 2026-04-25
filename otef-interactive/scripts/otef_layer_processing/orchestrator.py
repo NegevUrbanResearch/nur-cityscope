@@ -4,7 +4,7 @@ import json
 import logging
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
@@ -90,12 +90,38 @@ def compute_file_hash(path: Path) -> str:
     return hash_sha256.hexdigest()
 
 
+def _geo_style_cache_fingerprint(geo_file: Path, styles_dir: Path) -> Tuple[str, str, str]:
+    """
+    Cache invalidation: GIS body + matching .lyrx so style-only edits re-run transforms.
+    Returns (combined, geo_hash, lyrx_hash). combined is "geoHash:lyrxHash" (lyrxHash may be empty).
+    """
+    geo_hash = compute_file_hash(geo_file)
+    lyrx_path, _ = find_lyrx_file(geo_file, styles_dir)
+    lyrx_hash = (
+        compute_file_hash(lyrx_path)
+        if lyrx_path is not None and lyrx_path.is_file()
+        else ""
+    )
+    combined = f"{geo_hash}:{lyrx_hash}"
+    return combined, geo_hash, lyrx_hash
+
+
 def _task_id(task: Dict) -> str:
     """Return a stable id for logging (pack_id/layer_or_file_name)."""
     pack_id = task["pack_id"]
     if "geo_file" in task:
         return f"{pack_id}/{task['geo_file'].name}"
     return f"{pack_id}/{task['image_file'].name}"
+
+
+def _layer_render_sort_key(layer: Any) -> Any:
+    """Render order: model_base first, then satellite_imagery, then others (dict or mapping)."""
+    lid = layer.get("id", "") if isinstance(layer, dict) else getattr(layer, "id", "")
+    if lid == "model_base":
+        return (0, lid)
+    if lid == "satellite_imagery":
+        return (1, lid)
+    return (2, lid)
 
 
 class ProcessingOrchestrator:
@@ -137,8 +163,18 @@ class ProcessingOrchestrator:
     def save_cache(self):
         if not self.no_cache:
             self.output_dir.mkdir(parents=True, exist_ok=True)
-            with open(self.cache_path, "w", encoding="utf-8") as f:
-                json.dump(self.cache, f, indent=2, ensure_ascii=False)
+            self._atomic_write_json(self.cache_path, self.cache)
+
+    def _atomic_write_json(self, path: Path, data: Any) -> None:
+        """
+        Write JSON atomically: temp file in the same directory, then os.replace
+        so readers never see a partial final file.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
 
     def _load_popup_config(self) -> Dict:
         # source_dir is typically ".../public/source/layers" or just ".../public/source"
@@ -393,17 +429,7 @@ class ProcessingOrchestrator:
             manifest_data["layers"].sort(key=lambda x: x.id)
 
             layers_list = [entry.to_dict() for entry in manifest_data["layers"]]
-
-            # Render order: model_base first, then satellite_imagery, then others
-            def _layer_sort_key(layer):
-                lid = layer.get("id", "")
-                if lid == "model_base":
-                    return (0, lid)
-                if lid == "satellite_imagery":
-                    return (1, lid)
-                return (2, lid)
-
-            layers_list.sort(key=_layer_sort_key)
+            layers_list.sort(key=_layer_render_sort_key)
 
             manifest_dict = {
                 "id": manifest_data["id"],
@@ -438,17 +464,11 @@ class ProcessingOrchestrator:
         logger.info("Processing: %s/%s", pack_id, geo_file.name)
         layer_id = geo_file.stem
         cache_key = f"{pack_id}/{geo_file.name}"
-        file_hash = compute_file_hash(geo_file)
+        fingerprint, geo_hash, lyrx_hash = _geo_style_cache_fingerprint(
+            geo_file, styles_dir
+        )
 
-        # We need to access cache, but self.cache is copy-on-write in process.
-        # Check if we should pass needed flag or just check file hash again?
-        # Re-checking hash is safe but slow if we already did it.
-        # But we didn't do it in main process for all layers to save time.
-        # We will check hash here.
-        # But we don't have the old hash efficiently unless we pass it.
-        # Let's assume we re-read the cache dict (it was passed in self).
-
-        needed = self.no_cache or self.cache.get(cache_key, {}).get("hash") != file_hash
+        needed = self.no_cache or self.cache.get(cache_key, {}).get("hash") != fingerprint
 
         wgs84_file = pack_output / f"{layer_id}.geojson"
         pmtiles_file = pack_output / f"{layer_id}.pmtiles"
@@ -459,8 +479,7 @@ class ProcessingOrchestrator:
         if needed:
             # logger.info(f"Processing {layer_id}...")
             try:
-                # 1. Transform
-                # 1. Transform
+                # 1. Transform GeoJSON to WGS84
                 if not transform_to_wgs84(geo_file, wgs84_file):
                     logger.error(f"Transformation failed for {layer_id}, skipping.")
                     return None
@@ -540,13 +559,185 @@ class ProcessingOrchestrator:
             entry,
             style_config,
             cache_key,
-            {"hash": file_hash, "geometry_type": geom_type, "style": style_config},
+            {
+                "hash": fingerprint,
+                "geo_hash": geo_hash,
+                "lyrx_hash": lyrx_hash,
+                "geometry_type": geom_type,
+                "style": style_config,
+            },
         )
 
     def generate_root_manifest(self, pack_ids: List[str]):
         root_manifest = {"packs": sorted(pack_ids)}
-        with open(self.output_dir / "layers-manifest.json", "w", encoding="utf-8") as f:
-            json.dump(root_manifest, f, indent=2, ensure_ascii=False)
+        self._atomic_write_json(
+            self.output_dir / "layers-manifest.json", root_manifest
+        )
+
+    def _source_layers_root(self) -> Path:
+        source_layers = self.source_dir / "source" / "layers"
+        if not source_layers.exists():
+            source_layers = self.source_dir
+        return source_layers
+
+    def _discover_packs_having_manifest(self) -> List[str]:
+        if not self.output_dir.exists():
+            return []
+        pack_ids = [
+            d.name
+            for d in sorted(self.output_dir.iterdir())
+            if d.is_dir()
+            and not d.name.startswith(".")
+            and (d / "manifest.json").is_file()
+        ]
+        return pack_ids
+
+    def _resolve_geo_file_for_layer_stem(
+        self, pack_dir: Path, layer_stem: str
+    ) -> Path:
+        gis_dir = pack_dir / "gis" if (pack_dir / "gis").exists() else pack_dir
+        json_path = gis_dir / f"{layer_stem}.json"
+        geojson_path = gis_dir / f"{layer_stem}.geojson"
+        has_json = json_path.is_file()
+        has_geojson = geojson_path.is_file()
+        if has_json and has_geojson:
+            raise ValueError(
+                f"Ambiguous GIS files for stem {layer_stem!r}: both .json and .geojson exist"
+            )
+        if has_json:
+            return json_path
+        if has_geojson:
+            return geojson_path
+        raise FileNotFoundError(
+            f"No GIS file {layer_stem}.json or {layer_stem}.geojson under {gis_dir}"
+        )
+
+    def _merge_wmts_layers_from_source(
+        self, pack_id: str, gis_dir: Path, layers_by_id: Dict[str, Dict[str, Any]]
+    ) -> None:
+        for wmts_path in sorted(gis_dir.glob("*.wmts.json")):
+            try:
+                with open(wmts_path, "r", encoding="utf-8") as f:
+                    wmts_data = json.load(f)
+                layer_id = wmts_data.get("id", wmts_path.stem)
+                name = wmts_data.get("name", layer_id.replace("_", " ").title())
+                wmts_config = wmts_data.get("wmts")
+                mask_config = wmts_data.get("mask")
+                if wmts_config:
+                    entry = LayerEntry.create_wmts_layer(
+                        layer_id=layer_id,
+                        name=name,
+                        wmts_config=wmts_config,
+                        mask=mask_config,
+                    )
+                    layers_by_id[layer_id] = entry.to_dict()
+                    logger.info(
+                        "WMTS layer from %s: %s.%s", wmts_path.name, pack_id, layer_id
+                    )
+            except Exception as e:
+                logger.warning("Could not load WMTS %s: %s", wmts_path, e)
+
+    def process_single_layer_merged(
+        self, pack_id: str, layer_stem: str, stuck_timeout: Optional[int] = None
+    ) -> None:
+        """
+        Process one GIS layer and merge it into existing pack + root manifests.
+        Does not run a full pack scan. stuck_timeout is accepted for CLI parity
+        but is unused (single task runs synchronously).
+        """
+        _ = stuck_timeout
+        source_root = self._source_layers_root()
+        pack_dir = source_root / pack_id
+        if not pack_dir.is_dir():
+            logger.error("Pack not found: %s (under %s)", pack_id, source_root)
+            return
+
+        logger.info(
+            "Single-layer mode: pack=%s (not scanning all source packs)",
+            pack_id,
+        )
+        try:
+            geo_file = self._resolve_geo_file_for_layer_stem(pack_dir, layer_stem)
+        except (FileNotFoundError, ValueError) as e:
+            logger.error("%s", e)
+            return
+
+        if geo_file.name.endswith(".wmts.json"):
+            logger.error("WMTS config is not a processable GeoJSON layer: %s", geo_file)
+            return
+        if layer_stem.endswith(MASK_ASSET_STEM_SUFFIX):
+            logger.error(
+                "Layer stem %r is a boundary/mask asset, not a regular layer",
+                layer_stem,
+            )
+            return
+
+        gis_dir = pack_dir / "gis" if (pack_dir / "gis").exists() else pack_dir
+        styles_dir = pack_dir / "styles"
+        pack_output = self.output_dir / pack_id
+        pack_output.mkdir(parents=True, exist_ok=True)
+
+        task = {
+            "pack_id": pack_id,
+            "geo_file": geo_file,
+            "styles_dir": styles_dir,
+            "pack_output": pack_output,
+        }
+        log_level = logger.getEffectiveLevel()
+        result = self.process_single_layer(task, log_level)
+        if not result:
+            logger.error("Single-layer processing failed for %s/%s", pack_id, layer_stem)
+            return
+        layer_entry, style_entry, cache_key, cache_val = result
+        self.cache[cache_key] = cache_val
+        # 1 — GeoJSON (and pmtiles if any) is written inside process_single_layer
+        # 2 — Pack cache
+        if not self.no_cache:
+            self.save_cache()
+        # 3 — Merged pack styles (temp+replace before manifest so manifest ref style entry)
+        styles_path = pack_output / "styles.json"
+        merged_styles: Dict[str, Any] = {}
+        if styles_path.exists():
+            try:
+                with open(styles_path, "r", encoding="utf-8") as f:
+                    merged_styles = json.load(f)
+            except Exception as e:
+                logger.warning("Could not read existing styles.json: %s", e)
+        if style_entry is not None:
+            merged_styles[layer_stem] = style_entry
+        else:
+            merged_styles.pop(layer_stem, None)
+        self._atomic_write_json(styles_path, dict(sorted(merged_styles.items())))
+
+        # 4 — Merged pack manifest
+        manifest_path = pack_output / "manifest.json"
+        layers_by_id: Dict[str, Dict[str, Any]] = {}
+        pack_display_name = pack_id.title().replace("_", " ")
+        if manifest_path.exists():
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    old = json.load(f)
+                pack_display_name = old.get("name", pack_display_name)
+                for d in old.get("layers", []):
+                    if d.get("id"):
+                        layers_by_id[d["id"]] = d
+            except Exception as e:
+                logger.warning("Could not read existing manifest.json: %s", e)
+        self._merge_wmts_layers_from_source(pack_id, gis_dir, layers_by_id)
+        layers_by_id[layer_stem] = layer_entry.to_dict()
+        layer_dicts = sorted(layers_by_id.values(), key=_layer_render_sort_key)
+        manifest_dict = {
+            "id": pack_id,
+            "name": pack_display_name,
+            "layers": layer_dicts,
+        }
+        self._atomic_write_json(manifest_path, manifest_dict)
+        # 5 — Root layers-manifest.json (scan; last writer)
+        root_payload = {"packs": self._discover_packs_having_manifest()}
+        self._atomic_write_json(
+            self.output_dir / "layers-manifest.json", root_payload
+        )
+        logger.info("Single-layer merge complete: pack=%s", pack_id)
 
     def process_single_image(self, task: Dict, log_level: int) -> Optional[Any]:
         """
@@ -610,7 +801,7 @@ class ProcessingOrchestrator:
 
     def _resolve_style_for_geo_file(
         self, geo_file: Path, styles_dir: Path
-    ) -> tuple[Optional[Dict], str]:
+    ) -> Tuple[Optional[Dict], str]:
         """
         Resolve style config (including advanced symbol IR) and geometry type from
         source .lyrx. Shared by process_single_layer and update_metadata_only so

@@ -283,7 +283,59 @@ function getEffectiveLayerGroups() {
     });
   }
 
-  return finalizeMoreshetAxisPackForRemote(coalesceCuratedGroups(groups));
+  return finalizeMoreshetAxisPackForRemote(
+    coalesceCuratedGroups(mergeProjectorBaseShemotWithLocationsLine(groups)),
+  );
+}
+
+const _PROJECTOR_SHEMOT_LAYER_ID = "שמות_יישובים";
+const _PROJECTOR_LOCATIONS_LINES_ID = "Locations_Lines";
+
+/**
+ * For projector_base only: if both settlement names and Locations_Lines are registered,
+ * collapse to one UI row (primary id שמות_יישובים) with fullLayerIds for both, enabled =
+ * both ANDed, and the standalone Locations_Lines row removed.
+ *
+ * @param {Array} groups
+ * @returns {Array}
+ */
+function mergeProjectorBaseShemotWithLocationsLine(groups) {
+  if (!Array.isArray(groups)) return groups;
+  return groups.map((g) => {
+    if (g == null || g.id !== "projector_base" || !Array.isArray(g.layers)) {
+      return g;
+    }
+    const layers = g.layers;
+    const hasShemot = layers.some(
+      (l) => l && l.id === _PROJECTOR_SHEMOT_LAYER_ID,
+    );
+    const hasLoc = layers.some(
+      (l) => l && l.id === _PROJECTOR_LOCATIONS_LINES_ID,
+    );
+    if (!hasShemot || !hasLoc) return g;
+    const loc = layers.find((l) => l && l.id === _PROJECTOR_LOCATIONS_LINES_ID);
+    if (!loc) return g;
+    return {
+      ...g,
+      layers: layers
+        .filter(
+          (l) => l && l.id !== _PROJECTOR_LOCATIONS_LINES_ID,
+        )
+        .map((l) => {
+          if (l && l.id === _PROJECTOR_SHEMOT_LAYER_ID) {
+            return {
+              ...l,
+              fullLayerIds: [
+                "projector_base." + _PROJECTOR_SHEMOT_LAYER_ID,
+                "projector_base." + _PROJECTOR_LOCATIONS_LINES_ID,
+              ],
+              enabled: !!(l.enabled && loc.enabled),
+            };
+          }
+          return l;
+        }),
+    };
+  });
 }
 
 function coalesceCuratedGroups(groups) {

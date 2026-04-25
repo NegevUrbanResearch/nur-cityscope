@@ -7,8 +7,6 @@ from .models import StyleConfig
 
 logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
-
 # Conversion factor from Points (ArcGIS) to CSS Pixels (Web)
 # 1pt = 1/72 inch, 1px = 1/96 inch -> 96/72 = 1.333
 PT_TO_PX = 96 / 72
@@ -544,6 +542,54 @@ def _ensure_advanced_stroke_for_polygons(style: StyleConfig) -> None:
         symbol_layers.insert(insert_idx, new_stroke)
 
 
+def _labels_from_cim_annotation_layer(
+    layer_def: Dict[str, Any], lyrx_path: Path
+) -> Optional[Dict[str, Any]]:
+    """
+    Maplex is absent for CIMAnnotationLayer; we still emit a stable labels IR for the bridge.
+
+    Offsets: GeoJSON carries XOffset/YOffset per feature. Processed style exposes
+    labels.offsetEm (default em pair), labels.offsetEmFromProperties + field names so the
+    bridge builds a deterministic text-offset expression (ArcGIS offset points / labels.size
+    -> em).
+
+    Only ``שמות_יישובים``.lyrx uses this path; other .lyrx files keep prior behavior
+    (no automatic labels from this path).
+    """
+    if layer_def.get("type") != "CIMAnnotationLayer":
+        return None
+    if lyrx_path.stem != "שמות_יישובים":
+        return None
+    ft = layer_def.get("featureTable", {}) or {}
+    field = (ft.get("displayField") or "TextString").strip() or "TextString"
+    # Projection: primary face is loaded via @font-face (see projection.html); Noto is the
+    # glyph-PBF / local fallback stack tail for MapLibre 5.x (demotiles + local shaping).
+    return {
+        "field": field,
+        "font": ["Guttman Hatzvi", "Noto Sans Regular"],
+        "size": 11,
+        "color": "#202020",
+        "colorOpacity": 1.0,
+        "haloSize": 1.0,
+        "haloColor": "#fafafa",
+        "horizontalAlignment": "Center",
+        "verticalAlignment": "Center",
+        "textDirection": "auto",
+        "fontStyleName": "Regular",
+        "fontWeight": "normal",
+        "fontStyle": "normal",
+        # Hebrew order/shaping: projection map uses maplibregl.setRTLTextPlugin; do not use RLE in text-field.
+        # MapLibre text-offset is in ems; divisor matches labels.size for point-to-em mapping.
+        "offsetEm": [0.0, 0.0],
+        "offsetEmFromProperties": True,
+        "offsetEmFieldX": "XOffset",
+        "offsetEmFieldY": "YOffset",
+        "offsetEmDivisor": 11,
+        # No JS/RLE bidi wrap in text-field; projection uses maplibregl.setRTLTextPlugin instead.
+        "hebrewBidiWrap": False,
+    }
+
+
 def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
     try:
         with open(lyrx_path, "r", encoding="utf-8") as f:
@@ -646,6 +692,9 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
         else:
             label_config["fontStyle"] = "normal"
 
+    if label_config is None and layer_def.get("type") == "CIMAnnotationLayer":
+        label_config = _labels_from_cim_annotation_layer(layer_def, lyrx_path)
+
     min_scale = layer_def.get("minScale") or layer_def.get("minimumScale")
     max_scale = layer_def.get("maxScale") or layer_def.get("maximumScale")
     scale_range = None
@@ -733,6 +782,16 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
             "strokeColor": "#000000",
             "strokeWidth": 1.0,
         }
+
+    if (
+        layer_def.get("type") == "CIMAnnotationLayer"
+        and lyrx_path.stem == "שמות_יישובים"
+        and style.labels
+    ):
+        # Projection: TextString labels only; do not draw the annotation envelope as fill.
+        style.default_style = {}
+        style.full_symbol_layers = []
+        style.advanced_symbol = {"symbolLayers": []}
 
     # Determine complexity = simple | advanced
     complexity = "simple"
