@@ -51,7 +51,7 @@ async function pan(ctx, direction, delta = 0.15) {
     recordTraceEvent(traceId, "remote.pan.start", { direction, delta });
     ctx._currentInteractionSource = "remote";
     ctx._lastLocalStateTimestamp = Date.now();
-    await OTEF_API.executeCommand(ctx._tableName, {
+    const result = await OTEF_API.executeCommand(ctx._tableName, {
       action: "pan",
       direction,
       delta,
@@ -60,6 +60,19 @@ async function pan(ctx, direction, delta = 0.15) {
       base_viewport: ctx._viewport,
       traceId,
     });
+    if (result && result.viewport && result.viewport.bbox && result.viewport.bbox.length === 4) {
+      ctx._setViewport({
+        ...result.viewport,
+        sourceId: ctx._clientId,
+        timestamp: ctx._lastLocalStateTimestamp,
+      });
+    } else if (candidateViewport) {
+      ctx._setViewport({
+        ...candidateViewport,
+        sourceId: ctx._clientId,
+        timestamp: ctx._lastLocalStateTimestamp,
+      });
+    }
   } catch (err) {
     getLogger().error("[OTEFDataContext] Pan command failed:", err);
   } finally {
@@ -178,7 +191,7 @@ async function zoom(ctx, newZoom) {
     recordTraceEvent(traceId, "remote.zoom.start", { level: clampedZoom });
     ctx._currentInteractionSource = "remote";
     ctx._lastLocalStateTimestamp = Date.now();
-    await OTEF_API.executeCommand(ctx._tableName, {
+    const result = await OTEF_API.executeCommand(ctx._tableName, {
       action: "zoom",
       level: clampedZoom,
       sourceId: ctx._clientId,
@@ -186,6 +199,19 @@ async function zoom(ctx, newZoom) {
       base_viewport: ctx._viewport,
       traceId,
     });
+    if (result && result.viewport && result.viewport.bbox && result.viewport.bbox.length === 4) {
+      ctx._setViewport({
+        ...result.viewport,
+        sourceId: ctx._clientId,
+        timestamp: ctx._lastLocalStateTimestamp,
+      });
+    } else if (candidateViewport) {
+      ctx._setViewport({
+        ...candidateViewport,
+        sourceId: ctx._clientId,
+        timestamp: ctx._lastLocalStateTimestamp,
+      });
+    }
   } catch (err) {
     getLogger().error("[OTEFDataContext] Zoom command failed:", err);
   } finally {

@@ -189,7 +189,8 @@ export function setupViewportSync(map, dataContext) {
       ne: { x: neItm[0], y: neItm[1] },
     };
 
-    // Keep MapLibre fractional zoom in DataContext end-to-end; remote UI formats for display only.
+    // map.getZoom(): GIS map uses zoomSnap:1, so whole-level zoom is preferred, but the value is still a float
+    // (e.g. mid-gesture, fitBounds, or animations). Pass it through; remote UI may round (e.g. normalizeZoomLevel).
     const result = dataContext.updateViewportFromUI(
       {
         bbox,
