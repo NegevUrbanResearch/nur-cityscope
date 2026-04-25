@@ -142,6 +142,9 @@ describe("maplibre-projection-layers", () => {
     expect(applyLayerGroupsToMapMock).toHaveBeenCalledTimes(1);
     const passedGroups = applyLayerGroupsToMapMock.mock.calls[0][1];
     expect(passedGroups[0].layers[0].enabled).toBe(false);
+    expect(applyLayerGroupsToMapMock.mock.calls[0][2]).toEqual({
+      applyProjectionHatchPresentation: true,
+    });
 
     expect(map.addSource).toHaveBeenCalledWith(
       `wmts__${fullId}`,
@@ -177,6 +180,9 @@ describe("maplibre-projection-layers", () => {
     const passedGroups = applyLayerGroupsToMapMock.mock.calls[0][1];
     expect(passedGroups[0].enabled).toBe(false);
     expect(passedGroups[0].layers[0].enabled).toBe(false);
+    expect(applyLayerGroupsToMapMock.mock.calls[0][2]).toEqual({
+      applyProjectionHatchPresentation: true,
+    });
 
     expect(map.addSource).toHaveBeenCalledWith(
       `wmts__${fullId}`,

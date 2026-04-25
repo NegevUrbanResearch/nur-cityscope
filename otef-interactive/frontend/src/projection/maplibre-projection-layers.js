@@ -278,7 +278,7 @@ export function syncProjectionLayers(map, layerGroups) {
 
   const groups = asArrayLayerGroups(layerGroups);
   const groupsWithoutWmts = cloneGroupsWithWmtsDisabled(groups);
-  applyLayerGroupsToMap(map, groupsWithoutWmts);
+  applyLayerGroupsToMap(map, groupsWithoutWmts, { applyProjectionHatchPresentation: true });
 
   const wmtsState = getOrCreateWmtsState(map);
   const enabledWmts = resolveEnabledWmtsFullIds(groups);

@@ -4,73 +4,9 @@
  *
  * LayerRegistry is a singleton default export initialized elsewhere.
  */
+import { createHatchImageDataFromSpec } from "../shared/hatch-pattern-tile.js";
 import { irToMapLibreLayers } from "../shared/maplibre-style-bridge.js";
 import layerRegistry from "../shared/layer-registry.js";
-
-/**
- * Create a tileable ImageData for MapLibre fill-pattern from a hatch spec.
- * Tile size is derived from line spacing and rotation so the texture repeats
- * without visible seams.
- */
-function generateHatchImage(spec) {
-  const separation = spec.separation ?? 8;
-  const angleDeg = spec.rotation ?? 0;
-  const angleRad = (angleDeg * Math.PI) / 180;
-
-  const absCos = Math.abs(Math.cos(angleRad));
-  const absSin = Math.abs(Math.sin(angleRad));
-  const projX = absCos < 0.01 ? separation : separation / absCos;
-  const projY = absSin < 0.01 ? separation : separation / absSin;
-  const size = Math.max(16, Math.ceil(Math.max(projX, projY)));
-
-  const ctx2d = createCanvas2DContext(size);
-  if (!ctx2d) {
-    throw new Error("[maplibre-layer-manager] Hatch patterns require a 2D canvas (browser only).");
-  }
-  const { ctx, getImageData } = ctx2d;
-
-  ctx.clearRect(0, 0, size, size);
-  ctx.save();
-  ctx.translate(size / 2, size / 2);
-  ctx.rotate(angleRad);
-  ctx.strokeStyle = spec.color || "#808080";
-  ctx.lineWidth = spec.width ?? 1;
-
-  const diagonal = size * Math.SQRT2;
-  for (let offset = -diagonal; offset < diagonal; offset += separation) {
-    ctx.beginPath();
-    ctx.moveTo(-diagonal, offset);
-    ctx.lineTo(diagonal, offset);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  return getImageData();
-}
-
-function createCanvas2DContext(size) {
-  if (typeof document !== "undefined" && document.createElement) {
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    return {
-      ctx,
-      getImageData: () => ctx.getImageData(0, 0, size, size),
-    };
-  }
-  if (typeof OffscreenCanvas !== "undefined") {
-    const canvas = new OffscreenCanvas(size, size);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    return {
-      ctx,
-      getImageData: () => ctx.getImageData(0, 0, size, size),
-    };
-  }
-  return null;
-}
 
 function releaseHatchPatternsForFullId(map, fullId, state) {
   const ids = state.hatchPatternIdsByFullId.get(fullId);
@@ -109,8 +45,12 @@ function registerHatchPatternImages(map, styleLayer, state, trackedPatternIds) {
     if (!spec?.patternId) continue;
     if (trackedPatternIds.has(spec.patternId)) continue;
     if (!map.hasImage(spec.patternId)) {
-      const image = generateHatchImage(spec);
-      map.addImage(spec.patternId, image);
+      const image = createHatchImageDataFromSpec(spec);
+      if (spec.pixelRatio && spec.pixelRatio !== 1) {
+        map.addImage(spec.patternId, image, { pixelRatio: spec.pixelRatio });
+      } else {
+        map.addImage(spec.patternId, image);
+      }
     }
     trackedPatternIds.add(spec.patternId);
     const currentRefCount = state.hatchPatternRefCounts.get(spec.patternId) || 0;
@@ -350,7 +290,11 @@ function rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, register
   }
 }
 
-function addLayerToMap(map, fullId, state) {
+/**
+ * @param {{ applyProjectionHatchPresentation?: boolean }} [layerStyleOptions] - projection passes
+ *   `{ applyProjectionHatchPresentation: true }` for denser MapLibre hatch rasters; GIS omits.
+ */
+function addLayerToMap(map, fullId, state, layerStyleOptions) {
   const { loadedSources, loadedLayerIds } = state;
   // Curated layer ids are managed by maplibre-curated-layer-loader, not the registry path.
   if (!layerRegistry.getLayerConfig(fullId) && fullId.startsWith("curated")) return;
@@ -421,7 +365,7 @@ function addLayerToMap(map, fullId, state) {
   const registeredPatternIds = new Set();
   let styleLayers;
   try {
-    styleLayers = irToMapLibreLayers(fullId, sourceId, layerConfig);
+    styleLayers = irToMapLibreLayers(fullId, sourceId, layerConfig, layerStyleOptions || {});
   } catch (error) {
     console.warn(
       `[maplibre-layer-manager] Failed to build style layers for ${fullId}`,
@@ -487,7 +431,11 @@ function addLayerToMap(map, fullId, state) {
   }
 }
 
-export function applyLayerGroupsToMap(map, layerGroups) {
+/**
+ * @param {{ applyProjectionHatchPresentation?: boolean }} [layerStyleOptions] - set on projection
+ *   map so hatch fill-pattern rasters use presentation multipliers; GIS callers omit.
+ */
+export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
   const state = getOrCreateMapState(map);
   const { loadedSources, loadedLayerIds } = state;
   const enabledFullIds = resolveEnabledFullIds(layerGroups);
@@ -504,7 +452,7 @@ export function applyLayerGroupsToMap(map, layerGroups) {
 
   for (const fullId of enabledFullIds) {
     if (!loadedSources.has(fullId)) {
-      addLayerToMap(map, fullId, state);
+      addLayerToMap(map, fullId, state, layerStyleOptions);
     }
   }
 }

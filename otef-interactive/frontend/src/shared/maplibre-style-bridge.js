@@ -2,6 +2,7 @@
  * Translate OTEF AdvancedStyleEngine IR (symbolLayers)
  * into MapLibre style layer definitions.
  */
+import { projectionHatchRasterParams } from "./hatch-projection-presentation.js";
 
 function getNestedProp(obj, propPath) {
   if (!obj || !propPath) return undefined;
@@ -74,21 +75,40 @@ function markerLineFallbackWidth(symbolLayer) {
 }
 
 /**
+ * Bump only when the MapLibre hatch raster (tile size, torus math, or stroke recipe)
+ * changes for the same processed hatch fields. The layer manager skips `addImage` when
+ * `map.hasImage(patternId)` is true, so the id must not stay stable across incompatible
+ * `createHatchImageDataFromSpec` / `computeHatchTilePixelSize` generations.
+ */
+const HATCH_PATTERN_RASTER_ID_REV = "v2";
+
+/**
  * Build a stable pattern id and params from AdvancedStyleEngine hatch config.
  * Same inputs always yield the same patternId so the layer manager can dedupe
  * via map.hasImage and avoid image leaks on repeated syncs.
+ *
+ * @param {object} [hatchPresentation] - when `applyProjectionHatchPresentation` is true, applies
+ *   projection-only density + integer pixel snap (see `projectionHatchRasterParams`); source lyrx
+ *   values are unchanged.
  */
-function buildHatchPatternSpec(hatchConfig) {
+function buildHatchPatternSpec(hatchConfig, hatchPresentation = {}) {
   if (!hatchConfig) return null;
   const color = hatchConfig.color || "#808080";
   const rotation = hatchConfig.rotation ?? 0;
-  const separation = hatchConfig.separation ?? 8;
-  const width = hatchConfig.width ?? 1;
-  const patternId = `hatch_${String(color)}_${rotation}_${separation}_${width}`.replace(
+  let separation = hatchConfig.separation ?? 8;
+  let width = hatchConfig.width ?? 1;
+  let pixelRatio = 1;
+  if (hatchPresentation.applyProjectionHatchPresentation) {
+    const q = projectionHatchRasterParams({ separation, width });
+    separation = q.separation;
+    width = q.width;
+    pixelRatio = q.pixelRatio ?? 1;
+  }
+  const patternId = `hatch_${HATCH_PATTERN_RASTER_ID_REV}_${String(color)}_${rotation}_${separation}_${width}`.replace(
     /[^a-zA-Z0-9_#]/g,
     "_",
   );
-  return { patternId, color, rotation, separation, width };
+  return { patternId, color, rotation, separation, width, pixelRatio };
 }
 
 function groupKeyForSymbolLayer(mapLibreType, symbolLayer, i) {
@@ -104,12 +124,12 @@ function fillKindForSymbolLayer(symbolLayer) {
   return symbolLayer?.fillType === "hatch" ? "hatch" : "solid";
 }
 
-function symbolLayerToMapLibre(symbolLayer, id) {
+function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
   if (!symbolLayer || typeof symbolLayer !== "object") return null;
 
   if (symbolLayer.type === "fill") {
     if (symbolLayer.fillType === "hatch" && symbolLayer.hatch) {
-      const hatchSpec = buildHatchPatternSpec(symbolLayer.hatch);
+      const hatchSpec = buildHatchPatternSpec(symbolLayer.hatch, hatchPresentation);
       if (hatchSpec) {
         const paint = { "fill-pattern": hatchSpec.patternId };
         if (symbolLayer.opacity != null) paint["fill-opacity"] = symbolLayer.opacity;
@@ -163,12 +183,12 @@ function symbolLayerToMapLibre(symbolLayer, id) {
   return null;
 }
 
-function buildSimpleLayers(idBase, symbol) {
+function buildSimpleLayers(idBase, symbol, hatchPresentation) {
   const symbolLayers = Array.isArray(symbol?.symbolLayers) ? symbol.symbolLayers : [];
   const output = [];
 
   for (let i = 0; i < symbolLayers.length; i += 1) {
-    const mapLibreLayer = symbolLayerToMapLibre(symbolLayers[i], `${idBase}__${i}`);
+    const mapLibreLayer = symbolLayerToMapLibre(symbolLayers[i], `${idBase}__${i}`, hatchPresentation);
     if (mapLibreLayer) output.push(mapLibreLayer);
   }
 
@@ -290,9 +310,9 @@ function buildUniqueValueGroups(uniqueValues, defaultSymbol) {
   return groups;
 }
 
-function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol) {
+function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation) {
   const field = uniqueValues?.field;
-  if (!field) return buildSimpleLayers(idBase, defaultSymbol);
+  if (!field) return buildSimpleLayers(idBase, defaultSymbol, hatchPresentation);
 
   const defaultSymbolLayers = Array.isArray(defaultSymbol?.symbolLayers) ? defaultSymbol.symbolLayers : [];
   const groups = buildUniqueValueGroups(uniqueValues, defaultSymbol);
@@ -318,7 +338,8 @@ function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol) {
       group.type,
       field,
       group.entries,
-      defaultSymbolLayer
+      defaultSymbolLayer,
+      hatchPresentation,
     );
     if (layer) output.push(layer);
   }
@@ -326,19 +347,22 @@ function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol) {
   return output;
 }
 
-function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer) {
+function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, hatchPresentation) {
   const paint = {};
 
   if (mapLibreType === "fill") {
     if (defaultSymbolLayer?.fillType === "hatch") {
-      const defaultSpec = buildHatchPatternSpec(defaultSymbolLayer.hatch);
+      const defaultSpec = buildHatchPatternSpec(defaultSymbolLayer.hatch, hatchPresentation);
       if (defaultSpec) {
         const allSpecsById = new Map();
         allSpecsById.set(defaultSpec.patternId, defaultSpec);
         for (const entry of entries) {
           if (entry?.value == null) continue;
           const spec =
-            buildHatchPatternSpec(entry.symbolLayer?.hatch || defaultSymbolLayer.hatch) || defaultSpec;
+            buildHatchPatternSpec(
+              entry.symbolLayer?.hatch || defaultSymbolLayer.hatch,
+              hatchPresentation,
+            ) || defaultSpec;
           allSpecsById.set(spec.patternId, spec);
         }
 
@@ -346,7 +370,10 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer) {
         for (const entry of entries) {
           if (entry?.value == null) continue;
           const spec =
-            buildHatchPatternSpec(entry.symbolLayer?.hatch || defaultSymbolLayer.hatch) || defaultSpec;
+            buildHatchPatternSpec(
+              entry.symbolLayer?.hatch || defaultSymbolLayer.hatch,
+              hatchPresentation,
+            ) || defaultSpec;
           entryRows.push({ value: entry.value, patternId: spec.patternId });
         }
 
@@ -471,7 +498,12 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer) {
   return null;
 }
 
-export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig) {
+/**
+ * @param {object} [layerConfig]
+ * @param {{ applyProjectionHatchPresentation?: boolean }} [styleOptions] - set by projection
+ *   `applyLayerGroupsToMap` so hatch rasters are denser/thinner; omit on GIS.
+ */
+export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styleOptions = {}) {
   void sourceLayerId;
 
   const style = layerConfig?.style || {};
@@ -481,11 +513,15 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig) {
 
   const idBase = String(fullLayerId || "layer").replace(/\./g, "__");
 
+  const hatchPresentation = {
+    applyProjectionHatchPresentation: Boolean(styleOptions.applyProjectionHatchPresentation),
+  };
+
   if (renderer === "uniqueValue" && uniqueValues) {
-    return buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol);
+    return buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation);
   }
 
-  return buildSimpleLayers(idBase, defaultSymbol);
+  return buildSimpleLayers(idBase, defaultSymbol, hatchPresentation);
 }
 
 export { buildMatchLayer };

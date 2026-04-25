@@ -624,11 +624,40 @@ describe("irToMapLibreLayers", () => {
 
     const result = irToMapLibreLayers("test.hatch", "test__hatch", layerConfig);
     const fill = result.find((layer) => layer.type === "fill");
-    expect(fill.paint["fill-pattern"]).toBe("hatch_#000000_45_10_2");
+    expect(fill.paint["fill-pattern"]).toBe("hatch_v2_#000000_45_10_2");
     expect(fill.paint["fill-color"]).toBeUndefined();
     expect(fill.paint["fill-opacity"]).toBe(0.5);
     expect(fill._hatchPattern).toBeDefined();
-    expect(fill._hatchPattern.patternId).toBe("hatch_#000000_45_10_2");
+    expect(fill._hatchPattern.patternId).toBe("hatch_v2_#000000_45_10_2");
+  });
+
+  it("applies projection-only hatch pixel presentation when applyProjectionHatchPresentation is set", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "fill",
+              fillType: "hatch",
+              hatch: { color: "#000000", rotation: 45, separation: 10, width: 2 },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.hatchproj", "test__hatchproj", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    const fill = result.find((layer) => layer.type === "fill");
+    // 0.875× + snap => logical 9/1, then rasterized at pixelRatio 2 => 18/2 with cleaner texture
+    expect(fill._hatchPattern.separation).toBe(18);
+    expect(fill._hatchPattern.width).toBe(2);
+    expect(fill._hatchPattern.pixelRatio).toBe(2);
+    expect(fill._hatchPattern.patternId).toBe("hatch_v2_#000000_45_18_2");
+    expect(fill.paint["fill-pattern"]).toBe(fill._hatchPattern.patternId);
   });
 
   it("uses fill-pattern match and _hatchPatterns for uniqueValue hatch", () => {
@@ -685,17 +714,17 @@ describe("irToMapLibreLayers", () => {
       "match",
       ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
       "a",
-      "hatch_#111111_0_8_1",
+      "hatch_v2_#111111_0_8_1",
       "b",
-      "hatch_#222222_30_12_2",
-      "hatch_#808080_0_8_1",
+      "hatch_v2_#222222_30_12_2",
+      "hatch_v2_#808080_0_8_1",
     ]);
     expect(Array.isArray(fill._hatchPatterns)).toBe(true);
     const ids = fill._hatchPatterns.map((s) => s.patternId).sort();
     expect(ids).toEqual([
-      "hatch_#111111_0_8_1",
-      "hatch_#222222_30_12_2",
-      "hatch_#808080_0_8_1",
+      "hatch_v2_#111111_0_8_1",
+      "hatch_v2_#222222_30_12_2",
+      "hatch_v2_#808080_0_8_1",
     ]);
   });
 
