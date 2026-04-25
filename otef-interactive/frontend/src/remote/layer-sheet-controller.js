@@ -797,6 +797,9 @@ class LayerSheetController {
       return `<div class="sheet-empty">${escapeHtmlSafe(t("layerEmpty"))}</div>`;
     }
     const encGid = encAttrId(selected.id);
+    const allLayersOn =
+      (selected.layers || []).length > 0 &&
+      (selected.layers || []).every((l) => l.enabled);
 
     const chipForGroup = (g) => {
       const enc = encAttrId(g.id);
@@ -851,7 +854,7 @@ class LayerSheetController {
             data-layers-bulk-visibility
             data-layers-enc-gid="${encGid}"
             data-i18n-aria="ariaLayersBulkVisibility"
-            ${selected.enabled ? "checked" : ""}
+            ${allLayersOn ? "checked" : ""}
           />
           <span class="toggle-indicator"></span>
         </label>

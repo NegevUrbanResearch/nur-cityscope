@@ -18,6 +18,202 @@ function fallbackLogger() {
 
 const getLogger = OTEFDataContextInternals.getLogger || fallbackLogger;
 const VELOCITY_STOP_EPSILON = 1e-3;
+
+function layerGroupsEqual(a, b) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const ga = a[i],
+      gb = b[i];
+    if (ga === gb) continue;
+    if (ga.id !== gb.id || ga.enabled !== gb.enabled) return false;
+    const la = ga.layers || [],
+      lb = gb.layers || [];
+    if (la.length !== lb.length) return false;
+    for (let j = 0; j < la.length; j++) {
+      if (la[j].id !== lb[j].id || la[j].enabled !== lb[j].enabled) return false;
+    }
+  }
+  return true;
+}
+
+function ensureLayerPatchBaseline(ctx) {
+  if (ctx._layerPatchLastAcked == null && Array.isArray(ctx._layerGroups)) {
+    ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(ctx._layerGroups));
+  }
+}
+
+function flattenLayerEnabledByFullId(layerGroups) {
+  const out = new Map();
+  if (!Array.isArray(layerGroups)) return out;
+  for (const group of layerGroups) {
+    if (!group || typeof group.id !== "string" || !Array.isArray(group.layers)) continue;
+    for (const layer of group.layers) {
+      if (!layer || (typeof layer.id !== "string" && typeof layer.id !== "number")) continue;
+      out.set(`${group.id}.${String(layer.id)}`, !!layer.enabled);
+    }
+  }
+  return out;
+}
+
+function buildLayerToggleChanges(previousGroups, nextGroups) {
+  const previous = flattenLayerEnabledByFullId(previousGroups);
+  const next = flattenLayerEnabledByFullId(nextGroups);
+  const changes = [];
+  for (const [fullLayerId, enabled] of next.entries()) {
+    if (!previous.has(fullLayerId) || previous.get(fullLayerId) !== enabled) {
+      changes.push({ full_layer_id: fullLayerId, enabled });
+    }
+  }
+  return changes;
+}
+
+async function withLayerPatchMutex(ctx, fn) {
+  const prev = ctx._layerPatchMutex || Promise.resolve();
+  let releaseNext;
+  const gate = new Promise((r) => {
+    releaseNext = r;
+  });
+  ctx._layerPatchMutex = prev.then(() => gate);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    releaseNext();
+  }
+}
+
+/**
+ * Sends at most one PATCH at a time; loops while optimistic ctx._layerGroups differs from last ack.
+ * Drops stale HTTP results when ctx._layerOpGeneration advanced during the request.
+ * If a response is stale, forces another round so we never skip sending the latest intent when the
+ * client snapshot happens to shallow-match lastAcked while server state may differ.
+ */
+async function flushLayerGroupsPatchQueue(ctx) {
+  let forceAnotherRound = false;
+  while (!layerGroupsEqual(ctx._layerGroups, ctx._layerPatchLastAcked) || forceAnotherRound) {
+    forceAnotherRound = false;
+    const payload = JSON.parse(JSON.stringify(ctx._layerGroups));
+    const changes = buildLayerToggleChanges(ctx._layerPatchLastAcked, payload);
+    const sendGen = ctx._layerOpGeneration;
+    const traceId = generateTraceId("layer");
+    if (changes.length === 0) {
+      ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(payload));
+      continue;
+    }
+    try {
+      const updated = await OTEF_API.setLayerToggles(ctx._tableName, changes, {
+        sourceId: ctx._clientId,
+        timestamp: Date.now(),
+        traceId,
+      });
+      if (sendGen !== ctx._layerOpGeneration) {
+        forceAnotherRound = true;
+        continue;
+      }
+      if (updated && Array.isArray(updated.layerGroups)) {
+        ctx._setLayerGroups(updated.layerGroups);
+        ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(updated.layerGroups));
+      } else {
+        ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(payload));
+      }
+    } catch (err) {
+      getLogger().warn(
+        "[OTEFDataContext] Layer command failed; falling back to full layerGroups PATCH",
+        err,
+      );
+      try {
+        const updated = await OTEF_API.updateLayerGroups(ctx._tableName, payload, {
+          sourceId: ctx._clientId,
+          timestamp: Date.now(),
+          traceId,
+        });
+        if (sendGen !== ctx._layerOpGeneration) {
+          forceAnotherRound = true;
+          continue;
+        }
+        if (updated && Array.isArray(updated.layerGroups)) {
+          ctx._setLayerGroups(updated.layerGroups);
+          ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(updated.layerGroups));
+        } else {
+          ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(payload));
+        }
+      } catch (fallbackErr) {
+        if (sendGen === ctx._layerOpGeneration) {
+          ctx._setLayerGroups(JSON.parse(JSON.stringify(ctx._layerPatchLastAcked)));
+        }
+        throw fallbackErr;
+      }
+    }
+  }
+}
+
+async function enqueueLayerGroupsCoalescedFlush(ctx) {
+  return withLayerPatchMutex(ctx, () => flushLayerGroupsPatchQueue(ctx));
+}
+
+/**
+ * Group pack "toggle all" uses the server's set_group_enabled expansion (all layers the API
+ * lists for the group) instead of a client-only change diff, so group.enabled and LayerState
+ * stay aligned after _recompute_group_enabled_from_states_bulk. Coalesced set_layer_toggles
+ * from the diff path can miss extra LayerState/reconciled members and caused flip-back on
+ * the bulk checkbox after the first request returned.
+ */
+async function flushGroupEnabledCommand(ctx, groupId, enabled, traceId) {
+  return withLayerPatchMutex(ctx, async () => {
+    const sendGen = ctx._layerOpGeneration;
+    try {
+      const updated = await OTEF_API.setGroupEnabled(ctx._tableName, groupId, enabled, {
+        sourceId: ctx._clientId,
+        timestamp: Date.now(),
+        traceId,
+      });
+      if (sendGen !== ctx._layerOpGeneration) {
+        return;
+      }
+      if (updated && Array.isArray(updated.layerGroups)) {
+        ctx._setLayerGroups(updated.layerGroups);
+        ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(updated.layerGroups));
+        return;
+      }
+      const payload = JSON.parse(JSON.stringify(ctx._layerGroups));
+      ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(payload));
+    } catch (err) {
+      getLogger().warn(
+        "[OTEFDataContext] set_group_enabled failed; falling back to full layerGroups PATCH",
+        err,
+      );
+      try {
+        const updated = await OTEF_API.updateLayerGroups(ctx._tableName, ctx._layerGroups, {
+          sourceId: ctx._clientId,
+          timestamp: Date.now(),
+          traceId,
+        });
+        if (sendGen !== ctx._layerOpGeneration) {
+          return;
+        }
+        if (updated && Array.isArray(updated.layerGroups)) {
+          ctx._setLayerGroups(updated.layerGroups);
+          ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(updated.layerGroups));
+        } else {
+          const payload = JSON.parse(JSON.stringify(ctx._layerGroups));
+          ctx._layerPatchLastAcked = JSON.parse(JSON.stringify(payload));
+        }
+      } catch (fallbackErr) {
+        if (sendGen === ctx._layerOpGeneration) {
+          ctx._setLayerGroups(JSON.parse(JSON.stringify(ctx._layerPatchLastAcked || [])));
+        }
+        throw fallbackErr;
+      }
+    }
+  });
+}
+
+/** Bump and return generation for this layer-mutation await; stale if later !== ctx._layerOpGeneration after await. */
+function nextLayerOpGeneration(ctx) {
+  if (typeof ctx._layerOpGeneration !== "number") ctx._layerOpGeneration = 0;
+  return ++ctx._layerOpGeneration;
+}
 const VELOCITY_STALE_MS = 120;
 
 function isVelocityEffectivelyMoving(ctx) {
@@ -262,8 +458,10 @@ async function toggleLayer(ctx, layerId, enabled) {
 }
 
 async function toggleLayerInGroups(ctx, layerId, enabled, options = {}) {
-  const rawSnapshot = JSON.parse(JSON.stringify(ctx._layerGroups || []));
-  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(rawSnapshot);
+  ensureLayerPatchBaseline(ctx);
+  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(
+    JSON.parse(JSON.stringify(ctx._layerGroups || [])),
+  );
   let next = previous.map((group) => ({
     ...group,
     layers: group.layers.map((layer) => {
@@ -289,19 +487,18 @@ async function toggleLayerInGroups(ctx, layerId, enabled, options = {}) {
   });
   ctx._setLayerGroups(next);
   ctx._pendingLayerOps++;
+  const callGen = nextLayerOpGeneration(ctx);
   try {
-    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next, {
-      sourceId: ctx._clientId,
-      timestamp: Date.now(),
-      traceId,
-    });
-    if (updated && Array.isArray(updated.layerGroups)) {
-      ctx._setLayerGroups(updated.layerGroups);
+    await enqueueLayerGroupsCoalescedFlush(ctx);
+    if (callGen !== ctx._layerOpGeneration) {
+      return { ok: true, stale: true };
     }
     return { ok: true };
   } catch (err) {
+    if (callGen !== ctx._layerOpGeneration) {
+      return { ok: false, error: err, stale: true };
+    }
     getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
-    ctx._setLayerGroups(rawSnapshot);
     return { ok: false, error: err };
   } finally {
     ctx._pendingLayerOps--;
@@ -316,9 +513,11 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled, options = {}) {
     return { ok: true };
   }
 
+  ensureLayerPatchBaseline(ctx);
   const idSet = new Set(fullLayerIds);
-  const rawSnapshot = JSON.parse(JSON.stringify(ctx._layerGroups || []));
-  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(rawSnapshot);
+  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(
+    JSON.parse(JSON.stringify(ctx._layerGroups || [])),
+  );
   let next = previous.map((group) => ({
     ...group,
     layers: group.layers.map((layer) => {
@@ -344,19 +543,18 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled, options = {}) {
   });
   ctx._setLayerGroups(next);
   ctx._pendingLayerOps++;
+  const callGen = nextLayerOpGeneration(ctx);
   try {
-    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next, {
-      sourceId: ctx._clientId,
-      timestamp: Date.now(),
-      traceId,
-    });
-    if (updated && Array.isArray(updated.layerGroups)) {
-      ctx._setLayerGroups(updated.layerGroups);
+    await enqueueLayerGroupsCoalescedFlush(ctx);
+    if (callGen !== ctx._layerOpGeneration) {
+      return { ok: true, stale: true };
     }
     return { ok: true };
   } catch (err) {
+    if (callGen !== ctx._layerOpGeneration) {
+      return { ok: false, error: err, stale: true };
+    }
     getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
-    ctx._setLayerGroups(rawSnapshot);
     return { ok: false, error: err };
   } finally {
     ctx._pendingLayerOps--;
@@ -370,8 +568,10 @@ async function toggleGroup(ctx, groupId, enabled) {
   if (!ctx._tableName || !groupId) return { ok: false, error: "Missing groupId" };
   if (!ctx._layerGroups) return { ok: false, error: "Layer groups not available" };
 
-  const rawSnapshot = JSON.parse(JSON.stringify(ctx._layerGroups || []));
-  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(rawSnapshot);
+  ensureLayerPatchBaseline(ctx);
+  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(
+    JSON.parse(JSON.stringify(ctx._layerGroups || [])),
+  );
   let next = previous.map((group) => {
     if (group.id !== groupId) return group;
     const layers = group.layers.map((layer) => ({ ...layer, enabled: !!enabled }));
@@ -391,19 +591,18 @@ async function toggleGroup(ctx, groupId, enabled) {
   });
   ctx._setLayerGroups(next);
   ctx._pendingLayerOps++;
+  const callGen = nextLayerOpGeneration(ctx);
   try {
-    const updated = await OTEF_API.updateLayerGroups(ctx._tableName, next, {
-      sourceId: ctx._clientId,
-      timestamp: Date.now(),
-      traceId,
-    });
-    if (updated && Array.isArray(updated.layerGroups)) {
-      ctx._setLayerGroups(updated.layerGroups);
+    await flushGroupEnabledCommand(ctx, groupId, enabled, traceId);
+    if (callGen !== ctx._layerOpGeneration) {
+      return { ok: true, stale: true };
     }
     return { ok: true };
   } catch (err) {
+    if (callGen !== ctx._layerOpGeneration) {
+      return { ok: false, error: err, stale: true };
+    }
     getLogger().error("[OTEFDataContext] Failed to update layer groups:", err);
-    ctx._setLayerGroups(rawSnapshot);
     return { ok: false, error: err };
   } finally {
     ctx._pendingLayerOps--;

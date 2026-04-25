@@ -89,6 +89,12 @@ class OTEFDataContextClass {
     this._lastVelocityUpdate = 0;
     this._lastLocalStateTimestamp = 0;
     this._pendingLayerOps = 0;
+    /** Last server-aligned layerGroups snapshot (API init, WS, or successful PATCH). Drives coalescing no-op skips. */
+    this._layerPatchLastAcked = null;
+    /** Serializes coalesced PATCH flush so rapid toggles share one queue. */
+    this._layerPatchMutex = null;
+    /** Monotonic counter: latest user layer mutation intent (setLayersEnabled / toggleLayerInGroups / toggleGroup). */
+    this._layerOpGeneration = 0;
     this._pendingAnimationOps = 0;
     this._viewportSeq = 0;
     this._activeLayerTrace = null;
@@ -111,6 +117,7 @@ class OTEFDataContextClass {
       const state = await OTEF_API.getState(this._tableName, { forceFresh: true });
       if (state && state.layerGroups) {
         this._setLayerGroups(state.layerGroups, { bypassEquality: true });
+        this._ackLayerGroupsServerBaseline(state.layerGroups);
       }
     } catch (err) {
       getLogger().error("[OTEFDataContext] refreshLayerGroupsFromApi failed:", err);
@@ -212,6 +219,12 @@ class OTEFDataContextClass {
     if (!traceId || this._activeLayerTrace.traceId === traceId) {
       this._activeLayerTrace = null;
     }
+  }
+
+  /** Called when layerGroups are applied from server (init, WS, refresh) so coalescing skips duplicate PATCHes. */
+  _ackLayerGroupsServerBaseline(layerGroups) {
+    if (!Array.isArray(layerGroups)) return;
+    this._layerPatchLastAcked = JSON.parse(JSON.stringify(layerGroups));
   }
 
   _setAnimations(animations) {

@@ -20,7 +20,12 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
 
   if (notify) {
     if (state.viewport) ctx._setViewport(state.viewport);
-    if (state.layerGroups) ctx._setLayerGroups(state.layerGroups);
+    if (state.layerGroups) {
+      ctx._setLayerGroups(state.layerGroups);
+      if (typeof ctx._ackLayerGroupsServerBaseline === "function") {
+        ctx._ackLayerGroupsServerBaseline(state.layerGroups);
+      }
+    }
     if (state.animations) ctx._setAnimations(state.animations);
     if (state.bounds_polygon || state.bounds) ctx._setBounds(state.bounds_polygon || state.bounds);
     if (typeof state.viewer_angle_deg === "number") ctx._setViewerAngleDeg(state.viewer_angle_deg);
@@ -32,7 +37,12 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
         ctx._viewportSeq = incomingSeq;
       }
     }
-    if (state.layerGroups) ctx._layerGroups = state.layerGroups;
+    if (state.layerGroups) {
+      ctx._layerGroups = state.layerGroups;
+      if (typeof ctx._ackLayerGroupsServerBaseline === "function") {
+        ctx._ackLayerGroupsServerBaseline(state.layerGroups);
+      }
+    }
     if (state.animations) ctx._animations = state.animations;
     if (state.bounds_polygon || state.bounds) ctx._bounds = state.bounds_polygon || state.bounds;
     if (typeof state.viewer_angle_deg === "number") {
@@ -114,6 +124,9 @@ function setupWebSocket(ctx) {
     try {
       if (Array.isArray(msg.layerGroups)) {
         ctx._setLayerGroups(msg.layerGroups, { bypassEquality: true });
+        if (typeof ctx._ackLayerGroupsServerBaseline === "function") {
+          ctx._ackLayerGroupsServerBaseline(msg.layerGroups);
+        }
         if (traceId) {
           recordTraceEvent(traceId, "context.layers_from_ws_payload", {
             groupCount: msg.layerGroups.length,
@@ -123,6 +136,9 @@ function setupWebSocket(ctx) {
         const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
         if (state.layerGroups) {
           ctx._setLayerGroups(state.layerGroups, { bypassEquality: true });
+          if (typeof ctx._ackLayerGroupsServerBaseline === "function") {
+            ctx._ackLayerGroupsServerBaseline(state.layerGroups);
+          }
           if (traceId) {
             recordTraceEvent(traceId, "context.layers_from_api_fallback", {
               groupCount: state.layerGroups.length,

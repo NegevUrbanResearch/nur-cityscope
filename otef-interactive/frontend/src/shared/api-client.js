@@ -119,6 +119,32 @@ export const OTEF_API = {
     return this.updateState(tableName, { layerGroups, ...meta });
   },
 
+  async setLayersEnabled(tableName = this.defaultTable, fullLayerIds, enabled, meta = {}) {
+    return this.executeCommand(tableName, {
+      action: "set_layers_enabled",
+      full_layer_ids: fullLayerIds,
+      enabled: !!enabled,
+      ...meta,
+    });
+  },
+
+  async setLayerToggles(tableName = this.defaultTable, changes, meta = {}) {
+    return this.executeCommand(tableName, {
+      action: "set_layer_toggles",
+      changes,
+      ...meta,
+    });
+  },
+
+  async setGroupEnabled(tableName = this.defaultTable, groupId, enabled, meta = {}) {
+    return this.executeCommand(tableName, {
+      action: "set_group_enabled",
+      group_id: groupId,
+      enabled: !!enabled,
+      ...meta,
+    });
+  },
+
   async updateAnimations(tableName = this.defaultTable, animations) {
     return this.updateState(tableName, { animations });
   },
