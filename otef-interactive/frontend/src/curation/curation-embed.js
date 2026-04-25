@@ -1,6 +1,6 @@
 /**
  * `curation.html` when loaded inside remote-controller must use `?embed=1` (or `embed=true`).
- * Parent owns `startCuratedSupabaseHeartbeat`; this document must not start a second subscription.
+ * Curated Supabase sync is manual (workshop refresh); no polling in this document.
  * Heartbeat is skipped only when the embed flag is set **and** this document is in a
  * subframe (true iframe); a top-level page with `?embed=1` must still run its own poll.
  */

@@ -32,6 +32,11 @@ test("curation refresh is manual-only (no polling interval)", () => {
   expect(src.includes("setInterval(refresh, 30000)")).toBe(false);
 });
 
+test("curation refresh pulls Supabase curated layers for GIS/projection sync", () => {
+  const src = readCurationSource();
+  expect(src.includes("pullCuratedFromSupabaseOnce")).toBe(true);
+});
+
 test("submission list loads from all-submissions API (searchable list, no project merge)", () => {
   const workspace = readCurationWorkspaceSource();
   expect(workspace.includes("const optionLabel = `${project.name} - ${displayName}`;")).toBe(

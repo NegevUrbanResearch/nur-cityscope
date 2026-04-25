@@ -246,9 +246,8 @@
             data-embed-surface="curation"
           >
             <!--
-              Embed contract: parent remote-controller owns startCuratedSupabaseHeartbeat only.
-              Iframe src MUST include ?embed=1 so curation bootstrap skips duplicate heartbeat init
-              (see frontend/src/curation/curation-embed.js).
+              Embed contract: curated Supabase sync runs only from workshop refresh (see curation.js).
+              Iframe src MUST include ?embed=1 (see frontend/src/curation/curation-embed.js).
             -->
             <iframe
               id="remoteCurationFrame"

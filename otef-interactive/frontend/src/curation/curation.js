@@ -1,4 +1,5 @@
 import { LOCALE_EVENT, t } from "../remote/remote-locale.js";
+import { pullCuratedFromSupabaseOnce } from "../shared/curated-supabase-heartbeat.js";
 import { createCurationApi } from "./curation-api.js";
 import { buildPublishGeojsonFromApiFeatures } from "./curation-publish-geojson.js";
 import { createPublishedCuratedLayersPanel } from "./curation-published-layers.js";
@@ -36,6 +37,17 @@ export { createCurationPreviewState } from "./curation-state.js";
     if (!s) return;
     s.textContent = msg || "";
     s.className = "curation-status" + (type ? " " + type : "");
+  }
+
+  function setRefreshBusy(busy) {
+    const h = refreshBtn();
+    const sub = el("curationSubmissionsRefresh");
+    for (const btn of [h, sub]) {
+      if (!btn) continue;
+      btn.disabled = !!busy;
+      btn.setAttribute("aria-busy", busy ? "true" : "false");
+      btn.classList.toggle("curation-refresh--busy", !!busy);
+    }
   }
 
   const submissionsCtlRef = { current: null };
@@ -257,12 +269,28 @@ export { createCurationPreviewState } from "./curation-state.js";
     }
   }
 
-  function refresh() {
-    setStatus("");
-    void loadWorkshopModeUi();
-    Promise.all([loadSubmissions(), publishedPanel.loadPublishedCuratedLayers()]).then(() => {
+  async function refresh() {
+    setRefreshBusy(true);
+    setStatus(t("curationRefreshInProgress"));
+    try {
+      const pull = await Promise.all([
+        loadWorkshopModeUi(),
+        pullCuratedFromSupabaseOnce({ table: CURATION_TABLE }),
+      ]).then((r) => r[1]);
+      if (!pull.ok) {
+        const errLabel =
+          pull.status === 0
+            ? "network"
+            : `HTTP ${pull.status}`;
+        setStatus(t("curationRefreshPullError", { e: errLabel }), "error");
+      } else {
+        setStatus("");
+      }
+      await Promise.all([loadSubmissions(), publishedPanel.loadPublishedCuratedLayers()]);
       updatePublishState();
-    });
+    } finally {
+      setRefreshBusy(false);
+    }
   }
 
   function init() {
@@ -281,8 +309,8 @@ export { createCurationPreviewState } from "./curation-state.js";
     el("curationWorkshopAutoPublish")?.addEventListener("change", () => {
       void onWorkshopModeToggle();
     });
-    refreshBtn()?.addEventListener("click", refresh);
-    el("curationSubmissionsRefresh")?.addEventListener("click", refresh);
+    refreshBtn()?.addEventListener("click", () => void refresh());
+    el("curationSubmissionsRefresh")?.addEventListener("click", () => void refresh());
 
     if (typeof window !== "undefined") {
       window.addEventListener(LOCALE_EVENT, () => {
