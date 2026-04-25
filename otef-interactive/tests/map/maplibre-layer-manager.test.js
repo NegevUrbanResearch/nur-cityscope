@@ -24,6 +24,7 @@ import {
   buildPmtilesUrl,
   clearAllLayers,
   getVectorSourceLayerName,
+  registerCuratedLayerIds,
 } from "../../frontend/src/map/maplibre-layer-manager.js";
 
 function createMapMock() {
@@ -448,5 +449,40 @@ describe("maplibre-layer-manager", () => {
         globalThis.window = prevWin;
       }
     }
+  });
+
+  it("applyLayerGroupsToMap keeps curated pack when only the logical fullLayerId is registered", () => {
+    const map = createMapMock();
+    const logicalId = "curated_moresht_axis.solidLine";
+    const layerA = `${logicalId}__proposedLine__0`;
+    const layerB = `${logicalId}__solidLine__0`;
+    map._layers.add(layerA);
+    map._layers.add(layerB);
+    registerCuratedLayerIds(map, logicalId, `${logicalId}__src`, [layerA, layerB]);
+
+    map.removeLayer.mockClear();
+
+    applyLayerGroupsToMap(map, [
+      { id: "curated_moresht_axis", layers: [{ id: "solidLine", enabled: true }] },
+    ]);
+
+    expect(map.removeLayer).not.toHaveBeenCalled();
+  });
+
+  it("applyLayerGroupsToMap prunes per-source state keys (not OTEF layer ids) so they must not be registered", () => {
+    const map = createMapMock();
+    const logicalId = "curated_moresht_axis.solidLine";
+    const internalKey = `${logicalId}__proposedLine__src`;
+    const layerId = `${logicalId}__proposedLine__0`;
+    map._layers.add(layerId);
+    registerCuratedLayerIds(map, internalKey, internalKey, [layerId]);
+
+    map.removeLayer.mockClear();
+
+    applyLayerGroupsToMap(map, [
+      { id: "curated_moresht_axis", layers: [{ id: "solidLine", enabled: true }] },
+    ]);
+
+    expect(map.removeLayer).toHaveBeenCalledWith(layerId);
   });
 });

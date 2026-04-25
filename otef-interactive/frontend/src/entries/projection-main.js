@@ -5,6 +5,7 @@ import { syncProjectionLayers } from "../projection/maplibre-projection-layers.j
 import {
   loadCuratedLayerToMapLibre,
   removeCuratedHtmlMarkers,
+  syncPinkLineAxisCompanionForMapLibre,
 } from "../map/maplibre-curated-layer-loader.js";
 import { removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
 import {
@@ -242,6 +243,7 @@ async function bootstrapProjectionRuntime() {
 
       if (toRefresh.length === 0) {
         syncContextFlowAnimations();
+        syncPinkLineAxisCompanionForMapLibre(map, currentGroups);
         return;
       }
 
@@ -254,6 +256,7 @@ async function bootstrapProjectionRuntime() {
         }
       }
       syncContextFlowAnimations();
+      syncPinkLineAxisCompanionForMapLibre(map, currentGroups);
     };
     let projectionCuratedRefreshChain = Promise.resolve();
     const refreshProjectionCuratedLayers = (options = {}) => {

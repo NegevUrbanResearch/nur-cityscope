@@ -9,6 +9,24 @@ const PINK_LINE_PARKING_GEOJSON_URL =
 const PINK_LINE_PARKING_ICON_URL =
   "/otef-interactive/img/pink-line-parking/parking-icon.png";
 
+/**
+ * Root-relative OTEF static paths resolve against `location.origin` so fetch/loadImage
+ * work when the app is served from a subpath or MapLibre resolves URLs strictly.
+ *
+ * @param {string} path
+ * @returns {string}
+ */
+function resolvePinkLineParkingAssetUrl(path) {
+  if (typeof path !== "string") return path;
+  if (/^(https?:|data:)/i.test(path)) return path;
+  if (typeof window === "undefined" || !window.location) return path;
+  try {
+    return new URL(path, window.location.origin).href;
+  } catch (_) {
+    return path;
+  }
+}
+
 function escapeHtmlParking(s) {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -39,7 +57,7 @@ function formatParkingLotPopupHtml(props) {
  */
 async function fetchPinkLineParkingLotsGeojson() {
   try {
-    const res = await fetch(PINK_LINE_PARKING_GEOJSON_URL);
+    const res = await fetch(resolvePinkLineParkingAssetUrl(PINK_LINE_PARKING_GEOJSON_URL));
     if (!res.ok) return null;
     const geojson = await res.json();
     if (!geojson || geojson.type !== "FeatureCollection" || !Array.isArray(geojson.features)) {
@@ -114,6 +132,7 @@ function enrichParkingGeojsonForProjection(geojson, iconUrl) {
 export {
   PINK_LINE_PARKING_GEOJSON_URL,
   PINK_LINE_PARKING_ICON_URL,
+  resolvePinkLineParkingAssetUrl,
   escapeHtmlParking,
   formatParkingLotPopupHtml,
   fetchPinkLineParkingLotsGeojson,

@@ -46,6 +46,15 @@ import {
 import { planPinkCuratedOverlayLayers } from "./pink-curated-overlay-plan.js";
 import { buildMemorialInspectHtml } from "./curated-memorial-inspect-html.js";
 import { readPinkNodeOrder } from "../map-utils/pink-node-order.js";
+import {
+  computePinkLineBaseLayerVisible,
+  computePinkLineParkingOverlayVisible,
+} from "../map-utils/curated-pink-axis-state.js";
+import {
+  PINK_LINE_PARKING_ICON_URL,
+  fetchPinkLineParkingLotsGeojson,
+  resolvePinkLineParkingAssetUrl,
+} from "../map-utils/pink-line-parking.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
   addCuratedGeoJsonSource,
@@ -98,6 +107,10 @@ export function removeCuratedHtmlMarkers(fullLayerId) {
 const PINK_BASE_SOURCE_ID = "pink_line_base";
 const PINK_BASE_LAYER_ID = "pink_line_base__line";
 
+/** Serialize pink-base attach per map (sync + curated load can call concurrently). */
+/** @type {WeakMap<object, Promise<void>>} */
+const pinkBaseEnsureChainByMap = new WeakMap();
+
 /**
  * Ensure the pink-line base polylines are added to the MapLibre map.
  * Mirrors leaflet-curated-layer-loader.js `ensurePinkLineBaseLayer` logic:
@@ -106,7 +119,20 @@ const PINK_BASE_LAYER_ID = "pink_line_base__line";
  * @param {object} map - MapLibre map instance
  * @param {{ removedPaths?: Array<Array<[number, number]>> }} [options]
  */
-async function ensurePinkLineBaseLayer(map, options = {}) {
+function ensurePinkLineBaseLayer(map, options = {}) {
+  if (!map) return Promise.resolve();
+  const prev = pinkBaseEnsureChainByMap.get(map) || Promise.resolve();
+  const work = prev.then(() => ensurePinkLineBaseLayerWork(map, options));
+  pinkBaseEnsureChainByMap.set(
+    map,
+    work.catch(() => {
+      /* errors logged inside work */
+    }),
+  );
+  return work;
+}
+
+async function ensurePinkLineBaseLayerWork(map, options = {}) {
   const removedPaths = options.removedPaths;
   const clip =
     Array.isArray(removedPaths) &&
@@ -126,6 +152,7 @@ async function ensurePinkLineBaseLayer(map, options = {}) {
       fetchPinkLinePaths(),
       resolvePinkLinePackStyleBundle(),
     ]);
+    if (map.getLayer(PINK_BASE_LAYER_ID)) return;
     if (!basePaths || basePaths.length === 0) return;
 
     const features = basePaths
@@ -140,28 +167,297 @@ async function ensurePinkLineBaseLayer(map, options = {}) {
       }));
     if (features.length === 0) return;
 
+    if (map.getLayer(PINK_BASE_LAYER_ID)) return;
+
     const geojsonData = { type: "FeatureCollection", features };
     if (!map.getSource(PINK_BASE_SOURCE_ID)) {
       map.addSource(PINK_BASE_SOURCE_ID, { type: "geojson", data: geojsonData });
     }
 
+    if (map.getLayer(PINK_BASE_LAYER_ID)) return;
+
     const opts = styleBundle.leafletPolylineOptions || {};
-    map.addLayer({
-      id: PINK_BASE_LAYER_ID,
-      type: "line",
-      source: PINK_BASE_SOURCE_ID,
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": opts.color || "#FF69B4",
-        "line-width": typeof opts.weight === "number" ? opts.weight : 5,
-        "line-opacity": typeof opts.opacity === "number" ? opts.opacity : 0.9,
-      },
-    });
+    try {
+      map.addLayer({
+        id: PINK_BASE_LAYER_ID,
+        type: "line",
+        source: PINK_BASE_SOURCE_ID,
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": opts.color || "#FF69B4",
+          "line-width": typeof opts.weight === "number" ? opts.weight : 5,
+          "line-opacity": typeof opts.opacity === "number" ? opts.opacity : 0.9,
+        },
+      });
+    } catch (addErr) {
+      if (map.getLayer(PINK_BASE_LAYER_ID)) return;
+      throw addErr;
+    }
   } catch (err) {
     console.warn(
       "[maplibre-curated-layer-loader] ensurePinkLineBaseLayer failed",
       err,
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pink-line axis companion: base + parking (Leaflet parity; not registry layers)
+// ---------------------------------------------------------------------------
+
+/** @typedef {{ attachGeneration: number, visibleIntent: boolean, styleIdleWait?: boolean }} PinkParkingMapState */
+/** @type {WeakMap<object, PinkParkingMapState>} */
+const pinkParkingStateByMap = new WeakMap();
+
+const PINK_PARKING_SOURCE_ID = "pink_line_parking__points";
+const PINK_PARKING_LAYER_ID = "pink_line_parking__symbol";
+const PINK_PARKING_SPRITE_ID = "pink_line_parking_lot_icon";
+const PINK_PARKING_TARGET_ICON_PX = 28;
+const PINK_PARKING_ICON_SIZE_GIS = 1;
+const PINK_PARKING_ICON_SIZE_PROJECTION = 0.5;
+
+function getParkingIconSizeForMap(map) {
+  try {
+    const id = map?.getContainer?.()?.id;
+    if (id === "projectionMap") return PINK_PARKING_ICON_SIZE_PROJECTION;
+  } catch (_) {}
+  return PINK_PARKING_ICON_SIZE_GIS;
+}
+
+function getPinkParkingMapState(map) {
+  let s = pinkParkingStateByMap.get(map);
+  if (!s) {
+    s = { attachGeneration: 0, visibleIntent: false };
+    pinkParkingStateByMap.set(map, s);
+  }
+  return s;
+}
+
+function detachPinkLineParkingMapLibre(map) {
+  if (!map) return;
+  const st = getPinkParkingMapState(map);
+  st.attachGeneration += 1;
+  st.visibleIntent = false;
+  st.styleIdleWait = false;
+  try {
+    if (map.getLayer(PINK_PARKING_LAYER_ID)) map.removeLayer(PINK_PARKING_LAYER_ID);
+    if (map.getSource(PINK_PARKING_SOURCE_ID)) map.removeSource(PINK_PARKING_SOURCE_ID);
+    if (typeof map.hasImage === "function" && typeof map.removeImage === "function") {
+      if (map.hasImage(PINK_PARKING_SPRITE_ID)) {
+        map.removeImage(PINK_PARKING_SPRITE_ID);
+      }
+    }
+  } catch (_) {}
+}
+
+/**
+ * Ensure parking symbol layer on MapLibre (static GeoJSON + shared PNG).
+ * Mirrors `leaflet-curated-layer-loader.js` `ensurePinkLineParkingLayer`.
+ *
+ * @param {object} map
+ */
+function mapHasParkingSprite(map) {
+  if (typeof map.hasImage !== "function") return false;
+  try {
+    return map.hasImage(PINK_PARKING_SPRITE_ID);
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * Decode parking PNG the same way as successful Network-tab fetches.
+ * `map.loadImage` can still fail for WebGL (CORS/taint, worker quirks) while `fetch` returns 200.
+ *
+ * @param {string} iconUrl
+ * @returns {Promise<HTMLImageElement | ImageBitmap>}
+ */
+async function loadParkingIconRaster(iconUrl) {
+  const res = await fetch(iconUrl, { credentials: "same-origin" });
+  if (!res.ok) {
+    throw new Error(`parking icon fetch ${res.status}`);
+  }
+  const blob = await res.blob();
+  if (typeof createImageBitmap === "function") {
+    try {
+      return await createImageBitmap(blob);
+    } catch (_) {
+      // Fall through to Image + object URL (older engines / odd PNGs).
+    }
+  }
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    await new Promise((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("parking icon Image decode failed"));
+      img.src = objectUrl;
+    });
+    if (typeof img.decode === "function") {
+      try {
+        await img.decode();
+      } catch (_) {
+        // decode() can reject on incomplete metadata; onload already fired.
+      }
+    }
+    return img;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function ensurePinkLineParkingOnMapLibre(map) {
+  if (!map || typeof map.addLayer !== "function") return;
+  const st = getPinkParkingMapState(map);
+  if (!st.visibleIntent) return;
+  if (typeof map.isStyleLoaded === "function" && !map.isStyleLoaded()) {
+    if (!st.styleIdleWait && typeof map.once === "function") {
+      st.styleIdleWait = true;
+      map.once("idle", () => {
+        st.styleIdleWait = false;
+        if (getPinkParkingMapState(map).visibleIntent) {
+          void ensurePinkLineParkingOnMapLibre(map);
+        }
+      });
+    }
+    return;
+  }
+  if (map.getLayer(PINK_PARKING_LAYER_ID)) return;
+
+  const gen = st.attachGeneration;
+  try {
+    const geojson = await fetchPinkLineParkingLotsGeojson();
+    if (gen !== st.attachGeneration || !st.visibleIntent) return;
+    if (!geojson || !Array.isArray(geojson.features) || geojson.features.length === 0) return;
+
+    const iconUrl = resolvePinkLineParkingAssetUrl(PINK_LINE_PARKING_ICON_URL);
+
+    const addParkingSymbolLayer = () => {
+      if (gen !== st.attachGeneration || !st.visibleIntent) return;
+      if (map.getLayer(PINK_PARKING_LAYER_ID)) return;
+      if (!mapHasParkingSprite(map)) return;
+      const src = map.getSource(PINK_PARKING_SOURCE_ID);
+      if (src && typeof src.setData === "function") {
+        try {
+          src.setData(geojson);
+        } catch (_) {}
+      } else if (!map.getSource(PINK_PARKING_SOURCE_ID)) {
+        map.addSource(PINK_PARKING_SOURCE_ID, { type: "geojson", data: geojson });
+      }
+      try {
+        map.addLayer({
+          id: PINK_PARKING_LAYER_ID,
+          type: "symbol",
+          source: PINK_PARKING_SOURCE_ID,
+          layout: {
+            "icon-image": PINK_PARKING_SPRITE_ID,
+            "icon-size": getParkingIconSizeForMap(map),
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+          },
+          paint: {
+            "icon-opacity": 1,
+          },
+        });
+        if (typeof map.moveLayer === "function") {
+          try {
+            map.moveLayer(PINK_PARKING_LAYER_ID);
+          } catch (_) {
+            // Non-fatal; layer still exists at default stack position.
+          }
+        }
+      } catch (e) {
+        if (map.getLayer(PINK_PARKING_LAYER_ID)) return;
+        throw e;
+      }
+    };
+
+    if (!mapHasParkingSprite(map)) {
+      try {
+        const raster = await loadParkingIconRaster(iconUrl);
+        if (gen !== st.attachGeneration || !st.visibleIntent) return;
+        if (!mapHasParkingSprite(map)) {
+          const rasterWidth =
+            raster && Number.isFinite(raster.width) ? Number(raster.width) : null;
+          const normalizedPixelRatio =
+            rasterWidth && rasterWidth > 0
+              ? Math.max(1, rasterWidth / PINK_PARKING_TARGET_ICON_PX)
+              : 1;
+          map.addImage(PINK_PARKING_SPRITE_ID, raster, {
+            pixelRatio: normalizedPixelRatio,
+          });
+        }
+      } catch (e) {
+        console.warn("[maplibre-curated-layer-loader] parking icon raster failed", e);
+        return;
+      }
+    }
+    addParkingSymbolLayer();
+  } catch (err) {
+    console.warn("[maplibre-curated-layer-loader] ensurePinkLineParkingOnMapLibre failed", err);
+  }
+}
+
+/**
+ * Parking lots overlay on GIS/projection MapLibre maps.
+ * Same contract as Leaflet `setPinkLineParkingMapVisibility` but requires the map instance.
+ *
+ * @param {object} map
+ * @param {boolean} visible
+ */
+export function setPinkLineParkingMapLibreVisibility(map, visible) {
+  if (!map) return;
+  const st = getPinkParkingMapState(map);
+  if (!visible) {
+    detachPinkLineParkingMapLibre(map);
+    return;
+  }
+  st.visibleIntent = true;
+  // After base chain settles (success or failure) — parking must still attach (Leaflet parity when base is clipped).
+  void ensurePinkLineBaseLayer(map, {}).finally(() => {
+    if (!getPinkParkingMapState(map).visibleIntent) return;
+    void ensurePinkLineParkingOnMapLibre(map);
+  });
+}
+
+/**
+ * Shared pink-line *base polylines* on MapLibre (not parking — use `setPinkLineParkingMapLibreVisibility`).
+ *
+ * @param {object} map
+ * @param {boolean} visible
+ */
+export function setPinkLineBaseMapLibreVisibility(map, visible) {
+  if (!map) return;
+  if (!visible) {
+    try {
+      if (map.getLayer(PINK_BASE_LAYER_ID)) map.removeLayer(PINK_BASE_LAYER_ID);
+      if (map.getSource(PINK_BASE_SOURCE_ID)) map.removeSource(PINK_BASE_SOURCE_ID);
+    } catch (_) {}
+    return;
+  }
+  void ensurePinkLineBaseLayer(map, {});
+}
+
+/**
+ * Apply Moreshet-axis pink base + parking companion from raw/effective layer groups
+ * (must include `pink_line_parking` row when present — do not pass GIS-filtered groups).
+ *
+ * @param {object} map
+ * @param {unknown} layerGroups
+ */
+export function syncPinkLineAxisCompanionForMapLibre(map, layerGroups) {
+  if (!map) return;
+  const groups = Array.isArray(layerGroups)
+    ? layerGroups
+    : layerGroups && typeof layerGroups === "object"
+      ? Object.values(layerGroups)
+      : [];
+  try {
+    setPinkLineBaseMapLibreVisibility(map, computePinkLineBaseLayerVisible(groups));
+    setPinkLineParkingMapLibreVisibility(map, computePinkLineParkingOverlayVisible(groups));
+  } catch (_) {
+    // Non-fatal; mirrors leaflet `applyLayerGroupsState` try/catch around pink helpers.
   }
 }
 
@@ -740,9 +1036,6 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
       } catch (err) {
         console.warn(`[maplibre-curated-layer-loader] Failed to add layer ${layerId}`, err);
       }
-
-      // Register each source keyed by its sourceId for cleanup
-      registerCuratedLayerIds(map, sourceId, sourceId, [layerId]);
     }
 
     // Circle marker ops: GeoJSON point source + circle layer (spec parity).
@@ -771,9 +1064,6 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
       } catch (err) {
         console.warn(`[maplibre-curated-layer-loader] Failed to add circle layer ${layerId}`, err);
       }
-
-      // Keep explicit source registration for manager/state-assisted cleanup.
-      registerCuratedLayerIds(map, sourceId, sourceId, [layerId]);
     }
 
     // Node + memorial markers

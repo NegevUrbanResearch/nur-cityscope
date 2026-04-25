@@ -3,6 +3,7 @@ import {
   formatParkingLotPopupHtml,
   enrichParkingGeojsonForProjection,
   PINK_LINE_PARKING_ICON_URL,
+  resolvePinkLineParkingAssetUrl,
 } from "../../../frontend/src/map-utils/pink-line-parking.js";
 
 describe("pink-line-parking", () => {
@@ -54,5 +55,17 @@ describe("pink-line-parking", () => {
     expect(PINK_LINE_PARKING_ICON_URL).toMatch(
       /^\/otef-interactive\/img\/pink-line-parking\/parking-icon\.png$/,
     );
+  });
+
+  test("resolvePinkLineParkingAssetUrl joins root-relative paths to location.origin", () => {
+    const prev = globalThis.window;
+    globalThis.window = { location: { origin: "https://example.org" } };
+    try {
+      expect(resolvePinkLineParkingAssetUrl("/otef-interactive/img/x.png")).toBe(
+        "https://example.org/otef-interactive/img/x.png",
+      );
+    } finally {
+      globalThis.window = prev;
+    }
   });
 });

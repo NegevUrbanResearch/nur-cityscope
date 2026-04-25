@@ -9,6 +9,7 @@ import layerRegistry from "../shared/layer-registry.js";
 import {
   loadCuratedLayerToMapLibre,
   removeCuratedHtmlMarkers,
+  syncPinkLineAxisCompanionForMapLibre,
 } from "../map/maplibre-curated-layer-loader.js";
 import {
   applyContextFlowAnimationsToMap,
@@ -167,9 +168,10 @@ async function bootstrapMapRuntime() {
     let activeCuratedIds = new Set();
 
     const layerGroups = OTEFDataContext.getLayerGroups();
-    const initialGroups = filterGroupsForGisMap(
-      Array.isArray(layerGroups) ? layerGroups : Object.values(layerGroups || {}),
-    );
+    const rawInitialLayerGroups = Array.isArray(layerGroups)
+      ? layerGroups
+      : Object.values(layerGroups || {});
+    const initialGroups = filterGroupsForGisMap(rawInitialLayerGroups);
     applyLayerGroupsToMap(map, initialGroups);
     syncContextFlowAnimations();
 
@@ -250,6 +252,7 @@ async function bootstrapMapRuntime() {
 
       if (toRefresh.length === 0) {
         syncContextFlowAnimations();
+        syncPinkLineAxisCompanionForMapLibre(map, groupsAsArray);
         return;
       }
 
@@ -262,10 +265,11 @@ async function bootstrapMapRuntime() {
         }
       }
       syncContextFlowAnimations();
+      syncPinkLineAxisCompanionForMapLibre(map, groupsAsArray);
     };
 
-    // Initial curated load for current layerGroups state.
-    await refreshCuratedLayers({ groupsOverride: initialGroups });
+    // Initial curated load for current layerGroups state (raw groups preserve parking toggle row).
+    await refreshCuratedLayers({ groupsOverride: rawInitialLayerGroups });
 
     // layerGroups updates must drive curated lifecycle (WebSocket + manual workshop refresh).
     registerDisposer(
