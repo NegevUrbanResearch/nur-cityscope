@@ -16,6 +16,7 @@ describe("map-projection-config defaults", () => {
     expect(MapProjectionConfig.PROJECTION_LERP_FACTOR).toBeCloseTo(0.15);
     expect(MapProjectionConfig.PROJECTION_RESIZE_DEBOUNCE_MS).toBe(200);
     expect(MapProjectionConfig.PROJECTION_FULL_EXTENT_TOLERANCE).toBe(10);
+    expect(MapProjectionConfig.PROJECTION_MAP_PIXEL_RATIO).toBe(null);
   });
 
   test("includes GIS performance flags with safe defaults", () => {

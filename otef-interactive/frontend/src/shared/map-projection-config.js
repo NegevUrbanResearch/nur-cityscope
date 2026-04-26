@@ -38,6 +38,12 @@ const MapProjectionConfig = {
     urlOverride: null,
   },
 
+  // MapLibre GL canvas pixel ratio for the projection map only (supersampling when > devicePixelRatio).
+  // null -> browser default (usually devicePixelRatio; TouchDesigner Web Browser is often 1).
+  // Try 1.25–2 for a sharper map at the cost of GPU memory (canvas backing ≈ layout × this).
+  // URL `?mapPixelRatio=` / `?mpr=` overrides this (see projection-main).
+  PROJECTION_MAP_PIXEL_RATIO: null,
+
   // Projection-layer animation policy.
   // Supports line-flow animation even when style.animation metadata is absent,
   // using per-layer overrides keyed by full layer id ("pack.layer").

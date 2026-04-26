@@ -27,6 +27,53 @@ function getEffectiveProjectionLayerGroups() {
   return OTEFDataContext.getLayerGroups();
 }
 
+/**
+ * Query: `?projectionRenderDebug=1` or `?prd=1` (also true/yes/on; 0/false/no/off disables).
+ * For embedded WebViews (e.g. TouchDesigner) that cannot use the D key or executeJavaScript.
+ * @returns {boolean}
+ */
+function isProjectionRenderDebugRequestedInUrl() {
+  if (typeof window === "undefined" || typeof window.location?.search !== "string") return false;
+  const q = window.location.search;
+  if (!q || q === "?") return false;
+  const params = new URLSearchParams(q);
+  const raw = params.get("projectionRenderDebug") ?? params.get("prd");
+  if (raw === null || raw === "") return false;
+  const lower = String(raw).trim().toLowerCase();
+  if (lower === "0" || lower === "false" || lower === "no" || lower === "off") return false;
+  return true;
+}
+
+/** Cap avoids accidental huge framebuffers (e.g. mpr=99). */
+const MAX_PROJECTION_MAP_PIXEL_RATIO = 3;
+
+/**
+ * MapLibre `pixelRatio` for projection (supersampling). URL wins over config.
+ * Use `?mapPixelRatio=1.5` or short `?mpr=1.5` (TouchDesigner: append to projection URL).
+ * @returns {number | undefined} Omit Map option when undefined (MapLibre uses devicePixelRatio).
+ */
+function resolveProjectionMapPixelRatio() {
+  if (typeof window !== "undefined" && typeof window.location?.search === "string") {
+    const q = window.location.search;
+    if (q && q !== "?") {
+      const params = new URLSearchParams(q);
+      const raw = params.get("mapPixelRatio") ?? params.get("mpr");
+      if (raw !== null && raw !== "") {
+        const n = Number(String(raw).trim());
+        if (Number.isFinite(n) && n > 0 && n <= MAX_PROJECTION_MAP_PIXEL_RATIO) {
+          return n;
+        }
+      }
+    }
+  }
+  const c =
+    typeof window !== "undefined" && window.MapProjectionConfig?.PROJECTION_MAP_PIXEL_RATIO;
+  if (typeof c === "number" && Number.isFinite(c) && c > 0 && c <= MAX_PROJECTION_MAP_PIXEL_RATIO) {
+    return c;
+  }
+  return undefined;
+}
+
 function updateModelBaseImageVisibility(layerGroups, modelImgEl) {
   if (!modelImgEl) return;
   const groups = Array.isArray(layerGroups)
@@ -141,7 +188,10 @@ async function bootstrapProjectionRuntime() {
     }
   }
 
-  const map = createProjectionMap("projectionMap", modelBounds);
+  const projectionMapPixelRatio = resolveProjectionMapPixelRatio();
+  const map = createProjectionMap("projectionMap", modelBounds, {
+    ...(projectionMapPixelRatio !== undefined ? { pixelRatio: projectionMapPixelRatio } : {}),
+  });
   const highlightEl = document.getElementById("highlightOverlay");
   let lastViewport = null;
 
@@ -166,8 +216,19 @@ async function bootstrapProjectionRuntime() {
   const projectionRenderDebugApi = installProjectionRenderDebugOverlay({
     map,
     registerDisposer,
-    initialVisible: false,
+    initialVisible: isProjectionRenderDebugRequestedInUrl(),
   });
+
+  // TouchDesigner Web Browser DAT (and similar hosts) often do not deliver real key events;
+  // expose the overlay API like ProjectionBoundsEditor for executeJavaScript().
+  if (typeof window !== "undefined" && projectionRenderDebugApi) {
+    window.ProjectionRenderDebug = projectionRenderDebugApi;
+    registerDisposer(() => {
+      if (window.ProjectionRenderDebug === projectionRenderDebugApi) {
+        delete window.ProjectionRenderDebug;
+      }
+    });
+  }
 
   map.on("load", async () => {
     registerDisposer(() => {

@@ -1,6 +1,7 @@
 /**
  * Lab diagnostics: resolution, DPR, MapLibre canvas backing store, zoom.
  * Toggle with **D** from projection-main (same pattern as B bounds / R rotation).
+ * Embedded hosts: `?projectionRenderDebug=1` / `?prd=1`, or `window.ProjectionRenderDebug.toggle()` / `.setVisible(bool)`.
  */
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
 
@@ -95,9 +96,9 @@ function collectSnapshot(map) {
     `WMTS_PROJECTOR.zoomOverride   ${wmts.zoomOverride === null || wmts.zoomOverride === undefined ? "null (manifest default)" : String(wmts.zoomOverride)}`,
     `WMTS_PROJECTOR.urlOverride    ${wmts.urlOverride ? "set" : "null"}`,
     ``,
-    `Interpret: backing should be ≈ map CSS × devicePixelRatio unless`,
-    `pixelRatio is overridden. If effective ratio ≈ 1 while DPR is 1,`,
-    `you only have layout pixels (consider Map pixelRatio or larger layout).`,
+    `Interpret: effective ratio ≈ 1 means 1 GL pixel per layout pixel (no supersampling).`,
+    `Ratio > 1 means supersampling (sharper, heavier). Try URL ?mpr=1.5 or config`,
+    `PROJECTION_MAP_PIXEL_RATIO; WMTS zoom also affects tile sharpness.`,
     ``,
     `Toggle: D (same shortcut row as H / F / B / R in help)`,
   ];

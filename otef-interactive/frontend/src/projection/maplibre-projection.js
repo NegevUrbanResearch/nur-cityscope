@@ -65,8 +65,22 @@ ensureMapLibreRTLTextPlugin();
 
 const DEFAULT_FULL_EXTENT_TOLERANCE = 10;
 
-export function createProjectionMap(containerId, modelBounds) {
-  const map = new maplibregl.Map({
+/**
+ * MapLibre defaults `maxCanvasSize` to [4096, 4096], which lowers internal GL resolution
+ * for large containers (e.g. 5760×3240 TouchDesigner Web Browser) and looks soft when upscaled.
+ * Request a large cap; the runtime clamps to WebGL MAX_TEXTURE_SIZE / safe drawing buffer.
+ * @see https://maplibre.org/maplibre-gl-js/docs/API/type-aliases/MapOptions/
+ */
+const PROJECTION_MAP_MAX_CANVAS_SIZE = [16384, 16384];
+
+/**
+ * @param {string} containerId
+ * @param {object} modelBounds
+ * @param {{ pixelRatio?: number }} [options] If `pixelRatio` is a finite number > 0, passed to MapLibre (supersampling when above devicePixelRatio).
+ */
+export function createProjectionMap(containerId, modelBounds, options = {}) {
+  const { pixelRatio } = options;
+  const mapOptions = {
     container: containerId,
     style: {
       version: 8,
@@ -80,7 +94,12 @@ export function createProjectionMap(containerId, modelBounds) {
     attributionControl: false,
     preserveDrawingBuffer: true,
     dragRotate: false,
-  });
+    maxCanvasSize: PROJECTION_MAP_MAX_CANVAS_SIZE,
+  };
+  if (typeof pixelRatio === "number" && Number.isFinite(pixelRatio) && pixelRatio > 0) {
+    mapOptions.pixelRatio = pixelRatio;
+  }
+  const map = new maplibregl.Map(mapOptions);
 
   map.fitBounds(modelBounds.bounds, { animate: false, padding: 0 });
 
