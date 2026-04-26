@@ -9,6 +9,7 @@ export const OTEF_MESSAGE_TYPES = {
   ANIMATION_CHANGED: "otef_animation_changed",
   BOUNDS_CHANGED: "otef_bounds_changed",
   VELOCITY_SYNC: "otef_velocity_sync",
+  PROJECTION_SLIDESHOW_CHANGED: "otef_projection_slideshow_changed",
 };
 
 export const DEFAULT_LAYER_STATES = {

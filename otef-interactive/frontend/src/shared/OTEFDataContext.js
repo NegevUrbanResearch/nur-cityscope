@@ -1,6 +1,10 @@
 import { OTEF_API } from "./api-client.js";
 import { OTEFDataContextInternals } from "./otef-data-context/index.js";
 import { recordTraceEvent } from "./otef-trace.js";
+import {
+  normalizeSlideshowProjectionMessage,
+  postSlideshowBroadcastOnly,
+} from "./slideshow-projection-channel.js";
 import "./otef-data-context/OTEFDataContext-actions.js";
 import "./otef-data-context/OTEFDataContext-bounds.js";
 import "./otef-data-context/OTEFDataContext-websocket.js";
@@ -77,6 +81,7 @@ class OTEFDataContextClass {
       bounds: new Set(),
       connection: new Set(),
       orientation: new Set(),
+      projectionSlideshow: new Set(),
     };
 
     this._wsClient = null;
@@ -98,6 +103,8 @@ class OTEFDataContextClass {
     this._pendingAnimationOps = 0;
     this._viewportSeq = 0;
     this._activeLayerTrace = null;
+    /** @type {Record<string, unknown> | null} */
+    this._projectionSlideshow = null;
   }
 
   async init(tableName = "otef") {
@@ -253,6 +260,56 @@ class OTEFDataContextClass {
       this._viewerAngleDeg = angle;
       this._notify("orientation", this._viewerAngleDeg);
     }
+  }
+
+  _projectionSlideshowEqual(a, b) {
+    return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  }
+
+  /**
+   * @param {Record<string, unknown> | null | undefined} slideshow
+   */
+  _setProjectionSlideshow(slideshow) {
+    const next =
+      slideshow && typeof slideshow === "object" ? { ...slideshow } : null;
+    if (this._projectionSlideshowEqual(this._projectionSlideshow, next)) {
+      return;
+    }
+    this._projectionSlideshow = next;
+    this._notify("projectionSlideshow", this._projectionSlideshow);
+  }
+
+  /**
+   * Push a projection slideshow command through the OTEF API (WebSocket fan-out to projection).
+   * Falls back to BroadcastChannel if the PATCH fails or the table is not initialized.
+   *
+   * @param {unknown} message
+   */
+  async patchProjectionSlideshow(message) {
+    const normalized = normalizeSlideshowProjectionMessage(message);
+    if (this._tableName) {
+      try {
+        const state = await OTEF_API.updateState(this._tableName, {
+          projection_slideshow: normalized,
+          sourceId: this._clientId,
+          timestamp: Date.now(),
+        });
+        if (state?.projection_slideshow && typeof state.projection_slideshow === "object") {
+          this._setProjectionSlideshow(state.projection_slideshow);
+        }
+        return;
+      } catch (err) {
+        getLogger().warn(
+          "[OTEFDataContext] projection slideshow PATCH failed; using BroadcastChannel fallback",
+          err,
+        );
+      }
+    }
+    postSlideshowBroadcastOnly(normalized);
+  }
+
+  getProjectionSlideshow() {
+    return this._projectionSlideshow;
   }
 
   _notify(key, value) {
@@ -470,6 +527,9 @@ class OTEFDataContextClass {
         break;
       case "orientation":
         current = this._viewerAngleDeg;
+        break;
+      case "projectionSlideshow":
+        current = this._projectionSlideshow;
         break;
       default:
         break;

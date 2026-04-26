@@ -13,6 +13,9 @@ import {
   disposeRouteProgressOverlaysForMap,
   syncRouteProgressOverlaysToMap,
 } from "../shared/maplibre-route-progress-overlay.js";
+import MapProjectionConfig from "../shared/map-projection-config.js";
+import { createSlideshowPackRuntime } from "../shared/slideshow-pack-runtime.js";
+import { subscribeSlideshowProjection } from "../shared/slideshow-projection-channel.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
 
@@ -194,6 +197,22 @@ async function bootstrapProjectionRuntime() {
   });
   const highlightEl = document.getElementById("highlightOverlay");
   let lastViewport = null;
+  /** @type {ReturnType<import("../shared/slideshow-pack-runtime.js").createSlideshowPackRuntime> | null} */
+  let slideshowRuntime = null;
+
+  const syncProjectionHighlight = (viewport) => {
+    if (!highlightEl) return;
+    if (slideshowRuntime?.shouldSuppressProjectionHighlight?.()) {
+      highlightEl.style.display = "none";
+      highlightEl.setAttribute("aria-hidden", "true");
+      return;
+    }
+    highlightEl.style.display = "";
+    highlightEl.removeAttribute("aria-hidden");
+    if (viewport) {
+      updateHighlightFromViewport(map, viewport, modelBounds, highlightEl);
+    }
+  };
 
   const disposers = [];
   const registerDisposer = (fn) => {
@@ -278,13 +297,16 @@ async function bootstrapProjectionRuntime() {
     const runProjectionCuratedRefresh = async ({
       affectedCuratedFullLayerIds,
       groupsOverride,
+      skipInitialVectorLayerSync = false,
     } = {}) => {
       const rawGroups = groupsOverride ?? getEffectiveProjectionLayerGroups();
       const currentGroups = asLayerGroupsArray(rawGroups);
 
       updateModelBaseImageVisibility(rawGroups, modelImgEl);
 
-      syncProjectionLayers(map, currentGroups);
+      if (!skipInitialVectorLayerSync) {
+        syncProjectionLayers(map, currentGroups);
+      }
       syncContextFlowAnimations();
 
       const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
@@ -329,11 +351,30 @@ async function bootstrapProjectionRuntime() {
       syncContextFlowAnimations();
       syncPinkLineAxisCompanionForMapLibre(map, currentGroups);
     };
+    const shouldSkipLiveProjectionRefresh = () =>
+      !!(
+        slideshowRuntime?.isActive() &&
+        MapProjectionConfig.PROJECTION_SLIDESHOW?.ignoreLiveLayerUpdatesWhileActive
+      );
+    const applyProjectionRefresh = ({
+      groupsOverride,
+      affectedCuratedFullLayerIds,
+      fromSlideshowTick,
+    } = {}) => {
+      if (!fromSlideshowTick && shouldSkipLiveProjectionRefresh()) {
+        return Promise.resolve();
+      }
+      return runProjectionCuratedRefresh({
+        groupsOverride,
+        affectedCuratedFullLayerIds,
+        skipInitialVectorLayerSync: !!fromSlideshowTick,
+      });
+    };
     let projectionCuratedRefreshChain = Promise.resolve();
     const refreshProjectionCuratedLayers = (options = {}) => {
       projectionCuratedRefreshChain = projectionCuratedRefreshChain
         .catch(() => {})
-        .then(() => runProjectionCuratedRefresh(options));
+        .then(() => applyProjectionRefresh(options));
       return projectionCuratedRefreshChain;
     };
 
@@ -346,18 +387,64 @@ async function bootstrapProjectionRuntime() {
 
     lastViewport = OTEFDataContext.getViewport();
     if (lastViewport) {
-      updateHighlightFromViewport(map, lastViewport, modelBounds, highlightEl);
+      syncProjectionHighlight(lastViewport);
     }
 
     await loadProjectionCuratedLayers(map);
 
+    slideshowRuntime = createSlideshowPackRuntime({
+      map,
+      config: MapProjectionConfig.PROJECTION_SLIDESHOW,
+      getEffectiveLayerGroups: getEffectiveProjectionLayerGroups,
+      syncProjectionLayers,
+      applyProjectionRefresh,
+    });
+    registerDisposer(() => {
+      if (slideshowRuntime) {
+        void slideshowRuntime.dispose();
+      }
+      slideshowRuntime = null;
+    });
+
+    function handleSlideshowProjectionMessage(msg) {
+      if (!slideshowRuntime || !msg?.type) return;
+      if (msg.type === "start") {
+        slideshowRuntime.start(msg.payload || {});
+        syncProjectionHighlight(lastViewport);
+        return;
+      }
+      if (msg.type === "stop") {
+        void slideshowRuntime
+          .stop()
+          .then(() => applyProjectionRefresh())
+          .then(() => {
+            syncProjectionHighlight(lastViewport);
+          })
+          .catch((err) => {
+            console.warn(
+              "[projection-main] slideshow stop or projection refresh after stop failed",
+              err,
+            );
+          });
+      }
+    }
+
+    registerDisposer(subscribeSlideshowProjection(handleSlideshowProjectionMessage));
+    registerDisposer(
+      OTEFDataContext.subscribe("projectionSlideshow", (raw) => {
+        if (!raw || typeof raw !== "object" || !raw.type) return;
+        const payload =
+          raw.payload && typeof raw.payload === "object" ? raw.payload : {};
+        handleSlideshowProjectionMessage({ type: raw.type, payload });
+      }),
+    );
+
     registerDisposer(
       OTEFDataContext.subscribe("layerGroups", () => {
-        syncContextFlowAnimations();
         // Raw `groups` from the event omit LayerStateHelper merge rules (e.g. שמות_יישובים
         // + Locations_Lines → one row with fullLayerIds). Sync must use the same effective
         // groups as loadProjectionCuratedLayers or Locations_Lines never loads on toggle.
-        void refreshProjectionCuratedLayers({
+        void applyProjectionRefresh({
           groupsOverride: getEffectiveProjectionLayerGroups(),
         });
       }),
@@ -366,7 +453,7 @@ async function bootstrapProjectionRuntime() {
     registerDisposer(
       OTEFDataContext.subscribe("viewport", (viewport) => {
         lastViewport = viewport;
-        updateHighlightFromViewport(map, viewport, modelBounds, highlightEl);
+        syncProjectionHighlight(viewport);
       }),
     );
 
@@ -380,10 +467,16 @@ async function bootstrapProjectionRuntime() {
       ) {
         window._otefProjectionCuratedGeojsonRefreshBound = true;
         const onCuratedRefresh = (ev) => {
+          if (shouldSkipLiveProjectionRefresh()) {
+            return;
+          }
           void syncCuratedMapLayersAfterSupabasePull({
             pullPayload: ev?.detail || {},
             reloadCuratedOnMap: refreshProjectionCuratedLayers,
             applyLayerGroupsState: (groups) => {
+              if (shouldSkipLiveProjectionRefresh()) {
+                return;
+              }
               syncProjectionLayers(
                 map,
                 Array.isArray(groups) ? groups : Object.values(groups || {}),
@@ -459,9 +552,7 @@ async function bootstrapProjectionRuntime() {
     resizeTimer = window.setTimeout(() => {
       resizeTimer = null;
       const syncHighlight = () => {
-        if (lastViewport) {
-          updateHighlightFromViewport(map, lastViewport, modelBounds, highlightEl);
-        }
+        syncProjectionHighlight(lastViewport);
       };
       if (typeof map.resize === "function") {
         map.resize();

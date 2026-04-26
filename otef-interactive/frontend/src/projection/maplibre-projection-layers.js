@@ -273,12 +273,21 @@ async function applyWmtsIncludeMaskFromRegistry(map, layerConfig, fullId, epochA
   }
 }
 
-export function syncProjectionLayers(map, layerGroups) {
+export function syncProjectionLayers(map, layerGroups, options = {}) {
   if (!map) return;
 
   const groups = asArrayLayerGroups(layerGroups);
   const groupsWithoutWmts = cloneGroupsWithWmtsDisabled(groups);
-  applyLayerGroupsToMap(map, groupsWithoutWmts, { applyProjectionHatchPresentation: true });
+  const opts = options && typeof options === "object" ? options : {};
+  const { transition, ...restLayerStyleOptions } = opts;
+  const layerStyleOptions = {
+    applyProjectionHatchPresentation: true,
+    ...restLayerStyleOptions,
+  };
+  if (transition && typeof transition === "object") {
+    layerStyleOptions.transition = { ...transition };
+  }
+  applyLayerGroupsToMap(map, groupsWithoutWmts, layerStyleOptions);
 
   const wmtsState = getOrCreateWmtsState(map);
   const enabledWmts = resolveEnabledWmtsFullIds(groups);

@@ -45,3 +45,28 @@ describe("map-projection-config defaults", () => {
     ).toBe(true);
   });
 });
+
+describe("projection slideshow config", () => {
+  test("exposes stable defaults", () => {
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.intervalMs).toBe(10000);
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.crossfadeMs).toBe(1200);
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.warmupLeadMs).toBe(2500);
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.wmtsFadePolicy).toBe(
+      "instant-after-vector-fade"
+    );
+    expect(
+      MapProjectionConfig.PROJECTION_SLIDESHOW.excludedPresentationPackIds
+    ).toEqual([
+      "projector_base",
+      "gaza",
+      "curated_moresht_axis",
+    ]);
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.packOrder).toEqual([
+      "future_development",
+      "october_7th",
+      "greens",
+      "land_use",
+      "muniplicity_transport",
+    ]);
+  });
+});

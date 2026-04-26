@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { applyLayerGroupsToMapMock } = vi.hoisted(() => ({
   applyLayerGroupsToMapMock: vi.fn(),
@@ -118,6 +118,22 @@ describe("maplibre-projection-layers", () => {
       `wmts__${fullId}`,
       expect.objectContaining({ type: "raster" }),
     );
+  });
+
+  it("syncProjectionLayers forwards transition options into applyLayerGroupsToMap", () => {
+    const map = createMapMock();
+    const groups = [{ id: "proj", layers: [{ id: "x", enabled: true }] }];
+    registryMock.getLayerConfig.mockReturnValue({ format: "geojson" });
+
+    syncProjectionLayers(map, groups, {
+      transition: { stageHidden: true, transitionMs: 50 },
+    });
+
+    expect(applyLayerGroupsToMapMock).toHaveBeenCalledTimes(1);
+    expect(applyLayerGroupsToMapMock.mock.calls[0][2]).toEqual({
+      applyProjectionHatchPresentation: true,
+      transition: { stageHidden: true, transitionMs: 50 },
+    });
   });
 
   it("syncProjectionLayers applies base layers without WMTS then adds WMTS source", () => {

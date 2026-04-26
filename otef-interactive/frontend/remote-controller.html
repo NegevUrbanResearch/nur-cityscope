@@ -65,6 +65,69 @@
 
     <main class="remote-main" id="remoteMain" dir="rtl">
       <div class="remote-tab-panels" id="remoteTabPanels">
+        <!-- Tab: Slideshow (projection) -->
+        <section
+          class="remote-tab-panel"
+          data-remote-tab="slideshow"
+          id="remote-panel-slideshow"
+          role="tabpanel"
+          aria-labelledby="remote-tab-slideshow"
+          hidden
+        >
+          <div class="remote-slideshow-host" id="remoteSlideshowHost"></div>
+        </section>
+
+        <!--
+          Tab: Workshop (display) — data-remote-tab=curation for embed + routing contract
+          (Task 7: curation.html iframe, ?embed=1)
+        -->
+        <section
+          class="remote-tab-panel"
+          data-remote-tab="curation"
+          id="remote-panel-curation"
+          role="tabpanel"
+          aria-labelledby="remote-tab-curation"
+          hidden
+        >
+          <div
+            class="remote-curation-surface"
+            id="remoteCurationSurface"
+            data-embed-surface="curation"
+          >
+            <!--
+              Embed contract: curated Supabase sync runs only from workshop refresh (see curation.js).
+              Iframe src MUST include ?embed=1 (see frontend/src/curation/curation-embed.js).
+            -->
+            <iframe
+              id="remoteCurationFrame"
+              class="remote-curation-frame"
+              title="סדנה"
+              data-i18n-title="curationIframeTitle"
+              src="curation.html?embed=1"
+              loading="lazy"
+            ></iframe>
+          </div>
+        </section>
+
+        <!-- Tab: Layers — layer sheet host; Task 6 will align panel + sheet UX -->
+        <section
+          class="remote-tab-panel"
+          data-remote-tab="layers"
+          id="remote-panel-layers"
+          role="tabpanel"
+          aria-labelledby="remote-tab-layers"
+          hidden
+        >
+          <div class="remote-layer-host" id="remoteLayerHost">
+            <!-- #layerSheet — panel root; LayerSheetController (Task 6) -->
+            <div class="layer-panel" id="layerSheet">
+              <div class="sheet-content" id="layerPanelContent">
+                <!-- Populated by LayerSheetController -->
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- Tab: Navigation — map controls (ids preserved for remote-controller.js) -->
         <section
           class="remote-tab-panel"
@@ -208,57 +271,6 @@
             </div>
           </section>
         </section>
-
-        <!-- Tab: Layers — layer sheet host; Task 6 will align panel + sheet UX -->
-        <section
-          class="remote-tab-panel"
-          data-remote-tab="layers"
-          id="remote-panel-layers"
-          role="tabpanel"
-          aria-labelledby="remote-tab-layers"
-          hidden
-        >
-          <div class="remote-layer-host" id="remoteLayerHost">
-            <!-- #layerSheet — panel root; LayerSheetController (Task 6) -->
-            <div class="layer-panel" id="layerSheet">
-              <div class="sheet-content" id="layerPanelContent">
-                <!-- Populated by LayerSheetController -->
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!--
-          Tab: Workshop (display) — data-remote-tab=curation for embed + routing contract
-          (Task 7: curation.html iframe, ?embed=1)
-        -->
-        <section
-          class="remote-tab-panel"
-          data-remote-tab="curation"
-          id="remote-panel-curation"
-          role="tabpanel"
-          aria-labelledby="remote-tab-curation"
-          hidden
-        >
-          <div
-            class="remote-curation-surface"
-            id="remoteCurationSurface"
-            data-embed-surface="curation"
-          >
-            <!--
-              Embed contract: curated Supabase sync runs only from workshop refresh (see curation.js).
-              Iframe src MUST include ?embed=1 (see frontend/src/curation/curation-embed.js).
-            -->
-            <iframe
-              id="remoteCurationFrame"
-              class="remote-curation-frame"
-              title="סדנה"
-              data-i18n-title="curationIframeTitle"
-              src="curation.html?embed=1"
-              loading="lazy"
-            ></iframe>
-          </div>
-        </section>
       </div>
     </main>
 
@@ -269,7 +281,25 @@
       data-i18n-aria="navTablistAria"
       aria-label="אזורי בקרה"
     >
-      <!-- LTR visual: left → Workshop, middle → Layers, right → Nav -->
+      <!-- LTR visual order: Presentation (slideshow) | Workshop (curation) | Layers | Navigation -->
+      <button
+        type="button"
+        class="remote-bottom-nav__tab"
+        id="remote-tab-slideshow"
+        role="tab"
+        aria-selected="false"
+        aria-controls="remote-panel-slideshow"
+        tabindex="-1"
+        data-remote-tab="slideshow"
+      >
+        <span class="remote-bottom-nav__icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="5" width="18" height="14" rx="2" />
+            <path d="M10 9l5 3-5 3V9z" />
+          </svg>
+        </span>
+        <span class="remote-bottom-nav__label" data-i18n="navSlideshow">מצגת</span>
+      </button>
       <button
         type="button"
         class="remote-bottom-nav__tab"

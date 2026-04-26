@@ -9,6 +9,261 @@ import { createMarkerLineSquareImageData } from "../shared/markerline-square-ima
 import { irToMapLibreLayers } from "../shared/maplibre-style-bridge.js";
 import layerRegistry from "../shared/layer-registry.js";
 
+/**
+ * Opacity paint keys that slideshow staging can force to 0. Only when the
+ * current paint is a **plain number**; expression-based paints and missing
+ * keys are left unchanged (layers may stay visible until reveal) — v1
+ * limitation; see implementation plan.
+ *
+ * Order: area/line vector opacities, then circle (point markers), then symbol
+ * (icon/text) and raster.
+ */
+export const FADE_KEYS = [
+  "fill-opacity",
+  "line-opacity",
+  "circle-opacity",
+  "icon-opacity",
+  "text-opacity",
+  "raster-opacity",
+];
+
+/**
+ * @param {{ transition?: { stageHidden?: boolean, transitionMs?: number } }} [layerStyleOptions]
+ * @returns {{ stageHidden: boolean, transitionMs: number }}
+ */
+export function resolveTransitionOptions(layerStyleOptions) {
+  const t = layerStyleOptions?.transition;
+  if (!t || typeof t !== "object") {
+    return { stageHidden: false, transitionMs: 0 };
+  }
+  const stageHidden = Boolean(t.stageHidden);
+  const raw = t.transitionMs;
+  const transitionMs =
+    typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, raw) : 0;
+  return { stageHidden, transitionMs };
+}
+
+/**
+ * Stages a layer def for hidden add: for each of {@link FADE_KEYS}, if the
+ * value is a **plain number**, records it in `targetOpacity` and sets paint
+ * to 0. Non-numeric (e.g. `match` / `interpolate`) and missing keys are not
+ * modified.
+ *
+ * @param {object} layerDef - MapLibre layer spec (must include `paint` if opacities exist)
+ * @returns {{ stagedLayerDef: object, targetOpacity: Record<string, number> }}
+ */
+export function stageLayerHidden(layerDef) {
+  const targetOpacity = {};
+  const paint = { ...(layerDef.paint || {}) };
+  for (const key of FADE_KEYS) {
+    if (typeof paint[key] === "number") {
+      targetOpacity[key] = paint[key];
+      paint[key] = 0;
+    }
+  }
+  return { stagedLayerDef: { ...layerDef, paint }, targetOpacity };
+}
+
+/**
+ * Sets opacity paint properties on existing layers to values from
+ * `targetByLayerId`, with optional transition per key. Used by
+ * `commitSlideshowReveal`; expects numeric targets (from {@link stageLayerHidden}).
+ *
+ * @param {object} map
+ * @param {string[]} layerIds
+ * @param {Record<string, Record<string, number>>} targetByLayerId
+ * @param {number} transitionMs
+ */
+export function revealLayerIdsWithTargets(map, layerIds, targetByLayerId, transitionMs) {
+  if (!map || !Array.isArray(layerIds) || !targetByLayerId) {
+    return;
+  }
+  const ms =
+    typeof transitionMs === "number" && Number.isFinite(transitionMs)
+      ? Math.max(0, transitionMs)
+      : 0;
+  const setPaint =
+    typeof map.setPaintProperty === "function" ? map.setPaintProperty.bind(map) : null;
+  if (!setPaint) {
+    return;
+  }
+  for (const layerId of layerIds) {
+    if (typeof map.getLayer !== "function" || !map.getLayer(layerId)) {
+      continue;
+    }
+    const targets = targetByLayerId[layerId];
+    if (!targets || typeof targets !== "object") {
+      continue;
+    }
+    for (const [key, value] of Object.entries(targets)) {
+      if (typeof value !== "number") {
+        continue;
+      }
+      setPaint(layerId, `${key}-transition`, { duration: ms, delay: 0 });
+      setPaint(layerId, key, value);
+    }
+  }
+}
+
+/**
+ * Fades {@link FADE_KEYS} opacities on enabled registry layers to 0, waits
+ * approximately `transitionMs` (MapLibre transition end is not awaited), then
+ * removes each fullId from the map. Safe no-op when `!map` or `fullIds` is
+ * empty. When `transitionMs === 0`, removes immediately without animating.
+ *
+ * @param {object} map
+ * @param {string[]} fullIds
+ * @param {number} transitionMs
+ * @returns {Promise<void>}
+ */
+export async function fadeOutAndRemoveEnabledFullIds(map, fullIds, transitionMs) {
+  if (!map || !Array.isArray(fullIds) || fullIds.length === 0) {
+    return;
+  }
+  const state = getOrCreateMapState(map);
+  const ms =
+    typeof transitionMs === "number" && Number.isFinite(transitionMs)
+      ? Math.max(0, transitionMs)
+      : 0;
+
+  if (ms === 0) {
+    for (const fullId of fullIds) {
+      const fid = fullId != null ? String(fullId).trim() : "";
+      if (!fid || !state.loadedLayerIds.has(fid)) {
+        continue;
+      }
+      removeFullIdFromMap(map, fid, state);
+    }
+    return;
+  }
+
+  /** @type {Record<string, Record<string, number>>} */
+  const targetByLayerId = {};
+  const layerIdSet = new Set();
+  const getPaint =
+    typeof map.getPaintProperty === "function" ? map.getPaintProperty.bind(map) : null;
+  const getLayer = typeof map.getLayer === "function" ? map.getLayer.bind(map) : null;
+
+  for (const fullId of fullIds) {
+    const fid = fullId != null ? String(fullId).trim() : "";
+    if (!fid || !state.loadedLayerIds.has(fid)) {
+      continue;
+    }
+    const mlLayerIds = state.loadedLayerIds.get(fid) || [];
+    for (const layerId of mlLayerIds) {
+      if (!getLayer || !getLayer(layerId)) {
+        continue;
+      }
+      if (!targetByLayerId[layerId]) {
+        targetByLayerId[layerId] = {};
+      }
+      const merged = targetByLayerId[layerId];
+      if (getPaint) {
+        for (const key of FADE_KEYS) {
+          let v;
+          try {
+            v = getPaint(layerId, key);
+          } catch {
+            continue;
+          }
+          if (typeof v === "number") {
+            merged[key] = 0;
+          }
+        }
+      }
+      layerIdSet.add(layerId);
+    }
+  }
+
+  const uniqueLayerIds = [...layerIdSet];
+  revealLayerIdsWithTargets(map, uniqueLayerIds, targetByLayerId, ms);
+
+  await new Promise((r) => setTimeout(r, ms));
+
+  for (const fullId of fullIds) {
+    const fid = fullId != null ? String(fullId).trim() : "";
+    if (!fid || !state.loadedLayerIds.has(fid)) {
+      continue;
+    }
+    removeFullIdFromMap(map, fid, state);
+  }
+}
+
+/**
+ * Syncs layer groups in slideshow “stage hidden” mode. Staging only zeros
+ * {@link FADE_KEYS} when the paint is a plain number; expressions and missing
+ * keys are not altered (v1 limitation).
+ *
+ * Return value provides `stagedFullIds` for callers that need extra
+ * bookkeeping. Reveal uses {@link commitSlideshowReveal}, which only needs
+ * `addedLayerIds` and `targetOpacityByLayerId` from this object.
+ *
+ * @param {object} map
+ * @param {object} layerGroups
+ * @param {{
+ *   applyProjectionHatchPresentation?: boolean,
+ *   renderMapLabelsFromStyle?: boolean,
+ *   transition?: { stageHidden?: boolean, transitionMs?: number },
+ * }} [layerStyleOptions]
+ * @returns {{
+ *   addedLayerIds: string[],
+ *   targetOpacityByLayerId: Record<string, Record<string, number>>,
+ *   stagedFullIds: string[],
+ *   transitionMs: number,
+ * }}
+ */
+export function beginSlideshowStage(map, layerGroups, layerStyleOptions) {
+  const base = layerStyleOptions && typeof layerStyleOptions === "object" ? { ...layerStyleOptions } : {};
+  const prevTransition =
+    base.transition && typeof base.transition === "object" ? { ...base.transition } : {};
+  const opts = {
+    ...base,
+    transition: { ...prevTransition, stageHidden: true },
+  };
+  const { transitionMs } = resolveTransitionOptions(opts);
+  const stagedMeta = {
+    addedLayerIds: [],
+    targetOpacityByLayerId: {},
+    stagedFullIds: [],
+    transitionMs,
+  };
+  syncLayerGroupsToMap(map, layerGroups, opts, stagedMeta);
+  return stagedMeta;
+}
+
+/**
+ * Reveals layers staged by {@link beginSlideshowStage} using `addedLayerIds`
+ * and `targetOpacityByLayerId` only (`stagedFullIds` is not read here).
+ * Duration: if `transitionMs` is a **finite** number, it wins; otherwise
+ * `stagedMeta.transitionMs` is used.
+ *
+ * @param {object} map
+ * @param {{
+ *   addedLayerIds: string[],
+ *   targetOpacityByLayerId: Record<string, Record<string, number>>,
+ *   stagedFullIds?: string[],
+ *   transitionMs?: number,
+ * }} stagedMeta
+ * @param {number} [transitionMs] - When finite, overrides `stagedMeta.transitionMs` for duration.
+ */
+export function commitSlideshowReveal(map, stagedMeta, transitionMs) {
+  if (!map || !stagedMeta) {
+    return;
+  }
+  const ms =
+    typeof transitionMs === "number" && Number.isFinite(transitionMs)
+      ? Math.max(0, transitionMs)
+      : typeof stagedMeta.transitionMs === "number" && Number.isFinite(stagedMeta.transitionMs)
+        ? Math.max(0, stagedMeta.transitionMs)
+        : 0;
+  revealLayerIdsWithTargets(
+    map,
+    stagedMeta.addedLayerIds,
+    stagedMeta.targetOpacityByLayerId,
+    ms,
+  );
+}
+
 function releaseHatchPatternsForFullId(map, fullId, state) {
   const ids = state.hatchPatternIdsByFullId.get(fullId);
   if (!Array.isArray(ids) || ids.length === 0) {
@@ -336,8 +591,10 @@ function rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, register
  * }} [layerStyleOptions] - projection passes `{ applyProjectionHatchPresentation: true }` for
  *   denser hatch rasters and to scope `style.labels` → symbol layers to שמות_יישובים only; GIS omits.
  */
-function addLayerToMap(map, fullId, state, layerStyleOptions) {
+function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
   const { loadedSources, loadedLayerIds } = state;
+  const shouldStage =
+    stagedMeta != null && resolveTransitionOptions(layerStyleOptions).stageHidden;
   // Curated layer ids are managed by maplibre-curated-layer-loader, not the registry path.
   if (!layerRegistry.getLayerConfig(fullId) && fullId.startsWith("curated")) return;
   const layerConfig = layerRegistry.getLayerConfig(fullId);
@@ -404,6 +661,8 @@ function addLayerToMap(map, fullId, state, layerStyleOptions) {
   }
 
   const addedLayerIds = [];
+  /** @type {Record<string, Record<string, number>>} */
+  const pendingStageTargets = {};
   const registeredPatternIds = new Set();
   let styleLayers;
   try {
@@ -452,9 +711,18 @@ function addLayerToMap(map, fullId, state, layerStyleOptions) {
       layerDef["source-layer"] = pmtilesVectorSourceLayer;
     }
 
+    let defToAdd = layerDef;
+    if (shouldStage) {
+      const { stagedLayerDef, targetOpacity } = stageLayerHidden(layerDef);
+      defToAdd = stagedLayerDef;
+      if (Object.keys(targetOpacity).length > 0) {
+        pendingStageTargets[stagedLayerDef.id] = targetOpacity;
+      }
+    }
+
     try {
-      map.addLayer(layerDef);
-      addedLayerIds.push(layerDef.id);
+      map.addLayer(defToAdd);
+      addedLayerIds.push(defToAdd.id);
     } catch (error) {
       console.warn(
         `[maplibre-layer-manager] Failed to add style layer ${layerDef.id}`,
@@ -478,16 +746,32 @@ function addLayerToMap(map, fullId, state, layerStyleOptions) {
   } else {
     state.hatchPatternIdsByFullId.delete(fullId);
   }
+
+  if (shouldStage) {
+    for (const id of addedLayerIds) {
+      stagedMeta.addedLayerIds.push(id);
+      if (pendingStageTargets[id]) {
+        stagedMeta.targetOpacityByLayerId[id] = pendingStageTargets[id];
+      }
+    }
+    stagedMeta.stagedFullIds.push(fullId);
+  }
 }
 
 /**
  * @param {{
  *   applyProjectionHatchPresentation?: boolean,
  *   renderMapLabelsFromStyle?: boolean,
+ *   transition?: { stageHidden?: boolean, transitionMs?: number },
  * }} [layerStyleOptions] - projection sets `applyProjectionHatchPresentation` for hatch density
  *   and settlement-name-only map labels; GIS callers omit.
+ * @param {{
+ *   addedLayerIds: string[],
+ *   targetOpacityByLayerId: Record<string, Record<string, number>>,
+ *   stagedFullIds: string[],
+ * }} [stagedMeta] - when set and `transition.stageHidden` is true, new layers are added at opacity 0 and ids/targets are recorded
  */
-export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
+function syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, stagedMeta) {
   const state = getOrCreateMapState(map);
   const { loadedSources, loadedLayerIds } = state;
   const enabledFullIds = getEnabledMapFullLayerIds(layerGroups);
@@ -504,9 +788,21 @@ export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
 
   for (const fullId of enabledFullIds) {
     if (!loadedSources.has(fullId)) {
-      addLayerToMap(map, fullId, state, layerStyleOptions);
+      addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta);
     }
   }
+}
+
+/**
+ * @param {{
+ *   applyProjectionHatchPresentation?: boolean,
+ *   renderMapLabelsFromStyle?: boolean,
+ *   transition?: { stageHidden?: boolean, transitionMs?: number },
+ * }} [layerStyleOptions] - projection sets `applyProjectionHatchPresentation` for hatch density
+ *   and settlement-name-only map labels; GIS callers omit.
+ */
+export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
+  syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, null);
 }
 
 export function clearAllLayers(map) {

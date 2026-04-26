@@ -29,6 +29,13 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
     if (state.animations) ctx._setAnimations(state.animations);
     if (state.bounds_polygon || state.bounds) ctx._setBounds(state.bounds_polygon || state.bounds);
     if (typeof state.viewer_angle_deg === "number") ctx._setViewerAngleDeg(state.viewer_angle_deg);
+    if (
+      Object.prototype.hasOwnProperty.call(state, "projection_slideshow") &&
+      state.projection_slideshow &&
+      typeof state.projection_slideshow === "object"
+    ) {
+      ctx._setProjectionSlideshow(state.projection_slideshow);
+    }
   } else {
     if (state.viewport) {
       ctx._viewport = state.viewport;
@@ -47,6 +54,13 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
     if (state.bounds_polygon || state.bounds) ctx._bounds = state.bounds_polygon || state.bounds;
     if (typeof state.viewer_angle_deg === "number") {
       ctx._viewerAngleDeg = state.viewer_angle_deg;
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(state, "projection_slideshow") &&
+      state.projection_slideshow &&
+      typeof state.projection_slideshow === "object"
+    ) {
+      ctx._projectionSlideshow = { ...state.projection_slideshow };
     }
   }
 }
@@ -205,6 +219,26 @@ function setupWebSocket(ctx) {
       if (typeof state.viewer_angle_deg === "number") ctx._setViewerAngleDeg(state.viewer_angle_deg);
     } catch (err) {
       getLogger().error("[OTEFDataContext] Failed to refresh bounds after BOUNDS_CHANGED:", err);
+    }
+  });
+
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.PROJECTION_SLIDESHOW_CHANGED, async (msg = {}) => {
+    if (msg && msg.sourceId === ctx._clientId) return;
+    try {
+      const raw = msg && msg.projectionSlideshow;
+      if (raw && typeof raw === "object") {
+        ctx._setProjectionSlideshow(raw);
+        return;
+      }
+      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+      if (state?.projection_slideshow && typeof state.projection_slideshow === "object") {
+        ctx._setProjectionSlideshow(state.projection_slideshow);
+      }
+    } catch (err) {
+      getLogger().error(
+        "[OTEFDataContext] Failed to apply projection slideshow after PROJECTION_SLIDESHOW_CHANGED:",
+        err,
+      );
     }
   });
 

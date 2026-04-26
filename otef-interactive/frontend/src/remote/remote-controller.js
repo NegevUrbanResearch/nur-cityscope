@@ -42,8 +42,8 @@ const DEFAULT_ZOOM = 15;
 // Table name for this controller
 const TABLE_NAME = "otef";
 
-/** Bottom shell tabs: matches LTR bar order (Workshop | Layers | Nav); arrow key navigation. */
-const REMOTE_TAB_KEYS = ["curation", "layers", "navigation"];
+/** Bottom shell tabs: LTR bar order (Presentation (slideshow) | Workshop (curation) | Layers | Navigation); arrow key navigation. */
+const REMOTE_TAB_KEYS = ["slideshow", "curation", "layers", "navigation"];
 
 /*
  * Legacy `#toggleModel` wiring was removed: that checkbox is not part of the remote shell
@@ -144,6 +144,11 @@ async function initialize() {
  */
 function setRemoteTab(activeKey) {
   if (!REMOTE_TAB_KEYS.includes(activeKey)) return;
+  const nav = document.getElementById("remoteBottomNav");
+  const previousActiveKey =
+    nav
+      ?.querySelector('[role="tab"][data-remote-tab][aria-selected="true"]')
+      ?.getAttribute("data-remote-tab") || null;
 
   const panels = document.querySelectorAll(".remote-tab-panel[data-remote-tab]");
   panels.forEach((panel) => {
@@ -152,7 +157,6 @@ function setRemoteTab(activeKey) {
     panel.hidden = !isActive;
   });
 
-  const nav = document.getElementById("remoteBottomNav");
   if (!nav) return;
 
   nav.querySelectorAll('[role="tab"][data-remote-tab]').forEach((tab) => {
@@ -163,7 +167,11 @@ function setRemoteTab(activeKey) {
     tab.tabIndex = isActive ? 0 : -1;
   });
 
-  if (activeKey !== "layers" && window.layerSheetController) {
+  if (
+    previousActiveKey === "layers" &&
+    activeKey !== "layers" &&
+    window.layerSheetController
+  ) {
     const ctrl = window.layerSheetController;
     // Preserves focused pack; see LayerSheetController.onLayersTabHidden.
     if (typeof ctrl.onLayersTabHidden === "function") ctrl.onLayersTabHidden();
@@ -171,6 +179,22 @@ function setRemoteTab(activeKey) {
 
   if (activeKey === "layers" && window.layerSheetController) {
     const ctrl = window.layerSheetController;
+    if (typeof ctrl.open === "function") ctrl.open();
+  }
+
+  if (
+    previousActiveKey === "slideshow" &&
+    activeKey !== "slideshow" &&
+    window.slideshowTabController
+  ) {
+    const ctrl = window.slideshowTabController;
+    if (typeof ctrl.onSlideshowTabHidden === "function") {
+      ctrl.onSlideshowTabHidden();
+    }
+  }
+
+  if (activeKey === "slideshow" && window.slideshowTabController) {
+    const ctrl = window.slideshowTabController;
     if (typeof ctrl.open === "function") ctrl.open();
   }
 }

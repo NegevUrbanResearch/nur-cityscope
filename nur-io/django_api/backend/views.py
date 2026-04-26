@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import json
+import math
 import os
 import re
 from django.conf import settings
@@ -41,6 +42,67 @@ from .serializers import (
     LayerGroupSerializer,
     LayerStateSerializer,
 )
+
+
+def _normalize_projection_slideshow_patch(raw):
+    """
+    Validate and normalize projection_slideshow PATCH body (mirrors frontend sanitizer).
+    Returns (normalized_dict, None) or (None, error Response).
+    """
+    if not isinstance(raw, dict):
+        return None, Response(
+            {"error": "projection_slideshow must be an object"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    cmd_type = raw.get("type")
+    if cmd_type not in ("start", "stop"):
+        return None, Response(
+            {"error": 'projection_slideshow.type must be "start" or "stop"'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    payload = raw.get("payload")
+    if payload is not None and not isinstance(payload, dict):
+        return None, Response(
+            {"error": "projection_slideshow.payload must be an object"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    payload = dict(payload or {})
+
+    if cmd_type == "stop":
+        return {"type": "stop", "payload": {}}, None
+
+    out_payload = {}
+    if "packOrder" in payload:
+        po = payload["packOrder"]
+        if not isinstance(po, list):
+            return None, Response(
+                {"error": "packOrder must be an array"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        out_payload["packOrder"] = [str(x) for x in po]
+
+    for key in ("intervalMs", "crossfadeMs", "warmupLeadMs"):
+        if key not in payload:
+            continue
+        try:
+            v = float(payload[key])
+        except (TypeError, ValueError):
+            return None, Response(
+                {"error": f"{key} must be a finite number"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not math.isfinite(v):
+            return None, Response(
+                {"error": f"{key} must be a finite number"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        iv = int(round(v))
+        if key == "intervalMs":
+            out_payload[key] = max(1, iv)
+        else:
+            out_payload[key] = max(0, iv)
+
+    return {"type": "start", "payload": out_payload}, None
 
 
 class TableViewSet(viewsets.ModelViewSet):
@@ -397,6 +459,21 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'table': table_name,
                     }
                 }
+            elif field == 'projection_slideshow':
+                ps = state.projection_slideshow if state else {}
+                if not isinstance(ps, dict):
+                    ps = {}
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_projection_slideshow_changed',
+                        'table': table_name,
+                        'projectionSlideshow': ps,
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
+                        'traceId': trace_id,
+                    },
+                }
             else:
                 continue
 
@@ -490,6 +567,23 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 state.workshop_auto_publish = wap
                 changed_fields.append('workshop_auto_publish')
 
+            if 'projection_slideshow' in request.data:
+                normalized, err = _normalize_projection_slideshow_patch(
+                    request.data['projection_slideshow']
+                )
+                if err is not None:
+                    return err
+                prev = state.projection_slideshow or {}
+                rev = 0
+                if isinstance(prev, dict):
+                    try:
+                        rev = int(prev.get('revision') or 0)
+                    except (TypeError, ValueError):
+                        rev = 0
+                normalized['revision'] = rev + 1
+                state.projection_slideshow = normalized
+                changed_fields.append('projection_slideshow')
+
             state.save()
             self._emit_trace_event(
                 trace_id,
@@ -526,6 +620,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 if state.workshop_autopublish_started_at
                 else None
             ),
+            'projection_slideshow': state.projection_slideshow
+            if isinstance(state.projection_slideshow, dict)
+            else {},
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 

@@ -4,6 +4,27 @@
 
 // Default configuration values.
 // NOTE: These defaults preserve existing behavior; change with care.
+const PROJECTION_SLIDESHOW = {
+  enabledByDefault: false,
+  intervalMs: 10000,
+  crossfadeMs: 1200,
+  warmupLeadMs: 500,
+  packOrder: [
+    "future_development",
+    "october_7th",
+    "greens",
+    "land_use",
+    "muniplicity_transport",
+  ],
+  // Registry / context packs that must not appear in projection slideshow rotation and
+  // must remain fully off for the whole presentation (defense in depth in slideshow runtime).
+  // Includes: base projector context, Gaza pack, and merged Moreshet / workshop axis (no pink driving layers in presentation).
+  excludedPresentationPackIds: ["projector_base", "gaza", "curated_moresht_axis"],
+  ignoreLiveLayerUpdatesWhileActive: true,
+  // Reserved for future WMTS staging; v1 uses vector path only.
+  wmtsFadePolicy: "instant-after-vector-fade",
+};
+
 const MapProjectionConfig = {
   // When true, long two-point edges on stored `pink_line_route` are re-drawn in the
   // off-road style on a dedicated high z-index pane (Colab parity). Default on for GIS + projection.
@@ -113,6 +134,8 @@ const MapProjectionConfig = {
       SPEED_THRESHOLD_PX: 40,
     },
   },
+
+  PROJECTION_SLIDESHOW,
 };
 
 // Browser global

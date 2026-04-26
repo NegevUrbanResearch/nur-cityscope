@@ -21,16 +21,22 @@ vi.mock("../../frontend/src/shared/layer-registry.js", () => ({
 
 import {
   applyLayerGroupsToMap,
+  beginSlideshowStage,
   buildPmtilesUrl,
   clearAllLayers,
+  commitSlideshowReveal,
+  fadeOutAndRemoveEnabledFullIds,
   getVectorSourceLayerName,
   registerCuratedLayerIds,
+  stageLayerHidden,
 } from "../../frontend/src/map/maplibre-layer-manager.js";
 
 function createMapMock() {
   const sources = new Set();
   const layers = new Set();
   const images = new Set();
+  /** @type {Map<string, Record<string, unknown>>} */
+  const paintByLayerId = new Map();
 
   const map = {
     addSource: vi.fn((sourceId) => {
@@ -55,9 +61,18 @@ function createMapMock() {
     getLayer: vi.fn((layerId) => (layers.has(layerId) ? { id: layerId } : undefined)),
     removeLayer: vi.fn((layerId) => {
       layers.delete(layerId);
+      paintByLayerId.delete(layerId);
     }),
+    setPaintProperty: vi.fn((layerId, name, value) => {
+      if (!paintByLayerId.has(layerId)) {
+        paintByLayerId.set(layerId, {});
+      }
+      paintByLayerId.get(layerId)[name] = value;
+    }),
+    getPaintProperty: vi.fn((layerId, name) => paintByLayerId.get(layerId)?.[name]),
     _layers: layers,
     _images: images,
+    _paintByLayerId: paintByLayerId,
   };
 
   return map;
@@ -585,5 +600,122 @@ describe("maplibre-layer-manager", () => {
     ]);
 
     expect(map.removeLayer).toHaveBeenCalledWith(layerId);
+  });
+
+  it("stageLayerHidden zeros numeric circle-opacity and records restore target", () => {
+    const { stagedLayerDef, targetOpacity } = stageLayerHidden({
+      id: "group_a.layer_1-pts",
+      type: "circle",
+      paint: {
+        "circle-radius": 5,
+        "circle-color": "#112233",
+        "circle-opacity": 0.72,
+      },
+      layout: {},
+    });
+    expect(stagedLayerDef.paint["circle-opacity"]).toBe(0);
+    expect(targetOpacity).toEqual({ "circle-opacity": 0.72 });
+  });
+
+  it("fadeOutAndRemoveEnabledFullIds animates circle-opacity to 0 before remove", async () => {
+    vi.useFakeTimers();
+    const map = createMapMock();
+    const fullId = "pack.points";
+    const layerId = "pack.points-circle";
+    map.addSource(fullId);
+    map._layers.add(layerId);
+    registerCuratedLayerIds(map, fullId, fullId, [layerId]);
+    map.setPaintProperty(layerId, "circle-opacity", 0.55);
+
+    const p = fadeOutAndRemoveEnabledFullIds(map, [fullId], 90);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      layerId,
+      "circle-opacity-transition",
+      { duration: 90, delay: 0 },
+    );
+    expect(map.setPaintProperty).toHaveBeenCalledWith(layerId, "circle-opacity", 0);
+
+    await vi.advanceTimersByTimeAsync(90);
+    await p;
+
+    expect(map.removeLayer).toHaveBeenCalledWith(layerId);
+    expect(map.removeSource).toHaveBeenCalledWith(fullId);
+    vi.useRealTimers();
+  });
+
+  it("beginSlideshowStage hides new layers then commitSlideshowReveal sets paint transitions and targets", () => {
+    const map = createMapMock();
+    const layerId = "group_a.layer_1-fill";
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: layerId,
+        type: "fill",
+        paint: { "fill-color": "#f00", "fill-opacity": 0.85 },
+        layout: {},
+      },
+    ]);
+
+    const staged = beginSlideshowStage(map, enabledGroups, {
+      transition: { transitionMs: 400 },
+    });
+
+    const addedDef = map.addLayer.mock.calls.find((c) => c[0]?.id === layerId)?.[0];
+    expect(addedDef).toBeDefined();
+    expect(addedDef.paint["fill-opacity"]).toBe(0);
+    expect(staged.addedLayerIds).toContain(layerId);
+    expect(staged.targetOpacityByLayerId[layerId]).toEqual({ "fill-opacity": 0.85 });
+    expect(staged.stagedFullIds).toContain("group_a.layer_1");
+
+    map.setPaintProperty.mockClear();
+    commitSlideshowReveal(map, staged, 250);
+
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      layerId,
+      "fill-opacity-transition",
+      { duration: 250, delay: 0 },
+    );
+    expect(map.setPaintProperty).toHaveBeenCalledWith(layerId, "fill-opacity", 0.85);
+  });
+
+  it("fadeOutAndRemoveEnabledFullIds sets paint to 0 with transition then removes after timeout", async () => {
+    vi.useFakeTimers();
+    const map = createMapMock();
+    const fullId = "pack.layer_x";
+    const layerId = "pack.layer_x-fill";
+    map.addSource(fullId);
+    map._layers.add(layerId);
+    registerCuratedLayerIds(map, fullId, fullId, [layerId]);
+    map.setPaintProperty(layerId, "fill-opacity", 0.75);
+
+    const p = fadeOutAndRemoveEnabledFullIds(map, [fullId], 120);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      layerId,
+      "fill-opacity-transition",
+      { duration: 120, delay: 0 },
+    );
+    expect(map.setPaintProperty).toHaveBeenCalledWith(layerId, "fill-opacity", 0);
+
+    await vi.advanceTimersByTimeAsync(120);
+    await p;
+
+    expect(map.removeLayer).toHaveBeenCalledWith(layerId);
+    expect(map.removeSource).toHaveBeenCalledWith(fullId);
+    vi.useRealTimers();
+  });
+
+  it("fadeOutAndRemoveEnabledFullIds with transitionMs 0 removes immediately without fade", () => {
+    const map = createMapMock();
+    const fullId = "g.l";
+    const layerId = "g.l-fill";
+    map.addSource(fullId);
+    map._layers.add(layerId);
+    registerCuratedLayerIds(map, fullId, fullId, [layerId]);
+
+    map.setPaintProperty.mockClear();
+    void fadeOutAndRemoveEnabledFullIds(map, [fullId], 0);
+
+    expect(map.setPaintProperty).not.toHaveBeenCalled();
+    expect(map.removeLayer).toHaveBeenCalledWith(layerId);
+    expect(map.removeSource).toHaveBeenCalledWith(fullId);
   });
 });

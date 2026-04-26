@@ -20,6 +20,7 @@ async function bootstrapRemoteRuntime() {
     "../shared/layer-state-helper.js",
     "../remote/remote-controller.js",
     "../remote/layer-sheet-controller.js",
+    "../remote/slideshow-tab-controller.js",
   ];
 
   for (const mod of modules) {

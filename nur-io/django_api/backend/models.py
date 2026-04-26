@@ -390,6 +390,9 @@ class OTEFViewportState(models.Model):
     workshop_auto_publish = models.BooleanField(default=False)
     workshop_autopublish_started_at = models.DateTimeField(null=True, blank=True)
 
+    # Last projection slideshow command (start/stop + payload), replicated over otef WebSocket
+    projection_slideshow = models.JSONField(default=dict, blank=True)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def save(self, *args, **kwargs):
