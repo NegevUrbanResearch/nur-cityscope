@@ -6,6 +6,7 @@ import {
   projectionHatchRasterParams,
   PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
 } from "./hatch-projection-presentation.js";
+import { buildMarkerLineSquareImageSpec } from "./markerline-square-image.js";
 
 function getNestedProp(obj, propPath) {
   if (!obj || !propPath) return undefined;
@@ -46,6 +47,86 @@ function shouldSortFillsBeforeStrokesForPackLayer(fullLayerId, geometryType) {
     return false;
   }
   return !isLineGeometryType(geometryType);
+}
+
+function isMarkerLineSquareSymbol(symbolLayer) {
+  if (!symbolLayer || symbolLayer.type !== "markerLine") return false;
+  const s = symbolLayer?.marker?.shape;
+  if (s == null || s === "") return false;
+  return String(s).toLowerCase() === "square";
+}
+
+/**
+ * Wider/solid before dashed so thinner dashed strokes are not fully covered in multi-stroke
+ * line packs. Only permutes `type === "line"` entries, preserving non-line order.
+ * Not applied to polygon/line+fill cartography: gated on line geometry in `irToMapLibreLayers`.
+ * @param {Array<{ type?: string, paint?: object }>} layers
+ * @returns {typeof layers}
+ */
+function sortLinePackStrokeOrderForDashedVisibility(layers) {
+  if (!Array.isArray(layers) || layers.length <= 1) return layers;
+  const lineIndices = [];
+  for (let i = 0; i < layers.length; i += 1) {
+    if (layers[i] && layers[i].type === "line") {
+      lineIndices.push(i);
+    }
+  }
+  if (lineIndices.length <= 1) return layers;
+
+  function hasDash(paint) {
+    if (!paint) return false;
+    return (
+      Object.prototype.hasOwnProperty.call(paint, "line-dasharray") && paint["line-dasharray"] != null
+    );
+  }
+
+  function widthKey(paint) {
+    if (!paint) return null;
+    const w = paint["line-width"];
+    if (typeof w === "number" && Number.isFinite(w)) return w;
+    return null;
+  }
+
+  const lineLayers = lineIndices.map((idx) => layers[idx]);
+  const sorted = lineLayers.slice().sort((a, b) => {
+    const aDash = hasDash(a && a.paint);
+    const bDash = hasDash(b && b.paint);
+    if (aDash !== bDash) {
+      if (aDash) return 1;
+      if (bDash) return -1;
+    }
+    if (!aDash && !bDash) {
+      const wa = widthKey(a && a.paint);
+      const wb = widthKey(b && b.paint);
+      if (wa != null && wb != null && wa !== wb) {
+        return wb - wa;
+      }
+    }
+    return 0;
+  });
+
+  const out = layers.slice();
+  for (let j = 0; j < lineIndices.length; j += 1) {
+    out[lineIndices[j]] = sorted[j];
+  }
+  return out;
+}
+
+function mapLibreLineSymbolSpacingForMarkerLine(symbolLayer, hatchPresentation) {
+  const placement = symbolLayer?.placement || {};
+  const n = placement.interval;
+  // Processed lyrx intervals are point-like units; MapLibre expects pixel spacing.
+  // Keep GIS slightly denser than the previous pass, projection a touch sparser.
+  if (typeof n === "number" && n > 0) {
+    const scale = hatchPresentation?.applyProjectionHatchPresentation ? 1.15 : 2.25;
+    return n * scale;
+  }
+  return 30;
+}
+
+function markerLineSquareIconSize(hatchPresentation) {
+  // GIS needs stronger separation from the rail stroke; projection remains a bit smaller.
+  return hatchPresentation?.applyProjectionHatchPresentation ? 0.8 : 1.0;
 }
 
 /**
@@ -356,15 +437,17 @@ function normalizeUniqueValueMatchKey(value) {
 
 /**
  * Map OTEF symbol layer kinds to a coarse MapLibre family for grouping in uniqueValue.
- * `markerLine` is mapped to a line-fallback family so advanced line styles remain visible
- * even when exact marker-placement parity is not yet implemented.
+ * `markerLine` is mapped to a line-fallback family or `markerLineSquare` when
+ * `marker.shape === "square"` (MapLibre symbol along line with generated icon).
  */
 function getMapLibreType(symbolLayer) {
   if (!symbolLayer || typeof symbolLayer !== "object") return null;
   if (symbolLayer.type === "fill") return "fill";
   if (symbolLayer.type === "stroke") return "line";
   if (symbolLayer.type === "markerPoint") return "circle";
-  if (symbolLayer.type === "markerLine") return "markerLineFallback";
+  if (symbolLayer.type === "markerLine") {
+    return isMarkerLineSquareSymbol(symbolLayer) ? "markerLineSquare" : "markerLineFallback";
+  }
   return null;
 }
 
@@ -422,6 +505,41 @@ function buildHatchPatternSpec(hatchConfig, hatchPresentation = {}) {
     "_",
   );
   return { patternId, color, rotation, separation, width, pixelRatio };
+}
+
+/**
+ * @param {string} id
+ * @param {object} symbolLayer
+ * @param {object} hatchPresentation
+ * @returns {object | null}
+ */
+function buildMarkerLineSquareMapLibreLayer(id, symbolLayer, hatchPresentation) {
+  void hatchPresentation;
+  const spec = buildMarkerLineSquareImageSpec(symbolLayer);
+  if (!spec) return null;
+  const interval = mapLibreLineSymbolSpacingForMarkerLine(symbolLayer, hatchPresentation);
+  const orientation = symbolLayer.orientation || {};
+  const alignToLine = Boolean(orientation.alignToLine);
+  const layout = {
+    "icon-image": spec.imageId,
+    "icon-size": markerLineSquareIconSize(hatchPresentation),
+    "icon-allow-overlap": true,
+    "icon-ignore-placement": true,
+    "icon-rotation-alignment": "map",
+    "icon-pitch-alignment": "map",
+    "icon-keep-upright": !alignToLine,
+    "symbol-placement": "line",
+    "symbol-spacing": interval,
+  };
+  const paint = {};
+  if (symbolLayer.opacity != null) paint["icon-opacity"] = symbolLayer.opacity;
+  return {
+    id,
+    type: "symbol",
+    paint,
+    layout,
+    _markerLineSquarePattern: spec,
+  };
 }
 
 function groupKeyForSymbolLayer(mapLibreType, symbolLayer, i) {
@@ -488,6 +606,9 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
   }
 
   if (symbolLayer.type === "markerLine") {
+    if (isMarkerLineSquareSymbol(symbolLayer)) {
+      return buildMarkerLineSquareMapLibreLayer(id, symbolLayer, hatchPresentation);
+    }
     const paint = {
       "line-color": markerLineFallbackColor(symbolLayer),
       "line-width": scaleLineWidthPaintForProjection(
@@ -816,6 +937,72 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
     };
   }
 
+  if (mapLibreType === "markerLineSquare") {
+    const defaultSpec = buildMarkerLineSquareImageSpec(defaultSymbolLayer);
+    if (!defaultSpec) return null;
+
+    const allSpecsById = new Map();
+    allSpecsById.set(defaultSpec.imageId, defaultSpec);
+    for (const entry of entries) {
+      if (entry?.value == null) continue;
+      const s = buildMarkerLineSquareImageSpec(entry.symbolLayer) || defaultSpec;
+      allSpecsById.set(s.imageId, s);
+    }
+
+    const entryRows = [];
+    for (const entry of entries) {
+      if (entry?.value == null) continue;
+      const s = buildMarkerLineSquareImageSpec(entry.symbolLayer) || defaultSpec;
+      entryRows.push({ value: entry.value, imageId: s.imageId });
+    }
+
+    const fallbackPattern = defaultSpec.imageId;
+    let iconImage;
+    if (entryRows.length === 0) {
+      iconImage = fallbackPattern;
+    } else {
+      const expression = ["match", uniqueValueClassificationInputExpression(field)];
+      let allMatchFallback = true;
+      for (const { value, imageId } of entryRows) {
+        const normalizedMatchKey = normalizeUniqueValueMatchKey(value);
+        if (normalizedMatchKey == null) continue;
+        if (imageId !== fallbackPattern) allMatchFallback = false;
+        expression.push(normalizedMatchKey, imageId);
+      }
+      expression.push(fallbackPattern);
+      if (allMatchFallback) {
+        iconImage = fallbackPattern;
+      } else {
+        iconImage = expression;
+      }
+    }
+
+    const layout = {
+      "icon-allow-overlap": true,
+      "icon-ignore-placement": true,
+      "icon-rotation-alignment": "map",
+      "icon-pitch-alignment": "map",
+      "icon-keep-upright": !Boolean((defaultSymbolLayer?.orientation || {}).alignToLine),
+      "symbol-placement": "line",
+      "symbol-spacing": mapLibreLineSymbolSpacingForMarkerLine(
+        defaultSymbolLayer,
+        hatchPresentation,
+      ),
+      "icon-image": iconImage,
+      "icon-size": markerLineSquareIconSize(hatchPresentation),
+    };
+    const paint = {};
+    const op = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
+    if (op !== undefined) paint["icon-opacity"] = op;
+    return {
+      id,
+      type: "symbol",
+      paint,
+      layout,
+      _markerLineSquarePatterns: [...allSpecsById.values()],
+    };
+  }
+
   if (mapLibreType === "markerLineFallback") {
     const fromStroke = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.stroke");
     const fromStrokeColor = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.strokeColor");
@@ -894,7 +1081,7 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
     layerConfig?.geometryType,
   );
 
-  const baseLayers =
+  const rawBaseLayers =
     renderer === "uniqueValue" && uniqueValues
       ? buildUniqueValueLayers(
           idBase,
@@ -904,6 +1091,10 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
           sortFillBeforeStroke,
         )
       : buildSimpleLayers(idBase, defaultSymbol, hatchPresentation, sortFillBeforeStroke);
+
+  const baseLayers = isLineGeometryType(layerConfig?.geometryType)
+    ? sortLinePackStrokeOrderForDashedVisibility(rawBaseLayers)
+    : rawBaseLayers;
 
   const passMapLabels = shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId);
   const leaderLineLayers = passMapLabels

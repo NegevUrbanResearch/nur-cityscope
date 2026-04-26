@@ -409,6 +409,150 @@ describe("irToMapLibreLayers", () => {
     expect(result[0]._markerLineFallback).toBe(true);
   });
 
+  it("emits line symbol for markerLine with square along line and square image spec", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#ffffff", width: 6, opacity: 1 },
+            {
+              type: "markerLine",
+              marker: {
+                shape: "square",
+                size: 7,
+                fillColor: "#cc0000",
+                strokeColor: "#111111",
+                strokeWidth: 1,
+              },
+              opacity: 0.95,
+              placement: { interval: 20 },
+              orientation: { alignToLine: true },
+            },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("muniplicity_transport.מסלולי_רכבת", "src", layerConfig);
+    expect(result).toHaveLength(2);
+    const wideLine = result[0];
+    const symbol = result[1];
+    expect(wideLine.type).toBe("line");
+    expect(wideLine.paint["line-width"]).toBe(6);
+    expect(symbol.type).toBe("symbol");
+    expect(symbol.layout["symbol-placement"]).toBe("line");
+    expect(symbol.layout["symbol-spacing"]).toBeCloseTo(23, 6);
+    expect(symbol.layout["icon-size"]).toBe(0.9);
+    expect(symbol.layout["icon-allow-overlap"]).toBe(true);
+    expect(symbol.layout["icon-ignore-placement"]).toBe(true);
+    expect(symbol.layout["icon-rotation-alignment"]).toBe("map");
+    expect(symbol.layout["icon-keep-upright"]).toBe(false);
+    expect(symbol._markerLineSquarePattern).toBeDefined();
+    expect(symbol._markerLineSquarePattern.imageId).toMatch(/^otef_mlsq_v1_/);
+    expect(symbol.layout["icon-image"]).toBe(symbol._markerLineSquarePattern.imageId);
+    expect(symbol.paint["icon-opacity"]).toBe(0.95);
+  });
+
+  it("keeps line fallback for markerLine with unsupported shape", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "markerLine",
+              marker: { shape: "circle", size: 8, fillColor: "#00aa00" },
+            },
+          ],
+        },
+      },
+    };
+    const r = irToMapLibreLayers("test.markerline.circle", "src", layerConfig);
+    expect(r).toHaveLength(1);
+    expect(r[0].type).toBe("line");
+    expect(r[0]._markerLineFallback).toBe(true);
+  });
+
+  it("orders wide solid strokes before dashed in line multi-stroke pack", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#ff0000", width: 1, opacity: 1, dash: { array: [2, 1] } },
+            { type: "stroke", color: "#ffffff", width: 10, opacity: 1 },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("test.dashorder", "test__dashorder", layerConfig);
+    expect(result[0].type).toBe("line");
+    expect(result[0].paint["line-width"]).toBe(10);
+    expect(result[0].paint["line-dasharray"]).toBeUndefined();
+    expect(result[1].type).toBe("line");
+    expect(result[1].paint["line-dasharray"]).toEqual([2, 1]);
+    expect(result[1].paint["line-width"]).toBe(1);
+  });
+
+  it("builds uniqueValue markerLine square match for icon-image and patterns", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "kind",
+          classes: [
+            {
+              value: "a",
+              symbol: {
+                symbolLayers: [
+                  {
+                    type: "markerLine",
+                    marker: { shape: "square", fillColor: "#ff0000", size: 5 },
+                  },
+                ],
+              },
+            },
+            {
+              value: "b",
+              symbol: {
+                symbolLayers: [
+                  {
+                    type: "markerLine",
+                    marker: { shape: "square", fillColor: "#00ff00", size: 5 },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "markerLine", marker: { shape: "square", fillColor: "#222222", size: 5 } },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("test.square.uv", "test__sq", layerConfig);
+    const sym = result.find((l) => l.type === "symbol");
+    expect(sym).toBeDefined();
+    expect(sym._markerLineSquarePatterns).toBeDefined();
+    expect(Array.isArray(sym._markerLineSquarePatterns)).toBe(true);
+    expect(sym._markerLineSquarePatterns.length).toBe(3);
+    expect(sym.layout["icon-image"]).toEqual([
+      "match",
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
+      "a",
+      sym._markerLineSquarePatterns[1].imageId,
+      "b",
+      sym._markerLineSquarePatterns[2].imageId,
+      sym._markerLineSquarePatterns[0].imageId,
+    ]);
+  });
+
   it("builds uniqueValue markerLine fallback match expressions", () => {
     const layerConfig = {
       geometryType: "line",

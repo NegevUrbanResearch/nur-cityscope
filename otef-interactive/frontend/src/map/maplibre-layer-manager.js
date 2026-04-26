@@ -5,6 +5,7 @@
  * LayerRegistry is a singleton default export initialized elsewhere.
  */
 import { createHatchImageDataFromSpec } from "../shared/hatch-pattern-tile.js";
+import { createMarkerLineSquareImageData } from "../shared/markerline-square-image.js";
 import { irToMapLibreLayers } from "../shared/maplibre-style-bridge.js";
 import layerRegistry from "../shared/layer-registry.js";
 
@@ -55,6 +56,28 @@ function registerHatchPatternImages(map, styleLayer, state, trackedPatternIds) {
     trackedPatternIds.add(spec.patternId);
     const currentRefCount = state.hatchPatternRefCounts.get(spec.patternId) || 0;
     state.hatchPatternRefCounts.set(spec.patternId, currentRefCount + 1);
+  }
+
+  const markerSquares = [];
+  if (styleLayer._markerLineSquarePattern) {
+    markerSquares.push(styleLayer._markerLineSquarePattern);
+  }
+  if (Array.isArray(styleLayer._markerLineSquarePatterns)) {
+    for (const s of styleLayer._markerLineSquarePatterns) {
+      if (s) markerSquares.push(s);
+    }
+  }
+  for (const spec of markerSquares) {
+    const imageId = spec?.imageId;
+    if (!imageId) continue;
+    if (trackedPatternIds.has(imageId)) continue;
+    if (!map.hasImage(imageId)) {
+      const image = createMarkerLineSquareImageData(spec);
+      map.addImage(imageId, image);
+    }
+    trackedPatternIds.add(imageId);
+    const currentRefCount = state.hatchPatternRefCounts.get(imageId) || 0;
+    state.hatchPatternRefCounts.set(imageId, currentRefCount + 1);
   }
 }
 
@@ -403,13 +426,20 @@ function addLayerToMap(map, fullId, state, layerStyleOptions) {
       registerHatchPatternImages(map, styleLayer, state, registeredPatternIds);
     } catch (error) {
       console.warn(
-        `[maplibre-layer-manager] Failed to register hatch patterns for ${fullId}`,
+        `[maplibre-layer-manager] Failed to register style pattern images for ${fullId}`,
         error,
       );
       rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, registeredPatternIds);
       return;
     }
-    const { _hatchPattern, _hatchPatterns, _uniqueValuePointColorFallback, ...styleRest } = styleLayer;
+    const {
+      _hatchPattern,
+      _hatchPatterns,
+      _markerLineSquarePattern,
+      _markerLineSquarePatterns,
+      _uniqueValuePointColorFallback,
+      ...styleRest
+    } = styleLayer;
     if (_uniqueValuePointColorFallback) {
       console.warn(
         `[maplibre-layer-manager] uniqueValue point symbol has no resolvable color for ${fullId} ` +

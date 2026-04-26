@@ -73,10 +73,13 @@ function withCanvasStub(run) {
     restore: vi.fn(),
     translate: vi.fn(),
     rotate: vi.fn(),
+    setLineJoin: vi.fn(),
     beginPath: vi.fn(),
     moveTo: vi.fn(),
     lineTo: vi.fn(),
     stroke: vi.fn(),
+    fillRect: vi.fn(),
+    strokeRect: vi.fn(),
     getImageData: (x, y, w, h) => ({
       width: w,
       height: h,
@@ -250,6 +253,104 @@ describe("maplibre-layer-manager", () => {
     );
     expect(map.removeImage).toHaveBeenCalledWith(patternId);
     expect(map._images.has(patternId)).toBe(false);
+  });
+
+  it("registers marker line square images and strips metadata before addLayer", () => {
+    const map = createMapMock();
+    const imageId = "otef_mlsq_v1_#f00_#0f0_5_1_9";
+    const spec = {
+      imageId,
+      size: 5,
+      fill: "#f00",
+      stroke: "#0f0",
+      strokeWidth: 1,
+      side: 9,
+    };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: "group_a.layer_1__ml",
+        type: "symbol",
+        paint: {},
+        layout: { "icon-image": imageId, "symbol-placement": "line" },
+        _markerLineSquarePattern: spec,
+      },
+    ]);
+    withCanvasStub(() => {
+      applyLayerGroupsToMap(map, enabledGroups);
+    });
+
+    expect(map.hasImage).toHaveBeenCalledWith(imageId);
+    expect(map.addImage).toHaveBeenCalledWith(
+      imageId,
+      expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }),
+    );
+    const added = map.addLayer.mock.calls.find((c) => c[0]?.id === "group_a.layer_1__ml");
+    expect(added).toBeDefined();
+    expect(added[0]).not.toHaveProperty("_markerLineSquarePattern");
+    expect(added[0]).not.toHaveProperty("_markerLineSquarePatterns");
+  });
+
+  it("registers all marker line square pattern variants and does not double-ref duplicate ids", () => {
+    const map = createMapMock();
+    const idA = "otef_mlsq_v1_#a_#b_5_1_9";
+    const idB = "otef_mlsq_v1_#c_#d_5_1_9";
+    const specA = { imageId: idA, size: 5, fill: "#a", stroke: "#b", strokeWidth: 1, side: 9 };
+    const specB = { imageId: idB, size: 5, fill: "#c", stroke: "#d", strokeWidth: 1, side: 9 };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: "group_a.layer_1__ml_uv",
+        type: "symbol",
+        paint: {},
+        layout: {},
+        _markerLineSquarePatterns: [specA, specB, specA],
+      },
+    ]);
+    withCanvasStub(() => {
+      applyLayerGroupsToMap(map, enabledGroups);
+    });
+    expect(map.addImage).toHaveBeenCalledWith(
+      idA,
+      expect.objectContaining({ width: expect.any(Number) }),
+    );
+    expect(map.addImage).toHaveBeenCalledWith(
+      idB,
+      expect.objectContaining({ width: expect.any(Number) }),
+    );
+    expect(map.addImage.mock.calls.filter((c) => c[0] === idA)).toHaveLength(1);
+  });
+
+  it("removes marker line square image when layer is disabled and no longer referenced", () => {
+    const map = createMapMock();
+    const imageId = "otef_mlsq_v1_#f00_#0f0_5_1_9";
+    const spec = {
+      imageId,
+      size: 5,
+      fill: "#f00",
+      stroke: "#0f0",
+      strokeWidth: 1,
+      side: 9,
+    };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: "group_a.layer_1__ml",
+        type: "symbol",
+        paint: {},
+        layout: { "icon-image": imageId, "symbol-placement": "line" },
+        _markerLineSquarePattern: spec,
+      },
+    ]);
+
+    withCanvasStub(() => {
+      applyLayerGroupsToMap(map, enabledGroups);
+      applyLayerGroupsToMap(map, []);
+    });
+
+    expect(map.addImage).toHaveBeenCalledWith(
+      imageId,
+      expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }),
+    );
+    expect(map.removeImage).toHaveBeenCalledWith(imageId);
+    expect(map._images.has(imageId)).toBe(false);
   });
 
   it("rolls back layers, source, and hatch refs when hatch registration fails", () => {
