@@ -338,7 +338,7 @@ function buildLabelSymbolLayer(idBase, style, geometryType) {
     "text-size": size > 0 ? size : 12,
     "text-font": buildLabelFontStack(labels),
     "text-offset": buildLabelTextOffset(labels),
-    "text-anchor": labels.textAnchor != null ? String(labels.textAnchor) : "center",
+    "text-anchor": labels.textAnchor != null && Array.isArray(labels.textAnchor) ? labels.textAnchor : (labels.textAnchor != null ? String(labels.textAnchor) : "center"),
     "text-justify":
       labels.textJustify != null && String(labels.textJustify) !== ""
         ? String(labels.textJustify)

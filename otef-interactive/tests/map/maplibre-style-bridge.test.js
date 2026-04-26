@@ -1481,4 +1481,26 @@ describe("irToMapLibreLayers", () => {
     );
     expect(sym.layout["text-writing-mode"]).toEqual(["literal", ["horizontal"]]);
   });
+
+  it("sets text-allow-overlap and text-ignore-placement when labels.forceVisible is true", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 11,
+          color: "#202020",
+          forceVisible: true,
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("pack.שמות_יישובים", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    }).find((L) => L.type === "symbol");
+    expect(sym.layout["text-allow-overlap"]).toBe(true);
+    expect(sym.layout["text-ignore-placement"]).toBe(true);
+    expect(sym.layout["text-optional"]).toBe(false);
+  });
 });

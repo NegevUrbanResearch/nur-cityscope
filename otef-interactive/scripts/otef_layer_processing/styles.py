@@ -587,6 +587,11 @@ def _labels_from_cim_annotation_layer(
         "offsetEmDivisor": 11,
         # No JS/RLE bidi wrap in text-field; projection uses maplibregl.setRTLTextPlugin instead.
         "hebrewBidiWrap": False,
+        # Force all 42 settlement names to render without MapLibre collision culling.
+        "forceVisible": True,
+        "angleFromProperties": True,
+        "angleProperty": "_ComputedAngle",
+        "textAnchor": ["get", "_ComputedAnchor"],
     }
 
 

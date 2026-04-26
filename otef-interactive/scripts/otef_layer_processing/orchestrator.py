@@ -9,7 +9,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
 from .models import LayerEntry, PackManifest
-from .geo import transform_to_wgs84, get_geometry_type
+from .geo import transform_to_wgs84, get_geometry_type, convert_annotation_polygons_to_anchor_points
 from .styles import find_lyrx_file, parse_lyrx_style
 from .tiling import generate_pmtiles_smart
 
@@ -484,6 +484,36 @@ class ProcessingOrchestrator:
                     logger.error(f"Transformation failed for {layer_id}, skipping.")
                     return None
 
+                # 1b. שמות_יישובים annotation polygons → anchor points.
+                # ArcGIS annotation bounding-box polygons cause MapLibre to
+                # place labels at the centroid (~1.8 km off).  Convert each
+                # polygon to a Point at the position where the nearest
+                # Locations_Lines endpoint touches the polygon edge.
+                if layer_id == "שמות_יישובים":
+                    lines_geojson = pack_output / "Locations_Lines.geojson"
+                    if not lines_geojson.is_file():
+                        # Locations_Lines may not be processed yet; try
+                        # transforming the source on the fly.
+                        lines_source = geo_file.parent / "Locations_Lines.json"
+                        if not lines_source.is_file():
+                            lines_source = geo_file.parent / "Locations_Lines.geojson"
+                        if lines_source.is_file():
+                            lines_geojson = pack_output / "Locations_Lines.geojson"
+                            transform_to_wgs84(lines_source, lines_geojson)
+                    if lines_geojson.is_file():
+                        # Also find the towns layer for endpoint disambiguation
+                        towns_geojson = pack_output / "ישובים.geojson"
+                        if not towns_geojson.is_file():
+                            towns_source = geo_file.parent / "ישובים.json"
+                            if not towns_source.is_file():
+                                towns_source = geo_file.parent / "ישובים.geojson"
+                            if towns_source.is_file():
+                                towns_geojson = pack_output / "ישובים.geojson"
+                                transform_to_wgs84(towns_source, towns_geojson)
+                        convert_annotation_polygons_to_anchor_points(
+                            wgs84_file, lines_geojson, towns_geojson
+                        )
+
                 # 2. Parse Style (same path as update_metadata_only for consistent advanced styles)
                 style_config, geom_type = self._resolve_style_for_geo_file(
                     geo_file, styles_dir
@@ -494,6 +524,12 @@ class ProcessingOrchestrator:
 
                 if geom_type == "unknown":
                     geom_type = get_geometry_type(wgs84_file)
+
+                # Override geometry type after polygon→point anchor conversion.
+                if layer_id == "שמות_יישובים":
+                    geom_type = "point"
+                    if style_config and isinstance(style_config, dict):
+                        style_config["type"] = "point"
 
                 # 3. Tiling
                 # Use PMTiles for large or advanced layers so GIS can use
