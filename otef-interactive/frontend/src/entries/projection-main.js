@@ -1,6 +1,7 @@
 import TableSwitcher from "../shared/table-switcher.js";
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import { createProjectionMap, updateHighlightFromViewport } from "../projection/maplibre-projection.js";
+import { installProjectionRenderDebugOverlay } from "../projection/projection-render-debug-overlay.js";
 import { syncProjectionLayers } from "../projection/maplibre-projection-layers.js";
 import {
   loadCuratedLayerToMapLibre,
@@ -161,6 +162,12 @@ async function bootstrapProjectionRuntime() {
   if (typeof window !== "undefined") {
     window.addEventListener("beforeunload", cleanup, { once: true });
   }
+
+  const projectionRenderDebugApi = installProjectionRenderDebugOverlay({
+    map,
+    registerDisposer,
+    initialVisible: false,
+  });
 
   map.on("load", async () => {
     registerDisposer(() => {
@@ -476,6 +483,11 @@ async function bootstrapProjectionRuntime() {
     }
     if (key === "r" && window.ProjectionRotationEditor) {
       window.ProjectionRotationEditor.toggle();
+      return;
+    }
+    if (key === "d" && projectionRenderDebugApi) {
+      projectionRenderDebugApi.toggle();
+      return;
     }
   };
   window.addEventListener("keydown", onKeyDown);
