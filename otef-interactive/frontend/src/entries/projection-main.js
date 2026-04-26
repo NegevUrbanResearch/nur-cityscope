@@ -9,11 +9,9 @@ import {
 } from "../map/maplibre-curated-layer-loader.js";
 import { removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
 import {
-  applyContextFlowAnimationsToMap,
-  startFlowAnimation,
-  stopFlowAnimation,
-  stopAllFlowAnimations,
-} from "../shared/maplibre-flow-animation.js";
+  disposeRouteProgressOverlaysForMap,
+  syncRouteProgressOverlaysToMap,
+} from "../shared/maplibre-route-progress-overlay.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
 
@@ -165,22 +163,19 @@ async function bootstrapProjectionRuntime() {
   }
 
   map.on("load", async () => {
-    if (typeof window !== "undefined") {
-      window.MapLibreFlowAnimation = {
-        startFlowAnimation: (layerId, opts) => startFlowAnimation(map, layerId, opts),
-        stopFlowAnimation: (layerId) => stopFlowAnimation(map, layerId),
-        stopAllFlowAnimations: () => stopAllFlowAnimations(map),
-      };
-    }
-    registerDisposer(() => stopAllFlowAnimations(map));
+    registerDisposer(() => {
+      disposeRouteProgressOverlaysForMap(map);
+    });
 
     const syncContextFlowAnimations = () => {
-      applyContextFlowAnimationsToMap(
-        map,
-        typeof OTEFDataContext.getAnimations === "function"
-          ? OTEFDataContext.getAnimations()
-          : {},
-      );
+      const rawGroups = OTEFDataContext.getLayerGroups();
+      const rawAsArray = Array.isArray(rawGroups) ? rawGroups : Object.values(rawGroups || {});
+      const currentGroups = asLayerGroupsArray(getEffectiveProjectionLayerGroups());
+      const anim =
+        typeof OTEFDataContext.getAnimations === "function" ? OTEFDataContext.getAnimations() : {};
+      void syncRouteProgressOverlaysToMap(map, anim, currentGroups, {
+        visibilityLayerGroups: rawAsArray,
+      });
     };
     registerDisposer(OTEFDataContext.subscribe("animations", syncContextFlowAnimations));
 
@@ -290,6 +285,7 @@ async function bootstrapProjectionRuntime() {
 
     registerDisposer(
       OTEFDataContext.subscribe("layerGroups", () => {
+        syncContextFlowAnimations();
         // Raw `groups` from the event omit LayerStateHelper merge rules (e.g. שמות_יישובים
         // + Locations_Lines → one row with fullLayerIds). Sync must use the same effective
         // groups as loadProjectionCuratedLayers or Locations_Lines never loads on toggle.

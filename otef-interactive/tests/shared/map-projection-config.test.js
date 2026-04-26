@@ -26,11 +26,17 @@ describe("map-projection-config defaults", () => {
     expect(MapProjectionConfig.GIS_PERF.ENABLE_PREFER_CANVAS).toBe(true);
     expect(MapProjectionConfig.GIS_PERF.ENABLE_LAYER_VISIBILITY_BATCHING).toBe(true);
     expect(MapProjectionConfig.GIS_PERF.PAN_ANIMATION_ENABLED).toBe(false);
-    expect(MapProjectionConfig.GIS_PERF.ZOOM_ANIMATION_ENABLED).toBe(true);
+    expect(MapProjectionConfig.GIS_PERF.ZOOM_ANIMATION_ENABLED).toBe(false);
     expect(MapProjectionConfig.GIS_PERF.ZOOM_ANIMATION_DURATION_S).toBe(0.12);
     expect(MapProjectionConfig.GIS_PERF.HEAVY_LAYER_MIN_ZOOM).toEqual({
       "map_3_future.greens": 12,
       "map_3_future.land_use": 12,
+      greens: 12,
+      land_use: 12,
+      "greens.מישורי_הצפה": 13,
+      "map_3_future.מישורי_הצפה": 13,
+      "greens.נחלים": 13,
+      "map_3_future.נחלים": 13,
     });
     expect(MapProjectionConfig.GIS_PERF.PROJECTOR_SMOOTHING).toBeDefined();
     expect(

@@ -508,6 +508,35 @@ async function toggleLayerInGroups(ctx, layerId, enabled, options = {}) {
   }
 }
 
+/**
+ * When layers are turned off, clear persisted animation flags so the remote play
+ * button and MapLibre flow state stay aligned with visibility.
+ * @param {object} ctx
+ * @param {string[]} fullLayerIds
+ */
+async function clearAnimationsForDisabledLayerIds(ctx, fullLayerIds) {
+  const prevAnims = ctx._animations || {};
+  let changed = false;
+  const nextAnims = Object.assign({}, prevAnims);
+  for (const fid of fullLayerIds) {
+    if (nextAnims[fid]) {
+      nextAnims[fid] = false;
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  ctx._setAnimations(nextAnims);
+  ctx._pendingAnimationOps++;
+  try {
+    await OTEF_API.updateAnimations(ctx._tableName, nextAnims);
+  } catch (err) {
+    getLogger().error("[OTEFDataContext] Failed to clear animations after layer hide:", err);
+    ctx._setAnimations(prevAnims);
+  } finally {
+    ctx._pendingAnimationOps--;
+  }
+}
+
 async function setLayersEnabled(ctx, fullLayerIds, enabled, options = {}) {
   if (!ctx._tableName || !Array.isArray(fullLayerIds) || fullLayerIds.length === 0) {
     return { ok: true };
@@ -548,6 +577,9 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled, options = {}) {
     await enqueueLayerGroupsCoalescedFlush(ctx);
     if (callGen !== ctx._layerOpGeneration) {
       return { ok: true, stale: true };
+    }
+    if (!enabled) {
+      await clearAnimationsForDisabledLayerIds(ctx, fullLayerIds);
     }
     return { ok: true };
   } catch (err) {

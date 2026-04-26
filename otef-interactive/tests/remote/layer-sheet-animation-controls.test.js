@@ -34,6 +34,27 @@ function makeNonAnimatableLayerRow() {
 }
 
 describe('layer sheet animation controls', () => {
+  test('animation button encodes merged row fullLayerIds for visibility bootstrap', () => {
+    const row = {
+      baseName: 'r',
+      displayLabel: 'R',
+      fullLayerIds: ['october_7th.x', 'october_7th.y'],
+      layers: [
+        {
+          id: 'x',
+          name: 'X',
+          enabled: true,
+          style: { animation: { type: 'flow' } },
+        },
+      ],
+      enabled: true,
+    };
+    const html = renderLayerRow(row, { groupId: 'october_7th', animations: {} });
+    expect(html).toContain('data-animation-visibility-ids');
+    expect(html).toContain('october_7th.x');
+    expect(html).toContain('october_7th.y');
+  });
+
   test('layer row renders animation toggle only for animatable layers', () => {
     const html = renderLayerRow(makeAnimatableLayerRow(), {
       groupId: 'october_7th',

@@ -12,11 +12,9 @@ import {
   syncPinkLineAxisCompanionForMapLibre,
 } from "../map/maplibre-curated-layer-loader.js";
 import {
-  applyContextFlowAnimationsToMap,
-  startFlowAnimation,
-  stopFlowAnimation,
-  stopAllFlowAnimations,
-} from "../shared/maplibre-flow-animation.js";
+  disposeRouteProgressOverlaysForMap,
+  syncRouteProgressOverlaysToMap,
+} from "../shared/maplibre-route-progress-overlay.js";
 
 const DEFAULT_MAP_CENTER = [34.5, 31.4];
 
@@ -145,22 +143,21 @@ async function bootstrapMapRuntime() {
   }
 
   map.on("load", async () => {
-    if (typeof window !== "undefined") {
-      window.MapLibreFlowAnimation = {
-        startFlowAnimation: (layerId, opts) => startFlowAnimation(map, layerId, opts),
-        stopFlowAnimation: (layerId) => stopFlowAnimation(map, layerId),
-        stopAllFlowAnimations: () => stopAllFlowAnimations(map),
-      };
-    }
-    registerDisposer(() => stopAllFlowAnimations(map));
+    registerDisposer(() => {
+      disposeRouteProgressOverlaysForMap(map);
+    });
 
     const syncContextFlowAnimations = () => {
-      applyContextFlowAnimationsToMap(
-        map,
-        typeof OTEFDataContext.getAnimations === "function"
-          ? OTEFDataContext.getAnimations()
-          : {},
-      );
+      const groupsRaw = OTEFDataContext.getLayerGroups();
+      const groupsAsArray = Array.isArray(groupsRaw)
+        ? groupsRaw
+        : Object.values(groupsRaw || {});
+      const currentGroups = filterGroupsForGisMap(groupsAsArray);
+      const anim =
+        typeof OTEFDataContext.getAnimations === "function" ? OTEFDataContext.getAnimations() : {};
+      void syncRouteProgressOverlaysToMap(map, anim, currentGroups, {
+        visibilityLayerGroups: groupsAsArray,
+      });
     };
     registerDisposer(OTEFDataContext.subscribe("animations", syncContextFlowAnimations));
 
@@ -274,6 +271,7 @@ async function bootstrapMapRuntime() {
     // layerGroups updates must drive curated lifecycle (WebSocket + manual workshop refresh).
     registerDisposer(
       OTEFDataContext.subscribe("layerGroups", (groups) => {
+        syncContextFlowAnimations();
         void refreshCuratedLayers({ groupsOverride: groups });
       }),
     );

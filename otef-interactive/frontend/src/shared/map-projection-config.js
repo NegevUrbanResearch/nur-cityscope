@@ -47,26 +47,19 @@ const MapProjectionConfig = {
     DEFAULT_SPEED: 0,
     DEFAULT_DASH_ARRAY: null,
     LAYER_OVERRIDES: {
-      // Oct 7 route line(s): trail animation (point leaves line as trail; route stays visible).
-      "october_7th.חדירה_לישוב-ציר": {
-        ENABLE_FLOW: true,
-        SPEED: 22,
-        MODE: "trail",
-        HEAD_RADIUS: 1.6,
-        HIDE_HEAD_AT_END: true,
-      },
+      // Oct 7 route line(s): use canonical underscore ids; alias lookup also matches hyphen ids.
       "october_7th.חדירה_לישוב_ציר": {
         ENABLE_FLOW: true,
-        SPEED: 22,
+        SPEED: 10,
         MODE: "trail",
-        HEAD_RADIUS: 1.6,
+        HEAD_RADIUS: 3.2,
         HIDE_HEAD_AT_END: true,
       },
       "october_7th.מאבק_וגבורה_ציר": {
         ENABLE_FLOW: true,
-        SPEED: 22,
+        SPEED: 10,
         MODE: "trail",
-        HEAD_RADIUS: 1.6,
+        HEAD_RADIUS: 3.2,
         HIDE_HEAD_AT_END: true,
       },
     },

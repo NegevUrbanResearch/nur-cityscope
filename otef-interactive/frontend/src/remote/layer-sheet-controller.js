@@ -23,6 +23,7 @@ import { sanitizeCssColor } from "../curation/curation-color-utils.js";
 import { createCurationApi } from "../curation/curation-api.js";
 import { buildCurationColorSwatchHtml } from "../curation/curation-submissions.js";
 import { generateTraceId, recordTraceEvent } from "../shared/otef-trace.js";
+import { usesRouteProgressOverlay } from "../shared/maplibre-flow-animation.js";
 
 const workshopSubmissionColorById = new Map();
 const workshopSubmissionColorByName = new Map();
@@ -150,6 +151,23 @@ function isLayerAnimatable(layer, groupId) {
 
 function getRowAnimatableFullLayerIds(row, groupId) {
   if (!row || !Array.isArray(row.layers)) return [];
+  if (groupId === "october_7th") {
+    return row.layers
+      .filter((layer) => {
+        const fullId = `${groupId}.${layer.id}`;
+        const cfg =
+          typeof layerRegistry !== "undefined" &&
+          layerRegistry &&
+          typeof layerRegistry.getLayerConfig === "function"
+            ? layerRegistry.getLayerConfig(fullId)
+            : null;
+        if (cfg && cfg.geometryType && cfg.geometryType !== "line") {
+          return false;
+        }
+        return usesRouteProgressOverlay(fullId) || isLayerAnimatable(layer, groupId);
+      })
+      .map((layer) => `${groupId}.${layer.id}`);
+  }
   return row.layers
     .filter((layer) => isLayerAnimatable(layer, groupId))
     .map((layer) => `${groupId}.${layer.id}`);
@@ -362,6 +380,10 @@ function renderLayerRow(row, options = {}) {
   const animatableIds = getRowAnimatableFullLayerIds(row, groupId);
   const hasAnimationToggle = animatableIds.length > 0;
   const animIdsAttr = JSON.stringify(animatableIds).replace(/"/g, "&quot;");
+  const visibilityIdsAttr = JSON.stringify(row.fullLayerIds || []).replace(
+    /"/g,
+    "&quot;",
+  );
   const animations = options.animations || {};
   const enabledAnimationCount = hasAnimationToggle
     ? animatableIds.filter((id) => !!animations[id]).length
@@ -392,6 +414,7 @@ function renderLayerRow(row, options = {}) {
         class="anim-btn ${animStateClass}"
         data-animation-toggle
         data-animation-layer-ids="${animIdsAttr}"
+        data-animation-visibility-ids="${visibilityIdsAttr}"
         data-i18n-aria="ariaLayerAnimationToggle"
       >${playIcon}</button>`
     : "";
@@ -512,8 +535,17 @@ class LayerSheetController {
           ids = [];
         }
         if (!Array.isArray(ids) || ids.length === 0) return;
+        let visibilityIds = [];
+        try {
+          visibilityIds = JSON.parse(
+            animBtn.getAttribute("data-animation-visibility-ids") || "[]",
+          );
+        } catch {
+          visibilityIds = [];
+        }
+        if (!Array.isArray(visibilityIds)) visibilityIds = [];
         const nextEnabled = !animBtn.classList.contains("active");
-        this.toggleLayerRowAnimations(ids, nextEnabled);
+        void this.toggleLayerRowAnimations(ids, visibilityIds, nextEnabled);
         return;
       }
 
@@ -655,10 +687,24 @@ class LayerSheetController {
     return { ok: false };
   }
 
-  async toggleLayerRowAnimations(fullLayerIds, enabled) {
-    if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) return;
+  /**
+   * @param {string[]} animatableFullLayerIds - ids that participate in animation state
+   * @param {string[]} rowVisibilityFullLayerIds - merged row: enable all of these when turning animation on
+   * @param {boolean} enabled
+   */
+  async toggleLayerRowAnimations(animatableFullLayerIds, rowVisibilityFullLayerIds, enabled) {
+    if (!Array.isArray(animatableFullLayerIds) || animatableFullLayerIds.length === 0) return;
+    const visibility =
+      Array.isArray(rowVisibilityFullLayerIds) && rowVisibilityFullLayerIds.length > 0
+        ? rowVisibilityFullLayerIds
+        : animatableFullLayerIds;
     if (typeof OTEFDataContext !== "undefined") {
-      await OTEFDataContext.setLayerAnimations(fullLayerIds, enabled);
+      if (enabled) {
+        const vis = await OTEFDataContext.setLayersEnabled(visibility, true);
+        if (!vis || vis.ok === false) return;
+      }
+      await OTEFDataContext.setLayerAnimations(animatableFullLayerIds, enabled);
+      this.render();
     }
   }
 

@@ -4,6 +4,7 @@ import { initLocale } from "../remote/remote-locale.js";
 async function bootstrapRemoteRuntime() {
   const modules = [
     "../shared/logger.js",
+    "../shared/map-projection-config.js",
     "../shared/html-utils.js",
     "../shared/message-protocol.js",
     "../shared/websocket-client.js",

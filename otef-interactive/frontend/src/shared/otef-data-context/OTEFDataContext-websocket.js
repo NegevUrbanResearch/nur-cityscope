@@ -171,8 +171,23 @@ function setupWebSocket(ctx) {
     }
     try {
       const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
-      if (state.animations) {
-        ctx._setAnimations(state.animations);
+      // Apply layerGroups first so followers (GIS / projection) do not run route overlay sync
+      // with animation=true while merged-row siblings are still disabled in context.
+      if (state.layerGroups) {
+        ctx._setLayerGroups(state.layerGroups, { bypassEquality: true });
+        if (typeof ctx._ackLayerGroupsServerBaseline === "function") {
+          ctx._ackLayerGroupsServerBaseline(state.layerGroups);
+        }
+      }
+      let mergedAnimations = null;
+      if (state.animations && typeof state.animations === "object") {
+        mergedAnimations = { ...state.animations };
+      }
+      if (msg && msg.animations && typeof msg.animations === "object") {
+        mergedAnimations = { ...(mergedAnimations || {}), ...msg.animations };
+      }
+      if (mergedAnimations != null) {
+        ctx._setAnimations(mergedAnimations);
       } else if (msg && msg.layerId && typeof msg.enabled === "boolean") {
         const next = Object.assign({}, ctx._animations || {});
         next[msg.layerId] = msg.enabled;
