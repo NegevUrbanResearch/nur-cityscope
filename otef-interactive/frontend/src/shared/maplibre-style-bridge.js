@@ -203,6 +203,13 @@ function isLabelSymbolGeometry(geometryType) {
   );
 }
 
+/** Point / MultiPoint: use symbol-placement line with a single anchor; labels use point placement. */
+function isPointLikeLabelGeometry(geometryType) {
+  if (!geometryType) return false;
+  const g = String(geometryType).toLowerCase().replace(/_/g, "");
+  return g === "point" || g === "multipoint" || g === "esrigeometrypoint" || g === "esrigeometrymultipoint";
+}
+
 const NOTO_SANS_REGULAR = "Noto Sans Regular";
 
 function buildLabelFontStack(labels) {
@@ -245,44 +252,67 @@ function buildLabelOffsetEmPropertyNumber(field) {
 }
 
 /**
- * MapLibre layout text-offset (ems). When offsetEmFromProperties is true, prefers
- * When offsetEmFieldX + offsetEmFieldY are set, [x/d, y/d] with case-agnostic property reads
- * (divisor: offsetEmDivisor, else labels.size, else 11).
+ * Per-feature [emX, emY] from scalar numerators ÷ divisor (when offsetEmFromProperties + fields).
+ * Returns null if that mode is off.
+ */
+function buildScalarNumeratorTextOffsetExpression(labels) {
+  if (labels.offsetEmFromProperties !== true) return null;
+  const fieldX = labels.offsetEmFieldX;
+  const fieldY = labels.offsetEmFieldY;
+  const hasXY =
+    fieldX != null &&
+    String(fieldX).trim() !== "" &&
+    fieldY != null &&
+    String(fieldY).trim() !== "";
+
+  const size = Number(labels.size);
+  const divFromSize = size > 0 ? size : 11;
+  const divExplicit = Number(labels.offsetEmDivisor);
+  const divisorRaw =
+    Number.isFinite(divExplicit) && divExplicit > 0 ? divExplicit : divFromSize;
+  const divisor = Number.isFinite(divisorRaw) && divisorRaw > 0 ? divisorRaw : 11;
+
+  if (!hasXY) {
+    return ["literal", [0, 0]];
+  }
+  const xExpr = buildLabelOffsetEmPropertyNumber(String(fieldX).trim());
+  const yExpr = buildLabelOffsetEmPropertyNumber(String(fieldY).trim());
+  return [
+    "array",
+    "number",
+    2,
+    ["/", xExpr, divisor],
+    ["/", yExpr, divisor],
+  ];
+}
+
+/**
+ * MapLibre layout text-offset (ems).
+ * - Optional `labels.offsetArrayProperty`: GeoJSON holds a length-2 numeric array at that key
+ *   (e.g. `otef_map_text_offset_em`). MapLibre reliably uses `["get", …]` for `text-offset`;
+ *   when combined with scalar numerator fields, builds
+ *   `["coalesce", ["get", prop], scalarExpr]` so older tiles without the array still work.
+ * - `offsetEmFromProperties` + offsetEmFieldX/Y: numerators ÷ divisor (see buildScalarNumeratorTextOffsetExpression).
  * We do not coalesce `otef_text_offset_em` here: some GeoJSON exports set it to a scalar,
  * which makes MapLibre expect `array<number,2>` for text-offset and throws in the worker.
- * otherwise static labels.offsetEm, then labels.offset, else [0,0].
+ * Otherwise static labels.offsetEm, then labels.offset, else [0,0].
  */
 function buildLabelTextOffset(labels) {
-  if (labels.offsetEmFromProperties === true) {
-    const fieldX = labels.offsetEmFieldX;
-    const fieldY = labels.offsetEmFieldY;
-    const hasXY =
-      fieldX != null &&
-      String(fieldX).trim() !== "" &&
-      fieldY != null &&
-      String(fieldY).trim() !== "";
+  const arrayPropRaw = labels.offsetArrayProperty;
+  const arrayProp =
+    arrayPropRaw != null && String(arrayPropRaw).trim() !== "" ? String(arrayPropRaw).trim() : "";
+  const scalarExpr = buildScalarNumeratorTextOffsetExpression(labels);
 
-    const size = Number(labels.size);
-    const divFromSize = size > 0 ? size : 11;
-    const divExplicit = Number(labels.offsetEmDivisor);
-    const divisorRaw =
-      Number.isFinite(divExplicit) && divExplicit > 0 ? divExplicit : divFromSize;
-    const divisor = Number.isFinite(divisorRaw) && divisorRaw > 0 ? divisorRaw : 11;
-
-    if (hasXY) {
-      const xExpr = buildLabelOffsetEmPropertyNumber(String(fieldX).trim());
-      const yExpr = buildLabelOffsetEmPropertyNumber(String(fieldY).trim());
-      // Style-spec: ["array", type, N, ...] — N must be a positive integer literal.
-      return [
-        "array",
-        "number",
-        2,
-        ["/", xExpr, divisor],
-        ["/", yExpr, divisor],
-      ];
+  if (arrayProp) {
+    const fromProp = ["get", arrayProp];
+    if (scalarExpr != null) {
+      return ["coalesce", fromProp, scalarExpr];
     }
+    return ["coalesce", fromProp, ["literal", [0, 0]]];
+  }
 
-    return ["literal", [0, 0]];
+  if (labels.offsetEmFromProperties === true) {
+    return scalarExpr ?? ["literal", [0, 0]];
   }
 
   if (Array.isArray(labels.offsetEm) && labels.offsetEm.length >= 2) {
@@ -310,7 +340,7 @@ function buildLabelTextRotateFromProperty(propertyName) {
   return ["to-number", ["coalesce", ...variants.map((v) => ["get", v]), "0"]];
 }
 
-/** @returns {number|Array|undefined} MapLibre text-rotate static number, expression, or unset */
+/** @returns {number|Array} MapLibre text-rotate static number, data expression, or 0 */
 function buildLabelTextRotateValue(labels) {
   if (labels?.angleFromProperties === true) {
     return buildLabelTextRotateFromProperty(labels.angleProperty);
@@ -318,16 +348,24 @@ function buildLabelTextRotateValue(labels) {
   if (labels?.angle != null && Number.isFinite(Number(labels.angle))) {
     return Number(labels.angle);
   }
-  return undefined;
+  return 0;
 }
 
-/** @returns {object[]} 0 or 1 MapLibre layer object(s) */
-function buildLabelSymbolLayer(idBase, style, geometryType) {
+/**
+ * @param {string} [fullLayerId] e.g. `projector_base.שמות_יישובים` — when `labels.field` is empty,
+ *   `*.שמות_יישובים` defaults to `cityname`; otherwise `TextString` (annotation-era fixtures).
+ */
+function buildLabelSymbolLayer(idBase, style, geometryType, fullLayerId) {
   if (!isLabelSymbolGeometry(geometryType)) return [];
   const labels = style && style.labels;
   if (!labels || typeof labels !== "object") return [];
 
-  const field = labels.field != null && labels.field !== "" ? labels.field : "TextString";
+  const field =
+    labels.field != null && labels.field !== ""
+      ? labels.field
+      : /\.שמות_יישובים$/.test(String(fullLayerId || ""))
+        ? "cityname"
+        : "TextString";
   const textField = labelTextFieldExpression(field);
   const size = Number(labels.size);
   const haloW = Number(labels.haloSize);
@@ -343,9 +381,13 @@ function buildLabelSymbolLayer(idBase, style, geometryType) {
       labels.textJustify != null && String(labels.textJustify) !== ""
         ? String(labels.textJustify)
         : "auto",
+    "text-rotate": textRotate,
     // Omit default text-writing-mode: forcing ["horizontal"] can interact badly with bidi/Hebrew;
     // MapLibre 5.x defaults are sufficient; use `labels.textWritingModeHorizontal: true` to opt in.
   };
+  if (isPointLikeLabelGeometry(geometryType)) {
+    layout["symbol-placement"] = "point";
+  }
   if (labels.forceVisible === true) {
     layout["text-allow-overlap"] = true;
     layout["text-ignore-placement"] = true;
@@ -359,13 +401,19 @@ function buildLabelSymbolLayer(idBase, style, geometryType) {
   if (labels.textWritingModeHorizontal === true) {
     layout["text-writing-mode"] = ["literal", ["horizontal"]];
   }
-  if (textRotate !== undefined) {
-    layout["text-rotate"] = textRotate;
-  }
   if (labels.angleFromProperties === true) {
-    // ArcGIS annotation angles are in map space; keep glyphs aligned to the map (not the viewport).
+    // Data-driven angles (e.g. field-based rotation) use map space; keep glyphs aligned to the map.
     layout["text-rotation-alignment"] = "map";
     layout["text-pitch-alignment"] = "map";
+  } else {
+    const tra = labels.textRotationAlignment;
+    const tpa = labels.textPitchAlignment;
+    if (tra != null && String(tra).trim() !== "") {
+      layout["text-rotation-alignment"] = String(tra).trim();
+    }
+    if (tpa != null && String(tpa).trim() !== "") {
+      layout["text-pitch-alignment"] = String(tpa).trim();
+    }
   }
 
   const paint = {
@@ -555,6 +603,28 @@ function fillKindForSymbolLayer(symbolLayer) {
   return symbolLayer?.fillType === "hatch" ? "hatch" : "solid";
 }
 
+/**
+ * CIM / LYRX alpha is emitted on the IR as `marker.fillOpacity` / `marker.strokeOpacity` (0–1).
+ * MapLibre `circle-color` / `circle-stroke-color` need explicit alpha below 1; plain #rrggbb is opaque.
+ *
+ * @param {string|undefined} hex - `#rrggbb`
+ * @param {number|undefined} opacity - 0–1; omitted or ≥1 leaves `hex` unchanged
+ * @returns {string}
+ */
+function markerColorForMapLibre(hex, opacity) {
+  if (hex == null || hex === "") return "#808080";
+  const op = opacity;
+  if (op == null || !Number.isFinite(Number(op)) || Number(op) >= 1) return hex;
+  if (Number(op) <= 0) return "rgba(0,0,0,0)";
+  const s = String(hex).trim();
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(s);
+  if (!m) return hex;
+  const r = parseInt(m[1], 16);
+  const g = parseInt(m[2], 16);
+  const b = parseInt(m[3], 16);
+  return `rgba(${r},${g},${b},${Number(op)})`;
+}
+
 function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
   if (!symbolLayer || typeof symbolLayer !== "object") return null;
 
@@ -596,11 +666,21 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
     const marker = symbolLayer.marker || {};
     const size = marker.size ?? 8;
     const fill = marker.fill ?? marker.fillColor ?? marker.color;
+    const stroke = marker.stroke || marker.strokeColor || "#000000";
+    const strokeOp = marker.strokeOpacity;
+    const strokeWidthBase = marker.strokeWidth ?? 1;
+    const strokeWidth =
+      strokeOp != null && Number.isFinite(Number(strokeOp)) && Number(strokeOp) <= 0
+        ? 0
+        : strokeWidthBase;
     const paint = {
       "circle-radius": size / 2,
-      "circle-color": fill != null && fill !== "" ? fill : "#808080",
-      "circle-stroke-color": marker.stroke || marker.strokeColor || "#000000",
-      "circle-stroke-width": marker.strokeWidth ?? 1,
+      "circle-color": markerColorForMapLibre(
+        fill != null && fill !== "" ? fill : "#808080",
+        marker.fillOpacity,
+      ),
+      "circle-stroke-color": markerColorForMapLibre(stroke, strokeOp),
+      "circle-stroke-width": strokeWidth,
     };
     return { id, type: "circle", paint, layout: {} };
   }
@@ -1100,7 +1180,9 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
   const leaderLineLayers = passMapLabels
     ? buildLabelLeaderLineLayer(idBase, style, layerConfig?.geometryType)
     : [];
-  const labelLayers = passMapLabels ? buildLabelSymbolLayer(idBase, style, layerConfig?.geometryType) : [];
+  const labelLayers = passMapLabels
+    ? buildLabelSymbolLayer(idBase, style, layerConfig?.geometryType, fullLayerId)
+    : [];
   return [...baseLayers, ...leaderLineLayers, ...labelLayers];
 }
 

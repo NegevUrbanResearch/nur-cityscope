@@ -285,6 +285,36 @@ describe("irToMapLibreLayers", () => {
     expect(circle.paint["circle-radius"]).toBe(5);
   });
 
+  it("applies marker fillOpacity and strokeOpacity to circle paint (CIM alpha parity)", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "markerPoint",
+              marker: {
+                shape: "circle",
+                size: 13.33,
+                fillColor: "#e60000",
+                fillOpacity: 0,
+                strokeColor: "#000000",
+                strokeOpacity: 0,
+                strokeWidth: 0.8,
+              },
+            },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("test.invis", "test__invis", layerConfig);
+    const circle = result.find((layer) => layer.type === "circle");
+    expect(circle.paint["circle-color"]).toBe("rgba(0,0,0,0)");
+    expect(circle.paint["circle-stroke-color"]).toBe("rgba(0,0,0,0)");
+    expect(circle.paint["circle-stroke-width"]).toBe(0);
+  });
+
   it("resolves uniqueValue point color from marker.fillColor in match expressions", () => {
     const layerConfig = {
       geometryType: "point",
@@ -442,8 +472,9 @@ describe("irToMapLibreLayers", () => {
     expect(wideLine.paint["line-width"]).toBe(6);
     expect(symbol.type).toBe("symbol");
     expect(symbol.layout["symbol-placement"]).toBe("line");
-    expect(symbol.layout["symbol-spacing"]).toBeCloseTo(23, 6);
-    expect(symbol.layout["icon-size"]).toBe(0.9);
+    // Non-projection: interval 20 * GIS scale 2.25; projection would use 1.15 * 20
+    expect(symbol.layout["symbol-spacing"]).toBeCloseTo(45, 6);
+    expect(symbol.layout["icon-size"]).toBe(1.0);
     expect(symbol.layout["icon-allow-overlap"]).toBe(true);
     expect(symbol.layout["icon-ignore-placement"]).toBe(true);
     expect(symbol.layout["icon-rotation-alignment"]).toBe("map");
@@ -1007,18 +1038,19 @@ describe("irToMapLibreLayers", () => {
     expect(solidFill.paint["fill-color"]).toBeDefined();
   });
 
-  it("emits a symbol layer from TextString when style.labels is set (polygon annotation geometry)", () => {
+  it("emits a symbol layer from style.labels for projector_base שמות_יישובים (point + cityname)", () => {
     const layerConfig = {
-      geometryType: "polygon",
+      geometryType: "point",
       style: {
         renderer: "simple",
         defaultSymbol: { symbolLayers: [] },
         labels: {
-          field: "TextString",
-          size: 11,
-          color: "#202020",
+          field: "cityname",
+          size: 14,
+          color: "#ffffff",
+          font: ["Guttman Hatzvi", "Noto Sans Regular"],
           haloColor: "#fafafa",
-          haloSize: 1.2,
+          haloSize: 1,
           colorOpacity: 1,
         },
       },
@@ -1034,12 +1066,48 @@ describe("irToMapLibreLayers", () => {
     expect(sym.layout["text-field"][0]).toBe("to-string");
     const tf = sym.layout["text-field"];
     expect(tf[1][0]).toBe("coalesce");
-    expect(JSON.stringify(tf)).toMatch(/TextString/i);
-    expect(sym.layout["text-size"]).toBe(11);
+    expect(JSON.stringify(tf)).toMatch(/cityname/i);
+    expect(sym.layout["text-size"]).toBe(14);
     expect(sym.layout["text-justify"]).toBe("auto");
-    expect(sym.paint["text-color"]).toBe("#202020");
+    expect(sym.layout["text-font"]).toEqual(["Guttman Hatzvi", "Noto Sans Regular"]);
+    expect(sym.paint["text-color"]).toBe("#ffffff");
     expect(sym.paint["text-halo-color"]).toBe("#fafafa");
-    expect(sym.paint["text-halo-width"]).toBe(1.2);
+    expect(sym.paint["text-halo-width"]).toBe(1);
+  });
+
+  it("defaults missing labels.field to cityname for *.שמות_יישובים when map labels pass", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          size: 14,
+          color: "#ffffff",
+          font: ["Guttman Hatzvi", "Noto Sans Regular"],
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    }).find((L) => L.type === "symbol");
+    expect(sym).toBeDefined();
+    expect(JSON.stringify(sym.layout["text-field"])).toMatch(/cityname/i);
+  });
+
+  it("defaults missing labels.field to TextString for non-שמות layer ids (fixture compatibility)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: { size: 12, color: "#000000" },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
+    expect(JSON.stringify(sym.layout["text-field"])).toMatch(/TextString/i);
   });
 
   it("uses labels.offsetEm literal when offsetEmFromProperties is not set", () => {
@@ -1282,7 +1350,7 @@ describe("irToMapLibreLayers", () => {
     expect(result.indexOf(line)).toBeLessThan(result.indexOf(sym));
   });
 
-  it("emits leader line then symbol for polygon when leaderLine is true (annotation envelope)", () => {
+  it("emits leader line then symbol for polygon when leaderLine is true (callout geometry)", () => {
     const layerConfig = {
       geometryType: "polygon",
       style: {
@@ -1424,26 +1492,22 @@ describe("irToMapLibreLayers", () => {
     expect(sym.layout["text-writing-mode"]).toBeUndefined();
   });
 
-  it("matches שמות-style label layout: Noto, offsets, no RLE, no hebrew bidi wrap (RTL plugin contract)", () => {
+  it("matches שמות settlement label stack: Guttman + Noto, no RLE, forceVisible, projection gate", () => {
     const layerConfig = {
-      geometryType: "polygon",
+      geometryType: "point",
       style: {
         renderer: "simple",
         defaultSymbol: { symbolLayers: [] },
         labels: {
-          field: "TextString",
+          field: "cityname",
           font: ["Guttman Hatzvi", "Noto Sans Regular"],
-          size: 11,
-          color: "#202020",
+          size: 14,
+          color: "#ffffff",
           haloColor: "#fafafa",
           haloSize: 1,
           colorOpacity: 1,
-          offsetEm: [0, 0],
-          offsetEmFromProperties: true,
-          offsetEmFieldX: "XOffset",
-          offsetEmFieldY: "YOffset",
-          offsetEmDivisor: 11,
           hebrewBidiWrap: false,
+          forceVisible: true,
         },
       },
     };
@@ -1456,9 +1520,11 @@ describe("irToMapLibreLayers", () => {
     const tf = sym.layout["text-field"];
     expect(tf[0]).toBe("to-string");
     expect(tf[1][0]).toBe("coalesce");
-    expect(sym.layout["text-rotate"]).toBeUndefined();
+    expect(JSON.stringify(tf)).toMatch(/cityname/i);
+    expect(sym.layout["text-rotate"]).toBe(0);
+    expect(sym.layout["symbol-placement"]).toBe("point");
     expect(sym.layout["text-rotation-alignment"]).toBeUndefined();
-    expect(sym.layout["text-allow-overlap"]).toBeUndefined();
+    expect(sym.layout["text-allow-overlap"]).toBe(true);
     expect(sym.layout["text-font"]).toEqual(["Guttman Hatzvi", "Noto Sans Regular"]);
   });
 
@@ -1480,6 +1546,67 @@ describe("irToMapLibreLayers", () => {
       (L) => L.type === "symbol",
     );
     expect(sym.layout["text-writing-mode"]).toEqual(["literal", ["horizontal"]]);
+  });
+
+  it("applies textRotationAlignment and textPitchAlignment when not angleFromProperties", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "cityname",
+          size: 12,
+          color: "#000000",
+          textRotationAlignment: "viewport",
+          textPitchAlignment: "auto",
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
+    expect(sym.layout["text-rotate"]).toBe(0);
+    expect(sym.layout["text-rotation-alignment"]).toBe("viewport");
+    expect(sym.layout["text-pitch-alignment"]).toBe("auto");
+    expect(sym.layout["symbol-placement"]).toBe("point");
+  });
+
+  it("shemot-style labels: otef offset + rotate fields and point placement in projection", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "cityname",
+          size: 14,
+          color: "#ffffff",
+          font: ["Guttman Hatzvi", "Noto Sans Regular"],
+          angleFromProperties: true,
+          angleProperty: "otef_label_rotate_deg",
+          offsetEmFromProperties: true,
+          offsetEmFieldX: "otef_label_offset_em_x",
+          offsetEmFieldY: "otef_label_offset_em_y",
+          offsetArrayProperty: "otef_map_text_offset_em",
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    }).find((L) => L.type === "symbol");
+    expect(sym).toBeDefined();
+    expect(sym.layout["symbol-placement"]).toBe("point");
+    const tr = sym.layout["text-rotate"];
+    expect(Array.isArray(tr)).toBe(true);
+    expect(tr[0]).toBe("to-number");
+    const to = sym.layout["text-offset"];
+    expect(to[0]).toBe("coalesce");
+    expect(to[1]).toEqual(["get", "otef_map_text_offset_em"]);
+    expect(to[2][0]).toBe("array");
+    expect(to[2][3][0]).toBe("/");
+    expect(sym.paint["text-translate"]).toBeUndefined();
+    expect(sym.layout["text-rotation-alignment"]).toBe("map");
   });
 
   it("sets text-allow-overlap and text-ignore-placement when labels.forceVisible is true", () => {

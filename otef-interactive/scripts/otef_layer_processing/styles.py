@@ -367,7 +367,9 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
 
             # Derive marker colors and outline from nested markerGraphics symbol, if present.
             marker_fill = None
+            marker_fill_opacity = None
             marker_stroke = None
+            marker_stroke_opacity = None
             marker_stroke_width = None
             # Shape hint: default to circle, but try to infer "square" or "line-tick"
             # from markerGraphics geometry when available.
@@ -400,6 +402,11 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
                             g = normalize_color_channel(color_vals[1])
                             b = normalize_color_channel(color_vals[2])
                             marker_fill = f"#{r:02x}{g:02x}{b:02x}"
+                            marker_fill_opacity = (
+                                normalize_opacity(color_vals[3])
+                                if len(color_vals) > 3
+                                else 1.0
+                            )
                     elif ntype == "CIMSolidStroke" and marker_stroke is None:
                         color_vals = nlayer.get("color", {}).get(
                             "values", [0, 0, 0, 100]
@@ -409,6 +416,11 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
                             g = normalize_color_channel(color_vals[1])
                             b = normalize_color_channel(color_vals[2])
                             marker_stroke = f"#{r:02x}{g:02x}{b:02x}"
+                            marker_stroke_opacity = (
+                                normalize_opacity(color_vals[3])
+                                if len(color_vals) > 3
+                                else 1.0
+                            )
                         marker_stroke_width = nlayer.get("width", 1.0) * PT_TO_PX
 
             marker_entry: Dict[str, Any] = {
@@ -419,8 +431,12 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
             }
             if marker_fill:
                 marker_entry["marker"]["fillColor"] = marker_fill
+            if marker_fill_opacity is not None:
+                marker_entry["marker"]["fillOpacity"] = marker_fill_opacity
             if marker_stroke:
                 marker_entry["marker"]["strokeColor"] = marker_stroke
+            if marker_stroke_opacity is not None:
+                marker_entry["marker"]["strokeOpacity"] = marker_stroke_opacity
             if marker_stroke_width is not None:
                 marker_entry["marker"]["strokeWidth"] = marker_stroke_width
 
@@ -542,57 +558,69 @@ def _ensure_advanced_stroke_for_polygons(style: StyleConfig) -> None:
         symbol_layers.insert(insert_idx, new_stroke)
 
 
-def _labels_from_cim_annotation_layer(
-    layer_def: Dict[str, Any], lyrx_path: Path
-) -> Optional[Dict[str, Any]]:
-    """
-    Maplex is absent for CIMAnnotationLayer; we still emit a stable labels IR for the bridge.
+SHEMOT_LYRX_STEM = "שמות_יישובים"
+_SETTLEMENT_LABEL_NOTO_FALLBACK = "Noto Sans Regular"
+# Hebrew display face for projector settlement labels when the LYRX still has a generic export font.
+_SETTLEMENT_LABEL_PROJECTION_FONT = "Guttman Hatzvi"
 
-    Offsets: GeoJSON carries XOffset/YOffset per feature. Processed style exposes
-    labels.offsetEm (default em pair), labels.offsetEmFromProperties + field names so the
-    bridge builds a deterministic text-offset expression (ArcGIS offset points / labels.size
-    -> em).
 
-    Only ``שמות_יישובים``.lyrx uses this path; other .lyrx files keep prior behavior
-    (no automatic labels from this path).
+def _maplex_label_field_from_expression(expression: str) -> str:
+    """Resolve GeoJSON field name from a Maplex/Arcade expression (e.g. $feature['cityname'])."""
+    s = (expression or "").strip()
+    if not s:
+        return "name"
+    m = re.search(
+        r'\$feature\[\s*["\']?([A-Za-z0-9_]+)["\']?\s*\]', s, re.IGNORECASE
+    )
+    if m:
+        return m.group(1)
+    m2 = re.search(r"\$feature\.([A-Za-z0-9_]+)\s*$", s, re.IGNORECASE)
+    if m2:
+        return m2.group(1)
+    field = (
+        s.replace("$feature.", "")
+        .replace('$feature["', "")
+        .replace('"]', "")
+        .replace("'", "")
+        .replace('"', "")
+        .strip()
+    ) or "name"
+    return field
+
+
+def _apply_shemot_settlement_label_ir(
+    label_config: Optional[Dict[str, Any]], lyrx_path: Path
+) -> None:
     """
-    if layer_def.get("type") != "CIMAnnotationLayer":
-        return None
-    if lyrx_path.stem != "שמות_יישובים":
-        return None
-    ft = layer_def.get("featureTable", {}) or {}
-    field = (ft.get("displayField") or "TextString").strip() or "TextString"
-    # Projection: primary face is loaded via @font-face (see projection.html); Noto is the
-    # glyph-PBF / local fallback stack tail for MapLibre 5.x (demotiles + local shaping).
-    return {
-        "field": field,
-        "font": ["Guttman Hatzvi", "Noto Sans Regular"],
-        "size": 11,
-        "color": "#202020",
-        "colorOpacity": 1.0,
-        "haloSize": 1.0,
-        "haloColor": "#fafafa",
-        "horizontalAlignment": "Center",
-        "verticalAlignment": "Center",
-        "textDirection": "auto",
-        "fontStyleName": "Regular",
-        "fontWeight": "normal",
-        "fontStyle": "normal",
-        # Hebrew order/shaping: projection map uses maplibregl.setRTLTextPlugin; do not use RLE in text-field.
-        # MapLibre text-offset is in ems; divisor matches labels.size for point-to-em mapping.
-        "offsetEm": [0.0, 0.0],
-        "offsetEmFromProperties": True,
-        "offsetEmFieldX": "XOffset",
-        "offsetEmFieldY": "YOffset",
-        "offsetEmDivisor": 11,
-        # No JS/RLE bidi wrap in text-field; projection uses maplibregl.setRTLTextPlugin instead.
-        "hebrewBidiWrap": False,
-        # Force all 42 settlement names to render without MapLibre collision culling.
-        "forceVisible": True,
-        "angleFromProperties": True,
-        "angleProperty": "_ComputedAngle",
-        "textAnchor": ["get", "_ComputedAnchor"],
-    }
+    `שמות_יישובים` only: finalize labels IR (font stack, projection toggles) without
+    making Guttman/Noto the default for other layers.
+    """
+    if not label_config or lyrx_path.stem != SHEMOT_LYRX_STEM:
+        return
+    raw = label_config.get("font")
+    if isinstance(raw, list) and len(raw) > 0:
+        primary = str(raw[0]).strip()
+    elif isinstance(raw, str) and raw.strip():
+        primary = raw.strip()
+    else:
+        primary = ""
+    generic_lyrx_export = (not primary) or (primary.lower() == "arial")
+    if generic_lyrx_export:
+        primary = _SETTLEMENT_LABEL_PROJECTION_FONT
+    label_config["font"] = [primary, _SETTLEMENT_LABEL_NOTO_FALLBACK]
+    label_config.setdefault("hebrewBidiWrap", False)
+    label_config.setdefault("forceVisible", True)
+    # Thinner look at the same text-size: narrow MapLibre text-halo (LYRX often exports ~1).
+    label_config["haloSize"] = min(float(label_config.get("haloSize") or 1.0), 0.35)
+    # MapLibre: data-driven placement from processed GeoJSON (merged from שמות_label_overrides.json)
+    label_config["angleFromProperties"] = True
+    label_config["angleProperty"] = "otef_label_rotate_deg"
+    # Layout text-offset (ems): numerators on otef_label_offset_em_*; also otef_map_text_offset_em
+    # [x/size, y/size] so MapLibre can use ["get", …] (reliable) with coalesce fallback to scalars.
+    label_config["offsetEmFromProperties"] = True
+    label_config["offsetEmFieldX"] = "otef_label_offset_em_x"
+    label_config["offsetEmFieldY"] = "otef_label_offset_em_y"
+    label_config["offsetArrayProperty"] = "otef_map_text_offset_em"
 
 
 def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
@@ -642,13 +670,7 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
         text_symbol = label_class.get("textSymbol", {}).get("symbol", {})
         # Expression can be '$feature["cityname"]' or '$feature.cityname'
         expression = label_class.get("expression", "")
-        field = (
-            expression.replace("$feature.", "")
-            .replace('$feature["', "")
-            .replace('"]', "")
-            .replace('"', "")
-            .strip()
-        ) or "name"
+        field = _maplex_label_field_from_expression(str(expression or ""))
         # Text fill color from CIMPolygonSymbol -> symbolLayers[0].color (CIMRGBColor)
         color_hex = None
         color_opacity = 1.0
@@ -696,9 +718,7 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
             label_config["fontStyle"] = "italic"
         else:
             label_config["fontStyle"] = "normal"
-
-    if label_config is None and layer_def.get("type") == "CIMAnnotationLayer":
-        label_config = _labels_from_cim_annotation_layer(layer_def, lyrx_path)
+        _apply_shemot_settlement_label_ir(label_config, lyrx_path)
 
     min_scale = layer_def.get("minScale") or layer_def.get("minimumScale")
     max_scale = layer_def.get("maxScale") or layer_def.get("maximumScale")
@@ -787,16 +807,6 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
             "strokeColor": "#000000",
             "strokeWidth": 1.0,
         }
-
-    if (
-        layer_def.get("type") == "CIMAnnotationLayer"
-        and lyrx_path.stem == "שמות_יישובים"
-        and style.labels
-    ):
-        # Projection: TextString labels only; do not draw the annotation envelope as fill.
-        style.default_style = {}
-        style.full_symbol_layers = []
-        style.advanced_symbol = {"symbolLayers": []}
 
     # Determine complexity = simple | advanced
     complexity = "simple"

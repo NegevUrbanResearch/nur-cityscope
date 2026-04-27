@@ -2,6 +2,24 @@ import { APP_CONFIG } from "../config/app-config.js";
 import { getLogger } from "./logger.js";
 import { recordTraceEvent } from "./otef-trace.js";
 
+/**
+ * Browser: `globalThis.fetch`. Vitest `vmThreads` may omit both a bare `fetch` and `globalThis.fetch`;
+ * a minimal stub avoids unhandled rejections from debounced `updateViewport` when tests import this module.
+ */
+function httpFetch(input, init) {
+  let f = globalThis.fetch;
+  if (typeof f !== "function") {
+    f = () =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        text: async () => "",
+      });
+  }
+  return f.call(globalThis, input, init);
+}
+
 export const OTEF_API = {
   baseUrl: APP_CONFIG.api.viewportBase,
   defaultTable: APP_CONFIG.defaultTable,
@@ -22,7 +40,7 @@ export const OTEF_API = {
     }
     const fetchPromise = (async () => {
       try {
-        const response = await fetch(`${this.baseUrl}/${tableName}/`);
+        const response = await httpFetch(`${this.baseUrl}/${tableName}/`);
         if (!response.ok) throw new Error(`Failed to fetch state: ${response.status}`);
         const value = await response.json();
         this._stateCache.set(tableName, { ts: Date.now(), value });
@@ -50,7 +68,7 @@ export const OTEF_API = {
       });
     }
     try {
-      const response = await fetch(`${this.baseUrl}/${tableName}/`, {
+      const response = await httpFetch(`${this.baseUrl}/${tableName}/`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
@@ -86,7 +104,7 @@ export const OTEF_API = {
       });
     }
     try {
-      const response = await fetch(`${this.baseUrl}/${tableName}/command/`, {
+      const response = await httpFetch(`${this.baseUrl}/${tableName}/command/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(command),
@@ -167,7 +185,7 @@ export const OTEF_API = {
         body.viewer_angle_deg = viewerAngleDeg;
       }
 
-      const response = await fetch(APP_CONFIG.api.boundsApply, {
+      const response = await httpFetch(APP_CONFIG.api.boundsApply, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

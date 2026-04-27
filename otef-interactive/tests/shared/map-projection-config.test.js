@@ -50,7 +50,7 @@ describe("projection slideshow config", () => {
   test("exposes stable defaults", () => {
     expect(MapProjectionConfig.PROJECTION_SLIDESHOW.intervalMs).toBe(10000);
     expect(MapProjectionConfig.PROJECTION_SLIDESHOW.crossfadeMs).toBe(1200);
-    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.warmupLeadMs).toBe(2500);
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.warmupLeadMs).toBe(500);
     expect(MapProjectionConfig.PROJECTION_SLIDESHOW.wmtsFadePolicy).toBe(
       "instant-after-vector-fade"
     );

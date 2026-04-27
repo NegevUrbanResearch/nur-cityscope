@@ -57,6 +57,34 @@ function ensureMapLibreRTLTextPlugin() {
 ensureMapLibreRTLTextPlugin();
 
 /**
+ * Projection wall must not pan/zoom, but the map stays interactive so MapLibre attaches
+ * pointer listeners (required for label-debug clicks). Disable navigation handlers after construction.
+ * @param {import("maplibre-gl").Map} map
+ */
+function disableProjectionMapNavigation(map) {
+  if (!map) return;
+  const handlers = [
+    map.dragPan,
+    map.scrollZoom,
+    map.boxZoom,
+    map.doubleClickZoom,
+    map.dragRotate,
+    map.keyboard,
+    map.touchZoomRotate,
+    map.touchPitch,
+  ];
+  for (const h of handlers) {
+    if (h && typeof h.disable === "function") {
+      try {
+        h.disable();
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+/**
  * Projection map intentionally omits style.glyphs (MapLibre GL JS 5.11+): text-font is
  * resolved locally (TinySDF + web fonts). That avoids demotiles 404s for stacks like
  * "Guttman Hatzvi,Noto Sans Regular" and matches @font-face on projection.html. RTL
@@ -90,7 +118,7 @@ export function createProjectionMap(containerId, modelBounds, options = {}) {
     center: modelBounds.center,
     zoom: modelBounds.zoom || 12,
     bearing: modelBounds.bearing || 0,
-    interactive: false,
+    interactive: true,
     attributionControl: false,
     preserveDrawingBuffer: true,
     dragRotate: false,
@@ -100,6 +128,7 @@ export function createProjectionMap(containerId, modelBounds, options = {}) {
     mapOptions.pixelRatio = pixelRatio;
   }
   const map = new maplibregl.Map(mapOptions);
+  disableProjectionMapNavigation(map);
 
   map.fitBounds(modelBounds.bounds, { animate: false, padding: 0 });
 

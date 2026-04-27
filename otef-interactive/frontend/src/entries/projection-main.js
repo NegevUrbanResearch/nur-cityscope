@@ -215,6 +215,8 @@ async function bootstrapProjectionRuntime() {
   };
 
   const disposers = [];
+  /** @type {null | { toggle: () => void; setVisible: (v: boolean) => void; getActive: () => boolean; dispose: () => void }} */
+  let shemotLabelDebugApi = null;
   const registerDisposer = (fn) => {
     if (typeof fn === "function") disposers.push(fn);
   };
@@ -391,6 +393,24 @@ async function bootstrapProjectionRuntime() {
     }
 
     await loadProjectionCuratedLayers(map);
+
+    try {
+      const { installShemotLabelDebug } = await import(
+        "../projection/projection-shemot-label-debug.js"
+      );
+      shemotLabelDebugApi = installShemotLabelDebug({ map, registerDisposer });
+      if (typeof window !== "undefined" && shemotLabelDebugApi) {
+        window.ShemotLabelDebug = shemotLabelDebugApi;
+        registerDisposer(() => {
+          if (window.ShemotLabelDebug === shemotLabelDebugApi) {
+            delete window.ShemotLabelDebug;
+          }
+          shemotLabelDebugApi = null;
+        });
+      }
+    } catch (e) {
+      console.warn("[projection-main] Shemot label debug failed to load", e);
+    }
 
     slideshowRuntime = createSlideshowPackRuntime({
       map,
@@ -639,6 +659,10 @@ async function bootstrapProjectionRuntime() {
     }
     if (key === "d" && projectionRenderDebugApi) {
       projectionRenderDebugApi.toggle();
+      return;
+    }
+    if (key === "l" && shemotLabelDebugApi) {
+      shemotLabelDebugApi.toggle();
       return;
     }
   };

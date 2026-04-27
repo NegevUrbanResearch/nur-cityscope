@@ -63,7 +63,26 @@
         left: 0;
         width: 100%;
         height: 100%;
+        pointer-events: none;
         z-index: 10;
+      }
+      body.shemot-label-debug-active #highlightOverlay {
+        pointer-events: none;
+      }
+      /* Label selection bbox (L mode): above map, below highlight paint */
+      #shemotLabelBBoxLayer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 8;
+        pointer-events: none;
+        overflow: visible;
+      }
+      /* שמות label debug: allow clicking/dragging on the map (L key) */
+      body.shemot-label-debug-active #projectionMap {
+        pointer-events: auto;
       }
 
       /* Simple instruction overlay - press H to toggle */
@@ -152,7 +171,8 @@
   <body>
     <div id="displayContainer">
       <img id="displayedImage" src="" alt="OTEF Model" style="opacity: 0" />
-      <div id="projectionMap" style="position:absolute;top:0;left:0;width:100%;height:100%;z-index:5;pointer-events:none;"></div>
+      <div id="projectionMap" style="position:absolute;top:0;left:0;width:100%;height:100%;z-index:5;"></div>
+      <div id="shemotLabelBBoxLayer" aria-hidden="true"></div>
       <div id="highlightOverlay"></div>
       <svg id="boundsEditorOverlay"></svg>
     </div>
@@ -165,6 +185,7 @@
       <p><strong>B</strong> - Toggle bounds editor</p>
       <p><strong>R</strong> - Set orientation (viewer angle)</p>
       <p><strong>D</strong> - Toggle render debug (DPR, canvas, zoom — lab diagnostics)</p>
+      <p><strong>L</strong> - Toggle label placement debug (שמות_יישובים: move/rotate, export JSON)</p>
       <p style="margin-top: 6px; font-size: 12px; color: #aaa">
         Startup (no key / Web DAT): add <code style="color: #ccc">?projectionRenderDebug=1</code> or
         <code style="color: #ccc">?prd=1</code> to the projection URL.
