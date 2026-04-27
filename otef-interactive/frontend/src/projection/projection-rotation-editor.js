@@ -86,6 +86,7 @@
     if (typeof window !== "undefined") {
       window.rotationEditModeActive = true;
       window.rotationPreviewAngleDeg = workingAngleDeg;
+      window.dispatchEvent(new CustomEvent("otef-rotation-preview-updated"));
     }
   }
 
@@ -210,6 +211,7 @@
     if (typeof window !== "undefined") {
       window.rotationEditModeActive = false;
       window.rotationPreviewAngleDeg = 0;
+      window.dispatchEvent(new CustomEvent("otef-rotation-preview-updated"));
     }
   }
 

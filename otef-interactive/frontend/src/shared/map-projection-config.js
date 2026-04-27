@@ -4,6 +4,27 @@
 
 // Default configuration values.
 // NOTE: These defaults preserve existing behavior; change with care.
+const PROJECTION_SLIDESHOW = {
+  enabledByDefault: false,
+  intervalMs: 10000,
+  crossfadeMs: 1200,
+  warmupLeadMs: 500,
+  packOrder: [
+    "future_development",
+    "october_7th",
+    "greens",
+    "land_use",
+    "muniplicity_transport",
+  ],
+  // Registry / context packs that must not appear in projection slideshow rotation and
+  // must remain fully off for the whole presentation (defense in depth in slideshow runtime).
+  // Includes: base projector context, Gaza pack, and merged Moreshet / workshop axis (no pink driving layers in presentation).
+  excludedPresentationPackIds: ["projector_base", "gaza", "curated_moresht_axis"],
+  ignoreLiveLayerUpdatesWhileActive: true,
+  // Reserved for future WMTS staging; v1 uses vector path only.
+  wmtsFadePolicy: "instant-after-vector-fade",
+};
+
 const MapProjectionConfig = {
   // When true, long two-point edges on stored `pink_line_route` are re-drawn in the
   // off-road style on a dedicated high z-index pane (Colab parity). Default on for GIS + projection.
@@ -38,6 +59,12 @@ const MapProjectionConfig = {
     urlOverride: null,
   },
 
+  // MapLibre GL canvas pixel ratio for the projection map only (supersampling when > devicePixelRatio).
+  // null -> browser default (usually devicePixelRatio; TouchDesigner Web Browser is often 1).
+  // Try 1.25–2 for a sharper map at the cost of GPU memory (canvas backing ≈ layout × this).
+  // URL `?mapPixelRatio=` / `?mpr=` overrides this (see projection-main).
+  PROJECTION_MAP_PIXEL_RATIO: null,
+
   // Projection-layer animation policy.
   // Supports line-flow animation even when style.animation metadata is absent,
   // using per-layer overrides keyed by full layer id ("pack.layer").
@@ -47,26 +74,19 @@ const MapProjectionConfig = {
     DEFAULT_SPEED: 0,
     DEFAULT_DASH_ARRAY: null,
     LAYER_OVERRIDES: {
-      // Oct 7 route line(s): trail animation (point leaves line as trail; route stays visible).
-      "october_7th.חדירה_לישוב-ציר": {
-        ENABLE_FLOW: true,
-        SPEED: 22,
-        MODE: "trail",
-        HEAD_RADIUS: 1.6,
-        HIDE_HEAD_AT_END: true,
-      },
+      // Oct 7 route line(s): use canonical underscore ids; alias lookup also matches hyphen ids.
       "october_7th.חדירה_לישוב_ציר": {
         ENABLE_FLOW: true,
-        SPEED: 22,
+        SPEED: 10,
         MODE: "trail",
-        HEAD_RADIUS: 1.6,
+        HEAD_RADIUS: 3.2,
         HIDE_HEAD_AT_END: true,
       },
       "october_7th.מאבק_וגבורה_ציר": {
         ENABLE_FLOW: true,
-        SPEED: 22,
+        SPEED: 10,
         MODE: "trail",
-        HEAD_RADIUS: 1.6,
+        HEAD_RADIUS: 3.2,
         HIDE_HEAD_AT_END: true,
       },
     },
@@ -83,7 +103,7 @@ const MapProjectionConfig = {
     ANIMATE_REMOTE_VIEWPORT: false,
     REMOTE_ANIMATION_DURATION_S: 0.12,
     PAN_ANIMATION_ENABLED: false,
-    ZOOM_ANIMATION_ENABLED: true,
+    ZOOM_ANIMATION_ENABLED: false,
     ZOOM_ANIMATION_DURATION_S: 0.12,
 
     // Prefer canvas for vector paths to reduce SVG/DOM pressure on dense layers.
@@ -94,10 +114,16 @@ const MapProjectionConfig = {
     ANIMATION_MAX_FPS: 30,
 
     // Optional per-layer low-zoom guardrails for especially heavy packs.
-    // Example: { "map_3_future.greens": 12 }
+    // Supports both exact fullLayerId and group-prefix keys (e.g. "greens").
     HEAVY_LAYER_MIN_ZOOM: {
       "map_3_future.greens": 12,
       "map_3_future.land_use": 12,
+      greens: 12,
+      land_use: 12,
+      "greens.מישורי_הצפה": 13,
+      "map_3_future.מישורי_הצפה": 13,
+      "greens.נחלים": 13,
+      "map_3_future.נחלים": 13,
     },
 
     // Adaptive projector highlight smoothing.
@@ -108,6 +134,8 @@ const MapProjectionConfig = {
       SPEED_THRESHOLD_PX: 40,
     },
   },
+
+  PROJECTION_SLIDESHOW,
 };
 
 // Browser global

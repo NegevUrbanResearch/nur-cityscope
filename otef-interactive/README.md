@@ -4,7 +4,7 @@ Interactive mapping module for the OTEF physical model with synchronized project
 
 ## Features
 
-- Interactive Leaflet map with OpenStreetMap/Satellite basemap
+- Interactive MapLibre map with OpenStreetMap/Satellite basemap
 - Real-time coordinate transformation (EPSG:2039 ↔ WGS84)
 - Layer groups from registry (GeoJSON + PMTiles for large layers)
 - Physical model overlay with transparent background
@@ -138,7 +138,7 @@ POST /api/otef_viewport/
   - `frontend/src/entries/projection-main.js`
   - `frontend/src/entries/remote-main.js`
   - `frontend/src/entries/curation-main.js`
-- Centralized runtime config lives under `frontend/src/config/`.
+- Runtime/shared logic lives under `frontend/src/shared/`, `frontend/src/map/`, and `frontend/src/projection/`.
 
 Commands:
 

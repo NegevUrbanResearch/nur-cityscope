@@ -2,6 +2,8 @@ import {
   resolveLayerState,
   parseFullLayerId,
   getLayerIdOnly,
+  formatFullLayerIdFromGroupLayer,
+  isLayerEnabledWithGroupGate,
   getEffectiveLayerGroups,
   coalesceCuratedGroups,
 } from "../../frontend/src/shared/layer-state-helper.js";
@@ -37,6 +39,56 @@ describe("layer-state-helper: parseFullLayerId", () => {
     expect(parseFullLayerId(".onlyLayer")).toBeNull();
     expect(parseFullLayerId("onlyGroup.")).toBeNull();
     expect(parseFullLayerId(".")).toBeNull();
+  });
+});
+
+describe("layer-state-helper: formatFullLayerIdFromGroupLayer", () => {
+  test("returns null when group, layer, or id parts are missing or blank", () => {
+    expect(formatFullLayerIdFromGroupLayer(null, { id: "a" })).toBeNull();
+    expect(formatFullLayerIdFromGroupLayer({ id: "g" }, null)).toBeNull();
+    expect(formatFullLayerIdFromGroupLayer({ id: "g" }, { id: "" })).toBeNull();
+    expect(
+      formatFullLayerIdFromGroupLayer({ id: "  " }, { id: "a" }),
+    ).toBeNull();
+    expect(
+      formatFullLayerIdFromGroupLayer({ id: "g" }, { id: "  " }),
+    ).toBeNull();
+  });
+
+  test("returns groupId.layerId when both ids are non-empty", () => {
+    expect(
+      formatFullLayerIdFromGroupLayer(
+        { id: "map_3" },
+        { id: "layer.with.dots" },
+      ),
+    ).toBe("map_3.layer.with.dots");
+  });
+});
+
+describe("layer-state-helper: isLayerEnabledWithGroupGate", () => {
+  test("matches resolveLayerState enabled: group is a gate; layer must be on", () => {
+    const g = { id: "g1", enabled: true, layers: [] };
+    expect(isLayerEnabledWithGroupGate(g, { id: "a", enabled: true })).toBe(
+      true,
+    );
+    expect(isLayerEnabledWithGroupGate(g, { id: "a", enabled: false })).toBe(
+      false,
+    );
+    expect(
+      isLayerEnabledWithGroupGate(
+        { id: "g1", enabled: false, layers: [] },
+        { id: "a", enabled: true },
+      ),
+    ).toBe(false);
+  });
+
+  test("treats undefined group.enabled as enabled", () => {
+    expect(
+      isLayerEnabledWithGroupGate(
+        { id: "g1", layers: [] },
+        { id: "a", enabled: true },
+      ),
+    ).toBe(true);
   });
 });
 

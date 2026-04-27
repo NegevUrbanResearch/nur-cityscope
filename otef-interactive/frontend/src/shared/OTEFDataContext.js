@@ -1,5 +1,10 @@
 import { OTEF_API } from "./api-client.js";
 import { OTEFDataContextInternals } from "./otef-data-context/index.js";
+import { recordTraceEvent } from "./otef-trace.js";
+import {
+  normalizeSlideshowProjectionMessage,
+  postSlideshowBroadcastOnly,
+} from "./slideshow-projection-channel.js";
 import "./otef-data-context/OTEFDataContext-actions.js";
 import "./otef-data-context/OTEFDataContext-bounds.js";
 import "./otef-data-context/OTEFDataContext-websocket.js";
@@ -14,6 +19,49 @@ function getLogger() {
     warn: console.warn.bind(console),
     error: console.error.bind(console),
   };
+}
+
+function layerGroupsEqual(a, b) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const ga = a[i],
+      gb = b[i];
+    if (ga === gb) continue;
+    if (ga.id !== gb.id || ga.enabled !== gb.enabled) return false;
+    const la = ga.layers || [],
+      lb = gb.layers || [];
+    if (la.length !== lb.length) return false;
+    for (let j = 0; j < la.length; j++) {
+      if (la[j].id !== lb[j].id || la[j].enabled !== lb[j].enabled) return false;
+    }
+  }
+  return true;
+}
+
+function animationsEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const ka = Object.keys(a),
+    kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
+function viewportEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.zoom !== b.zoom) return false;
+  const ba = a.bbox,
+    bb = b.bbox;
+  if (!ba || !bb || ba.length !== bb.length) return false;
+  for (let i = 0; i < ba.length; i++) {
+    if (Math.abs(ba[i] - bb[i]) > 0.01) return false;
+  }
+  return true;
 }
 
 class OTEFDataContextClass {
@@ -33,6 +81,7 @@ class OTEFDataContextClass {
       bounds: new Set(),
       connection: new Set(),
       orientation: new Set(),
+      projectionSlideshow: new Set(),
     };
 
     this._wsClient = null;
@@ -44,6 +93,18 @@ class OTEFDataContextClass {
     this._velocity = { vx: 0, vy: 0 };
     this._lastVelocityUpdate = 0;
     this._lastLocalStateTimestamp = 0;
+    this._pendingLayerOps = 0;
+    /** Last server-aligned layerGroups snapshot (API init, WS, or successful PATCH). Drives coalescing no-op skips. */
+    this._layerPatchLastAcked = null;
+    /** Serializes coalesced PATCH flush so rapid toggles share one queue. */
+    this._layerPatchMutex = null;
+    /** Monotonic counter: latest user layer mutation intent (setLayersEnabled / toggleLayerInGroups / toggleGroup). */
+    this._layerOpGeneration = 0;
+    this._pendingAnimationOps = 0;
+    this._viewportSeq = 0;
+    this._activeLayerTrace = null;
+    /** @type {Record<string, unknown> | null} */
+    this._projectionSlideshow = null;
   }
 
   async init(tableName = "otef") {
@@ -60,9 +121,10 @@ class OTEFDataContextClass {
   async refreshLayerGroupsFromApi() {
     if (!this._tableName) return;
     try {
-      const state = await OTEF_API.getState(this._tableName);
+      const state = await OTEF_API.getState(this._tableName, { forceFresh: true });
       if (state && state.layerGroups) {
-        this._setLayerGroups(state.layerGroups);
+        this._setLayerGroups(state.layerGroups, { bypassEquality: true });
+        this._ackLayerGroupsServerBaseline(state.layerGroups);
       }
     } catch (err) {
       getLogger().error("[OTEFDataContext] refreshLayerGroupsFromApi failed:", err);
@@ -72,7 +134,7 @@ class OTEFDataContextClass {
   async _doInit(tableName) {
     this._tableName = tableName;
     try {
-      const state = await OTEF_API.getState(this._tableName);
+      const state = await OTEF_API.getState(this._tableName, { forceFresh: true });
       this._applyStateFromApi(state, { notify: false });
       this._setupWebSocket();
       this._initialized = true;
@@ -106,16 +168,74 @@ class OTEFDataContextClass {
   }
 
   _setViewport(viewport) {
-    this._viewport = viewport;
+    if (viewportEqual(this._viewport, viewport)) return;
+    const incomingSeq = Number.isFinite(viewport && viewport.seq) ? viewport.seq : null;
+    const nextSeq =
+      incomingSeq !== null && incomingSeq > this._viewportSeq
+        ? incomingSeq
+        : this._viewportSeq + 1;
+    this._viewportSeq = nextSeq;
+    this._viewport = { ...viewport, seq: nextSeq };
     this._notify("viewport", this._viewport);
+    return this._viewport;
   }
 
-  _setLayerGroups(layerGroups) {
+  /**
+   * @param {unknown} layerGroups
+   * @param {{ bypassEquality?: boolean }} [options]
+   * When `bypassEquality` is true, notify subscribers even if ids/enabled match (e.g. after
+   * otef_layers_changed: server-side curated GeoJSON changed but the layerGroups API is still shallow).
+   */
+  _setLayerGroups(layerGroups, options = {}) {
+    if (!options.bypassEquality && layerGroupsEqual(this._layerGroups, layerGroups)) {
+      return;
+    }
     this._layerGroups = layerGroups;
+    if (this._activeLayerTrace && this._activeLayerTrace.traceId) {
+      recordTraceEvent(this._activeLayerTrace.traceId, "context.layer_groups_set", {
+        source: this._activeLayerTrace.source || "unknown",
+      });
+    }
     this._notify("layerGroups", this._layerGroups);
   }
 
+  _setActiveLayerTrace(trace) {
+    if (!trace || !trace.traceId) return;
+    this._activeLayerTrace = {
+      traceId: trace.traceId,
+      source: trace.source || "unknown",
+      startedAt: Date.now(),
+      expiresAt: Date.now() + 4000,
+      fullLayerIds: Array.isArray(trace.fullLayerIds) ? [...trace.fullLayerIds] : [],
+    };
+  }
+
+  _getActiveLayerTrace() {
+    if (
+      this._activeLayerTrace &&
+      Number.isFinite(this._activeLayerTrace.expiresAt) &&
+      Date.now() > this._activeLayerTrace.expiresAt
+    ) {
+      this._activeLayerTrace = null;
+    }
+    return this._activeLayerTrace;
+  }
+
+  _clearActiveLayerTrace(traceId) {
+    if (!this._activeLayerTrace) return;
+    if (!traceId || this._activeLayerTrace.traceId === traceId) {
+      this._activeLayerTrace = null;
+    }
+  }
+
+  /** Called when layerGroups are applied from server (init, WS, refresh) so coalescing skips duplicate PATCHes. */
+  _ackLayerGroupsServerBaseline(layerGroups) {
+    if (!Array.isArray(layerGroups)) return;
+    this._layerPatchLastAcked = JSON.parse(JSON.stringify(layerGroups));
+  }
+
   _setAnimations(animations) {
+    if (animationsEqual(this._animations, animations)) return;
     this._animations = animations;
     this._notify("animations", this._animations);
   }
@@ -125,6 +245,16 @@ class OTEFDataContextClass {
     this._notify("bounds", this._bounds);
   }
 
+  _isLikelyStaleByTimestamp(ts) {
+    const normalizedTs = Number(ts);
+    if (!Number.isFinite(normalizedTs)) return false;
+    return normalizedTs < this._lastLocalStateTimestamp - 200;
+  }
+
+  _isLocalLayerOpPending() {
+    return this._pendingLayerOps > 0;
+  }
+
   _setViewerAngleDeg(angle) {
     if (typeof angle === "number" && !Number.isNaN(angle)) {
       this._viewerAngleDeg = angle;
@@ -132,9 +262,66 @@ class OTEFDataContextClass {
     }
   }
 
+  _projectionSlideshowEqual(a, b) {
+    return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  }
+
+  /**
+   * @param {Record<string, unknown> | null | undefined} slideshow
+   */
+  _setProjectionSlideshow(slideshow) {
+    const next =
+      slideshow && typeof slideshow === "object" ? { ...slideshow } : null;
+    if (this._projectionSlideshowEqual(this._projectionSlideshow, next)) {
+      return;
+    }
+    this._projectionSlideshow = next;
+    this._notify("projectionSlideshow", this._projectionSlideshow);
+  }
+
+  /**
+   * Push a projection slideshow command through the OTEF API (WebSocket fan-out to projection).
+   * Falls back to BroadcastChannel if the PATCH fails or the table is not initialized.
+   *
+   * @param {unknown} message
+   */
+  async patchProjectionSlideshow(message) {
+    const normalized = normalizeSlideshowProjectionMessage(message);
+    if (this._tableName) {
+      try {
+        const state = await OTEF_API.updateState(this._tableName, {
+          projection_slideshow: normalized,
+          sourceId: this._clientId,
+          timestamp: Date.now(),
+        });
+        if (state?.projection_slideshow && typeof state.projection_slideshow === "object") {
+          this._setProjectionSlideshow(state.projection_slideshow);
+        }
+        return;
+      } catch (err) {
+        getLogger().warn(
+          "[OTEFDataContext] projection slideshow PATCH failed; using BroadcastChannel fallback",
+          err,
+        );
+      }
+    }
+    postSlideshowBroadcastOnly(normalized);
+  }
+
+  getProjectionSlideshow() {
+    return this._projectionSlideshow;
+  }
+
   _notify(key, value) {
     const subs = this._subscribers[key];
     if (!subs || subs.size === 0) return;
+    if (
+      typeof window !== "undefined" &&
+      window.MapPerfTelemetry &&
+      typeof window.MapPerfTelemetry.record === "function"
+    ) {
+      window.MapPerfTelemetry.record(`notify_${key}_count`, 1);
+    }
     subs.forEach((cb) => {
       try {
         cb(value);
@@ -231,13 +418,13 @@ class OTEFDataContextClass {
     return actions.toggleLayer(this, layerId, enabled);
   }
 
-  async setLayersEnabled(fullLayerIds, enabled) {
+  async setLayersEnabled(fullLayerIds, enabled, options = undefined) {
     const actions = OTEFDataContextInternals.actions;
     if (!actions || typeof actions.setLayersEnabled !== "function") {
       getLogger().error("[OTEFDataContext] Missing action helpers");
       return { ok: false, error: "Missing action helpers" };
     }
-    return actions.setLayersEnabled(this, fullLayerIds, enabled);
+    return actions.setLayersEnabled(this, fullLayerIds, enabled, options);
   }
 
   async _toggleLayerInGroups(layerId, enabled) {
@@ -340,6 +527,9 @@ class OTEFDataContextClass {
         break;
       case "orientation":
         current = this._viewerAngleDeg;
+        break;
+      case "projectionSlideshow":
+        current = this._projectionSlideshow;
         break;
       default:
         break;

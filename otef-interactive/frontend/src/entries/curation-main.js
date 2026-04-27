@@ -17,7 +17,7 @@ async function boot() {
   await import("../map-utils/coordinate-utils.js");
   const { initLocale } = await import("../remote/remote-locale.js");
   initLocale();
-  // `?embed=1`: parent remote-controller owns heartbeat; `startCuratedSupabaseHeartbeat` no-ops when `curation-embed` detects embed mode.
+  // `?embed=1`: workshop refresh in iframe triggers `pullCuratedFromSupabaseOnce` (no background polling).
   await import("../curation/curation.js");
 }
 

@@ -356,8 +356,8 @@ class OTEFViewportState(models.Model):
         "parcels": False,
         "majorRoads": False,
         "smallRoads": False,
-        "projector_base.SEA": True,
-        "projector_base.רקע_שחור": True,
+        "projector_base.SEA": False,
+        "projector_base.רקע_שחור": False,
     }
 
     # Default viewport (EPSG:2039 ITM coordinates for Otef area)
@@ -389,6 +389,9 @@ class OTEFViewportState(models.Model):
 
     workshop_auto_publish = models.BooleanField(default=False)
     workshop_autopublish_started_at = models.DateTimeField(null=True, blank=True)
+
+    # Last projection slideshow command (start/stop + payload), replicated over otef WebSocket
+    projection_slideshow = models.JSONField(default=dict, blank=True)
 
     updated_at = models.DateTimeField(auto_now=True)
 

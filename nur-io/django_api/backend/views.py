@@ -1,11 +1,13 @@
 from django.shortcuts import render
 from django.db import models
+from django.db.models import Q
 from django.http import JsonResponse
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import json
+import math
 import os
 import re
 from django.conf import settings
@@ -40,6 +42,67 @@ from .serializers import (
     LayerGroupSerializer,
     LayerStateSerializer,
 )
+
+
+def _normalize_projection_slideshow_patch(raw):
+    """
+    Validate and normalize projection_slideshow PATCH body (mirrors frontend sanitizer).
+    Returns (normalized_dict, None) or (None, error Response).
+    """
+    if not isinstance(raw, dict):
+        return None, Response(
+            {"error": "projection_slideshow must be an object"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    cmd_type = raw.get("type")
+    if cmd_type not in ("start", "stop"):
+        return None, Response(
+            {"error": 'projection_slideshow.type must be "start" or "stop"'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    payload = raw.get("payload")
+    if payload is not None and not isinstance(payload, dict):
+        return None, Response(
+            {"error": "projection_slideshow.payload must be an object"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    payload = dict(payload or {})
+
+    if cmd_type == "stop":
+        return {"type": "stop", "payload": {}}, None
+
+    out_payload = {}
+    if "packOrder" in payload:
+        po = payload["packOrder"]
+        if not isinstance(po, list):
+            return None, Response(
+                {"error": "packOrder must be an array"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        out_payload["packOrder"] = [str(x) for x in po]
+
+    for key in ("intervalMs", "crossfadeMs", "warmupLeadMs"):
+        if key not in payload:
+            continue
+        try:
+            v = float(payload[key])
+        except (TypeError, ValueError):
+            return None, Response(
+                {"error": f"{key} must be a finite number"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not math.isfinite(v):
+            return None, Response(
+                {"error": f"{key} must be a finite number"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        iv = int(round(v))
+        if key == "intervalMs":
+            out_payload[key] = max(1, iv)
+        else:
+            out_payload[key] = max(0, iv)
+
+    return {"type": "start", "payload": out_payload}, None
 
 
 class TableViewSet(viewsets.ModelViewSet):
@@ -252,14 +315,61 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(table__name=table_name)
         return queryset
 
-    def _broadcast_state_change(self, table_name, changed_fields):
-        """Broadcast WebSocket notifications for state changes."""
+    def _emit_trace_event(self, trace_id, stage, table_name=None, extra=None):
+        if not isinstance(trace_id, str) or not trace_id.strip():
+            return
+        import json
+        import time
+
+        payload = {
+            "traceId": trace_id,
+            "stage": stage,
+            "table": table_name,
+            "ts_ms": int(time.time() * 1000),
+        }
+        if isinstance(extra, dict):
+            payload.update(extra)
+        print("[OTEF TRACE] " + json.dumps(payload, ensure_ascii=False))
+
+    def _broadcast_state_change(
+        self,
+        table_name,
+        changed_fields,
+        metadata=None,
+        layer_groups_cache=None,
+        layer_change_meta=None,
+    ):
+        """Broadcast WebSocket notifications for state changes.
+
+        layer_groups_cache: optional pre-built layer group list to avoid a redundant
+        _get_layer_groups() when the caller already computed it (e.g. command hot path).
+
+        layer_change_meta: optional dict with affected_group_ids, affected_full_layer_ids
+        to annotate the WebSocket message without scanning the full payload.
+        """
+        import time
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
 
         channel_layer = get_channel_layer()
         # Must match consumer's room_group_name: f'{channel_type}_channel'
         group_name = 'otef_channel'
+        state = OTEFViewportState.objects.filter(table__name=table_name).first()
+        table = state.table if state else None
+        meta = metadata or {}
+        source_id = meta.get('sourceId')
+        timestamp = meta.get('timestamp')
+        trace_id = meta.get('traceId')
+        self._emit_trace_event(
+            trace_id,
+            "django.broadcast.start",
+            table_name=table_name,
+            extra={"fields": list(changed_fields or [])},
+        )
+        if not isinstance(timestamp, (int, float)):
+            timestamp = int(time.time() * 1000)
+
+        lmeta = layer_change_meta if isinstance(layer_change_meta, dict) else None
 
         for field in changed_fields:
 
@@ -269,6 +379,10 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     'message': {
                         'type': 'otef_viewport_changed',
                         'table': table_name,
+                        'viewport': state.get_viewport_with_defaults() if state else None,
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
+                        'traceId': trace_id,
                     }
                 }
             elif (
@@ -276,13 +390,51 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 or field == 'layerGroups'
                 or field == 'workshop_auto_publish'
             ):
-                message = {
-                    'type': 'broadcast_message',
-                    'message': {
-                        'type': 'otef_layers_changed',
-                        'table': table_name,
-                    }
+                if isinstance(layer_groups_cache, list) and layer_groups_cache:
+                    layer_groups_payload = layer_groups_cache
+                else:
+                    layer_groups_payload = self._get_layer_groups(table) if table else []
+
+                if lmeta and isinstance(lmeta.get("affected_full_layer_ids"), list):
+                    affected_full = [
+                        x for x in lmeta["affected_full_layer_ids"] if isinstance(x, str)
+                    ]
+                    affected_curated_full_layer_ids = [
+                        fid
+                        for fid in affected_full
+                        if fid.split(".", 1)[0].startswith("curated")
+                    ]
+                else:
+                    affected_curated_full_layer_ids = []
+                    for group in layer_groups_payload:
+                        group_id = str(group.get("id", "")) if isinstance(group, dict) else ""
+                        if not group_id.startswith("curated"):
+                            continue
+                        for layer in (group.get("layers", []) if isinstance(group, dict) else []):
+                            if not isinstance(layer, dict):
+                                continue
+                            layer_id = str(layer.get("id", "")).strip()
+                            if not layer_id:
+                                continue
+                            affected_curated_full_layer_ids.append(f"{group_id}.{layer_id}")
+
+                msg_body = {
+                    "type": "otef_layers_changed",
+                    "table": table_name,
+                    "layerGroups": layer_groups_payload,
+                    "affected_curated_full_layer_ids": affected_curated_full_layer_ids,
+                    "sourceId": source_id,
+                    "timestamp": int(timestamp),
+                    "traceId": trace_id,
                 }
+                if lmeta:
+                    ag = lmeta.get("affected_group_ids")
+                    af = lmeta.get("affected_full_layer_ids")
+                    if isinstance(ag, (list, tuple)):
+                        msg_body["affected_group_ids"] = list(ag)
+                    if isinstance(af, (list, tuple)):
+                        msg_body["affected_full_layer_ids"] = list(af)
+                message = {"type": "broadcast_message", "message": msg_body}
             elif field == 'animations':
                 # Get current animation state to include in notification
                 try:
@@ -307,12 +459,33 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'table': table_name,
                     }
                 }
+            elif field == 'projection_slideshow':
+                ps = state.projection_slideshow if state else {}
+                if not isinstance(ps, dict):
+                    ps = {}
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_projection_slideshow_changed',
+                        'table': table_name,
+                        'projectionSlideshow': ps,
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
+                        'traceId': trace_id,
+                    },
+                }
             else:
                 continue
 
             try:
                 if channel_layer:
                     async_to_sync(channel_layer.group_send)(group_name, message)
+                    self._emit_trace_event(
+                        trace_id,
+                        "django.broadcast.sent",
+                        table_name=table_name,
+                        extra={"field": field},
+                    )
             except Exception as e:
                 print(f"[WARN] Broadcast skipped for {field} ({table_name}): {e}")
 
@@ -338,6 +511,12 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         )
 
         if request.method == 'PATCH':
+            trace_id = request.data.get('traceId')
+            self._emit_trace_event(
+                trace_id,
+                "django.patch.received",
+                table_name=table_name,
+            )
             changed_fields = []
 
             # Partial updates for each field
@@ -388,10 +567,41 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 state.workshop_auto_publish = wap
                 changed_fields.append('workshop_auto_publish')
 
+            if 'projection_slideshow' in request.data:
+                normalized, err = _normalize_projection_slideshow_patch(
+                    request.data['projection_slideshow']
+                )
+                if err is not None:
+                    return err
+                prev = state.projection_slideshow or {}
+                rev = 0
+                if isinstance(prev, dict):
+                    try:
+                        rev = int(prev.get('revision') or 0)
+                    except (TypeError, ValueError):
+                        rev = 0
+                normalized['revision'] = rev + 1
+                state.projection_slideshow = normalized
+                changed_fields.append('projection_slideshow')
+
             state.save()
+            self._emit_trace_event(
+                trace_id,
+                "django.patch.saved",
+                table_name=table_name,
+                extra={"fields": list(changed_fields)},
+            )
 
             # Broadcast notifications for each changed field
-            self._broadcast_state_change(table_name, changed_fields)
+            self._broadcast_state_change(
+                table_name,
+                changed_fields,
+                {
+                    'sourceId': request.data.get('sourceId'),
+                    'timestamp': request.data.get('timestamp'),
+                    'traceId': trace_id,
+                },
+            )
 
         # Return state with defaults applied (for both GET and PATCH)
         response_data = {
@@ -410,6 +620,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 if state.workshop_autopublish_started_at
                 else None
             ),
+            'projection_slideshow': state.projection_slideshow
+            if isinstance(state.projection_slideshow, dict)
+            else {},
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -681,6 +894,281 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         }
         return non_curated_groups + [merged_curated]
 
+    def _split_full_layer_id(self, full_layer_id):
+        if not full_layer_id or not isinstance(full_layer_id, str):
+            return None, None
+        if "." not in full_layer_id:
+            return None, None
+        return full_layer_id.split(".", 1)
+
+    def _recompute_group_enabled_from_states(self, table, group_id):
+        """Sync LayerGroup.enabled with LayerState rows for this table/group_id."""
+        if not group_id:
+            return
+        group = LayerGroup.objects.filter(table=table, group_id=group_id).first()
+        if not group:
+            return
+        states = list(
+            LayerState.objects.filter(
+                table=table, layer_id__startswith=f"{group_id}."
+            )
+        )
+        if not states:
+            return
+        all_on = all(s.enabled for s in states)
+        if group.enabled != all_on:
+            group.enabled = all_on
+            group.save()
+
+    def _moreshet_parking_coherence_table(self, table, layer_groups=None):
+        """
+        If no Moreshet *content* layer is on, ensure pink_line_parking is off in the DB
+        (mirrors frontend applyMoreshetParkingCoherenceToLayerGroups).
+
+        Returns True if callers should re-fetch layer groups (parking and/or group.enabled may
+        have changed in the database).
+        """
+        moreshet = "curated_moresht_axis"
+        parking = "pink_line_parking"
+        parking_fid = f"{moreshet}.{parking}"
+        groups = layer_groups if layer_groups is not None else self._get_layer_groups(table)
+        g = next((x for x in (groups or []) if isinstance(x, dict) and x.get("id") == moreshet), None)
+        if not g:
+            return False
+        layers = g.get("layers") or []
+        has_content = False
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            if str(layer.get("id", "")) == parking:
+                continue
+            if layer.get("enabled", False) is True:
+                has_content = True
+                break
+        if has_content:
+            return False
+        st = LayerState.objects.filter(table=table, layer_id=parking_fid).first()
+        if st and st.enabled is True:
+            st.enabled = False
+            st.save()
+        self._recompute_group_enabled_from_states(table, moreshet)
+        return True
+
+    def _merge_layer_toggle_changes_last_wins(self, change_dicts):
+        """Last entry for a full_layer_id wins (matches last-intent semantics)."""
+        merged = {}
+        for ch in change_dicts:
+            if not isinstance(ch, dict):
+                continue
+            full_id = ch.get("full_layer_id")
+            if not full_id and ch.get("fullLayerId"):
+                full_id = ch.get("fullLayerId")
+            if not full_id or not isinstance(full_id, str):
+                continue
+            en = ch.get("enabled")
+            if not isinstance(en, bool):
+                en = en is True or str(en).lower() in ("1", "true", "yes")
+            group_id, _tail = self._split_full_layer_id(full_id)
+            if not group_id:
+                continue
+            merged[full_id] = en
+        return merged
+
+    def _ensure_layer_groups_for_merge(self, table, merged):
+        """Create missing LayerGroup rows in bulk; does not update existing group flags."""
+        group_last_en = {}
+        for full_id, en in merged.items():
+            gid, _ = self._split_full_layer_id(full_id)
+            if gid:
+                group_last_en[gid] = en
+        if not group_last_en:
+            return
+        want = set(group_last_en.keys())
+        have = set(
+            LayerGroup.objects.filter(table=table, group_id__in=want).values_list(
+                "group_id", flat=True
+            )
+        )
+        missing = want - have
+        if not missing:
+            return
+        LayerGroup.objects.bulk_create(
+            [
+                LayerGroup(table=table, group_id=gid, enabled=group_last_en[gid])
+                for gid in missing
+            ]
+        )
+
+    def _recompute_group_enabled_from_states_bulk(self, table, group_ids):
+        """Sync LayerGroup.enabled with LayerState rows; batched queries."""
+        if not group_ids:
+            return
+        q = Q()
+        for gid in group_ids:
+            q |= Q(layer_id__startswith=f"{gid}.")
+        states = list(LayerState.objects.filter(table=table).filter(q))
+        by_group = {gid: [] for gid in group_ids}
+        prefix_by_gid = {gid: f"{gid}." for gid in group_ids}
+        for st in states:
+            for gid, pref in prefix_by_gid.items():
+                if st.layer_id.startswith(pref):
+                    by_group[gid].append(st)
+                    break
+        groups = {
+            lg.group_id: lg
+            for lg in LayerGroup.objects.filter(table=table, group_id__in=group_ids)
+        }
+        to_save = []
+        for gid in group_ids:
+            layer_group = groups.get(gid)
+            if not layer_group:
+                continue
+            slist = by_group.get(gid) or []
+            if not slist:
+                continue
+            all_on = all(s.enabled for s in slist)
+            if layer_group.enabled != all_on:
+                layer_group.enabled = all_on
+                to_save.append(layer_group)
+        if to_save:
+            LayerGroup.objects.bulk_update(to_save, ["enabled"])
+
+    def _apply_layer_toggle_change_dicts(self, table, change_dicts, state):
+        """
+        change_dicts: list of {full_layer_id, enabled} (enabled bool).
+        Persists to LayerState / LayerGroup and bumps OTEFViewportState.updated_at.
+
+        Returns:
+            (layer_groups, affected_group_ids, affected_full_layer_ids) for reuse
+            in HTTP response and WebSocket broadcast (avoids repeated _get_layer_groups).
+        """
+        merged = self._merge_layer_toggle_changes_last_wins(change_dicts)
+        if not merged:
+            layer_groups = self._get_layer_groups(table)
+            if self._moreshet_parking_coherence_table(table, layer_groups=layer_groups):
+                layer_groups = self._get_layer_groups(table)
+            if state and state.pk is not None:
+                state.save(update_fields=None)
+            return layer_groups, set(), []
+
+        self._ensure_layer_groups_for_merge(table, merged)
+
+        full_ids = list(merged.keys())
+        existing = {
+            ls.layer_id: ls
+            for ls in LayerState.objects.filter(table=table, layer_id__in=full_ids)
+        }
+
+        to_create = []
+        to_update = []
+        affected_group_ids = set()
+
+        for full_id, en in merged.items():
+            group_id, _tail = self._split_full_layer_id(full_id)
+            if not group_id:
+                continue
+            affected_group_ids.add(group_id)
+            if full_id in existing:
+                ls = existing[full_id]
+                if ls.enabled != en:
+                    ls.enabled = en
+                    to_update.append(ls)
+            else:
+                to_create.append(LayerState(table=table, layer_id=full_id, enabled=en))
+
+        if to_create:
+            LayerState.objects.bulk_create(to_create)
+        if to_update:
+            LayerState.objects.bulk_update(to_update, ["enabled"])
+
+        layer_groups = self._get_layer_groups(table)
+        if self._moreshet_parking_coherence_table(table, layer_groups=layer_groups):
+            # Parking row and/or merged group enabled may have been updated; refresh once.
+            layer_groups = self._get_layer_groups(table)
+
+        self._recompute_group_enabled_from_states_bulk(table, affected_group_ids)
+
+        if state and state.pk is not None:
+            state.save(update_fields=None)
+
+        affected_full = list(merged.keys())
+        return layer_groups, affected_group_ids, affected_full
+
+    def _expand_request_layer_toggle_change_dicts(self, table, request, layer_groups_cache=None):
+        action = request.data.get("action")
+        if action == "set_layer_toggles":
+            raw = request.data.get("changes")
+            if not isinstance(raw, list) or not raw:
+                return None, "changes must be a non-empty list for set_layer_toggles"
+            out = []
+            for it in raw:
+                if not isinstance(it, dict):
+                    continue
+                full_id = it.get("full_layer_id") or it.get("fullLayerId")
+                if not full_id or not isinstance(full_id, str):
+                    continue
+                en = it.get("enabled")
+                if not isinstance(en, bool):
+                    en = en is True or str(en).lower() in ("1", "true", "yes")
+                out.append({"full_layer_id": full_id, "enabled": en})
+            if not out:
+                return None, "no valid entries in changes"
+            return out, None
+
+        if action == "set_layers_enabled":
+            fids = request.data.get("full_layer_ids") or request.data.get("fullLayerIds", [])
+            if not isinstance(fids, list) or not fids:
+                return None, "full_layer_ids must be a non-empty list for set_layers_enabled"
+            en = request.data.get("enabled")
+            if not isinstance(en, bool):
+                en = en is True or str(en).lower() in ("1", "true", "yes")
+            out = []
+            for full_id in fids:
+                if not isinstance(full_id, str) or not full_id.strip():
+                    continue
+                out.append(
+                    {
+                        "full_layer_id": full_id,
+                        "enabled": en,
+                    }
+                )
+            if not out:
+                return None, "no valid full_layer_ids in set_layers_enabled"
+            return out, None
+
+        if action == "set_group_enabled":
+            group_id = request.data.get("group_id") or request.data.get("groupId")
+            if not group_id or not isinstance(group_id, str):
+                return None, "group_id is required for set_group_enabled"
+            en = request.data.get("enabled")
+            if not isinstance(en, bool):
+                en = en is True or str(en).lower() in ("1", "true", "yes")
+            groups = (
+                layer_groups_cache
+                if isinstance(layer_groups_cache, list)
+                else self._get_layer_groups(table)
+            )
+            g = next(
+                (x for x in (groups or []) if isinstance(x, dict) and x.get("id") == group_id),
+                None,
+            )
+            if not g or not isinstance(g.get("layers"), list):
+                return None, f"unknown or empty group_id: {group_id}"
+            out = []
+            for layer in g["layers"]:
+                if not isinstance(layer, dict):
+                    continue
+                lid = layer.get("id")
+                if not lid and lid != 0:
+                    continue
+                full_id = f"{group_id}.{str(lid).strip()}"
+                out.append({"full_layer_id": full_id, "enabled": en})
+            if not out:
+                return None, f"no layers to toggle for group {group_id}"
+            return out, None
+
+        return None, None
+
     @action(detail=False, methods=['post'], url_path='by-table/(?P<table_name>[^/.]+)/command')
     def command(self, request, table_name=None):
         """
@@ -689,6 +1177,10 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         POST body:
         - Pan: {"action": "pan", "direction": "north", "delta": 0.15}
         - Zoom: {"action": "zoom", "level": 16}
+        - Layer compact toggles:
+          - {"action": "set_layer_toggles", "changes": [{"full_layer_id": "g.l", "enabled": true}, ...]}
+          - {"action": "set_layers_enabled", "full_layer_ids": ["g.l"], "enabled": true}
+          - {"action": "set_group_enabled", "group_id": "g", "enabled": true}
         """
         from django.shortcuts import get_object_or_404
 
@@ -703,6 +1195,65 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         )
 
         action = request.data.get('action')
+        trace_id = request.data.get('traceId')
+        self._emit_trace_event(
+            trace_id,
+            "django.command.received",
+            table_name=table_name,
+            extra={"action": action},
+        )
+
+        if action in (
+            "set_layer_toggles",
+            "set_layers_enabled",
+            "set_group_enabled",
+        ):
+            layer_groups_expand_cache = (
+                self._get_layer_groups(table) if action == "set_group_enabled" else None
+            )
+            change_dicts, err = self._expand_request_layer_toggle_change_dicts(
+                table,
+                request,
+                layer_groups_cache=layer_groups_expand_cache,
+            )
+            if err:
+                return Response(
+                    {"error": err, "action": action},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            layer_groups, affected_group_ids, affected_full_ids = (
+                self._apply_layer_toggle_change_dicts(table, change_dicts, state)
+            )
+            self._emit_trace_event(
+                trace_id,
+                "django.command.saved",
+                table_name=table_name,
+                extra={"action": action},
+            )
+            layer_change_meta = {
+                "affected_group_ids": sorted(affected_group_ids),
+                "affected_full_layer_ids": affected_full_ids,
+            }
+            self._broadcast_state_change(
+                table_name,
+                ["layerGroups"],
+                {
+                    "sourceId": request.data.get("sourceId"),
+                    "timestamp": request.data.get("timestamp"),
+                    "traceId": trace_id,
+                },
+                layer_groups_cache=layer_groups,
+                layer_change_meta=layer_change_meta,
+            )
+            return Response(
+                {
+                    "status": "ok",
+                    "action": action,
+                    "layerGroups": layer_groups,
+                    "affected_group_ids": layer_change_meta["affected_group_ids"],
+                    "affected_full_layer_ids": affected_full_ids,
+                }
+            )
 
         # Support base_viewport to prevent snapback during rapid movements
         base_viewport = request.data.get('base_viewport')
@@ -714,18 +1265,52 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             delta = float(request.data.get('delta', 0.15))
             state.viewport = state.apply_pan_command(direction, delta)
             state.save()
-            self._broadcast_state_change(table_name, ['viewport'])
+            self._emit_trace_event(
+                trace_id,
+                "django.command.saved",
+                table_name=table_name,
+                extra={"action": action},
+            )
+            self._broadcast_state_change(
+                table_name,
+                ['viewport'],
+                {
+                    'sourceId': request.data.get('sourceId'),
+                    'timestamp': request.data.get('timestamp'),
+                    'traceId': trace_id,
+                },
+            )
 
         elif action == 'zoom':
             level = int(request.data.get('level', 15))
             level = max(10, min(19, level))  # Clamp to valid range
             state.viewport = state.apply_zoom_command(level)
             state.save()
-            self._broadcast_state_change(table_name, ['viewport'])
+            self._emit_trace_event(
+                trace_id,
+                "django.command.saved",
+                table_name=table_name,
+                extra={"action": action},
+            )
+            self._broadcast_state_change(
+                table_name,
+                ['viewport'],
+                {
+                    'sourceId': request.data.get('sourceId'),
+                    'timestamp': request.data.get('timestamp'),
+                    'traceId': trace_id,
+                },
+            )
 
         else:
             return Response(
-                {'error': f'Unknown action: {action}. Use "pan" or "zoom".'},
+                {
+                    'error': (
+                        f'Unknown action: {action}. '
+                        'Use "pan", "zoom", "set_layer_toggles", '
+                        '"set_layers_enabled", or "set_group_enabled".'
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 

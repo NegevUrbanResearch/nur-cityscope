@@ -16,6 +16,7 @@ describe("map-projection-config defaults", () => {
     expect(MapProjectionConfig.PROJECTION_LERP_FACTOR).toBeCloseTo(0.15);
     expect(MapProjectionConfig.PROJECTION_RESIZE_DEBOUNCE_MS).toBe(200);
     expect(MapProjectionConfig.PROJECTION_FULL_EXTENT_TOLERANCE).toBe(10);
+    expect(MapProjectionConfig.PROJECTION_MAP_PIXEL_RATIO).toBe(null);
   });
 
   test("includes GIS performance flags with safe defaults", () => {
@@ -26,15 +27,46 @@ describe("map-projection-config defaults", () => {
     expect(MapProjectionConfig.GIS_PERF.ENABLE_PREFER_CANVAS).toBe(true);
     expect(MapProjectionConfig.GIS_PERF.ENABLE_LAYER_VISIBILITY_BATCHING).toBe(true);
     expect(MapProjectionConfig.GIS_PERF.PAN_ANIMATION_ENABLED).toBe(false);
-    expect(MapProjectionConfig.GIS_PERF.ZOOM_ANIMATION_ENABLED).toBe(true);
+    expect(MapProjectionConfig.GIS_PERF.ZOOM_ANIMATION_ENABLED).toBe(false);
     expect(MapProjectionConfig.GIS_PERF.ZOOM_ANIMATION_DURATION_S).toBe(0.12);
     expect(MapProjectionConfig.GIS_PERF.HEAVY_LAYER_MIN_ZOOM).toEqual({
       "map_3_future.greens": 12,
       "map_3_future.land_use": 12,
+      greens: 12,
+      land_use: 12,
+      "greens.מישורי_הצפה": 13,
+      "map_3_future.מישורי_הצפה": 13,
+      "greens.נחלים": 13,
+      "map_3_future.נחלים": 13,
     });
     expect(MapProjectionConfig.GIS_PERF.PROJECTOR_SMOOTHING).toBeDefined();
     expect(
       MapProjectionConfig.GIS_PERF.PROJECTOR_SMOOTHING.ENABLE_ADAPTIVE_SMOOTHING
     ).toBe(true);
+  });
+});
+
+describe("projection slideshow config", () => {
+  test("exposes stable defaults", () => {
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.intervalMs).toBe(10000);
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.crossfadeMs).toBe(1200);
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.warmupLeadMs).toBe(2500);
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.wmtsFadePolicy).toBe(
+      "instant-after-vector-fade"
+    );
+    expect(
+      MapProjectionConfig.PROJECTION_SLIDESHOW.excludedPresentationPackIds
+    ).toEqual([
+      "projector_base",
+      "gaza",
+      "curated_moresht_axis",
+    ]);
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.packOrder).toEqual([
+      "future_development",
+      "october_7th",
+      "greens",
+      "land_use",
+      "muniplicity_transport",
+    ]);
   });
 });

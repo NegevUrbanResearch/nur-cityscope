@@ -1,0 +1,1506 @@
+import { describe, expect, it, vi } from "vitest";
+import { PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE } from "../../frontend/src/shared/hatch-projection-presentation.js";
+import {
+  irToMapLibreLayers,
+} from "../../frontend/src/shared/maplibre-style-bridge.js";
+
+function assertPaintHasNoNullish(paint) {
+  for (const v of Object.values(paint)) {
+    expect(v).not.toBeUndefined();
+    expect(v).not.toBeNull();
+  }
+}
+
+describe("irToMapLibreLayers", () => {
+  it("converts a simple solid-fill polygon layer", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "fill", fillType: "solid", color: "#ffdf7f", opacity: 1.0 },
+            { type: "stroke", color: "#000000", width: 1.0, opacity: 1.0 },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("land_use.מגורים", "land_use__מגורים", layerConfig);
+
+    expect(result).toHaveLength(2);
+
+    const fill = result.find((layer) => layer.type === "fill");
+    expect(fill).toBeDefined();
+    expect(fill.paint["fill-color"]).toBe("#ffdf7f");
+    expect(fill.paint["fill-opacity"]).toBe(1.0);
+
+    const line = result.find((layer) => layer.type === "line");
+    expect(line).toBeDefined();
+    expect(line.paint["line-color"]).toBe("#000000");
+    expect(line.paint["line-width"]).toBe(1.0);
+  });
+
+  it("does not reorder fill/line for line geometry (synthetic stroke must stay under fill)", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#000000", width: 1, opacity: 1 },
+            { type: "fill", fillType: "solid", color: "#895a44", opacity: 1 },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("muniplicity_transport.דרכים", "muniplicity_transport__דרכים", layerConfig);
+    expect(result).toHaveLength(2);
+    expect(result[0].type).toBe("line");
+    expect(result[1].type).toBe("fill");
+  });
+
+  it("skips fill-before-stroke sort for projection calibration dirt roads full id", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#000000", width: 1, opacity: 1 },
+            { type: "fill", fillType: "solid", color: "#895a44", opacity: 1 },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers(
+      "muniplicity_transport.דרכי_עפר",
+      "muniplicity_transport__דרכי_עפר",
+      layerConfig,
+    );
+    expect(result[0].type).toBe("line");
+    expect(result[1].type).toBe("fill");
+  });
+
+  it("orders fill style layers before line layers when lyrx symbol order is stroke-then-fill", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#003fff", width: 1.2, opacity: 1.0 },
+            { type: "fill", fillType: "solid", color: "#bfff00", opacity: 1.0 },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("greens.test", "greens__test", layerConfig);
+    expect(result).toHaveLength(2);
+    expect(result[0].type).toBe("fill");
+    expect(result[1].type).toBe("line");
+    expect(result[0].paint["fill-color"]).toBe("#bfff00");
+    expect(result[1].paint["line-color"]).toBe("#003fff");
+  });
+
+  it("scales stroke line-width on projection when applyProjectionHatchPresentation is set", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#112233", width: 2, opacity: 1 },
+            { type: "fill", fillType: "solid", color: "#eeddcc", opacity: 1 },
+          ],
+        },
+      },
+    };
+    const gis = irToMapLibreLayers("pack.layer", "pack__layer", layerConfig);
+    const proj = irToMapLibreLayers("pack.layer", "pack__layer", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    const lineG = gis.find((l) => l.type === "line");
+    const lineP = proj.find((l) => l.type === "line");
+    expect(lineG.paint["line-width"]).toBe(2);
+    expect(lineP.paint["line-width"]).toBeCloseTo(2 * PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE);
+  });
+
+  it("converts a uniqueValue renderer with match expression", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "mimush",
+          classes: [
+            {
+              value: "0",
+              symbol: {
+                symbolLayers: [
+                  { type: "fill", fillType: "solid", color: "#d76e89", opacity: 1.0 },
+                ],
+              },
+            },
+            {
+              value: "1",
+              symbol: {
+                symbolLayers: [
+                  { type: "fill", fillType: "solid", color: "#76b5c5", opacity: 1.0 },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "fill", fillType: "solid", color: "#808080", opacity: 1.0 },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.layer", "test__layer", layerConfig);
+    const fill = result.find((layer) => layer.type === "fill");
+    expect(fill.paint["fill-color"]).toEqual([
+      "match",
+      [
+        "to-string",
+        ["coalesce", ["get", "MIMUSH"], ["get", "Mimush"], ["get", "mimush"], ""],
+      ],
+      "0",
+      "#d76e89",
+      "1",
+      "#76b5c5",
+      "#808080",
+    ]);
+  });
+
+  it("uniqueValue fill-color uses coalesce+to-string for mixed-case field names", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "Zone",
+          classes: [
+            {
+              value: "a",
+              symbol: {
+                symbolLayers: [{ type: "fill", fillType: "solid", color: "#ff0000", opacity: 1 }],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "fill", fillType: "solid", color: "#808080", opacity: 1 }],
+        },
+      },
+    };
+
+    const fill = irToMapLibreLayers("test.case", "test__case", layerConfig).find((l) => l.type === "fill");
+    const fillColor = fill.paint["fill-color"];
+    expect(fillColor[0]).toBe("match");
+    const input = fillColor[1];
+    expect(input[0]).toBe("to-string");
+    expect(input[1][0]).toBe("coalesce");
+    const coReads = input[1].slice(1, -1);
+    expect(coReads).toEqual([
+      ["get", "ZONE"],
+      ["get", "Zone"],
+      ["get", "zone"],
+    ]);
+    expect(fillColor).toEqual(["match", input, "a", "#ff0000", "#808080"]);
+  });
+
+  it("uniqueValue stringifies numeric class values for match labels", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "k",
+          classes: [
+            {
+              value: 1,
+              symbol: {
+                symbolLayers: [{ type: "fill", fillType: "solid", color: "#111111", opacity: 1 }],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "fill", fillType: "solid", color: "#999999", opacity: 1 }],
+        },
+      },
+    };
+    const fill = irToMapLibreLayers("test.num", "test__num", layerConfig).find((l) => l.type === "fill");
+    const fillColor = fill.paint["fill-color"];
+    expect(fillColor[0]).toBe("match");
+    expect(fillColor[1]).toEqual(["to-string", ["coalesce", ["get", "K"], ["get", "k"], ""]]);
+    expect(fillColor[2]).toBe("1");
+    expect(fillColor[3]).toBe("#111111");
+    expect(fillColor[4]).toBe("#999999");
+  });
+
+  it("converts a circle marker layer", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "markerPoint",
+              marker: { size: 8, fill: "#a83800", stroke: "#000000", strokeWidth: 1 },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.points", "test__points", layerConfig);
+    const circle = result.find((layer) => layer.type === "circle");
+    expect(circle).toBeDefined();
+    expect(circle.paint["circle-radius"]).toBe(4);
+    expect(circle.paint["circle-color"]).toBe("#a83800");
+  });
+
+  it("maps marker fillColor to circle-color when fill is absent (OTEF IR parity)", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "markerPoint", marker: { fillColor: "#e84a5f", size: 10 } },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("g.points", "g__points", layerConfig);
+    const circle = result.find((layer) => layer.type === "circle");
+    expect(circle.paint["circle-color"]).toBe("#e84a5f");
+    expect(circle.paint["circle-radius"]).toBe(5);
+  });
+
+  it("resolves uniqueValue point color from marker.fillColor in match expressions", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "kind",
+          classes: [
+            {
+              value: "a",
+              symbol: {
+                symbolLayers: [
+                  { type: "markerPoint", marker: { fillColor: "#e84a5f", size: 8 } },
+                ],
+              },
+            },
+            {
+              value: "b",
+              symbol: {
+                symbolLayers: [
+                  { type: "markerPoint", marker: { fillColor: "#00ff00", size: 8 } },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "markerPoint", marker: { fillColor: "#999999", size: 8 } },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("t.pts", "t__pts", layerConfig);
+    const circle = result.find((layer) => layer.type === "circle");
+    expect(circle.paint["circle-color"]).toEqual([
+      "match",
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
+      "a",
+      "#e84a5f",
+      "b",
+      "#00ff00",
+      "#999999",
+    ]);
+  });
+
+  it("uses gray fallback and sets _uniqueValuePointColorFallback when no point color is resolvable (no console in bridge)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "k",
+          classes: [
+            { value: "a", symbol: { symbolLayers: [{ type: "markerPoint", marker: { size: 8 } }] } },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "markerPoint", marker: { size: 8 } }],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("t.nocolor", "t__nocolor", layerConfig);
+    const circle = result.find((layer) => layer.type === "circle");
+    expect(circle.paint["circle-color"]).toBe("#808080");
+    expect(circle._uniqueValuePointColorFallback).toBe(true);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("converts a line layer with dash array", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "stroke",
+              color: "#ff0000",
+              width: 2,
+              opacity: 1.0,
+              dash: { array: [4, 4] },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.dashed", "test__dashed", layerConfig);
+    const line = result.find((layer) => layer.type === "line");
+    expect(line.paint["line-dasharray"]).toEqual([4, 4]);
+  });
+
+  it("keeps markerLine visible in simple renderer via line fallback", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "markerLine",
+              marker: {
+                strokeColor: "#895a44",
+                strokeWidth: 5.333333333333333,
+              },
+              placement: { mode: "interval", interval: 18 },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.markerline", "test__markerline", layerConfig);
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe("line");
+    expect(result[0].paint["line-color"]).toBe("#895a44");
+    expect(result[0].paint["line-width"]).toBe(5.333333333333333);
+    expect(result[0]._markerLineFallback).toBe(true);
+  });
+
+  it("emits line symbol for markerLine with square along line and square image spec", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#ffffff", width: 6, opacity: 1 },
+            {
+              type: "markerLine",
+              marker: {
+                shape: "square",
+                size: 7,
+                fillColor: "#cc0000",
+                strokeColor: "#111111",
+                strokeWidth: 1,
+              },
+              opacity: 0.95,
+              placement: { interval: 20 },
+              orientation: { alignToLine: true },
+            },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("muniplicity_transport.מסלולי_רכבת", "src", layerConfig);
+    expect(result).toHaveLength(2);
+    const wideLine = result[0];
+    const symbol = result[1];
+    expect(wideLine.type).toBe("line");
+    expect(wideLine.paint["line-width"]).toBe(6);
+    expect(symbol.type).toBe("symbol");
+    expect(symbol.layout["symbol-placement"]).toBe("line");
+    expect(symbol.layout["symbol-spacing"]).toBeCloseTo(23, 6);
+    expect(symbol.layout["icon-size"]).toBe(0.9);
+    expect(symbol.layout["icon-allow-overlap"]).toBe(true);
+    expect(symbol.layout["icon-ignore-placement"]).toBe(true);
+    expect(symbol.layout["icon-rotation-alignment"]).toBe("map");
+    expect(symbol.layout["icon-keep-upright"]).toBe(false);
+    expect(symbol._markerLineSquarePattern).toBeDefined();
+    expect(symbol._markerLineSquarePattern.imageId).toMatch(/^otef_mlsq_v1_/);
+    expect(symbol.layout["icon-image"]).toBe(symbol._markerLineSquarePattern.imageId);
+    expect(symbol.paint["icon-opacity"]).toBe(0.95);
+  });
+
+  it("keeps line fallback for markerLine with unsupported shape", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "markerLine",
+              marker: { shape: "circle", size: 8, fillColor: "#00aa00" },
+            },
+          ],
+        },
+      },
+    };
+    const r = irToMapLibreLayers("test.markerline.circle", "src", layerConfig);
+    expect(r).toHaveLength(1);
+    expect(r[0].type).toBe("line");
+    expect(r[0]._markerLineFallback).toBe(true);
+  });
+
+  it("orders wide solid strokes before dashed in line multi-stroke pack", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#ff0000", width: 1, opacity: 1, dash: { array: [2, 1] } },
+            { type: "stroke", color: "#ffffff", width: 10, opacity: 1 },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("test.dashorder", "test__dashorder", layerConfig);
+    expect(result[0].type).toBe("line");
+    expect(result[0].paint["line-width"]).toBe(10);
+    expect(result[0].paint["line-dasharray"]).toBeUndefined();
+    expect(result[1].type).toBe("line");
+    expect(result[1].paint["line-dasharray"]).toEqual([2, 1]);
+    expect(result[1].paint["line-width"]).toBe(1);
+  });
+
+  it("builds uniqueValue markerLine square match for icon-image and patterns", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "kind",
+          classes: [
+            {
+              value: "a",
+              symbol: {
+                symbolLayers: [
+                  {
+                    type: "markerLine",
+                    marker: { shape: "square", fillColor: "#ff0000", size: 5 },
+                  },
+                ],
+              },
+            },
+            {
+              value: "b",
+              symbol: {
+                symbolLayers: [
+                  {
+                    type: "markerLine",
+                    marker: { shape: "square", fillColor: "#00ff00", size: 5 },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "markerLine", marker: { shape: "square", fillColor: "#222222", size: 5 } },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("test.square.uv", "test__sq", layerConfig);
+    const sym = result.find((l) => l.type === "symbol");
+    expect(sym).toBeDefined();
+    expect(sym._markerLineSquarePatterns).toBeDefined();
+    expect(Array.isArray(sym._markerLineSquarePatterns)).toBe(true);
+    expect(sym._markerLineSquarePatterns.length).toBe(3);
+    expect(sym.layout["icon-image"]).toEqual([
+      "match",
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
+      "a",
+      sym._markerLineSquarePatterns[1].imageId,
+      "b",
+      sym._markerLineSquarePatterns[2].imageId,
+      sym._markerLineSquarePatterns[0].imageId,
+    ]);
+  });
+
+  it("builds uniqueValue markerLine fallback match expressions", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "kind",
+          classes: [
+            {
+              value: "a",
+              symbol: {
+                symbolLayers: [
+                  { type: "markerLine", marker: { strokeColor: "#ff0000", strokeWidth: 2 } },
+                ],
+              },
+            },
+            {
+              value: "b",
+              symbol: {
+                symbolLayers: [
+                  { type: "markerLine", marker: { strokeColor: "#00ff00", strokeWidth: 4 } },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "markerLine", marker: { strokeColor: "#222222", strokeWidth: 1 } }],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.markerline.unique", "test__markerline__unique", layerConfig);
+    const line = result.find((layer) => layer.type === "line");
+    expect(line).toBeDefined();
+    expect(line.id).toBe("test__markerline__unique__markerLineFallback__0");
+    expect(line.paint["line-color"]).toEqual([
+      "match",
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
+      "a",
+      "#ff0000",
+      "b",
+      "#00ff00",
+      "#222222",
+    ]);
+    expect(line.paint["line-width"]).toEqual([
+      "match",
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
+      "a",
+      2,
+      "b",
+      4,
+      1,
+    ]);
+    expect(line._markerLineFallback).toBe(true);
+  });
+
+  it("emits default stroke layer when classes only override fill", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "zone",
+          classes: [
+            {
+              value: "a",
+              symbol: {
+                symbolLayers: [{ type: "fill", color: "#ff0000", opacity: 0.7 }],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "fill", color: "#cccccc", opacity: 0.4 },
+            { type: "stroke", color: "#111111", width: 2, lineCap: "round", lineJoin: "bevel" },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.partial", "test__partial", layerConfig);
+    expect(result).toHaveLength(2);
+
+    const fill = result.find((layer) => layer.type === "fill");
+    const stroke = result.find((layer) => layer.type === "line");
+
+    expect(fill).toBeDefined();
+    expect(stroke).toBeDefined();
+    expect(stroke.paint["line-color"]).toBe("#111111");
+    expect(stroke.paint["line-width"]).toBe(2);
+    expect(stroke.layout["line-cap"]).toBe("round");
+    expect(stroke.layout["line-join"]).toBe("bevel");
+  });
+
+  it("uses literal arrays in uniqueValue dashed stroke match expression", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "kind",
+          classes: [
+            {
+              value: "primary",
+              symbol: {
+                symbolLayers: [
+                  { type: "stroke", color: "#f00", width: 2, dash: { array: [2, 1] } },
+                ],
+              },
+            },
+            {
+              value: "secondary",
+              symbol: {
+                symbolLayers: [
+                  { type: "stroke", color: "#00f", width: 2, dash: { array: [6, 2] } },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "stroke", color: "#222", width: 1, dash: { array: [1, 1] } }],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.matchdash", "test__matchdash", layerConfig);
+    const line = result.find((layer) => layer.type === "line");
+
+    expect(line.paint["line-dasharray"]).toEqual([
+      "match",
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
+      "primary",
+      ["literal", [2, 1]],
+      "secondary",
+      ["literal", [6, 2]],
+      ["literal", [1, 1]],
+    ]);
+  });
+
+  it("uses class stroke/fill at each index when default order is fill-then-stroke (חניון-style)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "code",
+          classes: [
+            {
+              value: "parking",
+              symbol: {
+                label: "חניון",
+                symbolLayers: [
+                  { type: "stroke", color: "#1a1a1a", width: 1, opacity: 1 },
+                  { type: "fill", color: "#c8c8c8", opacity: 0.4 },
+                  { type: "fill", color: "#b0b0b0", opacity: 0.2 },
+                  { type: "fill", color: "#989898", opacity: 0.1 },
+                ],
+              },
+            },
+            {
+              value: "retail",
+              symbol: {
+                symbolLayers: [
+                  { type: "stroke", color: "#0066cc", width: 1.5, opacity: 1 },
+                  { type: "fill", color: "#e6f0ff", opacity: 0.5 },
+                  { type: "fill", color: "#d0e0f5", opacity: 0.3 },
+                  { type: "fill", color: "#bad4eb", opacity: 0.15 },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "fill", color: "#e0e0e0", opacity: 0.3 },
+            { type: "stroke", color: "#333333", width: 2, opacity: 1 },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("landuse.layer", "landuse__layer", layerConfig);
+
+    const byId = new Map(result.map((l) => [l.id, l]));
+    const line0 = byId.get("landuse__layer__line__0");
+    const fill0 = byId.get("landuse__layer__fill__solid__0");
+    const fill1 = byId.get("landuse__layer__fill__solid__1");
+    const fill2 = byId.get("landuse__layer__fill__solid__2");
+    const fill3 = byId.get("landuse__layer__fill__solid__3");
+
+    expect(line0).toBeDefined();
+    expect(line0.type).toBe("line");
+    expect(fill0).toBeDefined();
+    expect(fill0.type).toBe("fill");
+    expect(fill1?.type).toBe("fill");
+    expect(fill2?.type).toBe("fill");
+    expect(fill3?.type).toBe("fill");
+
+    const fillIdx = result.map((l, i) => (l.type === "fill" ? i : -1)).filter((i) => i >= 0);
+    const lineIdx = result.map((l, i) => (l.type === "line" ? i : -1)).filter((i) => i >= 0);
+    expect(Math.max(...fillIdx)).toBeLessThan(Math.min(...lineIdx));
+
+    expect(line0.paint["line-color"]).toEqual([
+      "match",
+      ["to-string", ["coalesce", ["get", "CODE"], ["get", "Code"], ["get", "code"], ""]],
+      "parking",
+      "#1a1a1a",
+      "retail",
+      "#0066cc",
+      "#1a1a1a",
+    ]);
+    expect(line0.paint["line-width"]).toEqual([
+      "match",
+      ["to-string", ["coalesce", ["get", "CODE"], ["get", "Code"], ["get", "code"], ""]],
+      "parking",
+      1,
+      "retail",
+      1.5,
+      1,
+    ]);
+
+    expect(fill1?.paint["fill-color"]).toEqual([
+      "match",
+      ["to-string", ["coalesce", ["get", "CODE"], ["get", "Code"], ["get", "code"], ""]],
+      "parking",
+      "#c8c8c8",
+      "retail",
+      "#e6f0ff",
+      "#c8c8c8",
+    ]);
+
+    for (const layer of result) {
+      assertPaintHasNoNullish(layer.paint);
+      for (const v of Object.values(layer.layout)) {
+        expect(v).not.toBeUndefined();
+        expect(v).not.toBeNull();
+      }
+    }
+  });
+
+  it("ignores classes with missing value while building expressions", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "mimush",
+          classes: [
+            {
+              symbol: {
+                symbolLayers: [{ type: "fill", color: "#123456", opacity: 0.8 }],
+              },
+            },
+            {
+              value: "1",
+              symbol: {
+                symbolLayers: [{ type: "fill", color: "#76b5c5", opacity: 1.0 }],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "fill", color: "#808080", opacity: 1.0 }],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.missing", "test__missing", layerConfig);
+    const fill = result.find((layer) => layer.type === "fill");
+
+    expect(fill.paint["fill-color"]).toEqual([
+      "match",
+      [
+        "to-string",
+        ["coalesce", ["get", "MIMUSH"], ["get", "Mimush"], ["get", "mimush"], ""],
+      ],
+      "1",
+      "#76b5c5",
+      "#808080",
+    ]);
+  });
+
+  it("emits fill-pattern and hatch metadata for simple hatch fill", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "fill",
+              fillType: "hatch",
+              hatch: { color: "#000000", rotation: 45, separation: 10, width: 2 },
+              opacity: 0.5,
+            },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.hatch", "test__hatch", layerConfig);
+    const fill = result.find((layer) => layer.type === "fill");
+    expect(fill.paint["fill-pattern"]).toBe("hatch_v2_#000000_45_10_2");
+    expect(fill.paint["fill-color"]).toBeUndefined();
+    expect(fill.paint["fill-opacity"]).toBe(0.5);
+    expect(fill._hatchPattern).toBeDefined();
+    expect(fill._hatchPattern.patternId).toBe("hatch_v2_#000000_45_10_2");
+  });
+
+  it("applies projection-only hatch pixel presentation when applyProjectionHatchPresentation is set", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "fill",
+              fillType: "hatch",
+              hatch: { color: "#000000", rotation: 45, separation: 10, width: 2 },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("test.hatchproj", "test__hatchproj", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    const fill = result.find((layer) => layer.type === "fill");
+    // 0.875× + snap => logical 9/1, then rasterized at pixelRatio 2 => 18/2 with cleaner texture
+    expect(fill._hatchPattern.separation).toBe(18);
+    expect(fill._hatchPattern.width).toBe(2);
+    expect(fill._hatchPattern.pixelRatio).toBe(2);
+    expect(fill._hatchPattern.patternId).toBe("hatch_v2_#000000_45_18_2");
+    expect(fill.paint["fill-pattern"]).toBe(fill._hatchPattern.patternId);
+  });
+
+  it("uses fill-pattern match and _hatchPatterns for uniqueValue hatch", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "kind",
+          classes: [
+            {
+              value: "a",
+              symbol: {
+                symbolLayers: [
+                  {
+                    type: "fill",
+                    fillType: "hatch",
+                    hatch: { color: "#111111", rotation: 0, separation: 8, width: 1 },
+                  },
+                ],
+              },
+            },
+            {
+              value: "b",
+              symbol: {
+                symbolLayers: [
+                  {
+                    type: "fill",
+                    fillType: "hatch",
+                    hatch: { color: "#222222", rotation: 30, separation: 12, width: 2 },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "fill",
+              fillType: "hatch",
+              hatch: { color: "#808080", rotation: 0, separation: 8, width: 1 },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("z.layer", "z__layer", layerConfig);
+    const fill = result.find((layer) => layer.type === "fill");
+    expect(fill.id).toBe("z__layer__fill__hatch__0");
+    expect(fill.paint["fill-color"]).toBeUndefined();
+    expect(fill.paint["fill-pattern"]).toEqual([
+      "match",
+      ["to-string", ["coalesce", ["get", "KIND"], ["get", "Kind"], ["get", "kind"], ""]],
+      "a",
+      "hatch_v2_#111111_0_8_1",
+      "b",
+      "hatch_v2_#222222_30_12_2",
+      "hatch_v2_#808080_0_8_1",
+    ]);
+    expect(Array.isArray(fill._hatchPatterns)).toBe(true);
+    const ids = fill._hatchPatterns.map((s) => s.patternId).sort();
+    expect(ids).toEqual([
+      "hatch_v2_#111111_0_8_1",
+      "hatch_v2_#222222_30_12_2",
+      "hatch_v2_#808080_0_8_1",
+    ]);
+  });
+
+  it("splits uniqueValue fill at the same index into solid vs hatch groups", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "t",
+          classes: [
+            {
+              value: "h",
+              symbol: {
+                symbolLayers: [
+                  {
+                    type: "fill",
+                    fillType: "hatch",
+                    hatch: { color: "#ff0000", rotation: 0, separation: 8, width: 1 },
+                  },
+                ],
+              },
+            },
+            {
+              value: "s",
+              symbol: {
+                symbolLayers: [
+                  { type: "fill", fillType: "solid", color: "#00ff00", opacity: 1 },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "fill", fillType: "solid", color: "#808080" }],
+        },
+      },
+    };
+
+    const result = irToMapLibreLayers("m.layer", "m__layer", layerConfig);
+    const hatchFill = result.find((l) => l.id === "m__layer__fill__hatch__0");
+    const solidFill = result.find((l) => l.id === "m__layer__fill__solid__0");
+    expect(hatchFill).toBeDefined();
+    expect(solidFill).toBeDefined();
+    expect(hatchFill.paint["fill-pattern"]).toBeDefined();
+    expect(solidFill.paint["fill-color"]).toBeDefined();
+  });
+
+  it("emits a symbol layer from TextString when style.labels is set (polygon annotation geometry)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 11,
+          color: "#202020",
+          haloColor: "#fafafa",
+          haloSize: 1.2,
+          colorOpacity: 1,
+        },
+      },
+    };
+    const result = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    expect(result).toHaveLength(1);
+    const sym = result.find((L) => L.type === "symbol");
+    expect(sym).toBeDefined();
+    expect(sym.id).toBe("projector_base__שמות_יישובים__labels");
+    expect(sym._labelSymbol).toBe(true);
+    expect(sym.layout["text-field"][0]).toBe("to-string");
+    const tf = sym.layout["text-field"];
+    expect(tf[1][0]).toBe("coalesce");
+    expect(JSON.stringify(tf)).toMatch(/TextString/i);
+    expect(sym.layout["text-size"]).toBe(11);
+    expect(sym.layout["text-justify"]).toBe("auto");
+    expect(sym.paint["text-color"]).toBe("#202020");
+    expect(sym.paint["text-halo-color"]).toBe("#fafafa");
+    expect(sym.paint["text-halo-width"]).toBe(1.2);
+  });
+
+  it("uses labels.offsetEm literal when offsetEmFromProperties is not set", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: { field: "TextString", size: 12, color: "#000000", offsetEm: [0.4, -0.25] },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
+    expect(sym.layout["text-offset"]).toEqual(["literal", [0.4, -0.25]]);
+  });
+
+  it("falls back to labels.offset when offsetEm is absent", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: { field: "TextString", size: 12, color: "#000000", offset: [0.1, 0.2] },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
+    expect(sym.layout["text-offset"]).toEqual(["literal", [0.1, 0.2]]);
+  });
+
+  it("uses property-driven text-offset when offsetEmFromProperties is true", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 11,
+          color: "#000000",
+          offsetEm: [0, 0],
+          offsetEmFromProperties: true,
+          offsetEmFieldX: "XOffset",
+          offsetEmFieldY: "YOffset",
+          offsetEmDivisor: 11,
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("ann", "ann", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
+    const to = sym.layout["text-offset"];
+    expect(to).toEqual([
+      "array",
+      "number",
+      2,
+      [
+        "/",
+        [
+          "to-number",
+          [
+            "coalesce",
+            ["get", "XOFFSET"],
+            ["get", "XOffset"],
+            ["get", "Xoffset"],
+            ["get", "xoffset"],
+            "0",
+          ],
+        ],
+        11,
+      ],
+      [
+        "/",
+        [
+          "to-number",
+          [
+            "coalesce",
+            ["get", "YOFFSET"],
+            ["get", "YOffset"],
+            ["get", "Yoffset"],
+            ["get", "yoffset"],
+            "0",
+          ],
+        ],
+        11,
+      ],
+    ]);
+  });
+
+  it("resolves label text field via case-variant coalesce (TextString path)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: { field: "TextString", size: 12, color: "#000000" },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
+    const tf = sym.layout["text-field"];
+    expect(tf).toEqual([
+      "to-string",
+      [
+        "coalesce",
+        ["get", "TEXTSTRING"],
+        ["get", "TextString"],
+        ["get", "Textstring"],
+        ["get", "textstring"],
+        "",
+      ],
+    ]);
+  });
+
+  it("appends label symbol for uniqueValue renderer when labels are set (after fill match layers)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "mimush",
+          classes: [
+            {
+              value: "0",
+              symbol: {
+                symbolLayers: [
+                  { type: "fill", fillType: "solid", color: "#d76e89", opacity: 1.0 },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "fill", fillType: "solid", color: "#808080", opacity: 1.0 },
+          ],
+        },
+        labels: { field: "TextString", size: 10, color: "#111111" },
+      },
+    };
+    const result = irToMapLibreLayers("uv.label", "uv__label", layerConfig, {
+      renderMapLabelsFromStyle: true,
+    });
+    const fill = result.find((layer) => layer.type === "fill");
+    const sym = result.find((layer) => layer.type === "symbol");
+    expect(fill).toBeDefined();
+    expect(sym).toBeDefined();
+    expect(sym.id).toBe("uv__label__labels");
+    expect(result.indexOf(sym)).toBeGreaterThan(result.indexOf(fill));
+    expect(sym.layout["text-font"]).toEqual(["Noto Sans Regular"]);
+  });
+
+  it("does not emit text symbol from style.labels for line-only geometry", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#ff0000", width: 2, opacity: 1.0 },
+          ],
+        },
+        labels: { field: "Name", size: 12, color: "#000000" },
+      },
+    };
+    const result = irToMapLibreLayers("line.labels", "line__labels", layerConfig);
+    expect(result.find((L) => L.type === "symbol")).toBeUndefined();
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe("line");
+  });
+
+  it("does not emit map labels from incidental ArcGIS labels on projection non-settlement layers", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [{ type: "fill", fillType: "solid", color: "#abdbe3", opacity: 1.0 }],
+        },
+        labels: {
+          field: "Id",
+          font: "Tahoma",
+          size: 10,
+          color: "#000000",
+          haloSize: 1,
+        },
+      },
+    };
+    const result = irToMapLibreLayers("projector_base.SEA", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    expect(result.find((L) => L.type === "symbol")).toBeUndefined();
+    expect(result.find((L) => L.type === "fill")).toBeDefined();
+  });
+
+  it("emits line and symbol when style.labels.leaderLine is true (point-like)", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          leaderLine: true,
+          leaderColor: "#c86464",
+          leaderWidth: 1.33,
+          size: 11,
+          color: "#202020",
+          haloColor: "#fafafa",
+          haloSize: 1.2,
+          colorOpacity: 1,
+        },
+      },
+    };
+    const result = irToMapLibreLayers("projector_base._leader_test_point", "src", layerConfig, {
+      renderMapLabelsFromStyle: true,
+    });
+    const line = result.find((L) => L.type === "line" && L._labelLeader);
+    const sym = result.find((L) => L.type === "symbol" && L._labelSymbol);
+    expect(line).toBeDefined();
+    expect(sym).toBeDefined();
+    expect(sym.layout["text-allow-overlap"]).toBe(true);
+    expect(sym.layout["text-ignore-placement"]).toBe(true);
+    expect(sym.filter).toEqual([
+      "!",
+      ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString"]]],
+    ]);
+    expect(line.id).not.toBe(sym.id);
+    expect(line.filter).toEqual(["==", ["get", "otef_label_leader"], true]);
+    // Stale processed styles used #c86464 as a placeholder; bridge maps to white leaders.
+    expect(line.paint["line-color"]).toBe("#ffffff");
+    expect(sym.layout["text-field"]).toBeDefined();
+    expect("source" in line).toBe(false);
+    expect("source" in sym).toBe(false);
+    expect(line.id).toBe("projector_base___leader_test_point__leader");
+    expect(sym.id).toBe("projector_base___leader_test_point__labels");
+    expect(result.indexOf(line)).toBeLessThan(result.indexOf(sym));
+  });
+
+  it("emits leader line then symbol for polygon when leaderLine is true (annotation envelope)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          leaderLine: true,
+          size: 10,
+          color: "#000000",
+        },
+      },
+    };
+    const result = irToMapLibreLayers("ann.poly", "ann__poly", layerConfig, {
+      renderMapLabelsFromStyle: true,
+    });
+    expect(result).toHaveLength(2);
+    expect(result[0].type).toBe("line");
+    expect(result[0].id).toBe("ann__poly__leader");
+    expect(result[1].type).toBe("symbol");
+    expect(result[1].filter).toEqual([
+      "!",
+      ["in", ["geometry-type"], ["literal", ["LineString", "MultiLineString"]]],
+    ]);
+  });
+
+  it("passes through non-legacy leaderColor unchanged", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          leaderLine: true,
+          leaderColor: "#aa1122",
+          size: 10,
+          color: "#000000",
+        },
+      },
+    };
+    const line = irToMapLibreLayers("x.y", "x__y", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L._labelLeader,
+    );
+    expect(line.paint["line-color"]).toBe("#aa1122");
+  });
+
+  it("keeps Guttman Hatzvi in font stack with Noto fallback for MapLibre shaping", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 12,
+          color: "#000000",
+          font: ["Guttman Hatzvi", "Noto Sans Regular"],
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
+    expect(sym.layout["text-font"]).toEqual(["Guttman Hatzvi", "Noto Sans Regular"]);
+  });
+
+  it("maps Noto Sans Hebrew Regular stacks to Noto Sans Regular for demotiles glyph URLs", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 12,
+          color: "#000000",
+          font: ["Noto Sans Hebrew Regular", "Noto Sans Regular"],
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
+    expect(sym.layout["text-font"]).toEqual(["Noto Sans Regular"]);
+  });
+
+  it("does not wrap text-field in RLE; Hebrew order is left to setRTLTextPlugin + natural text", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 12,
+          color: "#000000",
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
+    const tf = sym.layout["text-field"];
+    expect(tf[0]).not.toBe("concat");
+    expect(tf[0]).toBe("to-string");
+  });
+
+  it("uses data-driven text-rotate from Angle when labels.angleFromProperties is true", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 11,
+          color: "#202020",
+          angleFromProperties: true,
+          angleProperty: "Angle",
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    }).find((L) => L.type === "symbol");
+    expect(sym.layout["text-rotate"]).toEqual([
+      "to-number",
+      [
+        "coalesce",
+        ["get", "ANGLE"],
+        ["get", "Angle"],
+        ["get", "Angle".toLowerCase()],
+        "0",
+      ],
+    ]);
+    expect(sym.layout["text-rotation-alignment"]).toBe("map");
+    expect(sym.layout["text-pitch-alignment"]).toBe("map");
+    expect(sym.layout["text-writing-mode"]).toBeUndefined();
+  });
+
+  it("matches שמות-style label layout: Noto, offsets, no RLE, no hebrew bidi wrap (RTL plugin contract)", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          font: ["Guttman Hatzvi", "Noto Sans Regular"],
+          size: 11,
+          color: "#202020",
+          haloColor: "#fafafa",
+          haloSize: 1,
+          colorOpacity: 1,
+          offsetEm: [0, 0],
+          offsetEmFromProperties: true,
+          offsetEmFieldX: "XOffset",
+          offsetEmFieldY: "YOffset",
+          offsetEmDivisor: 11,
+          hebrewBidiWrap: false,
+        },
+      },
+    };
+    const labels = layerConfig.style.labels;
+    expect(labels.hebrewBidiWrap).toBe(false);
+    expect(labels.leaderLine).toBeUndefined();
+    const sym = irToMapLibreLayers("pack.שמות_יישובים", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    }).find((L) => L.type === "symbol");
+    const tf = sym.layout["text-field"];
+    expect(tf[0]).toBe("to-string");
+    expect(tf[1][0]).toBe("coalesce");
+    expect(sym.layout["text-rotate"]).toBeUndefined();
+    expect(sym.layout["text-rotation-alignment"]).toBeUndefined();
+    expect(sym.layout["text-allow-overlap"]).toBeUndefined();
+    expect(sym.layout["text-font"]).toEqual(["Guttman Hatzvi", "Noto Sans Regular"]);
+  });
+
+  it("sets text-writing-mode horizontal only when labels.textWritingModeHorizontal is true", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 12,
+          color: "#000000",
+          textWritingModeHorizontal: true,
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("a.b", "x", layerConfig, { renderMapLabelsFromStyle: true }).find(
+      (L) => L.type === "symbol",
+    );
+    expect(sym.layout["text-writing-mode"]).toEqual(["literal", ["horizontal"]]);
+  });
+
+  it("sets text-allow-overlap and text-ignore-placement when labels.forceVisible is true", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "TextString",
+          size: 11,
+          color: "#202020",
+          forceVisible: true,
+        },
+      },
+    };
+    const sym = irToMapLibreLayers("pack.שמות_יישובים", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    }).find((L) => L.type === "symbol");
+    expect(sym.layout["text-allow-overlap"]).toBe(true);
+    expect(sym.layout["text-ignore-placement"]).toBe(true);
+    expect(sym.layout["text-optional"]).toBe(false);
+  });
+});

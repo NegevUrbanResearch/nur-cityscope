@@ -50,6 +50,47 @@ function pickApiLayerOverlayFields(src) {
 }
 
 /**
+ * Build "groupId.layerId" for registry / MapLibre ids. Returns null if either id is
+ * missing or blank so callers do not pass malformed keys to getLayerConfig.
+ *
+ * @param {object|undefined} group
+ * @param {object|undefined} layer
+ * @returns {string|null}
+ */
+function formatFullLayerIdFromGroupLayer(group, layer) {
+  if (!group || !layer) {
+    return null;
+  }
+  const groupId = group.id;
+  const layerId = layer.id;
+  if (groupId == null || layerId == null) {
+    return null;
+  }
+  const g = String(groupId).trim();
+  const l = String(layerId).trim();
+  if (g === "" || l === "") {
+    return null;
+  }
+  return `${g}.${l}`;
+}
+
+/**
+ * Whether a pack layer counts as on for map sync: same boolean as resolveLayerState().enabled
+ * (group.enabled is a gate; undefined group.enabled means enabled).
+ *
+ * @param {object|undefined} group
+ * @param {object|undefined} layer
+ * @returns {boolean}
+ */
+function isLayerEnabledWithGroupGate(group, layer) {
+  if (!group || !layer) {
+    return false;
+  }
+  const groupEnabled = group.enabled !== false;
+  return groupEnabled && !!layer.enabled;
+}
+
+/**
  * Parse fullLayerId into groupId and layerId using "first dot" split.
  * Supports layer ids that contain dots (e.g. "map_3.layer.with.dots").
  *
@@ -188,10 +229,6 @@ function getEffectiveLayerGroups() {
             enabled: layerState ? !!layerState.enabled : defaultLayerEnabled(reg.id, layer.id),
           };
         });
-        const enabled =
-          state.id === "_legacy"
-            ? !!state.enabled
-            : layers.length > 0 && layers.every((l) => l.enabled);
         groups.push({
           id: reg.id,
           name: reg.name ?? reg.id,
@@ -246,7 +283,59 @@ function getEffectiveLayerGroups() {
     });
   }
 
-  return finalizeMoreshetAxisPackForRemote(coalesceCuratedGroups(groups));
+  return finalizeMoreshetAxisPackForRemote(
+    coalesceCuratedGroups(mergeProjectorBaseShemotWithLocationsLine(groups)),
+  );
+}
+
+const _PROJECTOR_SHEMOT_LAYER_ID = "שמות_יישובים";
+const _PROJECTOR_LOCATIONS_LINES_ID = "Locations_Lines";
+
+/**
+ * For projector_base only: if both settlement names and Locations_Lines are registered,
+ * collapse to one UI row (primary id שמות_יישובים) with fullLayerIds for both, enabled =
+ * both ANDed, and the standalone Locations_Lines row removed.
+ *
+ * @param {Array} groups
+ * @returns {Array}
+ */
+function mergeProjectorBaseShemotWithLocationsLine(groups) {
+  if (!Array.isArray(groups)) return groups;
+  return groups.map((g) => {
+    if (g == null || g.id !== "projector_base" || !Array.isArray(g.layers)) {
+      return g;
+    }
+    const layers = g.layers;
+    const hasShemot = layers.some(
+      (l) => l && l.id === _PROJECTOR_SHEMOT_LAYER_ID,
+    );
+    const hasLoc = layers.some(
+      (l) => l && l.id === _PROJECTOR_LOCATIONS_LINES_ID,
+    );
+    if (!hasShemot || !hasLoc) return g;
+    const loc = layers.find((l) => l && l.id === _PROJECTOR_LOCATIONS_LINES_ID);
+    if (!loc) return g;
+    return {
+      ...g,
+      layers: layers
+        .filter(
+          (l) => l && l.id !== _PROJECTOR_LOCATIONS_LINES_ID,
+        )
+        .map((l) => {
+          if (l && l.id === _PROJECTOR_SHEMOT_LAYER_ID) {
+            return {
+              ...l,
+              fullLayerIds: [
+                "projector_base." + _PROJECTOR_SHEMOT_LAYER_ID,
+                "projector_base." + _PROJECTOR_LOCATIONS_LINES_ID,
+              ],
+              enabled: !!(l.enabled && loc.enabled),
+            };
+          }
+          return l;
+        }),
+    };
+  });
 }
 
 function coalesceCuratedGroups(groups) {
@@ -339,6 +428,8 @@ if (typeof window !== "undefined") {
   window.LayerStateHelper = {
     parseFullLayerId,
     getLayerIdOnly,
+    formatFullLayerIdFromGroupLayer,
+    isLayerEnabledWithGroupGate,
     resolveLayerState,
     getLayerState,
     getEffectiveLayerGroups,
@@ -349,6 +440,8 @@ if (typeof window !== "undefined") {
 export {
   parseFullLayerId,
   getLayerIdOnly,
+  formatFullLayerIdFromGroupLayer,
+  isLayerEnabledWithGroupGate,
   resolveLayerState,
   getLayerState,
   getEffectiveLayerGroups,

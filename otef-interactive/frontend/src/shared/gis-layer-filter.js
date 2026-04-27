@@ -1,6 +1,7 @@
 /**
  * GIS-visible layer rule: single source of truth for which layers appear on the GIS map.
  * projector_base is projector-only except Tkuma_Area_LIne, which also appears on GIS.
+ * (E.g. שמות_יישובים, Locations_Lines, and other projector pack layers stay off the GIS map.)
  */
 
 /**

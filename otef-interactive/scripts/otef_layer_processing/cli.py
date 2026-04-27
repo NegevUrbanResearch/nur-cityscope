@@ -29,8 +29,28 @@ def main():
         help="If no task completes for this many seconds, log which task(s) are still pending (then keep waiting)",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--pack",
+        type=str,
+        default=None,
+        metavar="PACK_ID",
+        help="When used with --layer, process only this pack id (e.g. projector_base).",
+    )
+    parser.add_argument(
+        "--layer",
+        type=str,
+        default=None,
+        metavar="LAYER_STEM",
+        help="When used with --pack, process only this GIS file stem (e.g. שמות_יישובים).",
+    )
 
     args = parser.parse_args()
+
+    if (args.pack is None) != (args.layer is None):
+        parser.error(
+            "Single-layer mode requires both --pack and --layer. "
+            "Omit both flags for a full run."
+        )
 
     log_level = logging.DEBUG if args.debug else logging.INFO
     from .orchestrator import setup_logging
@@ -50,7 +70,11 @@ def main():
         max_workers=args.parallel,
     )
 
-    if args.metadata_only:
+    if args.pack and args.layer:
+        orchestrator.process_single_layer_merged(
+            args.pack, args.layer, stuck_timeout=args.stuck_timeout
+        )
+    elif args.metadata_only:
         orchestrator.update_metadata_only()
     else:
         orchestrator.process_all(stuck_timeout=args.stuck_timeout)

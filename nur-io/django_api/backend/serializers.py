@@ -227,6 +227,7 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "viewport",
             "layers",
             "animations",
+            "projection_slideshow",
             "workshop_auto_publish",
             "workshop_autopublish_started_at",
             "updated_at",

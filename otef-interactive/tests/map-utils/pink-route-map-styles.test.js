@@ -4,6 +4,7 @@ import {
   GHOST_REMOVED_LINE_OPACITY,
   OFFICIAL_NETWORK_GAP_METERS,
   STORED_PINK_ROUTE_OFFROAD_GAP_METERS,
+  pinkProjectionFallbackLineStyle,
   routeLineStylesForDisplayColor,
 } from "../../frontend/src/map-utils/pink-route-map-styles.js";
 
@@ -14,6 +15,16 @@ describe("pink-route-map-styles", () => {
 
   test("exports STORED_PINK_ROUTE_OFFROAD_GAP_METERS for stored pink_line_route (not 28m)", () => {
     expect(STORED_PINK_ROUTE_OFFROAD_GAP_METERS).toBe(3500);
+  });
+
+  test("pinkProjectionFallbackLineStyle: Colab proposed dash + weight for MapLibre pink-projection fallback", () => {
+    const s = pinkProjectionFallbackLineStyle("#00d4ff");
+    expect(s.color).toBe("#00d4ff");
+    expect(s.weight).toBe(6);
+    expect(s.opacity).toBe(0.95);
+    expect(s.dashArray).toBe("10 8");
+    expect(s.lineCap).toBe("round");
+    expect(s.lineJoin).toBe("round");
   });
 
   test("routeLineStylesForDisplayColor: palette allowlist sets proposedLine + proposedSecondary (Colab dual stack)", () => {
@@ -86,7 +97,7 @@ describe("pink-route-map-styles", () => {
     });
     expect(styles.oldHalo).toMatchObject({
       color: "#ffffff",
-      weight: 7,
+      weight: 5,
       opacity: GHOST_REMOVED_HALO_OPACITY,
       lineCap: "round",
       lineJoin: "round",

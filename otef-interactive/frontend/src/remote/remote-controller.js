@@ -3,7 +3,6 @@
 // Uses centralized OTEFDataContext for shared state (viewport, layers, animations, connection)
 
 import { rotateViewerVectorToItm } from "../shared/orientation-transform.js";
-import { startCuratedSupabaseHeartbeat } from "../shared/curated-supabase-heartbeat.js";
 import {
   LOCALE_EVENT,
   getLocale,
@@ -11,6 +10,7 @@ import {
   t,
 } from "./remote-locale.js";
 import { shouldReapplyDpadAfterFullControlRefresh } from "./remote-control-refresh-invariants.js";
+import { computeNextZoomFromLiveState } from "./remote-zoom-control-contract.js";
 
 // Current UI state (synced from API)
 let currentState = {
@@ -31,12 +31,19 @@ let joystickInterval = null; // For continuous pan updates
 // Throttle/debounce timers
 let zoomThrottleTimer = null;
 const ZOOM_THROTTLE_MS = 100;
+let zoomCommandInFlight = false;
+let pendingZoomTarget = null;
+let lastRequestedZoom = null;
+
+const MIN_ZOOM = 10;
+const MAX_ZOOM = 19;
+const DEFAULT_ZOOM = 15;
 
 // Table name for this controller
 const TABLE_NAME = "otef";
 
-/** Bottom shell tabs: matches LTR bar order (Workshop | Layers | Nav); arrow key navigation. */
-const REMOTE_TAB_KEYS = ["curation", "layers", "navigation"];
+/** Bottom shell tabs: LTR bar order (Presentation (slideshow) | Workshop (curation) | Layers | Navigation); arrow key navigation. */
+const REMOTE_TAB_KEYS = ["slideshow", "curation", "layers", "navigation"];
 
 /*
  * Legacy `#toggleModel` wiring was removed: that checkbox is not part of the remote shell
@@ -50,6 +57,12 @@ let unsubscribeFunctions = [];
 
 /** Last connection cluster state for re-applying translated status after locale change */
 let lastConnectionUiStatus = "connecting";
+
+function normalizeZoomLevel(value, fallback = DEFAULT_ZOOM) {
+  const z = Number(value);
+  if (!Number.isFinite(z)) return fallback;
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(z)));
+}
 
 // Initialize on DOM ready
 if (typeof document !== "undefined") {
@@ -73,8 +86,12 @@ async function initialize() {
   unsubscribeFunctions.push(
     OTEFDataContext.subscribe("viewport", (viewport) => {
       if (!viewport) return;
+      const normalizedZoom = normalizeZoomLevel(viewport.zoom);
       currentState.viewport = viewport;
-      updateZoomUI(viewport.zoom);
+      updateZoomUI(normalizedZoom);
+      if (!zoomCommandInFlight && pendingZoomTarget === null) {
+        lastRequestedZoom = normalizedZoom;
+      }
       updateUI();
     }),
   );
@@ -120,22 +137,6 @@ async function initialize() {
 
   // Initial UI render with whatever state DataContext has
   updateUI();
-
-  const stopCuratedHeartbeat = startCuratedSupabaseHeartbeat({
-    table: TABLE_NAME,
-    onUpdated: async () => {
-      if (
-        typeof OTEFDataContext.refreshLayerGroupsFromApi === "function"
-      ) {
-        await OTEFDataContext.refreshLayerGroupsFromApi();
-      }
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("otef-curated-geojson-refresh"));
-      }
-      updateUI();
-    },
-  });
-  unsubscribeFunctions.push(stopCuratedHeartbeat);
 }
 
 /**
@@ -143,6 +144,11 @@ async function initialize() {
  */
 function setRemoteTab(activeKey) {
   if (!REMOTE_TAB_KEYS.includes(activeKey)) return;
+  const nav = document.getElementById("remoteBottomNav");
+  const previousActiveKey =
+    nav
+      ?.querySelector('[role="tab"][data-remote-tab][aria-selected="true"]')
+      ?.getAttribute("data-remote-tab") || null;
 
   const panels = document.querySelectorAll(".remote-tab-panel[data-remote-tab]");
   panels.forEach((panel) => {
@@ -151,7 +157,6 @@ function setRemoteTab(activeKey) {
     panel.hidden = !isActive;
   });
 
-  const nav = document.getElementById("remoteBottomNav");
   if (!nav) return;
 
   nav.querySelectorAll('[role="tab"][data-remote-tab]').forEach((tab) => {
@@ -162,7 +167,11 @@ function setRemoteTab(activeKey) {
     tab.tabIndex = isActive ? 0 : -1;
   });
 
-  if (activeKey !== "layers" && window.layerSheetController) {
+  if (
+    previousActiveKey === "layers" &&
+    activeKey !== "layers" &&
+    window.layerSheetController
+  ) {
     const ctrl = window.layerSheetController;
     // Preserves focused pack; see LayerSheetController.onLayersTabHidden.
     if (typeof ctrl.onLayersTabHidden === "function") ctrl.onLayersTabHidden();
@@ -170,6 +179,22 @@ function setRemoteTab(activeKey) {
 
   if (activeKey === "layers" && window.layerSheetController) {
     const ctrl = window.layerSheetController;
+    if (typeof ctrl.open === "function") ctrl.open();
+  }
+
+  if (
+    previousActiveKey === "slideshow" &&
+    activeKey !== "slideshow" &&
+    window.slideshowTabController
+  ) {
+    const ctrl = window.slideshowTabController;
+    if (typeof ctrl.onSlideshowTabHidden === "function") {
+      ctrl.onSlideshowTabHidden();
+    }
+  }
+
+  if (activeKey === "slideshow" && window.slideshowTabController) {
+    const ctrl = window.slideshowTabController;
     if (typeof ctrl.open === "function") ctrl.open();
   }
 }
@@ -307,11 +332,11 @@ function initializePanControls() {
       activeControl = "dpad";
       button.classList.add("active");
 
-      const viewport = currentState.viewport;
+      const viewport = getLiveViewport();
       if (!viewport || !viewport.bbox) return;
       const width = viewport.bbox[2] - viewport.bbox[0];
       const height = viewport.bbox[3] - viewport.bbox[1];
-      const speed = 0.5; // 50% of viewport per second
+      const speed = getPanSpeedFactorForZoom(Number(viewport.zoom));
       const viewerVec = {
         dx: vector.vx * width * speed,
         dy: vector.vy * height * speed,
@@ -350,33 +375,112 @@ function initializeZoomControls() {
 
   if (!slider || !zoomIn || !zoomOut || !zoomValue) return;
 
+  slider.min = String(MIN_ZOOM);
+  slider.max = String(MAX_ZOOM);
+  slider.step = "1";
+
   // Slider change
   slider.addEventListener("input", (e) => {
-    const zoom = parseInt(e.target.value);
-    zoomValue.textContent = zoom;
+    const zoom = normalizeZoomLevel(e.target.value);
+    updateZoomUI(zoom);
 
     // Throttle slider updates
     clearTimeout(zoomThrottleTimer);
     zoomThrottleTimer = setTimeout(() => {
-      sendZoomCommand(zoom);
+      queueZoomCommand(zoom);
     }, ZOOM_THROTTLE_MS);
   });
 
   // Zoom in button
   zoomIn.addEventListener("click", () => {
     if (!currentState.isConnected) return;
-    const newZoom = Math.min(19, currentState.viewport.zoom + 1);
-    sendZoomCommand(newZoom);
-    updateZoomUI(newZoom);
+    const liveViewport =
+      typeof OTEFDataContext !== "undefined" &&
+      typeof OTEFDataContext.getViewport === "function"
+        ? OTEFDataContext.getViewport()
+        : null;
+    const newZoom = computeNextZoomFromLiveState({
+      sliderValue: slider.value,
+      liveViewportZoom: liveViewport?.zoom,
+      stateZoom: currentState.viewport?.zoom,
+      pendingZoom: lastRequestedZoom,
+      delta: 1,
+    });
+    queueZoomCommand(newZoom);
   });
 
   // Zoom out button
   zoomOut.addEventListener("click", () => {
     if (!currentState.isConnected) return;
-    const newZoom = Math.max(10, currentState.viewport.zoom - 1);
-    sendZoomCommand(newZoom);
-    updateZoomUI(newZoom);
+    const liveViewport =
+      typeof OTEFDataContext !== "undefined" &&
+      typeof OTEFDataContext.getViewport === "function"
+        ? OTEFDataContext.getViewport()
+        : null;
+    const newZoom = computeNextZoomFromLiveState({
+      sliderValue: slider.value,
+      liveViewportZoom: liveViewport?.zoom,
+      stateZoom: currentState.viewport?.zoom,
+      pendingZoom: lastRequestedZoom,
+      delta: -1,
+    });
+    queueZoomCommand(newZoom);
   });
+}
+
+function getLiveViewport() {
+  if (
+    typeof OTEFDataContext !== "undefined" &&
+    typeof OTEFDataContext.getViewport === "function"
+  ) {
+    const viewport = OTEFDataContext.getViewport();
+    if (viewport && viewport.bbox) {
+      return viewport;
+    }
+  }
+  return currentState.viewport;
+}
+
+function getPanSpeedFactorForZoom(zoom) {
+  if (!Number.isFinite(zoom)) return 0.32;
+  if (zoom >= 18) return 0.16;
+  if (zoom >= 17) return 0.2;
+  if (zoom >= 16) return 0.24;
+  if (zoom >= 15) return 0.28;
+  return 0.32;
+}
+
+function queueZoomCommand(zoom) {
+  const clampedZoom = normalizeZoomLevel(zoom);
+  if (!Number.isFinite(clampedZoom)) return;
+
+  pendingZoomTarget = clampedZoom;
+  lastRequestedZoom = clampedZoom;
+  updateZoomUI(clampedZoom);
+  if (currentState.viewport) {
+    currentState.viewport = { ...currentState.viewport, zoom: clampedZoom };
+  }
+
+  if (!zoomCommandInFlight) {
+    void flushZoomQueue();
+  }
+}
+
+async function flushZoomQueue() {
+  if (zoomCommandInFlight) return;
+  zoomCommandInFlight = true;
+  try {
+    while (pendingZoomTarget !== null) {
+      const targetZoom = pendingZoomTarget;
+      pendingZoomTarget = null;
+      await sendZoomCommand(targetZoom);
+    }
+  } finally {
+    zoomCommandInFlight = false;
+    if (pendingZoomTarget === null && currentState.viewport) {
+      lastRequestedZoom = normalizeZoomLevel(currentState.viewport.zoom);
+    }
+  }
 }
 
 async function sendZoomCommand(zoom) {
@@ -395,12 +499,13 @@ async function sendZoomCommand(zoom) {
 function updateZoomUI(zoom) {
   const slider = document.getElementById("zoomSlider");
   const zoomValue = document.getElementById("zoomValue");
+  const normalized = normalizeZoomLevel(zoom);
 
   if (slider) {
-    slider.value = zoom;
+    slider.value = String(normalized);
   }
   if (zoomValue) {
-    zoomValue.textContent = zoom;
+    zoomValue.textContent = String(normalized);
   }
 }
 
@@ -453,7 +558,7 @@ function handleJoystickMove(evt, data) {
   }
 
   const angleRad = data.angle.radian;
-  const viewport = currentState.viewport;
+  const viewport = getLiveViewport();
   if (!viewport || !viewport.bbox) return;
 
   const width = viewport.bbox[2] - viewport.bbox[0];
@@ -461,7 +566,7 @@ function handleJoystickMove(evt, data) {
 
   // Max speed factor: move fraction of viewport per second
   // We use 0.4 (40%) to keep it smooth but responsive
-  const maxSpeedFactor = 0.4;
+  const maxSpeedFactor = getPanSpeedFactorForZoom(Number(viewport.zoom));
   const viewerVec = {
     dx: Math.cos(angleRad) * force * width * maxSpeedFactor,
     dy: Math.sin(angleRad) * force * height * maxSpeedFactor,

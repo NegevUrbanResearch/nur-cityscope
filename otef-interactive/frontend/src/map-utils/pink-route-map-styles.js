@@ -139,6 +139,26 @@ const PROPOSED_LINE_DEFAULT = {
   lineJoin: "round",
 };
 
+/**
+ * Stroke tokens for the MapLibre curated **pink projection** fallback (stored line GeoJSON,
+ * no detour routing points): same Colab proposed dash and weight as {@link PROPOSED_LINE_DEFAULT}.
+ * Consumed via `leafletStyleToMapLibre` in `maplibre-curated-layer-loader.js` only —
+ * not a commitment to keep Leaflet rendering in sync during the MapLibre migration.
+ *
+ * @param {string | null | undefined} lineColor - layer accent hex (e.g. from UI curated color)
+ * @returns {LeafletPolylineLike}
+ */
+export function pinkProjectionFallbackLineStyle(lineColor) {
+  return {
+    color: lineColor || PROPOSED_DEFAULT_COLOR,
+    weight: PROPOSED_LINE_DEFAULT.weight,
+    opacity: PROPOSED_LINE_DEFAULT.opacity,
+    dashArray: PROPOSED_DASH,
+    lineCap: PROPOSED_LINE_DEFAULT.lineCap,
+    lineJoin: PROPOSED_LINE_DEFAULT.lineJoin,
+  };
+}
+
 /** @type {LeafletPolylineLike} */
 const OFFROAD_LINE = {
   color: "#C62828",
