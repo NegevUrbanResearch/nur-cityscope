@@ -576,6 +576,9 @@ async function bootstrapProjectionRuntime() {
       };
       if (typeof map.resize === "function") {
         map.resize();
+        if (modelBounds && modelBounds.bounds) {
+          map.fitBounds(modelBounds.bounds, { animate: false, padding: 0 });
+        }
       }
       if (typeof map.once === "function") {
         if (pendingResizeIdleHandler) {
