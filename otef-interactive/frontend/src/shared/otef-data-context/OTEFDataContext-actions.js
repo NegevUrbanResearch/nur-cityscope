@@ -230,6 +230,7 @@ function isVelocityEffectivelyMoving(ctx) {
   return ageMs <= VELOCITY_STALE_MS;
 }
 
+// Step 2b: Overlapping rapid remote pan/zoom can interleave awaits; a future mutex may serialize.
 async function pan(ctx, direction, delta = 0.15) {
   if (!ctx._tableName || !ctx._isConnected || !direction) return;
 
@@ -242,18 +243,27 @@ async function pan(ctx, direction, delta = 0.15) {
   const insideBounds = !candidateViewport || ctx._isViewportInsideBounds(candidateViewport);
   if (candidateViewport && !insideBounds) return;
 
+  let previousViewport;
   try {
     const traceId = generateTraceId("viewport-pan");
     recordTraceEvent(traceId, "remote.pan.start", { direction, delta });
     ctx._currentInteractionSource = "remote";
     ctx._lastLocalStateTimestamp = Date.now();
+    previousViewport = ctx._viewport;
+    if (candidateViewport) {
+      ctx._setViewport({
+        ...candidateViewport,
+        sourceId: ctx._clientId,
+        timestamp: ctx._lastLocalStateTimestamp,
+      });
+    }
     const result = await OTEF_API.executeCommand(ctx._tableName, {
       action: "pan",
       direction,
       delta,
       sourceId: ctx._clientId,
       timestamp: ctx._lastLocalStateTimestamp,
-      base_viewport: ctx._viewport,
+      base_viewport: previousViewport,
       traceId,
     });
     if (result && result.viewport && result.viewport.bbox && result.viewport.bbox.length === 4) {
@@ -262,15 +272,12 @@ async function pan(ctx, direction, delta = 0.15) {
         sourceId: ctx._clientId,
         timestamp: ctx._lastLocalStateTimestamp,
       });
-    } else if (candidateViewport) {
-      ctx._setViewport({
-        ...candidateViewport,
-        sourceId: ctx._clientId,
-        timestamp: ctx._lastLocalStateTimestamp,
-      });
+    } else if (previousViewport) {
+      ctx._setViewport(previousViewport);
     }
   } catch (err) {
     getLogger().error("[OTEFDataContext] Pan command failed:", err);
+    if (previousViewport) ctx._setViewport(previousViewport);
   } finally {
     ctx._currentInteractionSource = null;
   }
@@ -382,17 +389,26 @@ async function zoom(ctx, newZoom) {
 
   if (candidateViewport && !ctx._isViewportInsideBounds(candidateViewport)) return;
 
+  let previousViewport;
   try {
     const traceId = generateTraceId("viewport-zoom");
     recordTraceEvent(traceId, "remote.zoom.start", { level: clampedZoom });
     ctx._currentInteractionSource = "remote";
     ctx._lastLocalStateTimestamp = Date.now();
+    previousViewport = ctx._viewport;
+    if (candidateViewport) {
+      ctx._setViewport({
+        ...candidateViewport,
+        sourceId: ctx._clientId,
+        timestamp: ctx._lastLocalStateTimestamp,
+      });
+    }
     const result = await OTEF_API.executeCommand(ctx._tableName, {
       action: "zoom",
       level: clampedZoom,
       sourceId: ctx._clientId,
       timestamp: ctx._lastLocalStateTimestamp,
-      base_viewport: ctx._viewport,
+      base_viewport: previousViewport,
       traceId,
     });
     if (result && result.viewport && result.viewport.bbox && result.viewport.bbox.length === 4) {
@@ -401,15 +417,12 @@ async function zoom(ctx, newZoom) {
         sourceId: ctx._clientId,
         timestamp: ctx._lastLocalStateTimestamp,
       });
-    } else if (candidateViewport) {
-      ctx._setViewport({
-        ...candidateViewport,
-        sourceId: ctx._clientId,
-        timestamp: ctx._lastLocalStateTimestamp,
-      });
+    } else if (previousViewport) {
+      ctx._setViewport(previousViewport);
     }
   } catch (err) {
     getLogger().error("[OTEFDataContext] Zoom command failed:", err);
+    if (previousViewport) ctx._setViewport(previousViewport);
   } finally {
     ctx._currentInteractionSource = null;
   }

@@ -1,6 +1,12 @@
 import TableSwitcher from "../shared/table-switcher.js";
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
-import { createProjectionMap, updateHighlightFromViewport } from "../projection/maplibre-projection.js";
+import {
+  createProjectionMap,
+  ensureProjectionHighlightLayers,
+  raiseProjectionHighlightLayers,
+  setProjectionHighlightVisibility,
+  updateHighlightFromViewport,
+} from "../projection/maplibre-projection.js";
 import { installProjectionRenderDebugOverlay } from "../projection/projection-render-debug-overlay.js";
 import { syncProjectionLayers } from "../projection/maplibre-projection-layers.js";
 import {
@@ -195,22 +201,18 @@ async function bootstrapProjectionRuntime() {
   const map = createProjectionMap("projectionMap", modelBounds, {
     ...(projectionMapPixelRatio !== undefined ? { pixelRatio: projectionMapPixelRatio } : {}),
   });
-  const highlightEl = document.getElementById("highlightOverlay");
   let lastViewport = null;
   /** @type {ReturnType<import("../shared/slideshow-pack-runtime.js").createSlideshowPackRuntime> | null} */
   let slideshowRuntime = null;
 
   const syncProjectionHighlight = (viewport) => {
-    if (!highlightEl) return;
     if (slideshowRuntime?.shouldSuppressProjectionHighlight?.()) {
-      highlightEl.style.display = "none";
-      highlightEl.setAttribute("aria-hidden", "true");
+      setProjectionHighlightVisibility(map, false);
       return;
     }
-    highlightEl.style.display = "";
-    highlightEl.removeAttribute("aria-hidden");
+    setProjectionHighlightVisibility(map, true);
     if (viewport) {
-      updateHighlightFromViewport(map, viewport, modelBounds, highlightEl);
+      updateHighlightFromViewport(map, viewport, modelBounds, null);
     }
   };
 
@@ -252,6 +254,7 @@ async function bootstrapProjectionRuntime() {
   }
 
   map.on("load", async () => {
+    ensureProjectionHighlightLayers(map);
     registerDisposer(() => {
       disposeRouteProgressOverlaysForMap(map);
     });
@@ -339,6 +342,7 @@ async function bootstrapProjectionRuntime() {
       if (toRefresh.length === 0) {
         syncContextFlowAnimations();
         syncPinkLineAxisCompanionForMapLibre(map, currentGroups);
+        raiseProjectionHighlightLayers(map);
         return;
       }
 
@@ -352,6 +356,7 @@ async function bootstrapProjectionRuntime() {
       }
       syncContextFlowAnimations();
       syncPinkLineAxisCompanionForMapLibre(map, currentGroups);
+      raiseProjectionHighlightLayers(map);
     };
     const shouldSkipLiveProjectionRefresh = () =>
       !!(
@@ -412,11 +417,16 @@ async function bootstrapProjectionRuntime() {
       console.warn("[projection-main] Shemot label debug failed to load", e);
     }
 
+    const syncProjectionLayersAndRaiseHighlight = (projectionMap, groups, options) => {
+      syncProjectionLayers(projectionMap, groups, options);
+      raiseProjectionHighlightLayers(projectionMap);
+    };
+
     slideshowRuntime = createSlideshowPackRuntime({
       map,
       config: MapProjectionConfig.PROJECTION_SLIDESHOW,
       getEffectiveLayerGroups: getEffectiveProjectionLayerGroups,
-      syncProjectionLayers,
+      syncProjectionLayers: syncProjectionLayersAndRaiseHighlight,
       applyProjectionRefresh,
     });
     registerDisposer(() => {
@@ -502,6 +512,7 @@ async function bootstrapProjectionRuntime() {
                 Array.isArray(groups) ? groups : Object.values(groups || {}),
               );
               syncContextFlowAnimations();
+              raiseProjectionHighlightLayers(map);
             },
             mapDeps: {},
           });
@@ -611,7 +622,6 @@ async function bootstrapProjectionRuntime() {
     resizeObserver = new ResizeObserver(() => onResize());
     observeTarget(document.getElementById("displayContainer"));
     observeTarget(document.getElementById("projectionMap"));
-    observeTarget(highlightEl?.parentElement || null);
   }
 
   registerDisposer(() => {

@@ -158,6 +158,82 @@ test("projection entry keeps ResizeObserver reflow with window resize fallback",
   );
 });
 
+test("viewportToHighlightGeoJSON returns Polygon feature for bbox viewport", async () => {
+  const { viewportToHighlightGeoJSON } = await import(
+    "../../frontend/src/projection/maplibre-projection-viewport-geojson.js",
+  );
+  globalThis.proj4 = (from, to, coords) => {
+    if (from === "EPSG:2039" && to === "EPSG:4326")
+      return [coords[0] * 1e-6, coords[1] * 1e-6];
+    return coords;
+  };
+  const modelBounds = { itm: { west: 0, south: 0, east: 1000, north: 800 } };
+  const fc = viewportToHighlightGeoJSON({ bbox: [100, 100, 500, 500] }, modelBounds);
+  expect(fc && fc.features.length).toBe(1);
+  expect(fc.features[0].geometry.type).toBe("Polygon");
+  delete globalThis.proj4;
+});
+
+function createHighlightMockMap(setData, sourceId) {
+  return {
+    getSource: vi.fn((id) => (id === sourceId ? { setData } : null)),
+    getLayer: vi.fn(),
+    getContainer: vi.fn(() => ({ clientWidth: 800, clientHeight: 600 })),
+  };
+}
+
+test("MapLibre projection highlight: GeoJSON path calls setData with FeatureCollection when highlight source exists", async () => {
+  globalThis.proj4 = (from, to, coords) => {
+    if (from === "EPSG:2039" && to === "EPSG:4326")
+      return [coords[0] * 1e-6, coords[1] * 1e-6];
+    return coords;
+  };
+  const { updateHighlightFromViewport, PROJECTION_HIGHLIGHT_SOURCE_ID } =
+    await loadProjectionHighlightModule();
+
+  const setData = vi.fn();
+  const mockMap = createHighlightMockMap(setData, PROJECTION_HIGHLIGHT_SOURCE_ID);
+
+  const itm = { west: 0, south: 0, east: 1000, north: 800 };
+  const modelBounds = { itm };
+  const highlightEl = createProjectionDomElement({ w: 0, h: 0 });
+
+  const viewport = { bbox: [100, 150, 600, 550] };
+  updateHighlightFromViewport(mockMap, viewport, modelBounds, highlightEl);
+
+  expect(mockMap.getSource).toHaveBeenCalledWith(PROJECTION_HIGHLIGHT_SOURCE_ID);
+  expect(setData).toHaveBeenCalledTimes(1);
+  const payload = setData.mock.calls[0][0];
+  expect(payload.type).toBe("FeatureCollection");
+  expect(Array.isArray(payload.features)).toBe(true);
+  expect(payload.features.length).toBe(1);
+  expect(payload.features[0].geometry.type).toBe("Polygon");
+  expect(highlightEl.querySelector(".highlight-box")).toBeNull();
+  delete globalThis.proj4;
+});
+
+test("MapLibre projection highlight: GeoJSON path clears features at full extent", async () => {
+  globalThis.proj4 = (from, to, coords) => {
+    if (from === "EPSG:2039" && to === "EPSG:4326")
+      return [coords[0] * 1e-6, coords[1] * 1e-6];
+    return coords;
+  };
+  const { updateHighlightFromViewport, PROJECTION_HIGHLIGHT_SOURCE_ID } =
+    await loadProjectionHighlightModule();
+
+  const setData = vi.fn();
+  const mockMap = createHighlightMockMap(setData, PROJECTION_HIGHLIGHT_SOURCE_ID);
+
+  const itm = { west: 0, south: 0, east: 1000, north: 800 };
+  const modelBounds = { itm };
+  const highlightEl = createProjectionDomElement({ w: 0, h: 0 });
+
+  updateHighlightFromViewport(mockMap, { bbox: [0, 0, 1000, 800] }, modelBounds, highlightEl);
+
+  expect(setData).toHaveBeenCalledWith({ type: "FeatureCollection", features: [] });
+  delete globalThis.proj4;
+});
+
 test("MapLibre projection highlight: updateHighlightFromViewport creates .highlight-box without border or cssText", async () => {
   const { updateHighlightFromViewport } = await loadProjectionHighlightModule();
 

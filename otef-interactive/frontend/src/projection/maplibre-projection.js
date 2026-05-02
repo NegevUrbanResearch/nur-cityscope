@@ -3,6 +3,11 @@
  * Transparent background, no basemap, overlaid on model image.
  */
 import { itmBboxToWgs84SwNe } from "../map-utils/itm-bbox-to-wgs84-bounds.js";
+import { viewportToHighlightGeoJSON } from "./maplibre-projection-viewport-geojson.js";
+
+export const PROJECTION_HIGHLIGHT_SOURCE_ID = "projection-highlight-source";
+export const PROJECTION_HIGHLIGHT_FILL_LAYER_ID = "projection-highlight-fill";
+export const PROJECTION_HIGHLIGHT_LINE_LAYER_ID = "projection-highlight-line";
 
 const maplibregl =
   (typeof globalThis !== "undefined" && globalThis.maplibregl) ||
@@ -181,6 +186,81 @@ function bboxToWGS84(bbox) {
   return hull;
 }
 
+/**
+ * @param {import("maplibre-gl").Map} map
+ */
+export function ensureProjectionHighlightLayers(map) {
+  if (!map || typeof map.getSource !== "function") {
+    return;
+  }
+  if (map.getSource(PROJECTION_HIGHLIGHT_SOURCE_ID)) {
+    return;
+  }
+  try {
+    map.addSource(PROJECTION_HIGHLIGHT_SOURCE_ID, {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] },
+    });
+    // Match projection `.highlight-box` / `.highlight-box-fill` in frontend/css/styles.css
+    map.addLayer({
+      id: PROJECTION_HIGHLIGHT_FILL_LAYER_ID,
+      type: "fill",
+      source: PROJECTION_HIGHLIGHT_SOURCE_ID,
+      paint: {
+        "fill-color": "#ffffff",
+        "fill-opacity": 0.12,
+      },
+    });
+    map.addLayer({
+      id: PROJECTION_HIGHLIGHT_LINE_LAYER_ID,
+      type: "line",
+      source: PROJECTION_HIGHLIGHT_SOURCE_ID,
+      paint: {
+        "line-color": "rgba(255, 255, 255, 0.6)",
+        "line-width": 1,
+      },
+    });
+  } catch (err) {
+    console.warn("[maplibre-projection] ensureProjectionHighlightLayers failed", err);
+  }
+}
+
+/**
+ * @param {import("maplibre-gl").Map} map
+ */
+export function raiseProjectionHighlightLayers(map) {
+  if (!map || typeof map.getLayer !== "function" || typeof map.moveLayer !== "function") {
+    return;
+  }
+  if (map.getLayer(PROJECTION_HIGHLIGHT_FILL_LAYER_ID)) {
+    try {
+      map.moveLayer(PROJECTION_HIGHLIGHT_FILL_LAYER_ID);
+    } catch (_) {}
+  }
+  if (map.getLayer(PROJECTION_HIGHLIGHT_LINE_LAYER_ID)) {
+    try {
+      map.moveLayer(PROJECTION_HIGHLIGHT_LINE_LAYER_ID);
+    } catch (_) {}
+  }
+}
+
+/**
+ * @param {import("maplibre-gl").Map} map
+ * @param {boolean} visible
+ */
+export function setProjectionHighlightVisibility(map, visible) {
+  if (!map || typeof map.getLayer !== "function" || typeof map.setLayoutProperty !== "function") {
+    return;
+  }
+  const vis = visible ? "visible" : "none";
+  if (map.getLayer(PROJECTION_HIGHLIGHT_FILL_LAYER_ID)) {
+    map.setLayoutProperty(PROJECTION_HIGHLIGHT_FILL_LAYER_ID, "visibility", vis);
+  }
+  if (map.getLayer(PROJECTION_HIGHLIGHT_LINE_LAYER_ID)) {
+    map.setLayoutProperty(PROJECTION_HIGHLIGHT_LINE_LAYER_ID, "visibility", vis);
+  }
+}
+
 function isFinitePoint(point) {
   return (
     point &&
@@ -284,6 +364,15 @@ function tryHighlightPointsFromMapProject(map, highlightEl, itmPoints) {
  * @param {HTMLElement} highlightEl
  */
 export function updateHighlightFromViewport(map, viewport, modelBounds, highlightEl) {
+  if (map?.getSource?.(PROJECTION_HIGHLIGHT_SOURCE_ID)) {
+    const geojson = viewportToHighlightGeoJSON(viewport, modelBounds);
+    if (geojson === null) {
+      return;
+    }
+    map.getSource(PROJECTION_HIGHLIGHT_SOURCE_ID).setData(geojson);
+    return;
+  }
+
   if (
     !viewport ||
     !Array.isArray(viewport.bbox) ||

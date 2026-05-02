@@ -57,19 +57,7 @@
         pointer-events: none;
         z-index: 5;
       }
-      #highlightOverlay {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
-        z-index: 10;
-      }
-      body.shemot-label-debug-active #highlightOverlay {
-        pointer-events: none;
-      }
-      /* Label selection bbox (L mode): above map, below highlight paint */
+      /* Label selection bbox (L mode): above map */
       #shemotLabelBBoxLayer {
         position: absolute;
         top: 0;
@@ -171,9 +159,9 @@
   <body>
     <div id="displayContainer">
       <img id="displayedImage" src="" alt="OTEF Model" style="opacity: 0" />
+      <!-- Viewport highlight is drawn inside MapLibre (GeoJSON/source), not a separate overlay div. -->
       <div id="projectionMap" style="position:absolute;top:0;left:0;width:100%;height:100%;z-index:5;"></div>
       <div id="shemotLabelBBoxLayer" aria-hidden="true"></div>
-      <div id="highlightOverlay"></div>
       <svg id="boundsEditorOverlay"></svg>
     </div>
 
