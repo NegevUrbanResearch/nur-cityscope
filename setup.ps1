@@ -129,18 +129,14 @@ if (-not $pythonCmd) {
     Write-Host "Warning: Python not found, skipping layer pack processing" -ForegroundColor Yellow
 }
 
-# Ensure Bun and OTEF frontend dependencies (for tests and dev)
-Write-Host "Ensuring Bun and OTEF frontend dependencies..." -ForegroundColor Cyan
-$bunExe = "$env:USERPROFILE\.bun\bin\bun.exe"
-if (-not (Test-Path $bunExe)) {
-    Write-Host "   Installing Bun (one-time)..." -ForegroundColor Gray
-    irm https://bun.sh/install.ps1 | iex
-}
-if (Test-Path $bunExe) {
-    Write-Host "   Installing OTEF frontend dependencies (bun install)..." -ForegroundColor Gray
-    & $bunExe install --cwd "$SCRIPT_DIR\otef-interactive"
+# Ensure OTEF frontend dependencies (for tests and dev)
+Write-Host "Ensuring OTEF frontend dependencies..." -ForegroundColor Cyan
+$npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+if ($npmCmd) {
+    Write-Host "   Installing OTEF frontend dependencies (npm install)..." -ForegroundColor Gray
+    npm install --prefix "$SCRIPT_DIR\otef-interactive"
 } else {
-    Write-Host "   Warning: Bun not found after install, skipping otef-interactive deps (run 'bun install' in otef-interactive manually)" -ForegroundColor Yellow
+    Write-Host "   Warning: npm not found, skipping otef-interactive deps (run 'npm install' in otef-interactive manually)" -ForegroundColor Yellow
 }
 
 # Copy model-bounds.json if it doesn't exist in Django API directory

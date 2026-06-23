@@ -85,23 +85,13 @@ else
     echo "Warning: Docker not running, skipping layer pack processing"
 fi
 
-# Ensure Bun and OTEF frontend dependencies (for tests and dev)
-echo "Ensuring Bun and OTEF frontend dependencies..."
-BUN_EXE="${BUN_INSTALL:-$HOME/.bun}/bin/bun"
-if [ ! -x "$BUN_EXE" ]; then
-    if command -v bun >/dev/null 2>&1; then
-        BUN_EXE="bun"
-    else
-        echo "   Installing Bun (one-time)..."
-        curl -fsSL https://bun.sh/install | bash
-        BUN_EXE="${BUN_INSTALL:-$HOME/.bun}/bin/bun"
-    fi
-fi
-if [ -x "$BUN_EXE" ]; then
-    echo "   Installing OTEF frontend dependencies (bun install)..."
-    "$BUN_EXE" install --cwd "$SCRIPT_DIR/otef-interactive"
+# Ensure OTEF frontend dependencies (for tests and dev)
+echo "Ensuring OTEF frontend dependencies..."
+if command -v npm >/dev/null 2>&1; then
+    echo "   Installing OTEF frontend dependencies (npm install)..."
+    npm install --prefix "$SCRIPT_DIR/otef-interactive"
 else
-    echo "   Warning: Bun not found after install, skipping otef-interactive deps (run 'bun install' in otef-interactive manually)"
+    echo "   Warning: npm not found, skipping otef-interactive deps (run 'npm install' in otef-interactive manually)"
 fi
 
 # Copy model-bounds.json if it doesn't exist in Django API directory

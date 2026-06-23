@@ -92,18 +92,14 @@ if (-not $pythonCmd) {
     Write-Host "   Warning: Python not found, skipping layer pack processing" -ForegroundColor Yellow
 }
 
-# Ensure Bun and OTEF frontend dependencies (for tests and dev)
-Write-Host "6. Ensuring Bun and OTEF frontend dependencies..." -ForegroundColor Cyan
-$bunExe = "$env:USERPROFILE\.bun\bin\bun.exe"
-if (-not (Test-Path $bunExe)) {
-    Write-Host "   Installing Bun (one-time)..." -ForegroundColor Gray
-    irm https://bun.sh/install.ps1 | iex
-}
-if (Test-Path $bunExe) {
-    Write-Host "   Installing OTEF frontend dependencies (bun install)..." -ForegroundColor Gray
-    & $bunExe install --cwd "otef-interactive"
+# Ensure OTEF frontend dependencies (for tests and dev)
+Write-Host "6. Ensuring OTEF frontend dependencies..." -ForegroundColor Cyan
+$npmCmd = Get-Command npm -ErrorAction SilentlyContinue
+if ($npmCmd) {
+    Write-Host "   Installing OTEF frontend dependencies (npm install)..." -ForegroundColor Gray
+    npm install --prefix "otef-interactive"
 } else {
-    Write-Host "   Warning: Bun not found after install, skipping otef-interactive deps (run 'bun install' in otef-interactive manually)" -ForegroundColor Yellow
+    Write-Host "   Warning: npm not found, skipping otef-interactive deps (run 'npm install' in otef-interactive manually)" -ForegroundColor Yellow
 }
 
 # Rebuild and start containers
