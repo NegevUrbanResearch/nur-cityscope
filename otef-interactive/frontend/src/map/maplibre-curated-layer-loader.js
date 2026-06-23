@@ -1010,6 +1010,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
     }
 
     const registeredLayerIds = [];
+    const registeredSourceIds = [];
 
     // Add polyline groups as sources + layers in draw order
     let styleKeyIndex = 0;
@@ -1023,6 +1024,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
 
       addCuratedGeoJsonSource(map, sourceId, geojsonData);
       if (!map.getSource(sourceId)) continue;
+      registeredSourceIds.push(sourceId);
 
       try {
         map.addLayer({
@@ -1050,6 +1052,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
         features: group.features,
       });
       if (!map.getSource(sourceId)) continue;
+      registeredSourceIds.push(sourceId);
 
       const { paint, layout } = resolveMapLibreCircleStyle(styleKey, styles);
       try {
@@ -1079,7 +1082,7 @@ export async function loadCuratedLayerToMapLibre(map, fullLayerId, opts = {}) {
     }
 
     // Register the logical fullLayerId in layer manager with all added layer ids
-    registerCuratedLayerIds(map, fullLayerId, `${fullLayerId}__src`, registeredLayerIds);
+    registerCuratedLayerIds(map, fullLayerId, registeredSourceIds, registeredLayerIds);
     return;
   }
 

@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import { describe, expect, test } from "vitest";
 import {
   leafletStyleToMapLibre,
@@ -37,6 +38,14 @@ describe("maplibreLineDashWithLeafletOffset (Colab dual proposed)", () => {
     const T = 18;
     const o = maplibreLineDashWithLeafletOffset(base, 9);
     expect(o.reduce((a, b) => a + b, 0)).toBe(T);
+  });
+});
+
+describe("curated loader force cleanup contract", () => {
+  test("force cleanup hard-removes before same-id reload", () => {
+    const src = readFileSync("frontend/src/map/maplibre-curated-layer-loader.js", "utf8");
+    expect(src).toContain("removeCuratedLayersByPrefix(map, fullLayerId)");
+    expect(src).not.toContain("removeCuratedLayersByPrefix(map, fullLayerId, opts.layerStyleOptions)");
   });
 });
 

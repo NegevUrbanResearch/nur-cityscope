@@ -61,6 +61,13 @@ function makeTwoPacks() {
   ];
 }
 
+function makeCuratedAndRegularPacks() {
+  return [
+    { id: "curated_axis", layers: [{ id: "route", enabled: true }] },
+    { id: "pack_b", layers: [{ id: "b", enabled: true }] },
+  ];
+}
+
 function flushMicrotasks() {
   return new Promise((resolve) => {
     queueMicrotask(resolve);
@@ -106,7 +113,11 @@ describe("slideshow pack runtime", () => {
     const sync = vi.fn();
     const groups = makeTwoPacks();
     const runtime = createSlideshowPackRuntime({
-      config: baseConfig(),
+      config: {
+        ...baseConfig(),
+        packOrder: ["curated_axis", "pack_b"],
+        excludedPresentationPackIds: [],
+      },
       getEffectiveLayerGroups: () => groups,
       syncProjectionLayers: sync,
       map: null,
@@ -282,7 +293,15 @@ describe("slideshow pack runtime", () => {
     await flushMicrotasks();
 
     expect(fadeOutAndRemoveEnabledFullIds).toHaveBeenCalledTimes(1);
-    expect(fadeOutAndRemoveEnabledFullIds).toHaveBeenCalledWith(map, ["pack_b.b"], 80);
+    expect(fadeOutAndRemoveEnabledFullIds).toHaveBeenCalledWith(
+      map,
+      ["pack_b.b"],
+      80,
+      expect.objectContaining({
+        applyProjectionHatchPresentation: true,
+        lifecycle: { retainDisabled: true, maxRetainedSources: 2 },
+      }),
+    );
     const fadeOrder = fadeOutAndRemoveEnabledFullIds.mock.invocationCallOrder[0];
     const secondApplyOrder = applyProjectionRefresh.mock.invocationCallOrder[1];
     expect(fadeOrder).toBeLessThan(secondApplyOrder);
@@ -290,13 +309,17 @@ describe("slideshow pack runtime", () => {
     await runtime.stop();
   });
 
-  it("passes fromSlideshowTick and groupsOverride to applyProjectionRefresh before beginSlideshowStage", async () => {
+  it("refreshes curated slideshow layers while staged, then reveals", async () => {
     vi.useFakeTimers();
     const applyProjectionRefresh = vi.fn(() => Promise.resolve());
     const sync = vi.fn();
-    const groups = makeTwoPacks();
+    const groups = makeCuratedAndRegularPacks();
     const runtime = createSlideshowPackRuntime({
-      config: baseConfig(),
+      config: {
+        ...baseConfig(),
+        packOrder: ["curated_axis", "pack_b"],
+        excludedPresentationPackIds: [],
+      },
       getEffectiveLayerGroups: () => groups,
       syncProjectionLayers: sync,
       applyProjectionRefresh,
@@ -307,13 +330,23 @@ describe("slideshow pack runtime", () => {
     expect(applyProjectionRefresh).toHaveBeenCalled();
     const call = applyProjectionRefresh.mock.calls[0][0];
     expect(call).toEqual(
-      expect.objectContaining({ fromSlideshowTick: true, groupsOverride: expect.any(Array) }),
+      expect.objectContaining({
+        fromSlideshowTick: true,
+        affectedCuratedFullLayerIds: ["curated_axis.route"],
+        groupsOverride: expect.any(Array),
+        layerStyleOptions: expect.objectContaining({
+          applyProjectionHatchPresentation: true,
+          lifecycle: { retainDisabled: true, maxRetainedSources: 2 },
+        }),
+      }),
     );
-    expect(enabledPackId(call.groupsOverride)).toBe("pack_b");
+    expect(enabledPackId(call.groupsOverride)).toBe("curated_axis");
     expect(beginSlideshowStage).toHaveBeenCalled();
+    expect(commitSlideshowReveal).toHaveBeenCalled();
     expect(applyProjectionRefresh.mock.invocationCallOrder[0]).toBeLessThan(
-      beginSlideshowStage.mock.invocationCallOrder[0],
+      commitSlideshowReveal.mock.invocationCallOrder[0],
     );
+    expect(sync).not.toHaveBeenCalled();
     await runtime.stop();
   });
 

@@ -52,6 +52,13 @@ test("projection entry wires MapLibre curated pipeline (manual Supabase sync via
   expect(src.includes("syncCuratedMapLayersAfterSupabasePull")).toBe(true);
   expect(src.includes("otef-curated-geojson-refresh")).toBe(true);
   expect(src.includes("projectionCuratedRefreshChain")).toBe(true);
+  expect(src.includes("layerStyleOptions")).toBe(true);
+  expect(src.includes("syncProjectionLayers(map, currentGroups, layerStyleOptions)")).toBe(true);
+  expect(src.includes("removeCuratedLayersByPrefix(map, fullId, layerStyleOptions)")).toBe(true);
+  expect(src.includes("hasMapLibreLayerWithPrefix(map, fullId)")).toBe(true);
+  expect(src.includes("fromSlideshowTick,")).toBe(true);
+  expect(src.includes("loadCuratedLayerToMapLibre(map, fullId,")).toBe(true);
+  expect(src.includes("skipInitialVectorLayerSync")).toBe(false);
   const idxSubscribe = src.indexOf('OTEFDataContext.subscribe("layerGroups"');
   expect(idxSubscribe).toBeGreaterThan(-1);
   const subSlice = src.slice(idxSubscribe, idxSubscribe + 800);

@@ -12,6 +12,7 @@ from .models import LayerEntry, PackManifest
 from .geo import transform_to_wgs84, get_geometry_type
 from .styles import find_lyrx_file, parse_lyrx_style
 from .tiling import generate_pmtiles_smart
+from .pmtiles_lifecycle import resolve_pmtiles_lifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -63,23 +64,6 @@ ANIMATION_STYLE_OVERRIDES: Dict[str, Dict[str, Dict[str, Any]]] = {
         },
     }
 }
-
-
-def _style_config_is_advanced(style_config: Optional[Dict]) -> bool:
-    """True if layer should use PMTiles for advanced rendering (legacy complexity or defaultSymbol hints)."""
-    if not style_config or not isinstance(style_config, dict):
-        return False
-    if style_config.get("complexity") == "advanced":
-        return True
-    layers = (style_config.get("defaultSymbol") or {}).get("symbolLayers") or []
-    if len(layers) > 1:
-        return True
-    for layer in layers:
-        if isinstance(layer, dict) and layer.get("type") in ("markerLine", "markerPoint"):
-            return True
-        if isinstance(layer, dict) and layer.get("hatch"):
-            return True
-    return False
 
 
 def compute_file_hash(path: Path) -> str:
@@ -486,6 +470,7 @@ class ProcessingOrchestrator:
 
         style_config = None
         geom_type = "unknown"
+        pmtiles_lifecycle = None
 
         if needed:
             # logger.info(f"Processing {layer_id}...")
@@ -511,31 +496,21 @@ class ProcessingOrchestrator:
                 if geom_type == "unknown":
                     geom_type = get_geometry_type(wgs84_file)
 
-                # 3. Tiling
-                # Use PMTiles for large or advanced layers so GIS can use
-                # tile-aware rendering (especially for advanced styles).
-                # Skip PMTiles for label-only layers (they render as text from GeoJSON;
-                # source may have null geometries which tippecanoe rejects).
-                # projector_base layers are used only on the projection page, not the GIS map, so no PMTiles.
-                is_label_layer = bool(
-                    style_config
-                    and isinstance(style_config, dict)
-                    and style_config.get("labels")
-                    and str(geom_type).lower() == "point"
+                # 3. Tiling policy and artifact lifecycle
+                pmtiles_lifecycle = resolve_pmtiles_lifecycle(
+                    pack_id,
+                    layer_id,
+                    geom_type,
+                    style_config,
+                    wgs84_file,
+                    pmtiles_file,
+                    generate_pmtiles=lambda input_geojson, output_pmtiles, preset: generate_pmtiles_smart(
+                        input_geojson,
+                        output_pmtiles,
+                        preset=preset,
+                    ),
+                    regenerate_existing=True,
                 )
-                is_large = geo_file.stat().st_size > 15 * 1024 * 1024
-                is_advanced = _style_config_is_advanced(style_config)
-                use_pmtiles = (
-                    pack_id != "projector_base"
-                    and (is_large or is_advanced)
-                    and not is_label_layer
-                )
-                if use_pmtiles:
-                    generate_pmtiles_smart(
-                        wgs84_file,
-                        pmtiles_file,
-                        high_fidelity=True,
-                    )
 
             except Exception as e:
                 logger.error(f"Error processing {layer_id}: {e}")
@@ -549,6 +524,20 @@ class ProcessingOrchestrator:
             style_config = cached.get("style")
             style_config = self._apply_animation_style_overrides(
                 pack_id, layer_id, style_config
+            )
+            pmtiles_lifecycle = resolve_pmtiles_lifecycle(
+                pack_id,
+                layer_id,
+                geom_type,
+                style_config,
+                wgs84_file,
+                pmtiles_file,
+                generate_pmtiles=lambda input_geojson, output_pmtiles, preset: generate_pmtiles_smart(
+                    input_geojson,
+                    output_pmtiles,
+                    preset=preset,
+                ),
+                regenerate_existing=True,
             )
 
         popup_cfg = self._get_popup_config_for_layer(pack_id, layer_id)
@@ -566,7 +555,9 @@ class ProcessingOrchestrator:
             name=geo_file.stem,
             file=f"{layer_id}.geojson",
             geometry_type=geom_type,
-            pmtiles_file=f"{layer_id}.pmtiles" if pmtiles_file.exists() else None,
+            pmtiles_file=pmtiles_lifecycle.pmtiles_file if pmtiles_lifecycle else None,
+            tiling_preset=pmtiles_lifecycle.tiling_preset if pmtiles_lifecycle else None,
+            processing=pmtiles_lifecycle.metadata if pmtiles_lifecycle else None,
             ui_popup=ui_popup,
             ui_legend_label=ui_legend_label,
         )
@@ -908,6 +899,8 @@ class ProcessingOrchestrator:
             ]
             for geo_file in geo_files:
                 layer_id = geo_file.stem
+                processed_geo = pack_output / f"{layer_id}.geojson"
+                pmtiles_path = pack_output / f"{layer_id}.pmtiles"
 
                 # Styles (same resolution as process_single_layer for advanced/complexity)
                 style_config, geom_type = self._resolve_style_for_geo_file(
@@ -919,13 +912,21 @@ class ProcessingOrchestrator:
 
                 if geom_type == "unknown":
                     # Try to guess from existing processed file or manifest
-                    processed_geo = pack_output / f"{layer_id}.geojson"
                     if processed_geo.exists():
                         geom_type = get_geometry_type(processed_geo)
                     elif layer_id in existing_layers:
                         geom_type = existing_layers[layer_id].get(
                             "geometryType", "unknown"
                         )
+
+                pmtiles_lifecycle = resolve_pmtiles_lifecycle(
+                    pack_id,
+                    layer_id,
+                    geom_type,
+                    style_config,
+                    processed_geo,
+                    pmtiles_path,
+                )
 
                 # Popup and legend overrides
                 layer_popup_cfg = self._get_popup_config_for_layer(pack_id, layer_id)
@@ -948,11 +949,9 @@ class ProcessingOrchestrator:
                     name=layer_id,  # Or format it nicely
                     file=f"{layer_id}.geojson",
                     geometry_type=geom_type,
-                    pmtiles_file=(
-                        f"{layer_id}.pmtiles"
-                        if (pack_output / f"{layer_id}.pmtiles").exists()
-                        else None
-                    ),
+                    pmtiles_file=pmtiles_lifecycle.pmtiles_file,
+                    tiling_preset=pmtiles_lifecycle.tiling_preset,
+                    processing=pmtiles_lifecycle.metadata,
                     ui_popup=layer_popup,
                     ui_legend_label=ui_legend_label,
                 )

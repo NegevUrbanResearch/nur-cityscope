@@ -13,5 +13,7 @@ describe("perf validation checklist sync additions", () => {
     expect(text).toContain("p95 syncDriftPx");
     expect(text).toContain("Zoom feel");
     expect(text).toContain("Drift target");
+    expect(text).toContain("slideshow loaded source count");
+    expect(text).toContain("source churn per slideshow tick");
   });
 });

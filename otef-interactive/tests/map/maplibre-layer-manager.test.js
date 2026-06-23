@@ -28,6 +28,7 @@ import {
   fadeOutAndRemoveEnabledFullIds,
   getVectorSourceLayerName,
   registerCuratedLayerIds,
+  removeCuratedLayersByPrefix,
   stageLayerHidden,
 } from "../../frontend/src/map/maplibre-layer-manager.js";
 
@@ -37,9 +38,14 @@ function createMapMock() {
   const images = new Set();
   /** @type {Map<string, Record<string, unknown>>} */
   const paintByLayerId = new Map();
+  /** @type {Map<string, Record<string, unknown>>} */
+  const layoutByLayerId = new Map();
 
   const map = {
     addSource: vi.fn((sourceId) => {
+      if (sources.has(sourceId)) {
+        throw new Error(`source already exists: ${sourceId}`);
+      }
       sources.add(sourceId);
     }),
     getSource: vi.fn((sourceId) =>
@@ -57,11 +63,19 @@ function createMapMock() {
     }),
     addLayer: vi.fn((layerDef) => {
       layers.add(layerDef.id);
+      layoutByLayerId.set(layerDef.id, { ...(layerDef.layout || {}) });
     }),
     getLayer: vi.fn((layerId) => (layers.has(layerId) ? { id: layerId } : undefined)),
     removeLayer: vi.fn((layerId) => {
       layers.delete(layerId);
       paintByLayerId.delete(layerId);
+      layoutByLayerId.delete(layerId);
+    }),
+    setLayoutProperty: vi.fn((layerId, name, value) => {
+      if (!layoutByLayerId.has(layerId)) {
+        layoutByLayerId.set(layerId, {});
+      }
+      layoutByLayerId.get(layerId)[name] = value;
     }),
     setPaintProperty: vi.fn((layerId, name, value) => {
       if (!paintByLayerId.has(layerId)) {
@@ -73,6 +87,7 @@ function createMapMock() {
     _layers: layers,
     _images: images,
     _paintByLayerId: paintByLayerId,
+    _layoutByLayerId: layoutByLayerId,
   };
 
   return map;
@@ -201,6 +216,277 @@ describe("maplibre-layer-manager", () => {
     clearAllLayers(map);
 
     expect(map.removeSource).toHaveBeenCalledWith("group_a.layer_1");
+  });
+
+  it("applyLayerGroupsToMap removes disabled layers and sources by default", () => {
+    const map = createMapMock();
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      { id: "group_a.layer_1-fill", type: "fill", layout: {} },
+    ]);
+
+    applyLayerGroupsToMap(map, enabledGroups);
+    map.removeLayer.mockClear();
+    map.removeSource.mockClear();
+    map.setLayoutProperty.mockClear();
+
+    applyLayerGroupsToMap(map, []);
+
+    expect(map.removeLayer).toHaveBeenCalledWith("group_a.layer_1-fill");
+    expect(map.removeSource).toHaveBeenCalledWith("group_a.layer_1");
+    expect(map.setLayoutProperty).not.toHaveBeenCalled();
+  });
+
+  it("retains disabled tracked full ids warm and restores visibility on re-enable", () => {
+    const map = createMapMock();
+    const fullId = "group_a.layer_1";
+    const layerId = "group_a.layer_1-fill";
+    const lifecycle = { retainDisabled: true };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      { id: layerId, type: "fill", layout: {} },
+    ]);
+
+    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+    expect(map.addSource).toHaveBeenCalledTimes(1);
+
+    map.removeLayer.mockClear();
+    map.removeSource.mockClear();
+    map.setLayoutProperty.mockClear();
+    applyLayerGroupsToMap(map, [], { lifecycle });
+
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(layerId, "visibility", "none");
+    expect(map.removeLayer).not.toHaveBeenCalled();
+    expect(map.removeSource).not.toHaveBeenCalled();
+    expect(map._layers.has(layerId)).toBe(true);
+
+    map.addSource.mockClear();
+    map.addLayer.mockClear();
+    map.setLayoutProperty.mockClear();
+    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+
+    expect(map.addSource).not.toHaveBeenCalled();
+    expect(map.addLayer).not.toHaveBeenCalled();
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(layerId, "visibility", "visible");
+    expect(map._layoutByLayerId.get(layerId)?.visibility).toBe("visible");
+    expect(map.getSource(fullId)).toBeDefined();
+  });
+
+  it("fadeOutAndRemoveEnabledFullIds can retain outgoing full ids warm", async () => {
+    const map = createMapMock();
+    const fullId = "group_a.layer_1";
+    const layerId = "group_a.layer_1-fill";
+    const lifecycle = { retainDisabled: true, maxRetainedSources: 2 };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      { id: layerId, type: "fill", layout: {}, paint: { "fill-opacity": 0.65 } },
+    ]);
+
+    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+    map._paintByLayerId.set(layerId, { "fill-opacity": 0.65 });
+    map.removeLayer.mockClear();
+    map.removeSource.mockClear();
+    map.setLayoutProperty.mockClear();
+    map.setPaintProperty.mockClear();
+
+    await fadeOutAndRemoveEnabledFullIds(map, [fullId], 1, { lifecycle });
+
+    expect(map.setPaintProperty).toHaveBeenCalledWith(layerId, "fill-opacity", 0);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(layerId, "fill-opacity", 0.65);
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(layerId, "visibility", "none");
+    expect(map.removeLayer).not.toHaveBeenCalled();
+    expect(map.removeSource).not.toHaveBeenCalled();
+    expect(map._layers.has(layerId)).toBe(true);
+    expect(map.getSource(fullId)).toBeDefined();
+  });
+
+  it("recreates a retained layer when its style layers disappear out of band", () => {
+    const map = createMapMock();
+    const fullId = "group_a.layer_1";
+    const layerId = "group_a.layer_1-fill";
+    const lifecycle = { retainDisabled: true };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      { id: layerId, type: "fill", layout: {} },
+    ]);
+
+    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+    applyLayerGroupsToMap(map, [], { lifecycle });
+    map._layers.delete(layerId);
+    map._layoutByLayerId.delete(layerId);
+
+    map.addSource.mockClear();
+    map.addLayer.mockClear();
+    map.removeSource.mockClear();
+    map.setLayoutProperty.mockClear();
+    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+
+    expect(map.removeSource).toHaveBeenCalledWith(fullId);
+    expect(map.addSource).toHaveBeenCalledWith(fullId, expect.any(Object));
+    expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: layerId }));
+    expect(map._layers.has(layerId)).toBe(true);
+  });
+
+  it("recreates a retained multi-style layer when one style layer disappears out of band", () => {
+    const map = createMapMock();
+    const fullId = "group_a.layer_1";
+    const fillLayerId = "group_a.layer_1-fill";
+    const lineLayerId = "group_a.layer_1-line";
+    const lifecycle = { retainDisabled: true };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      { id: fillLayerId, type: "fill", layout: {} },
+      { id: lineLayerId, type: "line", layout: {} },
+    ]);
+
+    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+    applyLayerGroupsToMap(map, [], { lifecycle });
+    map._layers.delete(lineLayerId);
+    map._layoutByLayerId.delete(lineLayerId);
+
+    map.addSource.mockClear();
+    map.addLayer.mockClear();
+    map.removeLayer.mockClear();
+    map.removeSource.mockClear();
+    map.setLayoutProperty.mockClear();
+    applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+
+    expect(map.removeLayer).toHaveBeenCalledWith(fillLayerId);
+    expect(map.removeLayer).not.toHaveBeenCalledWith(lineLayerId);
+    expect(map.removeSource).toHaveBeenCalledWith(fullId);
+    expect(map.addSource).toHaveBeenCalledWith(fullId, expect.any(Object));
+    expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: fillLayerId }));
+    expect(map.addLayer).toHaveBeenCalledWith(expect.objectContaining({ id: lineLayerId }));
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
+      fillLayerId,
+      "visibility",
+      "visible",
+    );
+    expect(map._layers.has(fillLayerId)).toBe(true);
+    expect(map._layers.has(lineLayerId)).toBe(true);
+  });
+
+  it("keeps hatch and marker images while retained warm, then releases when retention is disabled", () => {
+    const map = createMapMock();
+    const hatchId = "hatch_#f00_0_8_1";
+    const markerId = "otef_mlsq_v1_#f00_#0f0_5_1_9";
+    const lifecycle = { retainDisabled: true };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: "group_a.layer_1__fill",
+        type: "fill",
+        paint: { "fill-pattern": hatchId },
+        layout: {},
+        _hatchPattern: {
+          patternId: hatchId,
+          color: "#f00",
+          rotation: 0,
+          separation: 8,
+          width: 1,
+        },
+      },
+      {
+        id: "group_a.layer_1__ml",
+        type: "symbol",
+        paint: {},
+        layout: { "icon-image": markerId, "symbol-placement": "line" },
+        _markerLineSquarePattern: {
+          imageId: markerId,
+          size: 5,
+          fill: "#f00",
+          stroke: "#0f0",
+          strokeWidth: 1,
+          side: 9,
+        },
+      },
+    ]);
+
+    withCanvasStub(() => {
+      applyLayerGroupsToMap(map, enabledGroups, { lifecycle });
+      map.removeImage.mockClear();
+      applyLayerGroupsToMap(map, [], { lifecycle });
+
+      expect(map.removeImage).not.toHaveBeenCalled();
+      expect(map._images.has(hatchId)).toBe(true);
+      expect(map._images.has(markerId)).toBe(true);
+
+      applyLayerGroupsToMap(map, []);
+    });
+
+    expect(map.removeImage).toHaveBeenCalledWith(hatchId);
+    expect(map.removeImage).toHaveBeenCalledWith(markerId);
+    expect(map._images.has(hatchId)).toBe(false);
+    expect(map._images.has(markerId)).toBe(false);
+  });
+
+  it("evicts oldest hidden retained full ids when maxRetainedSources is exceeded", () => {
+    const map = createMapMock();
+    const lifecycle = { retainDisabled: true, maxRetainedSources: 1 };
+    const twoEnabledGroups = [
+      { id: "group_a", layers: [{ id: "layer_1", enabled: true }] },
+      { id: "group_b", layers: [{ id: "layer_2", enabled: true }] },
+    ];
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [
+      { id: `${fullId}-fill`, type: "fill", layout: {} },
+    ]);
+
+    applyLayerGroupsToMap(map, twoEnabledGroups, { lifecycle });
+    map.removeLayer.mockClear();
+    map.removeSource.mockClear();
+
+    applyLayerGroupsToMap(map, [], { lifecycle });
+
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "group_a.layer_1-fill",
+      "visibility",
+      "none",
+    );
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "group_b.layer_2-fill",
+      "visibility",
+      "none",
+    );
+    expect(map.removeLayer).toHaveBeenCalledWith("group_a.layer_1-fill");
+    expect(map.removeSource).toHaveBeenCalledWith("group_a.layer_1");
+    expect(map.removeLayer).not.toHaveBeenCalledWith("group_b.layer_2-fill");
+    expect(map.removeSource).not.toHaveBeenCalledWith("group_b.layer_2");
+    expect(map._layers.has("group_a.layer_1-fill")).toBe(false);
+    expect(map._layers.has("group_b.layer_2-fill")).toBe(true);
+  });
+
+  it("does not evict an incoming enabled retained full id before it can restore", () => {
+    const map = createMapMock();
+    const lifecycle = { retainDisabled: true, maxRetainedSources: 1 };
+    const groupA = [{ id: "group_a", layers: [{ id: "layer_1", enabled: true }] }];
+    const groupB = [{ id: "group_b", layers: [{ id: "layer_2", enabled: true }] }];
+    const swapToA = [
+      { id: "group_a", layers: [{ id: "layer_1", enabled: true }] },
+      { id: "group_b", layers: [{ id: "layer_2", enabled: false }] },
+    ];
+    bridgeMock.irToMapLibreLayers.mockImplementation((fullId) => [
+      { id: `${fullId}-fill`, type: "fill", layout: {} },
+    ]);
+
+    applyLayerGroupsToMap(map, groupA, { lifecycle });
+    applyLayerGroupsToMap(map, [], { lifecycle });
+    applyLayerGroupsToMap(map, groupB, { lifecycle });
+
+    map.addSource.mockClear();
+    map.addLayer.mockClear();
+    map.removeLayer.mockClear();
+    map.removeSource.mockClear();
+    map.setLayoutProperty.mockClear();
+    applyLayerGroupsToMap(map, swapToA, { lifecycle });
+
+    expect(map.addSource).not.toHaveBeenCalledWith("group_a.layer_1", expect.anything());
+    expect(map.addLayer).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: "group_a.layer_1-fill" }),
+    );
+    expect(map.removeLayer).not.toHaveBeenCalledWith("group_a.layer_1-fill");
+    expect(map.removeSource).not.toHaveBeenCalledWith("group_a.layer_1");
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "group_a.layer_1-fill",
+      "visibility",
+      "visible",
+    );
+    expect(map._layers.has("group_a.layer_1-fill")).toBe(true);
+    expect(map._layers.has("group_b.layer_2-fill")).toBe(false);
+    expect(map.getSource("group_b.layer_2")).toBeUndefined();
   });
 
   it("registers hatch pattern images and strips metadata before addLayer", () => {
@@ -602,6 +888,45 @@ describe("maplibre-layer-manager", () => {
     expect(map.removeLayer).toHaveBeenCalledWith(layerId);
   });
 
+  it("removeCuratedLayersByPrefix can retain tracked curated layers during slideshow", () => {
+    const map = createMapMock();
+    const logicalId = "curated_moresht_axis.solidLine";
+    const layerA = `${logicalId}__proposedLine__0`;
+    const layerB = `${logicalId}__solidLine__0`;
+    const sourceA = `${logicalId}__proposedLine__src`;
+    const sourceB = `${logicalId}__solidLine__src`;
+    const untrackedLayer = `${logicalId}__stale`;
+    const untrackedSource = `${logicalId}__stale_src`;
+    map.addSource(sourceA, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map.addSource(sourceB, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map.addSource(untrackedSource, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map._layers.add(layerA);
+    map._layers.add(layerB);
+    map._layers.add(untrackedLayer);
+    map.getStyle = vi.fn(() => ({
+      layers: [{ id: layerA }, { id: layerB }, { id: untrackedLayer }],
+      sources: { [sourceA]: {}, [sourceB]: {}, [untrackedSource]: {} },
+    }));
+    registerCuratedLayerIds(map, logicalId, [sourceA, sourceB], [layerA, layerB]);
+
+    map.removeLayer.mockClear();
+    map.removeSource.mockClear();
+    map.setLayoutProperty.mockClear();
+
+    removeCuratedLayersByPrefix(map, logicalId, {
+      lifecycle: { retainDisabled: true, maxRetainedSources: 2 },
+    });
+
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(layerA, "visibility", "none");
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(layerB, "visibility", "none");
+    expect(map.removeLayer).toHaveBeenCalledWith(untrackedLayer);
+    expect(map.removeSource).toHaveBeenCalledWith(untrackedSource);
+    expect(map.removeLayer).not.toHaveBeenCalledWith(layerA);
+    expect(map.removeLayer).not.toHaveBeenCalledWith(layerB);
+    expect(map.removeSource).not.toHaveBeenCalledWith(sourceA);
+    expect(map.removeSource).not.toHaveBeenCalledWith(sourceB);
+  });
+
   it("stageLayerHidden zeros numeric circle-opacity and records restore target", () => {
     const { stagedLayerDef, targetOpacity } = stageLayerHidden({
       id: "group_a.layer_1-pts",
@@ -675,6 +1000,42 @@ describe("maplibre-layer-manager", () => {
       { duration: 250, delay: 0 },
     );
     expect(map.setPaintProperty).toHaveBeenCalledWith(layerId, "fill-opacity", 0.85);
+  });
+
+  it("beginSlideshowStage keeps retained layers hidden until reveal", () => {
+    const map = createMapMock();
+    const fullId = "pack.area";
+    const layerId = "pack.area-fill";
+    map.addSource(fullId);
+    map._layers.add(layerId);
+    registerCuratedLayerIds(map, fullId, fullId, [layerId]);
+    map.setPaintProperty(layerId, "fill-opacity", 0.7);
+
+    applyLayerGroupsToMap(
+      map,
+      [{ id: "pack", layers: [{ id: "area", enabled: false }] }],
+      { lifecycle: { retainDisabled: true, maxRetainedSources: 2 } },
+    );
+    map.setPaintProperty.mockClear();
+    map.setLayoutProperty.mockClear();
+
+    const staged = beginSlideshowStage(
+      map,
+      [{ id: "pack", layers: [{ id: "area", enabled: true }] }],
+      {
+        lifecycle: { retainDisabled: true, maxRetainedSources: 2 },
+        transition: { stageHidden: true, transitionMs: 120 },
+      },
+    );
+
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(layerId, "visibility", "visible");
+    expect(map.setPaintProperty).toHaveBeenCalledWith(layerId, "fill-opacity", 0);
+    expect(staged.addedLayerIds).toContain(layerId);
+    expect(staged.targetOpacityByLayerId[layerId]).toEqual({ "fill-opacity": 0.7 });
+
+    map.setPaintProperty.mockClear();
+    commitSlideshowReveal(map, staged, 120);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(layerId, "fill-opacity", 0.7);
   });
 
   it("fadeOutAndRemoveEnabledFullIds sets paint to 0 with transition then removes after timeout", async () => {

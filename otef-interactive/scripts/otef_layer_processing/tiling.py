@@ -13,6 +13,40 @@ TIPPECANOE_IMAGE = "ingmapping/tippecanoe"
 PMTILES_IMAGE = "protomaps/go-pmtiles"
 # Keep this aligned with frontend PMTiles source-layer fallback.
 DEFAULT_TIPPECANOE_LAYER_NAME = "layer"
+PMTILES_MAX_ZOOM = 19
+TILING_PRESETS = {
+    "critical_boundaries": ["--no-line-simplification"],
+    "roads_paths_rivers": ["--no-line-simplification"],
+    "large_polygons": ["--no-line-simplification"],
+    "dense_feature_polygons": ["--no-line-simplification"],
+    "points_thin": ["--no-line-simplification"],
+}
+
+
+def build_tippecanoe_base_args(output_mbtiles: str, input_geojson: str) -> List[str]:
+    """Build the common tippecanoe argument list, excluding Docker wrapper args."""
+    return [
+        "tippecanoe",
+        "-o",
+        output_mbtiles,
+        input_geojson,
+        f"--layer={DEFAULT_TIPPECANOE_LAYER_NAME}",
+        "--force",
+        "--minimum-zoom=9",
+        f"--maximum-zoom={PMTILES_MAX_ZOOM}",
+        "--no-feature-limit",
+        "--no-tile-size-limit",
+        "--detect-shared-borders",
+        "--quiet",
+    ]
+
+
+def build_tippecanoe_extra_args(preset: str) -> List[str]:
+    """Return preset-specific tippecanoe args."""
+    try:
+        return list(TILING_PRESETS[preset])
+    except KeyError as exc:
+        raise ValueError(f"Unknown tiling preset: {preset}") from exc
 
 def to_docker_path(path: Path) -> str:
     """Convert path to Docker-compatible format (for Windows/WSL)."""
@@ -44,19 +78,12 @@ def run_tippecanoe(input_file: Path, output_mbtiles: Path, extra_args: List[str]
             "docker", "run", "--rm",
             "-v", f"{to_docker_path(temp_dir)}:/work",
             TIPPECANOE_IMAGE,
-            "tippecanoe",
-            "-o", f"/work/{safe_output_name}",
-            f"/work/{safe_input_name}",
-            f"--layer={DEFAULT_TIPPECANOE_LAYER_NAME}",
-            "--force",
-            "--minimum-zoom=9",
-            "--maximum-zoom=18",
-            "--no-feature-limit",
-            "--no-tile-size-limit",
-            "--detect-shared-borders",
-            "--drop-densest-as-needed",
-            "--quiet"
         ]
+        docker_cmd.extend(
+            build_tippecanoe_base_args(
+                f"/work/{safe_output_name}", f"/work/{safe_input_name}"
+            )
+        )
 
         if extra_args:
             docker_cmd.extend(extra_args)
@@ -97,7 +124,7 @@ def convert_mbtiles_to_pmtiles(mbtiles_path: Path, pmtiles_path: Path) -> bool:
         if size_mb < 2:
             from pmtiles.convert import mbtiles_to_pmtiles
             if pmtiles_path.exists(): pmtiles_path.unlink()
-            mbtiles_to_pmtiles(str(mbtiles_path), str(pmtiles_path), maxzoom=18)
+            mbtiles_to_pmtiles(str(mbtiles_path), str(pmtiles_path), maxzoom=PMTILES_MAX_ZOOM)
             return pmtiles_path.exists()
 
         # GO GO GO for big ones, using safe ASCII names
@@ -141,11 +168,17 @@ def convert_mbtiles_to_pmtiles(mbtiles_path: Path, pmtiles_path: Path) -> bool:
         logger.error(f"PMTiles conversion failed: {e}")
         return False
 
-def generate_pmtiles_smart(input_geojson: Path, output_pmtiles: Path, high_fidelity: bool = False) -> bool:
+def generate_pmtiles_smart(
+    input_geojson: Path,
+    output_pmtiles: Path,
+    high_fidelity: bool = False,
+    preset: Optional[str] = None,
+) -> bool:
     """Direct, optimized tiling with Unicode-safety."""
     try:
-        # HIGH-FIDELITY: Disable simplification only if requested
-        extra_args = ["--no-line-simplification"] if high_fidelity else ["--simplification=2"]
+        if preset is None:
+            preset = "critical_boundaries" if high_fidelity else "roads_paths_rivers"
+        extra_args = build_tippecanoe_extra_args(preset)
 
         temp_mb = output_pmtiles.with_suffix(".mbtiles")
         if run_tippecanoe(input_geojson, temp_mb, extra_args):

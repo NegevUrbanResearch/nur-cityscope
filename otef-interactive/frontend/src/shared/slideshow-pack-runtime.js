@@ -6,6 +6,8 @@ import {
 } from "../map/maplibre-layer-manager.js";
 import MapProjectionConfig from "./map-projection-config.js";
 
+const SLIDESHOW_RETAINED_SOURCE_LIMIT = 2;
+
 /**
  * @param {import("./map-projection-config.js").MapProjectionConfig["PROJECTION_SLIDESHOW"] | {
  *   intervalMs?: number,
@@ -189,6 +191,7 @@ function waitForMapIdleOrTimeout(map, timeoutMs) {
  *     fromSlideshowTick?: boolean,
  *     groupsOverride?: unknown,
  *     affectedCuratedFullLayerIds?: string[],
+ *     layerStyleOptions?: object,
  *   }) => unknown) | ((opts?: object) => Promise<unknown>),
  *   map?: object | null,
  * }} deps
@@ -249,8 +252,17 @@ export function createSlideshowPackRuntime(deps) {
         : 0;
     return {
       applyProjectionHatchPresentation: true,
+      lifecycle: {
+        retainDisabled: true,
+        maxRetainedSources: SLIDESHOW_RETAINED_SOURCE_LIMIT,
+      },
       transition: { stageHidden: true, transitionMs: crossfadeMs },
     };
+  }
+
+  function effectiveRefreshLayerStyleOptions() {
+    const { transition: _transition, ...refreshOptions } = effectiveTransitionOptions();
+    return refreshOptions;
   }
 
   /**
@@ -299,21 +311,15 @@ export function createSlideshowPackRuntime(deps) {
         excludedSet,
       );
       const outgoingFullIds = Array.from(getEnabledMapFullLayerIds(outgoingGroups));
-      await fadeOutAndRemoveEnabledFullIds(map, outgoingFullIds, crossfadeMs);
+      await fadeOutAndRemoveEnabledFullIds(
+        map,
+        outgoingFullIds,
+        crossfadeMs,
+        effectiveRefreshLayerStyleOptions(),
+      );
       if (!active || disposed || sessionEpoch !== epochAtStart) {
         return;
       }
-    }
-
-    // Full projection refresh (curated + WMTS + vector) must run while slideshow is active;
-    // the default guard skips remote-driven refreshes — bypass only for this tick.
-    if (typeof applyProjectionRefresh === "function") {
-      await Promise.resolve(
-        applyProjectionRefresh({ fromSlideshowTick: true, groupsOverride: incoming }),
-      );
-    }
-    if (!active || disposed || sessionEpoch !== epochAtStart) {
-      return;
     }
 
     const stageOpts = effectiveTransitionOptions();
@@ -321,13 +327,27 @@ export function createSlideshowPackRuntime(deps) {
     if (!active || disposed || sessionEpoch !== epochAtStart) {
       return;
     }
-    commitSlideshowReveal(map, staged, crossfadeMs);
+    // Refresh while staged layers are still hidden so reveal is the final visible step.
+    if (typeof applyProjectionRefresh === "function") {
+      await Promise.resolve(
+        applyProjectionRefresh({
+          fromSlideshowTick: true,
+          groupsOverride: incoming,
+          affectedCuratedFullLayerIds: Array.from(getEnabledMapFullLayerIds(incoming)).filter(
+            (id) => id.startsWith("curated"),
+          ),
+          layerStyleOptions: effectiveRefreshLayerStyleOptions(),
+        }),
+      );
+    } else {
+      await Promise.resolve(
+        syncProjectionLayers(map, incoming, effectiveRefreshLayerStyleOptions()),
+      );
+    }
     if (!active || disposed || sessionEpoch !== epochAtStart) {
       return;
     }
-    await Promise.resolve(
-      syncProjectionLayers(map, incoming, { applyProjectionHatchPresentation: true }),
-    );
+    commitSlideshowReveal(map, staged, crossfadeMs);
     if (!active || disposed || sessionEpoch !== epochAtStart) {
       return;
     }

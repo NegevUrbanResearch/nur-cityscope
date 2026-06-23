@@ -12,7 +12,7 @@ Usage:
 import json
 import argparse
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import sys
 import io
 
@@ -26,38 +26,57 @@ sys.path.insert(0, str(Path(__file__).parent))
 try:
     from otef_layer_processing.styles import find_lyrx_file, parse_lyrx_style
     from otef_layer_processing.geo import get_geometry_type
-    from otef_layer_processing.orchestrator import compute_file_hash
+    from otef_layer_processing.layer_stats import collect_geojson_stats
+    from otef_layer_processing.pmtiles_policy import decide_pmtiles
 except ImportError as e:
     print(f"Error: Could not import modularize package: {e}")
     sys.exit(1)
 
 
-# Helper functions that were in process_layers.py
-def normalize_layer_id(layer_name: str) -> str:
-    return layer_name.lower().replace(" ", "_").replace("-", "_")
+def _is_geojson_layer_candidate(path: Path) -> bool:
+    if path.name in {"manifest.json", "styles.json"}:
+        return False
+    if path.name.endswith(".wmts.json"):
+        return False
+    return path.suffix.lower() in {".json", ".geojson"}
 
 
-def get_file_size_mb(path: Path) -> float:
-    if path.exists():
-        return path.stat().st_size / (1024 * 1024)
-    return 0.0
-
-
-def count_features(geojson_path: Path) -> int:
+def _load_json_file(path: Path) -> Optional[Dict[str, Any]]:
     try:
-        with open(geojson_path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return len(data.get("features", []))
+        return data if isinstance(data, dict) else None
     except Exception:
-        return 0
+        return None
 
 
-def should_convert_to_pmtiles(geojson_path: Path, layer_id: str = None) -> bool:
-    # Match logic in orchestrator: 15MB threshold
-    return get_file_size_mb(geojson_path) > 15
+def _discover_geojson_layers(pack_dir: Path) -> List[Tuple[str, Path, Dict[str, Any]]]:
+    manifest = _load_json_file(pack_dir / "manifest.json")
+    if manifest:
+        layers = []
+        for entry in manifest.get("layers", []):
+            if not isinstance(entry, dict):
+                continue
+            filename = entry.get("file")
+            if not filename or entry.get("format", "geojson") != "geojson":
+                continue
+            layer_path = pack_dir / filename
+            if layer_path.is_file() and _is_geojson_layer_candidate(layer_path):
+                layers.append((entry.get("id") or layer_path.stem, layer_path, entry))
+        return sorted(layers, key=lambda item: item[0])
+
+    gis_dir = pack_dir / "gis" if (pack_dir / "gis").exists() else pack_dir
+    candidates = [
+        path
+        for path in list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
+        if _is_geojson_layer_candidate(path)
+    ]
+    return [(path.stem, path, {}) for path in sorted(candidates)]
 
 
-PMTILES_SKIP_LAYER_IDS = set()
+def _load_processed_styles(pack_dir: Path) -> Dict[str, Any]:
+    styles = _load_json_file(pack_dir / "styles.json")
+    return styles or {}
 
 
 def scan_layer_packs(source_dir: Path) -> List[Path]:
@@ -73,9 +92,7 @@ def scan_layer_packs(source_dir: Path) -> List[Path]:
 
     for item in source_layers.iterdir():
         if item.is_dir() and not item.name.startswith("."):
-            gis_dir = item / "gis" if (item / "gis").exists() else item
-            geo_files = list(gis_dir.glob("*.json")) + list(gis_dir.glob("*.geojson"))
-            if geo_files:
+            if (item / "manifest.json").is_file() or _discover_geojson_layers(item):
                 packs.append(item)
     return sorted(packs)
 
@@ -478,29 +495,24 @@ def generate_report(source_dir: Path, output_path: Path):
         report_lines.append(f"## Layer Group: `{pack_id}`")
         report_lines.append("")
 
-        # Find all GeoJSON files
+        # Find all GeoJSON files. Processed layer packs prefer manifest entries,
+        # which avoids treating manifest.json/styles.json as layers.
         gis_dir = pack_dir / "gis"
         styles_dir = pack_dir / "styles"
+        processed_styles = _load_processed_styles(pack_dir)
 
-        geojson_files = []
-        if gis_dir.exists():
-            geojson_files.extend(gis_dir.glob("*.json"))
-            geojson_files.extend(gis_dir.glob("*.geojson"))
-        else:
-            geojson_files.extend(pack_dir.glob("*.json"))
-            geojson_files.extend(pack_dir.glob("*.geojson"))
+        geojson_layers = _discover_geojson_layers(pack_dir)
 
-        if not geojson_files:
+        if not geojson_layers:
             report_lines.append("*No GeoJSON files found in this pack.*")
             report_lines.append("")
             continue
 
-        report_lines.append(f"**Total Layers:** {len(geojson_files)}")
+        report_lines.append(f"**Total Layers:** {len(geojson_layers)}")
         report_lines.append("")
 
-        for geojson_file in sorted(geojson_files):
+        for layer_id, geojson_file, manifest_entry in geojson_layers:
             layer_name = geojson_file.stem
-            layer_id = normalize_layer_id(layer_name)
             full_layer_id = f"{pack_id}.{layer_id}"
 
             print(f"  Processing layer: {layer_name}")
@@ -511,29 +523,80 @@ def generate_report(source_dir: Path, output_path: Path):
             report_lines.append(f"**File:** `{geojson_file.name}`")
             report_lines.append("")
 
-            # File information
-            file_size_mb = get_file_size_mb(geojson_file)
-            feature_count = count_features(geojson_file)
             geometry_type = get_geometry_type(geojson_file)
-            needs_pmtiles = should_convert_to_pmtiles(geojson_file, layer_id)
-            skipped_pmtiles = layer_id in PMTILES_SKIP_LAYER_IDS
+            style_config = processed_styles.get(layer_id)
+            lyrx_file, match_method = find_lyrx_file(geojson_file, styles_dir)
+            style_obj = None
+            if style_config is None and lyrx_file and lyrx_file.exists():
+                style_obj = parse_lyrx_style(lyrx_file)
+                if style_obj:
+                    style_config = style_obj.to_dict()
+
+            stats = None
+            decision = None
+            stats_error = None
+            try:
+                stats = collect_geojson_stats(geojson_file)
+                decision = decide_pmtiles(
+                    pack_id=pack_id,
+                    layer_id=layer_id,
+                    geometry_type=geometry_type,
+                    style_config=style_config,
+                    stats=stats,
+                )
+            except ValueError as e:
+                stats_error = str(e)
+
+            pmtiles_file = manifest_entry.get("pmtilesFile") or f"{layer_id}.pmtiles"
+            pmtiles_exists = (pack_dir / pmtiles_file).is_file()
+            recommended = bool(decision and decision.use_pmtiles)
+            tiling_preset = (
+                decision.preset
+                if decision and decision.preset
+                else manifest_entry.get("tilingPreset")
+            )
+            reasons = list(decision.reasons) if decision else []
 
             report_lines.append("**File Information:**")
-            report_lines.append(f"  - Size: {file_size_mb:.2f} MB")
-            report_lines.append(f"  - Features: {feature_count:,}")
+            report_lines.append(
+                f"  - Size MB: {(stats.size_bytes / (1024 * 1024)):.2f}"
+                if stats
+                else "  - Size MB: unknown"
+            )
+            report_lines.append(
+                f"  - Features: {stats.feature_count:,}" if stats else "  - Features: unknown"
+            )
+            report_lines.append(
+                f"  - Coordinate count: {stats.coordinate_count:,}"
+                if stats
+                else "  - Coordinate count: unknown"
+            )
+            report_lines.append(
+                f"  - Property payload: {stats.property_bytes:,} bytes"
+                if stats
+                else "  - Property payload: unknown"
+            )
             report_lines.append(f"  - Geometry Type: `{geometry_type}`")
-            if skipped_pmtiles:
-                report_lines.append("  - PMTiles Conversion: No (skipped by rule)")
-            else:
-                report_lines.append(
-                    f"  - PMTiles Conversion: {'**Yes** (recommended)' if needs_pmtiles else 'No'}"
-                )
+            report_lines.append(f"  - PMTiles exists: {'Yes' if pmtiles_exists else 'No'}")
+            report_lines.append(
+                f"  - PMTiles recommended: {'Yes' if recommended else 'No'}"
+            )
+            report_lines.append(f"  - Tiling preset: `{tiling_preset or 'none'}`")
+            report_lines.append(
+                "  - PMTiles reasons: "
+                + (", ".join(f"`{reason}`" for reason in reasons) if reasons else "none")
+            )
+            if stats_error:
+                report_lines.append(f"  - Stats warning: `{stats_error}`")
             report_lines.append("")
 
             # Style information - use robust matching
-            lyrx_file, match_method = find_lyrx_file(geojson_file, styles_dir)
-
-            if lyrx_file and lyrx_file.exists():
+            if style_config and not (lyrx_file and lyrx_file.exists()):
+                report_lines.append("**Parsed Style Configuration:**")
+                report_lines.append("")
+                report_lines.append(format_style_config(style_config))
+                report_lines.append("")
+            elif lyrx_file and lyrx_file.exists():
                 report_lines.append("**Style File:**")
                 report_lines.append(f"  - Path: `{lyrx_file.relative_to(source_dir)}`")
                 if match_method and match_method != "exact":
@@ -542,9 +605,7 @@ def generate_report(source_dir: Path, output_path: Path):
                     )
                 report_lines.append("")
 
-                style_obj = parse_lyrx_style(lyrx_file)
                 if style_obj:
-                    style_config = style_obj.to_dict()
                     report_lines.append("**Parsed Style Configuration:**")
                     report_lines.append("")
                     report_lines.append(format_style_config(style_config))
@@ -624,14 +685,7 @@ def generate_report(source_dir: Path, output_path: Path):
 
     print(f"\n✓ Report generated: {output_path}")
     print(f"  Total packs: {len(packs)}")
-    total_layers = sum(
-        (
-            len(list((p / "gis").glob("*.json")) + list((p / "gis").glob("*.geojson")))
-            if (p / "gis").exists()
-            else len(list(p.glob("*.json")) + list(p.glob("*.geojson")))
-        )
-        for p in packs
-    )
+    total_layers = sum(len(_discover_geojson_layers(p)) for p in packs)
     print(f"  Total layers: {total_layers}")
 
 

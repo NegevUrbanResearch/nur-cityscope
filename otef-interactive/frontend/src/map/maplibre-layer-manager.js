@@ -114,9 +114,21 @@ export function revealLayerIdsWithTargets(map, layerIds, targetByLayerId, transi
  * @param {object} map
  * @param {string[]} fullIds
  * @param {number} transitionMs
+ * @param {{
+ *   lifecycle?: {
+ *     retainDisabled?: boolean,
+ *     maxRetainedSources?: number,
+ *     retainedFullIds?: Set<string> | string[],
+ *   },
+ * }} [layerStyleOptions]
  * @returns {Promise<void>}
  */
-export async function fadeOutAndRemoveEnabledFullIds(map, fullIds, transitionMs) {
+export async function fadeOutAndRemoveEnabledFullIds(
+  map,
+  fullIds,
+  transitionMs,
+  layerStyleOptions,
+) {
   if (!map || !Array.isArray(fullIds) || fullIds.length === 0) {
     return;
   }
@@ -125,20 +137,30 @@ export async function fadeOutAndRemoveEnabledFullIds(map, fullIds, transitionMs)
     typeof transitionMs === "number" && Number.isFinite(transitionMs)
       ? Math.max(0, transitionMs)
       : 0;
+  const lifecycleOptions = resolveLifecycleOptions(layerStyleOptions);
+
+  const cleanupOrRetain = (fullId) => {
+    const fid = fullId != null ? String(fullId).trim() : "";
+    if (!fid || !state.loadedLayerIds.has(fid)) {
+      return;
+    }
+    if (!hideRetainedFullId(map, fid, state, lifecycleOptions)) {
+      removeFullIdFromMap(map, fid, state);
+    }
+  };
 
   if (ms === 0) {
     for (const fullId of fullIds) {
-      const fid = fullId != null ? String(fullId).trim() : "";
-      if (!fid || !state.loadedLayerIds.has(fid)) {
-        continue;
-      }
-      removeFullIdFromMap(map, fid, state);
+      cleanupOrRetain(fullId);
     }
+    evictRetainedFullIds(map, state, lifecycleOptions.maxRetainedSources);
     return;
   }
 
   /** @type {Record<string, Record<string, number>>} */
   const targetByLayerId = {};
+  /** @type {Record<string, Record<string, number>>} */
+  const restoreByLayerId = {};
   const layerIdSet = new Set();
   const getPaint =
     typeof map.getPaintProperty === "function" ? map.getPaintProperty.bind(map) : null;
@@ -168,6 +190,10 @@ export async function fadeOutAndRemoveEnabledFullIds(map, fullIds, transitionMs)
           }
           if (typeof v === "number") {
             merged[key] = 0;
+            if (!restoreByLayerId[layerId]) {
+              restoreByLayerId[layerId] = {};
+            }
+            restoreByLayerId[layerId][key] = v;
           }
         }
       }
@@ -180,13 +206,14 @@ export async function fadeOutAndRemoveEnabledFullIds(map, fullIds, transitionMs)
 
   await new Promise((r) => setTimeout(r, ms));
 
-  for (const fullId of fullIds) {
-    const fid = fullId != null ? String(fullId).trim() : "";
-    if (!fid || !state.loadedLayerIds.has(fid)) {
-      continue;
-    }
-    removeFullIdFromMap(map, fid, state);
+  if (lifecycleOptions.retainDisabled) {
+    revealLayerIdsWithTargets(map, uniqueLayerIds, restoreByLayerId, 0);
   }
+
+  for (const fullId of fullIds) {
+    cleanupOrRetain(fullId);
+  }
+  evictRetainedFullIds(map, state, lifecycleOptions.maxRetainedSources);
 }
 
 /**
@@ -194,23 +221,6 @@ export async function fadeOutAndRemoveEnabledFullIds(map, fullIds, transitionMs)
  * {@link FADE_KEYS} when the paint is a plain number; expressions and missing
  * keys are not altered (v1 limitation).
  *
- * Return value provides `stagedFullIds` for callers that need extra
- * bookkeeping. Reveal uses {@link commitSlideshowReveal}, which only needs
- * `addedLayerIds` and `targetOpacityByLayerId` from this object.
- *
- * @param {object} map
- * @param {object} layerGroups
- * @param {{
- *   applyProjectionHatchPresentation?: boolean,
- *   renderMapLabelsFromStyle?: boolean,
- *   transition?: { stageHidden?: boolean, transitionMs?: number },
- * }} [layerStyleOptions]
- * @returns {{
- *   addedLayerIds: string[],
- *   targetOpacityByLayerId: Record<string, Record<string, number>>,
- *   stagedFullIds: string[],
- *   transitionMs: number,
- * }}
  */
 export function beginSlideshowStage(map, layerGroups, layerStyleOptions) {
   const base = layerStyleOptions && typeof layerStyleOptions === "object" ? { ...layerStyleOptions } : {};
@@ -236,15 +246,6 @@ export function beginSlideshowStage(map, layerGroups, layerStyleOptions) {
  * and `targetOpacityByLayerId` only (`stagedFullIds` is not read here).
  * Duration: if `transitionMs` is a **finite** number, it wins; otherwise
  * `stagedMeta.transitionMs` is used.
- *
- * @param {object} map
- * @param {{
- *   addedLayerIds: string[],
- *   targetOpacityByLayerId: Record<string, Record<string, number>>,
- *   stagedFullIds?: string[],
- *   transitionMs?: number,
- * }} stagedMeta
- * @param {number} [transitionMs] - When finite, overrides `stagedMeta.transitionMs` for duration.
  */
 export function commitSlideshowReveal(map, stagedMeta, transitionMs) {
   if (!map || !stagedMeta) {
@@ -339,7 +340,7 @@ function registerHatchPatternImages(map, styleLayer, state, trackedPatternIds) {
 /** MapLibre does not host DOM-backed image layers; tracked so sync does not retry addLayerToMap. */
 const DOM_IMAGE_LAYER_SOURCE_PLACEHOLDER = "__otef_dom_image_layer__";
 
-const mapStateByMap = new WeakMap(); // map -> { loadedSources: Map, loadedLayerIds: Map, hatchPatternIdsByFullId: Map, hatchPatternRefCounts: Map }
+const mapStateByMap = new WeakMap();
 
 function getOrCreateMapState(map) {
   let state = mapStateByMap.get(map);
@@ -347,6 +348,7 @@ function getOrCreateMapState(map) {
     state = {
       loadedSources: new Map(), // fullId -> sourceId
       loadedLayerIds: new Map(), // fullId -> string[]
+      retainedHiddenFullIds: new Map(), // fullId -> true, insertion order tracks hide age
       hatchPatternIdsByFullId: new Map(), // fullId -> string[]
       hatchPatternRefCounts: new Map(), // patternId -> number
     };
@@ -413,17 +415,174 @@ function removeFullIdFromMap(map, fullId, state) {
   loadedLayerIds.delete(fullId);
 
   const storedSourceId = loadedSources.get(fullId);
-  const sourceId =
-    storedSourceId !== undefined ? storedSourceId : fullId;
-  if (
-    sourceId &&
-    sourceId !== DOM_IMAGE_LAYER_SOURCE_PLACEHOLDER &&
-    map.getSource(sourceId)
-  ) {
-    map.removeSource(sourceId);
+  const sourceIds = normalizeSourceIds(
+    storedSourceId !== undefined ? storedSourceId : fullId,
+  );
+  for (const sourceId of sourceIds) {
+    if (
+      sourceId &&
+      sourceId !== DOM_IMAGE_LAYER_SOURCE_PLACEHOLDER &&
+      map.getSource(sourceId)
+    ) {
+      map.removeSource(sourceId);
+    }
   }
   loadedSources.delete(fullId);
+  state.retainedHiddenFullIds.delete(fullId);
   releaseHatchPatternsForFullId(map, fullId, state);
+}
+
+function normalizeSourceIds(sourceIds) {
+  if (Array.isArray(sourceIds)) {
+    return sourceIds.filter(Boolean);
+  }
+  return sourceIds ? [sourceIds] : [];
+}
+
+function resolveLifecycleOptions(layerStyleOptions) {
+  const lifecycle = layerStyleOptions?.lifecycle;
+  if (!lifecycle || typeof lifecycle !== "object") {
+    return {
+      retainDisabled: false,
+      maxRetainedSources: null,
+      retainedFullIds: null,
+    };
+  }
+
+  let retainedFullIds = null;
+  if (lifecycle.retainedFullIds instanceof Set) {
+    retainedFullIds = new Set(
+      [...lifecycle.retainedFullIds]
+        .map((id) => (id != null ? String(id).trim() : ""))
+        .filter(Boolean),
+    );
+  } else if (Array.isArray(lifecycle.retainedFullIds)) {
+    retainedFullIds = new Set(
+      lifecycle.retainedFullIds
+        .map((id) => (id != null ? String(id).trim() : ""))
+        .filter(Boolean),
+    );
+  }
+
+  const rawMax = lifecycle.maxRetainedSources;
+  const maxRetainedSources =
+    typeof rawMax === "number" && Number.isFinite(rawMax)
+      ? Math.max(0, Math.floor(rawMax))
+      : null;
+
+  return {
+    retainDisabled: Boolean(lifecycle.retainDisabled),
+    maxRetainedSources,
+    retainedFullIds,
+  };
+}
+
+function shouldRetainDisabledFullId(fullId, state, lifecycleOptions) {
+  if (!lifecycleOptions.retainDisabled) {
+    return false;
+  }
+  const sourceIds = normalizeSourceIds(state.loadedSources.get(fullId)).filter(
+    (sourceId) => sourceId !== DOM_IMAGE_LAYER_SOURCE_PLACEHOLDER,
+  );
+  if (sourceIds.length === 0) {
+    return false;
+  }
+  if (
+    lifecycleOptions.retainedFullIds &&
+    !lifecycleOptions.retainedFullIds.has(fullId)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function hideRetainedFullId(map, fullId, state, lifecycleOptions) {
+  if (!shouldRetainDisabledFullId(fullId, state, lifecycleOptions)) {
+    return false;
+  }
+  if (typeof map.setLayoutProperty !== "function") {
+    return false;
+  }
+  const mlLayerIds = state.loadedLayerIds.get(fullId) || [];
+  let didHide = false;
+  for (const layerId of mlLayerIds) {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", "none");
+      didHide = true;
+    }
+  }
+  if (!didHide) {
+    return false;
+  }
+  if (!state.retainedHiddenFullIds.has(fullId)) {
+    state.retainedHiddenFullIds.set(fullId, true);
+  }
+  return true;
+}
+
+function restoreRetainedFullId(map, fullId, state) {
+  if (!state.retainedHiddenFullIds.has(fullId)) {
+    return false;
+  }
+  if (typeof map.setLayoutProperty !== "function") {
+    removeFullIdFromMap(map, fullId, state);
+    return false;
+  }
+  const mlLayerIds = state.loadedLayerIds.get(fullId) || [];
+  if (mlLayerIds.length === 0) {
+    removeFullIdFromMap(map, fullId, state);
+    return false;
+  }
+  for (const layerId of mlLayerIds) {
+    if (!map.getLayer(layerId)) {
+      removeFullIdFromMap(map, fullId, state);
+      return false;
+    }
+  }
+  for (const layerId of mlLayerIds) {
+    map.setLayoutProperty(layerId, "visibility", "visible");
+  }
+  state.retainedHiddenFullIds.delete(fullId);
+  return true;
+}
+
+function stageRetainedFullId(map, fullId, state, stagedMeta) {
+  if (!restoreRetainedFullId(map, fullId, state)) return false;
+  const getPaint =
+    typeof map.getPaintProperty === "function" ? map.getPaintProperty.bind(map) : null;
+  for (const layerId of state.loadedLayerIds.get(fullId) || []) {
+    const targetOpacity = {};
+    if (getPaint) {
+      for (const key of FADE_KEYS) {
+        try {
+          const value = getPaint(layerId, key);
+          if (typeof value !== "number") continue;
+          targetOpacity[key] = value;
+          map.setPaintProperty(layerId, `${key}-transition`, { duration: 0, delay: 0 });
+          map.setPaintProperty(layerId, key, 0);
+        } catch {}
+      }
+    }
+    stagedMeta.addedLayerIds.push(layerId);
+    if (Object.keys(targetOpacity).length > 0) stagedMeta.targetOpacityByLayerId[layerId] = targetOpacity;
+  }
+  stagedMeta.stagedFullIds.push(fullId);
+  return true;
+}
+
+function evictRetainedFullIds(map, state, maxRetainedSources, protectedFullIds = null) {
+  if (maxRetainedSources === null) {
+    return;
+  }
+  while (state.retainedHiddenFullIds.size > maxRetainedSources) {
+    const oldest = [...state.retainedHiddenFullIds.keys()].find(
+      (fullId) => !protectedFullIds?.has(fullId),
+    );
+    if (!oldest) {
+      return;
+    }
+    removeFullIdFromMap(map, oldest, state);
+  }
 }
 
 /**
@@ -516,11 +675,21 @@ export function removeCuratedLayer(map, fullId) {
  * Also removes associated sources tracked in map state.
  * @param {object} map
  * @param {string} prefix - e.g. "curated.42"
+ * @param {{
+ *   lifecycle?: {
+ *     retainDisabled?: boolean,
+ *     maxRetainedSources?: number,
+ *     retainedFullIds?: Set<string> | string[],
+ *   },
+ * }} [layerStyleOptions]
  */
-export function removeCuratedLayersByPrefix(map, prefix) {
+export function removeCuratedLayersByPrefix(map, prefix, layerStyleOptions) {
   if (!map || !prefix) return;
   const state = getOrCreateMapState(map);
+  const lifecycleOptions = resolveLifecycleOptions(layerStyleOptions);
   const toRemove = [];
+  const retainedLayerIds = new Set();
+  const retainedSourceIds = new Set();
   for (const id of state.loadedLayerIds.keys()) {
     if (id.startsWith(prefix)) toRemove.push(id);
   }
@@ -528,19 +697,29 @@ export function removeCuratedLayersByPrefix(map, prefix) {
     if (id.startsWith(prefix) && !toRemove.includes(id)) toRemove.push(id);
   }
   for (const id of toRemove) {
-    removeFullIdFromMap(map, id, state);
+    if (!hideRetainedFullId(map, id, state, lifecycleOptions)) {
+      removeFullIdFromMap(map, id, state);
+    } else {
+      for (const layerId of state.loadedLayerIds.get(id) || []) {
+        retainedLayerIds.add(layerId);
+      }
+      for (const sourceId of normalizeSourceIds(state.loadedSources.get(id))) {
+        retainedSourceIds.add(sourceId);
+      }
+    }
   }
+  evictRetainedFullIds(map, state, lifecycleOptions.maxRetainedSources);
   // Also remove any MapLibre layers/sources with matching prefix not tracked in state
   try {
     const style = map.getStyle();
     if (style) {
       for (const layer of (style.layers || [])) {
-        if (layer.id && layer.id.startsWith(prefix)) {
+        if (layer.id && layer.id.startsWith(prefix) && !retainedLayerIds.has(layer.id)) {
           if (map.getLayer(layer.id)) map.removeLayer(layer.id);
         }
       }
       for (const srcId of Object.keys(style.sources || {})) {
-        if (srcId.startsWith(prefix)) {
+        if (srcId.startsWith(prefix) && !retainedSourceIds.has(srcId)) {
           if (map.getSource(srcId)) map.removeSource(srcId);
         }
       }
@@ -557,13 +736,13 @@ export function removeCuratedLayersByPrefix(map, prefix) {
  * Register curated layer ids and source into the map state for lifecycle tracking.
  * @param {object} map
  * @param {string} fullId - logical id (e.g. "curated.42")
- * @param {string} sourceId - MapLibre source id
+ * @param {string|string[]} sourceId - MapLibre source id or ids
  * @param {string[]} layerIds - MapLibre layer ids added for this curated pack
  */
 export function registerCuratedLayerIds(map, fullId, sourceId, layerIds) {
   if (!map || !fullId) return;
   const state = getOrCreateMapState(map);
-  state.loadedSources.set(fullId, sourceId);
+  state.loadedSources.set(fullId, Array.isArray(sourceId) ? [...sourceId] : sourceId);
   state.loadedLayerIds.set(fullId, Array.isArray(layerIds) ? layerIds : []);
 }
 
@@ -734,7 +913,6 @@ function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
   }
 
   if (addedLayerIds.length === 0) {
-    // No layer was added successfully, so rollback source and state for retry.
     rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, registeredPatternIds);
     return;
   }
@@ -758,22 +936,10 @@ function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
   }
 }
 
-/**
- * @param {{
- *   applyProjectionHatchPresentation?: boolean,
- *   renderMapLabelsFromStyle?: boolean,
- *   transition?: { stageHidden?: boolean, transitionMs?: number },
- * }} [layerStyleOptions] - projection sets `applyProjectionHatchPresentation` for hatch density
- *   and settlement-name-only map labels; GIS callers omit.
- * @param {{
- *   addedLayerIds: string[],
- *   targetOpacityByLayerId: Record<string, Record<string, number>>,
- *   stagedFullIds: string[],
- * }} [stagedMeta] - when set and `transition.stageHidden` is true, new layers are added at opacity 0 and ids/targets are recorded
- */
 function syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, stagedMeta) {
   const state = getOrCreateMapState(map);
   const { loadedSources, loadedLayerIds } = state;
+  const lifecycleOptions = resolveLifecycleOptions(layerStyleOptions);
   const enabledFullIds = getEnabledMapFullLayerIds(layerGroups);
   const trackedFullIds = new Set([
     ...loadedLayerIds.keys(),
@@ -782,25 +948,33 @@ function syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, stagedMeta) {
 
   for (const fullId of trackedFullIds) {
     if (!enabledFullIds.has(fullId)) {
-      removeFullIdFromMap(map, fullId, state);
+      if (!hideRetainedFullId(map, fullId, state, lifecycleOptions)) {
+        removeFullIdFromMap(map, fullId, state);
+      }
     }
   }
+  evictRetainedFullIds(
+    map,
+    state,
+    lifecycleOptions.maxRetainedSources,
+    enabledFullIds,
+  );
 
   for (const fullId of enabledFullIds) {
+    if (stagedMeta && state.retainedHiddenFullIds.has(fullId)) {
+      if (stageRetainedFullId(map, fullId, state, stagedMeta)) {
+        continue;
+      }
+    }
+    if (restoreRetainedFullId(map, fullId, state)) {
+      continue;
+    }
     if (!loadedSources.has(fullId)) {
       addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta);
     }
   }
 }
 
-/**
- * @param {{
- *   applyProjectionHatchPresentation?: boolean,
- *   renderMapLabelsFromStyle?: boolean,
- *   transition?: { stageHidden?: boolean, transitionMs?: number },
- * }} [layerStyleOptions] - projection sets `applyProjectionHatchPresentation` for hatch density
- *   and settlement-name-only map labels; GIS callers omit.
- */
 export function applyLayerGroupsToMap(map, layerGroups, layerStyleOptions) {
   syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, null);
 }
@@ -817,6 +991,7 @@ export function clearAllLayers(map) {
   }
   state.loadedSources.clear();
   state.loadedLayerIds.clear();
+  state.retainedHiddenFullIds.clear();
   state.hatchPatternIdsByFullId.clear();
   state.hatchPatternRefCounts.clear();
 }

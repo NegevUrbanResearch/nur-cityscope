@@ -16,5 +16,7 @@ describe("perf validation checklist doc", () => {
     expect(text).toContain("p95 applyViewportMs");
     expect(text).toContain("heavy layer time-to-visible");
     expect(text).toContain("desync duration");
+    expect(text).toContain("MapLibre source add/remove count");
+    expect(text).toContain("MapLibre layer add/remove count");
   });
 });

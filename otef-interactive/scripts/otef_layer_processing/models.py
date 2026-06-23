@@ -41,6 +41,8 @@ class LayerEntry:
     format: str = "geojson"
     geometry_type: str = "unknown"
     pmtiles_file: Optional[str] = None
+    tiling_preset: Optional[str] = None
+    processing: Optional[Dict[str, Any]] = None
     ui_popup: Optional[Dict] = None
     ui_legend_label: Optional[str] = None
     wmts: Optional[Dict] = None
@@ -56,6 +58,10 @@ class LayerEntry:
         }
         if self.pmtiles_file:
             d["pmtilesFile"] = self.pmtiles_file
+        if self.tiling_preset:
+            d["tilingPreset"] = self.tiling_preset
+        if self.processing:
+            d["processing"] = self.processing
         ui = {}
         if self.ui_popup:
             ui["popup"] = self.ui_popup

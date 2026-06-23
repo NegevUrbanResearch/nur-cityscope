@@ -290,6 +290,12 @@ async function bootstrapProjectionRuntime() {
       return ids;
     }
 
+    function hasMapLibreLayerWithPrefix(targetMap, prefix) {
+      if (!targetMap || !prefix || typeof targetMap.getStyle !== "function") return false;
+      const style = targetMap.getStyle();
+      return (style?.layers || []).some((layer) => layer?.id?.startsWith(prefix));
+    }
+
     async function resolveMaplibregl() {
       if (typeof window !== "undefined" && window.maplibregl) return window.maplibregl;
       try {
@@ -301,17 +307,16 @@ async function bootstrapProjectionRuntime() {
 
     const runProjectionCuratedRefresh = async ({
       affectedCuratedFullLayerIds,
+      fromSlideshowTick,
       groupsOverride,
-      skipInitialVectorLayerSync = false,
+      layerStyleOptions,
     } = {}) => {
       const rawGroups = groupsOverride ?? getEffectiveProjectionLayerGroups();
       const currentGroups = asLayerGroupsArray(rawGroups);
 
       updateModelBaseImageVisibility(rawGroups, modelImgEl);
 
-      if (!skipInitialVectorLayerSync) {
-        syncProjectionLayers(map, currentGroups);
-      }
+      syncProjectionLayers(map, currentGroups, layerStyleOptions);
       syncContextFlowAnimations();
 
       const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
@@ -320,7 +325,7 @@ async function bootstrapProjectionRuntime() {
 
       for (const fullId of previousCuratedIds) {
         if (!enabledCuratedIds.has(fullId)) {
-          removeCuratedLayersByPrefix(map, fullId);
+          removeCuratedLayersByPrefix(map, fullId, layerStyleOptions);
           removeCuratedHtmlMarkers(fullId);
         }
       }
@@ -331,7 +336,6 @@ async function bootstrapProjectionRuntime() {
           affectedCuratedFullLayerIds.filter((id) => typeof id === "string"),
         );
         for (const fullId of affectedSet) {
-          removeCuratedLayersByPrefix(map, fullId);
           removeCuratedHtmlMarkers(fullId);
         }
         toRefresh = [...enabledCuratedIds].filter((id) => affectedSet.has(id));
@@ -348,8 +352,14 @@ async function bootstrapProjectionRuntime() {
 
       const maplibregl = await resolveMaplibregl();
       for (const fullId of toRefresh) {
+        if (fromSlideshowTick && hasMapLibreLayerWithPrefix(map, fullId)) {
+          continue;
+        }
         try {
-          await loadCuratedLayerToMapLibre(map, fullId, { maplibregl, force: true });
+          await loadCuratedLayerToMapLibre(map, fullId, {
+            maplibregl,
+            force: true,
+          });
         } catch (err) {
           console.warn(`[projection-main] Failed to load curated layer ${fullId}`, err);
         }
@@ -367,6 +377,7 @@ async function bootstrapProjectionRuntime() {
       groupsOverride,
       affectedCuratedFullLayerIds,
       fromSlideshowTick,
+      layerStyleOptions,
     } = {}) => {
       if (!fromSlideshowTick && shouldSkipLiveProjectionRefresh()) {
         return Promise.resolve();
@@ -374,7 +385,8 @@ async function bootstrapProjectionRuntime() {
       return runProjectionCuratedRefresh({
         groupsOverride,
         affectedCuratedFullLayerIds,
-        skipInitialVectorLayerSync: !!fromSlideshowTick,
+        fromSlideshowTick,
+        layerStyleOptions,
       });
     };
     let projectionCuratedRefreshChain = Promise.resolve();
