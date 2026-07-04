@@ -16,3 +16,16 @@ test("remote-styles: hidden tab panels are display:none (out of layout)", () => 
   );
   expect(css).toMatch(/\.remote-tab-panel\[hidden\]\s*\{[^}]*display:\s*none/s);
 });
+
+test("remote-styles: disabled workshop tab is faded and placed at the left edge", () => {
+  const css = fs.readFileSync(
+    path.resolve(__dirname, "../../frontend/css/remote-styles.css"),
+    "utf8",
+  );
+  expect(css).toMatch(
+    /\.remote-bottom-nav__tab\[data-remote-tab="curation"\]\s*\{[^}]*order:\s*-1/s,
+  );
+  expect(css).toMatch(
+    /\.remote-bottom-nav__tab--disabled,\s*\.remote-bottom-nav__tab:disabled\s*\{[^}]*opacity:\s*0\.42/s,
+  );
+});

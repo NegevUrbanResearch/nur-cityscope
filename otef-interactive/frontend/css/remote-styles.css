@@ -179,6 +179,23 @@ body.otef-remote-shell {
   opacity: 1;
 }
 
+.remote-bottom-nav__tab[data-remote-tab="curation"] {
+  order: -1;
+}
+
+.remote-bottom-nav__tab--disabled,
+.remote-bottom-nav__tab:disabled {
+  color: var(--color-ink-subtle);
+  cursor: not-allowed;
+  opacity: 0.42;
+  filter: saturate(0.45);
+}
+
+.remote-bottom-nav__tab--disabled .remote-bottom-nav__icon,
+.remote-bottom-nav__tab:disabled .remote-bottom-nav__icon {
+  opacity: 0.55;
+}
+
 .remote-bottom-nav__tab:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-primary);

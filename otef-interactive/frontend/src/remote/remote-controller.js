@@ -42,8 +42,9 @@ const DEFAULT_ZOOM = 15;
 // Table name for this controller
 const TABLE_NAME = "otef";
 
-/** Bottom shell tabs: LTR bar order (Presentation (slideshow) | Workshop (curation) | Layers | Navigation); arrow key navigation. */
-const REMOTE_TAB_KEYS = ["slideshow", "curation", "layers", "navigation"];
+/** Bottom shell tabs: LTR bar order (Workshop disabled | Presentation | Layers | Navigation); arrow key navigation. */
+const REMOTE_TAB_KEYS = ["curation", "slideshow", "layers", "navigation"];
+const DISABLED_REMOTE_TAB_KEYS = new Set(["curation"]);
 
 /*
  * Legacy `#toggleModel` wiring was removed: that checkbox is not part of the remote shell
@@ -143,7 +144,7 @@ async function initialize() {
  * Tab shell: show one `data-remote-tab` panel, sync `role="tab"` (Task 4; locale in Task 5).
  */
 function setRemoteTab(activeKey) {
-  if (!REMOTE_TAB_KEYS.includes(activeKey)) return;
+  if (!REMOTE_TAB_KEYS.includes(activeKey) || DISABLED_REMOTE_TAB_KEYS.has(activeKey)) return;
   const nav = document.getElementById("remoteBottomNav");
   const previousActiveKey =
     nav
@@ -164,7 +165,7 @@ function setRemoteTab(activeKey) {
     const isActive = key === activeKey;
     tab.setAttribute("aria-selected", isActive ? "true" : "false");
     tab.classList.toggle("is-active", isActive);
-    tab.tabIndex = isActive ? 0 : -1;
+    tab.tabIndex = isActive && !DISABLED_REMOTE_TAB_KEYS.has(key) ? 0 : -1;
   });
 
   if (
@@ -247,6 +248,7 @@ function initRemoteShellTabs() {
     const tab = e.target.closest('[role="tab"][data-remote-tab]');
     if (!tab || !nav.contains(tab)) return;
     const k = tab.getAttribute("data-remote-tab");
+    if (DISABLED_REMOTE_TAB_KEYS.has(k) || tab.getAttribute("aria-disabled") === "true") return;
     if (k) setRemoteTab(k);
   });
 
@@ -259,8 +261,11 @@ function initRemoteShellTabs() {
     const i = REMOTE_TAB_KEYS.indexOf(key);
     if (i < 0) return;
     const delta = e.key === "ArrowRight" ? 1 : -1;
-    const next = (i + delta + REMOTE_TAB_KEYS.length) % REMOTE_TAB_KEYS.length;
-    const nextKey = REMOTE_TAB_KEYS[next];
+    const enabledTabKeys = REMOTE_TAB_KEYS.filter((tabKey) => !DISABLED_REMOTE_TAB_KEYS.has(tabKey));
+    const enabledIndex = enabledTabKeys.indexOf(key);
+    if (enabledIndex < 0) return;
+    const next = (enabledIndex + delta + enabledTabKeys.length) % enabledTabKeys.length;
+    const nextKey = enabledTabKeys[next];
     setRemoteTab(nextKey);
     document.getElementById(`remote-tab-${nextKey}`)?.focus();
   });

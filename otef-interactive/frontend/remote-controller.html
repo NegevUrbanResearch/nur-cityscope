@@ -281,7 +281,7 @@
       data-i18n-aria="navTablistAria"
       aria-label="אזורי בקרה"
     >
-      <!-- LTR visual order: Presentation (slideshow) | Workshop (curation) | Layers | Navigation -->
+      <!-- LTR visual order: Workshop (disabled) | Presentation (slideshow) | Layers | Navigation -->
       <button
         type="button"
         class="remote-bottom-nav__tab"
@@ -307,8 +307,10 @@
         role="tab"
         aria-selected="false"
         aria-controls="remote-panel-curation"
+        aria-disabled="true"
         tabindex="-1"
         data-remote-tab="curation"
+        disabled
       >
         <span class="remote-bottom-nav__icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

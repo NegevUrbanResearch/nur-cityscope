@@ -62,6 +62,9 @@ test("remote-controller shell: Hebrew default, tab regions, and stable mount ids
   expect(remote).toMatch(/\bid="remote-tab-navigation"[^>]*\baria-controls="remote-panel-navigation"/i);
   expect(remote).toMatch(/\bid="remote-tab-layers"[^>]*\baria-controls="remote-panel-layers"/i);
   expect(remote).toMatch(/\bid="remote-tab-curation"[^>]*\baria-controls="remote-panel-curation"/i);
+  expect(remote).toMatch(
+    /\bid="remote-tab-curation"[^>]*\baria-disabled="true"[^>]*\bdisabled\b/i,
+  );
 
   expect(remote).toMatch(/\bid="remoteLayerHost"/);
   expect(remote).toMatch(/\bid="layerSheet"/);
