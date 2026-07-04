@@ -459,6 +459,18 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'table': table_name,
                     }
                 }
+            elif field == 'basemap':
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_basemap_changed',
+                        'table': table_name,
+                        'basemap': state.basemap if state else 'osm',
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
+                        'traceId': trace_id,
+                    },
+                }
             elif field == 'projection_slideshow':
                 ps = state.projection_slideshow if state else {}
                 if not isinstance(ps, dict):
@@ -540,6 +552,16 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 state.animations = request.data['animations']
                 changed_fields.append('animations')
 
+            if 'basemap' in request.data:
+                basemap = request.data['basemap']
+                if basemap not in ('osm', 'satellite'):
+                    return Response(
+                        {'error': 'basemap must be "osm" or "satellite"'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                state.basemap = basemap
+                changed_fields.append('basemap')
+
             # Optional bounds polygon updates (used by bounds editor / apply endpoint)
             # Accept both "bounds_polygon" and legacy "bounds" keys.
             if 'bounds_polygon' in request.data or 'bounds' in request.data:
@@ -612,6 +634,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'layers': state.get_layers_with_defaults(),  # Keep for backward compatibility
             'layerGroups': self._get_layer_groups(table),
             'animations': state.get_animations_with_defaults(),
+            'basemap': state.basemap or 'osm',
             'bounds_polygon': state.get_bounds_polygon(),
             'viewer_angle_deg': state.viewer_angle_deg,
             'workshop_auto_publish': state.workshop_auto_publish,

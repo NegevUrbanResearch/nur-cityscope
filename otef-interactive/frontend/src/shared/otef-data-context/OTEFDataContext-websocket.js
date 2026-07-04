@@ -27,6 +27,7 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
       }
     }
     if (state.animations) ctx._setAnimations(state.animations);
+    if (Object.prototype.hasOwnProperty.call(state, "basemap")) ctx._setBasemap(state.basemap);
     if (state.bounds_polygon || state.bounds) ctx._setBounds(state.bounds_polygon || state.bounds);
     if (typeof state.viewer_angle_deg === "number") ctx._setViewerAngleDeg(state.viewer_angle_deg);
     if (
@@ -51,6 +52,9 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
       }
     }
     if (state.animations) ctx._animations = state.animations;
+    if (Object.prototype.hasOwnProperty.call(state, "basemap")) {
+      ctx._basemap = state.basemap === "satellite" ? "satellite" : "osm";
+    }
     if (state.bounds_polygon || state.bounds) ctx._bounds = state.bounds_polygon || state.bounds;
     if (typeof state.viewer_angle_deg === "number") {
       ctx._viewerAngleDeg = state.viewer_angle_deg;
@@ -219,6 +223,22 @@ function setupWebSocket(ctx) {
       if (typeof state.viewer_angle_deg === "number") ctx._setViewerAngleDeg(state.viewer_angle_deg);
     } catch (err) {
       getLogger().error("[OTEFDataContext] Failed to refresh bounds after BOUNDS_CHANGED:", err);
+    }
+  });
+
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.BASEMAP_CHANGED, async (msg = {}) => {
+    if (msg && msg.sourceId === ctx._clientId) return;
+    if (msg.basemap === "osm" || msg.basemap === "satellite") {
+      ctx._setBasemap(msg.basemap);
+      return;
+    }
+    try {
+      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+      if (state && Object.prototype.hasOwnProperty.call(state, "basemap")) {
+        ctx._setBasemap(state.basemap);
+      }
+    } catch (err) {
+      getLogger().error("[OTEFDataContext] Failed to refresh basemap after BASEMAP_CHANGED:", err);
     }
   });
 

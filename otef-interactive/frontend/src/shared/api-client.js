@@ -167,6 +167,10 @@ export const OTEF_API = {
     return this.updateState(tableName, { animations });
   },
 
+  async updateBasemap(tableName = this.defaultTable, basemap, meta = {}) {
+    return this.updateState(tableName, { basemap, ...meta });
+  },
+
   async updateViewport(tableName = this.defaultTable, viewport) {
     return this.updateState(tableName, { viewport });
   },

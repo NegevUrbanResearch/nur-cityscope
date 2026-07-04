@@ -1,8 +1,8 @@
 import TableSwitcher from "../shared/table-switcher.js";
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
-import { createGISMap } from "../map/maplibre-map.js";
+import { createGISMap, setGISBasemap } from "../map/maplibre-map.js";
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
-import { applyLayerGroupsToMap, removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
+import { applyLayerGroupsToMap, clearAllLayers, removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
@@ -113,9 +113,13 @@ async function bootstrapMapRuntime() {
     resolveCenterFromViewport(OTEFDataContext.getViewport()) ||
     DEFAULT_MAP_CENTER;
 
+  let currentBasemap =
+    typeof OTEFDataContext.getBasemap === "function" ? OTEFDataContext.getBasemap() : "osm";
+
   const map = createGISMap("map", {
     center,
     zoom: 11,
+    basemap: currentBasemap,
   });
 
   if (typeof window !== "undefined") {
@@ -267,6 +271,29 @@ async function bootstrapMapRuntime() {
 
     // Initial curated load for current layerGroups state (raw groups preserve parking toggle row).
     await refreshCuratedLayers({ groupsOverride: rawInitialLayerGroups });
+
+    registerDisposer(
+      OTEFDataContext.subscribe("basemap", (basemap) => {
+        const nextBasemap = basemap === "satellite" ? "satellite" : "osm";
+        if (nextBasemap === currentBasemap) return;
+
+        const reapplyAfterStyleLoad = () => {
+          currentBasemap = nextBasemap;
+          clearAllLayers(map);
+          activeCuratedIds = new Set();
+          void refreshCuratedLayers({ groupsOverride: OTEFDataContext.getLayerGroups() });
+        };
+
+        if (typeof map.once === "function") {
+          map.once("style.load", reapplyAfterStyleLoad);
+        }
+
+        if (!setGISBasemap(map, nextBasemap)) return;
+        if (typeof map.once !== "function") {
+          reapplyAfterStyleLoad();
+        }
+      }),
+    );
 
     // layerGroups updates must drive curated lifecycle (WebSocket + manual workshop refresh).
     registerDisposer(

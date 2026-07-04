@@ -1,6 +1,7 @@
 let setLayerAnimations;
 let zoom;
 let pan;
+let setBasemap;
 let updateViewportFromUI;
 let computePanViewport;
 
@@ -15,6 +16,7 @@ beforeEach(async () => {
   setLayerAnimations = mod.setLayerAnimations;
   zoom = mod.zoom;
   pan = mod.pan;
+  setBasemap = mod.setBasemap;
   updateViewportFromUI = mod.updateViewportFromUI;
   computePanViewport = mod.computePanViewport;
 });
@@ -507,4 +509,26 @@ describe('OTEFDataContext actions', () => {
     expect(setViewport).toHaveBeenCalled();
     nowSpy.mockRestore();
   });
+
+  test('setBasemap patches supported basemap state', async () => {
+    const ctx = {
+      _tableName: 'otef',
+      _clientId: 'test-client',
+      _basemap: 'osm',
+      _setBasemap: vi.fn(function setBasemapState(next) {
+        this._basemap = next;
+      }),
+    };
+
+    const result = await setBasemap(ctx, 'satellite');
+
+    expect(result).toEqual({ ok: true });
+    expect(ctx._setBasemap).toHaveBeenCalledWith('satellite');
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(global.fetch.mock.calls[0][0]).toContain('/otef/');
+    expect(global.fetch.mock.calls[0][1].method).toBe('PATCH');
+    expect(body.basemap).toBe('satellite');
+    expect(body.sourceId).toBe('test-client');
+  });
+
 });

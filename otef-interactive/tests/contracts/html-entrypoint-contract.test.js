@@ -70,7 +70,23 @@ test("remote-controller shell: Hebrew default, tab regions, and stable mount ids
   expect(remote).toMatch(/\bid="layerSheet"/);
   expect(remote).toMatch(/\bid="layerPanelContent"/);
   expect(remote).toMatch(/\bid="remoteLocaleToggle"/);
+  expect(remote).not.toMatch(/\bid="remoteLocaleTitle"/);
   expect(remote).toMatch(/\bid="panNorth"/);
+  expect(remote).toMatch(/\bid="basemapControl"/);
+  expect(remote).not.toMatch(/\bclass="header-basemap-row"/);
+  expect(remote).toMatch(/\bclass="layers-basemap-control"/);
+  expect(remote).toMatch(/\bdata-i18n="basemapControlTitle"/);
+  expect(remote).toMatch(/\bdata-i18n-aria="basemapControlAria"/);
+  expect(remote).toMatch(/\bdata-i18n="basemapOsm"/);
+  expect(remote).toMatch(/\bdata-i18n="basemapSatellite"/);
+  expect(remote).toMatch(/\bdata-basemap="osm"/);
+  expect(remote).toMatch(/\bdata-basemap="satellite"/);
+  expect(remote.indexOf('id="layerSheet"')).toBeLessThan(
+    remote.indexOf('id="basemapControl"'),
+  );
+  expect(remote.indexOf('id="basemapControl"')).toBeLessThan(
+    remote.indexOf('id="layerPanelContent"'),
+  );
   expect(remote).toMatch(/\bid="zoomSlider"/);
   expect(remote).toMatch(/\bid="joystickZone"/);
 });

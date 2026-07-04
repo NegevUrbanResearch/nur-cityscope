@@ -21,6 +21,7 @@ let currentState = {
   },
   isConnected: false,
   viewerAngleDeg: 0,
+  basemap: "osm",
 };
 
 // Control state management (prevent simultaneous use)
@@ -104,6 +105,14 @@ async function initialize() {
   );
 
   unsubscribeFunctions.push(
+    OTEFDataContext.subscribe("basemap", (basemap) => {
+      currentState.basemap = basemap === "satellite" ? "satellite" : "osm";
+      updateBasemapUI(currentState.basemap);
+      updateUI();
+    }),
+  );
+
+  unsubscribeFunctions.push(
     OTEFDataContext.subscribe("connection", (isConnected) => {
       currentState.isConnected = !!isConnected;
       updateConnectionStatus(isConnected ? "connected" : "disconnected");
@@ -131,6 +140,7 @@ async function initialize() {
 
   // Initialize UI controls
   initializePanControls();
+  initializeBasemapControls();
   initializeZoomControls();
   initializeJoystick();
   initRemoteShellTabs();
@@ -433,6 +443,32 @@ function initializeZoomControls() {
   });
 }
 
+function initializeBasemapControls() {
+  const control = document.getElementById("basemapControl");
+  if (!control) return;
+
+  control.addEventListener("click", (e) => {
+    const button = e.target.closest("[data-basemap]");
+    if (!button || !control.contains(button) || !currentState.isConnected) return;
+    const basemap = button.getAttribute("data-basemap");
+    if (basemap !== "osm" && basemap !== "satellite") return;
+    currentState.basemap = basemap;
+    updateBasemapUI(basemap);
+    void OTEFDataContext.setBasemap(basemap);
+  });
+
+  updateBasemapUI(currentState.basemap);
+}
+
+function updateBasemapUI(basemap) {
+  const normalized = basemap === "satellite" ? "satellite" : "osm";
+  document.querySelectorAll(".basemap-button[data-basemap]").forEach((button) => {
+    const isActive = button.getAttribute("data-basemap") === normalized;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+}
+
 function getLiveViewport() {
   if (
     typeof OTEFDataContext !== "undefined" &&
@@ -633,7 +669,7 @@ function updateUI() {
 
   // Disable controls if not connected
   const controls = document.querySelectorAll(
-    ".dpad-button, .zoom-button, .zoom-slider, .layer-toggle, .layer-toggle-with-action",
+    ".dpad-button, .zoom-button, .zoom-slider, .basemap-button, .layer-toggle, .layer-toggle-with-action",
   );
   controls.forEach((control) => {
     if (currentState.isConnected) {

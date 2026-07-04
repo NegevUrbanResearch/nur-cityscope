@@ -393,6 +393,8 @@ class OTEFViewportState(models.Model):
     # Last projection slideshow command (start/stop + payload), replicated over otef WebSocket
     projection_slideshow = models.JSONField(default=dict, blank=True)
 
+    basemap = models.CharField(max_length=16, default="osm")
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def save(self, *args, **kwargs):

@@ -174,6 +174,34 @@ describe("remote-locale", () => {
     expect(t("curatedGroupLabel")).toBe("Curated");
   });
 
+  test("basemap control strings resolve for both locales", async () => {
+    installLocaleTestEnv();
+    const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    const keys = [
+      "basemapControlTitle",
+      "basemapControlAria",
+      "basemapOsm",
+      "basemapSatellite",
+    ];
+
+    setLocale("he", { force: true });
+    const heOk = keys.every((key) => {
+      const text = t(key);
+      return typeof text === "string" && text !== key;
+    });
+    setLocale("en", { force: true });
+    const enOk = keys.every((key) => {
+      const text = t(key);
+      return typeof text === "string" && text !== key;
+    });
+
+    expect({ he: heOk, en: enOk }).toEqual({ he: true, en: true });
+    expect(t("basemapControlTitle")).toBe("Basemap");
+    expect(t("basemapControlAria")).toBe("Basemap selector");
+    expect(t("basemapOsm")).toBe("OSM");
+    expect(t("basemapSatellite")).toBe("Satellite");
+  });
+
   test("setLocale dispatches otef:locale with detail.locale after apply", async () => {
     installLocaleTestEnv();
     const { setLocale, LOCALE_EVENT } = await import(

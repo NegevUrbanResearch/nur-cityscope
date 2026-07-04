@@ -17,31 +17,33 @@
   <body class="otef-remote-shell">
     <header class="remote-header">
       <div class="header-top">
-        <div
-          class="remote-locale-toggle"
-          role="group"
-          data-i18n-aria="localeGroupAria"
-          aria-label="בחירת שפה"
-          id="remoteLocaleToggle"
-        >
-          <button
-            type="button"
-            class="remote-locale-btn is-active"
-            id="remoteLocaleHe"
-            data-locale="he"
-            aria-pressed="true"
+        <div class="header-locale-control">
+          <div
+            class="remote-locale-toggle"
+            role="group"
+            data-i18n-aria="localeGroupAria"
+            aria-label="בחירת שפה"
+            id="remoteLocaleToggle"
           >
-            עברית
-          </button>
-          <button
-            type="button"
-            class="remote-locale-btn"
-            id="remoteLocaleEn"
-            data-locale="en"
-            aria-pressed="false"
-          >
-            English
-          </button>
+            <button
+              type="button"
+              class="remote-locale-btn is-active"
+              id="remoteLocaleHe"
+              data-locale="he"
+              aria-pressed="true"
+            >
+              עברית
+            </button>
+            <button
+              type="button"
+              class="remote-locale-btn"
+              id="remoteLocaleEn"
+              data-locale="en"
+              aria-pressed="false"
+            >
+              English
+            </button>
+          </div>
         </div>
         <div class="header-end">
           <div
@@ -121,6 +123,44 @@
           <div class="remote-layer-host" id="remoteLayerHost">
             <!-- #layerSheet — panel root; LayerSheetController (Task 6) -->
             <div class="layer-panel" id="layerSheet">
+              <div class="layers-basemap-control">
+                <div
+                  class="basemap-control-title"
+                  id="basemapControlTitle"
+                  data-i18n="basemapControlTitle"
+                >
+                  מפת רקע
+                </div>
+                <div
+                  class="basemap-segmented"
+                  id="basemapControl"
+                  role="group"
+                  data-i18n-aria="basemapControlAria"
+                  aria-label="בחירת מפת רקע"
+                  aria-labelledby="basemapControlTitle"
+                >
+                  <button
+                    type="button"
+                    class="basemap-button is-active"
+                    id="basemapOsm"
+                    data-basemap="osm"
+                    data-i18n="basemapOsm"
+                    aria-pressed="true"
+                  >
+                    רגילה
+                  </button>
+                  <button
+                    type="button"
+                    class="basemap-button"
+                    id="basemapSatellite"
+                    data-basemap="satellite"
+                    data-i18n="basemapSatellite"
+                    aria-pressed="false"
+                  >
+                    לוויין
+                  </button>
+                </div>
+              </div>
               <div class="sheet-content" id="layerPanelContent">
                 <!-- Populated by LayerSheetController -->
               </div>

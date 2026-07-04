@@ -700,6 +700,27 @@ async function setLayerAnimations(ctx, fullLayerIds, enabled) {
   }
 }
 
+async function setBasemap(ctx, basemap) {
+  if (!ctx._tableName) return { ok: false, error: "Missing table" };
+  if (basemap !== "osm" && basemap !== "satellite") {
+    return { ok: false, error: "Unsupported basemap" };
+  }
+
+  const previous = ctx._basemap || "osm";
+  ctx._setBasemap(basemap);
+  try {
+    await OTEF_API.updateBasemap(ctx._tableName, basemap, {
+      sourceId: ctx._clientId,
+      timestamp: Date.now(),
+    });
+    return { ok: true };
+  } catch (err) {
+    getLogger().error("[OTEFDataContext] Failed to update basemap:", err);
+    ctx._setBasemap(previous);
+    return { ok: false, error: err };
+  }
+}
+
 function understandDirection(direction, delta, width, height) {
   let dx = 0;
   let dy = 0;
@@ -781,6 +802,7 @@ OTEFDataContextInternals.actions = {
   toggleGroup,
   toggleAnimation,
   setLayerAnimations,
+  setBasemap,
   computePanViewport,
   computeZoomViewport,
 };
@@ -797,6 +819,7 @@ export {
   toggleGroup,
   toggleAnimation,
   setLayerAnimations,
+  setBasemap,
   computePanViewport,
   computeZoomViewport,
 };

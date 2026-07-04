@@ -250,7 +250,7 @@ body.otef-remote-shell {
   align-items: center;
   gap: var(--space-xs);
   max-width: 100%;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   row-gap: 4px;
   width: 100%;
 }
@@ -266,15 +266,17 @@ body.otef-remote-shell {
 
 /* Locale toggle: compact chrome; each control ≥ 44×44 (touch, WCAG) */
 .remote-locale-toggle {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
-  border-radius: var(--rounded-pill);
+  border-radius: var(--rounded-sm);
   border: 1px solid var(--color-border);
-  background: var(--color-surface-raised);
-  padding: 0;
+  background: rgba(38, 35, 32, 0.72);
+  padding: 2px;
   flex-shrink: 0;
-  gap: 0;
+  gap: 2px;
   box-sizing: border-box;
+  box-shadow: var(--shadow-pressed-inset);
 }
 
 .remote-locale-btn {
@@ -293,16 +295,17 @@ body.otef-remote-shell {
   padding-block: 4px;
   padding-inline: 8px;
   min-width: 44px;
-  min-height: 44px;
-  border-radius: var(--rounded-pill);
+  min-height: 30px;
+  border-radius: 6px;
   cursor: pointer;
   transition: color var(--transition-speed) ease, background var(--transition-speed) ease;
 }
 
 .remote-locale-btn.is-active {
-  background: var(--color-canvas);
-  color: var(--color-ink);
-  box-shadow: var(--shadow-pressed-inset);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  box-shadow: inset 0 1px 0 rgba(245, 240, 234, 0.08),
+    0 1px 3px rgba(10, 8, 6, 0.26);
 }
 
 .remote-locale-btn:focus-visible {
@@ -605,6 +608,7 @@ body.otef-remote-shell {
   position: relative;
   display: flex;
   flex-direction: column;
+  gap: var(--space-sm);
   padding: var(--spacing-unit);
   padding-block-end: calc(var(--spacing-unit) + env(safe-area-inset-bottom, 0px));
 }
@@ -910,7 +914,63 @@ body.otef-remote-shell {
   box-shadow: none !important;
 }
 
-/* Zoom controls */
+/* Basemap + zoom controls */
+.basemap-control-title {
+  width: min(100%, 16rem);
+  align-self: center;
+  margin-block-end: 4px;
+  color: var(--color-ink-subtle);
+  font: var(--font-label-sm);
+  font-size: 0.6875rem;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.basemap-segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  width: min(100%, 16rem);
+  align-self: center;
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-sm);
+  background: rgba(38, 35, 32, 0.72);
+  box-shadow: var(--shadow-pressed-inset);
+}
+
+.basemap-button {
+  min-height: 40px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-ink-muted);
+  font: var(--font-label-sm);
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--transition-speed) ease,
+    color var(--transition-speed) ease, box-shadow var(--transition-speed) ease;
+}
+
+.basemap-button.is-active {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  box-shadow: inset 0 1px 0 rgba(245, 240, 234, 0.08),
+    0 1px 3px rgba(10, 8, 6, 0.26);
+}
+
+.basemap-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-primary);
+}
+
+.basemap-button:active:not(:focus-visible) {
+  transform: scale(0.98);
+}
+
 .zoom-controls {
   margin-block-start: var(--spacing-unit);
 }
@@ -1328,6 +1388,10 @@ body.otef-remote-shell {
     margin-block-start: 0;
   }
 
+  #remote-panel-navigation .navigation-group--zoom {
+    order: 3;
+  }
+
   #remote-panel-navigation #navigationSection .dpad-container {
     margin-block: var(--space-xs);
   }
@@ -1344,6 +1408,40 @@ body.otef-remote-shell {
 }
 
 /* Layers tab panel (full-height; #layerSheet) */
+.layers-basemap-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding-block: var(--space-sm);
+  padding-inline: var(--spacing-unit);
+  border-block-end: 1px solid var(--color-border);
+  background: rgba(18, 16, 14, 0.22);
+  flex: 0 0 auto;
+}
+
+.layers-basemap-control .basemap-control-title {
+  width: auto;
+  margin-block-end: 0;
+  color: var(--color-ink-muted);
+  font: var(--font-label-sm);
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.layers-basemap-control .basemap-segmented {
+  width: min(12rem, 62%);
+  max-width: 12rem;
+  padding: 2px;
+}
+
+.layers-basemap-control .basemap-button {
+  min-height: 34px;
+  padding-inline: 8px;
+}
+
 .layer-panel#layerSheet,
 .layer-panel {
   position: relative;

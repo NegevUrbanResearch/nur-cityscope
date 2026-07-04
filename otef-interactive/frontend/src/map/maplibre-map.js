@@ -51,6 +51,13 @@ const BASEMAP_STYLES = {
   },
 };
 
+export function setGISBasemap(map, basemap) {
+  const style = BASEMAP_STYLES[basemap];
+  if (!map || !style || typeof map.setStyle !== "function") return false;
+  map.setStyle(style, { diff: false });
+  return true;
+}
+
 export function createGISMap(containerId, options = {}) {
   const {
     center = [34.5, 31.4],

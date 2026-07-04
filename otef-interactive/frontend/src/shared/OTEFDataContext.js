@@ -70,6 +70,7 @@ class OTEFDataContextClass {
     this._viewport = null;
     this._layerGroups = null;
     this._animations = null;
+    this._basemap = "osm";
     this._bounds = null;
     this._viewerAngleDeg = 0;
     this._isConnected = false;
@@ -78,6 +79,7 @@ class OTEFDataContextClass {
       viewport: new Set(),
       layerGroups: new Set(),
       animations: new Set(),
+      basemap: new Set(),
       bounds: new Set(),
       connection: new Set(),
       orientation: new Set(),
@@ -240,6 +242,13 @@ class OTEFDataContextClass {
     this._notify("animations", this._animations);
   }
 
+  _setBasemap(basemap) {
+    const next = basemap === "satellite" ? "satellite" : "osm";
+    if (this._basemap === next) return;
+    this._basemap = next;
+    this._notify("basemap", this._basemap);
+  }
+
   _setBounds(bounds) {
     this._bounds = bounds;
     this._notify("bounds", this._bounds);
@@ -341,6 +350,10 @@ class OTEFDataContextClass {
 
   getAnimations() {
     return this._animations;
+  }
+
+  getBasemap() {
+    return this._basemap || "osm";
   }
 
   getBounds() {
@@ -463,6 +476,15 @@ class OTEFDataContextClass {
     return actions.setLayerAnimations(this, fullLayerIds, enabled);
   }
 
+  async setBasemap(basemap) {
+    const actions = OTEFDataContextInternals.actions;
+    if (!actions || typeof actions.setBasemap !== "function") {
+      getLogger().error("[OTEFDataContext] Missing action helpers");
+      return { ok: false, error: "Missing action helpers" };
+    }
+    return actions.setBasemap(this, basemap);
+  }
+
   _computePanViewport(viewport, direction, delta) {
     const actions = OTEFDataContextInternals.actions;
     if (!actions || typeof actions.computePanViewport !== "function") {
@@ -518,6 +540,9 @@ class OTEFDataContextClass {
         break;
       case "animations":
         current = this._animations;
+        break;
+      case "basemap":
+        current = this._basemap;
         break;
       case "bounds":
         current = this._bounds;
