@@ -470,6 +470,27 @@ class OTEFViewportState(models.Model):
             return coord[0], coord[1]
         return 0, 0
 
+    def _has_valid_viewport_corners(self, corners):
+        if not isinstance(corners, dict):
+            return False
+        for key in ("sw", "se", "nw", "ne"):
+            point = corners.get(key)
+            if not isinstance(point, dict):
+                return False
+            x = point.get("x")
+            y = point.get("y")
+            if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+                return False
+        return True
+
+    def _bbox_corners(self, bbox):
+        return {
+            "sw": {"x": bbox[0], "y": bbox[1]},
+            "se": {"x": bbox[2], "y": bbox[1]},
+            "nw": {"x": bbox[0], "y": bbox[3]},
+            "ne": {"x": bbox[2], "y": bbox[3]},
+        }
+
     def apply_pan_command(self, direction, delta=0.15):
         """
         Apply a pan command server-side without requiring GIS map.
@@ -506,13 +527,16 @@ class OTEFViewportState(models.Model):
 
         new_bbox = [min_x + dx, min_y + dy, max_x + dx, max_y + dy]
 
-        # Generate corners in format projector expects: {sw: {x, y}, se: {x, y}, nw: {x, y}, ne: {x, y}}
-        viewport["corners"] = {
-            "sw": {"x": new_bbox[0], "y": new_bbox[1]},
-            "se": {"x": new_bbox[2], "y": new_bbox[1]},
-            "nw": {"x": new_bbox[0], "y": new_bbox[3]},
-            "ne": {"x": new_bbox[2], "y": new_bbox[3]},
-        }
+        if self._has_valid_viewport_corners(viewport.get("corners")):
+            viewport["corners"] = {
+                key: {
+                    "x": viewport["corners"][key]["x"] + dx,
+                    "y": viewport["corners"][key]["y"] + dy,
+                }
+                for key in ("sw", "se", "nw", "ne")
+            }
+        else:
+            viewport["corners"] = self._bbox_corners(new_bbox)
 
         viewport["bbox"] = new_bbox
         return viewport
@@ -557,13 +581,16 @@ class OTEFViewportState(models.Model):
         viewport["bbox"] = new_bbox
         viewport["zoom"] = new_zoom
 
-        # Generate corners in format projector expects: {sw: {x, y}, se: {x, y}, nw: {x, y}, ne: {x, y}}
-        viewport["corners"] = {
-            "sw": {"x": new_bbox[0], "y": new_bbox[1]},
-            "se": {"x": new_bbox[2], "y": new_bbox[1]},
-            "nw": {"x": new_bbox[0], "y": new_bbox[3]},
-            "ne": {"x": new_bbox[2], "y": new_bbox[3]},
-        }
+        if self._has_valid_viewport_corners(viewport.get("corners")):
+            viewport["corners"] = {
+                key: {
+                    "x": center_x + (viewport["corners"][key]["x"] - center_x) * scale_factor,
+                    "y": center_y + (viewport["corners"][key]["y"] - center_y) * scale_factor,
+                }
+                for key in ("sw", "se", "nw", "ne")
+            }
+        else:
+            viewport["corners"] = self._bbox_corners(new_bbox)
 
         return viewport
 

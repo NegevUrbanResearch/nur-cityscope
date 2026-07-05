@@ -4,6 +4,7 @@ let pan;
 let setBasemap;
 let updateViewportFromUI;
 let computePanViewport;
+let computeZoomViewport;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -19,6 +20,7 @@ beforeEach(async () => {
   setBasemap = mod.setBasemap;
   updateViewportFromUI = mod.updateViewportFromUI;
   computePanViewport = mod.computePanViewport;
+  computeZoomViewport = mod.computeZoomViewport;
 });
 
 afterEach(() => {
@@ -271,6 +273,29 @@ describe('OTEFDataContext actions', () => {
     stringifySpy.mockRestore();
   });
 
+  test('computePanViewport translates skewed viewport corners', () => {
+    const viewport = {
+      bbox: [100, 100, 700, 700],
+      zoom: 14,
+      corners: {
+        sw: { x: 120, y: 120 },
+        se: { x: 640, y: 90 },
+        nw: { x: 140, y: 720 },
+        ne: { x: 710, y: 690 },
+      },
+    };
+
+    const result = computePanViewport(viewport, 'east', 0.1);
+
+    expect(result.bbox).toEqual([160, 100, 760, 700]);
+    expect(result.corners).toEqual({
+      sw: { x: 180, y: 120 },
+      se: { x: 700, y: 90 },
+      nw: { x: 200, y: 720 },
+      ne: { x: 770, y: 690 },
+    });
+  });
+
   test('zoom applies viewport from executeCommand JSON on success', async () => {
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(42_000);
     const serverViewport = {
@@ -417,6 +442,29 @@ describe('OTEFDataContext actions', () => {
 
     nowSpy.mockRestore();
     stringifySpy.mockRestore();
+  });
+
+  test('computeZoomViewport scales skewed viewport corners around bbox center', () => {
+    const viewport = {
+      bbox: [100, 100, 700, 700],
+      zoom: 14,
+      corners: {
+        sw: { x: 120, y: 120 },
+        se: { x: 640, y: 90 },
+        nw: { x: 140, y: 720 },
+        ne: { x: 710, y: 690 },
+      },
+    };
+
+    const result = computeZoomViewport(viewport, 15);
+
+    expect(result.bbox).toEqual([250, 250, 550, 550]);
+    expect(result.corners).toEqual({
+      sw: { x: 260, y: 260 },
+      se: { x: 520, y: 245 },
+      nw: { x: 270, y: 560 },
+      ne: { x: 555, y: 545 },
+    });
   });
 
   test('pan applies viewport from executeCommand JSON on success', async () => {

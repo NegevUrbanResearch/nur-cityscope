@@ -1,0 +1,288 @@
+{
+  "entries": [
+    {
+      "id": "yeshuv-0067",
+      "type": "yeshuv",
+      "citycode": "0067",
+      "name": { "en": "Or HaNer" },
+      "aliases": { "en": ["Or Haner"] }
+    },
+    {
+      "id": "yeshuv-0069",
+      "type": "yeshuv",
+      "citycode": "0069",
+      "name": { "en": "Nir Oz" }
+    },
+    {
+      "id": "yeshuv-0318",
+      "type": "yeshuv",
+      "citycode": "0318",
+      "name": { "en": "Ami'oz" },
+      "aliases": { "en": ["Amioz"] }
+    },
+    {
+      "id": "yeshuv-0338",
+      "type": "yeshuv",
+      "citycode": "0338",
+      "name": { "en": "Ivim" }
+    },
+    {
+      "id": "yeshuv-0348",
+      "type": "yeshuv",
+      "citycode": "0348",
+      "name": { "en": "Nir Am" }
+    },
+    {
+      "id": "yeshuv-0358",
+      "type": "yeshuv",
+      "citycode": "0358",
+      "name": { "en": "Yad Mordechai" }
+    },
+    {
+      "id": "yeshuv-0399",
+      "type": "yeshuv",
+      "citycode": "0399",
+      "name": { "en": "Be'eri" },
+      "aliases": { "en": ["Beeri"] }
+    },
+    {
+      "id": "yeshuv-0402",
+      "type": "yeshuv",
+      "citycode": "0402",
+      "name": { "en": "Nir Yitzhak" },
+      "aliases": { "en": ["Nir Itzhak"] }
+    },
+    {
+      "id": "yeshuv-0419",
+      "type": "yeshuv",
+      "citycode": "0419",
+      "name": { "en": "Sa'ad" },
+      "aliases": { "en": ["Saad"] }
+    },
+    {
+      "id": "yeshuv-0424",
+      "type": "yeshuv",
+      "citycode": "0424",
+      "name": { "en": "Gevim" }
+    },
+    {
+      "id": "yeshuv-0584",
+      "type": "yeshuv",
+      "citycode": "0584",
+      "name": { "en": "Zikim" }
+    },
+    {
+      "id": "yeshuv-0602",
+      "type": "yeshuv",
+      "citycode": "0602",
+      "name": { "en": "Nirim" }
+    },
+    {
+      "id": "yeshuv-0668",
+      "type": "yeshuv",
+      "citycode": "0668",
+      "name": { "en": "Mefalsim" }
+    },
+    {
+      "id": "yeshuv-0676",
+      "type": "yeshuv",
+      "citycode": "0676",
+      "name": { "en": "Ein HaShlosha" },
+      "aliases": { "en": ["Ein Hashlosha"] }
+    },
+    {
+      "id": "yeshuv-0695",
+      "type": "yeshuv",
+      "citycode": "0695",
+      "name": { "en": "Magen" }
+    },
+    {
+      "id": "yeshuv-0713",
+      "type": "yeshuv",
+      "citycode": "0713",
+      "name": { "en": "Re'im" },
+      "aliases": { "en": ["Reim"] }
+    },
+    {
+      "id": "yeshuv-0714",
+      "type": "yeshuv",
+      "citycode": "0714",
+      "name": { "en": "Erez" }
+    },
+    {
+      "id": "yeshuv-0761",
+      "type": "yeshuv",
+      "citycode": "0761",
+      "name": { "en": "Shuva" }
+    },
+    {
+      "id": "yeshuv-0768",
+      "type": "yeshuv",
+      "citycode": "0768",
+      "name": { "en": "Karmia" }
+    },
+    {
+      "id": "yeshuv-0811",
+      "type": "yeshuv",
+      "citycode": "0811",
+      "name": { "en": "Yakhini" }
+    },
+    {
+      "id": "yeshuv-0829",
+      "type": "yeshuv",
+      "citycode": "0829",
+      "name": { "en": "Mivtachim" }
+    },
+    {
+      "id": "yeshuv-0840",
+      "type": "yeshuv",
+      "citycode": "0840",
+      "name": { "en": "Kissufim" }
+    },
+    {
+      "id": "yeshuv-0844",
+      "type": "yeshuv",
+      "citycode": "0844",
+      "name": { "en": "Nahal Oz" }
+    },
+    {
+      "id": "yeshuv-0845",
+      "type": "yeshuv",
+      "citycode": "0845",
+      "name": { "en": "Kfar Aza" },
+      "aliases": { "en": ["Kfar Azza"] }
+    },
+    {
+      "id": "yeshuv-0916",
+      "type": "yeshuv",
+      "citycode": "0916",
+      "name": { "en": "Yesha" }
+    },
+    {
+      "id": "yeshuv-1031",
+      "type": "yeshuv",
+      "citycode": "1031",
+      "name": { "en": "Sderot" }
+    },
+    {
+      "id": "yeshuv-1065",
+      "type": "yeshuv",
+      "citycode": "1065",
+      "name": { "en": "Zimrat" }
+    },
+    {
+      "id": "yeshuv-1085",
+      "type": "yeshuv",
+      "citycode": "1085",
+      "name": { "en": "Kerem Shalom" },
+      "aliases": { "en": ["Karem Shalom"] },
+      "priority": 40
+    },
+    {
+      "id": "yeshuv-1146",
+      "type": "yeshuv",
+      "citycode": "1146",
+      "name": { "en": "Alumim" }
+    },
+    {
+      "id": "yeshuv-1223",
+      "type": "yeshuv",
+      "citycode": "1223",
+      "name": { "en": "Sdei Avraham" },
+      "aliases": { "en": ["Sde Avraham"] }
+    },
+    {
+      "id": "yeshuv-1227",
+      "type": "yeshuv",
+      "citycode": "1227",
+      "name": { "en": "Yated" }
+    },
+    {
+      "id": "yeshuv-1231",
+      "type": "yeshuv",
+      "citycode": "1231",
+      "name": { "en": "Pri Gan" }
+    },
+    {
+      "id": "yeshuv-1232",
+      "type": "yeshuv",
+      "citycode": "1232",
+      "name": { "en": "Yevul" }
+    },
+    {
+      "id": "yeshuv-1238",
+      "type": "yeshuv",
+      "citycode": "1238",
+      "name": { "en": "Sufa" }
+    },
+    {
+      "id": "yeshuv-1239",
+      "type": "yeshuv",
+      "citycode": "1239",
+      "name": { "en": "Holit" }
+    },
+    {
+      "id": "yeshuv-1241",
+      "type": "yeshuv",
+      "citycode": "1241",
+      "name": { "en": "Dekel" }
+    },
+    {
+      "id": "yeshuv-1242",
+      "type": "yeshuv",
+      "citycode": "1242",
+      "name": { "en": "Netiv HaAsara" },
+      "aliases": { "en": ["Netiv Haasara"] }
+    },
+    {
+      "id": "yeshuv-1311",
+      "type": "yeshuv",
+      "citycode": "1311",
+      "name": { "en": "Avshalom" },
+      "aliases": { "en": ["Av Shalom"] },
+      "priority": 30
+    },
+    {
+      "id": "yeshuv-1364",
+      "type": "yeshuv",
+      "citycode": "1364",
+      "name": { "en": "Shlomit" }
+    },
+    {
+      "id": "yeshuv-240P",
+      "type": "yeshuv",
+      "citycode": "240P",
+      "name": { "en": "Eshkol Regional Council" },
+      "aliases": { "en": ["Eshkol Council"] }
+    },
+    {
+      "id": "yeshuv-724P",
+      "type": "yeshuv",
+      "citycode": "724P",
+      "name": { "en": "Sapir College" },
+      "aliases": { "en": ["Sapir"] }
+    },
+    {
+      "id": "custom-reim-parking",
+      "type": "custom",
+      "name": {
+        "he": "\u05d7\u05e0\u05d9\u05d5\u05df \u05e8\u05e2\u05d9\u05dd",
+        "en": "Re'im Parking"
+      },
+      "aliases": {
+        "he": ["\u05e8\u05e2\u05d9\u05dd \u05d7\u05e0\u05d9\u05d5\u05df"],
+        "en": ["Reim parking", "Re'im festival parking"]
+      },
+      "priority": 80,
+      "center": {
+        "wgs84": {
+          "lng": 34.4713,
+          "lat": 31.3972
+        }
+      },
+      "target": {
+        "radiusMeters": 1200
+      }
+    }
+  ]
+}

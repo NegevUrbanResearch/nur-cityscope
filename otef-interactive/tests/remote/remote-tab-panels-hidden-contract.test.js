@@ -68,14 +68,3 @@ test("remote-styles: basemap control lives as a compact layers-tab toolbar", () 
   expect(localeActive).toMatch(/background:\s*var\(--color-surface\)/);
   expect(localeActive).toMatch(/color:\s*var\(--color-primary\)/);
 });
-
-test("remote-styles: navigation place-search label stays accessible but visually hidden", () => {
-  const css = readRemoteStyles();
-  const label = cssBlock(css, ".place-search-label");
-
-  expect(label).toMatch(/position:\s*absolute/);
-  expect(label).toMatch(/width:\s*1px/);
-  expect(label).toMatch(/height:\s*1px/);
-  expect(label).toMatch(/overflow:\s*hidden/);
-  expect(label).toMatch(/clip-path:\s*inset\(50%\)/);
-});

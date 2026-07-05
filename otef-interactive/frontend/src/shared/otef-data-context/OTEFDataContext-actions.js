@@ -731,6 +731,29 @@ function understandDirection(direction, delta, width, height) {
   return { dx, dy };
 }
 
+function isFiniteCornerPoint(point) {
+  return point && Number.isFinite(point.x) && Number.isFinite(point.y);
+}
+
+function hasValidViewportCorners(corners) {
+  return (
+    corners &&
+    isFiniteCornerPoint(corners.sw) &&
+    isFiniteCornerPoint(corners.se) &&
+    isFiniteCornerPoint(corners.nw) &&
+    isFiniteCornerPoint(corners.ne)
+  );
+}
+
+function bboxCornersFromBbox(bbox) {
+  return {
+    sw: { x: bbox[0], y: bbox[1] },
+    se: { x: bbox[2], y: bbox[1] },
+    nw: { x: bbox[0], y: bbox[3] },
+    ne: { x: bbox[2], y: bbox[3] },
+  };
+}
+
 function computePanViewport(viewport, direction, delta) {
   const bbox = viewport && viewport.bbox;
   if (!bbox || bbox.length !== 4) return viewport;
@@ -744,12 +767,14 @@ function computePanViewport(viewport, direction, delta) {
   return {
     ...viewport,
     bbox: newBbox,
-    corners: {
-      sw: { x: newBbox[0], y: newBbox[1] },
-      se: { x: newBbox[2], y: newBbox[1] },
-      nw: { x: newBbox[0], y: newBbox[3] },
-      ne: { x: newBbox[2], y: newBbox[3] },
-    },
+    corners: hasValidViewportCorners(viewport.corners)
+      ? {
+          sw: { x: viewport.corners.sw.x + dx, y: viewport.corners.sw.y + dy },
+          se: { x: viewport.corners.se.x + dx, y: viewport.corners.se.y + dy },
+          nw: { x: viewport.corners.nw.x + dx, y: viewport.corners.nw.y + dy },
+          ne: { x: viewport.corners.ne.x + dx, y: viewport.corners.ne.y + dy },
+        }
+      : bboxCornersFromBbox(newBbox),
   };
 }
 
@@ -781,12 +806,26 @@ function computeZoomViewport(viewport, newZoom) {
     ...viewport,
     bbox: newBbox,
     zoom: newZoom,
-    corners: {
-      sw: { x: newBbox[0], y: newBbox[1] },
-      se: { x: newBbox[2], y: newBbox[1] },
-      nw: { x: newBbox[0], y: newBbox[3] },
-      ne: { x: newBbox[2], y: newBbox[3] },
-    },
+    corners: hasValidViewportCorners(viewport.corners)
+      ? {
+          sw: {
+            x: centerX + (viewport.corners.sw.x - centerX) * scaleFactor,
+            y: centerY + (viewport.corners.sw.y - centerY) * scaleFactor,
+          },
+          se: {
+            x: centerX + (viewport.corners.se.x - centerX) * scaleFactor,
+            y: centerY + (viewport.corners.se.y - centerY) * scaleFactor,
+          },
+          nw: {
+            x: centerX + (viewport.corners.nw.x - centerX) * scaleFactor,
+            y: centerY + (viewport.corners.nw.y - centerY) * scaleFactor,
+          },
+          ne: {
+            x: centerX + (viewport.corners.ne.x - centerX) * scaleFactor,
+            y: centerY + (viewport.corners.ne.y - centerY) * scaleFactor,
+          },
+        }
+      : bboxCornersFromBbox(newBbox),
   };
 }
 

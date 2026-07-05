@@ -1,0 +1,975 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Yeshuv Outline Mapper</title>
+  <link href="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.css" rel="stylesheet">
+  <style>
+    :root {
+      --canvas: #12100e;
+      --surface: #1c1917;
+      --raised: #262320;
+      --raised-2: #302b27;
+      --ink: #f5f0ea;
+      --muted: #bfb6ab;
+      --subtle: #8c847a;
+      --border: #3d3834;
+      --border-strong: #4a4540;
+      --accent: #c17f4a;
+      --accent-hover: #d4925e;
+      --good: #7a9b7a;
+      --outline: #bfbf99;
+      --outline-halo: #fdfdfd;
+      --outline-active: #f2d18c;
+      --shadow: rgba(10, 8, 6, 0.42);
+      font-family: system-ui, "Segoe UI", "Noto Sans Hebrew", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--canvas);
+      color: var(--ink);
+      overflow: hidden;
+    }
+
+    button, input, textarea { font: inherit; }
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(290px, 360px) 1fr minmax(300px, 390px);
+      height: 100vh;
+      min-height: 0;
+    }
+
+    .panel {
+      min-height: 0;
+      background: var(--surface);
+      border-inline-end: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel:last-child {
+      border-inline-end: 0;
+      border-inline-start: 1px solid var(--border);
+    }
+
+    .header {
+      padding: 18px 18px 14px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #1f1b18 0%, var(--surface) 100%);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .hint {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .metric {
+      padding: 9px 10px;
+      background: var(--raised);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 5px;
+      color: var(--subtle);
+      font-size: 11px;
+    }
+
+    .search-wrap {
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .search {
+      width: 100%;
+      min-height: 42px;
+      padding: 10px 12px;
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      background: #161310;
+      color: var(--ink);
+      outline: none;
+      direction: auto;
+    }
+
+    .search:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(193, 127, 74, 0.2);
+    }
+
+    .name-list {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 10px;
+    }
+
+    .name-card {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      margin: 0 0 8px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--raised);
+      color: var(--ink);
+      text-align: start;
+      cursor: grab;
+    }
+
+    .name-card:hover {
+      border-color: var(--border-strong);
+      background: var(--raised-2);
+    }
+
+    .name-card.is-selected {
+      border-color: var(--accent);
+      box-shadow: inset 0 0 0 1px rgba(193, 127, 74, 0.45);
+    }
+
+    .name-card.is-assigned {
+      color: var(--muted);
+      background: #1a1714;
+    }
+
+    .name-card.is-assigned .status-dot { background: var(--good); }
+
+    .town {
+      font-size: 15px;
+      font-weight: 650;
+      line-height: 1.25;
+    }
+
+    .code {
+      margin-top: 3px;
+      color: var(--subtle);
+      font-size: 12px;
+      direction: ltr;
+      text-align: start;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--border-strong);
+    }
+
+    .map-area {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      background: #0f0d0b;
+      overflow: hidden;
+    }
+
+    #map {
+      position: absolute;
+      inset: 0;
+    }
+
+    .maplibregl-ctrl-group {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 26px var(--shadow);
+    }
+
+    .maplibregl-ctrl-group button {
+      filter: invert(1) sepia(0.2);
+    }
+
+    .map-toolbar {
+      position: absolute;
+      z-index: 4;
+      inset-block-start: 14px;
+      inset-inline: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    .toolbar-group,
+    .map-status {
+      background: rgba(28, 25, 23, 0.88);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 10px 26px var(--shadow);
+      backdrop-filter: blur(8px);
+      pointer-events: auto;
+    }
+
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+    }
+
+    .map-status {
+      max-width: min(560px, 50vw);
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .toolbar-btn,
+    .primary-btn,
+    .secondary-btn {
+      min-height: 36px;
+      padding: 8px 12px;
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      background: var(--raised);
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    .toolbar-btn:hover,
+    .secondary-btn:hover { background: var(--raised-2); }
+
+    .primary-btn {
+      border-color: transparent;
+      background: var(--accent);
+      color: #141210;
+      font-weight: 700;
+    }
+
+    .primary-btn:hover { background: var(--accent-hover); }
+
+    .drop-help {
+      position: absolute;
+      inset-block-end: 14px;
+      inset-inline: 14px;
+      z-index: 3;
+      display: flex;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    .drop-help span {
+      max-width: 720px;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(28, 25, 23, 0.86);
+      color: var(--muted);
+      font-size: 13px;
+      box-shadow: 0 10px 26px var(--shadow);
+    }
+
+    .detail {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 14px 18px 18px;
+    }
+
+    .section {
+      margin-bottom: 14px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--raised);
+    }
+
+    .section h2 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      line-height: 1.2;
+    }
+
+    .selected-readout {
+      display: grid;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .selected-readout strong {
+      color: var(--ink);
+      font-size: 18px;
+    }
+
+    .assign-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .assignment-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .assignment-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #1a1714;
+      font-size: 13px;
+    }
+
+    .assignment-row button {
+      min-height: 30px;
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .assignment-row button:hover {
+      color: var(--ink);
+      background: var(--raised);
+    }
+
+    .export-box {
+      width: 100%;
+      min-height: 210px;
+      resize: vertical;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #13110f;
+      color: var(--muted);
+      direction: ltr;
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre;
+    }
+
+    .load-state {
+      position: absolute;
+      z-index: 10;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: var(--canvas);
+      color: var(--muted);
+    }
+
+    .load-state[hidden] { display: none; }
+
+    @media (max-width: 980px) {
+      body { overflow: auto; }
+      .shell {
+        grid-template-columns: 1fr;
+        height: auto;
+        min-height: 100vh;
+      }
+      .panel,
+      .panel:last-child {
+        border: 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .map-area {
+        height: 65vh;
+        min-height: 520px;
+      }
+      .map-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .map-status { max-width: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="panel">
+      <header class="header">
+        <h1>מיפוי שמות ליישובים</h1>
+        <p class="hint">בחרו שם מהרשימה ואז לחצו על הפוליגון, או גררו שם ישירות אל המפה.</p>
+      </header>
+      <div class="metrics" aria-live="polite">
+        <div class="metric"><strong id="assignedCount">0</strong><span>משויכים</span></div>
+        <div class="metric"><strong id="remainingCount">0</strong><span>נותרו</span></div>
+        <div class="metric"><strong id="polygonCount">0</strong><span>פוליגונים</span></div>
+      </div>
+      <div class="search-wrap">
+        <input id="nameSearch" class="search" type="search" placeholder="חיפוש לפי שם או citycode" autocomplete="off">
+      </div>
+      <div id="nameList" class="name-list" aria-label="Yeshuv names"></div>
+    </aside>
+
+    <main class="map-area">
+      <div id="map"></div>
+      <div class="map-toolbar">
+        <div class="toolbar-group">
+          <button id="fitView" class="toolbar-btn" type="button">התאם תצוגה</button>
+          <button id="toggleLabels" class="toolbar-btn" type="button">נקודות שמות</button>
+        </div>
+        <div id="mapStatus" class="map-status">טוען שכבות...</div>
+      </div>
+      <div class="drop-help"><span>טיפ: קליק על שם ואז קליק על פוליגון. אפשר גם לגרור שם אל פוליגון.</span></div>
+      <div id="loadState" class="load-state">Loading mapper data...</div>
+    </main>
+
+    <aside class="panel">
+      <header class="header">
+        <h1>ייצוא מיפוי</h1>
+        <p class="hint">הכלי מייצא JSON בלבד. הוא לא משנה את קבצי ה-GeoJSON.</p>
+      </header>
+      <div class="detail">
+        <section class="section">
+          <h2>בחירה נוכחית</h2>
+          <div id="selectedReadout" class="selected-readout">בחרו שם ופוליגון כדי ליצור שיוך.</div>
+          <div class="assign-actions">
+            <button id="assignSelected" class="primary-btn" type="button">שייך</button>
+            <button id="clearSelection" class="secondary-btn" type="button">נקה בחירה</button>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>שיוכים</h2>
+          <div id="assignmentList" class="assignment-list"></div>
+        </section>
+
+        <section class="section">
+          <h2>JSON</h2>
+          <div class="assign-actions">
+            <button id="copyExport" class="primary-btn" type="button">העתק JSON</button>
+            <button id="downloadExport" class="secondary-btn" type="button">הורד קובץ</button>
+          </div>
+          <textarea id="exportBox" class="export-box" spellcheck="false"></textarea>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.js"></script>
+  <script>
+    const DATA_BASE = "/otef-interactive/public/processed/layers/projector_base";
+    const OUTLINE_URL = `${DATA_BASE}/ישובים.geojson`;
+    const LABEL_URL = `${DATA_BASE}/שמות_יישובים.geojson`;
+    const OUTLINE_SOURCE = "yeshuv-outlines";
+    const LABEL_SOURCE = "yeshuv-label-points";
+
+    const state = {
+      map: null,
+      labels: [],
+      outlines: [],
+      outlineGeojson: null,
+      labelGeojson: null,
+      bounds: null,
+      assignments: new Map(),
+      selectedCitycode: null,
+      selectedObjectId: null,
+      showLabelPoints: true,
+      dragCitycode: null,
+    };
+
+    const els = {
+      assignedCount: document.getElementById("assignedCount"),
+      remainingCount: document.getElementById("remainingCount"),
+      polygonCount: document.getElementById("polygonCount"),
+      nameSearch: document.getElementById("nameSearch"),
+      nameList: document.getElementById("nameList"),
+      mapStatus: document.getElementById("mapStatus"),
+      loadState: document.getElementById("loadState"),
+      selectedReadout: document.getElementById("selectedReadout"),
+      assignmentList: document.getElementById("assignmentList"),
+      exportBox: document.getElementById("exportBox"),
+      assignSelected: document.getElementById("assignSelected"),
+      clearSelection: document.getElementById("clearSelection"),
+      copyExport: document.getElementById("copyExport"),
+      downloadExport: document.getElementById("downloadExport"),
+      fitView: document.getElementById("fitView"),
+      toggleLabels: document.getElementById("toggleLabels"),
+      map: document.getElementById("map"),
+    };
+
+    function coordinatesOf(geometry) {
+      const out = [];
+      function visit(value) {
+        if (!Array.isArray(value)) return;
+        if (typeof value[0] === "number") {
+          out.push(value);
+          return;
+        }
+        value.forEach(visit);
+      }
+      visit(geometry?.coordinates);
+      return out;
+    }
+
+    function bboxOf(features) {
+      const bbox = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const feature of features) {
+        for (const [lng, lat] of coordinatesOf(feature.geometry)) {
+          bbox[0] = Math.min(bbox[0], lng);
+          bbox[1] = Math.min(bbox[1], lat);
+          bbox[2] = Math.max(bbox[2], lng);
+          bbox[3] = Math.max(bbox[3], lat);
+        }
+      }
+      return bbox;
+    }
+
+    function centerOf(feature) {
+      const bbox = bboxOf([feature]);
+      return { lng: (bbox[0] + bbox[2]) / 2, lat: (bbox[1] + bbox[3]) / 2 };
+    }
+
+    function labelByCitycode(citycode) {
+      return state.labels.find((label) => label.citycode === citycode) || null;
+    }
+
+    function outlineByObjectId(objectId) {
+      return state.outlines.find((outline) => outline.objectId === Number(objectId)) || null;
+    }
+
+    function assignedCityForObject(objectId) {
+      for (const [citycode, assignment] of state.assignments) {
+        if (assignment.outlineObjectId === Number(objectId)) return citycode;
+      }
+      return null;
+    }
+
+    function setMapFilters() {
+      if (!state.map || !state.map.getLayer("yeshuv-selected-line")) return;
+      const selected = state.selectedObjectId == null ? -1 : Number(state.selectedObjectId);
+      const assignedIds = [...state.assignments.values()].map((item) => Number(item.outlineObjectId));
+      state.map.setFilter("yeshuv-selected-fill", ["==", ["get", "OBJECTID"], selected]);
+      state.map.setFilter("yeshuv-selected-line", ["==", ["get", "OBJECTID"], selected]);
+      state.map.setFilter("yeshuv-assigned-fill", ["in", ["get", "OBJECTID"], ["literal", assignedIds]]);
+      state.map.setFilter("yeshuv-assigned-line", ["in", ["get", "OBJECTID"], ["literal", assignedIds]]);
+      state.map.setLayoutProperty("label-points", "visibility", state.showLabelPoints ? "visible" : "none");
+      state.map.getSource("assignment-labels")?.setData(makeAssignmentLabelGeojson());
+    }
+
+    function assign(citycode = state.selectedCitycode, objectId = state.selectedObjectId) {
+      if (!citycode || objectId == null) return;
+      const label = labelByCitycode(citycode);
+      const outline = outlineByObjectId(objectId);
+      if (!label || !outline) return;
+
+      state.assignments.set(citycode, {
+        citycode,
+        cityname: label.cityname,
+        outlineObjectId: Number(objectId),
+        outlineCenter: outline.center,
+      });
+      state.selectedCitycode = citycode;
+      state.selectedObjectId = Number(objectId);
+      renderAll();
+    }
+
+    function unassign(citycode) {
+      const removed = state.assignments.get(citycode);
+      state.assignments.delete(citycode);
+      if (state.selectedCitycode === citycode) state.selectedCitycode = null;
+      if (removed && state.selectedObjectId === removed.outlineObjectId) state.selectedObjectId = null;
+      renderAll();
+    }
+
+    function renderNames() {
+      const query = els.nameSearch.value.trim().toLocaleLowerCase("he");
+      els.nameList.replaceChildren();
+
+      const filtered = state.labels.filter((label) => {
+        if (!query) return true;
+        return (
+          label.cityname.toLocaleLowerCase("he").includes(query) ||
+          label.citycode.toLocaleLowerCase("he").includes(query)
+        );
+      });
+
+      for (const label of filtered) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "name-card";
+        button.draggable = true;
+        if (state.selectedCitycode === label.citycode) button.classList.add("is-selected");
+        if (state.assignments.has(label.citycode)) button.classList.add("is-assigned");
+        button.innerHTML = `
+          <span>
+            <span class="town">${label.cityname}</span>
+            <span class="code">${label.citycode}</span>
+          </span>
+          <span class="status-dot" aria-hidden="true"></span>
+        `;
+        button.addEventListener("click", () => {
+          state.selectedCitycode = label.citycode;
+          renderAll();
+        });
+        button.addEventListener("dragstart", (event) => {
+          state.dragCitycode = label.citycode;
+          event.dataTransfer.setData("text/plain", label.citycode);
+          event.dataTransfer.effectAllowed = "copy";
+        });
+        button.addEventListener("dragend", () => { state.dragCitycode = null; });
+        els.nameList.appendChild(button);
+      }
+    }
+
+    function makeAssignmentLabelGeojson() {
+      return {
+        type: "FeatureCollection",
+        features: [...state.assignments.values()].map((assignment) => ({
+          type: "Feature",
+          properties: {
+            citycode: assignment.citycode,
+            cityname: assignment.cityname,
+          },
+          geometry: {
+            type: "Point",
+            coordinates: [assignment.outlineCenter.lng, assignment.outlineCenter.lat],
+          },
+        })),
+      };
+    }
+
+    function exportPayload() {
+      return {
+        schemaVersion: 1,
+        labelLayer: "שמות_יישובים.geojson",
+        outlineLayer: "ישובים.geojson",
+        generatedBy: "scripts/place-navigation/tools/yeshuv-outline-mapper.html",
+        matches: [...state.assignments.values()]
+          .sort((a, b) => a.citycode.localeCompare(b.citycode, "he"))
+          .map((assignment) => ({
+            citycode: assignment.citycode,
+            cityname: assignment.cityname,
+            outlineObjectId: assignment.outlineObjectId,
+          })),
+      };
+    }
+
+    function renderDetails() {
+      const label = state.selectedCitycode ? labelByCitycode(state.selectedCitycode) : null;
+      const outline = state.selectedObjectId != null ? outlineByObjectId(state.selectedObjectId) : null;
+      els.selectedReadout.innerHTML = `
+        <span>שם: <strong>${label ? label.cityname : "לא נבחר"}</strong></span>
+        <span>citycode: ${label ? label.citycode : "-"}</span>
+        <span>outline OBJECTID: ${outline ? outline.objectId : "-"}</span>
+      `;
+
+      els.assignmentList.replaceChildren();
+      const assignments = [...state.assignments.values()].sort((a, b) =>
+        a.cityname.localeCompare(b.cityname, "he"),
+      );
+
+      if (assignments.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "hint";
+        empty.textContent = "עדיין אין שיוכים.";
+        els.assignmentList.appendChild(empty);
+      }
+
+      for (const assignment of assignments) {
+        const row = document.createElement("div");
+        row.className = "assignment-row";
+        row.innerHTML = `
+          <span>${assignment.cityname} <span class="code">${assignment.citycode} -> ${assignment.outlineObjectId}</span></span>
+          <button type="button">הסר</button>
+        `;
+        row.querySelector("button").addEventListener("click", () => unassign(assignment.citycode));
+        row.addEventListener("click", (event) => {
+          if (event.target.tagName === "BUTTON") return;
+          state.selectedCitycode = assignment.citycode;
+          state.selectedObjectId = assignment.outlineObjectId;
+          state.map.flyTo({ center: [assignment.outlineCenter.lng, assignment.outlineCenter.lat], zoom: 14.5 });
+          renderAll();
+        });
+        els.assignmentList.appendChild(row);
+      }
+
+      els.exportBox.value = JSON.stringify(exportPayload(), null, 2);
+      const assigned = state.assignments.size;
+      els.assignedCount.textContent = String(assigned);
+      els.remainingCount.textContent = String(Math.max(0, state.labels.length - assigned));
+      els.polygonCount.textContent = String(state.outlines.length);
+      els.mapStatus.textContent =
+        assigned === state.labels.length
+          ? "כל השמות שויכו. אפשר להעתיק או להוריד את ה-JSON."
+          : `${assigned}/${state.labels.length} שמות שויכו`;
+    }
+
+    function renderAll() {
+      renderNames();
+      setMapFilters();
+      renderDetails();
+    }
+
+    function fitOutlines() {
+      if (!state.bounds) return;
+      state.map.fitBounds(
+        [[state.bounds[0], state.bounds[1]], [state.bounds[2], state.bounds[3]]],
+        { padding: 56, duration: 650 },
+      );
+    }
+
+    function outlineObjectIdFromPoint(point) {
+      const features = state.map.queryRenderedFeatures(point, {
+        layers: ["yeshuv-selected-fill", "yeshuv-assigned-fill", "yeshuv-fill"],
+      });
+      const feature = features.find((item) => item.properties?.OBJECTID != null);
+      return feature ? Number(feature.properties.OBJECTID) : null;
+    }
+
+    function setupMapInteractions() {
+      state.map.on("mousemove", "yeshuv-fill", () => {
+        state.map.getCanvas().style.cursor = "pointer";
+      });
+      state.map.on("mouseleave", "yeshuv-fill", () => {
+        state.map.getCanvas().style.cursor = "";
+      });
+      state.map.on("click", (event) => {
+        const objectId = outlineObjectIdFromPoint(event.point);
+        if (objectId == null) return;
+        state.selectedObjectId = objectId;
+        if (state.selectedCitycode) assign(state.selectedCitycode, objectId);
+        else renderAll();
+      });
+      els.map.addEventListener("dragover", (event) => {
+        event.preventDefault();
+      });
+      els.map.addEventListener("drop", (event) => {
+        event.preventDefault();
+        const citycode = event.dataTransfer.getData("text/plain") || state.dragCitycode;
+        const rect = els.map.getBoundingClientRect();
+        const point = [event.clientX - rect.left, event.clientY - rect.top];
+        const objectId = outlineObjectIdFromPoint(point);
+        if (!citycode || objectId == null) return;
+        state.selectedCitycode = citycode;
+        state.selectedObjectId = objectId;
+        assign(citycode, objectId);
+      });
+    }
+
+    function setupActions() {
+      els.nameSearch.addEventListener("input", renderNames);
+      els.assignSelected.addEventListener("click", () => assign());
+      els.clearSelection.addEventListener("click", () => {
+        state.selectedCitycode = null;
+        state.selectedObjectId = null;
+        renderAll();
+      });
+      els.fitView.addEventListener("click", fitOutlines);
+      els.toggleLabels.addEventListener("click", () => {
+        state.showLabelPoints = !state.showLabelPoints;
+        renderAll();
+      });
+      els.copyExport.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(els.exportBox.value);
+        els.copyExport.textContent = "הועתק";
+        setTimeout(() => { els.copyExport.textContent = "העתק JSON"; }, 1100);
+      });
+      els.downloadExport.addEventListener("click", () => {
+        const blob = new Blob([els.exportBox.value + "\n"], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "yeshuv-outline-map.json";
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+    }
+
+    async function loadGeojson(url) {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Failed loading ${url}: ${response.status}`);
+      return response.json();
+    }
+
+    async function init() {
+      setupActions();
+      const [outlineGeojson, labelGeojson] = await Promise.all([
+        loadGeojson(OUTLINE_URL),
+        loadGeojson(LABEL_URL),
+      ]);
+
+      state.outlineGeojson = outlineGeojson;
+      state.labelGeojson = labelGeojson;
+      state.bounds = bboxOf(outlineGeojson.features);
+      state.labels = labelGeojson.features
+        .map((feature) => ({
+          cityname: feature.properties.cityname,
+          citycode: feature.properties.citycode,
+          lng: feature.geometry.coordinates[0],
+          lat: feature.geometry.coordinates[1],
+        }))
+        .sort((a, b) => a.cityname.localeCompare(b.cityname, "he"));
+      state.outlines = outlineGeojson.features.map((feature) => ({
+        feature,
+        objectId: Number(feature.properties.OBJECTID),
+        center: centerOf(feature),
+      }));
+
+      state.map = new maplibregl.Map({
+        container: "map",
+        center: [(state.bounds[0] + state.bounds[2]) / 2, (state.bounds[1] + state.bounds[3]) / 2],
+        zoom: 10,
+        attributionControl: false,
+        style: {
+          version: 8,
+          glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+          sources: {
+            "carto-dark": {
+              type: "raster",
+              tiles: [
+                "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+                "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+                "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+              ],
+              tileSize: 256,
+              attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+            },
+          },
+          layers: [
+            { id: "basemap", type: "raster", source: "carto-dark" },
+          ],
+        },
+      });
+
+      state.map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "bottom-left");
+      state.map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+
+      state.map.on("load", () => {
+        state.map.addSource(OUTLINE_SOURCE, { type: "geojson", data: outlineGeojson });
+        state.map.addSource(LABEL_SOURCE, { type: "geojson", data: labelGeojson });
+        state.map.addSource("assignment-labels", { type: "geojson", data: makeAssignmentLabelGeojson() });
+
+        state.map.addLayer({
+          id: "yeshuv-fill",
+          type: "fill",
+          source: OUTLINE_SOURCE,
+          paint: { "fill-color": "#bfbf99", "fill-opacity": 0.04 },
+        });
+        state.map.addLayer({
+          id: "yeshuv-halo-line",
+          type: "line",
+          source: OUTLINE_SOURCE,
+          paint: {
+            "line-color": "#fdfdfd",
+            "line-opacity": 0.9,
+            "line-width": 1.5,
+          },
+        });
+        state.map.addLayer({
+          id: "yeshuv-line",
+          type: "line",
+          source: OUTLINE_SOURCE,
+          paint: {
+            "line-color": "#bfbf99",
+            "line-opacity": 1,
+            "line-width": 2.7,
+          },
+        });
+        state.map.addLayer({
+          id: "yeshuv-assigned-fill",
+          type: "fill",
+          source: OUTLINE_SOURCE,
+          filter: ["in", ["get", "OBJECTID"], ["literal", []]],
+          paint: { "fill-color": "#7a9b7a", "fill-opacity": 0.22 },
+        });
+        state.map.addLayer({
+          id: "yeshuv-assigned-line",
+          type: "line",
+          source: OUTLINE_SOURCE,
+          filter: ["in", ["get", "OBJECTID"], ["literal", []]],
+          paint: { "line-color": "#b9cfa8", "line-width": 3.4, "line-opacity": 1 },
+        });
+        state.map.addLayer({
+          id: "yeshuv-selected-fill",
+          type: "fill",
+          source: OUTLINE_SOURCE,
+          filter: ["==", ["get", "OBJECTID"], -1],
+          paint: { "fill-color": "#c17f4a", "fill-opacity": 0.28 },
+        });
+        state.map.addLayer({
+          id: "yeshuv-selected-line",
+          type: "line",
+          source: OUTLINE_SOURCE,
+          filter: ["==", ["get", "OBJECTID"], -1],
+          paint: { "line-color": "#f2d18c", "line-width": 4.2, "line-opacity": 1 },
+        });
+        state.map.addLayer({
+          id: "label-points",
+          type: "circle",
+          source: LABEL_SOURCE,
+          paint: {
+            "circle-radius": 4,
+            "circle-color": "#c17f4a",
+            "circle-stroke-color": "#141210",
+            "circle-stroke-width": 1,
+            "circle-opacity": 0.82,
+          },
+        });
+        state.map.addLayer({
+          id: "assignment-labels",
+          type: "symbol",
+          source: "assignment-labels",
+          layout: {
+            "text-field": ["get", "cityname"],
+            "text-font": ["Open Sans Bold"],
+            "text-size": 14,
+            "text-anchor": "center",
+            "text-allow-overlap": true,
+          },
+          paint: {
+            "text-color": "#f5f0ea",
+            "text-halo-color": "#0f0d0b",
+            "text-halo-width": 2.4,
+          },
+        });
+
+        setupMapInteractions();
+        fitOutlines();
+        els.loadState.hidden = true;
+        renderAll();
+      });
+    }
+
+    init().catch((error) => {
+      console.error(error);
+      els.loadState.textContent = error.message;
+      els.mapStatus.textContent = "Failed to load mapper data.";
+    });
+  </script>
+</body>
+</html>
