@@ -428,7 +428,7 @@ async function zoom(ctx, newZoom) {
   }
 }
 
-function updateViewportFromUI(ctx, viewport, source = "gis") {
+function updateViewportFromUI(ctx, viewport, source = "gis", options = {}) {
   if (!ctx._tableName || !viewport || !viewport.bbox || viewport.bbox.length !== 4) {
     return false;
   }
@@ -447,10 +447,19 @@ function updateViewportFromUI(ctx, viewport, source = "gis") {
   try {
     const now = Date.now();
     const nextViewport = { ...viewport, sourceId: ctx._clientId, timestamp: now };
+    if (options && typeof options.traceId === "string") {
+      nextViewport.traceId = options.traceId;
+    }
     const appliedViewport = ctx._setViewport(nextViewport) || ctx._viewport || nextViewport;
     ctx._lastLocalStateTimestamp = now;
-    const payload = appliedViewport;
-    if (typeof OTEF_API.updateViewportDebounced === "function") {
+    const payload = { ...appliedViewport, ...nextViewport };
+    if (
+      options &&
+      options.sharedUpdate === "immediate" &&
+      typeof OTEF_API.updateViewportImmediate === "function"
+    ) {
+      OTEF_API.updateViewportImmediate(ctx._tableName, payload);
+    } else if (typeof OTEF_API.updateViewportDebounced === "function") {
       OTEF_API.updateViewportDebounced(ctx._tableName, payload);
     } else {
       OTEF_API.updateViewport(ctx._tableName, payload);
@@ -721,6 +730,22 @@ async function setBasemap(ctx, basemap) {
   }
 }
 
+async function navigateToPlace(ctx, place) {
+  if (!ctx._tableName || !place?.id || !place?.cameraHint?.center) {
+    return { ok: false, reason: "invalid_place" };
+  }
+  const traceId = generateTraceId("place-nav");
+  const payload = {
+    placeId: place.id,
+    cameraHint: place.cameraHint,
+    transition: { animate: true, durationMs: 1600 },
+    sourceId: ctx._clientId,
+    timestamp: Date.now(),
+    traceId,
+  };
+  return OTEF_API.navigateToPlace(ctx._tableName, payload);
+}
+
 function understandDirection(direction, delta, width, height) {
   let dx = 0;
   let dy = 0;
@@ -842,6 +867,7 @@ OTEFDataContextInternals.actions = {
   toggleAnimation,
   setLayerAnimations,
   setBasemap,
+  navigateToPlace,
   computePanViewport,
   computeZoomViewport,
 };
@@ -859,6 +885,7 @@ export {
   toggleAnimation,
   setLayerAnimations,
   setBasemap,
+  navigateToPlace,
   computePanViewport,
   computeZoomViewport,
 };

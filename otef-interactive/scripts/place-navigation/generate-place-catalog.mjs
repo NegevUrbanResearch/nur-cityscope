@@ -2,11 +2,6 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import proj4 from "proj4";
-import {
-  DEFAULT_CUSTOM_RADIUS_METERS,
-  DEFAULT_YESHUV_RADIUS_METERS,
-  deriveViewportTarget,
-} from "../../frontend/src/shared/place-navigation/viewport-target.js";
 import { validatePlaceCatalog } from "./place-catalog-validation.mjs";
 
 const WGS84 = "EPSG:4326";
@@ -18,13 +13,8 @@ const packageRoot = path.resolve(scriptDir, "../..");
 const sourceDir = path.join(packageRoot, "public", "processed", "layers", "projector_base");
 const settlementNamesLayerName = "שמות_יישובים.geojson";
 const settlementNamesPath = path.join(sourceDir, settlementNamesLayerName);
-const locationLinesPath = path.join(sourceDir, "Locations_Lines.geojson");
 const settlementOutlineMapPath = path.join(sourceDir, "yeshuv-outline-map.json");
 const manualPath = path.join(scriptDir, "manual-place-aliases.json");
-const pairingContractPath = path.join(
-  scriptDir,
-  "place-catalog-pairing-contract.json",
-);
 const moduleOutputPath = path.join(
   packageRoot,
   "frontend",
@@ -74,20 +64,6 @@ function roundNumber(value) {
 
 function roundPoint(point, keys) {
   return Object.fromEntries(keys.map((key) => [key, roundNumber(point[key])]));
-}
-
-function roundTarget(target) {
-  const bbox = target.bbox.map(roundNumber);
-  return {
-    bbox,
-    corners: {
-      sw: { x: bbox[0], y: bbox[1] },
-      se: { x: bbox[2], y: bbox[1] },
-      nw: { x: bbox[0], y: bbox[3] },
-      ne: { x: bbox[2], y: bbox[3] },
-    },
-    zoom: target.zoom,
-  };
 }
 
 function wgs84ToItm(centerWgs84) {
@@ -168,6 +144,20 @@ function featureBboxCenterWgs84(feature, label) {
   };
 }
 
+function pointFeatureCenterWgs84(feature) {
+  const coordinates = feature?.geometry?.coordinates;
+  if (
+    feature?.geometry?.type !== "Point" ||
+    !Array.isArray(coordinates) ||
+    coordinates.length < 2 ||
+    !isFiniteNumber(coordinates[0]) ||
+    !isFiniteNumber(coordinates[1])
+  ) {
+    throw new Error("Settlement label feature must be a Point with finite coordinates");
+  }
+  return { lng: coordinates[0], lat: coordinates[1] };
+}
+
 async function readSettlementOutlineFeatures() {
   const fileNames = await readdir(sourceDir);
   for (const fileName of fileNames) {
@@ -235,17 +225,6 @@ function buildReviewedOutlineTargetByCitycode(
   }
 
   return byCitycode;
-}
-
-async function readLocationLineFeatures(expectedCount) {
-  const geojson = await readJson(locationLinesPath);
-  const features = asArray(geojson.features);
-  if (features.length !== expectedCount) {
-    throw new Error(
-      `Locations_Lines.geojson feature count ${features.length} must match settlement label count ${expectedCount}`,
-    );
-  }
-  return features;
 }
 
 function normalizeObjectId(value) {
@@ -530,26 +509,20 @@ function makeBoundsPolicy(selectable) {
     : undefined;
 }
 
-function makeNavigationFields(centerWgs84, targetOverrides, defaultRadiusMeters) {
+function makeNavigationFields(centerWgs84) {
+  assertFinitePoint(centerWgs84, "center.wgs84", ["lng", "lat"]);
   const centerItm = wgs84ToItm(centerWgs84);
   return {
-    wgs84: roundPoint(centerWgs84, ["lng", "lat"]),
-    itmCenter: roundPoint(centerItm, ["x", "y"]),
-    target: roundTarget(
-      deriveViewportTarget({
-        centerItm,
-        radiusMeters: targetOverrides.radiusMeters,
-        defaultRadiusMeters,
-        bbox: targetOverrides.bbox,
-        zoom: targetOverrides.zoom,
-      }),
-    ),
+    cameraHint: {
+      center: roundPoint(centerWgs84, ["lng", "lat"]),
+      centerItm: roundPoint(centerItm, ["x", "y"]),
+      zoom: 15,
+    },
   };
 }
 
 function makeYeshuvEntry(feature, layerName, manualEntry, navigationWgs84) {
   const props = feature.properties || {};
-  const targetOverrides = manualEntry?.target || {};
   const aliases = manualEntry?.aliases || {};
   const name = { he: props.cityname };
   const selectable = manualEntry?.selectable === undefined ? true : !!manualEntry.selectable;
@@ -558,6 +531,7 @@ function makeYeshuvEntry(feature, layerName, manualEntry, navigationWgs84) {
   return {
     id: `yeshuv-${props.citycode}`,
     type: "yeshuv",
+    citycode: props.citycode,
     source: {
       kind: "geojson",
       file: `projector_base/${layerName}`,
@@ -568,16 +542,16 @@ function makeYeshuvEntry(feature, layerName, manualEntry, navigationWgs84) {
       he: dedupeStrings([props.cityname, props.citylabel, ...asArray(aliases.he)]),
       en: dedupeStrings([manualEntry?.name?.en, ...asArray(aliases.en)]),
     },
-    priority: Number.isFinite(manualEntry?.priority) ? manualEntry.priority : 0,
+    priority: Number.isFinite(manualEntry?.priority) ? manualEntry.priority : 10,
     selectable,
     boundsPolicy: makeBoundsPolicy(selectable),
-    ...makeNavigationFields(navigationWgs84, targetOverrides, DEFAULT_YESHUV_RADIUS_METERS),
+    ...makeNavigationFields(navigationWgs84),
   };
 }
 
 function makeCustomEntry(manualEntry) {
   const centerWgs84 = manualEntry.center?.wgs84;
-  const targetOverrides = manualEntry.target || {};
+  assertFinitePoint(centerWgs84, `${manualEntry.id}.center.wgs84`, ["lng", "lat"]);
   const selectable = manualEntry.selectable === undefined ? true : !!manualEntry.selectable;
   return {
     id: manualEntry.id,
@@ -594,10 +568,10 @@ function makeCustomEntry(manualEntry) {
       he: dedupeStrings([manualEntry.name.he, ...asArray(manualEntry.aliases?.he)]),
       en: dedupeStrings([manualEntry.name.en, ...asArray(manualEntry.aliases?.en)]),
     },
-    priority: Number.isFinite(manualEntry.priority) ? manualEntry.priority : 0,
+    priority: Number.isFinite(manualEntry.priority) ? manualEntry.priority : 10,
     selectable,
     boundsPolicy: makeBoundsPolicy(selectable),
-    ...makeNavigationFields(centerWgs84, targetOverrides, DEFAULT_CUSTOM_RADIUS_METERS),
+    ...makeNavigationFields(centerWgs84),
   };
 }
 
@@ -631,8 +605,9 @@ async function buildPlaceCatalog() {
     const props = feature.properties || {};
     const manualEntry = manualIndex.byCitycode.get(props.citycode);
     const navigationWgs84 =
-      manualEntry?.center?.wgs84 || outlineTargetByCitycode.get(props.citycode);
-    if (!navigationWgs84) continue;
+      manualEntry?.center?.wgs84 ||
+      outlineTargetByCitycode.get(props.citycode) ||
+      pointFeatureCenterWgs84(feature);
     entries.push(
       makeYeshuvEntry(
         feature,

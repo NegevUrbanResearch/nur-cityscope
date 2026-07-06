@@ -41,6 +41,15 @@ const MESSAGES = {
     basemapControlAria: "\u05d1\u05d7\u05d9\u05e8\u05ea \u05de\u05e4\u05ea \u05e8\u05e7\u05e2",
     basemapOsm: "\u05e8\u05d2\u05d9\u05dc\u05d4",
     basemapSatellite: "\u05dc\u05d5\u05d5\u05d9\u05d9\u05df",
+    placeSearchLabel: "\u05d9\u05d9\u05e9\u05d5\u05d1",
+    placeSearchPlaceholder: "חיפוש יישוב",
+    placeSearchAria: "חיפוש יישוב לניווט",
+    placeSearchClearAria: "ניקוי חיפוש",
+    placeSuggestionsAria: "הצעות יישובים",
+    placeSearchEmpty: "לא נמצאו יישובים",
+    placeSearchDisconnected: "אין חיבור למפה",
+    placeSearchTravelling: "נוסע אל {{place}}",
+    placeSearchFailed: "לא הצלחנו לנווט אל היישוב",
     zoomLabel: "זום:",
     statusConnected: "מחובר",
     statusDisconnected: "מנותק",
@@ -158,6 +167,15 @@ const MESSAGES = {
     basemapControlAria: "Basemap selector",
     basemapOsm: "OSM",
     basemapSatellite: "Satellite",
+    placeSearchLabel: "Settlement",
+    placeSearchPlaceholder: "Search settlement",
+    placeSearchAria: "Search settlement to navigate",
+    placeSearchClearAria: "Clear search",
+    placeSuggestionsAria: "Settlement suggestions",
+    placeSearchEmpty: "No settlements found",
+    placeSearchDisconnected: "Map is disconnected",
+    placeSearchTravelling: "Travelling to {{place}}",
+    placeSearchFailed: "Could not navigate to settlement",
     zoomLabel: "Zoom:",
     statusConnected: "Connected",
     statusDisconnected: "Disconnected",
@@ -427,7 +445,7 @@ export function initLocale() {
 
 /**
  * @param {string} key
- * @param {{ n?: string | number; e?: string | number; t?: string | number }} [vars]
+ * @param {{ n?: string | number; e?: string | number; t?: string | number; place?: string | number }} [vars]
  * @returns {string}
  */
 export function t(key, vars = {}) {
@@ -450,6 +468,11 @@ export function t(key, vars = {}) {
       text = text.replace(/\{\{t\}\}/g, String(vars.t));
     } else {
       text = text.replace(/\{\{t\}\}/g, "");
+    }
+    if (vars.place != null) {
+      text = text.replace(/\{\{place\}\}/g, String(vars.place));
+    } else {
+      text = text.replace(/\{\{place\}\}/g, "");
     }
   }
   return text;

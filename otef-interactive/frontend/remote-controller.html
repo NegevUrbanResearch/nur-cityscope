@@ -178,6 +178,85 @@
         >
           <section class="control-section" id="navigationSection">
             <div class="navigation-panel-stack">
+              <div
+                class="navigation-group navigation-group--place-search"
+                id="placeSearchGroup"
+              >
+                <label
+                  class="place-search-label visually-hidden"
+                  for="placeSearchInput"
+                  data-i18n="placeSearchLabel"
+                ></label>
+                <div class="place-search-shell">
+                  <span class="place-search-icon" aria-hidden="true">
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="18"
+                      height="18"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="11" cy="11" r="8"></circle>
+                      <path d="m21 21-4.35-4.35"></path>
+                    </svg>
+                  </span>
+                  <input
+                    id="placeSearchInput"
+                    class="place-search-input"
+                    type="search"
+                    role="combobox"
+                    autocomplete="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    aria-autocomplete="list"
+                    aria-expanded="false"
+                    aria-controls="placeSuggestions"
+                    data-i18n-aria="placeSearchAria"
+                    data-i18n-placeholder="placeSearchPlaceholder"
+                    dir="auto"
+                  />
+                  <button
+                    type="button"
+                    id="placeSearchClear"
+                    class="place-search-clear"
+                    data-i18n-aria="placeSearchClearAria"
+                    aria-label="Clear search"
+                    hidden
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="16"
+                      height="16"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M18 6 6 18"></path>
+                      <path d="m6 6 12 12"></path>
+                    </svg>
+                  </button>
+                  <div
+                    id="placeSuggestions"
+                    class="place-suggestions"
+                    role="listbox"
+                    data-i18n-aria="placeSuggestionsAria"
+                    aria-label=""
+                    hidden
+                  ></div>
+                </div>
+                <div
+                  id="placeSearchStatus"
+                  class="place-search-status"
+                  role="status"
+                  aria-live="polite"
+                ></div>
+              </div>
               <div class="navigation-group navigation-group--pan">
                 <div
                   class="navigation-group-label"

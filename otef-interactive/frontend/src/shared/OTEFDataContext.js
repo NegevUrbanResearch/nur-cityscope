@@ -84,6 +84,7 @@ class OTEFDataContextClass {
       connection: new Set(),
       orientation: new Set(),
       projectionSlideshow: new Set(),
+      navigationCommand: new Set(),
     };
 
     this._wsClient = null;
@@ -275,6 +276,11 @@ class OTEFDataContextClass {
     return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
   }
 
+  _emitNavigationCommand(command) {
+    if (!command || typeof command !== "object") return;
+    this._notify("navigationCommand", command);
+  }
+
   /**
    * @param {Record<string, unknown> | null | undefined} slideshow
    */
@@ -319,6 +325,15 @@ class OTEFDataContextClass {
 
   getProjectionSlideshow() {
     return this._projectionSlideshow;
+  }
+
+  navigateToPlace(place) {
+    const actions = OTEFDataContextInternals.actions;
+    if (!actions || typeof actions.navigateToPlace !== "function") {
+      getLogger().error("[OTEFDataContext] Missing navigateToPlace action helper");
+      return Promise.resolve({ ok: false, reason: "missing_action" });
+    }
+    return actions.navigateToPlace(this, place);
   }
 
   _notify(key, value) {
@@ -413,13 +428,13 @@ class OTEFDataContextClass {
     return actions.zoom(this, newZoom);
   }
 
-  updateViewportFromUI(viewport, source = "gis") {
+  updateViewportFromUI(viewport, source = "gis", options = {}) {
     const actions = OTEFDataContextInternals.actions;
     if (!actions || typeof actions.updateViewportFromUI !== "function") {
       getLogger().error("[OTEFDataContext] Missing action helpers");
       return false;
     }
-    return actions.updateViewportFromUI(this, viewport, source);
+    return actions.updateViewportFromUI(this, viewport, source, options);
   }
 
   async toggleLayer(layerId, enabled) {
@@ -556,11 +571,14 @@ class OTEFDataContextClass {
       case "projectionSlideshow":
         current = this._projectionSlideshow;
         break;
+      case "navigationCommand":
+        current = undefined;
+        break;
       default:
         break;
     }
 
-    if (current !== null && current !== undefined) {
+    if (key !== "navigationCommand" && current !== null && current !== undefined) {
       try {
         callback(current);
       } catch (err) {

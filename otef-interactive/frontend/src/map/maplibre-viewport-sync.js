@@ -16,6 +16,8 @@ const VIEWPORT_BOUNDS_CORNER_EPSILON_DEG = 0.0001;
 const VIEWPORT_EXPLICIT_ZOOM_MIN_DELTA = 0.1;
 /** Debounce window used to detect when resize churn has settled. */
 const VIEWPORT_RESIZE_SETTLE_DEBOUNCE_MS = 200;
+/** During GIS place travel, publish actual viewport snapshots at this cadence. */
+const PLACE_NAVIGATION_REPORT_INTERVAL_MS = 100;
 
 function wgs84ToItm(lng, lat) {
   if (typeof proj4 === "undefined" || !Number.isFinite(lng) || !Number.isFinite(lat)) return null;
@@ -99,6 +101,11 @@ export function setupViewportSync(map, dataContext) {
   let usingWindowResizeFallback = false;
   let handleWindowResize = null;
   let syncActive = true;
+  let lastNavigationCommandId = null;
+  let activeNavigationTraceId = null;
+  let navigationTravelActive = false;
+  let navigationReportTimer = null;
+  let navigationIdleHandler = null;
   /** Skips the next moveend/zoomend-driven report (used after a post-resize sync report). */
   let suppressNextGisMapChange = false;
   /** While true, `moveend`/`zoomend` reports are ignored until the post-resize `idle` callback runs. */
@@ -133,6 +140,18 @@ export function setupViewportSync(map, dataContext) {
     resizeSettleTimer = null;
   };
 
+  const clearNavigationReportTimer = () => {
+    if (!navigationReportTimer) return;
+    clearTimeout(navigationReportTimer);
+    navigationReportTimer = null;
+  };
+
+  const clearNavigationIdleHandler = () => {
+    if (!navigationIdleHandler || typeof map.off !== "function") return;
+    map.off("idle", navigationIdleHandler);
+    navigationIdleHandler = null;
+  };
+
   const resetResizeQueue = () => {
     queuedViewportDuringResize = null;
     queuedViewportSeqDuringResize = null;
@@ -151,11 +170,9 @@ export function setupViewportSync(map, dataContext) {
     postResizeIdleHandler = null;
   };
 
-  const reportToContext = (onInteractionGuard) => {
+  const reportToContext = (onInteractionGuard, options = {}) => {
     if (!syncActive) return;
-    if (!map || !dataContext || typeof dataContext.updateViewportFromUI !== "function") {
-      return;
-    }
+    if (!map || !dataContext || typeof dataContext.updateViewportFromUI !== "function") return;
 
     const bounds = map.getBounds();
     if (!bounds) return;
@@ -191,14 +208,15 @@ export function setupViewportSync(map, dataContext) {
 
     // map.getZoom(): GIS map uses zoomSnap:1, so whole-level zoom is preferred, but the value is still a float
     // (e.g. mid-gesture, fitBounds, or animations). Pass it through; remote UI may round (e.g. normalizeZoomLevel).
-    const result = dataContext.updateViewportFromUI(
-      {
-        bbox,
-        zoom: map.getZoom(),
-        corners,
-      },
-      "gis",
-    );
+    const viewportPayload = {
+      bbox,
+      zoom: map.getZoom(),
+      corners,
+    };
+    const result =
+      options && options.sharedUpdate === "immediate"
+        ? dataContext.updateViewportFromUI(viewportPayload, "gis", options)
+        : dataContext.updateViewportFromUI(viewportPayload, "gis");
 
     if (
       typeof onInteractionGuard === "function" &&
@@ -217,7 +235,12 @@ export function setupViewportSync(map, dataContext) {
     if (isApplyingRemote) return;
     gisReportBlockedPending = false;
     clearDeferredGuardFlushTimer();
-    reportToContext(null);
+    reportToContext(
+      null,
+      navigationTravelActive
+        ? { sharedUpdate: "immediate", traceId: activeNavigationTraceId }
+        : undefined,
+    );
   };
 
   const scheduleGISRetryFlush = () => {
@@ -276,7 +299,62 @@ export function setupViewportSync(map, dataContext) {
     }, 500);
   };
 
+  const reportNavigationTravelViewport = () => {
+    if (!navigationTravelActive || navigationReportTimer) return;
+    navigationReportTimer = setTimeout(() => {
+      navigationReportTimer = null;
+      if (!navigationTravelActive || !syncActive) return;
+      reportToContext(onGISReportInteractionGuard, {
+        sharedUpdate: "immediate",
+        traceId: activeNavigationTraceId,
+      });
+    }, PLACE_NAVIGATION_REPORT_INTERVAL_MS);
+  };
+
+  const applyNavigationCommand = (command) => {
+    const traceId = command?.traceId || command?.id || null;
+    if (!command || command.id === lastNavigationCommandId) {
+      return;
+    }
+    const center = command.cameraHint?.center;
+    const zoom = Number(command.cameraHint?.zoom);
+    if (!center || !Number.isFinite(center.lng) || !Number.isFinite(center.lat)) {
+      return;
+    }
+
+    lastNavigationCommandId = command.id;
+    activeNavigationTraceId = traceId;
+    navigationTravelActive = true;
+    clearNavigationReportTimer();
+    clearNavigationIdleHandler();
+    const cameraOptions = {
+      center,
+      zoom: Number.isFinite(zoom) ? zoom : 15,
+      animate: command.transition?.animate !== false,
+      duration: Number.isFinite(command.transition?.durationMs)
+        ? command.transition.durationMs
+        : 1600,
+    };
+    if (typeof map.flyTo === "function") {
+      map.flyTo(cameraOptions);
+    } else {
+      map.jumpTo?.({ center, zoom: cameraOptions.zoom });
+    }
+    navigationIdleHandler = () => {
+      navigationIdleHandler = null;
+      reportToContext(onGISReportInteractionGuard, {
+        sharedUpdate: "immediate",
+        traceId,
+      });
+      navigationTravelActive = false;
+      activeNavigationTraceId = null;
+      clearNavigationReportTimer();
+    };
+    map.once("idle", navigationIdleHandler);
+  };
+
   const applyAcceptedViewport = (viewport, options = {}) => {
+    void options;
     const seq = viewport && viewport.seq;
     const handled = applyViewportToMap(map, viewport, startRemoteApplyLock);
     if (handled && Number.isFinite(seq)) {
@@ -362,7 +440,30 @@ export function setupViewportSync(map, dataContext) {
       viewport && Number.isFinite(viewport.seq) ? viewport.seq : null;
   };
 
+  const isLocalViewportEchoDuringNavigation = (viewport) =>
+    navigationTravelActive &&
+    viewport &&
+    viewport.sourceId &&
+    dataContext?._clientId &&
+    viewport.sourceId === dataContext._clientId;
+
+  const isUnattributedViewportDuringNavigation = (viewport) =>
+    navigationTravelActive &&
+    activeNavigationTraceId &&
+    viewport &&
+    !viewport.sourceId &&
+    !viewport.traceId;
+
   const unsubscribeViewport = dataContext.subscribe("viewport", (viewport) => {
+    const traceId = viewport?.traceId || activeNavigationTraceId || null;
+    if (isLocalViewportEchoDuringNavigation(viewport)) {
+      return;
+    }
+
+    if (isUnattributedViewportDuringNavigation(viewport)) {
+      return;
+    }
+
     if (!evaluateViewportSeqAcceptance(viewport)) {
       return;
     }
@@ -372,8 +473,12 @@ export function setupViewportSync(map, dataContext) {
       return;
     }
 
-    applyAcceptedViewport(viewport);
+    applyAcceptedViewport(viewport, { traceId });
   });
+  const unsubscribeNavigationCommand = dataContext.subscribe(
+    "navigationCommand",
+    applyNavigationCommand,
+  );
 
   const handleMapChange = () => {
     if (suppressNextGisMapChange) {
@@ -410,12 +515,15 @@ export function setupViewportSync(map, dataContext) {
   }
 
   map.on("moveend", handleMapChange);
+  map.on("move", reportNavigationTravelViewport);
   map.on("zoomend", handleMapChange);
 
   return () => {
     syncActive = false;
     clearPostResizeIdleRegistration();
     if (typeof unsubscribeViewport === "function") unsubscribeViewport();
+    if (typeof unsubscribeNavigationCommand === "function") unsubscribeNavigationCommand();
+    map.off("move", reportNavigationTravelViewport);
     map.off("moveend", handleMapChange);
     map.off("zoomend", handleMapChange);
     if (pendingReportTimer) {
@@ -424,8 +532,12 @@ export function setupViewportSync(map, dataContext) {
     }
     clearDeferredGuardFlushTimer();
     clearResizeSettleTimer();
+    clearNavigationIdleHandler();
+    clearNavigationReportTimer();
     resetResizeQueue();
     gisReportBlockedPending = false;
+    navigationTravelActive = false;
+    activeNavigationTraceId = null;
     pendingPostResizeContextReport = false;
     postResizeGisSyncPending = false;
     suppressNextGisMapChange = false;

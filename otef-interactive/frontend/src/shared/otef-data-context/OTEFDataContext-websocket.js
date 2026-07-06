@@ -262,6 +262,13 @@ function setupWebSocket(ctx) {
     }
   });
 
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.PLACE_NAVIGATION_COMMAND, (msg = {}) => {
+    const command = msg.command && typeof msg.command === "object" ? msg.command : null;
+    if (!command) return;
+    if (command.sourceId && command.sourceId === ctx._clientId) return;
+    ctx._emitNavigationCommand(command);
+  });
+
   ctx._wsClient.connect();
 }
 

@@ -1,5 +1,3 @@
-import { validateViewportTarget } from "../../frontend/src/shared/place-navigation/viewport-target.js";
-
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -64,6 +62,25 @@ function validateSource(source, id) {
   assertOptionalString(source.featureId, `${id}.source.featureId`);
 }
 
+function validateCameraHint(cameraHint, id) {
+  if (!isPlainObject(cameraHint)) {
+    throw new Error(`${id}.cameraHint must be an object`);
+  }
+  assertFinitePoint(cameraHint.center, `${id}.cameraHint.center`, ["lng", "lat"]);
+  assertFinitePoint(cameraHint.centerItm, `${id}.cameraHint.centerItm`, ["x", "y"]);
+  if (!isFiniteNumber(cameraHint.zoom) || cameraHint.zoom < 10 || cameraHint.zoom > 19) {
+    throw new Error(`${id}.cameraHint.zoom must be finite and between 10 and 19`);
+  }
+}
+
+function rejectForbiddenGeometryFields(entry) {
+  for (const key of ["target", "bbox", "corners", "outlineRef"]) {
+    if (key in entry) {
+      throw new Error(`${entry.id} must not store ${key}`);
+    }
+  }
+}
+
 function validatePlaceEntry(entry) {
   if (!isPlainObject(entry)) {
     throw new Error("Catalog entry must be an object");
@@ -95,10 +112,9 @@ function validatePlaceEntry(entry) {
   if ("outOfBounds" in entry || "outOfBoundsReason" in entry) {
     throw new Error(`${entry.id} must not store runtime bounds state`);
   }
-  assertFinitePoint(entry.wgs84, `${entry.id}.wgs84`, ["lng", "lat"]);
-  assertFinitePoint(entry.itmCenter, `${entry.id}.itmCenter`, ["x", "y"]);
+  rejectForbiddenGeometryFields(entry);
+  validateCameraHint(entry.cameraHint, entry.id);
   validateBoundsPolicy(entry.boundsPolicy, entry.id);
-  validateViewportTarget(entry.target);
   return true;
 }
 
@@ -123,4 +139,4 @@ function validatePlaceCatalog(catalog) {
   return true;
 }
 
-export { validatePlaceCatalog, validatePlaceEntry, validateViewportTarget };
+export { validatePlaceCatalog, validatePlaceEntry };

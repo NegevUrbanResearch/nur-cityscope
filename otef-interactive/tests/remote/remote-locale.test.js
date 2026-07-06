@@ -202,6 +202,37 @@ describe("remote-locale", () => {
     expect(t("basemapSatellite")).toBe("Satellite");
   });
 
+  test("place navigation strings resolve for both locales", async () => {
+    installLocaleTestEnv();
+    const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    const keys = [
+      "placeSearchPlaceholder",
+      "placeSearchAria",
+      "placeSearchClearAria",
+      "placeSuggestionsAria",
+      "placeSearchEmpty",
+      "placeSearchDisconnected",
+      "placeSearchTravelling",
+      "placeSearchFailed",
+    ];
+
+    setLocale("he", { force: true });
+    const heOk = keys.every((key) => {
+      const text = t(key, { place: "אור הנר" });
+      return typeof text === "string" && text !== key;
+    });
+
+    setLocale("en", { force: true });
+    const enOk = keys.every((key) => {
+      const text = t(key, { place: "Or HaNer" });
+      return typeof text === "string" && text !== key;
+    });
+
+    expect({ he: heOk, en: enOk }).toEqual({ he: true, en: true });
+    expect(t("placeSearchPlaceholder")).toBe("Search settlement");
+    expect(t("placeSearchFailed")).toBe("Could not navigate to settlement");
+  });
+
   test("setLocale dispatches otef:locale with detail.locale after apply", async () => {
     installLocaleTestEnv();
     const { setLocale, LOCALE_EVENT } = await import(

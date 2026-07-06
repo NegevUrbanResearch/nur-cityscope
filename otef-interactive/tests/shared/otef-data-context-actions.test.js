@@ -558,6 +558,123 @@ describe('OTEFDataContext actions', () => {
     nowSpy.mockRestore();
   });
 
+  test('updateViewportFromUI keeps ordinary GIS viewport patches debounced', () => {
+    vi.useFakeTimers();
+    const setViewport = vi.fn((next) => next);
+    const ctx = {
+      _tableName: 'otef',
+      _clientId: 'test-client',
+      _velocity: { vx: 0, vy: 0 },
+      _lastVelocityUpdate: 0,
+      _currentInteractionSource: null,
+      _isViewportInsideBounds: () => true,
+      _setViewport: setViewport,
+      _viewport: null,
+      _lastLocalStateTimestamp: 0,
+    };
+    const viewport = {
+      bbox: [100, 100, 200, 200],
+      zoom: 14,
+      corners: {
+        sw: { x: 100, y: 100 },
+        se: { x: 200, y: 100 },
+        nw: { x: 100, y: 200 },
+        ne: { x: 200, y: 200 },
+      },
+    };
+
+    const result = updateViewportFromUI(ctx, viewport, 'gis');
+
+    expect(result).toEqual({ accepted: true });
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(119);
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  test('updateViewportFromUI can publish navigation GIS snapshots immediately', () => {
+    const setViewport = vi.fn((next) => next);
+    const ctx = {
+      _tableName: 'otef',
+      _clientId: 'test-client',
+      _velocity: { vx: 0, vy: 0 },
+      _lastVelocityUpdate: 0,
+      _currentInteractionSource: null,
+      _isViewportInsideBounds: () => true,
+      _setViewport: setViewport,
+      _viewport: null,
+      _lastLocalStateTimestamp: 0,
+    };
+    const viewport = {
+      bbox: [100, 100, 200, 200],
+      zoom: 14,
+      corners: {
+        sw: { x: 100, y: 100 },
+        se: { x: 200, y: 100 },
+        nw: { x: 100, y: 200 },
+        ne: { x: 200, y: 200 },
+      },
+    };
+
+    const result = updateViewportFromUI(ctx, viewport, 'gis', {
+      sharedUpdate: 'immediate',
+      traceId: 'place-nav-test',
+    });
+
+    expect(result).toEqual({ accepted: true });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const requestBody = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(requestBody.viewport.bbox).toEqual([100, 100, 200, 200]);
+    expect(requestBody.sourceId).toBe('test-client');
+    expect(requestBody.traceId).toBe('place-nav-test');
+  });
+
+  test('updateViewportFromUI preserves navigation metadata when viewport is unchanged', () => {
+    const existingViewport = {
+      bbox: [100, 100, 200, 200],
+      zoom: 14,
+      corners: {
+        sw: { x: 100, y: 100 },
+        se: { x: 200, y: 100 },
+        nw: { x: 100, y: 200 },
+        ne: { x: 200, y: 200 },
+      },
+      sourceId: 'old-client',
+      timestamp: 1,
+      seq: 7,
+    };
+    const setViewport = vi.fn(() => undefined);
+    const ctx = {
+      _tableName: 'otef',
+      _clientId: 'test-client',
+      _velocity: { vx: 0, vy: 0 },
+      _lastVelocityUpdate: 0,
+      _currentInteractionSource: null,
+      _isViewportInsideBounds: () => true,
+      _setViewport: setViewport,
+      _viewport: existingViewport,
+      _lastLocalStateTimestamp: 0,
+    };
+
+    const result = updateViewportFromUI(ctx, existingViewport, 'gis', {
+      sharedUpdate: 'immediate',
+      traceId: 'place-nav-equal',
+    });
+
+    expect(result).toEqual({ accepted: true });
+    const requestBody = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(requestBody.viewport.bbox).toEqual(existingViewport.bbox);
+    expect(requestBody.sourceId).toBe('test-client');
+    expect(requestBody.viewport.sourceId).toBe('test-client');
+    expect(requestBody.traceId).toBe('place-nav-equal');
+    expect(requestBody.viewport.traceId).toBe('place-nav-equal');
+  });
+
   test('setBasemap patches supported basemap state', async () => {
     const ctx = {
       _tableName: 'otef',

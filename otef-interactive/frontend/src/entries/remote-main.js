@@ -56,6 +56,22 @@ async function boot() {
   const shouldContinue = initializeTableSwitcher();
   if (!shouldContinue) return;
   await bootstrapRemoteRuntime();
+  const [{ initRemotePlaceNavigation }, { default: OTEFDataContext }] = await Promise.all([
+    import("../remote/remote-place-navigation.js"),
+    import("../shared/OTEFDataContext.js"),
+  ]);
+
+  initRemotePlaceNavigation({
+    dataContext: OTEFDataContext,
+    isConnected: () => OTEFDataContext.isConnected?.() !== false,
+    canNavigateToPlace: (place) => {
+      const centerItm = place?.cameraHint?.centerItm;
+      const bounds =
+        typeof OTEFDataContext.getBounds === "function" ? OTEFDataContext.getBounds() : null;
+      if (!centerItm || !bounds) return true;
+      return OTEFDataContext._pointInPolygon?.(centerItm, bounds) !== false;
+    },
+  });
 }
 
 boot().catch((error) => console.error("[frontend-b] remote bootstrap failed", error));

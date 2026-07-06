@@ -158,6 +158,15 @@ test("projection entry keeps ResizeObserver reflow with window resize fallback",
   );
 });
 
+test("projection entry does not consume place catalog or navigation command inputs for viewport highlight", () => {
+  const src = read("frontend/src/entries/projection-main.js");
+
+  expect(src).not.toContain("place-catalog");
+  expect(src).not.toContain("searchPlaces");
+  expect(src).not.toContain("cameraHint");
+  expect(src).not.toContain("navigationCommand");
+});
+
 test("viewportToHighlightGeoJSON returns Polygon feature for bbox viewport", async () => {
   const { viewportToHighlightGeoJSON } = await import(
     "../../frontend/src/projection/maplibre-projection-viewport-geojson.js",

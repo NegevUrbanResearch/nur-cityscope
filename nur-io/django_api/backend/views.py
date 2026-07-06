@@ -105,6 +105,26 @@ def _normalize_projection_slideshow_patch(raw):
     return {"type": "start", "payload": out_payload}, None
 
 
+def _finite_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def _is_stale_viewport_patch(current_viewport, incoming_viewport):
+    if not isinstance(current_viewport, dict) or not isinstance(incoming_viewport, dict):
+        return False
+    current_ts = _finite_number(current_viewport.get("timestamp"))
+    incoming_ts = _finite_number(incoming_viewport.get("timestamp"))
+    if current_ts is None or incoming_ts is None:
+        return False
+    return incoming_ts < current_ts
+
+
 class TableViewSet(viewsets.ModelViewSet):
     serializer_class = TableSerializer
     queryset = Table.objects.all()
@@ -501,6 +521,28 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 print(f"[WARN] Broadcast skipped for {field} ({table_name}): {e}")
 
+    def _broadcast_place_navigation_command(self, table_name, command):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        async_to_sync(channel_layer.group_send)(
+            "otef_channel",
+            {
+                "type": "broadcast_message",
+                "message": {
+                    "type": "otef_place_navigation_command",
+                    "table": table_name,
+                    "command": command,
+                    "sourceId": command.get("sourceId"),
+                    "timestamp": command.get("timestamp"),
+                    "traceId": command.get("traceId"),
+                },
+            },
+        )
+
 
     @action(detail=False, methods=['get', 'patch'], url_path='by-table/(?P<table_name>[^/.]+)')
     def by_table(self, request, table_name=None):
@@ -523,7 +565,12 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         )
 
         if request.method == 'PATCH':
-            trace_id = request.data.get('traceId')
+            request_viewport = (
+                request.data.get('viewport')
+                if isinstance(request.data.get('viewport'), dict)
+                else {}
+            )
+            trace_id = request.data.get('traceId') or request_viewport.get('traceId')
             self._emit_trace_event(
                 trace_id,
                 "django.patch.received",
@@ -536,8 +583,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 # Merge with existing viewport (preserve unset fields)
                 current = state.viewport or {}
                 new_viewport = request.data['viewport']
-                state.viewport = {**current, **new_viewport}
-                changed_fields.append('viewport')
+                if not _is_stale_viewport_patch(current, new_viewport):
+                    state.viewport = {**current, **new_viewport}
+                    changed_fields.append('viewport')
 
             if 'layers' in request.data:
                 state.layers = request.data['layers']
@@ -619,8 +667,8 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 table_name,
                 changed_fields,
                 {
-                    'sourceId': request.data.get('sourceId'),
-                    'timestamp': request.data.get('timestamp'),
+                    'sourceId': request.data.get('sourceId') or request_viewport.get('sourceId'),
+                    'timestamp': request.data.get('timestamp') or request_viewport.get('timestamp'),
                     'traceId': trace_id,
                 },
             )
@@ -1278,6 +1326,64 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 }
             )
 
+        if action == "navigate_to_place":
+            import time
+
+            place_id = request.data.get("placeId")
+            camera_hint = request.data.get("cameraHint")
+            if not isinstance(place_id, str) or not place_id.strip():
+                return Response(
+                    {"error": "placeId is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not isinstance(camera_hint, dict):
+                return Response(
+                    {"error": "cameraHint is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            center = camera_hint.get("center")
+            zoom = camera_hint.get("zoom")
+            if (
+                not isinstance(center, dict)
+                or not isinstance(center.get("lng"), (int, float))
+                or not isinstance(center.get("lat"), (int, float))
+                or not isinstance(zoom, (int, float))
+            ):
+                return Response(
+                    {"error": "cameraHint.center.lng/lat and zoom are required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            timestamp = request.data.get("timestamp")
+            if not isinstance(timestamp, (int, float)):
+                timestamp = int(time.time() * 1000)
+
+            command_payload = {
+                "id": f"nav-{int(timestamp)}",
+                "placeId": place_id.strip(),
+                "cameraHint": {
+                    "center": {
+                        "lng": float(center["lng"]),
+                        "lat": float(center["lat"]),
+                    },
+                    "zoom": max(10, min(19, int(round(float(zoom))))),
+                },
+                "transition": request.data.get("transition") or {},
+                "sourceId": request.data.get("sourceId"),
+                "timestamp": int(timestamp),
+                "traceId": trace_id,
+            }
+            self._broadcast_place_navigation_command(table_name, command_payload)
+            return Response(
+                {
+                    "status": "ok",
+                    "action": action,
+                    "command": command_payload,
+                    "viewport": state.get_viewport_with_defaults(),
+                }
+            )
+
         # Support base_viewport to prevent snapback during rapid movements
         base_viewport = request.data.get('base_viewport')
         if base_viewport:
@@ -1331,7 +1437,8 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     'error': (
                         f'Unknown action: {action}. '
                         'Use "pan", "zoom", "set_layer_toggles", '
-                        '"set_layers_enabled", or "set_group_enabled".'
+                        '"set_layers_enabled", "set_group_enabled", or '
+                        '"navigate_to_place".'
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST

@@ -20,6 +20,7 @@ function createMapMock({ bounds, zoom, fitBoundsZoom }) {
   const container = { clientWidth: 1200, clientHeight: 800 };
   const listeners = new Map();
   const fitBoundsCalls = [];
+  const flyToCalls = [];
   const setZoomCalls = [];
 
   const addListener = (eventName, handler, once) => {
@@ -30,16 +31,35 @@ function createMapMock({ bounds, zoom, fitBoundsZoom }) {
 
   const map = {
     fitBoundsCalls,
+    flyToCalls,
     setZoomCalls,
     getBounds: () => currentBounds,
     getZoom: () => currentZoom,
     getContainer: () => container,
+    setBoundsForTest: ([west, south, east, north]) => {
+      currentBounds = createBounds(west, south, east, north);
+    },
     fitBounds: (targetBounds, options) => {
       fitBoundsCalls.push({ targetBounds, options });
       const [[west, south], [east, north]] = targetBounds;
       currentBounds = createBounds(west, south, east, north);
       if (Number.isFinite(fitBoundsZoom)) {
         currentZoom = fitBoundsZoom;
+      }
+    },
+    flyTo: (options) => {
+      flyToCalls.push(options);
+      if (options?.center && Number.isFinite(options.center.lng) && Number.isFinite(options.center.lat)) {
+        const span = 0.01;
+        currentBounds = createBounds(
+          options.center.lng - span,
+          options.center.lat - span,
+          options.center.lng + span,
+          options.center.lat + span,
+        );
+      }
+      if (Number.isFinite(options?.zoom)) {
+        currentZoom = options.zoom;
       }
     },
     setZoom: (targetZoom, options) => {
@@ -82,22 +102,28 @@ function createMapMock({ bounds, zoom, fitBoundsZoom }) {
 
 function createDataContextMock() {
   const subscriptions = new Map();
-  const unsubscribeViewportSpy = vi.fn();
-  return {
+  const unsubscribeSpy = vi.fn();
+  const context = {
+    _clientId: "test-client",
     updateViewportFromUI: vi.fn(),
     subscribe: (topic, handler) => {
       subscriptions.set(topic, handler);
       return () => {
         subscriptions.delete(topic);
-        unsubscribeViewportSpy();
+        unsubscribeSpy(topic);
       };
     },
     emitViewport: (viewport) => {
       const handler = subscriptions.get("viewport");
       if (handler) handler(viewport);
     },
-    unsubscribeViewportSpy,
+    emitNavigationCommand: (command) => {
+      const handler = subscriptions.get("navigationCommand");
+      if (handler) handler(command);
+    },
+    unsubscribeSpy,
   };
+  return context;
 }
 
 function installResizeObserverMock() {
@@ -285,6 +311,260 @@ describe("maplibre-viewport-sync", () => {
     cleanup();
   });
 
+  it("consumes place navigation command with direct camera travel and reports canonical GIS viewport snapshots during travel", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6, fitBoundsZoom: 14 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    dataContext.emitNavigationCommand({
+      id: "nav-1",
+      placeId: "yeshuv-0067",
+      cameraHint: { center: { lng: 5, lat: 5 }, zoom: 15 },
+      transition: { animate: true, durationMs: 1600 },
+    });
+
+    expect(map.flyToCalls).toHaveLength(1);
+    expect(map.flyToCalls[0]).toEqual(
+      expect.objectContaining({
+        center: { lng: 5, lat: 5 },
+        zoom: 15,
+        animate: true,
+        duration: 1600,
+      }),
+    );
+    expect(map.fitBoundsCalls).toHaveLength(0);
+    expect(map.listenerCount("idle")).toBe(1);
+
+    map.emit("move");
+    vi.advanceTimersByTime(100);
+
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bbox: expect.any(Array),
+        corners: expect.any(Object),
+        zoom: expect.any(Number),
+      }),
+      "gis",
+      expect.objectContaining({ sharedUpdate: "immediate" }),
+    );
+    const reported = dataContext.updateViewportFromUI.mock.calls.at(-1)?.[0];
+    expect(reported).not.toHaveProperty("placeId");
+    expect(reported).not.toHaveProperty("cameraHint");
+    expect(reported).not.toHaveProperty("target");
+
+    map.emit("idle");
+
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bbox: expect.any(Array),
+        corners: expect.any(Object),
+        zoom: expect.any(Number),
+      }),
+      "gis",
+      expect.objectContaining({ sharedUpdate: "immediate" }),
+    );
+
+    cleanup();
+  });
+
+  it("keeps ordinary GIS map changes on the default debounced shared update path", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    map.emit("moveend");
+    vi.runOnlyPendingTimers();
+
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledTimes(1);
+    expect(dataContext.updateViewportFromUI.mock.calls[0]).toHaveLength(2);
+
+    cleanup();
+  });
+
+  it("does not treat camera hint bounds as canonical viewport geometry", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6, fitBoundsZoom: 14 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    dataContext.emitNavigationCommand({
+      id: "nav-1",
+      placeId: "yeshuv-0067",
+      cameraHint: { center: { lng: 5, lat: 5 }, zoom: 15 },
+      transition: { animate: false, durationMs: 0 },
+    });
+    map.emit("move");
+    vi.advanceTimersByTime(100);
+
+    const reported = dataContext.updateViewportFromUI.mock.calls.at(-1)?.[0];
+    expect(reported).toBeTruthy();
+    expect(reported).not.toHaveProperty("placeId");
+    expect(reported).not.toHaveProperty("cameraHint");
+
+    cleanup();
+  });
+
+  it("continues reporting canonical viewport snapshots without a corrective size snap", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6, fitBoundsZoom: 14 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    dataContext.emitNavigationCommand({
+      id: "nav-1",
+      placeId: "yeshuv-0067",
+      cameraHint: { center: { lng: 5, lat: 5 }, zoom: 15 },
+      transition: { animate: true, durationMs: 1600 },
+    });
+
+    map.setBoundsForTest([0, 0, 10, 10]);
+    map.emit("move");
+    vi.advanceTimersByTime(100);
+    map.setBoundsForTest([0, 0, 11, 11]);
+    map.emit("move");
+    vi.advanceTimersByTime(100);
+    map.setBoundsForTest([0, 0, 12, 12]);
+    map.emit("idle");
+    vi.runOnlyPendingTimers();
+
+    const widths = dataContext.updateViewportFromUI.mock.calls
+      .map((call) => call[0]?.bbox)
+      .filter(Boolean)
+      .map((bbox) => Math.abs(bbox[2] - bbox[0]));
+    expect(widths.length).toBeGreaterThanOrEqual(2);
+    for (let i = 1; i < widths.length; i += 1) {
+      const ratio =
+        Math.max(widths[i], widths[i - 1]) / Math.max(1e-9, Math.min(widths[i], widths[i - 1]));
+      expect(ratio).toBeLessThan(1.35);
+    }
+
+    cleanup();
+  });
+
+  it("does not re-apply GIS place-travel reports back onto the same map mid-flight", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6, fitBoundsZoom: 14 });
+    const dataContext = createDataContextMock();
+    dataContext.updateViewportFromUI = vi.fn((viewport) => {
+      dataContext.emitViewport({ ...viewport, sourceId: "test-client" });
+      return { accepted: true };
+    });
+    const cleanup = setupViewportSync(map, dataContext);
+
+    dataContext.emitNavigationCommand({
+      id: "nav-1",
+      placeId: "yeshuv-0067",
+      cameraHint: { center: { lng: 5, lat: 5 }, zoom: 15 },
+      transition: { animate: true, durationMs: 1600 },
+    });
+
+    map.emit("move");
+    vi.advanceTimersByTime(100);
+
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledTimes(1);
+    expect(map.flyToCalls).toHaveLength(1);
+    expect(map.fitBoundsCalls).toHaveLength(0);
+
+    map.emit("idle");
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledTimes(2);
+    expect(map.fitBoundsCalls).toHaveLength(0);
+
+    cleanup();
+  });
+
+  it("ignores same-client viewport echoes while place navigation is travelling", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6, fitBoundsZoom: 14 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    dataContext.emitNavigationCommand({
+      id: "nav-1",
+      placeId: "yeshuv-0067",
+      cameraHint: { center: { lng: 5, lat: 5 }, zoom: 15 },
+      transition: { animate: true, durationMs: 1600 },
+    });
+
+    dataContext.emitViewport({
+      sourceId: "test-client",
+      bbox: [100000, 500000, 150000, 550000],
+      zoom: 12,
+    });
+
+    expect(map.flyToCalls).toHaveLength(1);
+    expect(map.fitBoundsCalls).toHaveLength(0);
+    expect(map.setZoomCalls).toHaveLength(0);
+
+    cleanup();
+  });
+
+  it("ignores unattributed viewport messages while place navigation is travelling", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6, fitBoundsZoom: 14 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    dataContext.emitNavigationCommand({
+      id: "nav-1",
+      traceId: "trace-nav-1",
+      placeId: "yeshuv-0067",
+      cameraHint: { center: { lng: 5, lat: 5 }, zoom: 15 },
+      transition: { animate: true, durationMs: 1600 },
+    });
+
+    dataContext.emitViewport({
+      bbox: [100000, 500000, 150000, 550000],
+      zoom: 12,
+    });
+
+    expect(map.flyToCalls).toHaveLength(1);
+    expect(map.fitBoundsCalls).toHaveLength(0);
+    expect(map.setZoomCalls).toHaveLength(0);
+
+    cleanup();
+  });
+
+  it("retries a during-travel GIS report once after interaction_guard", () => {
+    let calls = 0;
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6, fitBoundsZoom: 14 });
+    const dataContext = createDataContextMock();
+    dataContext.updateViewportFromUI = vi.fn(() => {
+      calls += 1;
+      if (calls === 1) return { accepted: false, reason: "interaction_guard" };
+      return { accepted: true };
+    });
+    const cleanup = setupViewportSync(map, dataContext);
+
+    dataContext.emitNavigationCommand({
+      id: "nav-1",
+      placeId: "yeshuv-0067",
+      cameraHint: { center: { lng: 5, lat: 5 }, zoom: 15 },
+      transition: { animate: true, durationMs: 1600 },
+    });
+    map.emit("move");
+    vi.advanceTimersByTime(100);
+    vi.runOnlyPendingTimers();
+
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledTimes(2);
+    expect(dataContext.updateViewportFromUI).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        bbox: expect.any(Array),
+        corners: expect.any(Object),
+        zoom: expect.any(Number),
+      }),
+      "gis",
+      expect.objectContaining({ sharedUpdate: "immediate" }),
+    );
+    expect(dataContext.updateViewportFromUI).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        bbox: expect.any(Array),
+        corners: expect.any(Object),
+        zoom: expect.any(Number),
+      }),
+      "gis",
+      expect.objectContaining({ sharedUpdate: "immediate" }),
+    );
+
+    cleanup();
+  });
+
   it("does not loop when interaction_guard persists on the single reconcile attempt", () => {
     const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
     const dataContext = createDataContextMock();
@@ -434,28 +714,47 @@ describe("maplibre-viewport-sync", () => {
       bbox: [1, 1, 11, 11],
       zoom: 7,
     });
+    dataContext.emitNavigationCommand({
+      id: "nav-cleanup",
+      placeId: "yeshuv-0067",
+      cameraHint: { center: { lng: 5, lat: 5 }, zoom: 15 },
+      transition: { animate: true, durationMs: 1600 },
+    });
+    map.emit("move");
 
     expect(map.listenerCount("idle")).toBeGreaterThan(0);
+    expect(map.listenerCount("move")).toBeGreaterThan(0);
     expect(map.listenerCount("moveend")).toBeGreaterThan(0);
     expect(map.listenerCount("zoomend")).toBeGreaterThan(0);
 
     cleanup();
 
-    expect(dataContext.unsubscribeViewportSpy).toHaveBeenCalledTimes(1);
+    expect(dataContext.unsubscribeSpy).toHaveBeenCalledWith("viewport");
+    expect(dataContext.unsubscribeSpy).toHaveBeenCalledWith("navigationCommand");
     expect(map.listenerCount("idle")).toBe(0);
+    expect(map.listenerCount("move")).toBe(0);
     expect(map.listenerCount("moveend")).toBe(0);
     expect(map.listenerCount("zoomend")).toBe(0);
+    const fitBoundsCallCountAfterCleanup = map.fitBoundsCalls.length;
+    const setZoomCallsAfterCleanup = [...map.setZoomCalls];
 
     dataContext.emitViewport({
       bbox: [5, 5, 15, 15],
       zoom: 9,
     });
+    dataContext.emitNavigationCommand({
+      id: "nav-cleanup-after",
+      placeId: "yeshuv-0068",
+      cameraHint: { center: { lng: 6, lat: 6 }, zoom: 15 },
+      transition: { animate: true, durationMs: 1600 },
+    });
+    map.emit("move");
     map.emit("moveend");
     map.emit("zoomend");
-    vi.runOnlyPendingTimers();
+    vi.runAllTimers();
 
-    expect(map.fitBoundsCalls).toHaveLength(1);
-    expect(map.setZoomCalls).toEqual([{ zoom: 7, options: { animate: false } }]);
+    expect(map.fitBoundsCalls).toHaveLength(fitBoundsCallCountAfterCleanup);
+    expect(map.setZoomCalls).toEqual(setZoomCallsAfterCleanup);
     expect(dataContext.updateViewportFromUI).not.toHaveBeenCalled();
   });
 

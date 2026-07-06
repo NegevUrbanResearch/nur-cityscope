@@ -133,6 +133,13 @@ export const OTEF_API = {
     }
   },
 
+  async navigateToPlace(tableName = this.defaultTable, payload) {
+    return this.executeCommand(tableName, {
+      action: "navigate_to_place",
+      ...payload,
+    });
+  },
+
   async updateLayerGroups(tableName = this.defaultTable, layerGroups, meta = {}) {
     return this.updateState(tableName, { layerGroups, ...meta });
   },
@@ -172,7 +179,19 @@ export const OTEF_API = {
   },
 
   async updateViewport(tableName = this.defaultTable, viewport) {
-    return this.updateState(tableName, { viewport });
+    const meta = {};
+    if (viewport && typeof viewport === "object") {
+      if (viewport.sourceId) meta.sourceId = viewport.sourceId;
+      if (viewport.timestamp) meta.timestamp = viewport.timestamp;
+      if (viewport.traceId) meta.traceId = viewport.traceId;
+    }
+    return this.updateState(tableName, { viewport, ...meta });
+  },
+
+  async updateViewportImmediate(tableName = this.defaultTable, viewport) {
+    clearTimeout(this._viewportDebounce);
+    this._viewportDebounce = null;
+    return this.updateViewport(tableName, viewport);
   },
 
   updateViewportDebounced(tableName = this.defaultTable, viewport) {
