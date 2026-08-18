@@ -1,3 +1,5 @@
+import { normalizeGisBasemap } from "../shared/gis-basemap.js";
+
 const maplibregl =
   (typeof globalThis !== "undefined" && globalThis.maplibregl) ||
   (typeof window !== "undefined" && window.maplibregl);
@@ -49,6 +51,22 @@ const BASEMAP_STYLES = {
     },
     layers: [{ id: "esri-tiles", type: "raster", source: "esri" }],
   },
+  dark: {
+    version: 8,
+    sources: {
+      carto: {
+        type: "raster",
+        tiles: [
+          "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+          "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+          "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+        ],
+        tileSize: 256,
+        attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+      },
+    },
+    layers: [{ id: "carto-dark-tiles", type: "raster", source: "carto" }],
+  },
 };
 
 export function setGISBasemap(map, basemap) {
@@ -69,7 +87,7 @@ export function createGISMap(containerId, options = {}) {
 
   const map = new maplibregl.Map({
     container: containerId,
-    style: BASEMAP_STYLES[basemap] || BASEMAP_STYLES.osm,
+    style: BASEMAP_STYLES[normalizeGisBasemap(basemap)],
     center,
     zoom,
     minZoom,

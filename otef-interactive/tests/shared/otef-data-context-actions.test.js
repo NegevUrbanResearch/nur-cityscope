@@ -696,4 +696,23 @@ describe('OTEFDataContext actions', () => {
     expect(body.sourceId).toBe('test-client');
   });
 
+  test('setBasemap patches dark basemap state', async () => {
+    const ctx = {
+      _tableName: 'otef',
+      _clientId: 'test-client',
+      _basemap: 'osm',
+      _setBasemap: vi.fn(function setBasemapState(next) {
+        this._basemap = next;
+      }),
+    };
+
+    const result = await setBasemap(ctx, 'dark');
+
+    expect(result).toEqual({ ok: true });
+    expect(ctx._setBasemap).toHaveBeenCalledWith('dark');
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(body.basemap).toBe('dark');
+  });
+
 });
+

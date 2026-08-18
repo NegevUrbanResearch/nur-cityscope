@@ -227,9 +227,11 @@ function symbolIRToLegendItems(symbol, label, geometryType) {
   if (geom === "point") {
     if (markerPoint && markerPoint.marker) {
       const m = markerPoint.marker;
+      const rawShape = String(m.shape || "").toLowerCase();
+      const shape = rawShape === "square" ? "square" : rawShape === "diamond" ? "diamond" : "point";
       items.push({
         label,
-        shape: "point",
+        shape,
         fill: m.fillColor || m.strokeColor || "#808080",
         stroke: m.strokeColor || m.fillColor,
       });
@@ -431,6 +433,51 @@ function groupLayersByName(layers) {
   return result;
 }
 
+/**
+ * Build one legend layer from style config.
+ * uniqueValue with ui.legendLabel collapses to a single row (e.g. Gaza Roads).
+ * uniqueValue without legendLabel expands every class (e.g. NLI points).
+ */
+function legendLayerFromConfig(config, layer, options = {}) {
+  const style = config.style || {};
+  const renderer = style.renderer || "simple";
+  const geometryType = config.geometryType || "polygon";
+  let items = [];
+  let singleRowMultiSymbol = false;
+
+  if (renderer === "uniqueValue") {
+    items = itemsFromUniqueValue(config);
+    if (config.ui?.legendLabel && items.length > 0) {
+      items = [{ ...items[0], label: config.ui.legendLabel }];
+    }
+  } else if (renderer === "landUse") {
+    items = itemsFromLandUse(config, options.distinctLandUse);
+  } else {
+    const layerSymbol = style.defaultSymbol;
+    const symbol =
+      layerSymbol?.symbolLayers?.length > 0
+        ? layerSymbol
+        : symbolFromSimpleStyle(style.defaultStyle || {});
+    const label = config.ui?.legendLabel || config.name || layer.id;
+    const result = symbolIRToLegendItems(symbol, label, geometryType);
+    items = result.items;
+    singleRowMultiSymbol = result.singleRowMultiSymbol;
+    if (items.length === 0) {
+      items = itemsFromSimple(config);
+    }
+  }
+
+  if (items.length === 0) return null;
+
+  return {
+    id: layer.id,
+    name: config.ui?.legendLabel || config.name || layer.id,
+    geometryType,
+    items,
+    singleRowMultiSymbol,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // buildLegendModel
 // ---------------------------------------------------------------------------
@@ -515,64 +562,22 @@ async function buildLegendModel() {
       // Explicit hideInLegend check
       if (config.ui?.hideInLegend) continue;
 
-      const style = config.style || {};
-      const renderer = style.renderer || "simple";
-      const geometryType = config.geometryType || "polygon";
-      let items = [];
-      let singleRowMultiSymbol = false;
-
-      if (renderer === "uniqueValue") {
-        const collapseLabel = config.ui?.legendLabel;
-        if (collapseLabel) {
-          const uv = config.style?.uniqueValues || {};
-          const firstClass = (uv.classes || [])[0];
-          const layerSymbol =
-            firstClass?.symbol?.symbolLayers?.length > 0
-              ? firstClass.symbol
-              : config.style?.defaultSymbol;
-          const symbol =
-            layerSymbol?.symbolLayers?.length > 0
-              ? layerSymbol
-              : symbolFromSimpleStyle(config.style?.defaultStyle || {});
-          const result = symbolIRToLegendItems(symbol, collapseLabel, geometryType);
-          items = result.items;
-          singleRowMultiSymbol = result.singleRowMultiSymbol;
-        } else {
-          items = itemsFromUniqueValue(config);
-        }
-      } else if (renderer === "landUse") {
-        const field = style.landUseField || "TARGUMYEUD";
-        const fallback = style.landUseFieldFallback || "KVUZ_TRG";
+      const renderer = config.style?.renderer || "simple";
+      let distinctLandUse;
+      if (renderer === "landUse") {
+        const field = config.style.landUseField || "TARGUMYEUD";
+        const fallback = config.style.landUseFieldFallback || "KVUZ_TRG";
         const url = registry?.getLayerDataUrl(fullId) || null;
         const canScanGeojson = url && config.format === "geojson";
-        const distinct = canScanGeojson
+        distinctLandUse = canScanGeojson
           ? await distinctLandUseFromGeoJSON(url, field, fallback)
           : [];
-        items = itemsFromLandUse(config, distinct);
-      } else {
-        const layerSymbol = config.style?.defaultSymbol;
-        const symbol =
-          layerSymbol?.symbolLayers?.length > 0
-            ? layerSymbol
-            : symbolFromSimpleStyle(config.style?.defaultStyle || {});
-        const label = config.name || layer.id;
-        const result = symbolIRToLegendItems(symbol, label, geometryType);
-        items = result.items;
-        singleRowMultiSymbol = result.singleRowMultiSymbol;
-        if (items.length === 0) {
-          items = itemsFromSimple(config);
-        }
       }
 
-      if (items.length === 0) continue;
+      const built = legendLayerFromConfig(config, layer, { distinctLandUse });
+      if (!built || (built.items || []).length === 0) continue;
 
-      packLayers.push({
-        id: layer.id,
-        name: config.name || layer.id,
-        geometryType,
-        items,
-        singleRowMultiSymbol,
-      });
+      packLayers.push(built);
     }
 
     if (packLayers.length === 0) continue;
@@ -597,6 +602,7 @@ async function buildLegendModel() {
 
 export {
   buildLegendModel,
+  legendLayerFromConfig,
   symbolIRToLegendItems,
   // Also re-export helpers used by map-legend.js renderer
   getDashBackground,

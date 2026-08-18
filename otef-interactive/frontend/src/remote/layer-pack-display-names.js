@@ -19,6 +19,7 @@ const PACK_LABELS = {
   municpality_transport: { he: "תחבורה מוניציפלית", en: "Municipal transport" },
   // layers-manifest id (spelling in data / registry)
   muniplicity_transport: { he: "תחבורה מוניציפלית", en: "Municipal transport" },
+  nli: { he: "ספרייה לאומית", en: "National Library" },
 };
 
 export const REQUIRED_PACK_IDS = /** @type {const} */ ([

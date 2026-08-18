@@ -53,6 +53,55 @@ class DecidePmtilesTests(unittest.TestCase):
             ),
         )
 
+    def test_nli_pack_opts_out_even_with_advanced_marker_point_style(self):
+        marker_point_style = {
+            "uniqueValues": {
+                "classes": [
+                    {
+                        "symbol": {
+                            "symbolLayers": [{"type": "markerPoint"}],
+                        }
+                    }
+                ]
+            }
+        }
+        polygon_style = {
+            "defaultSymbol": {
+                "symbolLayers": [
+                    {"type": "stroke"},
+                    {"type": "fill"},
+                ]
+            }
+        }
+        cases = (
+            ("nli_catalog", "Point", "point", marker_point_style, 986),
+            ("investigation_polygons", "Polygon", "polygon", polygon_style, 13),
+        )
+        for layer_id, geometry_type, geometry_family, style_config, feature_count in cases:
+            with self.subTest(layer_id=layer_id):
+                decision = decide_pmtiles(
+                    pack_id="nli",
+                    layer_id=layer_id,
+                    geometry_type=geometry_type,
+                    style_config=style_config,
+                    stats=LayerStats(
+                        size_bytes=400_000,
+                        feature_count=feature_count,
+                        coordinate_count=feature_count,
+                        property_bytes=1000,
+                        geometry_family=geometry_family,
+                    ),
+                )
+
+                self.assertEqual(
+                    decision,
+                    PmtilesDecision(
+                        use_pmtiles=False,
+                        preset=None,
+                        reasons=("nli_pack_opt_out",),
+                    ),
+                )
+
     def test_label_only_point_layer_is_explicit_opt_out(self):
         decision = decide_pmtiles(
             pack_id="greens",

@@ -1,9 +1,11 @@
 import TableSwitcher from "../shared/table-switcher.js";
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
-import { createGISMap, setGISBasemap } from "../map/maplibre-map.js";
+import { createGISMap, setGISBasemap, maplibregl } from "../map/maplibre-map.js";
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
 import { applyLayerGroupsToMap, clearAllLayers, removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
+import { attachGisFeaturePopups } from "../map/maplibre-gis-popups.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
+import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
 import {
@@ -15,6 +17,10 @@ import {
   disposeRouteProgressOverlaysForMap,
   syncRouteProgressOverlaysToMap,
 } from "../shared/maplibre-route-progress-overlay.js";
+import {
+  disposeInvestigationTimelineForMap,
+  syncInvestigationTimelineToMap,
+} from "../shared/maplibre-investigation-timeline.js";
 
 const DEFAULT_MAP_CENTER = [34.5, 31.4];
 
@@ -113,8 +119,9 @@ async function bootstrapMapRuntime() {
     resolveCenterFromViewport(OTEFDataContext.getViewport()) ||
     DEFAULT_MAP_CENTER;
 
-  let currentBasemap =
-    typeof OTEFDataContext.getBasemap === "function" ? OTEFDataContext.getBasemap() : "osm";
+  let currentBasemap = normalizeGisBasemap(
+    typeof OTEFDataContext.getBasemap === "function" ? OTEFDataContext.getBasemap() : "osm",
+  );
 
   const map = createGISMap("map", {
     center,
@@ -149,6 +156,7 @@ async function bootstrapMapRuntime() {
   map.on("load", async () => {
     registerDisposer(() => {
       disposeRouteProgressOverlaysForMap(map);
+      disposeInvestigationTimelineForMap(map);
     });
 
     const syncContextFlowAnimations = () => {
@@ -162,10 +170,14 @@ async function bootstrapMapRuntime() {
       void syncRouteProgressOverlaysToMap(map, anim, currentGroups, {
         visibilityLayerGroups: groupsAsArray,
       });
+      void syncInvestigationTimelineToMap(map, anim, currentGroups, {
+        visibilityLayerGroups: groupsAsArray,
+      });
     };
     registerDisposer(OTEFDataContext.subscribe("animations", syncContextFlowAnimations));
 
     registerDisposer(setupViewportSync(map, OTEFDataContext));
+    registerDisposer(attachGisFeaturePopups(map, maplibregl));
     let activeCuratedIds = new Set();
 
     const layerGroups = OTEFDataContext.getLayerGroups();
@@ -274,7 +286,7 @@ async function bootstrapMapRuntime() {
 
     registerDisposer(
       OTEFDataContext.subscribe("basemap", (basemap) => {
-        const nextBasemap = basemap === "satellite" ? "satellite" : "osm";
+        const nextBasemap = normalizeGisBasemap(basemap);
         if (nextBasemap === currentBasemap) return;
 
         const reapplyAfterStyleLoad = () => {

@@ -31,6 +31,13 @@ export const PROJECTION_HATCH_PIXEL_RATIO = 2;
 export const PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE = 0.3;
 
 /**
+ * Multiplies IR-derived **point** `circle-radius` (and square `icon-size`) on the projection
+ * MapLibre map when `applyProjectionHatchPresentation` is true. GIS stays at scale 1.
+ * Hatch / line scales are unchanged.
+ */
+export const PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE = 0.5;
+
+/**
  * @param {number} scaledSeparation - after density multiplier, before quantize
  * @returns {number} whole px, >= 1
  */

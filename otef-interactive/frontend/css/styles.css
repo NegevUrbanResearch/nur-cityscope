@@ -257,6 +257,21 @@ body {
   border: 1px solid rgba(0, 0, 0, 0.2);
 }
 
+.map-legend-symbol--square {
+  width: 12px;
+  height: 12px;
+  border-radius: 0;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.map-legend-symbol--diamond {
+  width: 10px;
+  height: 10px;
+  border-radius: 0;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  transform: rotate(45deg);
+}
+
 .map-legend-symbol--none {
   width: 24px;
   height: 16px;
@@ -319,18 +334,24 @@ body {
 }
 
 /* Leaflet popup styles for layer feature popups */
-.leaflet-popup-content-wrapper {
+.leaflet-popup-content-wrapper,
+.maplibregl-popup-content {
   border-radius: 8px;
   padding: 0;
 }
 
-.leaflet-popup-content {
+.leaflet-popup-content,
+.maplibregl-popup-content {
   margin: 0;
   padding: 12px 16px;
   min-width: 200px;
   max-width: 400px;
   font-size: 14px;
   line-height: 1.5;
+}
+
+.gis-feature-popup .maplibregl-popup-content {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 
 .popup-content {
@@ -400,7 +421,8 @@ body {
 
 /* Mobile optimization for popups */
 @media (max-width: 768px) {
-  .leaflet-popup-content {
+  .leaflet-popup-content,
+  .maplibregl-popup-content {
     min-width: 180px;
     max-width: calc(100vw - 40px);
     padding: 10px 12px;
@@ -547,5 +569,38 @@ body {
 @keyframes highlightPulseLight {
   0% { opacity: 0.5; transform: scale(0.99); }
   100% { opacity: 1; transform: scale(1.01); }
+}
+
+.nli-investigation-timeline-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 8;
+  max-width: min(72vw, 42rem);
+  padding: 6px 12px;
+  background: rgba(12, 16, 22, 0.62);
+  color: #f4f1ea;
+  font-size: 13px;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  text-align: center;
+  pointer-events: none;
+  border-radius: 4px;
+}
+
+.nli-investigation-timeline-caption[hidden] {
+  display: none;
+}
+
+.nli-investigation-timeline-caption .nli-tl-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.nli-investigation-timeline-caption .nli-tl-names {
+  margin-top: 2px;
+  font-size: 12px;
+  opacity: 0.92;
 }
 

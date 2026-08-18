@@ -13,7 +13,7 @@ test("map entry does not poll Supabase curated heartbeat", () => {
 test("map entry bootstraps maplibre runtime modules", () => {
   const src = read("frontend/src/entries/map-main.js");
   const idxCreateMap = src.indexOf(
-    'import { createGISMap } from "../map/maplibre-map.js";',
+    'import { createGISMap, setGISBasemap, maplibregl } from "../map/maplibre-map.js";',
   );
   const idxViewportSync = src.indexOf(
     'import { setupViewportSync } from "../map/maplibre-viewport-sync.js";',
@@ -26,6 +26,8 @@ test("map entry bootstraps maplibre runtime modules", () => {
   expect(idxViewportSync).toBeGreaterThan(-1);
   expect(idxLayerManager).toBeGreaterThan(-1);
   expect(src.includes("applyLayerGroupsToMap")).toBe(true);
+  expect(src.includes("attachGisFeaturePopups")).toBe(true);
+  expect(src.includes("../map/maplibre-gis-popups.js")).toBe(true);
   expect(src.includes("../map/map-initialization.js")).toBe(false);
   expect(src.includes("../map/leaflet-control-with-basemap.js")).toBe(false);
   expect(src.includes("../map/viewport-sync.js")).toBe(false);

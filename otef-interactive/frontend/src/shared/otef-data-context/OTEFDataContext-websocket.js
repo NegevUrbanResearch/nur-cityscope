@@ -1,4 +1,5 @@
 import { OTEF_API } from "../api-client.js";
+import { isGisBasemapId, normalizeGisBasemap } from "../gis-basemap.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
 import { OTEFWebSocketClient } from "../websocket-client.js";
 import { recordTraceEvent } from "../otef-trace.js";
@@ -53,7 +54,7 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
     }
     if (state.animations) ctx._animations = state.animations;
     if (Object.prototype.hasOwnProperty.call(state, "basemap")) {
-      ctx._basemap = state.basemap === "satellite" ? "satellite" : "osm";
+      ctx._basemap = normalizeGisBasemap(state.basemap);
     }
     if (state.bounds_polygon || state.bounds) ctx._bounds = state.bounds_polygon || state.bounds;
     if (typeof state.viewer_angle_deg === "number") {
@@ -228,7 +229,7 @@ function setupWebSocket(ctx) {
 
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.BASEMAP_CHANGED, async (msg = {}) => {
     if (msg && msg.sourceId === ctx._clientId) return;
-    if (msg.basemap === "osm" || msg.basemap === "satellite") {
+    if (isGisBasemapId(msg.basemap)) {
       ctx._setBasemap(msg.basemap);
       return;
     }

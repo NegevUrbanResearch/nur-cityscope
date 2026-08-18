@@ -1,4 +1,5 @@
 import { OTEF_API } from "../api-client.js";
+import { isGisBasemapId } from "../gis-basemap.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
 import {
   applyMoreshetParkingCoherenceToLayerGroups,
@@ -711,7 +712,7 @@ async function setLayerAnimations(ctx, fullLayerIds, enabled) {
 
 async function setBasemap(ctx, basemap) {
   if (!ctx._tableName) return { ok: false, error: "Missing table" };
-  if (basemap !== "osm" && basemap !== "satellite") {
+  if (!isGisBasemapId(basemap)) {
     return { ok: false, error: "Unsupported basemap" };
   }
 

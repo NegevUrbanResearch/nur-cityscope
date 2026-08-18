@@ -269,6 +269,18 @@ const LAYER_DISPLAY_LABELS = {
     he: "חניה ציר ורוד",
     en: "Pink line parking",
   },
+  "nli.investigation_polygons": {
+    he: "פוליגונים מתחקירים",
+    en: "Investigation polygons",
+  },
+  "nli.oct7_database": {
+    he: "מסד נתוני 7 באוקטובר",
+    en: "Oct 7 database",
+  },
+  "nli.nli_catalog": {
+    he: "קטלוג הספרייה הלאומית",
+    en: "NLI catalog",
+  },
 };
 
 /**

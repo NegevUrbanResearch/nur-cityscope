@@ -60,6 +60,7 @@ describe("projection slideshow config", () => {
       "projector_base",
       "gaza",
       "curated_moresht_axis",
+      "nli",
     ]);
     expect(MapProjectionConfig.PROJECTION_SLIDESHOW.packOrder).toEqual([
       "future_development",

@@ -114,6 +114,9 @@ def decide_pmtiles(
     if pack_id == "projector_base":
         return PmtilesDecision(False, None, ("projector_base_opt_out",))
 
+    if pack_id == "nli":
+        return PmtilesDecision(False, None, ("nli_pack_opt_out",))
+
     if _is_label_only_point_layer(geometry_type, style_config):
         return PmtilesDecision(False, None, ("label_point_opt_out",))
 

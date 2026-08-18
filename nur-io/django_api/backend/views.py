@@ -602,9 +602,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
             if 'basemap' in request.data:
                 basemap = request.data['basemap']
-                if basemap not in ('osm', 'satellite'):
+                if basemap not in ('osm', 'satellite', 'dark'):
                     return Response(
-                        {'error': 'basemap must be "osm" or "satellite"'},
+                        {'error': 'basemap must be "osm", "satellite", or "dark"'},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
                 state.basemap = basemap

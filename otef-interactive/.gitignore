@@ -15,4 +15,9 @@ scripts/*.pyc
 *.tmp
 *.bak
 
+# Source GIS generated locally (geojson/lyrx). .gitkeep and popup-config.json
+# remain committable via root .gitignore exceptions.
+public/source/**/*.geojson
+public/source/**/*.lyrx
+
 

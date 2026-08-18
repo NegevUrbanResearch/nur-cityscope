@@ -37,6 +37,12 @@ describe("layer-pack-display-names (contract)", () => {
     ]);
   });
 
+  test("nli experimental pack has he/en labels but is not required", () => {
+    expect(REQUIRED_PACK_IDS).not.toContain("nli");
+    expect(getPackDisplayLabel("nli", "he")).toBe("ספרייה לאומית");
+    expect(getPackDisplayLabel("nli", "en")).toBe("National Library");
+  });
+
   for (const packId of REQUIRED_PACK_IDS) {
     if (packId === "curated") {
       test("curated: no static pack label; layer title is t(curatedGroupLabel) from remote-locale", () => {

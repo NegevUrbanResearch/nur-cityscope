@@ -4,6 +4,7 @@
  */
 import {
   projectionHatchRasterParams,
+  PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
 } from "./hatch-projection-presentation.js";
 import { buildMarkerLineSquareImageSpec } from "./markerline-square-image.js";
@@ -49,11 +50,32 @@ function shouldSortFillsBeforeStrokesForPackLayer(fullLayerId, geometryType) {
   return !isLineGeometryType(geometryType);
 }
 
+function isPointGeometryType(geometryType) {
+  if (!geometryType) return false;
+  const g = String(geometryType).toLowerCase().replace(/_/g, "");
+  return (
+    g === "point" ||
+    g === "multipoint" ||
+    g === "esrigeometrypoint" ||
+    g === "esrigeometrymultipoint"
+  );
+}
+
 function isMarkerLineSquareSymbol(symbolLayer) {
   if (!symbolLayer || symbolLayer.type !== "markerLine") return false;
   const s = symbolLayer?.marker?.shape;
   if (s == null || s === "") return false;
   return String(s).toLowerCase() === "square";
+}
+
+function isMarkerPointSquareSymbol(symbolLayer) {
+  if (!symbolLayer || symbolLayer.type !== "markerPoint") return false;
+  const s = String(symbolLayer?.marker?.shape || "").toLowerCase();
+  return s === "square" || s === "diamond";
+}
+
+function markerPointSquareImageSpec(symbolLayer) {
+  return buildMarkerLineSquareImageSpec(symbolLayer);
 }
 
 /**
@@ -127,6 +149,31 @@ function mapLibreLineSymbolSpacingForMarkerLine(symbolLayer, hatchPresentation) 
 function markerLineSquareIconSize(hatchPresentation) {
   // GIS needs stronger separation from the rail stroke; projection remains a bit smaller.
   return hatchPresentation?.applyProjectionHatchPresentation ? 0.8 : 1.0;
+}
+
+function markerPointSquareIconSize(hatchPresentation) {
+  if (!hatchPresentation?.applyProjectionHatchPresentation) return 1.0;
+  const scale = Number(PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE);
+  if (!Number.isFinite(scale) || scale <= 0) return 1.0;
+  return scale;
+}
+
+/**
+ * @param {{ applyProjectionHatchPresentation?: boolean }} hatchPresentation
+ * @param {number|Array|undefined} radius
+ */
+function scalePointRadiusPaintForProjection(radius, hatchPresentation) {
+  if (!hatchPresentation?.applyProjectionHatchPresentation) return radius;
+  const scale = Number(PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE);
+  if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return radius;
+  if (radius == null) return Math.max(0, scale);
+  if (typeof radius === "number" && Number.isFinite(radius)) {
+    return Math.max(0, radius * scale);
+  }
+  if (Array.isArray(radius)) {
+    return ["*", scale, radius];
+  }
+  return radius;
 }
 
 /**
@@ -492,7 +539,9 @@ function getMapLibreType(symbolLayer) {
   if (!symbolLayer || typeof symbolLayer !== "object") return null;
   if (symbolLayer.type === "fill") return "fill";
   if (symbolLayer.type === "stroke") return "line";
-  if (symbolLayer.type === "markerPoint") return "circle";
+  if (symbolLayer.type === "markerPoint") {
+    return isMarkerPointSquareSymbol(symbolLayer) ? "markerPointSquare" : "circle";
+  }
   if (symbolLayer.type === "markerLine") {
     return isMarkerLineSquareSymbol(symbolLayer) ? "markerLineSquare" : "markerLineFallback";
   }
@@ -590,6 +639,34 @@ function buildMarkerLineSquareMapLibreLayer(id, symbolLayer, hatchPresentation) 
   };
 }
 
+/**
+ * Point square markers reuse the markerLine square raster (`addImage` pipeline).
+ * @param {string} id
+ * @param {object} symbolLayer
+ * @param {object} hatchPresentation
+ * @returns {object | null}
+ */
+function buildMarkerPointSquareMapLibreLayer(id, symbolLayer, hatchPresentation) {
+  const spec = markerPointSquareImageSpec(symbolLayer);
+  if (!spec) return null;
+  const layout = {
+    "icon-image": spec.imageId,
+    "icon-size": markerPointSquareIconSize(hatchPresentation),
+    "icon-allow-overlap": true,
+    "icon-ignore-placement": true,
+    "symbol-placement": "point",
+  };
+  const paint = {};
+  if (symbolLayer.opacity != null) paint["icon-opacity"] = symbolLayer.opacity;
+  return {
+    id,
+    type: "symbol",
+    paint,
+    layout,
+    _markerLineSquarePattern: spec,
+  };
+}
+
 function groupKeyForSymbolLayer(mapLibreType, symbolLayer, i) {
   if (mapLibreType === "fill") {
     const fillKind = symbolLayer?.fillType === "hatch" ? "hatch" : "solid";
@@ -663,6 +740,9 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
   }
 
   if (symbolLayer.type === "markerPoint") {
+    if (isMarkerPointSquareSymbol(symbolLayer)) {
+      return buildMarkerPointSquareMapLibreLayer(id, symbolLayer, hatchPresentation);
+    }
     const marker = symbolLayer.marker || {};
     const size = marker.size ?? 8;
     const fill = marker.fill ?? marker.fillColor ?? marker.color;
@@ -674,7 +754,7 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
         ? 0
         : strokeWidthBase;
     const paint = {
-      "circle-radius": size / 2,
+      "circle-radius": scalePointRadiusPaintForProjection(size / 2, hatchPresentation),
       "circle-color": markerColorForMapLibre(
         fill != null && fill !== "" ? fill : "#808080",
         marker.fillOpacity,
@@ -727,12 +807,17 @@ function sortMaplibreStyleLayersFillBeforeStroke(layers) {
   return [...fills, ...rest];
 }
 
-function buildSimpleLayers(idBase, symbol, hatchPresentation, sortFillBeforeStroke) {
+function buildSimpleLayers(idBase, symbol, hatchPresentation, sortFillBeforeStroke, geometryType) {
   const symbolLayers = Array.isArray(symbol?.symbolLayers) ? symbol.symbolLayers : [];
   const output = [];
 
   for (let i = 0; i < symbolLayers.length; i += 1) {
-    const mapLibreLayer = symbolLayerToMapLibre(symbolLayers[i], `${idBase}__${i}`, hatchPresentation);
+    const symbolLayer = symbolLayers[i];
+    if (isPointGeometryType(geometryType)) {
+      const mapLibreType = getMapLibreType(symbolLayer);
+      if (mapLibreType === "fill" || mapLibreType === "line") continue;
+    }
+    const mapLibreLayer = symbolLayerToMapLibre(symbolLayer, `${idBase}__${i}`, hatchPresentation);
     if (mapLibreLayer) output.push(mapLibreLayer);
   }
 
@@ -854,15 +939,18 @@ function buildUniqueValueGroups(uniqueValues, defaultSymbol) {
   return groups;
 }
 
-function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation, sortFillBeforeStroke) {
+function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation, sortFillBeforeStroke, geometryType) {
   const field = uniqueValues?.field;
-  if (!field) return buildSimpleLayers(idBase, defaultSymbol, hatchPresentation, sortFillBeforeStroke);
+  if (!field) return buildSimpleLayers(idBase, defaultSymbol, hatchPresentation, sortFillBeforeStroke, geometryType);
 
   const defaultSymbolLayers = Array.isArray(defaultSymbol?.symbolLayers) ? defaultSymbol.symbolLayers : [];
   const groups = buildUniqueValueGroups(uniqueValues, defaultSymbol);
   const output = [];
 
   for (const [groupKey, group] of Object.entries(groups)) {
+    if (isPointGeometryType(geometryType) && (group.type === "fill" || group.type === "line")) {
+      continue;
+    }
     const atIndex = defaultSymbolLayers[group.index];
     let defaultSymbolLayer = atIndex ?? group.sampleSymbolLayer;
     if (atIndex != null && getMapLibreType(atIndex) !== group.type) {
@@ -997,13 +1085,16 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
       uniqueValuePointColorFallback = true;
       paint["circle-color"] = "#808080";
     }
-    paint["circle-radius"] = buildMatchExpr(
-      field,
-      entries,
-      defaultSymbolLayer,
-      "marker.size",
-      (size) => size / 2
-    ) ?? 4;
+    paint["circle-radius"] = scalePointRadiusPaintForProjection(
+      buildMatchExpr(
+        field,
+        entries,
+        defaultSymbolLayer,
+        "marker.size",
+        (size) => size / 2
+      ) ?? 4,
+      hatchPresentation,
+    );
     paint["circle-stroke-color"] = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.stroke")
       ?? buildMatchExpr(field, entries, defaultSymbolLayer, "marker.strokeColor")
       ?? "#000000";
@@ -1017,22 +1108,26 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
     };
   }
 
-  if (mapLibreType === "markerLineSquare") {
-    const defaultSpec = buildMarkerLineSquareImageSpec(defaultSymbolLayer);
+  if (mapLibreType === "markerPointSquare" || mapLibreType === "markerLineSquare") {
+    const specFor = (symbolLayer) =>
+      mapLibreType === "markerPointSquare"
+        ? markerPointSquareImageSpec(symbolLayer)
+        : buildMarkerLineSquareImageSpec(symbolLayer);
+    const defaultSpec = specFor(defaultSymbolLayer);
     if (!defaultSpec) return null;
 
     const allSpecsById = new Map();
     allSpecsById.set(defaultSpec.imageId, defaultSpec);
     for (const entry of entries) {
       if (entry?.value == null) continue;
-      const s = buildMarkerLineSquareImageSpec(entry.symbolLayer) || defaultSpec;
+      const s = specFor(entry.symbolLayer) || defaultSpec;
       allSpecsById.set(s.imageId, s);
     }
 
     const entryRows = [];
     for (const entry of entries) {
       if (entry?.value == null) continue;
-      const s = buildMarkerLineSquareImageSpec(entry.symbolLayer) || defaultSpec;
+      const s = specFor(entry.symbolLayer) || defaultSpec;
       entryRows.push({ value: entry.value, imageId: s.imageId });
     }
 
@@ -1057,20 +1152,29 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
       }
     }
 
-    const layout = {
-      "icon-allow-overlap": true,
-      "icon-ignore-placement": true,
-      "icon-rotation-alignment": "map",
-      "icon-pitch-alignment": "map",
-      "icon-keep-upright": !Boolean((defaultSymbolLayer?.orientation || {}).alignToLine),
-      "symbol-placement": "line",
-      "symbol-spacing": mapLibreLineSymbolSpacingForMarkerLine(
-        defaultSymbolLayer,
-        hatchPresentation,
-      ),
-      "icon-image": iconImage,
-      "icon-size": markerLineSquareIconSize(hatchPresentation),
-    };
+    const isPointSquare = mapLibreType === "markerPointSquare";
+    const layout = isPointSquare
+      ? {
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+          "symbol-placement": "point",
+          "icon-image": iconImage,
+          "icon-size": markerPointSquareIconSize(hatchPresentation),
+        }
+      : {
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+          "icon-rotation-alignment": "map",
+          "icon-pitch-alignment": "map",
+          "icon-keep-upright": !Boolean((defaultSymbolLayer?.orientation || {}).alignToLine),
+          "symbol-placement": "line",
+          "symbol-spacing": mapLibreLineSymbolSpacingForMarkerLine(
+            defaultSymbolLayer,
+            hatchPresentation,
+          ),
+          "icon-image": iconImage,
+          "icon-size": markerLineSquareIconSize(hatchPresentation),
+        };
     const paint = {};
     const op = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
     if (op !== undefined) paint["icon-opacity"] = op;
@@ -1169,8 +1273,9 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
           defaultSymbol,
           hatchPresentation,
           sortFillBeforeStroke,
+          layerConfig?.geometryType,
         )
-      : buildSimpleLayers(idBase, defaultSymbol, hatchPresentation, sortFillBeforeStroke);
+      : buildSimpleLayers(idBase, defaultSymbol, hatchPresentation, sortFillBeforeStroke, layerConfig?.geometryType);
 
   const baseLayers = isLineGeometryType(layerConfig?.geometryType)
     ? sortLinePackStrokeOrderForDashedVisibility(rawBaseLayers)

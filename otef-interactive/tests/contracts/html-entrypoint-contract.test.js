@@ -79,8 +79,14 @@ test("remote-controller shell: Hebrew default, tab regions, and stable mount ids
   expect(remote).toMatch(/\bdata-i18n-aria="basemapControlAria"/);
   expect(remote).toMatch(/\bdata-i18n="basemapOsm"/);
   expect(remote).toMatch(/\bdata-i18n="basemapSatellite"/);
+  expect(remote).toMatch(/\bdata-i18n="basemapDark"/);
   expect(remote).toMatch(/\bdata-basemap="osm"/);
   expect(remote).toMatch(/\bdata-basemap="satellite"/);
+  expect(remote).toMatch(/\bdata-basemap="dark"/);
+  expect(remote).toMatch(/\bid="basemapDark"/);
+  expect(remote.indexOf('data-basemap="satellite"')).toBeLessThan(
+    remote.indexOf('data-basemap="dark"'),
+  );
   expect(remote.indexOf('id="layerSheet"')).toBeLessThan(
     remote.indexOf('id="basemapControl"'),
   );

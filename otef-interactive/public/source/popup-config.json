@@ -1,0 +1,93 @@
+{
+  "nli": {
+    "layers": {
+      "investigation_polygons": {
+        "titleField": "Name",
+        "hideEmpty": true,
+        "legendLabel": "Investigation polygons",
+        "fields": [
+          {
+            "label": "Name",
+            "key": "Name"
+          },
+          {
+            "label": "Timeline",
+            "key": "timeline"
+          }
+        ]
+      },
+      "oct7_database": {
+        "titleField": "hebrew_name",
+        "hideEmpty": true,
+        "fields": [
+          {
+            "label": "Hebrew name",
+            "key": "hebrew_name"
+          },
+          {
+            "label": "Name",
+            "key": "name"
+          },
+          {
+            "label": "Status",
+            "key": "status"
+          },
+          {
+            "label": "Location",
+            "key": "location"
+          },
+          {
+            "label": "Location class",
+            "key": "location_class"
+          },
+          {
+            "label": "Type",
+            "key": "type"
+          },
+          {
+            "label": "Age",
+            "key": "age"
+          },
+          {
+            "label": "Info",
+            "key": "info"
+          }
+        ]
+      },
+      "nli_catalog": {
+        "titleField": "name_he",
+        "hideEmpty": true,
+        "fields": [
+          {
+            "label": "Hebrew name",
+            "key": "name_he"
+          },
+          {
+            "label": "English name",
+            "key": "name_en"
+          },
+          {
+            "label": "Categories",
+            "key": "categories"
+          },
+          {
+            "label": "Incident place",
+            "key": "incident_place_oct7_he"
+          },
+          {
+            "label": "Associated place",
+            "key": "associated_place_oct7"
+          },
+          {
+            "label": "Life span",
+            "key": "name_life_span"
+          },
+          {
+            "label": "Biography",
+            "key": "biography"
+          }
+        ]
+      }
+    }
+  }
+}

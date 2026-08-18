@@ -182,6 +182,7 @@ describe("remote-locale", () => {
       "basemapControlAria",
       "basemapOsm",
       "basemapSatellite",
+      "basemapDark",
     ];
 
     setLocale("he", { force: true });
@@ -200,6 +201,7 @@ describe("remote-locale", () => {
     expect(t("basemapControlAria")).toBe("Basemap selector");
     expect(t("basemapOsm")).toBe("OSM");
     expect(t("basemapSatellite")).toBe("Satellite");
+    expect(t("basemapDark")).toBe("Dark");
   });
 
   test("place navigation strings resolve for both locales", async () => {

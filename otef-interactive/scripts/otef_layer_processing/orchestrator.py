@@ -62,7 +62,13 @@ ANIMATION_STYLE_OVERRIDES: Dict[str, Dict[str, Dict[str, Any]]] = {
             "dashArray": [10, 14],
             "directionPolicy": "feature_order",
         },
-    }
+    },
+    "nli": {
+        "investigation_polygons": {
+            "type": "timeline",
+            "enabledByDefault": False,
+        }
+    },
 }
 
 

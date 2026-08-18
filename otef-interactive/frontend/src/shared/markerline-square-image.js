@@ -26,10 +26,10 @@ function createCanvas2DContext(size) {
 /**
  * @param {object} [symbolLayer]
  * @param {object} [symbolLayer.marker]
- * @param {{}} [_hatchPresentation] reserved for future projection tuning
- * @returns {{ imageId: string, size: number, fill: string, stroke: string, strokeWidth: number, side: number }|null}
+ * @param {{ rotate?: number }} [options]
+ * @returns {{ imageId: string, size: number, fill: string, stroke: string, strokeWidth: number, side: number, pad: number, rotate?: number }|null}
  */
-export function buildMarkerLineSquareImageSpec(symbolLayer) {
+export function buildMarkerLineSquareImageSpec(symbolLayer, options = {}) {
   if (!symbolLayer || typeof symbolLayer !== "object") return null;
   const marker = symbolLayer.marker || {};
   const size =
@@ -49,13 +49,20 @@ export function buildMarkerLineSquareImageSpec(symbolLayer) {
     typeof marker.strokeWidth === "number" && marker.strokeWidth > 0
       ? marker.strokeWidth
       : 1;
+  const shape = String(marker.shape || "").toLowerCase();
+  const rotateOpt = Number(options.rotate);
+  const rotate = shape === "diamond" ? 45 : Number.isFinite(rotateOpt) ? rotateOpt : 0;
   const pad = Math.max(1, Math.ceil(strokeWidth / 2) + 1);
-  const side = Math.max(1, Math.ceil(size + 2 * pad + 2));
-  const imageId = `otef_mlsq_${SPEC_REV}_${String(fill)}_${String(strokeColor)}_${String(size)}_${String(strokeWidth)}_${String(side)}`.replace(
+  const box = rotate ? size * Math.SQRT2 : size;
+  const side = Math.max(1, Math.ceil(box + 2 * pad + 2));
+  const rotatePart = rotate ? `_r${rotate}` : "";
+  const imageId = `otef_mlsq_${SPEC_REV}_${String(fill)}_${String(strokeColor)}_${String(size)}_${String(strokeWidth)}_${String(side)}${rotatePart}`.replace(
     /[^a-zA-Z0-9_#]/g,
     "_",
   );
-  return { imageId, size, fill, stroke: strokeColor, strokeWidth, side, pad };
+  const spec = { imageId, size, fill, stroke: strokeColor, strokeWidth, side, pad };
+  if (rotate) spec.rotate = rotate;
+  return spec;
 }
 
 /**
@@ -77,6 +84,7 @@ export function createMarkerLineSquareImageData(spec) {
   const cx = w / 2;
   const cy = w / 2;
   const half = size / 2;
+  const rotate = Number(spec.rotate) || 0;
   ctx.fillStyle = String(fill);
   ctx.strokeStyle = String(stroke);
   ctx.lineWidth = strokeWidth;
@@ -84,11 +92,13 @@ export function createMarkerLineSquareImageData(spec) {
   // Keep a defensive fallback for non-standard/mocked contexts.
   if (typeof ctx.setLineJoin === "function") ctx.setLineJoin("miter");
   else ctx.lineJoin = "miter";
-  const x0 = cx - half;
-  const y0 = cy - half;
-  ctx.fillRect(x0, y0, size, size);
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (rotate) ctx.rotate((rotate * Math.PI) / 180);
+  ctx.fillRect(-half, -half, size, size);
   if (strokeWidth > 0) {
-    ctx.strokeRect(x0, y0, size, size);
+    ctx.strokeRect(-half, -half, size, size);
   }
+  ctx.restore();
   return getImageData();
 }

@@ -1,4 +1,5 @@
 import { OTEF_API } from "./api-client.js";
+import { normalizeGisBasemap } from "./gis-basemap.js";
 import { OTEFDataContextInternals } from "./otef-data-context/index.js";
 import { recordTraceEvent } from "./otef-trace.js";
 import {
@@ -244,7 +245,7 @@ class OTEFDataContextClass {
   }
 
   _setBasemap(basemap) {
-    const next = basemap === "satellite" ? "satellite" : "osm";
+    const next = normalizeGisBasemap(basemap);
     if (this._basemap === next) return;
     this._basemap = next;
     this._notify("basemap", this._basemap);

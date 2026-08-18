@@ -19,7 +19,7 @@ const PROJECTION_SLIDESHOW = {
   // Registry / context packs that must not appear in projection slideshow rotation and
   // must remain fully off for the whole presentation (defense in depth in slideshow runtime).
   // Includes: base projector context, Gaza pack, and merged Moreshet / workshop axis (no pink driving layers in presentation).
-  excludedPresentationPackIds: ["projector_base", "gaza", "curated_moresht_axis"],
+  excludedPresentationPackIds: ["projector_base", "gaza", "curated_moresht_axis", "nli"],
   ignoreLiveLayerUpdatesWhileActive: true,
   // Reserved for future WMTS staging; v1 uses vector path only.
   wmtsFadePolicy: "instant-after-vector-fade",

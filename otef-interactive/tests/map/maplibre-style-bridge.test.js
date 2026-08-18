@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE } from "../../frontend/src/shared/hatch-projection-presentation.js";
+import {
+  PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
+  PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
+} from "../../frontend/src/shared/hatch-projection-presentation.js";
 import {
   irToMapLibreLayers,
 } from "../../frontend/src/shared/maplibre-style-bridge.js";
+import nliStyles from "../../public/processed/layers/nli/styles.json";
 
 function assertPaintHasNoNullish(paint) {
   for (const v of Object.values(paint)) {
@@ -283,6 +287,212 @@ describe("irToMapLibreLayers", () => {
     const circle = result.find((layer) => layer.type === "circle");
     expect(circle.paint["circle-color"]).toBe("#e84a5f");
     expect(circle.paint["circle-radius"]).toBe(5);
+  });
+
+  it("emits a point-placed square symbol for markerPoint shape square", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "markerPoint",
+              marker: {
+                shape: "square",
+                size: 10,
+                fillColor: "#d97706",
+                strokeColor: "#0f172a",
+                strokeWidth: 1,
+              },
+            },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("nli.nli_catalog", "nli__nli_catalog", layerConfig);
+    const proj = irToMapLibreLayers("nli.nli_catalog", "nli__nli_catalog", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    const symbol = result.find((layer) => layer.type === "symbol");
+    const circle = result.find((layer) => layer.type === "circle");
+    expect(symbol).toBeDefined();
+    expect(circle).toBeUndefined();
+    expect(symbol.layout["symbol-placement"]).toBe("point");
+    expect(symbol.layout["icon-allow-overlap"]).toBe(true);
+    expect(symbol._markerLineSquarePattern).toBeDefined();
+    expect(symbol.layout["icon-image"]).toBe(symbol._markerLineSquarePattern.imageId);
+    expect(symbol.layout["icon-size"]).toBe(1);
+    expect(proj.find((layer) => layer.type === "symbol").layout["icon-size"]).toBeCloseTo(
+      PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
+    );
+  });
+
+  it("emits uniqueValue point squares as symbol with icon-image match and point placement", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "categories",
+          classes: [
+            {
+              value: "Victims of terrorism",
+              symbol: {
+                symbolLayers: [
+                  { type: "markerPoint", marker: { shape: "square", fillColor: "#d97706", size: 10 } },
+                ],
+              },
+            },
+            {
+              value: "Fallen soldiers",
+              symbol: {
+                symbolLayers: [
+                  { type: "markerPoint", marker: { shape: "square", fillColor: "#6d28d9", size: 10 } },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "markerPoint", marker: { shape: "square", fillColor: "#808080", size: 10 } },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("nli.nli_catalog", "nli__nli_catalog", layerConfig);
+    const symbol = result.find((layer) => layer.type === "symbol");
+    expect(symbol).toBeDefined();
+    expect(result.find((layer) => layer.type === "circle")).toBeUndefined();
+    expect(symbol.layout["symbol-placement"]).toBe("point");
+    expect(symbol._markerLineSquarePatterns).toBeDefined();
+    expect(symbol._markerLineSquarePatterns.length).toBe(3);
+    expect(symbol.layout["icon-image"][0]).toBe("match");
+    const squareSpec = symbol._markerLineSquarePatterns[0];
+    expect(squareSpec.rotate == null || squareSpec.rotate === 0).toBe(true);
+  });
+
+  it("maps processed nli_catalog uniqueValue fill+stroke+markerPoint to square symbols only", () => {
+    const catalog = nliStyles.nli_catalog;
+    expect(catalog.renderer).toBe("uniqueValue");
+    const nestedTypes = catalog.defaultSymbol.symbolLayers.map((layer) => layer.type);
+    expect(nestedTypes).toEqual(expect.arrayContaining(["markerPoint", "stroke", "fill"]));
+
+    const result = irToMapLibreLayers("nli.nli_catalog", "nli__nli_catalog", {
+      geometryType: catalog.type,
+      style: catalog,
+    });
+    expect(result.some((layer) => layer.type === "circle")).toBe(false);
+    expect(result.some((layer) => layer.type === "fill")).toBe(false);
+    expect(result.some((layer) => layer.type === "line")).toBe(false);
+    const symbols = result.filter((layer) => layer.type === "symbol");
+    expect(symbols.length).toBeGreaterThan(0);
+    const specs = symbols.flatMap(
+      (layer) => layer._markerLineSquarePatterns || (layer._markerLineSquarePattern ? [layer._markerLineSquarePattern] : []),
+    );
+    expect(specs.length).toBeGreaterThan(0);
+    expect(specs.every((spec) => spec.rotate == null || spec.rotate === 0)).toBe(true);
+    const catalogMarker = catalog.defaultSymbol.symbolLayers.find((layer) => layer.type === "markerPoint")?.marker;
+    expect(catalogMarker.shape).toBe("square");
+    expect(catalogMarker.size).toBeCloseTo(10.0 * (96 / 72));
+    expect(catalogMarker.strokeWidth).toBeCloseTo(0.6 * (96 / 72));
+  });
+
+  it("maps processed oct7 murdered uniqueValue to a circle at #b42318", () => {
+    const oct7 = nliStyles.oct7_database;
+    const result = irToMapLibreLayers("nli.oct7_database", "nli__oct7_database", {
+      geometryType: oct7.type,
+      style: oct7,
+    });
+    expect(result.some((layer) => layer.type === "symbol")).toBe(false);
+    const circle = result.find((layer) => layer.type === "circle");
+    expect(circle).toBeDefined();
+    const color = circle.paint["circle-color"];
+    if (Array.isArray(color)) {
+      expect(color).toContain("Murdered");
+      expect(color).toContain("#b42318");
+    } else {
+      expect(color).toBe("#b42318");
+    }
+  });
+
+  it("keeps markerLine squares un-rotated when catalog points are squares", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "markerLine",
+              marker: { shape: "square", fillColor: "#ff0000", size: 5, strokeWidth: 1 },
+            },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("test.markerline.norotate", "src", layerConfig);
+    const symbol = result.find((layer) => layer.type === "symbol");
+    expect(symbol._markerLineSquarePattern.rotate == null || symbol._markerLineSquarePattern.rotate === 0).toBe(
+      true,
+    );
+  });
+
+  it("keeps circle markerPoint as a MapLibre circle", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            {
+              type: "markerPoint",
+              marker: { shape: "circle", size: 16, fillColor: "#b42318" },
+            },
+          ],
+        },
+      },
+    };
+    const result = irToMapLibreLayers("nli.oct7_database", "nli__oct7_database", layerConfig);
+    expect(result.find((layer) => layer.type === "circle")).toBeDefined();
+    expect(result.find((layer) => layer.type === "symbol")).toBeUndefined();
+  });
+
+  it("shrinks uniqueValue circle-radius on projection vs GIS", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "status",
+          classes: [
+            {
+              value: "Murdered",
+              symbol: {
+                symbolLayers: [
+                  { type: "markerPoint", marker: { fillColor: "#b42318", size: 16 } },
+                ],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "markerPoint", marker: { fillColor: "#808080", size: 16 } },
+          ],
+        },
+      },
+    };
+    const gis = irToMapLibreLayers("nli.oct7_database", "nli__oct7_database", layerConfig);
+    const proj = irToMapLibreLayers("nli.oct7_database", "nli__oct7_database", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    const gisCircle = gis.find((layer) => layer.type === "circle");
+    const projCircle = proj.find((layer) => layer.type === "circle");
+    expect(gisCircle.paint["circle-radius"]).toBe(8);
+    expect(projCircle.paint["circle-radius"]).toBeCloseTo(8 * PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE);
+    expect(PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE).toBeCloseTo(0.5);
   });
 
   it("applies marker fillOpacity and strokeOpacity to circle paint (CIM alpha parity)", () => {

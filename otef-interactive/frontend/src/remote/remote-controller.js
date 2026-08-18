@@ -3,6 +3,7 @@
 // Uses centralized OTEFDataContext for shared state (viewport, layers, animations, connection)
 
 import { rotateViewerVectorToItm } from "../shared/orientation-transform.js";
+import { isGisBasemapId, normalizeGisBasemap } from "../shared/gis-basemap.js";
 import {
   LOCALE_EVENT,
   getLocale,
@@ -106,7 +107,7 @@ async function initialize() {
 
   unsubscribeFunctions.push(
     OTEFDataContext.subscribe("basemap", (basemap) => {
-      currentState.basemap = basemap === "satellite" ? "satellite" : "osm";
+      currentState.basemap = normalizeGisBasemap(basemap);
       updateBasemapUI(currentState.basemap);
       updateUI();
     }),
@@ -451,7 +452,7 @@ function initializeBasemapControls() {
     const button = e.target.closest("[data-basemap]");
     if (!button || !control.contains(button) || !currentState.isConnected) return;
     const basemap = button.getAttribute("data-basemap");
-    if (basemap !== "osm" && basemap !== "satellite") return;
+    if (!isGisBasemapId(basemap)) return;
     currentState.basemap = basemap;
     updateBasemapUI(basemap);
     void OTEFDataContext.setBasemap(basemap);
@@ -461,7 +462,7 @@ function initializeBasemapControls() {
 }
 
 function updateBasemapUI(basemap) {
-  const normalized = basemap === "satellite" ? "satellite" : "osm";
+  const normalized = normalizeGisBasemap(basemap);
   document.querySelectorAll(".basemap-button[data-basemap]").forEach((button) => {
     const isActive = button.getAttribute("data-basemap") === normalized;
     button.classList.toggle("is-active", isActive);

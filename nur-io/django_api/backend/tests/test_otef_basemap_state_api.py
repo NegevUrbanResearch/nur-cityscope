@@ -39,10 +39,20 @@ class OTEFBasemapStateApiTests(TestCase):
         state = OTEFViewportState.objects.get(table=self.table)
         self.assertEqual(state.basemap, "satellite")
 
-    def test_patch_basemap_rejects_unknown_values(self):
         res = self.client.patch(
             "/api/otef_viewport/by-table/otef/",
             data=json.dumps({"basemap": "dark"}),
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["basemap"], "dark")
+        state = OTEFViewportState.objects.get(table=self.table)
+        self.assertEqual(state.basemap, "dark")
+
+    def test_patch_basemap_rejects_unknown_values(self):
+        res = self.client.patch(
+            "/api/otef_viewport/by-table/otef/",
+            data=json.dumps({"basemap": "terrain"}),
             content_type="application/json",
         )
         self.assertEqual(res.status_code, 400)

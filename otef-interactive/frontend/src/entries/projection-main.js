@@ -19,6 +19,10 @@ import {
   disposeRouteProgressOverlaysForMap,
   syncRouteProgressOverlaysToMap,
 } from "../shared/maplibre-route-progress-overlay.js";
+import {
+  disposeInvestigationTimelineForMap,
+  syncInvestigationTimelineToMap,
+} from "../shared/maplibre-investigation-timeline.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import { createSlideshowPackRuntime } from "../shared/slideshow-pack-runtime.js";
 import { subscribeSlideshowProjection } from "../shared/slideshow-projection-channel.js";
@@ -257,6 +261,7 @@ async function bootstrapProjectionRuntime() {
     ensureProjectionHighlightLayers(map);
     registerDisposer(() => {
       disposeRouteProgressOverlaysForMap(map);
+      disposeInvestigationTimelineForMap(map);
     });
 
     const syncContextFlowAnimations = () => {
@@ -266,6 +271,9 @@ async function bootstrapProjectionRuntime() {
       const anim =
         typeof OTEFDataContext.getAnimations === "function" ? OTEFDataContext.getAnimations() : {};
       void syncRouteProgressOverlaysToMap(map, anim, currentGroups, {
+        visibilityLayerGroups: rawAsArray,
+      });
+      void syncInvestigationTimelineToMap(map, anim, currentGroups, {
         visibilityLayerGroups: rawAsArray,
       });
     };
