@@ -65,6 +65,24 @@ const MapProjectionConfig = {
   // URL `?mapPixelRatio=` / `?mpr=` overrides this (see projection-main).
   PROJECTION_MAP_PIXEL_RATIO: null,
 
+  // Dual-projector screen slices. Must match Tesuga: transform3 then crop then transform1.
+  // crop1 cropleft/cropright = 0 / 0.6, crop2 = 0.4 / 1.0.
+  // transform3: sx=sy=1.41, rotate=-50, tx=0.01 (1% of width), ty=0.
+  // transform1/2: sx=sy=2.0, ty=-0.049 (baked into the span camera so Gain 1 stays sharp).
+  PROJECTION_SPAN: {
+    LEFT_X0: 0,
+    LEFT_X1: 0.6,
+    RIGHT_X0: 0.4,
+    RIGHT_X1: 1,
+    PRE_SCALE: 1.41,
+    PRE_ROTATE_DEG: -50,
+    PRE_TX: 0.01,
+    PRE_TY: 0,
+    POST_SCALE: 2,
+    POST_TX: 0,
+    POST_TY: -0.049,
+  },
+
   // Projection-layer animation policy.
   // Supports line-flow animation even when style.animation metadata is absent,
   // using per-layer overrides keyed by full layer id ("pack.layer").

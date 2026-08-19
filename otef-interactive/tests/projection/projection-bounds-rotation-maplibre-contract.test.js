@@ -158,6 +158,51 @@ test("projection entry keeps ResizeObserver reflow with window resize fallback",
   );
 });
 
+test("projection entry applies span view after full-model fitBounds on resize", () => {
+  const src = read("frontend/src/entries/projection-main.js");
+  expect(src).toContain("parseProjectionSpanId");
+  expect(src).toContain("applyProjectionSpanView");
+  expect(src).toContain('from "../projection/projection-span-view.js"');
+
+  const onResizeStart = src.indexOf("const onResize = () => {");
+  const onResizeSlice =
+    onResizeStart >= 0
+      ? src.slice(onResizeStart, src.indexOf("const handleWindowResize", onResizeStart))
+      : "";
+  expect(onResizeSlice).toContain("map.fitBounds(modelBounds.bounds");
+  const spanApplyName = onResizeSlice.includes("applySpanCamera")
+    ? "applySpanCamera"
+    : "applyProjectionSpanView";
+  expect(onResizeSlice).toContain(spanApplyName);
+  expect(onResizeSlice.indexOf("map.fitBounds")).toBeLessThan(
+    onResizeSlice.indexOf(spanApplyName),
+  );
+});
+
+test("projection entry applies span after load fitBounds without CSS pixel-ratio pumping", () => {
+  const src = read("frontend/src/entries/projection-main.js");
+  expect(src).toContain("applyProjectionSpanView");
+  expect(src).not.toContain("computeSpanJumpTo");
+  expect(src).not.toContain("spanHorizontalScale");
+
+  const mapCreate = src.indexOf("createProjectionMap(");
+  expect(mapCreate).toBeGreaterThan(-1);
+  const beforeMap = src.slice(0, mapCreate);
+  expect(beforeMap).toContain("parseProjectionSpanId");
+  expect(beforeMap).toContain("applyProjectionSpanView");
+
+  const loadStart = src.indexOf('map.on("load"');
+  const loadSlice =
+    loadStart >= 0 ? src.slice(loadStart, src.indexOf("await import", loadStart)) : "";
+  const loadApplyName = loadSlice.includes("applySpanCamera")
+    ? "applySpanCamera"
+    : "applyProjectionSpanView";
+  expect(loadSlice).toContain(loadApplyName);
+  expect(loadSlice.indexOf(loadApplyName)).toBeLessThan(
+    loadSlice.indexOf("ensureProjectionHighlightLayers"),
+  );
+});
+
 test("projection entry does not consume place catalog or navigation command inputs for viewport highlight", () => {
   const src = read("frontend/src/entries/projection-main.js");
 
@@ -444,4 +489,16 @@ test("MapLibre projection: skips setRTLTextPlugin when getRTLTextPluginStatus is
 test("MapLibre projection: skips setRTLTextPlugin when getRTLTextPluginStatus is loading", async () => {
   await loadProjectionModuleWithRtlStatus("loading");
   expect(globalThis.maplibregl.setRTLTextPlugin).not.toHaveBeenCalled();
+});
+
+test("render debug overlay reports span query", () => {
+  const src = read("frontend/src/projection/projection-render-debug-overlay.js");
+  expect(src).toContain("parseProjectionSpanId");
+  expect(src).toContain("span");
+});
+
+test("projection help documents span query", () => {
+  const html = read("frontend/projection.html");
+  expect(html).toContain("span=left");
+  expect(html).toContain("span=right");
 });

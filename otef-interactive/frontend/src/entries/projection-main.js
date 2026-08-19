@@ -28,6 +28,10 @@ import { createSlideshowPackRuntime } from "../shared/slideshow-pack-runtime.js"
 import { subscribeSlideshowProjection } from "../shared/slideshow-projection-channel.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
+import {
+  applyProjectionSpanView,
+  parseProjectionSpanId,
+} from "../projection/projection-span-view.js";
 
 function getEffectiveProjectionLayerGroups() {
   if (
@@ -201,10 +205,30 @@ async function bootstrapProjectionRuntime() {
     }
   }
 
-  const projectionMapPixelRatio = resolveProjectionMapPixelRatio();
+  const projectionSpanId = parseProjectionSpanId(
+    typeof window !== "undefined" ? window.location.search : "",
+  );
+  const displayContainerEl = document.getElementById("displayContainer");
+  if (projectionSpanId) {
+    applyProjectionSpanView({
+      map: null,
+      imageEl: modelImgEl,
+      containerEl: displayContainerEl,
+      spanId: projectionSpanId,
+    });
+  }
+  const urlOrConfigPixelRatio = resolveProjectionMapPixelRatio();
   const map = createProjectionMap("projectionMap", modelBounds, {
-    ...(projectionMapPixelRatio !== undefined ? { pixelRatio: projectionMapPixelRatio } : {}),
+    ...(urlOrConfigPixelRatio !== undefined ? { pixelRatio: urlOrConfigPixelRatio } : {}),
   });
+  const applySpanCamera = () => {
+    applyProjectionSpanView({
+      map,
+      imageEl: modelImgEl,
+      containerEl: document.getElementById("displayContainer"),
+      spanId: projectionSpanId,
+    });
+  };
   let lastViewport = null;
   /** @type {ReturnType<import("../shared/slideshow-pack-runtime.js").createSlideshowPackRuntime> | null} */
   let slideshowRuntime = null;
@@ -258,6 +282,7 @@ async function bootstrapProjectionRuntime() {
   }
 
   map.on("load", async () => {
+    applySpanCamera();
     ensureProjectionHighlightLayers(map);
     registerDisposer(() => {
       disposeRouteProgressOverlaysForMap(map);
@@ -602,15 +627,16 @@ async function bootstrapProjectionRuntime() {
     }
     resizeTimer = window.setTimeout(() => {
       resizeTimer = null;
-      const syncHighlight = () => {
-        syncProjectionHighlight(lastViewport);
-      };
       if (typeof map.resize === "function") {
         map.resize();
         if (modelBounds && modelBounds.bounds) {
           map.fitBounds(modelBounds.bounds, { animate: false, padding: 0 });
         }
       }
+      const syncHighlight = () => {
+        applySpanCamera();
+        syncProjectionHighlight(lastViewport);
+      };
       if (typeof map.once === "function") {
         if (pendingResizeIdleHandler) {
           map.off("idle", pendingResizeIdleHandler);

@@ -4,6 +4,7 @@
  * Embedded hosts: `?projectionRenderDebug=1` / `?prd=1`, or `window.ProjectionRenderDebug.toggle()` / `.setVisible(bool)`.
  */
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
+import { parseProjectionSpanId } from "./projection-span-view.js";
 
 function readMapTransformPixelRatio(map) {
   if (!map || typeof map !== "object") return null;
@@ -70,9 +71,13 @@ function collectSnapshot(map) {
     typeof window !== "undefined" && window.location
       ? `${window.location.pathname}${window.location.search ? " (+query)" : ""}`
       : "";
+  const spanId = parseProjectionSpanId(
+    typeof window !== "undefined" ? window.location.search : "",
+  );
   const lines = [
     `time (local)     ${new Date().toLocaleString()}`,
     `path             ${path || "n/a"}`,
+    `span                      ${spanId ?? "full"}`,
     ``,
     `window.devicePixelRatio   ${dpr ?? "n/a"}`,
     `visualViewport scale      ${vv && typeof vv.scale === "number" ? vv.scale : "n/a"}`,
