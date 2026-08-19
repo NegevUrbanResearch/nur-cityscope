@@ -264,6 +264,57 @@ async function bootstrapProjectionRuntime() {
     window.addEventListener("beforeunload", cleanup, { once: true });
   }
 
+  /** Tesuga reads Web Render info DAT `title`; keep in sync with `slideshowRuntime.isActive()`. */
+  let presentationPollId = null;
+  let lastPresentationFlag = null;
+
+  function syncPresentationFlag() {
+    const active = !!(slideshowRuntime && slideshowRuntime.isActive());
+    const flag = active ? "on" : "off";
+    if (lastPresentationFlag === flag) {
+      return;
+    }
+    lastPresentationFlag = flag;
+    if (typeof document !== "undefined") {
+      if (document.body) {
+        document.body.dataset.presentation = flag;
+      }
+      document.title = active
+        ? "OTEF Projection Display | pres=on"
+        : "OTEF Projection Display | pres=off";
+    }
+    if (typeof window !== "undefined") {
+      window.OTEFPresentationActive = active;
+    }
+  }
+
+  function clearPresentationPoll() {
+    if (presentationPollId != null) {
+      window.clearInterval(presentationPollId);
+      presentationPollId = null;
+    }
+  }
+
+  function startPresentationPoll() {
+    if (presentationPollId != null) {
+      return;
+    }
+    presentationPollId = window.setInterval(() => {
+      syncPresentationFlag();
+      const waitingToBecomeActive =
+        slideshowRuntime &&
+        !slideshowRuntime.isActive() &&
+        typeof slideshowRuntime.shouldSuppressProjectionHighlight === "function" &&
+        slideshowRuntime.shouldSuppressProjectionHighlight();
+      if (!waitingToBecomeActive) {
+        clearPresentationPoll();
+      }
+    }, 250);
+  }
+
+  syncPresentationFlag();
+  registerDisposer(clearPresentationPoll);
+
   const projectionRenderDebugApi = installProjectionRenderDebugOverlay({
     map,
     registerDisposer,
@@ -486,12 +537,18 @@ async function bootstrapProjectionRuntime() {
       if (msg.type === "start") {
         slideshowRuntime.start(msg.payload || {});
         syncProjectionHighlight(lastViewport);
+        syncPresentationFlag();
+        startPresentationPoll();
         return;
       }
       if (msg.type === "stop") {
         void slideshowRuntime
           .stop()
-          .then(() => applyProjectionRefresh())
+          .then(() => {
+            syncPresentationFlag();
+            clearPresentationPoll();
+            return applyProjectionRefresh();
+          })
           .then(() => {
             syncProjectionHighlight(lastViewport);
           })

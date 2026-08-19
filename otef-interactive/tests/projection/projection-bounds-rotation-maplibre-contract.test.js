@@ -502,3 +502,11 @@ test("projection help documents span query", () => {
   expect(html).toContain("span=left");
   expect(html).toContain("span=right");
 });
+
+test("projection entry exposes Tesuga presentation flag via title, dataset, and window", () => {
+  const src = read("frontend/src/entries/projection-main.js");
+  expect(src).toContain("pres=on");
+  expect(src).toContain("pres=off");
+  expect(src).toContain("OTEFPresentationActive");
+  expect(src).toContain("dataset.presentation");
+});
