@@ -74,8 +74,9 @@ class DecidePmtilesTests(unittest.TestCase):
             }
         }
         cases = (
-            ("nli_catalog", "Point", "point", marker_point_style, 986),
-            ("investigation_polygons", "Polygon", "polygon", polygon_style, 13),
+            ("people", "Point", "point", marker_point_style, 1271),
+            ("investigation_polygons", "Polygon", "polygon", polygon_style, 101),
+            ("lines", "LineString", "line", polygon_style, 44),
         )
         for layer_id, geometry_type, geometry_family, style_config, feature_count in cases:
             with self.subTest(layer_id=layer_id):

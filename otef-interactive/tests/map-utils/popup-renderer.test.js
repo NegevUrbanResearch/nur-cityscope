@@ -46,6 +46,23 @@ describe("renderPopupContent", () => {
     expect(html).not.toContain("Timeline");
   });
 
+  test("renders nli_url fields as links", () => {
+    const html = renderPopupContent(
+      {
+        properties: {
+          nli_url: "https://www.nli.org.il/he/authorities/987007591931905171",
+        },
+      },
+      {
+        hideEmpty: true,
+        fields: [{ label: "NLI catalog", key: "nli_url", type: "url", linkLabel: "Open record" }],
+      },
+    );
+    expect(html).toContain('href="https://www.nli.org.il/he/authorities/987007591931905171"');
+    expect(html).toContain("Open record");
+    expect(html).toContain('target="_blank"');
+  });
+
   test("escapes HTML in property values", () => {
     const html = renderPopupContent(
       { properties: { Name: "<img src=x>" } },

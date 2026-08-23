@@ -14,7 +14,7 @@ export const GIS_POPUP_HIT_PADDING_PX = 8;
 
 /**
  * Pick the topmost queried feature that has a registry popup config.
- * MapLibre source ids are fullIds (`nli.nli_catalog`); style-layer ids are not.
+ * MapLibre source ids are fullIds (`nli.people`); style-layer ids are not.
  *
  * @param {Array<{ source?: string, properties?: object }>} renderedFeatures
  * @param {(fullId: string) => object|null} getLayerConfig

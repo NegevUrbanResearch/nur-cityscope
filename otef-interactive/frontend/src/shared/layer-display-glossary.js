@@ -273,13 +273,13 @@ const LAYER_DISPLAY_LABELS = {
     he: "פוליגונים מתחקירים",
     en: "Investigation polygons",
   },
-  "nli.oct7_database": {
-    he: "מסד נתוני 7 באוקטובר",
-    en: "Oct 7 database",
+  "nli.people": {
+    he: "אנשים",
+    en: "People",
   },
-  "nli.nli_catalog": {
-    he: "קטלוג הספרייה הלאומית",
-    en: "NLI catalog",
+  "nli.lines": {
+    he: "צירי חדירה",
+    en: "Infiltration routes",
   },
 };
 

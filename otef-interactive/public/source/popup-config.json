@@ -11,12 +11,20 @@
             "key": "Name"
           },
           {
+            "label": "Location",
+            "key": "מיקום"
+          },
+          {
             "label": "Timeline",
             "key": "timeline"
+          },
+          {
+            "label": "Notes",
+            "key": "Notes"
           }
         ]
       },
-      "oct7_database": {
+      "people": {
         "titleField": "hebrew_name",
         "hideEmpty": true,
         "fields": [
@@ -51,40 +59,31 @@
           {
             "label": "Info",
             "key": "info"
+          },
+          {
+            "label": "NLI catalog",
+            "key": "nli_url",
+            "type": "url",
+            "linkLabel": "Open record"
           }
         ]
       },
-      "nli_catalog": {
-        "titleField": "name_he",
+      "lines": {
+        "titleField": "Name",
         "hideEmpty": true,
+        "legendLabel": "Infiltration routes",
         "fields": [
           {
-            "label": "Hebrew name",
-            "key": "name_he"
+            "label": "Name",
+            "key": "Name"
           },
           {
-            "label": "English name",
-            "key": "name_en"
+            "label": "Timeline",
+            "key": "timeline"
           },
           {
-            "label": "Categories",
-            "key": "categories"
-          },
-          {
-            "label": "Incident place",
-            "key": "incident_place_oct7_he"
-          },
-          {
-            "label": "Associated place",
-            "key": "associated_place_oct7"
-          },
-          {
-            "label": "Life span",
-            "key": "name_life_span"
-          },
-          {
-            "label": "Biography",
-            "key": "biography"
+            "label": "Notes",
+            "key": "Notes"
           }
         ]
       }

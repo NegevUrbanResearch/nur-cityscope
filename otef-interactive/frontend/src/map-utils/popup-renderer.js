@@ -45,7 +45,7 @@ function renderPopupContent(feature, popupConfig, layerName) {
 
     const formattedValue = formatFieldValue(value);
     const label = escapeHtml(field.label);
-    const valueHtml = escapeHtml(formattedValue);
+    const valueHtml = formatFieldHtml(formattedValue, field);
 
     fieldItems.push(`
       <div class="popup-field">
@@ -79,6 +79,20 @@ function renderPopupContent(feature, popupConfig, layerName) {
  * @param {*} value - Raw field value
  * @returns {string} Formatted string
  */
+function isHttpUrl(value) {
+  return typeof value === "string" && /^https?:\/\//i.test(value.trim());
+}
+
+function formatFieldHtml(value, field) {
+  const href = typeof value === "string" ? value.trim() : "";
+  const asUrl = field && (field.type === "url" || isHttpUrl(href));
+  if (!asUrl || !isHttpUrl(href)) {
+    return escapeHtml(value);
+  }
+  const label = field && field.linkLabel ? String(field.linkLabel) : href;
+  return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+}
+
 function formatFieldValue(value) {
   if (value === null || value === undefined) {
     return "";

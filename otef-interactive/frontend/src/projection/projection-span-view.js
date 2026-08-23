@@ -102,7 +102,9 @@ export function spanVisibleCenterInT3({ x0, x1, spanConfig = MapProjectionConfig
   const t3x1 = x0 + (0.75 - fitPad);
   return {
     x: (t3x0 + t3x1) / 2,
-    y: 0.5 - postTy / 2,
+    // TD transform ty<0 moves the image down, revealing more of the T3 *top*.
+    // MapLibre y grows downward, so the 2x-fill center must move the same way.
+    y: 0.5 + postTy / 2,
   };
 }
 

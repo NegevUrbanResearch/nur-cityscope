@@ -99,7 +99,7 @@ test("PROJECTION_SPAN matches TouchDesigner crop fractions and transform3", () =
   expect(s.PRE_ROTATE_DEG).toBe(-50);
   expect(s.PRE_TX).toBe(0.01);
   expect(s.PRE_TY).toBe(0);
-  expect(s.POST_SCALE).toBe(2);
+  expect(s.POST_SCALE).toBeCloseTo(1.55, 10);
   expect(s.POST_TY).toBe(-0.049);
 });
 
@@ -128,12 +128,12 @@ test("spanHorizontalScale is inverse width fraction", () => {
   expect(spanHorizontalScale(0.4, 1)).toBeCloseTo(1 / 0.6, 10);
 });
 
-test("span fill camera zooms transform1's 2x so 1920 samples are native", () => {
+test("span fill camera zooms to the 60% Tesuga crop so 1920 samples are native", () => {
   const visLeft = spanVisibleCenterInT3({ x0: 0, x1: 0.6 });
   const visRight = spanVisibleCenterInT3({ x0: 0.4, x1: 1 });
   expect(visLeft.x).toBeCloseTo(0.3, 5);
   expect(visRight.x).toBeCloseTo(0.7, 5);
-  expect(visLeft.y).toBeCloseTo(0.5 - -0.049 / 2, 5);
+  expect(visLeft.y).toBeCloseTo(0.5 + -0.049 / 2, 5);
   const jump = computeTesugaPostFillJumpTo({
     zoom: 10 + Math.log2(1.41),
     bearing: -50,
@@ -143,7 +143,7 @@ test("span fill camera zooms transform1's 2x so 1920 samples are native", () => 
     x0: 0,
     x1: 0.6,
   });
-  expect(jump.zoom).toBeCloseTo(10 + Math.log2(1.41 * 2), 10);
+  expect(jump.zoom).toBeCloseTo(10 + Math.log2(1.41 * 1.55), 10);
   expect(jump.bearing).toBe(-50);
   expect(jump.center.lng).toBeCloseTo(0.3 * 1920, 5);
 });
@@ -201,7 +201,7 @@ test("applyProjectionSpanView jumpTos T3 then transform1 fill and does not wrap 
   );
   expect(jumpTo.mock.calls[1][0]).toEqual(
     expect.objectContaining({
-      zoom: 10 + Math.log2(1.41 * 2),
+      zoom: 10 + Math.log2(1.41 * 1.55),
       bearing: -50,
       animate: false,
     }),
@@ -214,7 +214,7 @@ test("applyProjectionSpanView jumpTos T3 then transform1 fill and does not wrap 
   expect(mapContainerEl.style.transform || "").toBe("");
   expect(canvasEl.style.transform).toBeUndefined();
   expect(imageEl.style.transform).toContain("rotate(-50deg)");
-  expect(imageEl.style.transform).toContain("scale(2.82)");
+  expect(imageEl.style.transform).toContain(`scale(${1.41 * 1.55})`);
   const visLeft = spanVisibleCenterInT3({ x0: 0, x1: 0.6 });
   expect(imageEl.style.transformOrigin).toBe(`${visLeft.x * 100}% ${visLeft.y * 100}%`);
 });

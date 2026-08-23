@@ -373,35 +373,9 @@ describe("irToMapLibreLayers", () => {
     expect(squareSpec.rotate == null || squareSpec.rotate === 0).toBe(true);
   });
 
-  it("maps processed nli_catalog uniqueValue fill+stroke+markerPoint to square symbols only", () => {
-    const catalog = nliStyles.nli_catalog;
-    expect(catalog.renderer).toBe("uniqueValue");
-    const nestedTypes = catalog.defaultSymbol.symbolLayers.map((layer) => layer.type);
-    expect(nestedTypes).toEqual(expect.arrayContaining(["markerPoint", "stroke", "fill"]));
-
-    const result = irToMapLibreLayers("nli.nli_catalog", "nli__nli_catalog", {
-      geometryType: catalog.type,
-      style: catalog,
-    });
-    expect(result.some((layer) => layer.type === "circle")).toBe(false);
-    expect(result.some((layer) => layer.type === "fill")).toBe(false);
-    expect(result.some((layer) => layer.type === "line")).toBe(false);
-    const symbols = result.filter((layer) => layer.type === "symbol");
-    expect(symbols.length).toBeGreaterThan(0);
-    const specs = symbols.flatMap(
-      (layer) => layer._markerLineSquarePatterns || (layer._markerLineSquarePattern ? [layer._markerLineSquarePattern] : []),
-    );
-    expect(specs.length).toBeGreaterThan(0);
-    expect(specs.every((spec) => spec.rotate == null || spec.rotate === 0)).toBe(true);
-    const catalogMarker = catalog.defaultSymbol.symbolLayers.find((layer) => layer.type === "markerPoint")?.marker;
-    expect(catalogMarker.shape).toBe("square");
-    expect(catalogMarker.size).toBeCloseTo(10.0 * (96 / 72));
-    expect(catalogMarker.strokeWidth).toBeCloseTo(0.6 * (96 / 72));
-  });
-
-  it("maps processed oct7 murdered uniqueValue to a circle at #b42318", () => {
-    const oct7 = nliStyles.oct7_database;
-    const result = irToMapLibreLayers("nli.oct7_database", "nli__oct7_database", {
+  it("maps processed people murdered uniqueValue to a circle at #b42318", () => {
+    const oct7 = nliStyles.people;
+    const result = irToMapLibreLayers("nli.people", "nli__people", {
       geometryType: oct7.type,
       style: oct7,
     });

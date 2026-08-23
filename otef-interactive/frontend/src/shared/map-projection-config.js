@@ -65,10 +65,13 @@ const MapProjectionConfig = {
   // URL `?mapPixelRatio=` / `?mpr=` overrides this (see projection-main).
   PROJECTION_MAP_PIXEL_RATIO: null,
 
-  // Dual-projector screen slices. Must match Tesuga: transform3 then crop then transform1.
+  // Dual-projector screen slices. Must match Tesuga: transform3 then crop.
   // crop1 cropleft/cropright = 0 / 0.6, crop2 = 0.4 / 1.0.
   // transform3: sx=sy=1.41, rotate=-50, tx=0.01 (1% of width), ty=0.
-  // transform1/2: sx=sy=2.0, ty=-0.049 (baked into the span camera so Gain 1 stays sharp).
+  // POST_SCALE fills the Tesuga crop into 1920. 1/0.6 is the exact 60% crop;
+  // 1.55 is a little wider so table edges (bottom-right) stay on the Stoner mesh.
+  // Do not use transform1's old 2x — that zoomed past the Gain-3 table extent.
+  // TD ty<0 shifts the plate down (more T3 top visible). Span fill center is 0.5 + POST_TY/2.
   PROJECTION_SPAN: {
     LEFT_X0: 0,
     LEFT_X1: 0.6,
@@ -78,7 +81,7 @@ const MapProjectionConfig = {
     PRE_ROTATE_DEG: -50,
     PRE_TX: 0.01,
     PRE_TY: 0,
-    POST_SCALE: 2,
+    POST_SCALE: 1.55,
     POST_TX: 0,
     POST_TY: -0.049,
   },

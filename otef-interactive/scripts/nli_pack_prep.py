@@ -117,11 +117,15 @@ _LOCAL_HHMM = re.compile(r"^local\s+(\d{1,2}):(\d{2})$")
 
 BIBAS_STATUS_VALUE = "Murdered in captivity (bibas)"
 CANONICAL_CAPTIVITY_STATUS = "Murdered in captivity"
+MURDERED_THEN_KIDNAPPED_STATUS = "Murdered then kidnapped"
+CANONICAL_MURDERED_STATUS = "Murdered"
 
 
 def rewrite_oct7_status(value: Any) -> Any:
     if value == BIBAS_STATUS_VALUE:
         return CANONICAL_CAPTIVITY_STATUS
+    if value == MURDERED_THEN_KIDNAPPED_STATUS:
+        return CANONICAL_MURDERED_STATUS
     return value
 
 
@@ -135,9 +139,138 @@ def group_nli_category(raw: Any) -> Any:
     return "Victims of terrorism"
 
 
+NLI_AUTHORITY_URL = "https://www.nli.org.il/he/authorities/{mms_id}"
+DEFAULT_AUTHORITIES_PATH = Path(__file__).resolve().parent / "nli_mazal_authorities.json"
+_MARC_SUBFIELD = re.compile(r"\$\$[a-z0-9]")
+_MMS_ID = re.compile(r"^\d{17,19}$")
+OLDER_CATALOG_ZIP_NAME = "geojson/older versions/noam_layer.geojson"
+
+
+def parse_marc_name(raw: Any) -> str:
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    parts = re.findall(r"\$\$a([^$]*)", raw)
+    name = parts[0] if parts else _MARC_SUBFIELD.sub("", raw)
+    name = re.sub(r",\s*$", "", name)
+    return re.sub(r"\s+", " ", name).strip(" ,")
+
+
+def normalize_person_name(value: Any) -> str:
+    if not value:
+        return ""
+    text = str(value).replace("\u05f3", "'").replace("\u05f4", '"')
+    text = re.sub(r"[\"'`״׳]", "", text)
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def flip_person_name(name: str) -> str:
+    if not name:
+        return ""
+    if "," in name:
+        last, first = [part.strip() for part in name.split(",", 1)]
+        return f"{first} {last}".strip()
+    parts = name.split()
+    if len(parts) == 2:
+        return f"{parts[1]} {parts[0]}"
+    return name
+
+
+def person_name_keys(value: Any) -> List[str]:
+    name = normalize_person_name(value)
+    if not name:
+        return []
+    flipped = flip_person_name(name)
+    keys = {name, flipped, " ".join(sorted(name.split()))}
+    if flipped:
+        keys.add(" ".join(sorted(flipped.split())))
+    return [key for key in keys if key]
+
+
+def nli_authority_url(mms_id: str) -> str:
+    return NLI_AUTHORITY_URL.format(mms_id=mms_id)
+
+
+def load_nli_authorities(path: Path) -> List[Dict[str, str]]:
+    if not path.is_file():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    rows: List[Dict[str, str]] = []
+    for item in payload or []:
+        mms_id = str((item or {}).get("mms_id") or "").strip()
+        if not _MMS_ID.fullmatch(mms_id):
+            continue
+        rows.append(
+            {
+                "mms_id": mms_id,
+                "he": str((item or {}).get("he") or ""),
+                "en": str((item or {}).get("en") or ""),
+            }
+        )
+    return rows
+
+
+def _authority_name_index(authorities: Sequence[Dict[str, str]]) -> Dict[str, set]:
+    index: Dict[str, set] = {}
+    for row in authorities:
+        mms_id = row["mms_id"]
+        for raw in (row.get("he"), row.get("en")):
+            for key in person_name_keys(raw):
+                index.setdefault(key, set()).add(mms_id)
+    return index
+
+
+def _lookup_mms_ids(index: Dict[str, set], *names: Any) -> set:
+    hits: set = set()
+    for name in names:
+        for key in person_name_keys(name):
+            hits |= index.get(key, set())
+    return hits
+
+
+def attach_nli_catalog_links(
+    collection: Dict[str, Any],
+    authorities: Sequence[Dict[str, str]],
+    catalog_features: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Dict[str, int]:
+    """Attach string mms_id + NLI authority URL for unique name matches."""
+    index = _authority_name_index(authorities)
+    catalog_by_pid: Dict[str, List[Dict[str, Any]]] = {}
+    for feature in catalog_features or []:
+        props = feature.get("properties") or {}
+        pid = props.get("oct7_pid")
+        if pid in (None, ""):
+            continue
+        catalog_by_pid.setdefault(str(pid), []).append(props)
+
+    linked = 0
+    ambiguous = 0
+    unmatched = 0
+    for feature in collection.get("features") or []:
+        props = dict(feature.get("properties") or {})
+        hits = _lookup_mms_ids(index, props.get("hebrew_name"), props.get("name"))
+        if len(hits) != 1:
+            for catalog_props in catalog_by_pid.get(str(props.get("pid") or ""), []):
+                hits |= _lookup_mms_ids(
+                    index,
+                    catalog_props.get("name_he"),
+                    catalog_props.get("name_en"),
+                )
+        if len(hits) == 1:
+            mms_id = next(iter(hits))
+            props["mms_id"] = mms_id
+            props["nli_url"] = nli_authority_url(mms_id)
+            feature["properties"] = props
+            linked += 1
+        elif len(hits) > 1:
+            ambiguous += 1
+        else:
+            unmatched += 1
+    return {"linked": linked, "ambiguous": ambiguous, "unmatched": unmatched}
+
+
 def rewrite_nli_layer_properties(stem: str, collection: Dict[str, Any]) -> int:
     changed = 0
-    if stem == "oct7_database":
+    if stem in ("oct7_database", "people"):
         key, rewrite = "status", rewrite_oct7_status
     elif stem == "nli_catalog":
         key, rewrite = "categories", group_nli_category
@@ -310,11 +443,53 @@ def simple_polygon_lyrx(
     }
 
 
+def _cim_line_symbol(color: Sequence[int], width: float) -> Dict[str, Any]:
+    return {
+        "type": "CIMLineSymbol",
+        "symbolLayers": [
+            {
+                "type": "CIMSolidStroke",
+                "enable": True,
+                "capStyle": "Round",
+                "joinStyle": "Round",
+                "width": width,
+                "color": _rgb(color),
+            }
+        ],
+    }
+
+
+# Match october_7th מאבק_וגבורה_ציר: CIM RGB (195, 31, 79), 1.5pt.
+OCT7_STRUGGLE_LINE_COLOR = (195, 31, 79)
+OCT7_STRUGGLE_LINE_WIDTH = 1.5
+
+
+def simple_line_lyrx(
+    color: Sequence[int] = OCT7_STRUGGLE_LINE_COLOR,
+    width: float = OCT7_STRUGGLE_LINE_WIDTH,
+) -> Dict[str, Any]:
+    symbol = _cim_line_symbol(color, width)
+    return {
+        "layerDefinitions": [
+            {
+                "name": "lines",
+                "renderer": {
+                    "type": "CIMSimpleRenderer",
+                    "symbol": _symbol_ref(symbol),
+                },
+            }
+        ]
+    }
+
+
 ZIP_LAYER_MAP = {
-    "geojson/פוליגונים מתחקירים.geojson": "investigation_polygons",
-    "geojson/oct7database_mid_manual_gitit.geojson": "oct7_database",
-    "geojson/noam_layer.geojson": "nli_catalog",
+    "geojson/people_7_10.json": "people",
+    "geojson/polygons_7_10.geojson": "investigation_polygons",
+    "geojson/lines_7_10.geojson": "lines",
 }
+
+PROJECTED_STEMS = {"investigation_polygons", "lines"}
+TIMELINE_STEMS = {"investigation_polygons", "lines"}
 
 NLI_POPUP_CONFIG = {
     "nli": {
@@ -325,10 +500,12 @@ NLI_POPUP_CONFIG = {
                 "legendLabel": "Investigation polygons",
                 "fields": [
                     {"label": "Name", "key": "Name"},
+                    {"label": "Location", "key": "מיקום"},
                     {"label": "Timeline", "key": "timeline"},
+                    {"label": "Notes", "key": "Notes"},
                 ],
             },
-            "oct7_database": {
+            "people": {
                 "titleField": "hebrew_name",
                 "hideEmpty": True,
                 "fields": [
@@ -340,19 +517,17 @@ NLI_POPUP_CONFIG = {
                     {"label": "Type", "key": "type"},
                     {"label": "Age", "key": "age"},
                     {"label": "Info", "key": "info"},
+                    {"label": "NLI catalog", "key": "nli_url", "type": "url", "linkLabel": "Open record"},
                 ],
             },
-            "nli_catalog": {
-                "titleField": "name_he",
+            "lines": {
+                "titleField": "Name",
                 "hideEmpty": True,
+                "legendLabel": "Infiltration routes",
                 "fields": [
-                    {"label": "Hebrew name", "key": "name_he"},
-                    {"label": "English name", "key": "name_en"},
-                    {"label": "Categories", "key": "categories"},
-                    {"label": "Incident place", "key": "incident_place_oct7_he"},
-                    {"label": "Associated place", "key": "associated_place_oct7"},
-                    {"label": "Life span", "key": "name_life_span"},
-                    {"label": "Biography", "key": "biography"},
+                    {"label": "Name", "key": "Name"},
+                    {"label": "Timeline", "key": "timeline"},
+                    {"label": "Notes", "key": "Notes"},
                 ],
             },
         }
@@ -434,18 +609,29 @@ def _as_popup_paths(popup_path: Optional[Path | Sequence[Path]]) -> List[Path]:
     return list(popup_path)
 
 
+def _catalog_features_from_zip(by_name: Dict[str, Any], archive: zipfile.ZipFile) -> List[Dict[str, Any]]:
+    info = by_name.get(OLDER_CATALOG_ZIP_NAME)
+    if info is None:
+        return []
+    payload = json.loads(archive.read(info))
+    return list(payload.get("features") or [])
+
+
 def prepare_nli_pack(
     zip_path: Path,
     pack_dir: Path,
     popup_path: Optional[Path | Sequence[Path]] = None,
+    authorities_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     gis_dir = pack_dir / "gis"
     styles_dir = pack_dir / "styles"
     gis_dir.mkdir(parents=True, exist_ok=True)
     styles_dir.mkdir(parents=True, exist_ok=True)
     summary: Dict[str, Any] = {"layers": {}}
+    authorities = load_nli_authorities(authorities_path or DEFAULT_AUTHORITIES_PATH)
     with zipfile.ZipFile(zip_path) as archive:
         by_name = {zip_entry_name(info): info for info in archive.infolist()}
+        catalog_features = _catalog_features_from_zip(by_name, archive)
         for zip_name, stem in ZIP_LAYER_MAP.items():
             info = by_name.get(zip_name)
             if info is None:
@@ -455,11 +641,14 @@ def prepare_nli_pack(
             moved = 0
             times = sanitize_time_like_properties(collection)
             grouped = rewrite_nli_layer_properties(stem, collection)
-            if stem == "investigation_polygons":
+            if stem in PROJECTED_STEMS:
                 reproject_web_mercator_collection_to_wgs84(collection)
+            if stem in TIMELINE_STEMS:
                 apply_timeline_minutes(collection)
-            if stem == "nli_catalog":
-                moved = jitter_coincident_points(collection.get("features") or [])
+            if stem == "people" and authorities:
+                summary["nli_catalog_links"] = attach_nli_catalog_links(
+                    collection, authorities, catalog_features
+                )
             _write_json(gis_dir / f"{stem}.geojson", collection)
             summary["layers"][stem] = {
                 "features": len(collection.get("features") or []),
@@ -469,18 +658,19 @@ def prepare_nli_pack(
                 "legend_values_rewritten": grouped,
             }
     _write_json(styles_dir / "investigation_polygons.lyrx", simple_polygon_lyrx())
-    _write_json(styles_dir / "oct7_database.lyrx", unique_value_point_lyrx("status", OCT7_STATUS_CLASSES))
-    _write_json(
-        styles_dir / "nli_catalog.lyrx",
-        unique_value_point_lyrx(
-            "categories",
-            NLI_CATEGORY_CLASSES,
-            size=NLI_CATALOG_MARKER_SIZE,
-            stroke=NLI_CATALOG_STROKE,
-            shape="square",
-            stroke_width=NLI_CATALOG_STROKE_WIDTH,
-        ),
-    )
+    _write_json(styles_dir / "people.lyrx", unique_value_point_lyrx("status", OCT7_STATUS_CLASSES))
+    _write_json(styles_dir / "lines.lyrx", simple_line_lyrx())
+    keep_stems = set(ZIP_LAYER_MAP.values())
+    removed = []
+    for folder in (gis_dir, styles_dir):
+        for path in folder.iterdir():
+            if path.name.startswith("."):
+                continue
+            if path.stem not in keep_stems:
+                path.unlink()
+                removed.append(str(path.name))
+    if removed:
+        summary["removed_obsolete"] = removed
     written: List[str] = []
     for path in _as_popup_paths(popup_path):
         merge_popup_config(path, NLI_POPUP_CONFIG)
@@ -492,7 +682,7 @@ def prepare_nli_pack(
 
 def main() -> None:
     repo = Path(__file__).resolve().parents[2]
-    zip_path = repo / "geojson-20260818T050200Z-1-001.zip"
+    zip_path = repo / "geojson-20260823T094646Z-1-001.zip"
     pack_dir = repo / "otef-interactive" / "public" / "source" / "layers" / "nli"
     popup_paths = [
         repo / "otef-interactive" / "public" / "source" / "popup-config.json",

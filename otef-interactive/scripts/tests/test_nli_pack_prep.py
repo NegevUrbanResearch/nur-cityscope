@@ -12,17 +12,21 @@ from nli_pack_prep import (
     NLI_CATALOG_STROKE,
     NLI_CATALOG_STROKE_WIDTH,
     apply_timeline_minutes,
+    attach_nli_catalog_links,
     collect_timeline_beats,
     group_nli_category,
     jitter_coincident_points,
     merge_popup_config,
+    nli_authority_url,
     NLI_POPUP_CONFIG,
     object_ids_active_at,
     parse_local_timeline_to_minutes,
+    parse_marc_name,
     reproject_web_mercator_collection_to_wgs84,
     rewrite_nli_layer_properties,
     rewrite_oct7_status,
     sanitize_time_like_properties,
+    simple_line_lyrx,
     simple_polygon_lyrx,
     unique_value_point_lyrx,
     unit_from_seed,
@@ -43,14 +47,15 @@ class ZipEntryNameTests(unittest.TestCase):
     def test_reads_infozip_unicode_path_extra_field(self):
         zip_path = (
             Path(__file__).resolve().parents[3]
-            / "geojson-20260818T050200Z-1-001.zip"
+            / "geojson-20260823T094646Z-1-001.zip"
         )
         self.assertTrue(zip_path.is_file(), f"missing {zip_path}")
         with zipfile.ZipFile(zip_path) as zf:
             names = [zip_entry_name(info) for info in zf.infolist()]
-        self.assertIn("geojson/פוליגונים מתחקירים.geojson", names)
-        self.assertIn("geojson/oct7database_mid_manual_gitit.geojson", names)
-        self.assertIn("geojson/noam_layer.geojson", names)
+        self.assertIn("geojson/people_7_10.json", names)
+        self.assertIn("geojson/polygons_7_10.geojson", names)
+        self.assertIn("geojson/lines_7_10.geojson", names)
+        self.assertTrue(any(name.startswith("geojson/older versions/") for name in names))
 
 
 class JitterTests(unittest.TestCase):
@@ -141,6 +146,20 @@ class LyrxBuilderTests(unittest.TestCase):
         ]
         self.assertTrue(fills)
 
+    def test_line_simple_parses_as_line(self):
+        parsed = parse_lyrx_style(_write_lyrx(simple_line_lyrx()))
+        self.assertIsNotNone(parsed)
+        data = parsed.to_dict()
+        self.assertEqual(data["type"], "line")
+        self.assertEqual(data["renderer"], "simple")
+        strokes = [
+            layer
+            for layer in data["defaultSymbol"]["symbolLayers"]
+            if layer.get("type") == "stroke"
+        ]
+        self.assertTrue(strokes)
+        self.assertEqual(strokes[0]["color"], "#c31f4f")
+
     def test_oct7_status_classes_parse_four_unique_values(self):
         parsed = parse_lyrx_style(_write_lyrx(unique_value_point_lyrx("status", OCT7_STATUS_CLASSES)))
         self.assertIsNotNone(parsed)
@@ -229,6 +248,7 @@ class GroupingTests(unittest.TestCase):
         )
         self.assertEqual(rewrite_oct7_status("Murdered"), "Murdered")
         self.assertEqual(rewrite_oct7_status("Killed on duty"), "Killed on duty")
+        self.assertEqual(rewrite_oct7_status("Murdered then kidnapped"), "Murdered")
 
     def test_kidnapping_substring_wins_category_group(self):
         self.assertEqual(
@@ -265,7 +285,7 @@ class GroupingTests(unittest.TestCase):
                 _point(34.48, 31.41, categories="Victims of terrorism"),
             ]
         }
-        self.assertEqual(rewrite_nli_layer_properties("oct7_database", oct7), 1)
+        self.assertEqual(rewrite_nli_layer_properties("people", oct7), 1)
         self.assertEqual(
             oct7["features"][0]["properties"]["status"],
             "Murdered in captivity",
@@ -282,6 +302,49 @@ class GroupingTests(unittest.TestCase):
         )
 
 
+class CatalogLinkTests(unittest.TestCase):
+    def test_parse_marc_name_uses_dollar_a(self):
+        self.assertEqual(parse_marc_name("$$aשביט, טל$$d2003-2024$$9heb"), "שביט, טל")
+
+    def test_attaches_string_mms_id_and_authority_url(self):
+        people = {
+            "features": [
+                _point(34.47, 31.40, pid=23, hebrew_name="רן גואילי", name="Ran Gvili"),
+                _point(34.48, 31.41, pid=16, hebrew_name="לא ידוע", name="Singh Dhami Lokendra"),
+            ]
+        }
+        stats = attach_nli_catalog_links(
+            people,
+            [{"mms_id": "987007591931905171", "he": "גואילי, רן", "en": "Gvili, Ran"}],
+        )
+        self.assertEqual(stats["linked"], 1)
+        self.assertEqual(stats["unmatched"], 1)
+        linked = people["features"][0]["properties"]
+        self.assertEqual(linked["mms_id"], "987007591931905171")
+        self.assertIsInstance(linked["mms_id"], str)
+        self.assertEqual(
+            linked["nli_url"],
+            nli_authority_url("987007591931905171"),
+        )
+        self.assertNotIn("mms_id", people["features"][1]["properties"])
+
+    def test_uses_old_catalog_names_when_people_name_does_not_match(self):
+        people = {
+            "features": [
+                _point(34.47, 31.40, pid=1190, hebrew_name="לא ידוע", name="Alik P"),
+            ]
+        }
+        stats = attach_nli_catalog_links(
+            people,
+            [{"mms_id": "987012345678901234", "he": "פוזדניאקוב, אליק", "en": "Pozdnykov, Alik"}],
+            catalog_features=[
+                {"properties": {"oct7_pid": 1190, "name_he": "פוזדניאקוב, אליק", "name_en": "Pozdnykov, Alik"}}
+            ],
+        )
+        self.assertEqual(stats["linked"], 1)
+        self.assertEqual(people["features"][0]["properties"]["mms_id"], "987012345678901234")
+
+
 class PreparePackTests(unittest.TestCase):
     def test_merge_popup_config_preserves_other_packs(self):
         tmp = Path(tempfile.mkdtemp())
@@ -293,12 +356,18 @@ class PreparePackTests(unittest.TestCase):
         merge_popup_config(popup, NLI_POPUP_CONFIG)
         data = json.loads(popup.read_text(encoding="utf-8"))
         self.assertEqual(data["october_7th"]["layers"]["x"]["titleField"], "A")
-        self.assertIn("nli_catalog", data["nli"]["layers"])
-        self.assertNotIn("legendLabel", data["nli"]["layers"]["oct7_database"])
-        self.assertNotIn("legendLabel", data["nli"]["layers"]["nli_catalog"])
+        self.assertIn("people", data["nli"]["layers"])
+        self.assertIn("lines", data["nli"]["layers"])
+        self.assertNotIn("nli_catalog", data["nli"]["layers"])
+        self.assertNotIn("oct7_database", data["nli"]["layers"])
+        self.assertNotIn("legendLabel", data["nli"]["layers"]["people"])
         self.assertEqual(
             data["nli"]["layers"]["investigation_polygons"]["legendLabel"],
             "Investigation polygons",
+        )
+        self.assertEqual(
+            data["nli"]["layers"]["lines"]["legendLabel"],
+            "Infiltration routes",
         )
 
     def test_rewrites_hhmmss_timeline_values(self):
@@ -392,8 +461,9 @@ class AnimationOverrideContractTests(unittest.TestCase):
         src = path.read_text(encoding="utf-8")
         nli_idx = src.find('"nli"')
         self.assertGreater(nli_idx, -1)
-        snippet = src[nli_idx : nli_idx + 400]
+        snippet = src[nli_idx : nli_idx + 600]
         self.assertIn("investigation_polygons", snippet)
+        self.assertIn("lines", snippet)
         self.assertIn('"type": "timeline"', snippet)
         self.assertIn("enabledByDefault", snippet)
 
@@ -411,6 +481,9 @@ class AnimationOverrideContractTests(unittest.TestCase):
         animation = data.get("investigation_polygons", {}).get("animation") or {}
         self.assertEqual(animation.get("type"), "timeline")
         self.assertFalse(animation.get("enabledByDefault"))
+        line_animation = data.get("lines", {}).get("animation") or {}
+        self.assertEqual(line_animation.get("type"), "timeline")
+        self.assertFalse(line_animation.get("enabledByDefault"))
 
 
 if __name__ == "__main__":

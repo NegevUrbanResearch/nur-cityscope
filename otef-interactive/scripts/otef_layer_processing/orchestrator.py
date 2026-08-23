@@ -67,7 +67,11 @@ ANIMATION_STYLE_OVERRIDES: Dict[str, Dict[str, Dict[str, Any]]] = {
         "investigation_polygons": {
             "type": "timeline",
             "enabledByDefault": False,
-        }
+        },
+        "lines": {
+            "type": "timeline",
+            "enabledByDefault": False,
+        },
     },
 }
 
