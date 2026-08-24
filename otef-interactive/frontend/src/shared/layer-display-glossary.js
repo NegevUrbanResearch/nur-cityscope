@@ -277,6 +277,10 @@ const LAYER_DISPLAY_LABELS = {
     he: "אנשים",
     en: "People",
   },
+  "nli.people_names": {
+    he: "שמות אנשים",
+    en: "People names",
+  },
   "nli.lines": {
     he: "צירי חדירה",
     en: "Infiltration routes",

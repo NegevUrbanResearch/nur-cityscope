@@ -102,4 +102,13 @@ describe("getLayerDisplayLabel", () => {
       getLayerDisplayLabel("land_use.שטחי_אש_", "en", "שטחי אש", ["land_use.שטחי_אש_"]),
     ).toBe("Fire zones");
   });
+
+  test("glossary for nli.people_names sibling tile", () => {
+    expect(
+      getLayerDisplayLabel("nli.people_names", "he", "people_names", ["nli.people_names"]),
+    ).toBe("שמות אנשים");
+    expect(
+      getLayerDisplayLabel("nli.people_names", "en", "people_names", ["nli.people_names"]),
+    ).toBe("People names");
+  });
 });

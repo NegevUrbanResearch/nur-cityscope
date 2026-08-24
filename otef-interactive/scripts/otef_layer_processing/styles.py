@@ -559,6 +559,7 @@ def _ensure_advanced_stroke_for_polygons(style: StyleConfig) -> None:
 
 
 SHEMOT_LYRX_STEM = "שמות_יישובים"
+PEOPLE_NAMES_LYRX_STEM = "people_names"
 _SETTLEMENT_LABEL_NOTO_FALLBACK = "Noto Sans Regular"
 # Hebrew display face for projector settlement labels when the LYRX still has a generic export font.
 _SETTLEMENT_LABEL_PROJECTION_FONT = "Guttman Hatzvi"
@@ -621,6 +622,39 @@ def _apply_shemot_settlement_label_ir(
     label_config["offsetEmFieldX"] = "otef_label_offset_em_x"
     label_config["offsetEmFieldY"] = "otef_label_offset_em_y"
     label_config["offsetArrayProperty"] = "otef_map_text_offset_em"
+
+
+def _apply_people_names_label_ir(
+    label_config: Optional[Dict[str, Any]], lyrx_path: Path
+) -> None:
+    """
+    `people_names` only: same type treatment as `שמות_יישובים` (Guttman + Noto, white,
+    thin halo, forceVisible) without shemot angle/offset IR.
+    """
+    if not label_config or lyrx_path.stem != PEOPLE_NAMES_LYRX_STEM:
+        return
+    label_config["font"] = [
+        _SETTLEMENT_LABEL_PROJECTION_FONT,
+        _SETTLEMENT_LABEL_NOTO_FALLBACK,
+    ]
+    label_config["color"] = "#ffffff"
+    label_config["size"] = 14.0
+    label_config["haloSize"] = min(float(label_config.get("haloSize") or 1.0), 0.35)
+    if not label_config.get("haloColor"):
+        label_config["haloColor"] = "#ffffff"
+    label_config["forceVisible"] = True
+    label_config["hebrewBidiWrap"] = False
+
+
+def _finalize_people_names_style(style: StyleConfig, lyrx_path: Path) -> None:
+    """Labels-only: drop parser fill/stroke fallback so MapLibre emits no point markers."""
+    if lyrx_path.stem != PEOPLE_NAMES_LYRX_STEM:
+        return
+    style.full_symbol_layers = []
+    style.default_style = {}
+    style.advanced_symbol = {"symbolLayers": []}
+    style.unique_values = None
+    style.renderer = "simple"
 
 
 def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
@@ -719,6 +753,7 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
         else:
             label_config["fontStyle"] = "normal"
         _apply_shemot_settlement_label_ir(label_config, lyrx_path)
+        _apply_people_names_label_ir(label_config, lyrx_path)
 
     min_scale = layer_def.get("minScale") or layer_def.get("minimumScale")
     max_scale = layer_def.get("maxScale") or layer_def.get("maximumScale")
@@ -846,5 +881,7 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
                     break
 
     style.complexity = complexity
+
+    _finalize_people_names_style(style, lyrx_path)
 
     return style

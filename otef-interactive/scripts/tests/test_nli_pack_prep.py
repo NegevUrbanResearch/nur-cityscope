@@ -11,17 +11,20 @@ from nli_pack_prep import (
     NLI_CATALOG_MARKER_SIZE,
     NLI_CATALOG_STROKE,
     NLI_CATALOG_STROKE_WIDTH,
+    NLI_KEEP_STEMS,
     apply_timeline_minutes,
     attach_nli_catalog_links,
     collect_timeline_beats,
     group_nli_category,
     jitter_coincident_points,
+    labels_only_point_lyrx,
     merge_popup_config,
     nli_authority_url,
     NLI_POPUP_CONFIG,
     object_ids_active_at,
     parse_local_timeline_to_minutes,
     parse_marc_name,
+    prepare_nli_pack,
     reproject_web_mercator_collection_to_wgs84,
     rewrite_nli_layer_properties,
     rewrite_oct7_status,
@@ -107,8 +110,8 @@ class JitterTests(unittest.TestCase):
         self.assertEqual(a[1]["geometry"]["coordinates"], b[1]["geometry"]["coordinates"])
 
 
-def _write_lyrx(payload):
-    tmp = Path(tempfile.mkdtemp()) / "layer.lyrx"
+def _write_lyrx(payload, name="layer.lyrx"):
+    tmp = Path(tempfile.mkdtemp()) / name
     tmp.write_text(json.dumps(payload), encoding="utf-8")
     return tmp
 
@@ -212,6 +215,28 @@ class LyrxBuilderTests(unittest.TestCase):
         self.assertEqual(markers[0]["marker"]["shape"], "square")
         self.assertEqual(NLI_CATALOG_MARKER_SIZE, 10.0)
         self.assertEqual(NLI_CATALOG_STROKE_WIDTH, 0.6)
+
+    def test_people_names_lyrx_is_labels_only_point_with_name_and_force_visible(self):
+        payload = labels_only_point_lyrx()
+        parsed = parse_lyrx_style(_write_lyrx(payload, "people_names.lyrx"))
+        self.assertIsNotNone(parsed)
+        data = parsed.to_dict()
+        self.assertEqual(data["type"], "point")
+        self.assertEqual(data["renderer"], "simple")
+        self.assertNotIn("uniqueValues", data)
+        labels = data["labels"]
+        self.assertEqual(labels["field"], "name")
+        self.assertTrue(labels["forceVisible"])
+        self.assertFalse(labels["hebrewBidiWrap"])
+        self.assertEqual(labels["font"], ["Guttman Hatzvi", "Noto Sans Regular"])
+        self.assertEqual(labels["color"], "#ffffff")
+        self.assertEqual(float(labels["size"]), 14.0)
+        self.assertLessEqual(float(labels.get("haloSize") or 0), 0.35)
+        self.assertGreater(float(labels.get("haloSize") or 0), 0)
+        symbol_layers = (data.get("defaultSymbol") or {}).get("symbolLayers") or []
+        markers = [layer for layer in symbol_layers if layer.get("type") == "markerPoint"]
+        self.assertFalse(markers, msg=f"expected labels-only, got markers {markers}")
+        self.assertEqual(symbol_layers, [])
 
 
 class LegendClassContractTests(unittest.TestCase):
@@ -360,6 +385,7 @@ class PreparePackTests(unittest.TestCase):
         self.assertIn("lines", data["nli"]["layers"])
         self.assertNotIn("nli_catalog", data["nli"]["layers"])
         self.assertNotIn("oct7_database", data["nli"]["layers"])
+        self.assertNotIn("people_names", data["nli"]["layers"])
         self.assertNotIn("legendLabel", data["nli"]["layers"]["people"])
         self.assertEqual(
             data["nli"]["layers"]["investigation_polygons"]["legendLabel"],
@@ -403,6 +429,39 @@ class PreparePackTests(unittest.TestCase):
         lon, lat = collection["features"][0]["geometry"]["coordinates"][0][0]
         self.assertTrue(34.0 < lon < 35.5)
         self.assertTrue(31.0 < lat < 32.0)
+
+    def test_keep_stems_include_derived_people_names(self):
+        self.assertIn("people_names", NLI_KEEP_STEMS)
+        self.assertIn("people", NLI_KEEP_STEMS)
+
+    def test_prepare_copies_jittered_people_to_people_names(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = tmp / "nli.zip"
+        people = {
+            "type": "FeatureCollection",
+            "features": [
+                _point(34.47, 31.40, name="Ada", hebrew_name="עדה", status="Murdered", oct7_pid=1),
+                _point(34.47, 31.40, name="Ben", hebrew_name="בן", status="Murdered", oct7_pid=2),
+            ],
+        }
+        empty = {"type": "FeatureCollection", "features": []}
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("geojson/people_7_10.json", json.dumps(people))
+            archive.writestr("geojson/polygons_7_10.geojson", json.dumps(empty))
+            archive.writestr("geojson/lines_7_10.geojson", json.dumps(empty))
+        pack_dir = tmp / "nli"
+        prepare_nli_pack(zip_path, pack_dir, authorities_path=tmp / "missing.json")
+        people_out = json.loads((pack_dir / "gis" / "people.geojson").read_text(encoding="utf-8"))
+        names_out = json.loads((pack_dir / "gis" / "people_names.geojson").read_text(encoding="utf-8"))
+        self.assertTrue((pack_dir / "styles" / "people_names.lyrx").is_file())
+        self.assertEqual(len(names_out["features"]), len(people_out["features"]))
+        self.assertEqual(len(names_out["features"]), 2)
+        self.assertEqual(
+            [feat["geometry"] for feat in names_out["features"]],
+            [feat["geometry"] for feat in people_out["features"]],
+        )
+        coords = [tuple(feat["geometry"]["coordinates"]) for feat in names_out["features"]]
+        self.assertEqual(len(set(coords)), 2)
 
 
 INVESTIGATION_TIMELINE_FIXTURE = [

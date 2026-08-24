@@ -114,6 +114,14 @@ async function bootstrapMapRuntime() {
   await OTEFDataContext.init("otef");
   await layerRegistry.init();
 
+  if (typeof document !== "undefined" && document.fonts && typeof document.fonts.load === "function") {
+    try {
+      await document.fonts.load("14px 'Guttman Hatzvi'");
+    } catch (err) {
+      console.warn("[map-main] Guttman Hatzvi font preload failed; people-name labels may flash", err);
+    }
+  }
+
   const center =
     resolveCenterFromBounds(OTEFDataContext.getBounds()) ||
     resolveCenterFromViewport(OTEFDataContext.getViewport()) ||

@@ -1793,6 +1793,64 @@ describe("irToMapLibreLayers", () => {
     expect(sym.layout["text-rotation-alignment"]).toBe("map");
   });
 
+  it("emits forceVisible English name labels for nli.people_names on GIS and projection", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "name",
+          font: ["Guttman Hatzvi", "Noto Sans Regular"],
+          size: 14,
+          color: "#ffffff",
+          haloColor: "#ffffff",
+          haloSize: 0.35,
+          forceVisible: true,
+          hebrewBidiWrap: false,
+        },
+      },
+    };
+    const gis = irToMapLibreLayers("nli.people_names", "nli__people_names", layerConfig);
+    const proj = irToMapLibreLayers("nli.people_names", "nli__people_names", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    for (const result of [gis, proj]) {
+      const symbols = result.filter((layer) => layer.type === "symbol");
+      expect(symbols).toHaveLength(1);
+      const sym = symbols[0];
+      expect(sym._labelSymbol).toBe(true);
+      expect(JSON.stringify(sym.layout["text-field"])).toMatch(/name/i);
+      expect(JSON.stringify(sym.layout["text-field"])).not.toMatch(/hebrew_name/i);
+      expect(sym.layout["text-font"]).toEqual(["Guttman Hatzvi", "Noto Sans Regular"]);
+      expect(sym.layout["text-size"]).toBe(14);
+      expect(sym.paint["text-color"]).toBe("#ffffff");
+      expect(sym.paint["text-halo-width"]).toBe(0.35);
+      expect(sym.layout["text-allow-overlap"]).toBe(true);
+      expect(sym.layout["text-ignore-placement"]).toBe(true);
+      expect(result.find((layer) => layer.type === "circle")).toBeUndefined();
+      expect(result.find((layer) => layer.type === "fill")).toBeUndefined();
+    }
+  });
+
+  it("does not emit GIS map labels from incidental style.labels on nli.people", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "markerPoint", marker: { size: 8, fill: "#a83800", stroke: "#000000", strokeWidth: 1 } },
+          ],
+        },
+        labels: { field: "name", size: 9, color: "#000000", forceVisible: true },
+      },
+    };
+    const result = irToMapLibreLayers("nli.people", "nli__people", layerConfig);
+    expect(result.find((layer) => layer.type === "symbol")).toBeUndefined();
+    expect(result.find((layer) => layer.type === "circle")).toBeDefined();
+  });
+
   it("sets text-allow-overlap and text-ignore-placement when labels.forceVisible is true", () => {
     const layerConfig = {
       geometryType: "polygon",

@@ -1222,8 +1222,8 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
  * ArcGIS-derived `style.labels` exists on many processed layers as metadata (class fields like
  * `Id`, `Shape_Length`, `Name`) and must not become MapLibre text layers by default.
  *
- * - GIS / default: no map labels from `style.labels`.
- * - Projection (`applyProjectionHatchPresentation`): only the settlement-names layer stem.
+ * - GIS / default: no map labels from `style.labels`, except `*.people_names`.
+ * - Projection (`applyProjectionHatchPresentation`): settlement-names stem and `*.people_names`.
  * - Unit tests / explicit opt-in: `renderMapLabelsFromStyle: true`.
  *
  * @param {{ applyProjectionHatchPresentation?: boolean, renderMapLabelsFromStyle?: boolean }} [styleOptions]
@@ -1231,8 +1231,9 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
  */
 function shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId) {
   if (styleOptions?.renderMapLabelsFromStyle === true) return true;
+  const s = String(fullLayerId || "");
+  if (/\.people_names$/.test(s)) return true;
   if (styleOptions?.applyProjectionHatchPresentation === true) {
-    const s = String(fullLayerId || "");
     return /\.שמות_יישובים$/.test(s);
   }
   return false;
@@ -1244,7 +1245,7 @@ function shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId) {
  *   applyProjectionHatchPresentation?: boolean,
  *   renderMapLabelsFromStyle?: boolean,
  * }} [styleOptions] - projection sets `applyLayerGroupsToMap` with `applyProjectionHatchPresentation`
- *   for hatch density; that flag also scopes label rendering to שמות_יישובים only.
+ *   for hatch density; that flag also scopes label rendering to שמות_יישובים (plus nli.people_names).
  */
 export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styleOptions = {}) {
   void sourceLayerId;

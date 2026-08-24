@@ -482,11 +482,67 @@ def simple_line_lyrx(
     }
 
 
+def labels_only_point_lyrx(
+    field: str = "name",
+    height: float = 14.0,
+    halo_size: float = 0.35,
+    fill: Sequence[int] = (255, 255, 255),
+    halo: Sequence[int] = (255, 255, 255),
+) -> Dict[str, Any]:
+    """Point layer with labels only: no unique-value marker classes."""
+    return {
+        "layerDefinitions": [
+            {
+                "name": "people_names",
+                "renderer": {
+                    "type": "CIMSimpleRenderer",
+                    "symbol": _symbol_ref({"type": "CIMPointSymbol", "symbolLayers": []}),
+                },
+                "labelClasses": [
+                    {
+                        "type": "CIMLabelClass",
+                        "expression": f'$feature["{field}"]',
+                        "maplexLabelPlacementProperties": {
+                            "type": "CIMMaplexLabelPlacementProperties",
+                            "featureType": "Point",
+                        },
+                        "textSymbol": {
+                            "type": "CIMSymbolReference",
+                            "symbol": {
+                                "type": "CIMTextSymbol",
+                                "height": height,
+                                "haloSize": halo_size,
+                                "haloColor": _rgb(halo),
+                                "fontFamilyName": "Guttman Hatzvi",
+                                "fontStyleName": "Regular",
+                                "horizontalAlignment": "Center",
+                                "symbol": {
+                                    "type": "CIMPolygonSymbol",
+                                    "symbolLayers": [
+                                        {
+                                            "type": "CIMSolidFill",
+                                            "enable": True,
+                                            "color": _rgb(fill),
+                                        }
+                                    ],
+                                },
+                            },
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+
+
 ZIP_LAYER_MAP = {
     "geojson/people_7_10.json": "people",
     "geojson/polygons_7_10.geojson": "investigation_polygons",
     "geojson/lines_7_10.geojson": "lines",
 }
+
+# Derived stems (not in the zip map) must survive obsolete-file cleanup.
+NLI_KEEP_STEMS = set(ZIP_LAYER_MAP.values()) | {"people_names"}
 
 PROJECTED_STEMS = {"investigation_polygons", "lines"}
 TIMELINE_STEMS = {"investigation_polygons", "lines"}
@@ -649,7 +705,11 @@ def prepare_nli_pack(
                 summary["nli_catalog_links"] = attach_nli_catalog_links(
                     collection, authorities, catalog_features
                 )
+            if stem == "people":
+                moved = jitter_coincident_points(collection.get("features") or [])
             _write_json(gis_dir / f"{stem}.geojson", collection)
+            if stem == "people":
+                _write_json(gis_dir / "people_names.geojson", collection)
             summary["layers"][stem] = {
                 "features": len(collection.get("features") or []),
                 "dropped_null_geometry": dropped,
@@ -660,7 +720,8 @@ def prepare_nli_pack(
     _write_json(styles_dir / "investigation_polygons.lyrx", simple_polygon_lyrx())
     _write_json(styles_dir / "people.lyrx", unique_value_point_lyrx("status", OCT7_STATUS_CLASSES))
     _write_json(styles_dir / "lines.lyrx", simple_line_lyrx())
-    keep_stems = set(ZIP_LAYER_MAP.values())
+    _write_json(styles_dir / "people_names.lyrx", labels_only_point_lyrx())
+    keep_stems = NLI_KEEP_STEMS
     removed = []
     for folder in (gis_dir, styles_dir):
         for path in folder.iterdir():
