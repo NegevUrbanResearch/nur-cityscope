@@ -24,7 +24,11 @@ import {
   syncInvestigationTimelineToMap,
 } from "../shared/maplibre-investigation-timeline.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
-import { createSlideshowPackRuntime } from "../shared/slideshow-pack-runtime.js";
+import {
+  createSlideshowPackRuntime,
+  resolvePresentationOverlayVisibility,
+  suppressInvestigationPlayback,
+} from "../shared/slideshow-pack-runtime.js";
 import { subscribeSlideshowProjection } from "../shared/slideshow-projection-channel.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
@@ -344,13 +348,29 @@ async function bootstrapProjectionRuntime() {
       const rawGroups = OTEFDataContext.getLayerGroups();
       const rawAsArray = Array.isArray(rawGroups) ? rawGroups : Object.values(rawGroups || {});
       const currentGroups = asLayerGroupsArray(getEffectiveProjectionLayerGroups());
+      const presentationActive =
+        typeof slideshowRuntime?.shouldSuppressProjectionHighlight === "function"
+          ? slideshowRuntime.shouldSuppressProjectionHighlight()
+          : !!(slideshowRuntime && slideshowRuntime.isActive());
+      const overlayGroups = resolvePresentationOverlayVisibility({
+        presentationActive,
+        incomingGroups:
+          typeof slideshowRuntime?.getLastIncomingGroups === "function"
+            ? slideshowRuntime.getLastIncomingGroups()
+            : null,
+        liveGroups: rawAsArray,
+        keepSettlementNames: MapProjectionConfig.PROJECTION_SLIDESHOW?.keepSettlementNames === true,
+        excludedPresentationPackIds:
+          MapProjectionConfig.PROJECTION_SLIDESHOW?.excludedPresentationPackIds,
+      });
       const anim =
         typeof OTEFDataContext.getAnimations === "function" ? OTEFDataContext.getAnimations() : {};
-      void syncRouteProgressOverlaysToMap(map, anim, currentGroups, {
-        visibilityLayerGroups: rawAsArray,
+      const overlayAnim = suppressInvestigationPlayback(anim, presentationActive);
+      void syncRouteProgressOverlaysToMap(map, overlayAnim, currentGroups, {
+        visibilityLayerGroups: overlayGroups,
       });
-      void syncInvestigationTimelineToMap(map, anim, currentGroups, {
-        visibilityLayerGroups: rawAsArray,
+      void syncInvestigationTimelineToMap(map, overlayAnim, currentGroups, {
+        visibilityLayerGroups: overlayGroups,
       });
     };
     registerDisposer(OTEFDataContext.subscribe("animations", syncContextFlowAnimations));
@@ -524,6 +544,7 @@ async function bootstrapProjectionRuntime() {
       getEffectiveLayerGroups: getEffectiveProjectionLayerGroups,
       syncProjectionLayers: syncProjectionLayersAndRaiseHighlight,
       applyProjectionRefresh,
+      syncPresentationOverlays: syncContextFlowAnimations,
     });
     registerDisposer(() => {
       if (slideshowRuntime) {

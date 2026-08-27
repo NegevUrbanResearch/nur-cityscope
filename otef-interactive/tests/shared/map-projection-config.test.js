@@ -60,14 +60,15 @@ describe("projection slideshow config", () => {
       "projector_base",
       "gaza",
       "curated_moresht_axis",
-      "nli",
     ]);
+    expect(MapProjectionConfig.PROJECTION_SLIDESHOW.keepSettlementNames).toBe(true);
     expect(MapProjectionConfig.PROJECTION_SLIDESHOW.packOrder).toEqual([
       "future_development",
       "october_7th",
       "greens",
       "land_use",
       "muniplicity_transport",
+      "nli",
     ]);
   });
 });

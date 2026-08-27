@@ -16,8 +16,18 @@ vi.mock("../../frontend/src/map/maplibre-layer-manager.js", async (importOrigina
   };
 });
 
+import {
+  INVESTIGATION_ALARMS_FULL_ID,
+  INVESTIGATION_LINES_FULL_ID,
+  INVESTIGATION_POLYGONS_FULL_ID,
+} from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import MapProjectionConfig from "../../frontend/src/shared/map-projection-config.js";
-import { createSlideshowPackRuntime } from "../../frontend/src/shared/slideshow-pack-runtime.js";
+import {
+  buildSlideshowIncomingGroups,
+  createSlideshowPackRuntime,
+  resolvePresentationOverlayVisibility,
+  suppressInvestigationPlayback,
+} from "../../frontend/src/shared/slideshow-pack-runtime.js";
 
 const { beginSlideshowStage, commitSlideshowReveal, fadeOutAndRemoveEnabledFullIds } =
   layerManagerMock;
@@ -428,5 +438,280 @@ describe("slideshow pack runtime", () => {
     expect(sync.mock.calls.length).toBeGreaterThanOrEqual(2);
     await runtime.stop();
     setIntervalSpy.mockRestore();
+  });
+
+  function settlementEnabled(groups, layerId) {
+    const pack = (groups || []).find((g) => g?.id === "projector_base");
+    const layer = (pack?.layers || []).find((l) => l?.id === layerId);
+    return !!layer?.enabled;
+  }
+
+  function makePacksWithSettlementNames() {
+    return [
+      { id: "pack_a", layers: [{ id: "a", enabled: true }] },
+      { id: "pack_b", layers: [{ id: "b", enabled: true }] },
+      {
+        id: "projector_base",
+        layers: [
+          { id: "שמות_יישובים", enabled: false },
+          { id: "Locations_Lines", enabled: false },
+          { id: "ישובים", enabled: false },
+          { id: "model_base", enabled: true },
+        ],
+      },
+    ];
+  }
+
+  it("keeps settlement name layers on across packs when keepSettlementNames is true", async () => {
+    vi.useFakeTimers();
+    const sync = vi.fn();
+    const runtime = createSlideshowPackRuntime({
+      config: {
+        ...baseConfig(),
+        excludedPresentationPackIds: ["projector_base"],
+        keepSettlementNames: true,
+      },
+      getEffectiveLayerGroups: () => makePacksWithSettlementNames(),
+      syncProjectionLayers: sync,
+      map: null,
+    });
+    runtime.start({ keepSettlementNames: true });
+    await flushStart(runtime);
+    expect(enabledPackId(sync.mock.calls[0][1])).toBe("pack_b");
+    expect(settlementEnabled(sync.mock.calls[0][1], "שמות_יישובים")).toBe(true);
+    expect(settlementEnabled(sync.mock.calls[0][1], "Locations_Lines")).toBe(true);
+    expect(settlementEnabled(sync.mock.calls[0][1], "ישובים")).toBe(true);
+    expect(settlementEnabled(sync.mock.calls[0][1], "model_base")).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
+    await flushMicrotasks();
+    expect(enabledPackId(sync.mock.calls[1][1])).toBe("pack_a");
+    expect(settlementEnabled(sync.mock.calls[1][1], "שמות_יישובים")).toBe(true);
+    expect(settlementEnabled(sync.mock.calls[1][1], "Locations_Lines")).toBe(true);
+    expect(settlementEnabled(sync.mock.calls[1][1], "ישובים")).toBe(true);
+    expect(settlementEnabled(sync.mock.calls[1][1], "model_base")).toBe(false);
+    await runtime.stop();
+  });
+
+  it("leaves settlement names off when keepSettlementNames is false", async () => {
+    vi.useFakeTimers();
+    const sync = vi.fn();
+    const runtime = createSlideshowPackRuntime({
+      config: {
+        ...baseConfig(),
+        excludedPresentationPackIds: ["projector_base"],
+        keepSettlementNames: false,
+      },
+      getEffectiveLayerGroups: () => makePacksWithSettlementNames(),
+      syncProjectionLayers: sync,
+      map: null,
+    });
+    runtime.start({ keepSettlementNames: false });
+    await flushStart(runtime);
+    expect(settlementEnabled(sync.mock.calls[0][1], "שמות_יישובים")).toBe(false);
+    expect(settlementEnabled(sync.mock.calls[0][1], "Locations_Lines")).toBe(false);
+    expect(settlementEnabled(sync.mock.calls[0][1], "ישובים")).toBe(false);
+    expect(settlementEnabled(sync.mock.calls[0][1], "model_base")).toBe(false);
+    await runtime.stop();
+  });
+
+  it("updates settlement names on a live start without restarting the cycle", async () => {
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const sync = vi.fn();
+    const runtime = createSlideshowPackRuntime({
+      config: {
+        ...baseConfig(),
+        excludedPresentationPackIds: ["projector_base"],
+        keepSettlementNames: false,
+      },
+      getEffectiveLayerGroups: () => makePacksWithSettlementNames(),
+      syncProjectionLayers: sync,
+      map: null,
+    });
+    runtime.start({ keepSettlementNames: false });
+    await flushStart(runtime);
+    expect(settlementEnabled(sync.mock.calls[0][1], "שמות_יישובים")).toBe(false);
+    const callsAfterFirstTick = sync.mock.calls.length;
+    runtime.start({ keepSettlementNames: true });
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+    expect(sync.mock.calls.length).toBeGreaterThan(callsAfterFirstTick);
+    const lastGroups = sync.mock.calls[sync.mock.calls.length - 1][1];
+    expect(settlementEnabled(lastGroups, "שמות_יישובים")).toBe(true);
+    expect(settlementEnabled(lastGroups, "Locations_Lines")).toBe(true);
+    expect(settlementEnabled(lastGroups, "ישובים")).toBe(true);
+    expect(settlementEnabled(lastGroups, "model_base")).toBe(false);
+    await runtime.stop();
+    setIntervalSpy.mockRestore();
+  });
+});
+
+const NLI_LAYERS = [
+  { id: "investigation_polygons", enabled: true },
+  { id: "lines", enabled: true },
+  { id: "alarms", enabled: true },
+  { id: "people", enabled: true },
+  { id: "people_names", enabled: true },
+];
+
+function makeLiveGroupsWithNliOn() {
+  return [
+    { id: "pack_a", layers: [{ id: "a", enabled: true }] },
+    { id: "pack_b", layers: [{ id: "b", enabled: true }] },
+    { id: "gaza", layers: [{ id: "g1", enabled: true }] },
+    { id: "nli", layers: NLI_LAYERS.map((layer) => ({ ...layer })) },
+  ];
+}
+
+function packLayerEnabled(groups, packId, layerId) {
+  const pack = (groups || []).find((g) => g?.id === packId);
+  const layer = (pack?.layers || []).find((l) => l?.id === layerId);
+  return !!layer?.enabled;
+}
+
+function expectNliFullyOff(groups) {
+  const pack = (groups || []).find((g) => g?.id === "nli");
+  expect(pack, "nli group should be present so overlays can read disabled flags").toBeTruthy();
+  for (const layer of pack.layers || []) {
+    expect(layer?.enabled, `nli.${layer?.id}`).toBe(false);
+  }
+}
+
+describe("slideshow incoming groups vs live NLI", () => {
+  it("forces live-enabled nli layers off when the current pack is not nli", () => {
+    const incoming = buildSlideshowIncomingGroups("pack_b", makeLiveGroupsWithNliOn(), {
+      excludedPresentationPackIds: ["gaza", "projector_base", "curated_moresht_axis"],
+      keepSettlementNames: true,
+    });
+    expect(enabledPackId(incoming)).toBe("pack_b");
+    expectNliFullyOff(incoming);
+    expect(packLayerEnabled(incoming, "gaza", "g1")).toBe(false);
+    expect(packLayerEnabled(incoming, "pack_a", "a")).toBe(false);
+  });
+
+  it("enables the full nli pack on the nli tick and keeps other packs off", () => {
+    const incoming = buildSlideshowIncomingGroups("nli", makeLiveGroupsWithNliOn(), {
+      excludedPresentationPackIds: ["gaza", "projector_base", "curated_moresht_axis"],
+      keepSettlementNames: true,
+    });
+    expect(enabledPackId(incoming)).toBe("nli");
+    for (const layer of NLI_LAYERS) {
+      expect(packLayerEnabled(incoming, "nli", layer.id)).toBe(true);
+    }
+    expect(packLayerEnabled(incoming, "pack_b", "b")).toBe(false);
+    expect(packLayerEnabled(incoming, "gaza", "g1")).toBe(false);
+  });
+
+  it("does not use live nli-on groups for overlays while presentation is active", () => {
+    const live = makeLiveGroupsWithNliOn();
+    const incoming = buildSlideshowIncomingGroups("pack_a", live, {
+      excludedPresentationPackIds: ["gaza"],
+      keepSettlementNames: true,
+    });
+    const overlayGroups = resolvePresentationOverlayVisibility({
+      presentationActive: true,
+      incomingGroups: incoming,
+      liveGroups: live,
+    });
+    expect(overlayGroups).toBe(incoming);
+    expectNliFullyOff(overlayGroups);
+    expect(packLayerEnabled(live, "nli", "people_names")).toBe(true);
+  });
+
+  it("clears nli overlays before the first incoming tick when presentation is starting", () => {
+    const live = makeLiveGroupsWithNliOn();
+    const overlayGroups = resolvePresentationOverlayVisibility({
+      presentationActive: true,
+      incomingGroups: null,
+      liveGroups: live,
+      keepSettlementNames: true,
+      excludedPresentationPackIds: ["gaza"],
+    });
+    expectNliFullyOff(overlayGroups);
+    expect(packLayerEnabled(overlayGroups, "pack_a", "a")).toBe(false);
+    expect(packLayerEnabled(overlayGroups, "pack_b", "b")).toBe(false);
+  });
+
+  it("suppresses investigation timeline playback during presentation (nli final/idle state)", () => {
+    const liveAnim = {
+      [INVESTIGATION_POLYGONS_FULL_ID]: true,
+      [INVESTIGATION_LINES_FULL_ID]: true,
+      [INVESTIGATION_ALARMS_FULL_ID]: true,
+      "october_7th.חדירה_לישוב_ציר": true,
+    };
+    expect(suppressInvestigationPlayback(liveAnim, false)).toEqual(liveAnim);
+    const presentationAnim = suppressInvestigationPlayback(liveAnim, true);
+    expect(presentationAnim[INVESTIGATION_POLYGONS_FULL_ID]).toBe(false);
+    expect(presentationAnim[INVESTIGATION_LINES_FULL_ID]).toBe(false);
+    expect(presentationAnim[INVESTIGATION_ALARMS_FULL_ID]).toBe(false);
+    expect(presentationAnim["october_7th.חדירה_לישוב_ציר"]).toBe(true);
+  });
+});
+
+describe("slideshow runtime nli rotation", () => {
+  it("turns off live-enabled nli on non-nli ticks and shows nli as a later pack", async () => {
+    vi.useFakeTimers();
+    const sync = vi.fn();
+    const groups = makeLiveGroupsWithNliOn();
+    const runtime = createSlideshowPackRuntime({
+      config: {
+        ...baseConfig(),
+        packOrder: ["pack_b", "pack_a", "nli"],
+        excludedPresentationPackIds: ["gaza", "projector_base", "curated_moresht_axis"],
+      },
+      getEffectiveLayerGroups: () => groups,
+      syncProjectionLayers: sync,
+      map: null,
+    });
+    runtime.start();
+    await flushStart(runtime);
+    expect(enabledPackId(sync.mock.calls[0][1])).toBe("pack_b");
+    expectNliFullyOff(sync.mock.calls[0][1]);
+    expectNliFullyOff(runtime.getLastIncomingGroups());
+    await vi.advanceTimersByTimeAsync(100);
+    await flushMicrotasks();
+    expect(enabledPackId(sync.mock.calls[1][1])).toBe("pack_a");
+    expectNliFullyOff(sync.mock.calls[1][1]);
+    await vi.advanceTimersByTimeAsync(100);
+    await flushMicrotasks();
+    expect(enabledPackId(sync.mock.calls[2][1])).toBe("nli");
+    for (const layer of NLI_LAYERS) {
+      expect(packLayerEnabled(sync.mock.calls[2][1], "nli", layer.id)).toBe(true);
+    }
+    expect(packLayerEnabled(sync.mock.calls[2][1], "pack_b", "b")).toBe(false);
+    await runtime.stop();
+    expect(runtime.getLastIncomingGroups()).toBeNull();
+  });
+
+  it("syncs overlays with nli off before the first pack tick (warmup window)", async () => {
+    vi.useFakeTimers();
+    const sync = vi.fn();
+    const overlays = vi.fn();
+    const groups = makeLiveGroupsWithNliOn();
+    const runtime = createSlideshowPackRuntime({
+      config: {
+        ...baseConfig(),
+        packOrder: ["pack_b", "nli"],
+        excludedPresentationPackIds: ["gaza"],
+        warmupLeadMs: 50,
+      },
+      getEffectiveLayerGroups: () => groups,
+      syncProjectionLayers: sync,
+      syncPresentationOverlays: overlays,
+      map: null,
+    });
+    runtime.start();
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    expect(overlays.mock.calls.length).toBeGreaterThan(0);
+    expectNliFullyOff(overlays.mock.calls[0][0]);
+    await vi.advanceTimersByTimeAsync(50);
+    await flushStart(runtime);
+    expect(enabledPackId(sync.mock.calls[0][1])).toBe("pack_b");
+    expectNliFullyOff(overlays.mock.calls[overlays.mock.calls.length - 1][0]);
+    await runtime.stop();
   });
 });

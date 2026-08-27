@@ -174,6 +174,15 @@ describe("remote-locale", () => {
     expect(t("curatedGroupLabel")).toBe("Curated");
   });
 
+  test("t(pinkLineLayerLabel) localizes the workshop pink-line tile", async () => {
+    installLocaleTestEnv();
+    const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    setLocale("he", { force: true });
+    expect(t("pinkLineLayerLabel")).toBe("קו ורוד");
+    setLocale("en", { force: true });
+    expect(t("pinkLineLayerLabel")).toBe("Pink line");
+  });
+
   test("basemap control strings resolve for both locales", async () => {
     installLocaleTestEnv();
     const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
@@ -233,6 +242,40 @@ describe("remote-locale", () => {
     expect({ he: heOk, en: enOk }).toEqual({ he: true, en: true });
     expect(t("placeSearchPlaceholder")).toBe("Search settlement");
     expect(t("placeSearchFailed")).toBe("Could not navigate to settlement");
+  });
+
+  test("slideshow settlement-names toggle strings resolve for both locales", async () => {
+    installLocaleTestEnv();
+    const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+
+    setLocale("he", { force: true });
+    expect(t("slideshowKeepSettlementNames")).toBe("שמות יישובים");
+    expect(t("ariaSlideshowKeepSettlementNames")).toBe("הצגת שמות יישובים בכל החבילות");
+
+    setLocale("en", { force: true });
+    expect(t("slideshowKeepSettlementNames")).toBe("Settlement names");
+    expect(t("ariaSlideshowKeepSettlementNames")).toBe("Show settlement names on all packs");
+  });
+
+  test("slideshow timing short labels stay compact while full labels remain for aria", async () => {
+    installLocaleTestEnv();
+    const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+
+    setLocale("he", { force: true });
+    expect(t("slideshowIntervalSecShort")).toBe("מרווח");
+    expect(t("slideshowCrossfadeSecShort")).toBe("מיזוג");
+    expect(t("slideshowWarmupLeadSecShort")).toBe("הכנה");
+    expect(t("slideshowIntervalSecLabel")).toBe("מרווח (שניות)");
+    expect(t("slideshowCrossfadeSecLabel")).toBe("מיזוג (שניות)");
+    expect(t("slideshowWarmupLeadSecLabel")).toBe("זמן הכנה (שניות)");
+
+    setLocale("en", { force: true });
+    expect(t("slideshowIntervalSecShort")).toBe("Interval");
+    expect(t("slideshowCrossfadeSecShort")).toBe("Crossfade");
+    expect(t("slideshowWarmupLeadSecShort")).toBe("Warmup");
+    expect(t("slideshowIntervalSecLabel")).toBe("Interval (seconds)");
+    expect(t("slideshowCrossfadeSecLabel")).toBe("Crossfade (seconds)");
+    expect(t("slideshowWarmupLeadSecLabel")).toBe("Warmup lead (seconds)");
   });
 
   test("setLocale dispatches otef:locale with detail.locale after apply", async () => {

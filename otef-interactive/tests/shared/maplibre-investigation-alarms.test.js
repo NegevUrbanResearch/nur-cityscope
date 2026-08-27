@@ -557,4 +557,32 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     );
     disposeInvestigationTimelineForMap(map);
   });
+
+  it("unmounts idle alarm overlays when visibilityLayerGroups has nli off", async () => {
+    const map = makeMap();
+    const liveOn = [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }];
+    const slideshowOff = [{ id: "nli", layers: [{ id: "alarms", enabled: false }] }];
+    const deps = {
+      featuresById: {
+        [INVESTIGATION_ALARMS_FULL_ID]: [
+          {
+            id: "שדרות",
+            properties: { city: "שדרות", alarm_minutes: [389, 400], alarm_count_total: 2 },
+          },
+        ],
+      },
+      getLayerDataUrl: () => null,
+      now: () => 0,
+    };
+    await syncInvestigationTimelineToMap(map, {}, liveOn, deps);
+    expect(map.getLayer("nli-investigation-alarm-circles")).toBeTruthy();
+    expect(map.getSource("nli-investigation-alarm-count")).toBeTruthy();
+    await syncInvestigationTimelineToMap(map, {}, liveOn, {
+      ...deps,
+      visibilityLayerGroups: slideshowOff,
+    });
+    expect(map.getLayer("nli-investigation-alarm-circles")).toBeFalsy();
+    expect(map.getSource("nli-investigation-alarm-count")).toBeFalsy();
+    disposeInvestigationTimelineForMap(map);
+  });
 });

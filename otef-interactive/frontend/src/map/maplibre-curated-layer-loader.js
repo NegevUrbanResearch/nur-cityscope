@@ -441,7 +441,8 @@ export function setPinkLineBaseMapLibreVisibility(map, visible) {
 
 /**
  * Apply Moreshet-axis pink base + parking companion from raw/effective layer groups
- * (must include `pink_line_parking` row when present — do not pass GIS-filtered groups).
+ * (must include `pink_line_route` / `pink_line_parking` rows when present — do not
+ * pass GIS-filtered groups).
  *
  * @param {object} map
  * @param {unknown} layerGroups

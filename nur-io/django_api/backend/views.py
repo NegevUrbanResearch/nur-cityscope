@@ -102,6 +102,9 @@ def _normalize_projection_slideshow_patch(raw):
         else:
             out_payload[key] = max(0, iv)
 
+    if "keepSettlementNames" in payload:
+        out_payload["keepSettlementNames"] = payload["keepSettlementNames"] is True
+
     return {"type": "start", "payload": out_payload}, None
 
 
@@ -325,8 +328,26 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
     GET /api/otef_viewport/by-table/{table_name}/ - Get full state
     PATCH /api/otef_viewport/by-table/{table_name}/ - Update state partially
     POST /api/otef_viewport/by-table/{table_name}/command/ - Execute command (pan/zoom)
+
+    Synthetic Moreshet companions (`pink_line_parking`, `pink_line_route`) are not GISLayer
+    rows. `_get_layer_groups` must still emit them or remote toggles never reach the maps.
     """
+
     serializer_class = OTEFViewportStateSerializer
+    _MORESHET_COMPANION_LAYER_IDS = frozenset({"pink_line_parking", "pink_line_route"})
+
+    def _is_moreshet_companion_layer_id(self, layer_id):
+        return str(layer_id or "") in self._MORESHET_COMPANION_LAYER_IDS
+
+    def _is_moreshet_published_content_layer_id(self, layer_id):
+        s = str(layer_id or "")
+        if self._is_moreshet_companion_layer_id(s):
+            return False
+        try:
+            int(s)
+            return True
+        except (ValueError, TypeError):
+            return False
 
     def get_queryset(self):
         queryset = OTEFViewportState.objects.all()
@@ -770,6 +791,10 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         layer_item["displayName"] = "Parking lots"
                         layers.append(layer_item)
                         continue
+                    if layer_id == "pink_line_route":
+                        layer_item["displayName"] = "Pink line"
+                        layers.append(layer_item)
+                        continue
                     try:
                         gid = int(layer_id)
                     except (ValueError, TypeError):
@@ -844,6 +869,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
         coalesced = self._coalesce_curated_groups(result)
         self._ensure_pink_line_parking_toggle_in_moreshet_group(table, coalesced)
+        self._ensure_pink_line_route_toggle_in_moreshet_group(table, coalesced)
         return coalesced
 
     def _ensure_pink_line_parking_toggle_in_moreshet_group(self, table, groups):
@@ -859,7 +885,8 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 continue
             layers = list(g.get("layers") or [])
             has_published_content = any(
-                isinstance(x, dict) and str(x.get("id", "")) != "pink_line_parking"
+                isinstance(x, dict)
+                and self._is_moreshet_published_content_layer_id(x.get("id", ""))
                 for x in layers
             )
             if not has_published_content:
@@ -878,6 +905,45 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     "enabled": bool(st.enabled) if st else True,
                     "displayName": "Parking lots",
                 }
+            )
+            g["layers"] = layers
+            g["enabled"] = layers and all(
+                isinstance(x, dict) and x.get("enabled", False) is True for x in layers
+            )
+
+    def _ensure_pink_line_route_toggle_in_moreshet_group(self, table, groups):
+        """
+        Emit an explicit pink_line_route row so the dedicated axis toggle survives
+        GET/PATCH/WS. Default off (workshop-layer coupling still shows the axis).
+        """
+        if not isinstance(groups, list):
+            return
+        for g in groups:
+            if not isinstance(g, dict) or g.get("id") != "curated_moresht_axis":
+                continue
+            layers = list(g.get("layers") or [])
+            has_published_content = any(
+                isinstance(x, dict)
+                and self._is_moreshet_published_content_layer_id(x.get("id", ""))
+                for x in layers
+            )
+            if not has_published_content:
+                continue
+            if any(
+                isinstance(x, dict) and str(x.get("id", "")) == "pink_line_route"
+                for x in layers
+            ):
+                continue
+            st = LayerState.objects.filter(
+                table=table, layer_id="curated_moresht_axis.pink_line_route"
+            ).first()
+            layers.insert(
+                0,
+                {
+                    "id": "pink_line_route",
+                    "enabled": bool(st.enabled) if st else False,
+                    "displayName": "Pink line",
+                },
             )
             g["layers"] = layers
             g["enabled"] = layers and all(
@@ -942,8 +1008,8 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 # Prefer canonical moresht-axis rows when duplicates exist.
                 if existing is None or group.get("id") == "curated_moresht_axis":
                     merged_layers_map[layer_id] = candidate
-                elif layer_id == "pink_line_parking":
-                    # Synthetic parking toggle: any curated group turning it OFF must win
+                elif layer_id in ("pink_line_parking", "pink_line_route"):
+                    # Synthetic companions: any curated group turning it OFF must win
                     # over another group's stale ON (legacy multi-group LayerGroup rows).
                     merged_layers_map[layer_id] = {
                         "id": layer_id,
@@ -1011,7 +1077,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         for layer in layers:
             if not isinstance(layer, dict):
                 continue
-            if str(layer.get("id", "")) == parking:
+            if self._is_moreshet_companion_layer_id(layer.get("id", "")):
                 continue
             if layer.get("enabled", False) is True:
                 has_content = True

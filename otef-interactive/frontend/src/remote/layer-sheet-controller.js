@@ -24,6 +24,11 @@ import { createCurationApi } from "../curation/curation-api.js";
 import { buildCurationColorSwatchHtml } from "../curation/curation-submissions.js";
 import { generateTraceId, recordTraceEvent } from "../shared/otef-trace.js";
 import { usesRouteProgressOverlay } from "../shared/maplibre-flow-animation.js";
+import {
+  MORESHET_AXIS_GROUP_ID,
+  PINK_LINE_ROUTE_FULL_LAYER_ID,
+  PINK_LINE_ROUTE_LAYER_ID,
+} from "../map-utils/curated-pink-axis-state.js";
 
 const workshopSubmissionColorById = new Map();
 const workshopSubmissionColorByName = new Map();
@@ -208,6 +213,45 @@ function encAttrId(id) {
   return encodeURIComponent(String(id));
 }
 
+/**
+ * True when this sheet row is the synthetic workshop pink-line toggle.
+ * @param {object} row
+ * @param {string} [groupId]
+ * @returns {boolean}
+ */
+function isPinkLineRouteSheetRow(row, groupId) {
+  if (!row) return false;
+  if (groupId && groupId !== MORESHET_AXIS_GROUP_ID) return false;
+  if (
+    Array.isArray(row.fullLayerIds) &&
+    row.fullLayerIds.some((id) => String(id) === PINK_LINE_ROUTE_FULL_LAYER_ID)
+  ) {
+    return true;
+  }
+  return (row.layers || []).some(
+    (layer) => layer && String(layer.id) === PINK_LINE_ROUTE_LAYER_ID,
+  );
+}
+
+/**
+ * Keep the pink-line tile first in the workshop pack regardless of label-length sort.
+ * @param {object[]} rows
+ * @returns {object[]}
+ */
+function orderMoreshetWorkshopSheetRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const pink = [];
+  const rest = [];
+  for (const row of rows) {
+    if (isPinkLineRouteSheetRow(row, MORESHET_AXIS_GROUP_ID)) {
+      pink.push(row);
+    } else {
+      rest.push(row);
+    }
+  }
+  return pink.concat(rest);
+}
+
 const HEB_RANGE_RE = /[\u0590-\u05FF]/;
 
 /**
@@ -368,15 +412,18 @@ function renderLayerRow(row, options = {}) {
     /"/g,
     "&quot;",
   );
+  const isPinkLineRow = isPinkLineRouteSheetRow(row, groupId);
   const rawLabel = pickRawLabelForRow(row, getLocale());
-  const label = getLayerDisplayLabel(
-    row.fullLayerIds && row.fullLayerIds[0] != null
-      ? String(row.fullLayerIds[0])
-      : "",
-    getLocale(),
-    rawLabel,
-    row.fullLayerIds,
-  );
+  const label = isPinkLineRow
+    ? t("pinkLineLayerLabel")
+    : getLayerDisplayLabel(
+        row.fullLayerIds && row.fullLayerIds[0] != null
+          ? String(row.fullLayerIds[0])
+          : "",
+        getLocale(),
+        rawLabel,
+        row.fullLayerIds,
+      );
   const animatableIds = getRowAnimatableFullLayerIds(row, groupId);
   const hasAnimationToggle = animatableIds.length > 0;
   const animIdsAttr = JSON.stringify(animatableIds).replace(/"/g, "&quot;");
@@ -404,6 +451,7 @@ function renderLayerRow(row, options = {}) {
   const visibleClass =
     checked && !isPrimary ? " is-visible" : "";
   const animTileClass = hasAnimationToggle ? " layer-tile--anim" : "";
+  const pinkLineClass = isPinkLineRow ? " layer-tile--pink-line" : "";
   const animStateClass = `${animationEnabled ? "active" : ""} ${
     animationMixed ? "mixed" : ""
   }`.trim();
@@ -419,7 +467,9 @@ function renderLayerRow(row, options = {}) {
       >${playIcon}</button>`
     : "";
   let workshopSwatch = "";
-  if (groupId === "curated_moresht_axis") {
+  if (isPinkLineRow) {
+    workshopSwatch = `<span class="layer-tile__swatch layer-tile__swatch--pink-line" aria-hidden="true"></span>`;
+  } else if (groupId === "curated_moresht_axis") {
     const swatchCss = pickWorkshopRowSwatchCssColor(row, groupId);
     if (swatchCss) {
       workshopSwatch = buildCurationColorSwatchHtml(
@@ -430,7 +480,7 @@ function renderLayerRow(row, options = {}) {
   }
   return `
     <div
-      class="layer-tile ${stateClass}${visibleClass}${primaryClass}${animTileClass}"
+      class="layer-tile ${stateClass}${visibleClass}${primaryClass}${animTileClass}${pinkLineClass}"
       role="button"
       tabindex="0"
       aria-pressed="${checked ? "true" : "false"}"
@@ -805,7 +855,11 @@ class LayerSheetController {
       const kb = layerIdsToPrimaryKey(b.fullLayerIds) || "";
       return ka.localeCompare(kb);
     });
-    return rows
+    const ordered =
+      group.id === MORESHET_AXIS_GROUP_ID
+        ? orderMoreshetWorkshopSheetRows(rows)
+        : rows;
+    return ordered
       .map((row) =>
         renderLayerRow(row, {
           groupId: group.id,
@@ -986,5 +1040,7 @@ export {
   LayerSheetController,
   groupLayersByNameForSheet,
   isLayerAnimatable,
+  isPinkLineRouteSheetRow,
+  orderMoreshetWorkshopSheetRows,
   renderLayerRow,
 };

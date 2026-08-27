@@ -667,6 +667,55 @@ ZIP_LAYER_MAP = {
     "geojson/lines_7_10.geojson": "lines",
 }
 
+# Dated Google Drive dumps put files at zip root, e.g. people_7_10_270826.geojson.
+ZIP_LAYER_NAME_PREFIXES = {
+    "people": ("people_7_10",),
+    "investigation_polygons": ("polygons_7_10",),
+    "lines": ("lines_7_10",),
+}
+
+DEFAULT_NLI_ZIP_CANDIDATES = (
+    "drive-download-20260827T125810Z-1-001.zip",
+    "geojson-20260823T094646Z-1-001.zip",
+)
+
+
+def default_nli_zip_path(repo: Path) -> Path:
+    for name in DEFAULT_NLI_ZIP_CANDIDATES:
+        path = repo / name
+        if path.is_file():
+            return path
+    return repo / DEFAULT_NLI_ZIP_CANDIDATES[0]
+
+
+def resolve_zip_layer_info(
+    by_name: Dict[str, zipfile.ZipInfo],
+    zip_name: str,
+    stem: str,
+) -> zipfile.ZipInfo:
+    if zip_name in by_name:
+        return by_name[zip_name]
+    prefixes = ZIP_LAYER_NAME_PREFIXES.get(stem, ())
+    matches: List[Tuple[str, zipfile.ZipInfo]] = []
+    for name, info in by_name.items():
+        normalized = name.replace("\\", "/")
+        if "/older versions/" in f"/{normalized.lower()}":
+            continue
+        base = Path(normalized).name.lower()
+        for prefix in prefixes:
+            if base.startswith(prefix.lower()) and (
+                base.endswith(".geojson") or base.endswith(".json")
+            ):
+                matches.append((name, info))
+                break
+    if len(matches) == 1:
+        return matches[0][1]
+    if not matches:
+        raise FileNotFoundError(f"Zip is missing {zip_name}")
+    raise FileNotFoundError(
+        f"Zip has multiple matches for {stem}: {[name for name, _ in matches]}"
+    )
+
 # Derived stems (not in the zip map) must survive obsolete-file cleanup.
 NLI_KEEP_STEMS = set(ZIP_LAYER_MAP.values()) | {"people_names", "alarms"}
 
@@ -824,9 +873,7 @@ def prepare_nli_pack(
         by_name = {zip_entry_name(info): info for info in archive.infolist()}
         catalog_features = _catalog_features_from_zip(by_name, archive)
         for zip_name, stem in ZIP_LAYER_MAP.items():
-            info = by_name.get(zip_name)
-            if info is None:
-                raise FileNotFoundError(f"Zip is missing {zip_name}")
+            info = resolve_zip_layer_info(by_name, zip_name, stem)
             collection = json.loads(archive.read(info))
             dropped = drop_null_geometries(collection)
             moved = 0
@@ -891,7 +938,7 @@ def prepare_nli_pack(
 
 def main() -> None:
     repo = Path(__file__).resolve().parents[2]
-    zip_path = repo / "geojson-20260823T094646Z-1-001.zip"
+    zip_path = default_nli_zip_path(repo)
     pack_dir = repo / "otef-interactive" / "public" / "source" / "layers" / "nli"
     popup_paths = [
         repo / "otef-interactive" / "public" / "source" / "popup-config.json",

@@ -3,7 +3,7 @@ import { isGisBasemapId } from "../gis-basemap.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
 import {
   applyMoreshetParkingCoherenceToLayerGroups,
-  ensurePinkLineParkingRowInMoreshetAxisGroup,
+  ensureMoreshetAxisCompanionRows,
 } from "../../map-utils/curated-pink-axis-state.js";
 import { generateTraceId, recordTraceEvent } from "../otef-trace.js";
 import { OTEFDataContextInternals } from "./index.js";
@@ -482,7 +482,7 @@ async function toggleLayer(ctx, layerId, enabled) {
 
 async function toggleLayerInGroups(ctx, layerId, enabled, options = {}) {
   ensureLayerPatchBaseline(ctx);
-  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(
+  const previous = ensureMoreshetAxisCompanionRows(
     JSON.parse(JSON.stringify(ctx._layerGroups || [])),
   );
   let next = previous.map((group) => ({
@@ -567,7 +567,7 @@ async function setLayersEnabled(ctx, fullLayerIds, enabled, options = {}) {
 
   ensureLayerPatchBaseline(ctx);
   const idSet = new Set(fullLayerIds);
-  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(
+  const previous = ensureMoreshetAxisCompanionRows(
     JSON.parse(JSON.stringify(ctx._layerGroups || [])),
   );
   let next = previous.map((group) => ({
@@ -624,7 +624,7 @@ async function toggleGroup(ctx, groupId, enabled) {
   if (!ctx._layerGroups) return { ok: false, error: "Layer groups not available" };
 
   ensureLayerPatchBaseline(ctx);
-  const previous = ensurePinkLineParkingRowInMoreshetAxisGroup(
+  const previous = ensureMoreshetAxisCompanionRows(
     JSON.parse(JSON.stringify(ctx._layerGroups || [])),
   );
   let next = previous.map((group) => {

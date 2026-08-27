@@ -285,6 +285,16 @@ class CuratedUnpublishEndpointTests(TestCase):
         )
         self.assertIsNotNone(parking)
         self.assertTrue(parking.get("enabled"))
+        pink_route = next(
+            (
+                x
+                for x in (curated.get("layers") or [])
+                if isinstance(x, dict) and x.get("id") == "pink_line_route"
+            ),
+            None,
+        )
+        self.assertIsNotNone(pink_route)
+        self.assertFalse(pink_route.get("enabled"))
 
     @patch.dict("os.environ", {"CURATION_WRITE_TOKEN": "test-token"}, clear=False)
     def test_unpublish_all_deactivates_curated_layers_and_counts_removed(self):

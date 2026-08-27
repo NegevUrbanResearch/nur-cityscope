@@ -27,8 +27,11 @@ function isCuratedPackFullLayerId(fullLayerId) {
  * @returns {boolean} - true if the layer should be shown on the GIS map
  */
 function shouldShowLayerOnGisMap(groupId, layerId) {
-  // Parking companion is driven by pink-line modules, not registry GeoJSON.
-  if (groupId === "curated_moresht_axis" && layerId === "pink_line_parking") {
+  // Pink-line companions are driven by pink-line modules, not registry GeoJSON.
+  if (
+    groupId === "curated_moresht_axis" &&
+    (layerId === "pink_line_parking" || layerId === "pink_line_route")
+  ) {
     return false;
   }
   if (typeof layerRegistry !== "undefined" && layerRegistry.getLayerConfig) {

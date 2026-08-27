@@ -2,19 +2,21 @@
 // Centralizes the pattern of resolving a fullLayerId ("group.layer")
 // into its group + layer objects and enabled flag.
 //
-// Effective vs raw layer groups (important for the Moreshet axis + parking companion):
+// Effective vs raw layer groups (important for the Moreshet axis + companions):
 // - getEffectiveLayerGroups() is the merged view for map init, remote sheet, and projection
 //   sync: registry defaults + API state, curated* coalesced into curated_moresht_axis, and
-//   finalizeMoreshetAxisPackForRemote() injects the synthetic parking toggle row when there
-//   is at least one published curated layer (see curated-pink-axis-state.js).
+//   finalizeMoreshetAxisPackForRemote() injects synthetic pink_line_route (first) and
+//   pink_line_parking (last) when there is at least one published curated layer
+//   (see curated-pink-axis-state.js).
 // - resolveLayerState() / getLayerState() read ctx.getLayerGroups() as given — typically the
-//   raw OTEF API payload. The parking companion appears there only after the server stores
-//   curated_moresht_axis.pink_line_parking; until then, effective groups may still show the
-//   row (default-on) for UI while GIS/parking visibility uses effective groups elsewhere.
+//   raw OTEF API payload. Companion rows appear there only after the server stores them;
+//   until then, effective groups may still show the rows for UI while GIS/parking/pink-line
+//   visibility uses effective groups elsewhere.
 
 import {
   finalizeMoreshetAxisPackForRemote,
   PINK_LINE_PARKING_LAYER_ID,
+  PINK_LINE_ROUTE_LAYER_ID,
 } from "../map-utils/curated-pink-axis-state.js";
 
 /**
@@ -193,9 +195,10 @@ function getLayerState(fullLayerId) {
  * When context has no state for a group, applies defaults so projection/map/remote show and load registry layers.
  *
  * After coalescing curated* into curated_moresht_axis, finalizeMoreshetAxisPackForRemote()
- * drops the pack when there are no published content layers and appends the synthetic
- * pink_line_parking companion row when there are — that row is a UI/state toggle, not a
- * registry GeoJSON layer (GIS loads parking via pink-line modules; see gis-layer-filter).
+ * drops the pack when there are no published content layers and injects synthetic
+ * pink_line_route (first) + pink_line_parking (last) when there are — those rows are
+ * UI/state toggles, not registry GeoJSON layers (GIS loads the overlays via pink-line
+ * modules; see gis-layer-filter).
  *
  * @returns {Array<{id: string, name?: string, enabled: boolean, layers: Array<{id: string, name?: string, enabled: boolean}>}>}
  */
@@ -376,7 +379,10 @@ function coalesceCuratedGroups(groups) {
       const existing = mergedLayerMap.get(key);
       if (!existing || group.id === "curated_moresht_axis") {
         mergedLayerMap.set(key, candidate);
-      } else if (existing && key === PINK_LINE_PARKING_LAYER_ID) {
+      } else if (
+        existing &&
+        (key === PINK_LINE_PARKING_LAYER_ID || key === PINK_LINE_ROUTE_LAYER_ID)
+      ) {
         const nextFullLayerIds = new Set([
           ...(Array.isArray(existing.fullLayerIds) ? existing.fullLayerIds : []),
           ...candidate.fullLayerIds,

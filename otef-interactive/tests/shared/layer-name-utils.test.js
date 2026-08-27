@@ -120,4 +120,23 @@ describe("getLayerDisplayLabel", () => {
       getLayerDisplayLabel("nli.alarms", "en", "alarms", ["nli.alarms"]),
     ).toBe("Alarms");
   });
+
+  test("glossary for workshop pink line companion", () => {
+    expect(
+      getLayerDisplayLabel(
+        "curated_moresht_axis.pink_line_route",
+        "he",
+        "Pink line",
+        ["curated_moresht_axis.pink_line_route"],
+      ),
+    ).toBe("קו ורוד");
+    expect(
+      getLayerDisplayLabel(
+        "curated_moresht_axis.pink_line_route",
+        "en",
+        "Pink line",
+        ["curated_moresht_axis.pink_line_route"],
+      ),
+    ).toBe("Pink line");
+  });
 });

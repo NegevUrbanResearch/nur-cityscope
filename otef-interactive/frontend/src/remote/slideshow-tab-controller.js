@@ -1,6 +1,7 @@
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
-import { LOCALE_EVENT, applyRemoteChromeI18n, t } from "./remote-locale.js";
+import { getPackDisplayLabel } from "./layer-pack-display-names.js";
+import { LOCALE_EVENT, applyRemoteChromeI18n, getLocale, t } from "./remote-locale.js";
 
 function escapeHtml(value) {
   return String(value)
@@ -52,6 +53,21 @@ function filterExcludedPresentationPacks(packs, excludedPresentationPackIds) {
   return packs.filter((p) => p?.id && !excluded.has(String(p.id)));
 }
 
+/**
+ * Prefer the Layers-tab Hebrew/English pack title; fall back to registry/API name or id.
+ * @param {string} packId
+ * @param {string} [fallbackLabel]
+ * @returns {string}
+ */
+function resolveSlideshowPackLabel(packId, fallbackLabel) {
+  const translated = getPackDisplayLabel(packId, getLocale());
+  if (typeof translated === "string" && translated.trim() !== "") {
+    return translated;
+  }
+  const fallback = String(fallbackLabel || packId).trim();
+  return fallback || String(packId);
+}
+
 class SlideshowTabController {
   constructor(options = {}) {
     this.rootId = options.rootId || "remoteSlideshowHost";
@@ -61,6 +77,8 @@ class SlideshowTabController {
     this.packOrder = [];
     this.availablePacks = [];
     this.bound = false;
+    this.keepSettlementNames =
+      MapProjectionConfig?.PROJECTION_SLIDESHOW?.keepSettlementNames !== false;
   }
 
   open() {
@@ -146,6 +164,37 @@ class SlideshowTabController {
     this.render();
   }
 
+  readKeepSettlementNames() {
+    const input = this.root?.querySelector("[data-slideshow-keep-settlement-names]");
+    if (input && "checked" in input) {
+      this.keepSettlementNames = !!input.checked;
+    }
+    return this.keepSettlementNames !== false;
+  }
+
+  buildStartPayload() {
+    const cfg = MapProjectionConfig?.PROJECTION_SLIDESHOW || {};
+    const intervalSec = this.readNumberInput(
+      "slideshowIntervalSec",
+      (cfg.intervalMs ?? 10000) / 1000,
+    );
+    const crossfadeSec = this.readNumberInput(
+      "slideshowCrossfadeSec",
+      (cfg.crossfadeMs ?? 1200) / 1000,
+    );
+    const warmupSec = this.readNumberInput(
+      "slideshowWarmupLeadSec",
+      (cfg.warmupLeadMs ?? 2500) / 1000,
+    );
+    return {
+      packOrder: [...this.packOrder],
+      intervalMs: Math.max(1, Math.round(intervalSec * 1000)),
+      crossfadeMs: Math.max(0, Math.round(crossfadeSec * 1000)),
+      warmupLeadMs: Math.max(0, Math.round(warmupSec * 1000)),
+      keepSettlementNames: this.readKeepSettlementNames(),
+    };
+  }
+
   readNumberInput(id, fallback) {
     const input = this.root?.querySelector(`#${id}`);
     const parsed = parseOptionalNonNegativeNumber(input?.value);
@@ -161,30 +210,27 @@ class SlideshowTabController {
       }
       return;
     }
-    const cfg = MapProjectionConfig?.PROJECTION_SLIDESHOW || {};
-    const intervalSec = this.readNumberInput(
-      "slideshowIntervalSec",
-      (cfg.intervalMs ?? 10000) / 1000,
-    );
-    const crossfadeSec = this.readNumberInput(
-      "slideshowCrossfadeSec",
-      (cfg.crossfadeMs ?? 1200) / 1000,
-    );
-    const warmupSec = this.readNumberInput(
-      "slideshowWarmupLeadSec",
-      (cfg.warmupLeadMs ?? 2500) / 1000,
-    );
     await OTEFDataContext.patchProjectionSlideshow({
       type: "start",
-      payload: {
-        packOrder: [...this.packOrder],
-        intervalMs: Math.max(1, Math.round(intervalSec * 1000)),
-        crossfadeMs: Math.max(0, Math.round(crossfadeSec * 1000)),
-        warmupLeadMs: Math.max(0, Math.round(warmupSec * 1000)),
-      },
+      payload: this.buildStartPayload(),
     });
     this.running = true;
     this.renderStatusOnly();
+  }
+
+  async handleKeepSettlementNamesChange() {
+    const keepOn = this.readKeepSettlementNames();
+    if (!this.running) {
+      return;
+    }
+    this.ensurePackOrder();
+    if (this.packOrder.length === 0) {
+      return;
+    }
+    await OTEFDataContext.patchProjectionSlideshow({
+      type: "start",
+      payload: { ...this.buildStartPayload(), keepSettlementNames: keepOn },
+    });
   }
 
   async handleStop() {
@@ -227,6 +273,14 @@ class SlideshowTabController {
       }
     });
 
+    this.root.addEventListener("change", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target?.closest?.("[data-slideshow-keep-settlement-names]")) {
+        return;
+      }
+      void this.handleKeepSettlementNamesChange();
+    });
+
     if (typeof window !== "undefined") {
       window.addEventListener(LOCALE_EVENT, () => {
         if (this.isOpen) this.render();
@@ -248,7 +302,7 @@ class SlideshowTabController {
           )}</div>`
         : `<ul class="slideshow-pack-list" aria-labelledby="${packListHeadingId}">${this.packOrder
             .map((packId, index) => {
-              const label = packNameById.get(packId) || packId;
+              const label = resolveSlideshowPackLabel(packId, packNameById.get(packId));
               const disableUp = index === 0 ? "disabled" : "";
               const disableDown = index === this.packOrder.length - 1 ? "disabled" : "";
               return `<li class="slideshow-pack-row">
@@ -272,18 +326,29 @@ class SlideshowTabController {
         }</p>
         ${packListMarkup}
 
+        <label class="layer-toggle slideshow-keep-names">
+          <input
+            type="checkbox"
+            data-slideshow-keep-settlement-names
+            data-i18n-aria="ariaSlideshowKeepSettlementNames"
+            ${this.keepSettlementNames !== false ? "checked" : ""}
+          />
+          <span class="toggle-indicator"></span>
+          <span class="toggle-label">${escapeHtml(t("slideshowKeepSettlementNames"))}</span>
+        </label>
+
         <div class="slideshow-input-grid">
-          <label class="slideshow-field">
-            <span>${escapeHtml(t("slideshowIntervalSecLabel"))}</span>
-            <input id="slideshowIntervalSec" type="number" min="0" step="0.1" placeholder="${(cfg.intervalMs ?? 10000) / 1000}" />
+          <label class="slideshow-field" title="${escapeHtml(t("slideshowIntervalSecLabel"))}">
+            <span class="slideshow-field__label">${escapeHtml(t("slideshowIntervalSecShort"))}</span>
+            <input id="slideshowIntervalSec" type="number" min="0" step="0.1" placeholder="${(cfg.intervalMs ?? 10000) / 1000}" data-i18n-aria="slideshowIntervalSecLabel" data-i18n-title="slideshowIntervalSecLabel" />
           </label>
-          <label class="slideshow-field">
-            <span>${escapeHtml(t("slideshowCrossfadeSecLabel"))}</span>
-            <input id="slideshowCrossfadeSec" type="number" min="0" step="0.1" placeholder="${(cfg.crossfadeMs ?? 1200) / 1000}" />
+          <label class="slideshow-field" title="${escapeHtml(t("slideshowCrossfadeSecLabel"))}">
+            <span class="slideshow-field__label">${escapeHtml(t("slideshowCrossfadeSecShort"))}</span>
+            <input id="slideshowCrossfadeSec" type="number" min="0" step="0.1" placeholder="${(cfg.crossfadeMs ?? 1200) / 1000}" data-i18n-aria="slideshowCrossfadeSecLabel" data-i18n-title="slideshowCrossfadeSecLabel" />
           </label>
-          <label class="slideshow-field">
-            <span>${escapeHtml(t("slideshowWarmupLeadSecLabel"))}</span>
-            <input id="slideshowWarmupLeadSec" type="number" min="0" step="0.1" placeholder="${(cfg.warmupLeadMs ?? 2500) / 1000}" />
+          <label class="slideshow-field" title="${escapeHtml(t("slideshowWarmupLeadSecLabel"))}">
+            <span class="slideshow-field__label">${escapeHtml(t("slideshowWarmupLeadSecShort"))}</span>
+            <input id="slideshowWarmupLeadSec" type="number" min="0" step="0.1" placeholder="${(cfg.warmupLeadMs ?? 2500) / 1000}" data-i18n-aria="slideshowWarmupLeadSecLabel" data-i18n-title="slideshowWarmupLeadSecLabel" />
           </label>
         </div>
 
@@ -318,4 +383,4 @@ if (typeof document !== "undefined" && typeof window !== "undefined") {
   }
 }
 
-export { SlideshowTabController, filterExcludedPresentationPacks };
+export { SlideshowTabController, filterExcludedPresentationPacks, resolveSlideshowPackLabel };

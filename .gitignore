@@ -102,6 +102,7 @@ external_files/
 **/docs/superpowers/
 _nli_geojson_inspect/
 geojson-*.zip
+drive-download-*.zip
 
 # Data directories - Ignore all data directories and their contents
 data/

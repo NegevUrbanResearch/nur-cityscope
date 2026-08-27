@@ -4,9 +4,21 @@ import {
   fadeOutAndRemoveEnabledFullIds,
   getEnabledMapFullLayerIds,
 } from "../map/maplibre-layer-manager.js";
+import {
+  INVESTIGATION_ALARMS_FULL_ID,
+  INVESTIGATION_LINES_FULL_ID,
+  INVESTIGATION_POLYGONS_FULL_ID,
+} from "./maplibre-investigation-timeline.js";
 import MapProjectionConfig from "./map-projection-config.js";
 
 const SLIDESHOW_RETAINED_SOURCE_LIMIT = 2;
+
+const SETTLEMENT_NAME_LAYER_IDS = new Set(["שמות_יישובים", "Locations_Lines", "ישובים"]);
+const SETTLEMENT_NAME_FULL_IDS = new Set([
+  "projector_base.שמות_יישובים",
+  "projector_base.Locations_Lines",
+  "projector_base.ישובים",
+]);
 
 /**
  * @param {import("./map-projection-config.js").MapProjectionConfig["PROJECTION_SLIDESHOW"] | {
@@ -15,6 +27,7 @@ const SLIDESHOW_RETAINED_SOURCE_LIMIT = 2;
  *   warmupLeadMs?: number,
  *   packOrder?: string[],
  *   excludedPresentationPackIds?: string[],
+ *   keepSettlementNames?: boolean,
  * }} config
  * @param {Record<string, unknown>} [payload]
  */
@@ -42,6 +55,9 @@ function mergeSlideshowConfig(config, payload) {
             : base.excludedPresentationPackIds,
         }
       : {}),
+    keepSettlementNames: Object.prototype.hasOwnProperty.call(p, "keepSettlementNames")
+      ? p.keepSettlementNames === true
+      : base.keepSettlementNames === true,
   };
 }
 
@@ -126,6 +142,121 @@ function forceDisableExcludedPackGroups(incoming, excluded) {
 }
 
 /**
+ * @param {object | null | undefined} layer
+ * @returns {boolean}
+ */
+function layerIsSettlementName(layer) {
+  if (!layer) {
+    return false;
+  }
+  if (SETTLEMENT_NAME_LAYER_IDS.has(String(layer.id))) {
+    return true;
+  }
+  const extras = Array.isArray(layer.fullLayerIds) ? layer.fullLayerIds : [];
+  return extras.some((id) => SETTLEMENT_NAME_FULL_IDS.has(String(id)));
+}
+
+/**
+ * Re-enables (or keeps off) settlement names and outlines after excluded packs are force-disabled.
+ * Other `projector_base` layers stay off.
+ *
+ * @param {object[]} incoming
+ * @param {boolean} keepOn
+ * @returns {object[]}
+ */
+function applySettlementNamesVisibility(incoming, keepOn) {
+  const enabled = keepOn === true;
+  const groups = Array.isArray(incoming) ? incoming : [];
+  return groups.map((g) => {
+    if (!g || String(g.id) !== "projector_base") {
+      return g;
+    }
+    const layers = (g.layers || []).map((layer) => {
+      if (!layerIsSettlementName(layer)) {
+        return layer;
+      }
+      return { ...layer, enabled };
+    });
+    return { ...g, layers };
+  });
+}
+
+/**
+ * Build the layer-group payload for one slideshow tick.
+ * Empty/unknown `packId` disables every pack layer, then re-applies keep-on overlays.
+ *
+ * @param {string} packId
+ * @param {object[]} baseGroups
+ * @param {{
+ *   excludedPresentationPackIds?: string[],
+ *   keepSettlementNames?: boolean,
+ * }} [options]
+ * @returns {object[]}
+ */
+export function buildSlideshowIncomingGroups(packId, baseGroups, options = {}) {
+  const excludedSet = excludedPresentationPackIdSet(options.excludedPresentationPackIds);
+  return applySettlementNamesVisibility(
+    forceDisableExcludedPackGroups(buildSinglePackGroups(packId, baseGroups), excludedSet),
+    options.keepSettlementNames === true,
+  );
+}
+
+/**
+ * Overlay controllers (investigation timeline, route progress) must not read live GIS
+ * state while presentation is active — that is how NLI/alarms leak through other packs.
+ *
+ * @param {{
+ *   presentationActive?: boolean,
+ *   incomingGroups?: object[] | null,
+ *   liveGroups?: unknown,
+ *   keepSettlementNames?: boolean,
+ *   excludedPresentationPackIds?: string[],
+ * }} [opts]
+ * @returns {object[]}
+ */
+export function resolvePresentationOverlayVisibility({
+  presentationActive,
+  incomingGroups,
+  liveGroups,
+  keepSettlementNames,
+  excludedPresentationPackIds,
+} = {}) {
+  const live = Array.isArray(liveGroups)
+    ? liveGroups
+    : liveGroups && typeof liveGroups === "object"
+      ? Object.values(liveGroups)
+      : [];
+  if (!presentationActive) {
+    return live;
+  }
+  if (Array.isArray(incomingGroups)) {
+    return incomingGroups;
+  }
+  return buildSlideshowIncomingGroups("", live, {
+    keepSettlementNames,
+    excludedPresentationPackIds,
+  });
+}
+
+/**
+ * Presentation shows NLI as a static/idle pack. Timeline playback stays off for every tick.
+ *
+ * @param {Record<string, unknown> | null | undefined} animState
+ * @param {boolean} shouldSuppress
+ * @returns {Record<string, unknown>}
+ */
+export function suppressInvestigationPlayback(animState, shouldSuppress) {
+  const next = animState && typeof animState === "object" ? { ...animState } : {};
+  if (!shouldSuppress) {
+    return next;
+  }
+  next[INVESTIGATION_POLYGONS_FULL_ID] = false;
+  next[INVESTIGATION_LINES_FULL_ID] = false;
+  next[INVESTIGATION_ALARMS_FULL_ID] = false;
+  return next;
+}
+
+/**
  * @param {object|null} map
  * @param {number} timeoutMs
  * @returns {Promise<void>}
@@ -193,6 +324,7 @@ function waitForMapIdleOrTimeout(map, timeoutMs) {
  *     affectedCuratedFullLayerIds?: string[],
  *     layerStyleOptions?: object,
  *   }) => unknown) | ((opts?: object) => Promise<unknown>),
+ *   syncPresentationOverlays?: (groups: object[]) => unknown,
  *   map?: object | null,
  * }} deps
  * @returns {{
@@ -201,6 +333,7 @@ function waitForMapIdleOrTimeout(map, timeoutMs) {
  *   dispose: () => Promise<void>,
  *   isActive: () => boolean,
  *   shouldSuppressProjectionHighlight: () => boolean,
+ *   getLastIncomingGroups: () => object[] | null,
  *   getSessionEpoch: () => number,
  * }}
  */
@@ -213,6 +346,7 @@ export function createSlideshowPackRuntime(deps) {
     getEffectiveLayerGroups,
     syncProjectionLayers,
     applyProjectionRefresh,
+    syncPresentationOverlays,
     map = null,
   } = deps;
 
@@ -235,8 +369,21 @@ export function createSlideshowPackRuntime(deps) {
   let startInProgress = false;
   /** @type {string | null} */
   let lastPresentationPackId = null;
+  /** @type {object[] | null} */
+  let lastIncomingGroups = null;
 
   let merged = mergeSlideshowConfig(baseConfig, {});
+
+  function rememberIncomingGroups(groups) {
+    lastIncomingGroups = groups;
+    if (typeof syncPresentationOverlays === "function") {
+      try {
+        void Promise.resolve(syncPresentationOverlays(groups));
+      } catch {
+        // Overlay sync must not break pack rotation.
+      }
+    }
+  }
 
   function clearTimer() {
     if (timerId != null) {
@@ -266,6 +413,52 @@ export function createSlideshowPackRuntime(deps) {
   }
 
   /**
+   * @param {string} packId
+   * @param {object[]} baseGroups
+   * @returns {object[]}
+   */
+  function buildIncomingGroups(packId, baseGroups) {
+    return buildSlideshowIncomingGroups(packId, baseGroups, {
+      excludedPresentationPackIds: merged.excludedPresentationPackIds,
+      keepSettlementNames: merged.keepSettlementNames === true,
+    });
+  }
+
+  /**
+   * Apply keep-settlement-names (or pack options) to the currently visible pack
+   * without advancing the slideshow.
+   * @param {number} epochAtStart
+   */
+  async function refreshVisiblePack(epochAtStart) {
+    if (!active || disposed || sessionEpoch !== epochAtStart || lastPresentationPackId == null) {
+      return;
+    }
+    const base = await Promise.resolve(getEffectiveLayerGroups());
+    if (!active || disposed || sessionEpoch !== epochAtStart || lastPresentationPackId == null) {
+      return;
+    }
+    const baseGroups = Array.isArray(base) ? base : [];
+    const incoming = buildIncomingGroups(lastPresentationPackId, baseGroups);
+    rememberIncomingGroups(incoming);
+    if (typeof applyProjectionRefresh === "function") {
+      await Promise.resolve(
+        applyProjectionRefresh({
+          fromSlideshowTick: true,
+          groupsOverride: incoming,
+          affectedCuratedFullLayerIds: Array.from(getEnabledMapFullLayerIds(incoming)).filter(
+            (id) => id.startsWith("curated"),
+          ),
+          layerStyleOptions: effectiveRefreshLayerStyleOptions(),
+        }),
+      );
+    } else {
+      await Promise.resolve(
+        syncProjectionLayers(map, incoming, effectiveRefreshLayerStyleOptions()),
+      );
+    }
+  }
+
+  /**
    * @param {number} epochAtStart
    */
   async function runOneTick(epochAtStart) {
@@ -284,10 +477,8 @@ export function createSlideshowPackRuntime(deps) {
       return;
     }
     const nextPackId = ordered[packIndex % ordered.length];
-    const incoming = forceDisableExcludedPackGroups(
-      buildSinglePackGroups(nextPackId, baseGroups),
-      excludedSet,
-    );
+    const incoming = buildIncomingGroups(nextPackId, baseGroups);
+    rememberIncomingGroups(incoming);
 
     const warmup =
       typeof merged.warmupLeadMs === "number" && Number.isFinite(merged.warmupLeadMs)
@@ -387,6 +578,7 @@ export function createSlideshowPackRuntime(deps) {
     sessionEpoch += 1;
     active = false;
     lastPresentationPackId = null;
+    lastIncomingGroups = null;
     clearTimer();
     if (runningPromise) {
       await runningPromise;
@@ -406,18 +598,26 @@ export function createSlideshowPackRuntime(deps) {
       return !disposed && (active || startInProgress);
     },
 
+    getLastIncomingGroups() {
+      return lastIncomingGroups;
+    },
+
     start(payload) {
       if (disposed) {
         return;
       }
+      merged = mergeSlideshowConfig(baseConfig, payload);
       if (active) {
+        if (!inFlight && lastPresentationPackId) {
+          const epoch = sessionEpoch;
+          void refreshVisiblePack(epoch);
+        }
         return;
       }
       if (startInProgress) {
         return;
       }
       startInProgress = true;
-      merged = mergeSlideshowConfig(baseConfig, payload);
       void (async () => {
         try {
           if (disposed) {
@@ -440,6 +640,7 @@ export function createSlideshowPackRuntime(deps) {
           ) {
             return;
           }
+          rememberIncomingGroups(buildIncomingGroups("", baseGroups));
           active = true;
           packIndex = 0;
           lastPresentationPackId = null;

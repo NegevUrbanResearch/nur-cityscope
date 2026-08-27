@@ -34,6 +34,7 @@ describe("slideshow projection channel", () => {
         intervalMs: 5000,
         crossfadeMs: 800,
         warmupLeadMs: 1200,
+        keepSettlementNames: true,
       },
     });
 
@@ -46,9 +47,23 @@ describe("slideshow projection channel", () => {
         intervalMs: 5000,
         crossfadeMs: 800,
         warmupLeadMs: 1200,
+        keepSettlementNames: true,
       },
     });
     expect(instance.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("coerces keepSettlementNames to a real boolean", () => {
+    installBroadcastChannelMock();
+    slideshowPost({
+      type: "start",
+      payload: { keepSettlementNames: "yes" },
+    });
+    const instance = channelCtor.mock.results[0].value;
+    expect(instance.postMessage).toHaveBeenCalledWith({
+      type: "start",
+      payload: { keepSettlementNames: false },
+    });
   });
 
   it("posts stop with empty payload", () => {

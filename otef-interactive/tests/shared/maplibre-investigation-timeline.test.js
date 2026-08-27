@@ -325,6 +325,36 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.setPaintProperty).not.toHaveBeenCalled();
   });
 
+  it("stops playback and removes line overlays when visibilityLayerGroups has nli off", async () => {
+    const map = makeMap();
+    const liveOn = bothGroups();
+    const slideshowOff = [
+      {
+        id: "nli",
+        layers: [
+          { id: "investigation_polygons", enabled: false },
+          { id: "lines", enabled: false },
+        ],
+      },
+    ];
+    const deps = {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES,
+        [INVESTIGATION_LINES_FULL_ID]: LINE_FEATURES,
+      },
+      now: () => 0,
+    };
+    await syncInvestigationTimelineToMap(map, { [INVESTIGATION_LINES_FULL_ID]: true }, liveOn, deps);
+    expect(map.getLayer("nli-investigation-line-active-line")).toBeTruthy();
+    await syncInvestigationTimelineToMap(map, { [INVESTIGATION_LINES_FULL_ID]: true }, liveOn, {
+      ...deps,
+      visibilityLayerGroups: slideshowOff,
+    });
+    expect(map.getLayer("nli-investigation-line-active-line")).toBeFalsy();
+    expect(map.getSource("nli-investigation-line-active")).toBeFalsy();
+    disposeInvestigationTimelineForMap(map);
+  });
+
   it("plays lines with an Oct 7 line-gradient trail and hides the dim base", async () => {
     const map = makeMap();
     await syncInvestigationTimelineToMap(

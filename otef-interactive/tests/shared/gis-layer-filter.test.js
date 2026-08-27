@@ -45,6 +45,12 @@ describe("gis-layer-filter: shouldShowLayerOnGisMap", () => {
       false,
     );
   });
+
+  test("returns false for synthetic pink-line route companion layer", () => {
+    expect(shouldShowLayerOnGisMap("curated_moresht_axis", "pink_line_route")).toBe(
+      false,
+    );
+  });
 });
 
 describe("gis-layer-filter: filterGroupsForGisMap", () => {

@@ -265,6 +265,10 @@ const LAYER_DISPLAY_LABELS = {
   "muniplicity_transport.שבילים": { he: "שבילים", en: "Trails" },
   "muniplicity_transport.תחנות_רכבת": { he: "תחנות רכבת", en: "Railway stations" },
   // --- curated Moreshet axis (Supabase) ---
+  "curated_moresht_axis.pink_line_route": {
+    he: "קו ורוד",
+    en: "Pink line",
+  },
   "curated_moresht_axis.pink_line_parking": {
     he: "חניה ציר ורוד",
     en: "Pink line parking",

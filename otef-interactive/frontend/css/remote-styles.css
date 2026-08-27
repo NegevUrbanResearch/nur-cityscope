@@ -24,6 +24,8 @@
   --color-warning: #d4a85c;
   --color-danger: #b85c5c;
   --color-overlay-scrim: #0a0908;
+  /* Workshop pink-line tile — matches map axis pack stroke. */
+  --color-pink-line: #ff69b4;
 
   --rounded-sm: 8px;
   --rounded-md: 12px;
@@ -37,7 +39,7 @@
   --space-touch: 56px;
 
   --font-title-sm: 600 1.125rem/1.3 system-ui, "Segoe UI", "SF Pro Text",
-    "Helvetica Neue", sans-serif;
+    "Helvetica Neue", "Noto Sans Hebrew", sans-serif;
   --font-body-md: 400 1rem/1.5 system-ui, "Segoe UI", "SF Pro Text",
     "Helvetica Neue", "Noto Sans Hebrew", sans-serif;
   --font-label-sm: 500 0.8125rem/1.4 system-ui, "Segoe UI", "SF Pro Text",
@@ -868,7 +870,10 @@ body.otef-remote-shell {
 }
 
 .slideshow-pack-row__label {
-  font: var(--font-label-sm);
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
   color: var(--color-ink);
   overflow-wrap: anywhere;
 }
@@ -879,11 +884,17 @@ body.otef-remote-shell {
 }
 
 .slideshow-pack-row__btn {
+  font: inherit;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
   border: 1px solid var(--color-border-strong);
   background: var(--color-surface);
   color: var(--color-ink-muted);
   border-radius: var(--rounded-sm);
-  padding: 8px 10px;
+  padding-block: 8px;
+  padding-inline: 10px;
   min-height: 40px;
   cursor: pointer;
 }
@@ -900,17 +911,27 @@ body.otef-remote-shell {
 
 .slideshow-input-grid {
   display: grid;
-  grid-template-columns: repeat(1, minmax(0, 1fr));
-  gap: var(--space-sm);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-xs);
   margin-block-end: var(--space-md);
 }
 
 .slideshow-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  min-inline-size: 0;
   color: var(--color-ink-muted);
   font: var(--font-label-sm);
+}
+
+.slideshow-field__label {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: start;
+  overflow-wrap: anywhere;
 }
 
 .slideshow-field input {
@@ -919,7 +940,13 @@ body.otef-remote-shell {
   color: var(--color-ink);
   border-radius: var(--rounded-sm);
   min-height: 40px;
-  padding: 8px 10px;
+  min-inline-size: 0;
+  inline-size: 100%;
+  padding-block: 8px;
+  padding-inline: 8px;
+  font-family: inherit;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .slideshow-actions {
@@ -963,6 +990,14 @@ body.otef-remote-shell {
 
 .slideshow-pack-empty {
   margin-block-end: var(--space-md);
+}
+
+.slideshow-keep-names {
+  margin-block-end: var(--space-md);
+}
+
+.slideshow-keep-names .toggle-label {
+  font-family: inherit;
 }
 
 /* Workshop / curation embed: same-origin iframe fills tab (static node — state kept on tab switch) */
@@ -1977,6 +2012,42 @@ body.otef-remote-shell {
 .layer-tile__swatch {
   flex: 0 0 auto;
   margin-block-end: 4px;
+}
+
+.layer-tile--pink-line {
+  grid-column: 1 / -1;
+}
+
+.layer-tile--pink-line.is-off {
+  border-color: color-mix(in srgb, var(--color-pink-line) 45%, var(--color-border-strong));
+  color: var(--color-ink);
+}
+
+.layer-tile--pink-line.is-on {
+  border-color: color-mix(in srgb, var(--color-pink-line) 72%, var(--color-border));
+  background: color-mix(in srgb, var(--color-pink-line) 16%, var(--color-surface-raised));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px color-mix(in srgb, var(--color-pink-line) 28%, transparent),
+    0 2px 6px rgba(10, 8, 6, 0.28);
+}
+
+.layer-tile--pink-line.is-on:hover {
+  background: color-mix(in srgb, var(--color-pink-line) 22%, var(--color-surface-raised));
+  border-color: color-mix(in srgb, var(--color-pink-line) 80%, var(--color-border));
+}
+
+.layer-tile--pink-line.is-on.is-visible,
+.layer-tile--pink-line.is-on.layer-tile--primary {
+  border-color: color-mix(in srgb, var(--color-pink-line) 78%, var(--color-border));
+  background: color-mix(in srgb, var(--color-pink-line) 18%, var(--color-surface-raised));
+}
+
+.layer-tile__swatch--pink-line {
+  width: 28px;
+  height: 4px;
+  border-radius: var(--rounded-pill);
+  background: var(--color-pink-line);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-pink-line) 35%, var(--color-border));
 }
 
 .curation-published-layer-swatch {

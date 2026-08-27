@@ -41,6 +41,7 @@ class OTEFProjectionSlideshowApiTests(TestCase):
                             "intervalMs": 5000,
                             "crossfadeMs": 800,
                             "warmupLeadMs": 1000,
+                            "keepSettlementNames": True,
                         },
                     }
                 }
@@ -56,6 +57,7 @@ class OTEFProjectionSlideshowApiTests(TestCase):
         self.assertEqual(ps["payload"]["intervalMs"], 5000)
         self.assertEqual(ps["payload"]["crossfadeMs"], 800)
         self.assertEqual(ps["payload"]["warmupLeadMs"], 1000)
+        self.assertEqual(ps["payload"]["keepSettlementNames"], True)
 
         state = OTEFViewportState.objects.get(table=self.table)
         self.assertEqual(state.projection_slideshow["revision"], 1)
@@ -91,3 +93,23 @@ class OTEFProjectionSlideshowApiTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(res.status_code, 400)
+
+    def test_patch_projection_slideshow_keep_settlement_names_false(self):
+        res = self.client.patch(
+            "/api/otef_viewport/by-table/otef/",
+            data=json.dumps(
+                {
+                    "projection_slideshow": {
+                        "type": "start",
+                        "payload": {
+                            "packOrder": ["greens"],
+                            "keepSettlementNames": False,
+                        },
+                    }
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 200)
+        ps = res.json()["projection_slideshow"]
+        self.assertEqual(ps["payload"]["keepSettlementNames"], False)

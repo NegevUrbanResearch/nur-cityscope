@@ -1,5 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import MapProjectionConfig from "../../frontend/src/shared/map-projection-config.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Same predicate as `shouldSkipLiveProjectionRefresh` in projection-main.js (entry not imported in tests).
@@ -69,5 +74,19 @@ describe("projection slideshow live-update guards (mirrors projection-main)", ()
 
     expect(applyProjectionRefresh).toHaveBeenCalledTimes(1);
     expect(syncProjectionLayers).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("projection-main slideshow overlay wiring", () => {
+  it("uses presentation overlay helpers instead of raw live groups for investigation visibility", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../../frontend/src/entries/projection-main.js"),
+      "utf8",
+    );
+    expect(src).toContain("resolvePresentationOverlayVisibility");
+    expect(src).toContain("suppressInvestigationPlayback");
+    expect(src).toContain("getLastIncomingGroups");
+    expect(src).toContain("syncPresentationOverlays");
+    expect(src).toMatch(/visibilityLayerGroups:\s*overlayGroups/);
   });
 });

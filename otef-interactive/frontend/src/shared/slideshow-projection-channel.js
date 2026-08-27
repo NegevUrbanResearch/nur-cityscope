@@ -58,6 +58,10 @@ function sanitizeStartPayload(payload) {
   const warmupLeadMs = sanitizeOptionalNumber(payload.warmupLeadMs);
   if (warmupLeadMs !== undefined) out.warmupLeadMs = warmupLeadMs;
 
+  if (Object.prototype.hasOwnProperty.call(payload, "keepSettlementNames")) {
+    out.keepSettlementNames = payload.keepSettlementNames === true;
+  }
+
   return out;
 }
 

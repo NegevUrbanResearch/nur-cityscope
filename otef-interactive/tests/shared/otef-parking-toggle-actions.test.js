@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import { PINK_LINE_PARKING_LAYER_ID } from "../../frontend/src/map-utils/curated-pink-axis-state.js";
+import { PINK_LINE_PARKING_LAYER_ID, PINK_LINE_ROUTE_LAYER_ID } from "../../frontend/src/map-utils/curated-pink-axis-state.js";
 
 const apiMocks = vi.hoisted(() => ({
   setLayerToggles: vi.fn().mockResolvedValue(undefined),
@@ -67,6 +67,40 @@ describe("toggleLayerInGroups + parking row", () => {
     const axis = payload.find((g) => g.id === "curated_moresht_axis");
     const parking = axis.layers.find((l) => l.id === PINK_LINE_PARKING_LAYER_ID);
     expect(parking.enabled).toBe(false);
+  });
+
+  test("persists pink_line_route when row was missing from API-shaped layerGroups", async () => {
+    const ctx = {
+      _tableName: "otef",
+      _clientId: "test-client",
+      _pendingLayerOps: 0,
+      _layerOpGeneration: 0,
+      _layerGroups: [
+        {
+          id: "curated_moresht_axis",
+          enabled: true,
+          layers: [{ id: "101", displayName: "Demo", enabled: false }],
+        },
+      ],
+      _setActiveLayerTrace: vi.fn(),
+      _clearActiveLayerTrace: vi.fn(),
+      _setLayerGroups(next) {
+        if (Array.isArray(next)) this._layerGroups = next;
+      },
+    };
+
+    const result = await toggleLayerInGroups(
+      ctx,
+      `curated_moresht_axis.${PINK_LINE_ROUTE_LAYER_ID}`,
+      true,
+    );
+
+    expect(result.ok).toBe(true);
+    const axis = ctx._layerGroups.find((g) => g.id === "curated_moresht_axis");
+    const pink = axis.layers.find((l) => l.id === PINK_LINE_ROUTE_LAYER_ID);
+    expect(pink).toBeDefined();
+    expect(pink.enabled).toBe(true);
+    expect(axis.layers.find((l) => l.id === "101").enabled).toBe(false);
   });
 
   test("applies layerGroups from PATCH response when present", async () => {

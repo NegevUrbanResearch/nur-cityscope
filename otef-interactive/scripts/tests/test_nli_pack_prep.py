@@ -22,6 +22,7 @@ from nli_pack_prep import (
     city_centroid_in_story_band,
     collapse_alarms_to_cities,
     collect_timeline_beats,
+    default_nli_zip_path,
     group_nli_category,
     jitter_coincident_points,
     labels_only_point_lyrx,
@@ -34,6 +35,7 @@ from nli_pack_prep import (
     parse_marc_name,
     prepare_nli_pack,
     reproject_web_mercator_collection_to_wgs84,
+    resolve_zip_layer_info,
     rewrite_nli_layer_properties,
     rewrite_oct7_status,
     sanitize_time_like_properties,
@@ -61,13 +63,39 @@ class ZipEntryNameTests(unittest.TestCase):
             Path(__file__).resolve().parents[3]
             / "geojson-20260823T094646Z-1-001.zip"
         )
-        self.assertTrue(zip_path.is_file(), f"missing {zip_path}")
+        if not zip_path.is_file():
+            self.skipTest(f"missing {zip_path}")
         with zipfile.ZipFile(zip_path) as zf:
             names = [zip_entry_name(info) for info in zf.infolist()]
         self.assertIn("geojson/people_7_10.json", names)
         self.assertIn("geojson/polygons_7_10.geojson", names)
         self.assertIn("geojson/lines_7_10.geojson", names)
         self.assertTrue(any(name.startswith("geojson/older versions/") for name in names))
+
+    def test_dated_drive_dump_uses_root_geojson_names(self):
+        zip_path = (
+            Path(__file__).resolve().parents[3]
+            / "drive-download-20260827T125810Z-1-001.zip"
+        )
+        if not zip_path.is_file():
+            self.skipTest(f"missing {zip_path}")
+        with zipfile.ZipFile(zip_path) as zf:
+            names = [zip_entry_name(info) for info in zf.infolist()]
+        self.assertIn("people_7_10_270826.geojson", names)
+        self.assertIn("polygons_7_10_270826.geojson", names)
+        self.assertIn("lines_7_10_270826.geojson", names)
+
+    def test_resolve_prefers_canonical_then_dated_root(self):
+        dated = zipfile.ZipInfo("people_7_10_270826.geojson")
+        by_name = {"people_7_10_270826.geojson": dated}
+        info = resolve_zip_layer_info(by_name, "geojson/people_7_10.json", "people")
+        self.assertIs(info, dated)
+
+    def test_default_nli_zip_path_prefers_dated_dump(self):
+        tmp = Path(tempfile.mkdtemp())
+        dated = tmp / "drive-download-20260827T125810Z-1-001.zip"
+        dated.write_bytes(b"PK")
+        self.assertEqual(default_nli_zip_path(tmp), dated)
 
 
 class JitterTests(unittest.TestCase):
@@ -499,6 +527,25 @@ class PreparePackTests(unittest.TestCase):
         )
         coords = [tuple(feat["geometry"]["coordinates"]) for feat in names_out["features"]]
         self.assertEqual(len(set(coords)), 2)
+
+    def test_prepare_accepts_dated_root_geojson_names(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = tmp / "nli.zip"
+        people = {
+            "type": "FeatureCollection",
+            "features": [_point(34.47, 31.40, name="Ada", oct7_pid=1)],
+        }
+        empty = {"type": "FeatureCollection", "features": []}
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("people_7_10_270826.geojson", json.dumps(people))
+            archive.writestr("polygons_7_10_270826.geojson", json.dumps(empty))
+            archive.writestr("lines_7_10_270826.geojson", json.dumps(empty))
+        pack_dir = tmp / "nli"
+        summary = prepare_nli_pack(zip_path, pack_dir, authorities_path=tmp / "missing.json")
+        self.assertEqual(summary["layers"]["people"]["features"], 1)
+        self.assertTrue((pack_dir / "gis" / "people.geojson").is_file())
+        self.assertTrue((pack_dir / "gis" / "investigation_polygons.geojson").is_file())
+        self.assertTrue((pack_dir / "gis" / "lines.geojson").is_file())
 
     def test_prepare_writes_alarms_from_external_geojson(self):
         tmp = Path(tempfile.mkdtemp())

@@ -19,6 +19,7 @@ vi.mock("../../frontend/src/shared/map-projection-config.js", () => ({
 import {
   SlideshowTabController,
   filterExcludedPresentationPacks,
+  resolveSlideshowPackLabel,
 } from "../../frontend/src/remote/slideshow-tab-controller.js";
 
 const EXCLUDED = ["projector_base", "gaza", "curated_moresht_axis"];
@@ -113,5 +114,53 @@ describe("ensurePackOrder", () => {
 
     assertPackOrderHasNoExcluded(c.packOrder);
     expect(c.packOrder).toEqual(["land_use", "greens"]);
+  });
+});
+
+describe("slideshow timing fields markup", () => {
+  beforeEach(() => {
+    mockSlideshow.excludedPresentationPackIds = [...EXCLUDED];
+    mockSlideshow.packOrder = [];
+  });
+
+  it("renders three side-by-side timing inputs with short labels and preserved ids", () => {
+    const packs = [{ id: "greens", label: "Greens" }];
+    const c = new SlideshowTabControllerWithFakeSources(packs);
+    const root = { innerHTML: "" };
+    c.root = root;
+    c.packOrder = ["greens"];
+    c.render();
+
+    expect(root.innerHTML).toContain('id="slideshowIntervalSec"');
+    expect(root.innerHTML).toContain('id="slideshowCrossfadeSec"');
+    expect(root.innerHTML).toContain('id="slideshowWarmupLeadSec"');
+    expect(root.innerHTML).toContain("slideshow-input-grid");
+    expect(root.innerHTML).toContain("slideshow-field__label");
+    expect(root.innerHTML).toContain("מרווח");
+    expect(root.innerHTML).toContain("מיזוג");
+    expect(root.innerHTML).toContain("הכנה");
+    expect(root.innerHTML).toContain('data-i18n-aria="slideshowIntervalSecLabel"');
+    expect(root.innerHTML).toContain('data-i18n-aria="slideshowCrossfadeSecLabel"');
+    expect(root.innerHTML).toContain('data-i18n-aria="slideshowWarmupLeadSecLabel"');
+    expect(root.innerHTML).toContain("data-slideshow-keep-settlement-names");
+    expect(root.innerHTML).not.toContain("מרווח (שניות)</span>");
+    expect(root.innerHTML).not.toContain("זמן הכנה (שניות)</span>");
+  });
+});
+
+describe("resolveSlideshowPackLabel", () => {
+  it("uses Hebrew pack titles for known ids", () => {
+    expect(resolveSlideshowPackLabel("future_development", "future_development")).toBe(
+      "פיתוח עתידי",
+    );
+    expect(resolveSlideshowPackLabel("october_7th")).toBe("7 באוקטובר");
+    expect(resolveSlideshowPackLabel("greens")).toBe("ירוקים");
+    expect(resolveSlideshowPackLabel("land_use")).toBe("שימושי קרקע");
+    expect(resolveSlideshowPackLabel("muniplicity_transport")).toBe("תחבורה מוניציפלית");
+  });
+
+  it("falls back to the provided label when the pack is unknown", () => {
+    expect(resolveSlideshowPackLabel("unknown_pack", "Custom Pack")).toBe("Custom Pack");
+    expect(resolveSlideshowPackLabel("unknown_pack")).toBe("unknown_pack");
   });
 });

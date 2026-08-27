@@ -245,7 +245,12 @@ describe("layer-state-helper: curated group display names", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].id).toBe("curated_moresht_axis");
     expect(groups[0].name).toBe("Workshop");
-    expect(groups[0].layers.map((l) => l.id)).toEqual(["10", "11", "pink_line_parking"]);
+    expect(groups[0].layers.map((l) => l.id)).toEqual([
+      "pink_line_route",
+      "10",
+      "11",
+      "pink_line_parking",
+    ]);
   });
 
   test("coalesceCuratedGroups: parking OFF in a secondary curated group wins over axis ON", () => {

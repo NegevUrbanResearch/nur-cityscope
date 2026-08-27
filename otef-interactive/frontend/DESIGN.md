@@ -24,7 +24,7 @@ colors:
   overlay-scrim: "#0a0908"
 typography:
   title-sm:
-    fontFamily: system-ui, "Segoe UI", "SF Pro Text", "Helvetica Neue", sans-serif
+    fontFamily: system-ui, "Segoe UI", "SF Pro Text", "Helvetica Neue", "Noto Sans Hebrew", sans-serif
     fontSize: 1.125rem
     fontWeight: 600
     lineHeight: 1.3

@@ -15,11 +15,17 @@ const PROJECTION_SLIDESHOW = {
     "greens",
     "land_use",
     "muniplicity_transport",
+    "nli",
   ],
   // Registry / context packs that must not appear in projection slideshow rotation and
-  // must remain fully off for the whole presentation (defense in depth in slideshow runtime).
+  // stay off for the whole presentation (defense in depth in slideshow runtime).
+  // Settlement names inside projector_base can be re-enabled via keepSettlementNames.
   // Includes: base projector context, Gaza pack, and merged Moreshet / workshop axis (no pink driving layers in presentation).
-  excludedPresentationPackIds: ["projector_base", "gaza", "curated_moresht_axis", "nli"],
+  // NLI is in packOrder as a static/idle final-state slide (timeline playback is suppressed).
+  excludedPresentationPackIds: ["projector_base", "gaza", "curated_moresht_axis"],
+  // Settlement names + outlines (שמות_יישובים, Locations_Lines, ישובים) stay visible across packs
+  // unless the remote slideshow toggle turns them off. Other projector_base layers stay excluded.
+  keepSettlementNames: true,
   ignoreLiveLayerUpdatesWhileActive: true,
   // Reserved for future WMTS staging; v1 uses vector path only.
   wmtsFadePolicy: "instant-after-vector-fade",

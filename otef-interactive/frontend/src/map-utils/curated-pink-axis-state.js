@@ -1,18 +1,35 @@
 /**
- * Single source of truth for Moreshet-axis + pink-line parking UX state.
- * Parking is a synthetic layer id under the merged remote group `curated_moresht_axis`.
+ * Single source of truth for Moreshet-axis + pink-line companion UX state.
+ * Synthetic layer ids live under the merged remote group `curated_moresht_axis`:
+ * - `pink_line_route` — dedicated toggle for the driving-axis overlay
+ * - `pink_line_parking` — parking-lot companion (still gated on published workshop rows)
  */
 
 const MORESHET_AXIS_GROUP_ID = "curated_moresht_axis";
 const PINK_LINE_PARKING_LAYER_ID = "pink_line_parking";
 const PINK_LINE_PARKING_FULL_LAYER_ID = `${MORESHET_AXIS_GROUP_ID}.${PINK_LINE_PARKING_LAYER_ID}`;
+const PINK_LINE_ROUTE_LAYER_ID = "pink_line_route";
+const PINK_LINE_ROUTE_FULL_LAYER_ID = `${MORESHET_AXIS_GROUP_ID}.${PINK_LINE_ROUTE_LAYER_ID}`;
 
 function isPinkLineParkingLayerId(layerId) {
   return layerId === PINK_LINE_PARKING_LAYER_ID;
 }
 
+function isPinkLineRouteLayerId(layerId) {
+  return layerId === PINK_LINE_ROUTE_LAYER_ID;
+}
+
+function isMoreshetCompanionLayerId(layerId) {
+  const id = String(layerId || "");
+  return isPinkLineParkingLayerId(id) || isPinkLineRouteLayerId(id);
+}
+
+function isMoreshetPublishedContentLayer(layer) {
+  return !!(layer && !isMoreshetCompanionLayerId(String(layer.id || "")));
+}
+
 /**
- * Published / GIS-backed Moreshet rows only (excludes parking companion toggle).
+ * Published / GIS-backed Moreshet rows only (excludes pink-line + parking companion toggles).
  *
  * @param {Array<{ id?: string, layers?: Array<{ id?: string }> }>} layerGroups
  * @returns {Array<{ id?: string }>}
@@ -22,7 +39,7 @@ function getMoreshetAxisContentLayers(layerGroups) {
     ? layerGroups.find((x) => x && x.id === MORESHET_AXIS_GROUP_ID)
     : null;
   const layers = g && Array.isArray(g.layers) ? g.layers : [];
-  return layers.filter((l) => l && !isPinkLineParkingLayerId(String(l.id || "")));
+  return layers.filter((l) => isMoreshetPublishedContentLayer(l));
 }
 
 function hasAnyEnabledMoreshetContentLayer(layerGroups) {
@@ -46,8 +63,28 @@ function isPinkLineParkingUserEnabled(layerGroups) {
   return !!p.enabled;
 }
 
+/**
+ * User intent for the driving-axis overlay. Absent row means off so existing tables
+ * stay hidden until a workshop submission is on (legacy coupling) or the user opts in.
+ *
+ * @param {Array} layerGroups
+ * @returns {boolean}
+ */
+function isPinkLineRouteUserEnabled(layerGroups) {
+  const g = Array.isArray(layerGroups)
+    ? layerGroups.find((x) => x && x.id === MORESHET_AXIS_GROUP_ID)
+    : null;
+  if (!g || !Array.isArray(g.layers)) return false;
+  const row = g.layers.find((l) => l && isPinkLineRouteLayerId(String(l.id || "")));
+  if (!row) return false;
+  return !!row.enabled;
+}
+
 function computePinkLineBaseLayerVisible(layerGroups) {
-  return hasAnyEnabledMoreshetContentLayer(layerGroups);
+  return (
+    isPinkLineRouteUserEnabled(layerGroups) ||
+    hasAnyEnabledMoreshetContentLayer(layerGroups)
+  );
 }
 
 function computePinkLineParkingOverlayVisible(layerGroups) {
@@ -59,7 +96,8 @@ function computePinkLineParkingOverlayVisible(layerGroups) {
 
 /**
  * Ensure API-shaped layerGroups keep parking aligned: when no visible Moreshet
- * content remains enabled, parking cannot stay enabled.
+ * published content remains enabled, parking cannot stay enabled.
+ * Pink-line-only mode does not keep parking on.
  *
  * @param {Array} layerGroups — deep-cloned mutable copy is expected
  * @returns {Array}
@@ -70,7 +108,7 @@ function applyMoreshetParkingCoherenceToLayerGroups(layerGroups) {
   if (idx < 0) return layerGroups;
   const group = layerGroups[idx];
   const layers = Array.isArray(group.layers) ? group.layers : [];
-  const content = layers.filter((l) => l && !isPinkLineParkingLayerId(String(l.id || "")));
+  const content = layers.filter((l) => isMoreshetPublishedContentLayer(l));
   const hasContentOn = content.some((l) => !!l.enabled);
   if (hasContentOn) return layerGroups;
   const nextLayers = layers.map((l) => {
@@ -80,6 +118,36 @@ function applyMoreshetParkingCoherenceToLayerGroups(layerGroups) {
   const nextGroup = { ...group, layers: nextLayers };
   const out = layerGroups.slice();
   out[idx] = nextGroup;
+  return out;
+}
+
+/**
+ * Mutates a deep-cloned layerGroups list so API-shaped state includes
+ * `pink_line_route` whenever the Moreshet axis group has published content rows.
+ * Without this row, remote toggles target a layer id that does not exist in raw
+ * `_layerGroups` and PATCH no-ops until a LayerState row is created elsewhere.
+ *
+ * @param {Array} layerGroups
+ * @returns {Array}
+ */
+function ensurePinkLineRouteRowInMoreshetAxisGroup(layerGroups) {
+  if (!Array.isArray(layerGroups)) return layerGroups;
+  const idx = layerGroups.findIndex((g) => g && g.id === MORESHET_AXIS_GROUP_ID);
+  if (idx < 0) return layerGroups;
+  const group = layerGroups[idx];
+  const layers = Array.isArray(group.layers) ? group.layers : [];
+  const contentLayers = layers.filter((l) => isMoreshetPublishedContentLayer(l));
+  if (contentLayers.length === 0) return layerGroups;
+  if (layers.some((l) => l && isPinkLineRouteLayerId(String(l.id || "")))) {
+    return layerGroups;
+  }
+  const pinkLayer = {
+    id: PINK_LINE_ROUTE_LAYER_ID,
+    displayName: "Pink line",
+    enabled: false,
+  };
+  const out = layerGroups.slice();
+  out[idx] = { ...group, layers: [pinkLayer].concat(layers) };
   return out;
 }
 
@@ -98,9 +166,7 @@ function ensurePinkLineParkingRowInMoreshetAxisGroup(layerGroups) {
   if (idx < 0) return layerGroups;
   const group = layerGroups[idx];
   const layers = Array.isArray(group.layers) ? group.layers : [];
-  const contentLayers = layers.filter(
-    (l) => l && !isPinkLineParkingLayerId(String(l.id || "")),
-  );
+  const contentLayers = layers.filter((l) => isMoreshetPublishedContentLayer(l));
   if (contentLayers.length === 0) return layerGroups;
   if (layers.some((l) => l && isPinkLineParkingLayerId(String(l.id || "")))) {
     return layerGroups;
@@ -116,8 +182,22 @@ function ensurePinkLineParkingRowInMoreshetAxisGroup(layerGroups) {
 }
 
 /**
+ * Inject both Moreshet companion rows (pink-line toggle first, parking last) when
+ * published workshop content exists.
+ *
+ * @param {Array} layerGroups
+ * @returns {Array}
+ */
+function ensureMoreshetAxisCompanionRows(layerGroups) {
+  return ensurePinkLineParkingRowInMoreshetAxisGroup(
+    ensurePinkLineRouteRowInMoreshetAxisGroup(layerGroups),
+  );
+}
+
+/**
  * After coalescing, drop an empty Moreshet pack (no published rows) from remote/UI lists.
- * When there is published content, ensure the parking toggle row exists.
+ * When there is published content, ensure the pink-line toggle (first) and parking
+ * companion (last) exist.
  *
  * @param {Array} groups
  * @returns {Array}
@@ -128,23 +208,30 @@ function finalizeMoreshetAxisPackForRemote(groups) {
   if (idx < 0) return groups;
   const g = groups[idx];
   const rawLayers = Array.isArray(g.layers) ? g.layers : [];
-  const contentLayers = rawLayers.filter(
-    (l) => l && !isPinkLineParkingLayerId(String(l.id || "")),
-  );
+  const contentLayers = rawLayers.filter((l) => isMoreshetPublishedContentLayer(l));
   if (contentLayers.length === 0) {
     return groups.filter((_, i) => i !== idx);
   }
   const parkingRow = rawLayers.find((l) => l && isPinkLineParkingLayerId(String(l.id || "")));
+  const pinkRow = rawLayers.find((l) => l && isPinkLineRouteLayerId(String(l.id || "")));
   const hasContentOn = contentLayers.some((l) => !!l.enabled);
   const parkingEnabled =
     hasContentOn && (parkingRow ? !!parkingRow.enabled : true);
+  const pinkEnabled = pinkRow ? !!pinkRow.enabled : false;
+  const pinkLayer = {
+    id: PINK_LINE_ROUTE_LAYER_ID,
+    name: "Pink line",
+    displayName: (pinkRow && pinkRow.displayName) || "Pink line",
+    enabled: pinkEnabled,
+    fullLayerIds: [PINK_LINE_ROUTE_FULL_LAYER_ID],
+  };
   const parkingLayer = {
     id: PINK_LINE_PARKING_LAYER_ID,
     name: "Parking lots",
     displayName: (parkingRow && parkingRow.displayName) || "Parking lots",
     enabled: parkingEnabled,
   };
-  const nextLayers = contentLayers.concat([parkingLayer]);
+  const nextLayers = [pinkLayer, ...contentLayers, parkingLayer];
   const allOn = nextLayers.length > 0 && nextLayers.every((l) => !!l.enabled);
   const copy = groups.slice();
   copy[idx] = { ...g, layers: nextLayers, enabled: allOn };
@@ -155,13 +242,20 @@ export {
   MORESHET_AXIS_GROUP_ID,
   PINK_LINE_PARKING_LAYER_ID,
   PINK_LINE_PARKING_FULL_LAYER_ID,
+  PINK_LINE_ROUTE_LAYER_ID,
+  PINK_LINE_ROUTE_FULL_LAYER_ID,
   isPinkLineParkingLayerId,
+  isPinkLineRouteLayerId,
+  isMoreshetCompanionLayerId,
   getMoreshetAxisContentLayers,
   hasAnyEnabledMoreshetContentLayer,
   isPinkLineParkingUserEnabled,
+  isPinkLineRouteUserEnabled,
   computePinkLineBaseLayerVisible,
   computePinkLineParkingOverlayVisible,
   applyMoreshetParkingCoherenceToLayerGroups,
   ensurePinkLineParkingRowInMoreshetAxisGroup,
+  ensurePinkLineRouteRowInMoreshetAxisGroup,
+  ensureMoreshetAxisCompanionRows,
   finalizeMoreshetAxisPackForRemote,
 };
