@@ -1,15 +1,23 @@
 /**
- * Shared-clock highlight for NLI investigation polygons and lines.
+ * Shared-clock highlight for NLI investigation polygons, lines, and alarms.
  * Uses the same remote play/stop as Oct 7 (`style.animation` + toggleAnimation).
  * Active lines use the same line-gradient trail as Oct 7 ציר layers, once per beat,
  * including the trail-head circle. The head hides when that line's beat finishes.
  * Completed lines stay fully drawn. Base pack lines are hidden while playback runs.
+ * Alarms hitchhike polygon/line beats when those layers play; alarms-only uses 5-minute bins.
  */
 
+import {
+  INVESTIGATION_ALARMS_FULL_ID,
+  alarmCaptionHtml,
+  applyAlarmMode,
+  collectAlarmTimelineBeats,
+} from "./maplibre-investigation-alarms.js";
 import layerRegistry from "./layer-registry.js";
 
 export const INVESTIGATION_POLYGONS_FULL_ID = "nli.investigation_polygons";
 export const INVESTIGATION_LINES_FULL_ID = "nli.lines";
+export { INVESTIGATION_ALARMS_FULL_ID };
 export const TIMELINE_BEAT_MS = 3200;
 export const TIMELINE_HOLD_MS = 2500;
 
@@ -77,11 +85,29 @@ export function collectUnionTimelineBeats(...featureLists) {
   return collectTimelineBeats(merged);
 }
 
-export function collectPlaybackTimelineBeats(polygonOn, lineOn, polygonFeatures, lineFeatures) {
-  return collectUnionTimelineBeats(
-    polygonOn ? polygonFeatures : null,
-    lineOn ? lineFeatures : null,
-  );
+export function collectPlaybackTimelineBeats(
+  polygonOn,
+  lineOn,
+  alarmOn,
+  polygonFeatures,
+  lineFeatures,
+  alarmFeatures,
+) {
+  if (polygonOn || lineOn) {
+    return collectUnionTimelineBeats(
+      polygonOn ? polygonFeatures : null,
+      lineOn ? lineFeatures : null,
+    );
+  }
+  if (!alarmOn) return [];
+  return collectAlarmTimelineBeats(alarmFeatures);
+}
+
+export function previousTimelineBeat(beats, clock) {
+  if (clock == null || !Array.isArray(beats)) return null;
+  const index = beats.indexOf(clock);
+  if (index <= 0) return null;
+  return beats[index - 1];
 }
 
 export function objectIdsActiveAt(features, minutes) {
@@ -273,12 +299,16 @@ function isAnimOn(animState, fullId) {
 }
 
 function participating(animState, layerGroups) {
-  return {
-    polygonOn:
-      isAnimOn(animState, INVESTIGATION_POLYGONS_FULL_ID) &&
-      isNliLayerEnabled(layerGroups, "investigation_polygons"),
-    lineOn: isAnimOn(animState, INVESTIGATION_LINES_FULL_ID) && isNliLayerEnabled(layerGroups, "lines"),
-  };
+  const polygonOn =
+    isAnimOn(animState, INVESTIGATION_POLYGONS_FULL_ID) &&
+    isNliLayerEnabled(layerGroups, "investigation_polygons");
+  const lineOn = isAnimOn(animState, INVESTIGATION_LINES_FULL_ID) && isNliLayerEnabled(layerGroups, "lines");
+  const alarmPlay =
+    isAnimOn(animState, INVESTIGATION_ALARMS_FULL_ID) && isNliLayerEnabled(layerGroups, "alarms");
+  const alarmIdle = !alarmPlay && isNliLayerEnabled(layerGroups, "alarms");
+  /** @type {'off' | 'idle' | 'play'} */
+  const alarmMode = alarmPlay ? "play" : alarmIdle ? "idle" : "off";
+  return { polygonOn, lineOn, alarmMode };
 }
 
 function styleLayers(map) {
@@ -342,6 +372,21 @@ function raiseLineOverlays(map) {
       /* ignore */
     }
   }
+}
+
+function raiseStoryLayers(map) {
+  if (!map || typeof map.moveLayer !== "function") return;
+  const { fillIds, lineIds } = collectPolygonPaintLayers(map);
+  for (const id of [...fillIds, ...lineIds]) {
+    try {
+      if (typeof map.getLayer === "function" && map.getLayer(id)) {
+        map.moveLayer(id);
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  raiseLineOverlays(map);
 }
 
 function savePaints(map, layerIds, keys) {
@@ -642,13 +687,20 @@ function updateCaption(state, phase) {
   const names = [];
   if (state.polygonOn) names.push(...namesActiveAt(state.polygonFeatures, phase.clock));
   if (state.lineOn) names.push(...namesActiveAt(state.lineFeatures, phase.clock));
-  if (names.length === 0) {
+  const previousClock = previousTimelineBeat(state.beats, phase.clock);
+  const alarmHtml =
+    state.alarmMode === "play"
+      ? alarmCaptionHtml(state.alarmFeatures, phase.clock, previousClock)
+      : "";
+  if (names.length === 0 && !alarmHtml) {
     el.hidden = true;
     el.textContent = "";
     return;
   }
+  const nameHtml = names.map(escapeCaption).join(" · ");
+  const parts = [nameHtml, alarmHtml].filter(Boolean).join(" · ");
   el.hidden = false;
-  el.innerHTML = `<div class="nli-tl-clock">${clock}</div><div class="nli-tl-names">${names.map(escapeCaption).join(" · ")}</div>`;
+  el.innerHTML = `<div class="nli-tl-clock">${clock}</div><div class="nli-tl-names">${parts}</div>`;
 }
 
 function escapeCaption(value) {
@@ -665,10 +717,18 @@ function currentPhase(state) {
 }
 
 function applyPlayingVisuals(map, state, phase) {
+  const previousClock = previousTimelineBeat(state.beats, phase.clock);
+  applyAlarmMode(map, state, state.alarmMode, {
+    clock: phase.clock,
+    previousClock,
+    beatElapsedMs: phase.beatElapsedMs,
+  });
   if (state.polygonOn) applyPolygonTimelinePaint(map, phase.clock);
   if (state.lineOn) {
     applyLineTrailVisuals(map, state.lineFeatures, phase.clock, phase.beatElapsedMs);
-    raiseLineOverlays(map);
+  }
+  if (state.polygonOn || state.lineOn || state.alarmMode === "play") {
+    raiseStoryLayers(map);
   }
   updateCaption(state, phase);
 }
@@ -702,6 +762,36 @@ function disableLinePlayback(map, state) {
   restorePaints(map, state.savedBaseLines);
   state.savedBaseLines = null;
   removeLineProgressOverlay(map);
+}
+
+function createTimelineState(map, deps = {}) {
+  return {
+    playing: false,
+    polygonOn: false,
+    lineOn: false,
+    alarmMode: "off",
+    polygonFeatures: null,
+    lineFeatures: null,
+    alarmFeatures: null,
+    beats: [],
+    now: typeof deps.now === "function" ? deps.now : () => Date.now(),
+    startedAt: 0,
+    rafId: null,
+    captionEl: ensureCaptionEl(map),
+    savedFills: null,
+    savedLines: null,
+    savedBaseLines: null,
+    savedAlarms: null,
+  };
+}
+
+function getOrCreateState(map, deps = {}) {
+  let state = stateByMap.get(map);
+  if (!state) {
+    state = createTimelineState(map, deps);
+    stateByMap.set(map, state);
+  }
+  return state;
 }
 
 function stopPlayback(map) {
@@ -744,6 +834,18 @@ async function loadLayerFeatures(deps, fullId) {
   return Array.isArray(json?.features) ? json.features : [];
 }
 
+async function ensureLayerFeatures(state, deps, key, fullId) {
+  if (Array.isArray(state[key])) return;
+  state[key] = await loadLayerFeatures(deps, fullId);
+}
+
+function applyStoryPlayback(map, state) {
+  if (state.polygonOn) enablePolygonPlayback(map, state);
+  else disablePolygonPlayback(map, state);
+  if (state.lineOn) enableLinePlayback(map, state);
+  else disableLinePlayback(map, state);
+}
+
 /**
  * @param {import('maplibre-gl').Map} map
  * @param {Record<string, boolean>|null|undefined} animState
@@ -760,60 +862,67 @@ export async function syncInvestigationTimelineToMap(map, animState, layerGroups
   if (!map || typeof map.getStyle !== "function") return;
   const visibilityGroups = deps.visibilityLayerGroups != null ? deps.visibilityLayerGroups : layerGroups;
   const want = participating(animState, visibilityGroups);
-  const wantPlay = !!(want.polygonOn || want.lineOn);
+  const wantPlay = !!(want.polygonOn || want.lineOn || want.alarmMode === "play");
   const existing = stateByMap.get(map);
 
   if (!wantPlay) {
-    if (existing) stopPlayback(map);
+    if (existing?.playing) stopPlayback(map);
+    if (want.alarmMode === "idle") {
+      const state = getOrCreateState(map, deps);
+      state.polygonOn = false;
+      state.lineOn = false;
+      await ensureLayerFeatures(state, deps, "alarmFeatures", INVESTIGATION_ALARMS_FULL_ID);
+      applyAlarmMode(map, state, "idle");
+      updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
+    } else if (existing) {
+      existing.polygonOn = false;
+      existing.lineOn = false;
+      applyAlarmMode(map, existing, "off");
+      updateCaption(existing, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
+    }
     return;
   }
 
-  if (existing?.playing) {
-    existing.polygonOn = want.polygonOn;
-    existing.lineOn = want.lineOn;
-    existing.beats = collectPlaybackTimelineBeats(
-      want.polygonOn,
-      want.lineOn,
-      existing.polygonFeatures,
-      existing.lineFeatures,
-    );
-    if (want.polygonOn) enablePolygonPlayback(map, existing);
-    else disablePolygonPlayback(map, existing);
-    if (want.lineOn) enableLinePlayback(map, existing);
-    else disableLinePlayback(map, existing);
-    applyPlayingVisuals(map, existing, currentPhase(existing));
-    return;
+  const state = getOrCreateState(map, deps);
+  if (want.polygonOn) {
+    await ensureLayerFeatures(state, deps, "polygonFeatures", INVESTIGATION_POLYGONS_FULL_ID);
   }
-
-  const [polygonFeatures, lineFeatures] = await Promise.all([
-    loadLayerFeatures(deps, INVESTIGATION_POLYGONS_FULL_ID),
-    loadLayerFeatures(deps, INVESTIGATION_LINES_FULL_ID),
-  ]);
+  if (want.lineOn) {
+    await ensureLayerFeatures(state, deps, "lineFeatures", INVESTIGATION_LINES_FULL_ID);
+  }
+  if (want.alarmMode !== "off") {
+    await ensureLayerFeatures(state, deps, "alarmFeatures", INVESTIGATION_ALARMS_FULL_ID);
+  }
   const beats = collectPlaybackTimelineBeats(
     want.polygonOn,
     want.lineOn,
-    polygonFeatures,
-    lineFeatures,
+    want.alarmMode === "play",
+    state.polygonFeatures,
+    state.lineFeatures,
+    state.alarmFeatures,
   );
+
+  if (state.playing) {
+    state.polygonOn = want.polygonOn;
+    state.lineOn = want.lineOn;
+    state.alarmMode = want.alarmMode;
+    state.beats = beats;
+    applyStoryPlayback(map, state);
+    applyPlayingVisuals(map, state, currentPhase(state));
+    return;
+  }
+
   const nowFn = typeof deps.now === "function" ? deps.now : () => Date.now();
-  const state = {
-    playing: true,
-    polygonOn: want.polygonOn,
-    lineOn: want.lineOn,
-    polygonFeatures,
-    lineFeatures,
-    beats,
-    now: nowFn,
-    startedAt: nowFn(),
-    rafId: null,
-    captionEl: ensureCaptionEl(map),
-    savedFills: null,
-    savedLines: null,
-    savedBaseLines: null,
-  };
-  stateByMap.set(map, state);
-  if (want.polygonOn) enablePolygonPlayback(map, state);
-  if (want.lineOn) enableLinePlayback(map, state);
+  state.playing = true;
+  state.polygonOn = want.polygonOn;
+  state.lineOn = want.lineOn;
+  state.alarmMode = want.alarmMode;
+  state.beats = beats;
+  state.now = nowFn;
+  state.startedAt = nowFn();
+  state.rafId = null;
+  if (!state.captionEl) state.captionEl = ensureCaptionEl(map);
+  applyStoryPlayback(map, state);
   applyPlayingVisuals(map, state, timelinePhaseAt(0, beats));
   if (typeof requestAnimationFrame === "function") {
     state.rafId = requestAnimationFrame(() => tick(map));
@@ -824,6 +933,7 @@ export function disposeInvestigationTimelineForMap(map) {
   if (!map) return;
   stopPlayback(map);
   const state = stateByMap.get(map);
+  if (state) applyAlarmMode(map, state, "off");
   if (state?.captionEl && state.captionEl.parentNode) {
     state.captionEl.parentNode.removeChild(state.captionEl);
   }

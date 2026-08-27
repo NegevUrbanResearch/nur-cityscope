@@ -72,6 +72,10 @@ ANIMATION_STYLE_OVERRIDES: Dict[str, Dict[str, Dict[str, Any]]] = {
             "type": "timeline",
             "enabledByDefault": False,
         },
+        "alarms": {
+            "type": "timeline",
+            "enabledByDefault": False,
+        },
     },
 }
 

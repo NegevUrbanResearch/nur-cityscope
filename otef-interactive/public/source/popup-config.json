@@ -86,6 +86,20 @@
             "key": "Notes"
           }
         ]
+      },
+      "alarms": {
+        "titleField": "city",
+        "hideEmpty": true,
+        "fields": [
+          {
+            "label": "City",
+            "key": "city"
+          },
+          {
+            "label": "Alerts",
+            "key": "alarm_count_total"
+          }
+        ]
       }
     }
   }

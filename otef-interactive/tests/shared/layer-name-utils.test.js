@@ -111,4 +111,13 @@ describe("getLayerDisplayLabel", () => {
       getLayerDisplayLabel("nli.people_names", "en", "people_names", ["nli.people_names"]),
     ).toBe("People names");
   });
+
+  test("glossary for nli.alarms", () => {
+    expect(
+      getLayerDisplayLabel("nli.alarms", "he", "alarms", ["nli.alarms"]),
+    ).toBe("אזעקות");
+    expect(
+      getLayerDisplayLabel("nli.alarms", "en", "alarms", ["nli.alarms"]),
+    ).toBe("Alarms");
+  });
 });

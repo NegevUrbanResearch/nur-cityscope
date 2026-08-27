@@ -285,6 +285,10 @@ const LAYER_DISPLAY_LABELS = {
     he: "צירי חדירה",
     en: "Infiltration routes",
   },
+  "nli.alarms": {
+    he: "אזעקות",
+    en: "Alarms",
+  },
 };
 
 /**

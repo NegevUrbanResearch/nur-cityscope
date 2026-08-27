@@ -6,14 +6,21 @@ import zipfile
 from pathlib import Path
 
 from nli_pack_prep import (
+    ASHKELON_NORTH_FALLBACK_LAT,
+    MITZPE_RAMON_LAT,
     OCT7_STATUS_CLASSES,
     NLI_CATEGORY_CLASSES,
     NLI_CATALOG_MARKER_SIZE,
     NLI_CATALOG_STROKE,
     NLI_CATALOG_STROKE_WIDTH,
     NLI_KEEP_STEMS,
+    ZIP_LAYER_MAP,
+    apply_alarm_timeline_minutes,
     apply_timeline_minutes,
+    ashkelon_north_lat,
     attach_nli_catalog_links,
+    city_centroid_in_story_band,
+    collapse_alarms_to_cities,
     collect_timeline_beats,
     group_nli_category,
     jitter_coincident_points,
@@ -22,6 +29,7 @@ from nli_pack_prep import (
     nli_authority_url,
     NLI_POPUP_CONFIG,
     object_ids_active_at,
+    parse_alarm_timestamp_to_minutes,
     parse_local_timeline_to_minutes,
     parse_marc_name,
     prepare_nli_pack,
@@ -30,6 +38,7 @@ from nli_pack_prep import (
     rewrite_oct7_status,
     sanitize_time_like_properties,
     simple_line_lyrx,
+    simple_point_lyrx,
     simple_polygon_lyrx,
     unique_value_point_lyrx,
     unit_from_seed,
@@ -238,6 +247,19 @@ class LyrxBuilderTests(unittest.TestCase):
         self.assertFalse(markers, msg=f"expected labels-only, got markers {markers}")
         self.assertEqual(symbol_layers, [])
 
+    def test_alarms_lyrx_is_simple_point(self):
+        parsed = parse_lyrx_style(_write_lyrx(simple_point_lyrx(), "alarms.lyrx"))
+        self.assertIsNotNone(parsed)
+        data = parsed.to_dict()
+        self.assertEqual(data["type"], "point")
+        self.assertEqual(data["renderer"], "simple")
+        markers = [
+            layer
+            for layer in data["defaultSymbol"]["symbolLayers"]
+            if layer.get("type") == "markerPoint"
+        ]
+        self.assertTrue(markers)
+
 
 class LegendClassContractTests(unittest.TestCase):
     def test_oct7_status_classes_are_four_without_bibas(self):
@@ -396,6 +418,17 @@ class PreparePackTests(unittest.TestCase):
             "Infiltration routes",
         )
 
+    def test_alarms_popup_is_city_and_count(self):
+        tmp = Path(tempfile.mkdtemp())
+        popup = tmp / "popup-config.json"
+        merge_popup_config(popup, NLI_POPUP_CONFIG)
+        data = json.loads(popup.read_text(encoding="utf-8"))
+        alarms = data["nli"]["layers"]["alarms"]
+        self.assertEqual(alarms["titleField"], "city")
+        keys = {field["key"] for field in alarms["fields"]}
+        self.assertEqual(keys, {"city", "alarm_count_total"})
+        self.assertIn({"label": "City", "key": "city"}, alarms["fields"])
+
     def test_rewrites_hhmmss_timeline_values(self):
         collection = {
             "features": [
@@ -434,6 +467,10 @@ class PreparePackTests(unittest.TestCase):
         self.assertIn("people_names", NLI_KEEP_STEMS)
         self.assertIn("people", NLI_KEEP_STEMS)
 
+    def test_keep_stems_include_alarms(self):
+        self.assertIn("alarms", NLI_KEEP_STEMS)
+        self.assertNotIn("alarms", ZIP_LAYER_MAP.values())
+
     def test_prepare_copies_jittered_people_to_people_names(self):
         tmp = Path(tempfile.mkdtemp())
         zip_path = tmp / "nli.zip"
@@ -463,6 +500,79 @@ class PreparePackTests(unittest.TestCase):
         coords = [tuple(feat["geometry"]["coordinates"]) for feat in names_out["features"]]
         self.assertEqual(len(set(coords)), 2)
 
+    def test_prepare_writes_alarms_from_external_geojson(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = tmp / "nli.zip"
+        people = {
+            "type": "FeatureCollection",
+            "features": [_point(34.47, 31.40, name="Ada", oct7_pid=1)],
+        }
+        empty = {"type": "FeatureCollection", "features": []}
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("geojson/people_7_10.json", json.dumps(people))
+            archive.writestr("geojson/polygons_7_10.geojson", json.dumps(empty))
+            archive.writestr("geojson/lines_7_10.geojson", json.dumps(empty))
+        alarms_path = tmp / "oct7_alarms_2023-10-07.geojson"
+        alarms_path.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        _point(
+                            34.50,
+                            31.40,
+                            time="2023-10-07 06:29:02",
+                            id="1",
+                            rid="a",
+                            city="שדרות",
+                        ),
+                        _point(
+                            34.52,
+                            31.42,
+                            time="2023-10-07 06:30:00",
+                            id="2",
+                            rid="b",
+                            city="שדרות",
+                        ),
+                        _point(
+                            34.80,
+                            32.08,
+                            time="2023-10-07 06:29:02",
+                            id="3",
+                            rid="c",
+                            city="תל אביב - מרכז העיר",
+                        ),
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        pack_dir = tmp / "nli"
+        summary = prepare_nli_pack(
+            zip_path,
+            pack_dir,
+            authorities_path=tmp / "missing.json",
+            alarms_path=alarms_path,
+        )
+        out_path = pack_dir / "gis" / "alarms.geojson"
+        self.assertTrue(out_path.is_file())
+        self.assertTrue((pack_dir / "styles" / "alarms.lyrx").is_file())
+        out = json.loads(out_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(out["features"]), 1)
+        feat = out["features"][0]
+        self.assertEqual(feat["id"], feat["properties"]["city"])
+        self.assertEqual(feat["properties"]["city"], "שדרות")
+        self.assertEqual(feat["properties"]["alarm_minutes"], [389, 390])
+        self.assertEqual(feat["properties"]["alarm_count_total"], 2)
+        self.assertIsNone(feat["properties"].get("timeline_minutes"))
+        coords = [tuple(feat["geometry"]["coordinates"][:2]) for feat in out["features"]]
+        self.assertEqual(len(set(coords)), 1)
+        self.assertAlmostEqual(coords[0][0], 34.51, places=5)
+        self.assertAlmostEqual(coords[0][1], 31.41, places=5)
+        self.assertEqual(summary["layers"]["alarms"]["jittered"], 0)
+        cities = {feat["properties"]["city"] for feat in out["features"]}
+        self.assertNotIn("תל אביב - מרכז העיר", cities)
+
 
 INVESTIGATION_TIMELINE_FIXTURE = [
     (1, "מרחב כניסה לקיבוץ", "local 07:15"),
@@ -482,6 +592,16 @@ INVESTIGATION_TIMELINE_FIXTURE = [
 
 
 class TimelineMinutesTests(unittest.TestCase):
+    def test_parses_alarm_timestamp_to_minute_of_day(self):
+        self.assertEqual(parse_alarm_timestamp_to_minutes("2023-10-07 06:29:02"), 389)
+        self.assertEqual(parse_alarm_timestamp_to_minutes("2023-10-07 20:00:11"), 1200)
+        self.assertIsNone(parse_alarm_timestamp_to_minutes(None))
+
+    def test_apply_alarm_timeline_minutes(self):
+        col = {"features": [_point(34.75, 32.01, time="2023-10-07 06:29:02", id="1")]}
+        self.assertEqual(apply_alarm_timeline_minutes(col), 1)
+        self.assertEqual(col["features"][0]["properties"]["timeline_minutes"], 389)
+
     def test_parses_local_hhmm_to_minutes(self):
         self.assertEqual(parse_local_timeline_to_minutes("local 07:15"), 435)
         self.assertEqual(parse_local_timeline_to_minutes("local 06:40"), 400)
@@ -510,6 +630,82 @@ class TimelineMinutesTests(unittest.TestCase):
         self.assertEqual(object_ids_active_at(collection["features"], 420), [4, 7, 14])
 
 
+class CityAlarmCollapseTests(unittest.TestCase):
+    def test_city_band_includes_ashkelon_netivot_ofakim_excludes_tel_aviv(self):
+        north = 31.6857
+        self.assertTrue(city_centroid_in_story_band(31.6857, north))
+        self.assertTrue(city_centroid_in_story_band(31.423, north))
+        self.assertTrue(city_centroid_in_story_band(31.312, north))
+        self.assertTrue(city_centroid_in_story_band(31.40, north))
+        self.assertFalse(city_centroid_in_story_band(32.08, north))
+        self.assertFalse(city_centroid_in_story_band(29.55, north))
+        self.assertTrue(city_centroid_in_story_band(MITZPE_RAMON_LAT, north))
+
+    def test_ashkelon_north_lat_uses_max_ashkelon_point_or_fallback(self):
+        self.assertEqual(ashkelon_north_lat([]), ASHKELON_NORTH_FALLBACK_LAT)
+        self.assertEqual(ashkelon_north_lat(None), ASHKELON_NORTH_FALLBACK_LAT)
+        features = [
+            _point(34.57, 31.650, city="אשקלון - דרום"),
+            _point(34.57, 31.686, city="אשקלון - צפון"),
+            _point(34.80, 32.08, city="תל אביב - מרכז העיר"),
+        ]
+        self.assertAlmostEqual(ashkelon_north_lat(features), 31.686, places=5)
+
+    def test_collapse_alarms_to_cities_merges_minutes_and_centroid(self):
+        col = {
+            "type": "FeatureCollection",
+            "features": [
+                _point(34.50, 31.40, time="2023-10-07 06:29:02", city="שדרות"),
+                _point(34.52, 31.42, time="2023-10-07 06:30:00", city="שדרות"),
+                _point(34.80, 32.08, time="2023-10-07 06:29:02", city="תל אביב - מרכז העיר"),
+            ],
+        }
+        apply_alarm_timeline_minutes(col)
+        out = collapse_alarms_to_cities(col)
+        self.assertEqual(len(out["features"]), 1)
+        feat = out["features"][0]
+        self.assertEqual(feat["id"], "שדרות")
+        self.assertEqual(feat["properties"]["city"], "שדרות")
+        self.assertEqual(feat["properties"]["alarm_minutes"], [389, 390])
+        self.assertEqual(feat["properties"]["alarm_count_total"], 2)
+        lon, lat = feat["geometry"]["coordinates"][:2]
+        self.assertAlmostEqual(lon, 34.51, places=5)
+        self.assertAlmostEqual(lat, 31.41, places=5)
+        self.assertIsNone(feat["properties"].get("timeline_minutes"))
+
+    def test_collapse_skips_empty_city_and_keeps_duplicate_minutes(self):
+        col = {
+            "type": "FeatureCollection",
+            "features": [
+                _point(34.50, 31.40, time="2023-10-07 06:29:02", city="שדרות"),
+                _point(34.50, 31.40, time="2023-10-07 06:29:02", city="שדרות"),
+                _point(34.51, 31.41, time="2023-10-07 06:30:00", city=""),
+                _point(34.52, 31.42, time="2023-10-07 06:31:00"),
+            ],
+        }
+        apply_alarm_timeline_minutes(col)
+        out = collapse_alarms_to_cities(col)
+        self.assertEqual(len(out["features"]), 1)
+        feat = out["features"][0]
+        self.assertEqual(feat["properties"]["city"], "שדרות")
+        self.assertEqual(feat["properties"]["alarm_minutes"], [389, 389])
+        self.assertEqual(feat["properties"]["alarm_count_total"], 2)
+
+    def test_collapse_skips_cities_with_empty_alarm_minutes(self):
+        col = {
+            "type": "FeatureCollection",
+            "features": [
+                _point(34.50, 31.40, city="שדרות"),
+                _point(34.51, 31.41, time="2023-10-07 06:29:02", city="נתיבות"),
+            ],
+        }
+        apply_alarm_timeline_minutes(col)
+        out = collapse_alarms_to_cities(col)
+        cities = [feat["properties"]["city"] for feat in out["features"]]
+        self.assertEqual(cities, ["נתיבות"])
+        self.assertEqual(out["features"][0]["id"], out["features"][0]["properties"]["city"])
+
+
 class AnimationOverrideContractTests(unittest.TestCase):
     def test_orchestrator_declares_nli_investigation_timeline(self):
         path = (
@@ -523,8 +719,11 @@ class AnimationOverrideContractTests(unittest.TestCase):
         snippet = src[nli_idx : nli_idx + 600]
         self.assertIn("investigation_polygons", snippet)
         self.assertIn("lines", snippet)
+        self.assertIn("alarms", snippet)
         self.assertIn('"type": "timeline"', snippet)
         self.assertIn("enabledByDefault", snippet)
+        alarms_block = snippet[snippet.find("alarms") : snippet.find("alarms") + 120]
+        self.assertIn("False", alarms_block)
 
     def test_processed_nli_investigation_style_is_timeline(self):
         path = (
@@ -543,6 +742,13 @@ class AnimationOverrideContractTests(unittest.TestCase):
         line_animation = data.get("lines", {}).get("animation") or {}
         self.assertEqual(line_animation.get("type"), "timeline")
         self.assertFalse(line_animation.get("enabledByDefault"))
+        alarm_style = data.get("alarms") or {}
+        alarm_animation = alarm_style.get("animation") or {}
+        self.assertEqual(alarm_animation.get("type"), "timeline")
+        self.assertFalse(alarm_animation.get("enabledByDefault"))
+        self.assertIsNone(alarm_style.get("labels"))
+        layers = (alarm_style.get("defaultSymbol") or {}).get("symbolLayers") or []
+        self.assertTrue(any(layer.get("type") == "markerPoint" for layer in layers))
 
 
 if __name__ == "__main__":

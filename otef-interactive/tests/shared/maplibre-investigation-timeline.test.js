@@ -8,6 +8,7 @@ import {
   collectTimelineBeats,
   collectUnionTimelineBeats,
   disposeInvestigationTimelineForMap,
+  INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
   lineHeadCoordinatesAt,
@@ -15,6 +16,7 @@ import {
   orientLineCoordinatesTowardIsrael,
   objectIdsActiveAt,
   parseLocalTimelineToMinutes,
+  previousTimelineBeat,
   syncInvestigationTimelineToMap,
   TIMELINE_BEAT_MS,
   timelinePhaseAt,
@@ -102,15 +104,39 @@ describe("investigation polygon timeline", () => {
       { properties: { OBJECTID: 1, timeline_minutes: 390 } },
       { properties: { OBJECTID: 2, timeline_minutes: 420 } },
     ];
-    expect(collectPlaybackTimelineBeats(true, false, INVESTIGATION_FEATURES, lines)).toEqual([
+    expect(collectPlaybackTimelineBeats(true, false, false, INVESTIGATION_FEATURES, lines, [])).toEqual([
       400, 410, 420, 435, 560, 570, 700, 740,
     ]);
-    expect(collectPlaybackTimelineBeats(false, true, INVESTIGATION_FEATURES, lines)).toEqual([
+    expect(collectPlaybackTimelineBeats(false, true, false, INVESTIGATION_FEATURES, lines, [])).toEqual([
       390, 420,
     ]);
-    expect(collectPlaybackTimelineBeats(true, true, INVESTIGATION_FEATURES, lines)).toEqual([
+    expect(collectPlaybackTimelineBeats(true, true, false, INVESTIGATION_FEATURES, lines, [])).toEqual([
       390, 400, 410, 420, 435, 560, 570, 700, 740,
     ]);
+  });
+
+  it("hitchhikes polygon beats when polygons play with alarms", () => {
+    expect(
+      collectPlaybackTimelineBeats(true, false, true, INVESTIGATION_FEATURES, [], [
+        { properties: { alarm_minutes: [389, 1200] } },
+        { properties: { alarm_minutes: [401] } },
+      ]),
+    ).toEqual([400, 410, 420, 435, 560, 570, 700, 740]);
+  });
+
+  it("uses 5-minute bins from city minutes when only alarms play", () => {
+    expect(
+      collectPlaybackTimelineBeats(false, false, true, [], [], [
+        { properties: { alarm_minutes: [389, 391] } },
+        { properties: { alarm_minutes: [402] } },
+      ]),
+    ).toEqual([385, 390, 400]);
+  });
+
+  it("previousTimelineBeat is null on first beat and hold", () => {
+    expect(previousTimelineBeat([400, 410], 400)).toBeNull();
+    expect(previousTimelineBeat([400, 410], null)).toBeNull();
+    expect(previousTimelineBeat([400, 410], 410)).toBe(400);
   });
 
   it("grows a line once during its beat and keeps it full afterward", () => {
@@ -179,15 +205,23 @@ describe("syncInvestigationTimelineToMap", () => {
     const fillId = "nli__investigation_polygons__fill__0";
     const lineId = "nli__investigation_polygons__line__1";
     const routeId = "nli__lines__line__0";
+    const alarmId = "nli__alarms__circle__0";
     const paints = {
       [fillId]: { "fill-opacity": 0.4, "fill-color": "#f79009" },
       [lineId]: { "line-opacity": 1, "line-width": 1.6, "line-color": "#b54708" },
       [routeId]: { "line-opacity": 1, "line-width": 2, "line-color": "#c31f4f" },
+      [alarmId]: {
+        "circle-radius": 4,
+        "circle-color": "#fbbf24",
+        "circle-opacity": 0.4,
+        "circle-stroke-width": 0.5,
+      },
     };
     const layers = [
       { id: fillId, type: "fill", source: "nli__investigation_polygons" },
       { id: lineId, type: "line", source: "nli__investigation_polygons" },
       { id: routeId, type: "line", source: "nli__lines" },
+      { id: alarmId, type: "circle", source: "nli__alarms" },
     ];
     const sources = {};
     return {
@@ -438,6 +472,100 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(gradient).toBeDefined();
     expect(JSON.stringify(gradient[2])).toContain("line-progress");
     expect(JSON.stringify(gradient[2])).toContain(String(800 / TIMELINE_BEAT_MS));
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("starts playback when only nli.alarms is playing", async () => {
+    const map = makeMap();
+    const raf = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", raf);
+    await syncInvestigationTimelineToMap(
+      map,
+      { [INVESTIGATION_ALARMS_FULL_ID]: true },
+      [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }],
+      {
+        featuresById: {
+          [INVESTIGATION_ALARMS_FULL_ID]: [{ properties: { alarm_minutes: [389] } }],
+        },
+        getLayerDataUrl: () => null,
+        now: () => 0,
+      },
+    );
+    expect(raf).toHaveBeenCalled();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("does not reset startedAt when alarms join a playing polygon session", async () => {
+    const map = makeMap();
+    let now = 800;
+    const groups = [
+      {
+        id: "nli",
+        layers: [
+          { id: "investigation_polygons", enabled: true },
+          { id: "alarms", enabled: true },
+        ],
+      },
+    ];
+    const deps = {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES,
+        [INVESTIGATION_ALARMS_FULL_ID]: [
+          { properties: { alarm_minutes: [389] } },
+          { properties: { alarm_minutes: [401] } },
+        ],
+      },
+      getLayerDataUrl: () => null,
+      now: () => now,
+    };
+    await syncInvestigationTimelineToMap(map, { [INVESTIGATION_POLYGONS_FULL_ID]: true }, groups, deps);
+    now = 800 + TIMELINE_BEAT_MS;
+    await syncInvestigationTimelineToMap(
+      map,
+      { [INVESTIGATION_POLYGONS_FULL_ID]: true, [INVESTIGATION_ALARMS_FULL_ID]: true },
+      groups,
+      deps,
+    );
+    const fillOpacity = [...map.setPaintProperty.mock.calls]
+      .reverse()
+      .find((call) => call[0].includes("investigation_polygons") && call[1] === "fill-opacity");
+    expect(JSON.stringify(fillOpacity[2])).toContain("410");
+    cancelAnimationFrame.mockClear();
+    await syncInvestigationTimelineToMap(
+      map,
+      { [INVESTIGATION_POLYGONS_FULL_ID]: false, [INVESTIGATION_ALARMS_FULL_ID]: true },
+      groups,
+      deps,
+    );
+    expect(cancelAnimationFrame).not.toHaveBeenCalled();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("fetches layers missing from featuresById", async () => {
+    const map = makeMap();
+    const getLayerDataUrl = vi.fn((id) =>
+      id === INVESTIGATION_LINES_FULL_ID ? "https://example.test/lines.json" : null,
+    );
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ features: LINE_FEATURES }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    await syncInvestigationTimelineToMap(
+      map,
+      { [INVESTIGATION_POLYGONS_FULL_ID]: true, [INVESTIGATION_LINES_FULL_ID]: true },
+      bothGroups(),
+      {
+        featuresById: {
+          [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES,
+        },
+        getLayerDataUrl,
+        now: () => 0,
+      },
+    );
+    expect(getLayerDataUrl).toHaveBeenCalledWith(INVESTIGATION_LINES_FULL_ID);
+    expect(getLayerDataUrl).not.toHaveBeenCalledWith(INVESTIGATION_ALARMS_FULL_ID);
+    expect(fetchMock).toHaveBeenCalledWith("https://example.test/lines.json");
     disposeInvestigationTimelineForMap(map);
   });
 });

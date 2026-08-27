@@ -114,6 +114,7 @@ NLI_CATALOG_MARKER_SIZE = 10.0
 NLI_CATALOG_STROKE = (15, 23, 42)
 NLI_CATALOG_STROKE_WIDTH = 0.6
 _LOCAL_HHMM = re.compile(r"^local\s+(\d{1,2}):(\d{2})$")
+ALARM_TIME_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$")
 
 BIBAS_STATUS_VALUE = "Murdered in captivity (bibas)"
 CANONICAL_CAPTIVITY_STATUS = "Murdered in captivity"
@@ -322,6 +323,105 @@ def parse_local_timeline_to_minutes(value: Any) -> Optional[int]:
     return int(match.group(1)) * 60 + int(match.group(2))
 
 
+def parse_alarm_timestamp_to_minutes(value: Any) -> Optional[int]:
+    if not isinstance(value, str):
+        return None
+    match = ALARM_TIME_RE.match(value.strip())
+    if not match:
+        return None
+    return int(match.group(4)) * 60 + int(match.group(5))
+
+
+def apply_alarm_timeline_minutes(collection: Dict[str, Any]) -> int:
+    changed = 0
+    for feature in collection.get("features") or []:
+        props = dict(feature.get("properties") or {})
+        minutes = parse_alarm_timestamp_to_minutes(props.get("time"))
+        if minutes is None:
+            continue
+        if props.get("timeline_minutes") != minutes:
+            props["timeline_minutes"] = minutes
+            feature["properties"] = props
+            changed += 1
+    return changed
+
+
+MITZPE_RAMON_LAT = 30.610
+ASHKELON_NORTH_FALLBACK_LAT = 31.686
+
+
+def _point_lonlat(feature: Dict[str, Any]) -> Optional[Tuple[float, float]]:
+    geometry = feature.get("geometry") or {}
+    coords = geometry.get("coordinates") or []
+    if geometry.get("type") != "Point" or len(coords) < 2:
+        return None
+    return float(coords[0]), float(coords[1])
+
+
+def ashkelon_north_lat(features) -> float:
+    lats = []
+    for feat in features or []:
+        city = str((feat.get("properties") or {}).get("city") or "")
+        if "אשקלון" not in city:
+            continue
+        lonlat = _point_lonlat(feat)
+        if lonlat is not None:
+            lats.append(lonlat[1])
+    return max(lats) if lats else ASHKELON_NORTH_FALLBACK_LAT
+
+
+def city_centroid_in_story_band(lat: float, north_lat: float) -> bool:
+    return MITZPE_RAMON_LAT - 1e-9 <= float(lat) <= float(north_lat) + 1e-9
+
+
+def collapse_alarms_to_cities(collection: Dict[str, Any]) -> Dict[str, Any]:
+    features = list(collection.get("features") or [])
+    north_lat = ashkelon_north_lat(features)
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for feat in features:
+        city = str((feat.get("properties") or {}).get("city") or "").strip()
+        if not city:
+            continue
+        groups.setdefault(city, []).append(feat)
+    out_features: List[Dict[str, Any]] = []
+    for city, group in groups.items():
+        lons: List[float] = []
+        lats: List[float] = []
+        minutes: List[int] = []
+        for feat in group:
+            lonlat = _point_lonlat(feat)
+            if lonlat is None:
+                continue
+            lons.append(lonlat[0])
+            lats.append(lonlat[1])
+            raw = (feat.get("properties") or {}).get("timeline_minutes")
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                continue
+            minutes.append(int(raw))
+        if not lons:
+            continue
+        lon = sum(lons) / len(lons)
+        lat = sum(lats) / len(lats)
+        if not city_centroid_in_story_band(lat, north_lat):
+            continue
+        minutes.sort()
+        if not minutes:
+            continue
+        out_features.append(
+            {
+                "type": "Feature",
+                "id": city,
+                "properties": {
+                    "city": city,
+                    "alarm_minutes": minutes,
+                    "alarm_count_total": len(minutes),
+                },
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            }
+        )
+    return {"type": "FeatureCollection", "features": out_features}
+
+
 def apply_timeline_minutes(collection: Dict[str, Any]) -> int:
     changed = 0
     for feature in collection.get("features") or []:
@@ -363,8 +463,11 @@ def _cim_point_symbol(
     stroke: Sequence[int] = (255, 255, 255),
     shape: str = "circle",
     stroke_width: float = 0.6,
+    fill_alpha: int = 100,
 ) -> Dict[str, Any]:
-    graphic: Dict[str, Any] = {"symbol": _cim_polygon_symbol(fill, 100, stroke, stroke_width)}
+    graphic: Dict[str, Any] = {
+        "symbol": _cim_polygon_symbol(fill, fill_alpha, stroke, stroke_width)
+    }
     if str(shape).lower() == "square":
         graphic["geometry"] = {"paths": [[[0, 0], [1, 0]]]}
     return {
@@ -417,6 +520,29 @@ def unique_value_point_lyrx(
                     "symbol": _symbol_ref(default_symbol),
                     "defaultSymbol": _symbol_ref(default_symbol),
                     "groups": [{"type": "CIMUniqueValueGroup", "classes": cim_classes}],
+                },
+            }
+        ]
+    }
+
+
+def simple_point_lyrx(
+    fill: Sequence[int] = (251, 191, 36),
+    size: float = 6.0,
+    fill_alpha: int = 40,
+    stroke: Sequence[int] = (255, 255, 255),
+    stroke_width: float = 0.4,
+) -> Dict[str, Any]:
+    symbol = _cim_point_symbol(
+        fill, size=size, stroke=stroke, stroke_width=stroke_width, fill_alpha=fill_alpha
+    )
+    return {
+        "layerDefinitions": [
+            {
+                "name": "alarms",
+                "renderer": {
+                    "type": "CIMSimpleRenderer",
+                    "symbol": _symbol_ref(symbol),
                 },
             }
         ]
@@ -542,7 +668,7 @@ ZIP_LAYER_MAP = {
 }
 
 # Derived stems (not in the zip map) must survive obsolete-file cleanup.
-NLI_KEEP_STEMS = set(ZIP_LAYER_MAP.values()) | {"people_names"}
+NLI_KEEP_STEMS = set(ZIP_LAYER_MAP.values()) | {"people_names", "alarms"}
 
 PROJECTED_STEMS = {"investigation_polygons", "lines"}
 TIMELINE_STEMS = {"investigation_polygons", "lines"}
@@ -584,6 +710,14 @@ NLI_POPUP_CONFIG = {
                     {"label": "Name", "key": "Name"},
                     {"label": "Timeline", "key": "timeline"},
                     {"label": "Notes", "key": "Notes"},
+                ],
+            },
+            "alarms": {
+                "titleField": "city",
+                "hideEmpty": True,
+                "fields": [
+                    {"label": "City", "key": "city"},
+                    {"label": "Alerts", "key": "alarm_count_total"},
                 ],
             },
         }
@@ -678,6 +812,7 @@ def prepare_nli_pack(
     pack_dir: Path,
     popup_path: Optional[Path | Sequence[Path]] = None,
     authorities_path: Optional[Path] = None,
+    alarms_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     gis_dir = pack_dir / "gis"
     styles_dir = pack_dir / "styles"
@@ -717,6 +852,19 @@ def prepare_nli_pack(
                 "time_fields_rewritten": times,
                 "legend_values_rewritten": grouped,
             }
+    if alarms_path is not None and Path(alarms_path).is_file():
+        alarms_collection = json.loads(Path(alarms_path).read_text(encoding="utf-8"))
+        dropped = drop_null_geometries(alarms_collection)
+        timed = apply_alarm_timeline_minutes(alarms_collection)
+        alarms_collection = collapse_alarms_to_cities(alarms_collection)
+        _write_json(gis_dir / "alarms.geojson", alarms_collection)
+        _write_json(styles_dir / "alarms.lyrx", simple_point_lyrx())
+        summary["layers"]["alarms"] = {
+            "features": len(alarms_collection.get("features") or []),
+            "dropped_null_geometry": dropped,
+            "jittered": 0,
+            "timeline_minutes_written": timed,
+        }
     _write_json(styles_dir / "investigation_polygons.lyrx", simple_polygon_lyrx())
     _write_json(styles_dir / "people.lyrx", unique_value_point_lyrx("status", OCT7_STATUS_CLASSES))
     _write_json(styles_dir / "lines.lyrx", simple_line_lyrx())
@@ -749,7 +897,8 @@ def main() -> None:
         repo / "otef-interactive" / "public" / "source" / "popup-config.json",
         repo / "otef-interactive" / "public" / "source" / "layers" / "popup-config.json",
     ]
-    summary = prepare_nli_pack(zip_path, pack_dir, popup_paths)
+    alarms_path = Path.home() / "Downloads" / "oct7_alarms_2023-10-07.geojson"
+    summary = prepare_nli_pack(zip_path, pack_dir, popup_paths, alarms_path=alarms_path)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
