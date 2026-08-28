@@ -579,6 +579,12 @@ function expectNliFullyOff(groups) {
   }
 }
 
+function expectNliSlideshowLayers(groups) {
+  for (const layer of NLI_LAYERS) {
+    expect(packLayerEnabled(groups, "nli", layer.id)).toBe(layer.id !== "people_names");
+  }
+}
+
 describe("slideshow incoming groups vs live NLI", () => {
   it("forces live-enabled nli layers off when the current pack is not nli", () => {
     const incoming = buildSlideshowIncomingGroups("pack_b", makeLiveGroupsWithNliOn(), {
@@ -597,9 +603,9 @@ describe("slideshow incoming groups vs live NLI", () => {
       keepSettlementNames: true,
     });
     expect(enabledPackId(incoming)).toBe("nli");
-    for (const layer of NLI_LAYERS) {
-      expect(packLayerEnabled(incoming, "nli", layer.id)).toBe(true);
-    }
+    expectNliSlideshowLayers(incoming);
+    expect(packLayerEnabled(incoming, "nli", "people")).toBe(true);
+    expect(packLayerEnabled(incoming, "nli", "people_names")).toBe(false);
     expect(packLayerEnabled(incoming, "pack_b", "b")).toBe(false);
     expect(packLayerEnabled(incoming, "gaza", "g1")).toBe(false);
   });
@@ -618,6 +624,21 @@ describe("slideshow incoming groups vs live NLI", () => {
     expect(overlayGroups).toBe(incoming);
     expectNliFullyOff(overlayGroups);
     expect(packLayerEnabled(live, "nli", "people_names")).toBe(true);
+    expect(packLayerEnabled(incoming, "nli", "people_names")).toBe(false);
+
+    const nliIncoming = buildSlideshowIncomingGroups("nli", live, {
+      excludedPresentationPackIds: ["gaza"],
+      keepSettlementNames: true,
+    });
+    const nliOverlay = resolvePresentationOverlayVisibility({
+      presentationActive: true,
+      incomingGroups: nliIncoming,
+      liveGroups: live,
+    });
+    expect(nliOverlay).toBe(nliIncoming);
+    expect(packLayerEnabled(live, "nli", "people_names")).toBe(true);
+    expect(packLayerEnabled(nliIncoming, "nli", "people_names")).toBe(false);
+    expect(packLayerEnabled(nliIncoming, "nli", "people")).toBe(true);
   });
 
   it("clears nli overlays before the first incoming tick when presentation is starting", () => {
@@ -677,9 +698,9 @@ describe("slideshow runtime nli rotation", () => {
     await vi.advanceTimersByTimeAsync(100);
     await flushMicrotasks();
     expect(enabledPackId(sync.mock.calls[2][1])).toBe("nli");
-    for (const layer of NLI_LAYERS) {
-      expect(packLayerEnabled(sync.mock.calls[2][1], "nli", layer.id)).toBe(true);
-    }
+    expectNliSlideshowLayers(sync.mock.calls[2][1]);
+    expect(packLayerEnabled(sync.mock.calls[2][1], "nli", "people")).toBe(true);
+    expect(packLayerEnabled(sync.mock.calls[2][1], "nli", "people_names")).toBe(false);
     expect(packLayerEnabled(sync.mock.calls[2][1], "pack_b", "b")).toBe(false);
     await runtime.stop();
     expect(runtime.getLastIncomingGroups()).toBeNull();

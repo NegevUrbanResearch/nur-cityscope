@@ -178,6 +178,10 @@ export const OTEF_API = {
     return this.updateState(tableName, { basemap, ...meta });
   },
 
+  async updateInvestigationClock(tableName = this.defaultTable, clock, meta = {}) {
+    return this.updateState(tableName, { investigation_clock: clock, ...meta });
+  },
+
   async updateViewport(tableName = this.defaultTable, viewport) {
     const meta = {};
     if (viewport && typeof viewport === "object") {

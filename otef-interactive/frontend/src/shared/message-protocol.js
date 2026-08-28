@@ -11,6 +11,7 @@ export const OTEF_MESSAGE_TYPES = {
   BASEMAP_CHANGED: "otef_basemap_changed",
   VELOCITY_SYNC: "otef_velocity_sync",
   PROJECTION_SLIDESHOW_CHANGED: "otef_projection_slideshow_changed",
+  INVESTIGATION_CLOCK_CHANGED: "otef_investigation_clock_changed",
   PLACE_NAVIGATION_COMMAND: "otef_place_navigation_command",
 };
 

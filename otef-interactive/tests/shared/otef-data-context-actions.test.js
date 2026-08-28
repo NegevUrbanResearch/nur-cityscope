@@ -1,4 +1,7 @@
+import { idleNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
+
 let setLayerAnimations;
+let toggleAnimation;
 let zoom;
 let pan;
 let setBasemap;
@@ -15,6 +18,7 @@ beforeEach(async () => {
 
   const mod = await import('../../frontend/src/shared/otef-data-context/OTEFDataContext-actions.js');
   setLayerAnimations = mod.setLayerAnimations;
+  toggleAnimation = mod.toggleAnimation;
   zoom = mod.zoom;
   pan = mod.pan;
   setBasemap = mod.setBasemap;
@@ -47,6 +51,58 @@ describe('OTEFDataContext actions', () => {
     expect(result.ok).toBe(true);
     expect(ctx._animations[ids[0]]).toBe(true);
     expect(ctx._animations[ids[1]]).toBe(true);
+    expect(global.fetch).toHaveBeenCalled();
+  });
+
+  test('toggleAnimation("nli.lines", true) does not change the clock', async () => {
+    const clock = idleNliClock();
+    const ctx = makeMockContextWithAnimations({});
+    ctx._investigationClock = { ...clock };
+    ctx._pendingAnimationOps = 0;
+    ctx._setInvestigationClock = function setClock(next) {
+      this._investigationClock = next;
+    };
+
+    const result = await toggleAnimation(ctx, "nli.lines", true);
+
+    expect(result.ok).toBe(true);
+    expect(ctx._investigationClock).toEqual(clock);
+    expect(ctx._animations["nli.lines"]).toBeFalsy();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("setLayerAnimations no-ops NLI playable ids without touching the clock", async () => {
+    const clock = idleNliClock();
+    const ctx = makeMockContextWithAnimations({});
+    ctx._investigationClock = { ...clock };
+    ctx._pendingAnimationOps = 0;
+    ctx._setInvestigationClock = function setClock(next) {
+      this._investigationClock = next;
+    };
+
+    const result = await setLayerAnimations(
+      ctx,
+      ["nli.investigation_polygons", "nli.lines", "nli.alarms"],
+      true,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(ctx._investigationClock).toEqual(clock);
+    expect(ctx._animations["nli.investigation_polygons"]).toBeFalsy();
+    expect(ctx._animations["nli.lines"]).toBeFalsy();
+    expect(ctx._animations["nli.alarms"]).toBeFalsy();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("setLayerAnimations still applies non-NLI ids when mixed with playables", async () => {
+    const ctx = makeMockContextWithAnimations({});
+    ctx._pendingAnimationOps = 0;
+
+    const result = await setLayerAnimations(ctx, ["nli.lines", "october_7th.route_line_test"], true);
+
+    expect(result.ok).toBe(true);
+    expect(ctx._animations["nli.lines"]).toBeFalsy();
+    expect(ctx._animations["october_7th.route_line_test"]).toBe(true);
     expect(global.fetch).toHaveBeenCalled();
   });
 

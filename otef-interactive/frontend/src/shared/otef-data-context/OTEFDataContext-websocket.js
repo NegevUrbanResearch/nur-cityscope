@@ -1,6 +1,7 @@
 import { OTEF_API } from "../api-client.js";
 import { isGisBasemapId, normalizeGisBasemap } from "../gis-basemap.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
+import { normalizeNliClock } from "../nli-investigation-clock.js";
 import { OTEFWebSocketClient } from "../websocket-client.js";
 import { recordTraceEvent } from "../otef-trace.js";
 import { OTEFDataContextInternals } from "./index.js";
@@ -15,6 +16,35 @@ function fallbackLogger() {
 }
 
 const getLogger = OTEFDataContextInternals.getLogger || fallbackLogger;
+
+function stampClockOffset(ctx, clock) {
+  const serverNowMs = Number(clock && clock.serverNowMs);
+  if (Number.isFinite(serverNowMs)) {
+    ctx._clockOffsetMs = serverNowMs - Date.now();
+  }
+}
+
+function applyInvestigationClockHydrate(ctx, raw, { notify } = { notify: true }) {
+  if (notify && typeof ctx._setInvestigationClock === "function") {
+    ctx._setInvestigationClock(raw);
+    return;
+  }
+  const normalized = normalizeNliClock(raw, ctx._investigationClock);
+  ctx._investigationClock = normalized;
+  stampClockOffset(ctx, normalized);
+}
+
+function applyInvestigationClockIfNewer(ctx, raw) {
+  const incoming = normalizeNliClock(raw, ctx._investigationClock);
+  const localRev = Number(ctx._investigationClock && ctx._investigationClock.revision) || 0;
+  if (!(incoming.revision > localRev)) return;
+  if (typeof ctx._setInvestigationClock === "function") {
+    ctx._setInvestigationClock(incoming);
+    return;
+  }
+  ctx._investigationClock = incoming;
+  stampClockOffset(ctx, incoming);
+}
 
 function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
   if (!state || typeof state !== "object") return;
@@ -37,6 +67,13 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
       typeof state.projection_slideshow === "object"
     ) {
       ctx._setProjectionSlideshow(state.projection_slideshow);
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(state, "investigation_clock") &&
+      state.investigation_clock &&
+      typeof state.investigation_clock === "object"
+    ) {
+      applyInvestigationClockHydrate(ctx, state.investigation_clock, { notify: true });
     }
   } else {
     if (state.viewport) {
@@ -66,6 +103,13 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
       typeof state.projection_slideshow === "object"
     ) {
       ctx._projectionSlideshow = { ...state.projection_slideshow };
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(state, "investigation_clock") &&
+      state.investigation_clock &&
+      typeof state.investigation_clock === "object"
+    ) {
+      applyInvestigationClockHydrate(ctx, state.investigation_clock, { notify: false });
     }
   }
 }
@@ -263,6 +307,25 @@ function setupWebSocket(ctx) {
     }
   });
 
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.INVESTIGATION_CLOCK_CHANGED, async (msg = {}) => {
+    try {
+      const raw = msg && msg.investigationClock;
+      if (raw && typeof raw === "object") {
+        applyInvestigationClockIfNewer(ctx, raw);
+        return;
+      }
+      const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+      if (state?.investigation_clock && typeof state.investigation_clock === "object") {
+        applyInvestigationClockIfNewer(ctx, state.investigation_clock);
+      }
+    } catch (err) {
+      getLogger().error(
+        "[OTEFDataContext] Failed to apply investigation clock after INVESTIGATION_CLOCK_CHANGED:",
+        err,
+      );
+    }
+  });
+
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.PLACE_NAVIGATION_COMMAND, (msg = {}) => {
     const command = msg.command && typeof msg.command === "object" ? msg.command : null;
     if (!command) return;
@@ -276,6 +339,7 @@ function setupWebSocket(ctx) {
 OTEFDataContextInternals.websocket = {
   applyStateFromApi,
   setupWebSocket,
+  applyInvestigationClockIfNewer,
 };
 
-export { applyStateFromApi, setupWebSocket };
+export { applyStateFromApi, setupWebSocket, applyInvestigationClockIfNewer };

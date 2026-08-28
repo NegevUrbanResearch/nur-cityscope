@@ -14,7 +14,9 @@ import {
   INVESTIGATION_ALARMS_FULL_ID,
   quantizeAlarmMinutes,
 } from "../../frontend/src/shared/maplibre-investigation-alarms.js";
+import { flashPreviousClock, idleNliClock, playNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
 import {
+  collectPlaybackTimelineBeats,
   disposeInvestigationTimelineForMap,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
@@ -139,6 +141,27 @@ describe("investigation alarm helpers", () => {
     expect(JSON.stringify(flash.color)).toMatch(/#fde68a/i);
     expect(JSON.stringify(flash.opacity)).toMatch(/0\.9/);
   });
+
+  it("jump to later beat flashes only the native window", () => {
+    const names = flashingCityNames(
+      [
+        { properties: { city: "A", alarm_minutes: [400], alarm_count_total: 1 } },
+        { properties: { city: "B", alarm_minutes: [420], alarm_count_total: 1 } },
+      ],
+      420,
+      flashPreviousClock([400, 420], 420, { isJump: true }),
+    );
+    expect(names.rows.map((r) => r.city)).toEqual(["B"]);
+  });
+
+  it("jump to first beat does not megawave", () => {
+    const names = flashingCityNames(
+      [{ properties: { city: "A", alarm_minutes: [400], alarm_count_total: 1 } }],
+      400,
+      flashPreviousClock([400, 420], 400, { isJump: true }),
+    );
+    expect(names.totalFlashing).toBe(0);
+  });
 });
 
 describe("syncInvestigationTimelineToMap alarms", () => {
@@ -209,6 +232,14 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     };
   }
 
+  const POLYGON_BEATS = [
+    400, 410, 420, 435, 560, 570, 700, 740,
+  ];
+
+  function playClock(membership, beats, nowMs = 0) {
+    return playNliClock(idleNliClock(), membership, beats, nowMs);
+  }
+
   it("sync paints overlay alarm circles from GeoJSON count, not pack feature-state", async () => {
     const map = makeMap();
     const alarmId = "nli__alarms__circle__0";
@@ -224,11 +255,10 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     ];
     await syncInvestigationTimelineToMap(
       map,
-      {
-        [INVESTIGATION_POLYGONS_FULL_ID]: true,
-        [INVESTIGATION_LINES_FULL_ID]: true,
-        [INVESTIGATION_ALARMS_FULL_ID]: true,
-      },
+      playClock(
+        [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID, INVESTIGATION_ALARMS_FULL_ID],
+        POLYGON_BEATS,
+      ),
       groups,
       {
         featuresById: {
@@ -317,10 +347,18 @@ describe("syncInvestigationTimelineToMap alarms", () => {
       getLayerDataUrl: () => null,
       now: () => 0,
     };
-    await syncInvestigationTimelineToMap(map, { [INVESTIGATION_ALARMS_FULL_ID]: true }, groups, deps);
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_ALARMS_FULL_ID]: false },
+      playClock(
+        [INVESTIGATION_ALARMS_FULL_ID],
+        collectPlaybackTimelineBeats(false, false, true, [], [], deps.featuresById[INVESTIGATION_ALARMS_FULL_ID]),
+      ),
+      groups,
+      deps,
+    );
+    await syncInvestigationTimelineToMap(
+      map,
+      idleNliClock(),
       [{ id: "nli", layers: [{ id: "alarms", enabled: false }] }],
       deps,
     );
@@ -335,27 +373,31 @@ describe("syncInvestigationTimelineToMap alarms", () => {
 
   it("count layer layout and filter use GeoJSON properties not feature-state", async () => {
     const map = makeMap();
+    const alarmFeatures = [
+      {
+        id: "נתיב העשרה",
+        properties: {
+          city: "נתיב העשרה",
+          alarm_minutes: Array.from({ length: 20 }, (_, i) => 389 + i),
+        },
+        geometry: { type: "Point", coordinates: [34.54, 31.37] },
+      },
+      {
+        id: "שדרות",
+        properties: { city: "שדרות", alarm_minutes: [389] },
+        geometry: { type: "Point", coordinates: [34.59, 31.52] },
+      },
+    ];
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_ALARMS_FULL_ID]: true },
+      playClock(
+        [INVESTIGATION_ALARMS_FULL_ID],
+        collectPlaybackTimelineBeats(false, false, true, [], [], alarmFeatures),
+      ),
       [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }],
       {
         featuresById: {
-          [INVESTIGATION_ALARMS_FULL_ID]: [
-            {
-              id: "נתיב העשרה",
-              properties: {
-                city: "נתיב העשרה",
-                alarm_minutes: Array.from({ length: 20 }, (_, i) => 389 + i),
-              },
-              geometry: { type: "Point", coordinates: [34.54, 31.37] },
-            },
-            {
-              id: "שדרות",
-              properties: { city: "שדרות", alarm_minutes: [389] },
-              geometry: { type: "Point", coordinates: [34.59, 31.52] },
-            },
-          ],
+          [INVESTIGATION_ALARMS_FULL_ID]: alarmFeatures,
         },
         now: () => 0,
       },
@@ -411,7 +453,10 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     }));
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_POLYGONS_FULL_ID]: true, [INVESTIGATION_ALARMS_FULL_ID]: true },
+      playClock(
+        [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_ALARMS_FULL_ID],
+        POLYGON_BEATS,
+      ),
       [
         {
           id: "nli",
@@ -466,7 +511,10 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     });
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_ALARMS_FULL_ID]: true },
+      playClock(
+        [INVESTIGATION_ALARMS_FULL_ID],
+        collectPlaybackTimelineBeats(false, false, true, [], [], cities),
+      ),
       [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }],
       {
         featuresById: { [INVESTIGATION_ALARMS_FULL_ID]: cities },
@@ -484,7 +532,7 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     vi.stubGlobal("requestAnimationFrame", raf);
     await syncInvestigationTimelineToMap(
       map,
-      {},
+      idleNliClock(),
       [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }],
       {
         featuresById: {
@@ -528,18 +576,22 @@ describe("syncInvestigationTimelineToMap alarms", () => {
       rafCb = cb;
       return 1;
     });
+    const alarmFeatures = [
+      {
+        id: "שדרות",
+        properties: { city: "שדרות", alarm_minutes: [385, 410], alarm_count_total: 2 },
+      },
+    ];
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_ALARMS_FULL_ID]: true },
+      playClock(
+        [INVESTIGATION_ALARMS_FULL_ID],
+        collectPlaybackTimelineBeats(false, false, true, [], [], alarmFeatures),
+      ),
       [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }],
       {
         featuresById: {
-          [INVESTIGATION_ALARMS_FULL_ID]: [
-            {
-              id: "שדרות",
-              properties: { city: "שדרות", alarm_minutes: [385, 410], alarm_count_total: 2 },
-            },
-          ],
+          [INVESTIGATION_ALARMS_FULL_ID]: alarmFeatures,
         },
         now: () => now,
       },
@@ -574,10 +626,10 @@ describe("syncInvestigationTimelineToMap alarms", () => {
       getLayerDataUrl: () => null,
       now: () => 0,
     };
-    await syncInvestigationTimelineToMap(map, {}, liveOn, deps);
+    await syncInvestigationTimelineToMap(map, idleNliClock(), liveOn, deps);
     expect(map.getLayer("nli-investigation-alarm-circles")).toBeTruthy();
     expect(map.getSource("nli-investigation-alarm-count")).toBeTruthy();
-    await syncInvestigationTimelineToMap(map, {}, liveOn, {
+    await syncInvestigationTimelineToMap(map, idleNliClock(), liveOn, {
       ...deps,
       visibilityLayerGroups: slideshowOff,
     });

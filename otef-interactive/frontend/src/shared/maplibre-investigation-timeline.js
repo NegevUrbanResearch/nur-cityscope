@@ -1,6 +1,6 @@
 /**
  * Shared-clock highlight for NLI investigation polygons, lines, and alarms.
- * Uses the same remote play/stop as Oct 7 (`style.animation` + toggleAnimation).
+ * Maps evaluate `NliInvestigationClock` (GIS and projection share T via correctedNow).
  * Active lines use the same line-gradient trail as Oct 7 ציר layers, once per beat,
  * including the trail-head circle. The head hides when that line's beat finishes.
  * Completed lines stay fully drawn. Base pack lines are hidden while playback runs.
@@ -8,18 +8,37 @@
  */
 
 import {
-  INVESTIGATION_ALARMS_FULL_ID,
   alarmCaptionHtml,
   applyAlarmMode,
-  collectAlarmTimelineBeats,
 } from "./maplibre-investigation-alarms.js";
+import {
+  INVESTIGATION_ALARMS_FULL_ID,
+  INVESTIGATION_LINES_FULL_ID,
+  INVESTIGATION_POLYGONS_FULL_ID,
+  TIMELINE_BEAT_MS,
+  formatMinutesAsLocalClock,
+} from "./nli-investigation-beats.js";
+import {
+  evaluateClock,
+  flashPreviousClock,
+  normalizeNliClock,
+} from "./nli-investigation-clock.js";
 import layerRegistry from "./layer-registry.js";
 
-export const INVESTIGATION_POLYGONS_FULL_ID = "nli.investigation_polygons";
-export const INVESTIGATION_LINES_FULL_ID = "nli.lines";
-export { INVESTIGATION_ALARMS_FULL_ID };
-export const TIMELINE_BEAT_MS = 3200;
-export const TIMELINE_HOLD_MS = 2500;
+export {
+  INVESTIGATION_ALARMS_FULL_ID,
+  INVESTIGATION_LINES_FULL_ID,
+  INVESTIGATION_POLYGONS_FULL_ID,
+  TIMELINE_BEAT_MS,
+  TIMELINE_HOLD_MS,
+  clockStoryDurationMs,
+  collectPlaybackTimelineBeats,
+  collectTimelineBeats,
+  collectUnionTimelineBeats,
+  formatMinutesAsLocalClock,
+  previousTimelineBeat,
+  timelinePhaseAt,
+} from "./nli-investigation-beats.js";
 
 const FILL_FUTURE = 0.06;
 const FILL_PAST = 0.55;
@@ -53,61 +72,37 @@ const LINE_HEAD_HIDE_AT = 0.999;
 /** @type {WeakMap<object, object>} */
 const stateByMap = new WeakMap();
 
+/** Jump flash consume keyed by revision; survives dispose/remount of the same map. @type {WeakMap<object, number>} */
+const consumedJumpRevisionByMap = new WeakMap();
+
+/** Per-map paused+jump one-shot origin: first non-stale apply of that revision. @type {WeakMap<object, { revision: number, originMs: number }>} */
+const jumpOneShotOriginByMap = new WeakMap();
+
+/** In-flight sync generation + requested revision so a later Stop can abort an older Play. @type {WeakMap<object, { generation: number, revision: number }>} */
+const syncRequestByMap = new WeakMap();
+
+function beginTimelineSyncRequest(map, clock) {
+  const prev = syncRequestByMap.get(map);
+  const request = {
+    generation: (prev?.generation || 0) + 1,
+    revision: Number.isFinite(Number(clock?.revision)) ? Number(clock.revision) : 0,
+  };
+  syncRequestByMap.set(map, request);
+  return request;
+}
+
+function isStaleTimelineSyncRequest(map, request) {
+  const latest = syncRequestByMap.get(map);
+  if (!latest || latest.generation !== request.generation) return true;
+  if (request.revision < latest.revision) return true;
+  return false;
+}
+
 export function parseLocalTimelineToMinutes(value) {
   if (typeof value !== "string") return null;
   const match = /^local\s+(\d{1,2}):(\d{2})$/i.exec(value.trim());
   if (!match) return null;
   return Number(match[1]) * 60 + Number(match[2]);
-}
-
-export function formatMinutesAsLocalClock(minutes) {
-  if (!Number.isFinite(minutes)) return "";
-  const h = Math.floor(minutes / 60);
-  const m = Math.abs(minutes % 60);
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-export function collectTimelineBeats(features) {
-  const beats = new Set();
-  for (const feature of features || []) {
-    const raw = feature?.properties?.timeline_minutes;
-    if (typeof raw === "boolean" || !Number.isFinite(Number(raw))) continue;
-    beats.add(Number(raw));
-  }
-  return [...beats].sort((a, b) => a - b);
-}
-
-export function collectUnionTimelineBeats(...featureLists) {
-  const merged = [];
-  for (const list of featureLists) {
-    if (Array.isArray(list)) merged.push(...list);
-  }
-  return collectTimelineBeats(merged);
-}
-
-export function collectPlaybackTimelineBeats(
-  polygonOn,
-  lineOn,
-  alarmOn,
-  polygonFeatures,
-  lineFeatures,
-  alarmFeatures,
-) {
-  if (polygonOn || lineOn) {
-    return collectUnionTimelineBeats(
-      polygonOn ? polygonFeatures : null,
-      lineOn ? lineFeatures : null,
-    );
-  }
-  if (!alarmOn) return [];
-  return collectAlarmTimelineBeats(alarmFeatures);
-}
-
-export function previousTimelineBeat(beats, clock) {
-  if (clock == null || !Array.isArray(beats)) return null;
-  const index = beats.indexOf(clock);
-  if (index <= 0) return null;
-  return beats[index - 1];
 }
 
 export function objectIdsActiveAt(features, minutes) {
@@ -128,23 +123,6 @@ export function namesActiveAt(features, minutes) {
     if (typeof name === "string" && name.trim()) names.push(name.trim());
   }
   return names;
-}
-
-export function timelinePhaseAt(elapsedMs, beats) {
-  const list = Array.isArray(beats) ? beats : [];
-  if (list.length === 0) return { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 };
-  const cycle = list.length * TIMELINE_BEAT_MS + TIMELINE_HOLD_MS;
-  const t = ((Number(elapsedMs) % cycle) + cycle) % cycle;
-  if (t >= list.length * TIMELINE_BEAT_MS) {
-    return { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 };
-  }
-  const index = Math.floor(t / TIMELINE_BEAT_MS);
-  return {
-    mode: "beat",
-    clock: list[index],
-    index,
-    beatElapsedMs: t - index * TIMELINE_BEAT_MS,
-  };
 }
 
 export function lineProgressAt(minutes, clock, beatElapsedMs) {
@@ -293,22 +271,13 @@ function isNliLayerEnabled(layerGroups, layerId) {
   return !!(layer && layer.enabled);
 }
 
-function isAnimOn(animState, fullId) {
-  const state = animState && typeof animState === "object" ? animState : {};
-  return !!state[fullId];
-}
-
-function participating(animState, layerGroups) {
-  const polygonOn =
-    isAnimOn(animState, INVESTIGATION_POLYGONS_FULL_ID) &&
-    isNliLayerEnabled(layerGroups, "investigation_polygons");
-  const lineOn = isAnimOn(animState, INVESTIGATION_LINES_FULL_ID) && isNliLayerEnabled(layerGroups, "lines");
-  const alarmPlay =
-    isAnimOn(animState, INVESTIGATION_ALARMS_FULL_ID) && isNliLayerEnabled(layerGroups, "alarms");
-  const alarmIdle = !alarmPlay && isNliLayerEnabled(layerGroups, "alarms");
-  /** @type {'off' | 'idle' | 'play'} */
-  const alarmMode = alarmPlay ? "play" : alarmIdle ? "idle" : "off";
-  return { polygonOn, lineOn, alarmMode };
+function membershipFromClock(clock) {
+  const set = new Set(Array.isArray(clock?.membership) ? clock.membership : []);
+  return {
+    polygonOn: set.has(INVESTIGATION_POLYGONS_FULL_ID),
+    lineOn: set.has(INVESTIGATION_LINES_FULL_ID),
+    alarmPlay: set.has(INVESTIGATION_ALARMS_FULL_ID),
+  };
 }
 
 function styleLayers(map) {
@@ -675,10 +644,14 @@ function ensureCaptionEl(map) {
   return el;
 }
 
-function updateCaption(state, phase) {
+function updateCaption(state, phase, previousClock) {
   const el = state.captionEl;
   if (!el) return;
-  if (!state.playing || phase.mode !== "beat" || phase.clock == null) {
+  const showCaption =
+    (state.clockPhase === "playing" || state.clockPhase === "paused") &&
+    phase.mode === "beat" &&
+    phase.clock != null;
+  if (!showCaption) {
     el.hidden = true;
     el.textContent = "";
     return;
@@ -687,7 +660,6 @@ function updateCaption(state, phase) {
   const names = [];
   if (state.polygonOn) names.push(...namesActiveAt(state.polygonFeatures, phase.clock));
   if (state.lineOn) names.push(...namesActiveAt(state.lineFeatures, phase.clock));
-  const previousClock = previousTimelineBeat(state.beats, phase.clock);
   const alarmHtml =
     state.alarmMode === "play"
       ? alarmCaptionHtml(state.alarmFeatures, phase.clock, previousClock)
@@ -711,13 +683,38 @@ function escapeCaption(value) {
     .replace(/"/g, "&quot;");
 }
 
-function currentPhase(state) {
-  const nowFn = state.now || (() => Date.now());
-  return timelinePhaseAt(nowFn() - state.startedAt, state.beats);
+function rememberJumpOneShotOrigin(map, clock, nowMs) {
+  if (clock?.phase !== "paused" || clock?.seekKind !== "jump") return;
+  const revision = Number(clock.revision);
+  const rec = jumpOneShotOriginByMap.get(map);
+  if (rec && rec.revision === revision) return;
+  jumpOneShotOriginByMap.set(map, { revision, originMs: nowMs });
+}
+
+function clockWithJumpOrigin(map, clock) {
+  if (clock?.phase !== "paused" || clock?.seekKind !== "jump") return clock;
+  const rec = jumpOneShotOriginByMap.get(map);
+  if (!rec || rec.revision !== Number(clock.revision)) return clock;
+  return { ...clock, playEpochMs: rec.originMs };
+}
+
+function jumpPreviousClock(map, state, vis) {
+  const clock = state.clock;
+  const beats = Array.isArray(clock?.beats) ? clock.beats : state.beats;
+  const isJump = clock?.seekKind === "jump";
+  if (!isJump) return flashPreviousClock(beats, vis.clock, { isJump });
+  const alreadyConsumed = consumedJumpRevisionByMap.get(map) === clock.revision;
+  if (alreadyConsumed) return vis.clock;
+  const oneShotActive = clock.phase === "paused" && vis.beatElapsedMs < TIMELINE_BEAT_MS;
+  if (oneShotActive) {
+    return flashPreviousClock(beats, vis.clock, { isJump });
+  }
+  consumedJumpRevisionByMap.set(map, clock.revision);
+  return vis.clock;
 }
 
 function applyPlayingVisuals(map, state, phase) {
-  const previousClock = previousTimelineBeat(state.beats, phase.clock);
+  const previousClock = jumpPreviousClock(map, state, phase);
   applyAlarmMode(map, state, state.alarmMode, {
     clock: phase.clock,
     previousClock,
@@ -730,7 +727,7 @@ function applyPlayingVisuals(map, state, phase) {
   if (state.polygonOn || state.lineOn || state.alarmMode === "play") {
     raiseStoryLayers(map);
   }
-  updateCaption(state, phase);
+  updateCaption(state, phase, previousClock);
 }
 
 function enablePolygonPlayback(map, state) {
@@ -767,6 +764,8 @@ function disableLinePlayback(map, state) {
 function createTimelineState(map, deps = {}) {
   return {
     playing: false,
+    clockPhase: "idle",
+    clock: null,
     polygonOn: false,
     lineOn: false,
     alarmMode: "off",
@@ -775,7 +774,6 @@ function createTimelineState(map, deps = {}) {
     alarmFeatures: null,
     beats: [],
     now: typeof deps.now === "function" ? deps.now : () => Date.now(),
-    startedAt: 0,
     rafId: null,
     captionEl: ensureCaptionEl(map),
     savedFills: null,
@@ -802,17 +800,36 @@ function stopPlayback(map) {
   }
   state.rafId = null;
   state.playing = false;
+  state.clockPhase = "idle";
   disablePolygonPlayback(map, state);
   disableLinePlayback(map, state);
   updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
 }
 
+function shouldRafClock(clock, vis) {
+  if (!clock || !vis) return false;
+  if (clock.phase === "playing" && vis.phase !== "ended") return true;
+  return (
+    clock.phase === "paused" &&
+    clock.seekKind === "jump" &&
+    vis.beatElapsedMs < TIMELINE_BEAT_MS
+  );
+}
+
 function tick(map) {
   const state = stateByMap.get(map);
-  if (!state || !state.playing) return;
-  applyPlayingVisuals(map, state, currentPhase(state));
-  if (typeof requestAnimationFrame === "function") {
+  if (!state?.clock) return;
+  const clock = state.clock;
+  const nowFn = state.now || (() => Date.now());
+  const nowMs = nowFn();
+  const vis = evaluateClock(clockWithJumpOrigin(map, clock), nowMs);
+  if (clock.phase === "playing" || (clock.phase === "paused" && clock.seekKind === "jump")) {
+    applyPlayingVisuals(map, state, vis);
+  }
+  if (shouldRafClock(clock, vis) && typeof requestAnimationFrame === "function") {
     state.rafId = requestAnimationFrame(() => tick(map));
+  } else {
+    state.rafId = null;
   }
 }
 
@@ -848,7 +865,7 @@ function applyStoryPlayback(map, state) {
 
 /**
  * @param {import('maplibre-gl').Map} map
- * @param {Record<string, boolean>|null|undefined} animState
+ * @param {import('./nli-investigation-clock.js').NliInvestigationClock|null|undefined} clockInput
  * @param {unknown} layerGroups
  * @param {{
  *   features?: object[],
@@ -858,74 +875,96 @@ function applyStoryPlayback(map, state) {
  *   visibilityLayerGroups?: unknown,
  * }} [deps]
  */
-export async function syncInvestigationTimelineToMap(map, animState, layerGroups, deps = {}) {
+export async function syncInvestigationTimelineToMap(map, clockInput, layerGroups, deps = {}) {
   if (!map || typeof map.getStyle !== "function") return;
   const visibilityGroups = deps.visibilityLayerGroups != null ? deps.visibilityLayerGroups : layerGroups;
-  const want = participating(animState, visibilityGroups);
-  const wantPlay = !!(want.polygonOn || want.lineOn || want.alarmMode === "play");
+  const clock = normalizeNliClock(clockInput);
+  const syncRequest = beginTimelineSyncRequest(map, clock);
+  const nowFn = typeof deps.now === "function" ? deps.now : () => Date.now();
   const existing = stateByMap.get(map);
 
-  if (!wantPlay) {
-    if (existing?.playing) stopPlayback(map);
-    if (want.alarmMode === "idle") {
+  if (clock.phase === "idle") {
+    if (existing && existing.clockPhase !== "idle") {
+      stopPlayback(map);
+    } else if (existing?.rafId != null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(existing.rafId);
+      existing.rafId = null;
+    }
+    const alarmsVisible = isNliLayerEnabled(visibilityGroups, "alarms");
+    if (alarmsVisible) {
       const state = getOrCreateState(map, deps);
+      state.clock = clock;
+      state.clockPhase = "idle";
+      state.playing = false;
       state.polygonOn = false;
       state.lineOn = false;
+      state.beats = [];
+      state.now = nowFn;
       await ensureLayerFeatures(state, deps, "alarmFeatures", INVESTIGATION_ALARMS_FULL_ID);
+      if (isStaleTimelineSyncRequest(map, syncRequest)) return;
       applyAlarmMode(map, state, "idle");
       updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
     } else if (existing) {
+      existing.clock = clock;
+      existing.clockPhase = "idle";
+      existing.playing = false;
       existing.polygonOn = false;
       existing.lineOn = false;
+      existing.beats = [];
       applyAlarmMode(map, existing, "off");
       updateCaption(existing, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
     }
     return;
   }
 
+  const mem = membershipFromClock(clock);
+  /** @type {'off' | 'idle' | 'play'} */
+  const alarmMode = mem.alarmPlay
+    ? "play"
+    : isNliLayerEnabled(visibilityGroups, "alarms")
+      ? "idle"
+      : "off";
+
   const state = getOrCreateState(map, deps);
-  if (want.polygonOn) {
+  if (mem.polygonOn) {
     await ensureLayerFeatures(state, deps, "polygonFeatures", INVESTIGATION_POLYGONS_FULL_ID);
+    if (isStaleTimelineSyncRequest(map, syncRequest)) return;
   }
-  if (want.lineOn) {
+  if (mem.lineOn) {
     await ensureLayerFeatures(state, deps, "lineFeatures", INVESTIGATION_LINES_FULL_ID);
+    if (isStaleTimelineSyncRequest(map, syncRequest)) return;
   }
-  if (want.alarmMode !== "off") {
+  if (alarmMode !== "off") {
     await ensureLayerFeatures(state, deps, "alarmFeatures", INVESTIGATION_ALARMS_FULL_ID);
-  }
-  const beats = collectPlaybackTimelineBeats(
-    want.polygonOn,
-    want.lineOn,
-    want.alarmMode === "play",
-    state.polygonFeatures,
-    state.lineFeatures,
-    state.alarmFeatures,
-  );
-
-  if (state.playing) {
-    state.polygonOn = want.polygonOn;
-    state.lineOn = want.lineOn;
-    state.alarmMode = want.alarmMode;
-    state.beats = beats;
-    applyStoryPlayback(map, state);
-    applyPlayingVisuals(map, state, currentPhase(state));
-    return;
+    if (isStaleTimelineSyncRequest(map, syncRequest)) return;
   }
 
-  const nowFn = typeof deps.now === "function" ? deps.now : () => Date.now();
-  state.playing = true;
-  state.polygonOn = want.polygonOn;
-  state.lineOn = want.lineOn;
-  state.alarmMode = want.alarmMode;
-  state.beats = beats;
+  const nowMs = nowFn();
+  rememberJumpOneShotOrigin(map, clock, nowMs);
+  const vis = evaluateClock(clockWithJumpOrigin(map, clock), nowMs);
+  const shouldRaf = shouldRafClock(clock, vis);
+
+  state.clock = clock;
+  state.clockPhase = clock.phase;
+  state.playing = clock.phase === "playing" || clock.phase === "paused" || clock.phase === "ended";
+  state.polygonOn = mem.polygonOn;
+  state.lineOn = mem.lineOn;
+  state.alarmMode = alarmMode;
+  state.beats = Array.isArray(clock.beats) ? clock.beats : [];
   state.now = nowFn;
-  state.startedAt = nowFn();
-  state.rafId = null;
   if (!state.captionEl) state.captionEl = ensureCaptionEl(map);
   applyStoryPlayback(map, state);
-  applyPlayingVisuals(map, state, timelinePhaseAt(0, beats));
-  if (typeof requestAnimationFrame === "function") {
-    state.rafId = requestAnimationFrame(() => tick(map));
+  applyPlayingVisuals(map, state, vis);
+
+  if (shouldRaf) {
+    if (state.rafId == null && typeof requestAnimationFrame === "function") {
+      state.rafId = requestAnimationFrame(() => tick(map));
+    }
+  } else if (state.rafId != null) {
+    if (typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(state.rafId);
+    }
+    state.rafId = null;
   }
 }
 

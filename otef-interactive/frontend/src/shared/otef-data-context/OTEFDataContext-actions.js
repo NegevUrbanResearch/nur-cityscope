@@ -6,6 +6,7 @@ import {
   ensureMoreshetAxisCompanionRows,
 } from "../../map-utils/curated-pink-axis-state.js";
 import { generateTraceId, recordTraceEvent } from "../otef-trace.js";
+import { isNliPlayableFullId } from "../nli-investigation-beats.js";
 import { OTEFDataContextInternals } from "./index.js";
 
 function fallbackLogger() {
@@ -669,6 +670,7 @@ async function toggleGroup(ctx, groupId, enabled) {
 
 async function toggleAnimation(ctx, layerId, enabled) {
   if (!ctx._tableName || !layerId) return { ok: false, error: "Missing layerId" };
+  if (isNliPlayableFullId(layerId)) return { ok: true };
 
   const previous = ctx._animations || {};
   const next = Object.assign({}, previous, { [layerId]: !!enabled });
@@ -692,9 +694,12 @@ async function setLayerAnimations(ctx, fullLayerIds, enabled) {
     return { ok: true };
   }
 
+  const ids = fullLayerIds.filter((id) => id && !isNliPlayableFullId(id));
+  if (ids.length === 0) return { ok: true };
+
   const previous = Object.assign({}, ctx._animations || {});
   const next = Object.assign({}, previous);
-  for (const id of fullLayerIds) next[id] = !!enabled;
+  for (const id of ids) next[id] = !!enabled;
   ctx._setAnimations(next);
 
   ctx._pendingAnimationOps++;
@@ -729,6 +734,25 @@ async function setBasemap(ctx, basemap) {
     ctx._setBasemap(previous);
     return { ok: false, error: err };
   }
+}
+
+async function patchInvestigationClock(ctx, next) {
+  const run = async () => {
+    if (!ctx._tableName) return;
+    const state = await OTEF_API.updateInvestigationClock(ctx._tableName, next, {
+      sourceId: ctx._clientId,
+      timestamp: Date.now(),
+    });
+    if (state?.investigation_clock && typeof state.investigation_clock === "object") {
+      ctx._setInvestigationClock(state.investigation_clock);
+    }
+  };
+  const queued = (ctx._clockPatchQueue || Promise.resolve()).then(run, run);
+  ctx._clockPatchQueue = queued.then(
+    () => {},
+    () => {},
+  );
+  return queued;
 }
 
 async function navigateToPlace(ctx, place) {
@@ -868,6 +892,7 @@ OTEFDataContextInternals.actions = {
   toggleAnimation,
   setLayerAnimations,
   setBasemap,
+  patchInvestigationClock,
   navigateToPlace,
   computePanViewport,
   computeZoomViewport,
@@ -886,6 +911,7 @@ export {
   toggleAnimation,
   setLayerAnimations,
   setBasemap,
+  patchInvestigationClock,
   navigateToPlace,
   computePanViewport,
   computeZoomViewport,

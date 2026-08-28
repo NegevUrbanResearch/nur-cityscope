@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockSlideshow } = vi.hoisted(() => {
   const mockSlideshow = {
@@ -21,6 +21,7 @@ import {
   filterExcludedPresentationPacks,
   resolveSlideshowPackLabel,
 } from "../../frontend/src/remote/slideshow-tab-controller.js";
+import OTEFDataContext from "../../frontend/src/shared/OTEFDataContext.js";
 
 const EXCLUDED = ["projector_base", "gaza", "curated_moresht_axis"];
 
@@ -162,5 +163,63 @@ describe("resolveSlideshowPackLabel", () => {
   it("falls back to the provided label when the pack is unknown", () => {
     expect(resolveSlideshowPackLabel("unknown_pack", "Custom Pack")).toBe("Custom Pack");
     expect(resolveSlideshowPackLabel("unknown_pack")).toBe("unknown_pack");
+  });
+});
+
+describe("slideshow start stops NLI clock", () => {
+  let patchClock;
+  let patchSlideshow;
+
+  beforeEach(() => {
+    mockSlideshow.excludedPresentationPackIds = [...EXCLUDED];
+    mockSlideshow.packOrder = [];
+    patchClock = vi
+      .spyOn(OTEFDataContext, "patchInvestigationClock")
+      .mockResolvedValue(undefined);
+    patchSlideshow = vi
+      .spyOn(OTEFDataContext, "patchProjectionSlideshow")
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function controllerWithPacks() {
+    const packs = [{ id: "greens", label: "Greens" }];
+    const c = new SlideshowTabControllerWithFakeSources(packs);
+    c.packOrder = ["greens"];
+    return c;
+  }
+
+  function expectIdleClockPatchedBeforeStart() {
+    expect(patchClock).toHaveBeenCalledTimes(1);
+    expect(patchClock.mock.calls[0][0].phase).toBe("idle");
+    expect(patchSlideshow).toHaveBeenCalledTimes(1);
+    expect(patchSlideshow.mock.calls[0][0].type).toBe("start");
+    expect(patchClock.mock.invocationCallOrder[0]).toBeLessThan(
+      patchSlideshow.mock.invocationCallOrder[0],
+    );
+  }
+
+  it("handleStart patches idle clock before starting slideshow", async () => {
+    const c = controllerWithPacks();
+    await c.handleStart();
+    expectIdleClockPatchedBeforeStart();
+  });
+
+  it("handleKeepSettlementNamesChange patches idle clock before restarting slideshow", async () => {
+    const c = controllerWithPacks();
+    c.running = true;
+    await c.handleKeepSettlementNamesChange();
+    expectIdleClockPatchedBeforeStart();
+  });
+
+  it("handleStop does not play NLI", async () => {
+    const c = controllerWithPacks();
+    c.running = true;
+    await c.handleStop();
+    expect(patchSlideshow).toHaveBeenCalledWith({ type: "stop", payload: {} });
+    expect(patchClock).not.toHaveBeenCalled();
   });
 });

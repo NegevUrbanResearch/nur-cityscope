@@ -1,9 +1,5 @@
 /**
- * Layer list controller (Layers tab)
- *
- * **Sharpened Variant C:** pack chip strip (single selection) + per-pack count on each chip +
- * one bulk-visibility control for the selected pack + tile grid (per-layer on/off, animation
- * icon button on tile only). Syncs with OTEFDataContext.
+ * Layer list controller (Layers tab).
  */
 
 import {
@@ -19,8 +15,6 @@ import {
   t,
 } from "./remote-locale.js";
 import { getPackDisplayLabel } from "./layer-pack-display-names.js";
-import { sanitizeCssColor } from "../curation/curation-color-utils.js";
-import { createCurationApi } from "../curation/curation-api.js";
 import { buildCurationColorSwatchHtml } from "../curation/curation-submissions.js";
 import { generateTraceId, recordTraceEvent } from "../shared/otef-trace.js";
 import { usesRouteProgressOverlay } from "../shared/maplibre-flow-animation.js";
@@ -29,52 +23,18 @@ import {
   PINK_LINE_ROUTE_FULL_LAYER_ID,
   PINK_LINE_ROUTE_LAYER_ID,
 } from "../map-utils/curated-pink-axis-state.js";
-
-const workshopSubmissionColorById = new Map();
-const workshopSubmissionColorByName = new Map();
-let workshopSubmissionColorsLoaded = false;
-let workshopSubmissionColorsLoading = null;
-
-function normSubmissionKey(v) {
-  return String(v ?? "").trim().toLowerCase();
-}
-
-async function ensureWorkshopSubmissionColorsLoaded() {
-  if (workshopSubmissionColorsLoaded) return;
-  if (workshopSubmissionColorsLoading) {
-    await workshopSubmissionColorsLoading;
-    return;
-  }
-  workshopSubmissionColorsLoading = (async () => {
-    try {
-      const API = createCurationApi();
-      const list = await API.submissionsAll();
-      workshopSubmissionColorById.clear();
-      workshopSubmissionColorByName.clear();
-      for (const item of Array.isArray(list) ? list : []) {
-        if (!item || typeof item !== "object") continue;
-        const idKey = normSubmissionKey(item.id ?? item.submission_id);
-        const nameKey = normSubmissionKey(item.name);
-        const rawColor =
-          item.submission_color ??
-          item.submissionColor ??
-          item.display_color ??
-          item.displayColor ??
-          item.color;
-        const css = sanitizeCssColor(rawColor);
-        if (!css) continue;
-        if (idKey) workshopSubmissionColorById.set(idKey, css);
-        if (nameKey) workshopSubmissionColorByName.set(nameKey, css);
-      }
-      workshopSubmissionColorsLoaded = true;
-    } catch {
-      // Keep empty maps on failure; layer tiles will still use direct metadata colors.
-    } finally {
-      workshopSubmissionColorsLoading = null;
-    }
-  })();
-  await workshopSubmissionColorsLoading;
-}
+import {
+  bindNliTimelinePointerListeners,
+  consumeNliTimelineButtonClick,
+  isNliPlayableLayerLocked,
+  nliTimelineHostMethods,
+  nliTransportSheetHtml,
+  renderNliTimelineTransport,
+} from "./nli-timeline-transport.js";
+import {
+  ensureWorkshopSubmissionColorsLoaded,
+  pickWorkshopRowSwatchCssColor,
+} from "./layer-sheet-workshop-swatches.js";
 
 function groupLayersByNameForSheet(layers, groupId) {
   const groups = new Map();
@@ -178,10 +138,6 @@ function getRowAnimatableFullLayerIds(row, groupId) {
     .map((layer) => `${groupId}.${layer.id}`);
 }
 
-/**
- * @param {{ id?: string, name?: string }} group
- * @returns {string}
- */
 function layerGroupTitle(group) {
   const id = group && group.id;
   const name = group && group.name;
@@ -213,12 +169,19 @@ function encAttrId(id) {
   return encodeURIComponent(String(id));
 }
 
-/**
- * True when this sheet row is the synthetic workshop pink-line toggle.
- * @param {object} row
- * @param {string} [groupId]
- * @returns {boolean}
- */
+function fullLayerIdsForGroup(group) {
+  if (!group) return [];
+  const ids = [];
+  for (const layer of group.layers || []) {
+    const fullIds =
+      Array.isArray(layer.fullLayerIds) && layer.fullLayerIds.length > 0
+        ? layer.fullLayerIds
+        : [`${group.id}.${layer.id}`];
+    ids.push(...fullIds);
+  }
+  return ids;
+}
+
 function isPinkLineRouteSheetRow(row, groupId) {
   if (!row) return false;
   if (groupId && groupId !== MORESHET_AXIS_GROUP_ID) return false;
@@ -233,11 +196,6 @@ function isPinkLineRouteSheetRow(row, groupId) {
   );
 }
 
-/**
- * Keep the pink-line tile first in the workshop pack regardless of label-length sort.
- * @param {object[]} rows
- * @returns {object[]}
- */
 function orderMoreshetWorkshopSheetRows(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return rows;
   const pink = [];
@@ -254,10 +212,6 @@ function orderMoreshetWorkshopSheetRows(rows) {
 
 const HEB_RANGE_RE = /[\u0590-\u05FF]/;
 
-/**
- * @param {unknown} s
- * @returns {boolean}
- */
 function isLatinPrimaryString(s) {
   if (s == null) return false;
   const t = String(s);
@@ -265,15 +219,6 @@ function isLatinPrimaryString(s) {
   return /[A-Za-z]/.test(t) && !HEB_RANGE_RE.test(t);
 }
 
-/**
- * Raw label for glossary resolution: English UI prefers a Latin-primary name from
- * `row.layers` when the row-level label is Hebrew-only; Hebrew UI keeps row-level
- * precedence for Hebrew-friendly copy.
- *
- * @param {object} row
- * @param {"he" | "en"} locale
- * @returns {string}
- */
 function pickRawLabelForRow(row, locale) {
   if (locale === "en" && row && Array.isArray(row.layers)) {
     for (const layer of row.layers) {
@@ -297,11 +242,6 @@ function pickRawLabelForRow(row, locale) {
   );
 }
 
-/**
- * Label string used for `renderLayerRow` (sorting tile order by length).
- * @param {object} row
- * @returns {string}
- */
 function getRowDisplayLabelForSort(row) {
   const loc = getLocale();
   const rawLabel = pickRawLabelForRow(row, loc);
@@ -315,93 +255,9 @@ function getRowDisplayLabelForSort(row) {
   );
 }
 
-/**
- * Stable key for comparing tile identity (order-independent).
- * @param {string[] | undefined} fullLayerIds
- * @returns {string | null}
- */
 function layerIdsToPrimaryKey(fullLayerIds) {
   if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) return null;
   return JSON.stringify([...fullLayerIds].map(String).sort());
-}
-
-/**
- * Decorative workshop tile swatch: first sanitized color on the row's layers.
- * Tries explicit API fields, then registry/Leaflet-style hints, then nested metadata.
- * If still missing, attempts lookup from submissions API cache (same source used by workshop page).
- *
- * @param {object} row
- * @param {string} [groupId]
- * @returns {string | null}
- */
-function pickWorkshopRowSwatchCssColor(row, groupId) {
-  if (!row || !Array.isArray(row.layers)) return null;
-  const tryValue = (v) => {
-    const css = sanitizeCssColor(v);
-    return css || null;
-  };
-  for (const layer of row.layers) {
-    if (!layer || typeof layer !== "object") continue;
-    const direct =
-      layer.submissionColor ??
-      layer.displayColor ??
-      layer.submission_color ??
-      layer.display_color ??
-      layer.color ??
-      layer.fillColor ??
-      layer.strokeColor;
-    const fromDirect = tryValue(direct);
-    if (fromDirect) return fromDirect;
-
-    const style = layer.style;
-    if (style && typeof style === "object") {
-      for (const sk of ["fillColor", "color", "fill", "stroke"]) {
-        const v = style[sk];
-        if (typeof v !== "string") continue;
-        const css = tryValue(v);
-        if (css) return css;
-      }
-    }
-
-    const meta = layer.metadata;
-    if (meta && typeof meta === "object") {
-      for (const mk of [
-        "display_color",
-        "submissionColor",
-        "displayColor",
-        "color",
-        "primaryColor",
-      ]) {
-        const css = tryValue(meta[mk]);
-        if (css) return css;
-      }
-    }
-
-    const props = layer.properties;
-    if (props && typeof props === "object") {
-      const css = tryValue(props.display_color ?? props.displayColor);
-      if (css) return css;
-    }
-  }
-
-  const gid = String(groupId || "");
-  if (gid !== "curated_moresht_axis") return null;
-  for (const layer of row.layers) {
-    if (!layer || typeof layer !== "object") continue;
-    const idKey = normSubmissionKey(layer.submissionId ?? layer.submission_id ?? layer.id);
-    if (idKey && workshopSubmissionColorById.has(idKey)) {
-      return workshopSubmissionColorById.get(idKey) || null;
-    }
-    const nameCandidates = [layer.displayName, layer.name, row.displayLabel];
-    for (const candidate of nameCandidates) {
-      const nk = normSubmissionKey(candidate);
-      if (!nk) continue;
-      if (workshopSubmissionColorByName.has(nk)) {
-        return workshopSubmissionColorByName.get(nk) || null;
-      }
-    }
-  }
-  return null;
 }
 
 function renderLayerRow(row, options = {}) {
@@ -425,7 +281,7 @@ function renderLayerRow(row, options = {}) {
         row.fullLayerIds,
       );
   const animatableIds = getRowAnimatableFullLayerIds(row, groupId);
-  const hasAnimationToggle = animatableIds.length > 0;
+  const hasAnimationToggle = groupId !== "nli" && animatableIds.length > 0;
   const animIdsAttr = JSON.stringify(animatableIds).replace(/"/g, "&quot;");
   const visibilityIdsAttr = JSON.stringify(row.fullLayerIds || []).replace(
     /"/g,
@@ -452,6 +308,9 @@ function renderLayerRow(row, options = {}) {
     checked && !isPrimary ? " is-visible" : "";
   const animTileClass = hasAnimationToggle ? " layer-tile--anim" : "";
   const pinkLineClass = isPinkLineRow ? " layer-tile--pink-line" : "";
+  const clock = options.investigationClock;
+  const playableLocked = isNliPlayableLayerLocked(clock, row.fullLayerIds);
+  const lockedClass = playableLocked ? " layer-tile--locked" : "";
   const animStateClass = `${animationEnabled ? "active" : ""} ${
     animationMixed ? "mixed" : ""
   }`.trim();
@@ -480,7 +339,7 @@ function renderLayerRow(row, options = {}) {
   }
   return `
     <div
-      class="layer-tile ${stateClass}${visibleClass}${primaryClass}${animTileClass}${pinkLineClass}"
+      class="layer-tile ${stateClass}${visibleClass}${primaryClass}${animTileClass}${pinkLineClass}${lockedClass}"
       role="button"
       tabindex="0"
       aria-pressed="${checked ? "true" : "false"}"
@@ -494,17 +353,19 @@ function renderLayerRow(row, options = {}) {
 }
 
 class LayerSheetController {
-  /**
-   * @param {{ rootId?: string }} [options]
-   */
   constructor(options = {}) {
     this.rootId = options.rootId || "layerSheet";
     this.sheet = null;
     this.isOpen = false;
-    /** @type {string | null} */
     this.focusedGroupId = null;
-    /** @type {string | null} last-focused tile in focused pack (sorted `fullLayerIds` JSON) */
     this.primaryTileIdsJson = null;
+    this._nliEndTimer = null;
+    this._nliPlayheadTimer = null;
+    this._nliFeatureCache = Object.create(null);
+    this._nliScrub = null;
+    this._nliScrubEl = null;
+    this._nliOptimisticClock = null;
+    this._nliCacheFetchInflight = false;
 
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", () => {
@@ -539,6 +400,13 @@ class LayerSheetController {
     if (typeof OTEFDataContext !== "undefined") {
       OTEFDataContext.subscribe("layerGroups", () => this.render());
       OTEFDataContext.subscribe("animations", () => this.render());
+      OTEFDataContext.subscribe("investigationClock", (clock) => {
+        this._nliOptimisticClock = null;
+        this._syncNliEndedTimer(clock);
+        this._syncNliPlayheadTicker(clock);
+        this.render();
+      });
+      OTEFDataContext.subscribe("projectionSlideshow", () => this.render());
     }
 
     if (typeof window !== "undefined") {
@@ -573,6 +441,8 @@ class LayerSheetController {
         }
         return;
       }
+
+      if (consumeNliTimelineButtonClick(e, this)) return;
 
       const animBtn = e.target.closest("[data-animation-toggle]");
       if (animBtn) {
@@ -622,12 +492,10 @@ class LayerSheetController {
         this.toggleGroupEnabled(gid, t.checked);
       }
     });
+
+    bindNliTimelinePointerListeners(content, this);
   }
 
-  /**
-   * Leaving Layers tab: mark sheet not open. Selected pack (`focusedGroupId`) is kept
-   * so returning to Layers restores the same strip + grid state.
-   */
   onLayersTabHidden() {
     this.isOpen = false;
   }
@@ -647,20 +515,13 @@ class LayerSheetController {
     this.render();
   }
 
-  /**
-   * Drop primary-tile highlight (`primaryTileIdsJson`). Does not change the selected
-   * pack; `render()` keeps a valid pack via `resolveSelectedPackId`.
-   * (Previously wired to #layerPanelBack; that control was removed — kept for API use.)
-   */
   clearLayerFocus() {
     this.primaryTileIdsJson = null;
     this.render();
   }
 
-  /**
-   * @param {Element} layerTile
-   */
   async runLayerTileToggleFromElement(layerTile) {
+    if (layerTile.classList.contains("layer-tile--locked")) return;
     const raw = layerTile.getAttribute("data-layer-ids") || "[]";
     let fullLayerIds = [];
     try {
@@ -689,6 +550,24 @@ class LayerSheetController {
   async toggleGroupEnabled(groupId, enabled) {
     if (typeof OTEFDataContext === "undefined") return;
     try {
+      const groups = this.getEffectiveGroupsForView();
+      const group = groups.find((g) => g && g.id === groupId);
+      const allIds = fullLayerIdsForGroup(group);
+      const clock = this._readNliClock();
+      const unlockedIds = allIds.filter(
+        (id) => !isNliPlayableLayerLocked(clock, [id]),
+      );
+      if (unlockedIds.length < allIds.length) {
+        if (unlockedIds.length === 0) return;
+        const result = await OTEFDataContext.setLayersEnabled(unlockedIds, enabled);
+        if (!result || !result.ok) {
+          console.error(
+            `[LayerSheet] Failed to toggle unlocked layers:`,
+            result?.error,
+          );
+        }
+        return;
+      }
       if (groupId === "curated_moresht_axis") {
         const ctxGroups = OTEFDataContext.getLayerGroups?.() || [];
         const curatedIds = [];
@@ -737,11 +616,6 @@ class LayerSheetController {
     return { ok: false };
   }
 
-  /**
-   * @param {string[]} animatableFullLayerIds - ids that participate in animation state
-   * @param {string[]} rowVisibilityFullLayerIds - merged row: enable all of these when turning animation on
-   * @param {boolean} enabled
-   */
   async toggleLayerRowAnimations(animatableFullLayerIds, rowVisibilityFullLayerIds, enabled) {
     if (!Array.isArray(animatableFullLayerIds) || animatableFullLayerIds.length === 0) return;
     const visibility =
@@ -758,9 +632,6 @@ class LayerSheetController {
     }
   }
 
-  /**
-   * @returns {Array}
-   */
   getEffectiveGroupsForView() {
     let groups = [];
     if (
@@ -828,11 +699,6 @@ class LayerSheetController {
     return groups;
   }
 
-  /**
-   * @param {object} group
-   * @param {Record<string, boolean>} [animations]
-   * @returns {string}
-   */
   buildLayerRowsHtml(group, animations) {
     const anims = animations || {};
     const rows =
@@ -865,15 +731,12 @@ class LayerSheetController {
           groupId: group.id,
           animations: anims,
           primaryTileIdsJson: this.primaryTileIdsJson,
+          investigationClock: this._readNliClock(),
         }),
       )
       .join("");
   }
 
-  /**
-   * @param {Array} groups
-   * @returns {string | null}
-   */
   resolveSelectedPackId(groups) {
     if (!groups || groups.length === 0) return null;
     if (
@@ -885,11 +748,6 @@ class LayerSheetController {
     return String(groups[0].id);
   }
 
-  /**
-   * @param {Array} groups
-   * @param {Record<string, boolean>} animations
-   * @returns {string}
-   */
   renderLayersTabContent(groups, animations) {
     const selectedId = this.focusedGroupId;
     const selected = groups.find((g) => g.id === selectedId);
@@ -919,8 +777,19 @@ class LayerSheetController {
     const row1 = groups.slice(0, mid).map(chipForGroup).join("");
     const row2 = groups.slice(mid).map(chipForGroup).join("");
 
+    const clock = this._readNliClock();
+    const presentationActive = this._isPresentationActive();
+    const variantClass =
+      selected.id === "nli" ? "layers-variant-c layers-variant-c--nli" : "layers-variant-c";
+    const nliSheet = nliTransportSheetHtml(
+      selected,
+      clock,
+      this._nliFeatureCache,
+      presentationActive,
+    );
+
     return `
-    <div class="layers-variant-c">
+    <div class="${variantClass}">
       <div
         class="layers-pack-strip-wrap"
         role="region"
@@ -964,6 +833,7 @@ class LayerSheetController {
         ${this.buildLayerRowsHtml(selected, animations)}
         </div>
       </div>
+      ${nliSheet}
     </div>
   `;
   }
@@ -983,6 +853,7 @@ class LayerSheetController {
   render() {
     const content = this.sheet && this.sheet.querySelector(".sheet-content");
     if (!content) return;
+    if (this._nliScrub && this._nliScrubEl) return;
 
     const groups = this.getEffectiveGroupsForView();
     if (groups.length === 0) {
@@ -1027,8 +898,15 @@ class LayerSheetController {
 
     this.updatePanelChrome(groups);
     applyRemoteChromeI18n();
+    if (this.focusedGroupId === "nli") {
+      this._syncNliEndedTimer(this._liveNliClock());
+      this._syncNliPlayheadTicker(this._liveNliClock());
+      void this._ensureNliFeatureCache();
+    }
   }
 }
+
+Object.assign(LayerSheetController.prototype, nliTimelineHostMethods);
 
 let layerSheetController = null;
 if (typeof document !== "undefined" && typeof window !== "undefined") {
@@ -1043,4 +921,5 @@ export {
   isPinkLineRouteSheetRow,
   orderMoreshetWorkshopSheetRows,
   renderLayerRow,
+  renderNliTimelineTransport,
 };

@@ -85,6 +85,9 @@ describe("projection-main slideshow overlay wiring", () => {
     );
     expect(src).toContain("resolvePresentationOverlayVisibility");
     expect(src).toContain("suppressInvestigationPlayback");
+    expect(src).toContain("idleNliClock");
+    expect(src).toContain("getInvestigationClock");
+    expect(src).toContain('subscribe("investigationClock"');
     expect(src).toContain("getLastIncomingGroups");
     expect(src).toContain("syncPresentationOverlays");
     expect(src).toMatch(/visibilityLayerGroups:\s*overlayGroups/);

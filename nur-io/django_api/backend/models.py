@@ -393,6 +393,9 @@ class OTEFViewportState(models.Model):
     # Last projection slideshow command (start/stop + payload), replicated over otef WebSocket
     projection_slideshow = models.JSONField(default=dict, blank=True)
 
+    # Shared NLI investigation clock (play/pause/seek), replicated over otef WebSocket
+    investigation_clock = models.JSONField(default=dict, blank=True)
+
     basemap = models.CharField(max_length=16, default="osm")
 
     updated_at = models.DateTimeField(auto_now=True)

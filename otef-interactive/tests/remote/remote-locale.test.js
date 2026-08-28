@@ -151,6 +151,25 @@ describe("remote-locale", () => {
     expect(t("curationSubmissionsRefreshAria")).toBe("Refresh submissions list");
   });
 
+  test("nli timeline transport aria keys resolve for both locales", async () => {
+    installLocaleTestEnv();
+    const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    const keys = [
+      "ariaNliTimelinePlay",
+      "ariaNliTimelinePause",
+      "ariaNliTimelineStop",
+      "ariaNliTimelineLoop",
+      "ariaNliTimelineStepBack",
+      "ariaNliTimelineStepForward",
+      "ariaNliTimelineScrub",
+    ];
+    setLocale("he", { force: true });
+    const heOk = keys.every((k) => typeof t(k) === "string" && t(k) !== k);
+    setLocale("en", { force: true });
+    const enOk = keys.every((k) => typeof t(k) === "string" && t(k) !== k);
+    expect({ he: heOk, en: enOk }).toEqual({ he: true, en: true });
+  });
+
   test("layer pack counts + layer animation aria keys resolve for both locales", async () => {
     installLocaleTestEnv();
     const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");

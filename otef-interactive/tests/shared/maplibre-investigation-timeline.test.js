@@ -21,6 +21,12 @@ import {
   TIMELINE_BEAT_MS,
   timelinePhaseAt,
 } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
+import {
+  idleNliClock,
+  pauseNliClock,
+  playNliClock,
+  seekNliClock,
+} from "../../frontend/src/shared/nli-investigation-clock.js";
 
 const INVESTIGATION_FEATURES = [
   { properties: { OBJECTID: 1, Name: "מרחב כניסה לקיבוץ", timeline: "local 07:15", timeline_minutes: 435 } },
@@ -270,6 +276,9 @@ describe("syncInvestigationTimelineToMap", () => {
     },
   ];
 
+  const POLYGON_BEATS = collectTimelineBeats(INVESTIGATION_FEATURES);
+  const LINE_BEATS = collectTimelineBeats(LINE_FEATURES);
+
   function bothGroups() {
     return [
       {
@@ -282,6 +291,10 @@ describe("syncInvestigationTimelineToMap", () => {
     ];
   }
 
+  function playClock(membership, beats, nowMs = 0) {
+    return playNliClock(idleNliClock(), membership, beats, nowMs);
+  }
+
   it("sets fill/line paint from timeline_minutes and restores on stop", async () => {
     const map = makeMap();
     const groups = [
@@ -292,7 +305,7 @@ describe("syncInvestigationTimelineToMap", () => {
     ];
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_POLYGONS_FULL_ID]: true },
+      playClock([INVESTIGATION_POLYGONS_FULL_ID], POLYGON_BEATS),
       groups,
       { features: INVESTIGATION_FEATURES, getLayerDataUrl: () => null, now: () => 0 },
     );
@@ -303,7 +316,7 @@ describe("syncInvestigationTimelineToMap", () => {
     const fillColor = map.setPaintProperty.mock.calls.find((call) => call[1] === "fill-color");
     expect(JSON.stringify(fillColor[2])).toContain("#f79009");
 
-    await syncInvestigationTimelineToMap(map, { [INVESTIGATION_POLYGONS_FULL_ID]: false }, groups, {
+    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, {
       features: INVESTIGATION_FEATURES,
       getLayerDataUrl: () => null,
     });
@@ -314,12 +327,12 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("skips when the polygon layer is not enabled", async () => {
+  it("skips when the clock is idle", async () => {
     const map = makeMap();
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_POLYGONS_FULL_ID]: true },
-      [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: false }] }],
+      idleNliClock(),
+      [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }],
       { features: INVESTIGATION_FEATURES, getLayerDataUrl: () => null },
     );
     expect(map.setPaintProperty).not.toHaveBeenCalled();
@@ -344,9 +357,14 @@ describe("syncInvestigationTimelineToMap", () => {
       },
       now: () => 0,
     };
-    await syncInvestigationTimelineToMap(map, { [INVESTIGATION_LINES_FULL_ID]: true }, liveOn, deps);
+    await syncInvestigationTimelineToMap(
+      map,
+      playClock([INVESTIGATION_LINES_FULL_ID], LINE_BEATS),
+      liveOn,
+      deps,
+    );
     expect(map.getLayer("nli-investigation-line-active-line")).toBeTruthy();
-    await syncInvestigationTimelineToMap(map, { [INVESTIGATION_LINES_FULL_ID]: true }, liveOn, {
+    await syncInvestigationTimelineToMap(map, idleNliClock(), liveOn, {
       ...deps,
       visibilityLayerGroups: slideshowOff,
     });
@@ -359,7 +377,7 @@ describe("syncInvestigationTimelineToMap", () => {
     const map = makeMap();
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_LINES_FULL_ID]: true },
+      playClock([INVESTIGATION_LINES_FULL_ID], LINE_BEATS),
       bothGroups(),
       {
         featuresById: {
@@ -404,13 +422,13 @@ describe("syncInvestigationTimelineToMap", () => {
       },
       now: () => 0,
     };
-    await syncInvestigationTimelineToMap(map, { [INVESTIGATION_LINES_FULL_ID]: true }, bothGroups(), deps);
+    await syncInvestigationTimelineToMap(map, playClock([INVESTIGATION_LINES_FULL_ID], LINE_BEATS), bothGroups(), deps);
     const hiddenBefore = map.setPaintProperty.mock.calls.filter(
       (call) => call[0] === "nli__lines__line__0" && call[1] === "line-opacity" && call[2] === 0,
     );
     expect(hiddenBefore).toHaveLength(0);
     style.layers.push(route);
-    await syncInvestigationTimelineToMap(map, { [INVESTIGATION_LINES_FULL_ID]: true }, bothGroups(), deps);
+    await syncInvestigationTimelineToMap(map, playClock([INVESTIGATION_LINES_FULL_ID], LINE_BEATS), bothGroups(), deps);
     const hiddenAfter = map.setPaintProperty.mock.calls.filter(
       (call) => call[0] === "nli__lines__line__0" && call[1] === "line-opacity" && call[2] === 0,
     );
@@ -428,7 +446,7 @@ describe("syncInvestigationTimelineToMap", () => {
     });
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_LINES_FULL_ID]: true },
+      playClock([INVESTIGATION_LINES_FULL_ID], LINE_BEATS),
       bothGroups(),
       {
         featuresById: {
@@ -456,7 +474,7 @@ describe("syncInvestigationTimelineToMap", () => {
     });
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_LINES_FULL_ID]: true },
+      playClock([INVESTIGATION_LINES_FULL_ID], LINE_BEATS),
       bothGroups(),
       {
         featuresById: {
@@ -474,9 +492,14 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("keeps the same clock when the other layer joins", async () => {
+  it("re-syncing a playing clock does not reset playEpoch", async () => {
     const map = makeMap();
     let now = 800;
+    const clock = playClock(
+      [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID],
+      collectUnionTimelineBeats(INVESTIGATION_FEATURES, LINE_FEATURES),
+      0,
+    );
     const deps = {
       featuresById: {
         [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES,
@@ -484,24 +507,14 @@ describe("syncInvestigationTimelineToMap", () => {
       },
       now: () => now,
     };
-    await syncInvestigationTimelineToMap(
-      map,
-      { [INVESTIGATION_POLYGONS_FULL_ID]: true },
-      bothGroups(),
-      deps,
-    );
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), deps);
     now = 1600;
-    await syncInvestigationTimelineToMap(
-      map,
-      { [INVESTIGATION_POLYGONS_FULL_ID]: true, [INVESTIGATION_LINES_FULL_ID]: true },
-      bothGroups(),
-      deps,
-    );
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), deps);
     expect(map.addSource).toHaveBeenCalled();
     const gradient = [...map.setPaintProperty.mock.calls].reverse().find((call) => call[1] === "line-gradient");
     expect(gradient).toBeDefined();
     expect(JSON.stringify(gradient[2])).toContain("line-progress");
-    expect(JSON.stringify(gradient[2])).toContain(String(800 / TIMELINE_BEAT_MS));
+    expect(JSON.stringify(gradient[2])).toContain(String(1600 / TIMELINE_BEAT_MS));
     disposeInvestigationTimelineForMap(map);
   });
 
@@ -511,7 +524,10 @@ describe("syncInvestigationTimelineToMap", () => {
     vi.stubGlobal("requestAnimationFrame", raf);
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_ALARMS_FULL_ID]: true },
+      playClock(
+        [INVESTIGATION_ALARMS_FULL_ID],
+        collectPlaybackTimelineBeats(false, false, true, [], [], [{ properties: { alarm_minutes: [389] } }]),
+      ),
       [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }],
       {
         featuresById: {
@@ -525,10 +541,10 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("does not reset startedAt when alarms join a playing polygon session", async () => {
+  it("re-syncing a playing clock does not restart RAF or rebuild beats", async () => {
     const map = makeMap();
     let now = 800;
-    const groups = [
+    const armedGroups = [
       {
         id: "nli",
         layers: [
@@ -537,6 +553,16 @@ describe("syncInvestigationTimelineToMap", () => {
         ],
       },
     ];
+    const liveAlarmsOnlyGroups = [
+      {
+        id: "nli",
+        layers: [
+          { id: "investigation_polygons", enabled: false },
+          { id: "alarms", enabled: true },
+        ],
+      },
+    ];
+    const clock = playClock([INVESTIGATION_POLYGONS_FULL_ID], POLYGON_BEATS, 0);
     const deps = {
       featuresById: {
         [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES,
@@ -548,25 +574,16 @@ describe("syncInvestigationTimelineToMap", () => {
       getLayerDataUrl: () => null,
       now: () => now,
     };
-    await syncInvestigationTimelineToMap(map, { [INVESTIGATION_POLYGONS_FULL_ID]: true }, groups, deps);
+    await syncInvestigationTimelineToMap(map, clock, armedGroups, deps);
     now = 800 + TIMELINE_BEAT_MS;
-    await syncInvestigationTimelineToMap(
-      map,
-      { [INVESTIGATION_POLYGONS_FULL_ID]: true, [INVESTIGATION_ALARMS_FULL_ID]: true },
-      groups,
-      deps,
-    );
+    await syncInvestigationTimelineToMap(map, clock, liveAlarmsOnlyGroups, deps);
     const fillOpacity = [...map.setPaintProperty.mock.calls]
       .reverse()
       .find((call) => call[0].includes("investigation_polygons") && call[1] === "fill-opacity");
     expect(JSON.stringify(fillOpacity[2])).toContain("410");
+    expect(JSON.stringify(fillOpacity[2])).not.toContain("385");
     cancelAnimationFrame.mockClear();
-    await syncInvestigationTimelineToMap(
-      map,
-      { [INVESTIGATION_POLYGONS_FULL_ID]: false, [INVESTIGATION_ALARMS_FULL_ID]: true },
-      groups,
-      deps,
-    );
+    await syncInvestigationTimelineToMap(map, clock, liveAlarmsOnlyGroups, deps);
     expect(cancelAnimationFrame).not.toHaveBeenCalled();
     disposeInvestigationTimelineForMap(map);
   });
@@ -583,7 +600,10 @@ describe("syncInvestigationTimelineToMap", () => {
     vi.stubGlobal("fetch", fetchMock);
     await syncInvestigationTimelineToMap(
       map,
-      { [INVESTIGATION_POLYGONS_FULL_ID]: true, [INVESTIGATION_LINES_FULL_ID]: true },
+      playClock(
+        [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID],
+        collectUnionTimelineBeats(INVESTIGATION_FEATURES, LINE_FEATURES),
+      ),
       bothGroups(),
       {
         featuresById: {
@@ -597,5 +617,371 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(getLayerDataUrl).not.toHaveBeenCalledWith(INVESTIGATION_ALARMS_FULL_ID);
     expect(fetchMock).toHaveBeenCalledWith("https://example.test/lines.json");
     disposeInvestigationTimelineForMap(map);
+  });
+
+  it("pause freezes beatElapsedMs when deps.now advances 10s", async () => {
+    let captionEl = null;
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        className: "",
+        hidden: true,
+        innerHTML: "",
+        textContent: "",
+        setAttribute() {},
+      }),
+    });
+    const map = makeMap();
+    map.getContainer = vi.fn(() => ({
+      querySelector: () => captionEl,
+      appendChild: (el) => {
+        captionEl = el;
+      },
+    }));
+    let now = 800;
+    const playing = playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [400, 420, 740], 0);
+    const paused = pauseNliClock(playing, 800);
+    const deps = {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES,
+        [INVESTIGATION_LINES_FULL_ID]: LINE_FEATURES,
+      },
+      now: () => now,
+    };
+    const raf = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", raf);
+    await syncInvestigationTimelineToMap(map, paused, bothGroups(), deps);
+    expect(raf).not.toHaveBeenCalled();
+    const gradientAtPause = [...map.setPaintProperty.mock.calls]
+      .reverse()
+      .find((call) => call[1] === "line-gradient");
+    expect(JSON.stringify(gradientAtPause[2])).toContain(String(800 / TIMELINE_BEAT_MS));
+    expect(captionEl?.hidden).toBe(false);
+    now += 10_000;
+    await syncInvestigationTimelineToMap(map, paused, bothGroups(), deps);
+    const gradientLater = [...map.setPaintProperty.mock.calls]
+      .reverse()
+      .find((call) => call[1] === "line-gradient");
+    expect(JSON.stringify(gradientLater[2])).toContain(String(800 / TIMELINE_BEAT_MS));
+    expect(captionEl?.hidden).toBe(false);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("seek jump does RAF and progress 0 to 0.5 to 1 at same index", async () => {
+    const map = makeMap();
+    let now = 10_000;
+    let rafCb = null;
+    const raf = vi.fn((cb) => {
+      rafCb = cb;
+      return 1;
+    });
+    vi.stubGlobal("requestAnimationFrame", raf);
+    const clock = seekNliClock(idleNliClock(), 1, now, {
+      visibleMembership: [INVESTIGATION_LINES_FULL_ID],
+      beats: [400, 420, 740],
+    });
+    const deps = {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES,
+        [INVESTIGATION_LINES_FULL_ID]: LINE_FEATURES,
+      },
+      now: () => now,
+    };
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), deps);
+    expect(raf).toHaveBeenCalled();
+    const lastGradient = () =>
+      [...map.setPaintProperty.mock.calls].reverse().find((call) => call[1] === "line-gradient");
+    const lastActiveIds = () =>
+      map
+        .getSource("nli-investigation-line-active")
+        .setData.mock.calls.at(-1)[0]
+        .features.map((f) => f.properties.OBJECTID);
+    expect(lastActiveIds()).toEqual([1]);
+    expect(JSON.stringify(lastGradient()[2])).not.toContain("0.5");
+
+    now = 10_000 + 1600;
+    rafCb();
+    expect(lastActiveIds()).toEqual([1]);
+    expect(JSON.stringify(lastGradient()[2])).toContain(String(1600 / TIMELINE_BEAT_MS));
+
+    now = 10_000 + TIMELINE_BEAT_MS;
+    rafCb();
+    expect(lastActiveIds()).toEqual([1]);
+    expect(JSON.stringify(lastGradient()[2])).toContain(String(1 - 0.00015));
+
+    now = 10_000 + 10_000;
+    raf.mockClear();
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), deps);
+    expect(raf).not.toHaveBeenCalled();
+    expect(lastActiveIds()).toEqual([1]);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("jump flash stays native previous-beat for the whole one-shot", async () => {
+    const map = makeMap();
+    let now = 10_000;
+    let rafCb = null;
+    vi.stubGlobal("requestAnimationFrame", (cb) => {
+      rafCb = cb;
+      return 1;
+    });
+    const clock = {
+      ...seekNliClock(idleNliClock(), 1, now, {
+        visibleMembership: [INVESTIGATION_ALARMS_FULL_ID],
+        beats: [400, 420, 740],
+      }),
+      revision: 7,
+    };
+    const groups = [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }];
+    const deps = {
+      featuresById: {
+        [INVESTIGATION_ALARMS_FULL_ID]: [
+          {
+            properties: { city: "A", alarm_minutes: [400], alarm_count_total: 1 },
+            geometry: { type: "Point", coordinates: [34.4, 31.5] },
+          },
+          {
+            properties: { city: "B", alarm_minutes: [420], alarm_count_total: 1 },
+            geometry: { type: "Point", coordinates: [34.5, 31.5] },
+          },
+        ],
+      },
+      getLayerDataUrl: () => null,
+      now: () => now,
+    };
+
+    function flashingCities() {
+      const source = map.getSource("nli-investigation-alarm-count");
+      const fc = source?.setData?.mock.calls.at(-1)?.[0];
+      return (fc?.features || [])
+        .filter((feature) => feature.properties.flash)
+        .map((feature) => feature.properties.city);
+    }
+
+    await syncInvestigationTimelineToMap(map, clock, groups, deps);
+    expect(flashingCities()).toEqual(["B"]);
+
+    now = 10_000 + 1600;
+    rafCb();
+    expect(flashingCities()).toEqual(["B"]);
+
+    now = 10_000 + TIMELINE_BEAT_MS;
+    rafCb();
+    expect(flashingCities()).toEqual([]);
+
+    disposeInvestigationTimelineForMap(map);
+    await syncInvestigationTimelineToMap(map, clock, groups, deps);
+    expect(flashingCities()).toEqual([]);
+  });
+
+  it("jump flash is not re-fired after dispose remount at the same revision", async () => {
+    const map = makeMap();
+    let now = 0;
+    const clock = {
+      ...seekNliClock(idleNliClock(), 1, 0, {
+        visibleMembership: [INVESTIGATION_ALARMS_FULL_ID],
+        beats: [400, 420, 740],
+      }),
+      revision: 7,
+    };
+    const groups = [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }];
+    const deps = {
+      featuresById: {
+        [INVESTIGATION_ALARMS_FULL_ID]: [
+          {
+            properties: { city: "A", alarm_minutes: [400], alarm_count_total: 1 },
+            geometry: { type: "Point", coordinates: [34.4, 31.5] },
+          },
+          {
+            properties: { city: "B", alarm_minutes: [420], alarm_count_total: 1 },
+            geometry: { type: "Point", coordinates: [34.5, 31.5] },
+          },
+        ],
+      },
+      getLayerDataUrl: () => null,
+      now: () => now,
+    };
+
+    function flashingCities() {
+      const source = map.getSource("nli-investigation-alarm-count");
+      const fc = source?.setData?.mock.calls.at(-1)?.[0];
+      return (fc?.features || [])
+        .filter((feature) => feature.properties.flash)
+        .map((feature) => feature.properties.city);
+    }
+
+    await syncInvestigationTimelineToMap(map, clock, groups, deps);
+    expect(flashingCities()).toEqual(["B"]);
+
+    now = TIMELINE_BEAT_MS;
+    await syncInvestigationTimelineToMap(map, clock, groups, deps);
+
+    disposeInvestigationTimelineForMap(map);
+    await syncInvestigationTimelineToMap(map, clock, groups, deps);
+    expect(flashingCities()).toEqual([]);
+  });
+
+  it("paused jump still RAFs when fetch advances now past the clock epoch window", async () => {
+    const map = makeMap();
+    let now = 10_000;
+    const raf = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", raf);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        now += 3500;
+        return { ok: true, json: async () => ({ features: LINE_FEATURES }) };
+      }),
+    );
+    const clock = {
+      ...seekNliClock(idleNliClock(), 1, 10_000, {
+        visibleMembership: [INVESTIGATION_LINES_FULL_ID],
+        beats: [400, 420, 740],
+      }),
+      revision: 11,
+    };
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      getLayerDataUrl: (id) =>
+        id === INVESTIGATION_LINES_FULL_ID ? "https://example.test/lines.json" : null,
+      now: () => now,
+    });
+    expect(now).toBe(13_500);
+    expect(raf).toHaveBeenCalled();
+    const lastGradient = [...map.setPaintProperty.mock.calls]
+      .reverse()
+      .find((call) => call[1] === "line-gradient");
+    expect(JSON.stringify(lastGradient[2])).not.toContain(String(1 - 0.00015));
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("paused jump RAFs from first paint even when playEpochMs is null", async () => {
+    const map = makeMap();
+    const raf = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", raf);
+    const clock = {
+      phase: "paused",
+      membership: [INVESTIGATION_LINES_FULL_ID],
+      beats: [400, 420, 740],
+      loop: false,
+      beatIndex: 1,
+      beatElapsedMs: 0,
+      playEpochMs: null,
+      seekKind: "jump",
+      revision: 12,
+    };
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES,
+        [INVESTIGATION_LINES_FULL_ID]: LINE_FEATURES,
+      },
+      now: () => 10_000,
+    });
+    expect(raf).toHaveBeenCalled();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("does not start RAF for idle clock even with leftover nli anim unused arg", async () => {
+    const map = makeMap();
+    const raf = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", raf);
+    const leftover = {
+      [INVESTIGATION_POLYGONS_FULL_ID]: true,
+      [INVESTIGATION_LINES_FULL_ID]: true,
+      [INVESTIGATION_ALARMS_FULL_ID]: true,
+    };
+    await syncInvestigationTimelineToMap(
+      map,
+      idleNliClock(),
+      bothGroups(),
+      {
+        featuresById: {
+          [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES,
+          [INVESTIGATION_LINES_FULL_ID]: LINE_FEATURES,
+        },
+        now: () => 0,
+      },
+      leftover,
+    );
+    expect(raf).not.toHaveBeenCalled();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("overlapping sync(play) then sync(idle) must not restart RAF", async () => {
+    const map = makeMap();
+    let releaseFetch;
+    const fetchGate = new Promise((resolve) => {
+      releaseFetch = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        await fetchGate;
+        return { ok: true, json: async () => ({ features: LINE_FEATURES }) };
+      }),
+    );
+    const raf = vi.fn(() => 7);
+    vi.stubGlobal("requestAnimationFrame", raf);
+    const playing = {
+      ...playClock([INVESTIGATION_LINES_FULL_ID], LINE_BEATS),
+      revision: 1,
+    };
+    const stopped = { ...idleNliClock(), revision: 2 };
+    const playSync = syncInvestigationTimelineToMap(map, playing, bothGroups(), {
+      featuresById: {},
+      getLayerDataUrl: () => "https://example.test/lines.json",
+      now: () => 0,
+    });
+    const idleSync = syncInvestigationTimelineToMap(map, stopped, bothGroups(), {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES,
+        [INVESTIGATION_LINES_FULL_ID]: LINE_FEATURES,
+      },
+      now: () => 0,
+    });
+    await idleSync;
+    releaseFetch();
+    await playSync;
+    expect(raf).not.toHaveBeenCalled();
+    disposeInvestigationTimelineForMap(map);
+  });
+});
+
+function subscribeCallbackName(src, topic) {
+  const match = src.match(new RegExp(`subscribe\\("${topic}",\\s*(\\w+)\\)`));
+  expect(match).toBeTruthy();
+  return match[1];
+}
+
+function namedArrowFunctionBody(src, name) {
+  const match = src.match(new RegExp(`const ${name} = \\(\\) => \\{([\\s\\S]*?)\\n    \\};`));
+  expect(match).toBeTruthy();
+  return match[1];
+}
+
+describe("maps ignore leftover nli animation booleans", () => {
+  it("map-main animations subscribe does not re-enter investigation sync", () => {
+    const src = fs.readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../frontend/src/entries/map-main.js"),
+      "utf8",
+    );
+    const animCb = subscribeCallbackName(src, "animations");
+    const clockCb = subscribeCallbackName(src, "investigationClock");
+    expect(animCb).not.toBe("syncContextFlowAnimations");
+    expect(namedArrowFunctionBody(src, animCb)).not.toContain("syncContextInvestigation");
+    expect(namedArrowFunctionBody(src, animCb)).not.toContain("syncInvestigationTimelineToMap");
+    expect(namedArrowFunctionBody(src, clockCb)).toContain("syncInvestigationTimelineToMap");
+  });
+
+  it("projection-main animations subscribe does not re-enter investigation sync", () => {
+    const src = fs.readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../frontend/src/entries/projection-main.js"),
+      "utf8",
+    );
+    const animCb = subscribeCallbackName(src, "animations");
+    const clockCb = subscribeCallbackName(src, "investigationClock");
+    expect(animCb).not.toBe("syncContextFlowAnimations");
+    expect(namedArrowFunctionBody(src, animCb)).not.toContain("syncContextInvestigation");
+    expect(namedArrowFunctionBody(src, animCb)).not.toContain("syncInvestigationTimelineToMap");
+    expect(namedArrowFunctionBody(src, clockCb)).toContain("syncInvestigationTimelineToMap");
+    expect(namedArrowFunctionBody(src, clockCb)).toContain("idleNliClock");
   });
 });

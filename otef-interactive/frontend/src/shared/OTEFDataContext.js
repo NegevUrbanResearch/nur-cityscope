@@ -1,5 +1,6 @@
 import { OTEF_API } from "./api-client.js";
 import { normalizeGisBasemap } from "./gis-basemap.js";
+import { idleNliClock, normalizeNliClock } from "./nli-investigation-clock.js";
 import { OTEFDataContextInternals } from "./otef-data-context/index.js";
 import { recordTraceEvent } from "./otef-trace.js";
 import {
@@ -85,6 +86,7 @@ class OTEFDataContextClass {
       connection: new Set(),
       orientation: new Set(),
       projectionSlideshow: new Set(),
+      investigationClock: new Set(),
       navigationCommand: new Set(),
     };
 
@@ -109,6 +111,9 @@ class OTEFDataContextClass {
     this._activeLayerTrace = null;
     /** @type {Record<string, unknown> | null} */
     this._projectionSlideshow = null;
+    this._investigationClock = idleNliClock();
+    this._clockOffsetMs = 0;
+    this._clockPatchQueue = null;
   }
 
   async init(tableName = "otef") {
@@ -296,6 +301,36 @@ class OTEFDataContextClass {
   }
 
   /**
+   * @param {unknown} clock
+   */
+  _setInvestigationClock(clock) {
+    const next = normalizeNliClock(clock, this._investigationClock);
+    if (Number.isFinite(next.serverNowMs)) {
+      this._clockOffsetMs = next.serverNowMs - Date.now();
+    }
+    if (JSON.stringify(this._investigationClock ?? null) === JSON.stringify(next)) {
+      return;
+    }
+    this._investigationClock = next;
+    this._notify("investigationClock", this._investigationClock);
+  }
+
+  /**
+   * Push an investigation clock through the OTEF API (WebSocket fan-out).
+   * Patches serialize on `_clockPatchQueue` (one in flight).
+   *
+   * @param {unknown} next
+   */
+  async patchInvestigationClock(next) {
+    const actions = OTEFDataContextInternals.actions;
+    if (!actions || typeof actions.patchInvestigationClock !== "function") {
+      getLogger().error("[OTEFDataContext] Missing patchInvestigationClock action helper");
+      return;
+    }
+    return actions.patchInvestigationClock(this, next);
+  }
+
+  /**
    * Push a projection slideshow command through the OTEF API (WebSocket fan-out to projection).
    * Falls back to BroadcastChannel if the PATCH fails or the table is not initialized.
    *
@@ -326,6 +361,18 @@ class OTEFDataContextClass {
 
   getProjectionSlideshow() {
     return this._projectionSlideshow;
+  }
+
+  getInvestigationClock() {
+    return this._investigationClock;
+  }
+
+  getClockOffsetMs() {
+    return Number(this._clockOffsetMs) || 0;
+  }
+
+  correctedNow() {
+    return Date.now() + this.getClockOffsetMs();
   }
 
   navigateToPlace(place) {
@@ -571,6 +618,9 @@ class OTEFDataContextClass {
         break;
       case "projectionSlideshow":
         current = this._projectionSlideshow;
+        break;
+      case "investigationClock":
+        current = this._investigationClock;
         break;
       case "navigationCommand":
         current = undefined;

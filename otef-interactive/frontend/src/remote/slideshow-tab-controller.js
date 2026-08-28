@@ -1,4 +1,5 @@
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
+import { stopNliClock } from "../shared/nli-investigation-clock.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import { getPackDisplayLabel } from "./layer-pack-display-names.js";
 import { LOCALE_EVENT, applyRemoteChromeI18n, getLocale, t } from "./remote-locale.js";
@@ -210,6 +211,9 @@ class SlideshowTabController {
       }
       return;
     }
+    await OTEFDataContext.patchInvestigationClock(
+      stopNliClock(OTEFDataContext.getInvestigationClock()),
+    );
     await OTEFDataContext.patchProjectionSlideshow({
       type: "start",
       payload: this.buildStartPayload(),
@@ -227,6 +231,9 @@ class SlideshowTabController {
     if (this.packOrder.length === 0) {
       return;
     }
+    await OTEFDataContext.patchInvestigationClock(
+      stopNliClock(OTEFDataContext.getInvestigationClock()),
+    );
     await OTEFDataContext.patchProjectionSlideshow({
       type: "start",
       payload: { ...this.buildStartPayload(), keepSettlementNames: keepOn },

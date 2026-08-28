@@ -113,6 +113,11 @@ function buildSinglePackGroups(packId, baseGroups) {
         for (const layer of layers) {
           if (layer) layer.enabled = true;
         }
+        for (const layer of layers) {
+          if (layer && `${g.id}.${layer.id}` === "nli.people_names") {
+            layer.enabled = false;
+          }
+        }
       }
       return { ...g, layers };
     });

@@ -21,6 +21,7 @@ import {
   disposeInvestigationTimelineForMap,
   syncInvestigationTimelineToMap,
 } from "../shared/maplibre-investigation-timeline.js";
+import { idleNliClock } from "../shared/nli-investigation-clock.js";
 
 const DEFAULT_MAP_CENTER = [34.5, 31.4];
 
@@ -167,22 +168,44 @@ async function bootstrapMapRuntime() {
       disposeInvestigationTimelineForMap(map);
     });
 
-    const syncContextFlowAnimations = () => {
+    const gisOverlayGroups = () => {
       const groupsRaw = OTEFDataContext.getLayerGroups();
       const groupsAsArray = Array.isArray(groupsRaw)
         ? groupsRaw
         : Object.values(groupsRaw || {});
-      const currentGroups = filterGroupsForGisMap(groupsAsArray);
+      return {
+        groupsAsArray,
+        currentGroups: filterGroupsForGisMap(groupsAsArray),
+      };
+    };
+    const syncContextRouteProgress = () => {
+      const { groupsAsArray, currentGroups } = gisOverlayGroups();
       const anim =
         typeof OTEFDataContext.getAnimations === "function" ? OTEFDataContext.getAnimations() : {};
       void syncRouteProgressOverlaysToMap(map, anim, currentGroups, {
         visibilityLayerGroups: groupsAsArray,
       });
-      void syncInvestigationTimelineToMap(map, anim, currentGroups, {
+    };
+    const syncContextInvestigation = () => {
+      const { groupsAsArray, currentGroups } = gisOverlayGroups();
+      const clock =
+        typeof OTEFDataContext.getInvestigationClock === "function"
+          ? OTEFDataContext.getInvestigationClock()
+          : idleNliClock();
+      void syncInvestigationTimelineToMap(map, clock, currentGroups, {
         visibilityLayerGroups: groupsAsArray,
+        now: () =>
+          typeof OTEFDataContext.correctedNow === "function"
+            ? OTEFDataContext.correctedNow()
+            : Date.now(),
       });
     };
-    registerDisposer(OTEFDataContext.subscribe("animations", syncContextFlowAnimations));
+    const syncContextFlowAnimations = () => {
+      syncContextRouteProgress();
+      syncContextInvestigation();
+    };
+    registerDisposer(OTEFDataContext.subscribe("animations", syncContextRouteProgress));
+    registerDisposer(OTEFDataContext.subscribe("investigationClock", syncContextInvestigation));
 
     registerDisposer(setupViewportSync(map, OTEFDataContext));
     registerDisposer(attachGisFeaturePopups(map, maplibregl));

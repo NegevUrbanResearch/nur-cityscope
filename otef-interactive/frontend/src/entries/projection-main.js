@@ -23,6 +23,7 @@ import {
   disposeInvestigationTimelineForMap,
   syncInvestigationTimelineToMap,
 } from "../shared/maplibre-investigation-timeline.js";
+import { idleNliClock } from "../shared/nli-investigation-clock.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
   createSlideshowPackRuntime,
@@ -344,7 +345,7 @@ async function bootstrapProjectionRuntime() {
       disposeInvestigationTimelineForMap(map);
     });
 
-    const syncContextFlowAnimations = () => {
+    const projectionOverlayContext = () => {
       const rawGroups = OTEFDataContext.getLayerGroups();
       const rawAsArray = Array.isArray(rawGroups) ? rawGroups : Object.values(rawGroups || {});
       const currentGroups = asLayerGroupsArray(getEffectiveProjectionLayerGroups());
@@ -363,17 +364,38 @@ async function bootstrapProjectionRuntime() {
         excludedPresentationPackIds:
           MapProjectionConfig.PROJECTION_SLIDESHOW?.excludedPresentationPackIds,
       });
+      return { currentGroups, overlayGroups, presentationActive };
+    };
+    const syncContextRouteProgress = () => {
+      const { currentGroups, overlayGroups, presentationActive } = projectionOverlayContext();
       const anim =
         typeof OTEFDataContext.getAnimations === "function" ? OTEFDataContext.getAnimations() : {};
       const overlayAnim = suppressInvestigationPlayback(anim, presentationActive);
       void syncRouteProgressOverlaysToMap(map, overlayAnim, currentGroups, {
         visibilityLayerGroups: overlayGroups,
       });
-      void syncInvestigationTimelineToMap(map, overlayAnim, currentGroups, {
+    };
+    const syncContextInvestigation = () => {
+      const { currentGroups, overlayGroups, presentationActive } = projectionOverlayContext();
+      const clock =
+        typeof OTEFDataContext.getInvestigationClock === "function"
+          ? OTEFDataContext.getInvestigationClock()
+          : idleNliClock();
+      const overlayClock = presentationActive ? idleNliClock(clock) : clock;
+      void syncInvestigationTimelineToMap(map, overlayClock, currentGroups, {
         visibilityLayerGroups: overlayGroups,
+        now: () =>
+          typeof OTEFDataContext.correctedNow === "function"
+            ? OTEFDataContext.correctedNow()
+            : Date.now(),
       });
     };
-    registerDisposer(OTEFDataContext.subscribe("animations", syncContextFlowAnimations));
+    const syncContextFlowAnimations = () => {
+      syncContextRouteProgress();
+      syncContextInvestigation();
+    };
+    registerDisposer(OTEFDataContext.subscribe("animations", syncContextRouteProgress));
+    registerDisposer(OTEFDataContext.subscribe("investigationClock", syncContextInvestigation));
 
     let activeCuratedIds = new Set();
 

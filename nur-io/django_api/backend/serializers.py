@@ -229,6 +229,7 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "animations",
             "basemap",
             "projection_slideshow",
+            "investigation_clock",
             "workshop_auto_publish",
             "workshop_autopublish_started_at",
             "updated_at",

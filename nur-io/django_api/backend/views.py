@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import time
 from django.conf import settings
 from datetime import datetime
 
@@ -106,6 +107,170 @@ def _normalize_projection_slideshow_patch(raw):
         out_payload["keepSettlementNames"] = payload["keepSettlementNames"] is True
 
     return {"type": "start", "payload": out_payload}, None
+
+
+# Keep in sync with otef-interactive/frontend/src/shared/nli-investigation-beats.js NLI_PLAYABLE_IDS
+_NLI_PLAYABLE_IDS = frozenset(
+    (
+        "nli.investigation_polygons",
+        "nli.lines",
+        "nli.alarms",
+    )
+)
+_INVESTIGATION_CLOCK_PHASES = ("idle", "playing", "paused", "ended")
+_INVESTIGATION_CLOCK_SEEK_KINDS = ("none", "jump")
+
+
+def _idle_investigation_clock(loop=False, revision=0):
+    return {
+        "phase": "idle",
+        "membership": [],
+        "beats": [],
+        "loop": bool(loop),
+        "beatIndex": -1,
+        "beatElapsedMs": 0,
+        "playEpochMs": None,
+        "seekKind": "none",
+        "revision": int(revision),
+    }
+
+
+def _stamp_investigation_clock_server_now(clock):
+    stamped = dict(clock) if isinstance(clock, dict) else _idle_investigation_clock()
+    stamped["serverNowMs"] = int(time.time() * 1000)
+    return stamped
+
+
+def _investigation_clock_for_response(raw):
+    if not isinstance(raw, dict) or raw.get("phase") not in _INVESTIGATION_CLOCK_PHASES:
+        return _stamp_investigation_clock_server_now(_idle_investigation_clock())
+    return _stamp_investigation_clock_server_now(raw)
+
+
+def _previous_investigation_clock_loop(prev):
+    if isinstance(prev, dict) and isinstance(prev.get("loop"), bool):
+        return prev["loop"]
+    return False
+
+
+def _normalize_investigation_clock_patch(raw, prev=None):
+    """
+    Validate and normalize investigation_clock PATCH body.
+    Returns (normalized_dict, None) or (None, error Response).
+    revision and serverNowMs are assigned by the caller.
+    """
+    if not isinstance(raw, dict):
+        return None, Response(
+            {"error": "investigation_clock must be an object"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    phase = raw.get("phase")
+    if phase not in _INVESTIGATION_CLOCK_PHASES:
+        return None, Response(
+            {
+                "error": (
+                    'investigation_clock.phase must be '
+                    '"idle", "playing", "paused", or "ended"'
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if "seekKind" in raw and raw.get("seekKind") not in _INVESTIGATION_CLOCK_SEEK_KINDS:
+        return None, Response(
+            {"error": 'investigation_clock.seekKind must be "none" or "jump"'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    membership = []
+    if "membership" in raw:
+        membership = raw["membership"]
+        if not isinstance(membership, list):
+            return None, Response(
+                {"error": "investigation_clock.membership must be an array"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for item in membership:
+            if item not in _NLI_PLAYABLE_IDS:
+                return None, Response(
+                    {
+                        "error": (
+                            "investigation_clock.membership ids must be "
+                            "nli.investigation_polygons, nli.lines, or nli.alarms"
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        membership = [str(x) for x in membership]
+
+    beats = []
+    if "beats" in raw:
+        beats_raw = raw["beats"]
+        if not isinstance(beats_raw, list):
+            return None, Response(
+                {"error": "investigation_clock.beats must be an array"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for item in beats_raw:
+            number = _finite_number(item)
+            if number is None:
+                return None, Response(
+                    {"error": "investigation_clock.beats must be finite numbers"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            beats.append(int(number) if number == int(number) else number)
+
+    if "loop" in raw:
+        if not isinstance(raw["loop"], bool):
+            return None, Response(
+                {"error": "investigation_clock.loop must be a boolean"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        loop = raw["loop"]
+    else:
+        loop = _previous_investigation_clock_loop(prev)
+
+    if phase == "idle":
+        return _idle_investigation_clock(loop=loop), None
+
+    seek_kind = raw.get("seekKind", "none")
+    if seek_kind not in _INVESTIGATION_CLOCK_SEEK_KINDS:
+        seek_kind = "none"
+    if phase != "paused":
+        seek_kind = "none"
+
+    beat_index = raw.get("beatIndex", 0)
+    try:
+        beat_index = int(beat_index)
+    except (TypeError, ValueError):
+        beat_index = 0
+
+    beat_elapsed = raw.get("beatElapsedMs", 0)
+    try:
+        beat_elapsed = 0 if beat_elapsed is None else int(round(float(beat_elapsed)))
+        if beat_elapsed < 0:
+            beat_elapsed = 0
+    except (TypeError, ValueError):
+        beat_elapsed = 0
+
+    play_epoch = None
+    if phase in ("playing", "paused"):
+        play_raw = raw.get("playEpochMs")
+        if play_raw is not None:
+            number = _finite_number(play_raw)
+            if number is not None:
+                play_epoch = int(number) if number == int(number) else number
+
+    return {
+        "phase": phase,
+        "membership": membership,
+        "beats": beats,
+        "loop": loop,
+        "beatIndex": beat_index,
+        "beatElapsedMs": beat_elapsed,
+        "playEpochMs": play_epoch,
+        "seekKind": seek_kind,
+    }, None
 
 
 def _finite_number(value):
@@ -527,6 +692,21 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         'traceId': trace_id,
                     },
                 }
+            elif field == 'investigation_clock':
+                clock = state.investigation_clock if state else {}
+                if not isinstance(clock, dict):
+                    clock = {}
+                message = {
+                    'type': 'broadcast_message',
+                    'message': {
+                        'type': 'otef_investigation_clock_changed',
+                        'table': table_name,
+                        'investigationClock': clock,
+                        'sourceId': source_id,
+                        'timestamp': int(timestamp),
+                        'traceId': trace_id,
+                    },
+                }
             else:
                 continue
 
@@ -675,6 +855,26 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 state.projection_slideshow = normalized
                 changed_fields.append('projection_slideshow')
 
+            if 'investigation_clock' in request.data:
+                prev_clock = state.investigation_clock or {}
+                normalized, err = _normalize_investigation_clock_patch(
+                    request.data['investigation_clock'],
+                    prev_clock,
+                )
+                if err is not None:
+                    return err
+                rev = 0
+                if isinstance(prev_clock, dict):
+                    try:
+                        rev = int(prev_clock.get('revision') or 0)
+                    except (TypeError, ValueError):
+                        rev = 0
+                normalized['revision'] = rev + 1
+                state.investigation_clock = _stamp_investigation_clock_server_now(
+                    normalized
+                )
+                changed_fields.append('investigation_clock')
+
             state.save()
             self._emit_trace_event(
                 trace_id,
@@ -715,6 +915,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'projection_slideshow': state.projection_slideshow
             if isinstance(state.projection_slideshow, dict)
             else {},
+            'investigation_clock': _investigation_clock_for_response(
+                state.investigation_clock
+            ),
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
