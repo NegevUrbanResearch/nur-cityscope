@@ -92,6 +92,15 @@ const MapProjectionConfig = {
     POST_TY: -0.049,
   },
 
+  // Projection-page NLI explainer slot (unrotated % of #displayContainer, plus rotateDeg).
+  // Lab parks these; commit a calibrated map after E-key export. right.leftPct is the unique two-thirds.
+  // full/left: 2026-08-29 table parks (nli-explainer-layout.json).
+  NLI_EXPLAINER_LAYOUT: {
+    full: { leftPct: 31.83, topPct: 48.95, widthPct: 16.7, heightPct: 19.75, fontPx: 12, rotateDeg: -48.5 },
+    left: { leftPct: 46.8, topPct: 18.79, widthPct: 21.64, heightPct: 22.83, fontPx: 15, rotateDeg: 0 },
+    right: { leftPct: 58, topPct: 68, widthPct: 42, heightPct: 26, fontPx: 22, rotateDeg: 0 },
+  },
+
   // Projection-layer animation policy.
   // Supports line-flow animation even when style.animation metadata is absent,
   // using per-layer overrides keyed by full layer id ("pack.layer").

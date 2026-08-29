@@ -598,9 +598,38 @@ body {
   font-weight: 600;
 }
 
-.nli-investigation-timeline-caption .nli-tl-names {
-  margin-top: 2px;
-  font-size: 12px;
-  opacity: 0.92;
+.nli-tl-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.55em;
+  text-align: start;
+}
+.nli-tl-kind { font-weight: 650; white-space: nowrap; }
+.nli-tl-row--polygons .nli-tl-kind { color: #f79009; }
+.nli-tl-row--lines .nli-tl-kind { color: #c31f4f; }
+.nli-tl-row--alarms .nli-tl-kind { color: #38bdf8; }
+.nli-tl-chips { min-width: 0; overflow-wrap: normal; word-break: keep-all; }
+.nli-tl-chip { display: inline; white-space: pre-wrap; }
+.nli-tl-sep { white-space: pre-wrap; }
+.nli-tl-clock { font-size: 1.35em; font-variant-numeric: tabular-nums; font-weight: 600; }
+#nliExplainerHost {
+  position: absolute;
+  z-index: 12;
+  box-sizing: border-box;
+  pointer-events: none;
+  overflow: visible;
+}
+#nliExplainerHost .nli-investigation-timeline-caption {
+  position: absolute;
+  inset: 0;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  max-width: none;
+  width: 100%;
+  height: 100%;
+  font-size: inherit;
+  text-align: start;
+  overflow: hidden;
 }
 

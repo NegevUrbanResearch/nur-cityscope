@@ -102,24 +102,6 @@ export function flashingCityNames(features, clock, previousClock) {
   return { rows: rows.slice(0, 12), totalFlashing: rows.length };
 }
 
-function escapeCaption(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-export function alarmCaptionHtml(features, clock, previousClock) {
-  const { rows, totalFlashing } = flashingCityNames(features, clock, previousClock);
-  if (rows.length === 0) return "";
-  const parts = rows.map((row) => escapeCaption(row.city));
-  if (rows.length === 12 && totalFlashing > 12) {
-    parts.push(`ועוד ${totalFlashing - 12}`);
-  }
-  return parts.join(" · ");
-}
-
 function interpolateStopsExpression(input, stops) {
   const expr = ["interpolate", ["linear"], input];
   for (const [at, value] of stops) {

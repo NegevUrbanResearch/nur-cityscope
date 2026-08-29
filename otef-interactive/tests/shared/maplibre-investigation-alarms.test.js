@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ALARM_COUNT_COLOR_STOPS,
   ALARM_COUNT_RADIUS_STOPS,
-  alarmCaptionHtml,
   alarmCirclePaint,
   cityFlashedInWindow,
   collectAlarmTimelineBeats,
@@ -14,6 +13,7 @@ import {
   INVESTIGATION_ALARMS_FULL_ID,
   quantizeAlarmMinutes,
 } from "../../frontend/src/shared/maplibre-investigation-alarms.js";
+import { buildNliExplainerModel, nliExplainerInnerHtml } from "../../frontend/src/shared/nli-explainer-model.js";
 import { flashPreviousClock, idleNliClock, playNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
 import {
   collectPlaybackTimelineBeats,
@@ -66,6 +66,7 @@ describe("investigation alarm helpers", () => {
     expect(src).not.toMatch(/syncRouteProgressOverlaysToMap/);
     expect(src).not.toMatch(/usesRouteProgressOverlay/);
     expect(src).not.toMatch(/maplibre-flow-animation/);
+    expect(src).not.toMatch(/export function alarmCaptionHtml/);
   });
 
   it("quantizes alarm minutes to 5-minute bins", () => {
@@ -110,7 +111,20 @@ describe("investigation alarm helpers", () => {
     expect(capped.rows).toHaveLength(12);
     expect(capped.totalFlashing).toBe(15);
     expect(capped.rows.every((row) => row.n === 1)).toBe(true);
-    expect(alarmCaptionHtml(many, 400, null)).toMatch(/ועוד 3/);
+    const html = nliExplainerInnerHtml(
+      buildNliExplainerModel({
+        polygonOn: false,
+        lineOn: false,
+        alarmPlay: true,
+        polygonFeatures: [],
+        lineFeatures: [],
+        alarmFeatures: many,
+        clock: 400,
+        previousClock: null,
+      }),
+    );
+    expect(html).toMatch(/ועוד 3/);
+    expect(html).toMatch(/nli-tl-chip/);
   });
 
   it("paints overlay GeoJSON count interpolate expressions, not feature-state", () => {

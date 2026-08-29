@@ -7,16 +7,17 @@
  * Alarms hitchhike polygon/line beats when those layers play; alarms-only uses 5-minute bins.
  */
 
+import { applyAlarmMode } from "./maplibre-investigation-alarms.js";
 import {
-  alarmCaptionHtml,
-  applyAlarmMode,
-} from "./maplibre-investigation-alarms.js";
+  buildNliExplainerModel,
+  nliExplainerInnerHtml,
+  NLI_EXPLAINER_SAMPLE_MODEL,
+} from "./nli-explainer-model.js";
 import {
   INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
   TIMELINE_BEAT_MS,
-  formatMinutesAsLocalClock,
 } from "./nli-investigation-beats.js";
 import {
   evaluateClock,
@@ -113,16 +114,6 @@ export function objectIdsActiveAt(features, minutes) {
     if (oid != null) active.push(oid);
   }
   return active;
-}
-
-export function namesActiveAt(features, minutes) {
-  const names = [];
-  for (const feature of features || []) {
-    if (Number(feature?.properties?.timeline_minutes) !== minutes) continue;
-    const name = feature?.properties?.Name;
-    if (typeof name === "string" && name.trim()) names.push(name.trim());
-  }
-  return names;
 }
 
 export function lineProgressAt(minutes, clock, beatElapsedMs) {
@@ -626,61 +617,124 @@ function hideBaseLines(map, saved) {
   }
 }
 
+function mapCaptionContainer(map) {
+  return typeof map.getContainer === "function" ? map.getContainer() : null;
+}
+
+function queryMapCaptionEl(map) {
+  const container = mapCaptionContainer(map);
+  if (!container || typeof container.querySelector !== "function") return null;
+  return container.querySelector(".nli-investigation-timeline-caption");
+}
+
+function removeLeftoverMapCaption(map, keepEl) {
+  const leftover = queryMapCaptionEl(map);
+  if (!leftover || leftover === keepEl) return;
+  const container = mapCaptionContainer(map);
+  if (container && typeof container.removeChild === "function") {
+    container.removeChild(leftover);
+    return;
+  }
+  if (leftover.parentNode && typeof leftover.parentNode.removeChild === "function") {
+    leftover.parentNode.removeChild(leftover);
+  }
+}
+
+function setCaptionDirRtl(el) {
+  if (!el) return;
+  el.dir = "rtl";
+  if (typeof el.setAttribute === "function") el.setAttribute("dir", "rtl");
+}
+
 function ensureCaptionEl(map) {
   if (typeof document === "undefined") return null;
-  const container = typeof map.getContainer === "function" ? map.getContainer() : null;
+  const container = mapCaptionContainer(map);
   if (!container || typeof container.appendChild !== "function") return null;
-  let el =
-    typeof container.querySelector === "function"
-      ? container.querySelector(".nli-investigation-timeline-caption")
-      : null;
+  let el = queryMapCaptionEl(map);
   if (!el) {
     el = document.createElement("div");
     el.className = "nli-investigation-timeline-caption";
     el.hidden = true;
-    el.setAttribute("dir", "auto");
+    setCaptionDirRtl(el);
     container.appendChild(el);
+  } else {
+    setCaptionDirRtl(el);
   }
   return el;
 }
 
-function updateCaption(state, phase, previousClock) {
-  const el = state.captionEl;
-  if (!el) return;
-  const showCaption =
-    (state.clockPhase === "playing" || state.clockPhase === "paused") &&
-    phase.mode === "beat" &&
-    phase.clock != null;
-  if (!showCaption) {
-    el.hidden = true;
-    el.textContent = "";
+function applyCaptionDeps(state, map, deps = {}) {
+  state.explainerDebugVisible = deps.explainerDebugVisible === true;
+  if (deps.captionEl) {
+    removeLeftoverMapCaption(map, deps.captionEl);
+    state.captionEl = deps.captionEl;
+    state.captionOwned = false;
+    setCaptionDirRtl(state.captionEl);
     return;
   }
-  const clock = formatMinutesAsLocalClock(phase.clock);
-  const names = [];
-  if (state.polygonOn) names.push(...namesActiveAt(state.polygonFeatures, phase.clock));
-  if (state.lineOn) names.push(...namesActiveAt(state.lineFeatures, phase.clock));
-  const alarmHtml =
-    state.alarmMode === "play"
-      ? alarmCaptionHtml(state.alarmFeatures, phase.clock, previousClock)
-      : "";
-  if (names.length === 0 && !alarmHtml) {
-    el.hidden = true;
-    el.textContent = "";
+  if (deps.allowMapCaption === false) {
+    if (state.captionOwned) {
+      removeLeftoverMapCaption(map);
+      state.captionEl = null;
+      state.captionOwned = false;
+    }
     return;
   }
-  const nameHtml = names.map(escapeCaption).join(" · ");
-  const parts = [nameHtml, alarmHtml].filter(Boolean).join(" · ");
-  el.hidden = false;
-  el.innerHTML = `<div class="nli-tl-clock">${clock}</div><div class="nli-tl-names">${parts}</div>`;
+  if (!state.captionOwned || !state.captionEl) {
+    state.captionEl = ensureCaptionEl(map);
+    state.captionOwned = !!state.captionEl;
+  }
+  setCaptionDirRtl(state.captionEl);
 }
 
-function escapeCaption(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+function explainerPreviousClock(state, clockMinutes) {
+  const beats = Array.isArray(state.beats) ? state.beats : [];
+  return flashPreviousClock(beats, clockMinutes);
+}
+
+function updateCaption(state, phase, _previousClock) {
+  const el = state.captionEl;
+  if (!el) return;
+  setCaptionDirRtl(el);
+  const playbackOn =
+    state.clockPhase === "playing" || state.clockPhase === "paused" || state.clockPhase === "ended";
+  const liveBeat = playbackOn && phase.mode === "beat" && phase.clock != null;
+  if (liveBeat) {
+    state.lastCaption = {
+      clock: phase.clock,
+      previousClock: explainerPreviousClock(state, phase.clock),
+      polygonOn: state.polygonOn,
+      lineOn: state.lineOn,
+      alarmPlay: state.alarmMode === "play",
+    };
+  }
+  const snap = liveBeat
+    ? state.lastCaption
+    : playbackOn && phase.mode === "hold" && state.lastCaption
+      ? state.lastCaption
+      : null;
+  if (snap) {
+    const model = buildNliExplainerModel({
+      polygonOn: snap.polygonOn,
+      lineOn: snap.lineOn,
+      alarmPlay: snap.alarmPlay,
+      polygonFeatures: state.polygonFeatures,
+      lineFeatures: state.lineFeatures,
+      alarmFeatures: state.alarmFeatures,
+      clock: snap.clock,
+      previousClock: snap.previousClock,
+    });
+    el.hidden = false;
+    el.innerHTML = nliExplainerInnerHtml(model);
+    return;
+  }
+  if (state.explainerDebugVisible) {
+    el.hidden = false;
+    el.innerHTML = nliExplainerInnerHtml(NLI_EXPLAINER_SAMPLE_MODEL);
+    return;
+  }
+  el.hidden = true;
+  el.innerHTML = "";
 }
 
 function rememberJumpOneShotOrigin(map, clock, nowMs) {
@@ -775,7 +829,10 @@ function createTimelineState(map, deps = {}) {
     beats: [],
     now: typeof deps.now === "function" ? deps.now : () => Date.now(),
     rafId: null,
-    captionEl: ensureCaptionEl(map),
+    captionEl: null,
+    captionOwned: false,
+    explainerDebugVisible: false,
+    lastCaption: null,
     savedFills: null,
     savedLines: null,
     savedBaseLines: null,
@@ -801,6 +858,7 @@ function stopPlayback(map) {
   state.rafId = null;
   state.playing = false;
   state.clockPhase = "idle";
+  state.lastCaption = null;
   disablePolygonPlayback(map, state);
   disableLinePlayback(map, state);
   updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
@@ -873,6 +931,9 @@ function applyStoryPlayback(map, state) {
  *   getLayerDataUrl?: (fullId: string) => string | null,
  *   now?: () => number,
  *   visibilityLayerGroups?: unknown,
+ *   captionEl?: HTMLElement | null,
+ *   allowMapCaption?: boolean,
+ *   explainerDebugVisible?: boolean,
  * }} [deps]
  */
 export async function syncInvestigationTimelineToMap(map, clockInput, layerGroups, deps = {}) {
@@ -881,39 +942,33 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   const clock = normalizeNliClock(clockInput);
   const syncRequest = beginTimelineSyncRequest(map, clock);
   const nowFn = typeof deps.now === "function" ? deps.now : () => Date.now();
-  const existing = stateByMap.get(map);
 
   if (clock.phase === "idle") {
-    if (existing && existing.clockPhase !== "idle") {
+    const state = getOrCreateState(map, deps);
+    applyCaptionDeps(state, map, deps);
+    if (state.clockPhase !== "idle") {
       stopPlayback(map);
-    } else if (existing?.rafId != null && typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(existing.rafId);
-      existing.rafId = null;
+    } else if (state.rafId != null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(state.rafId);
+      state.rafId = null;
     }
     const alarmsVisible = isNliLayerEnabled(visibilityGroups, "alarms");
+    state.clock = clock;
+    state.clockPhase = "idle";
+    state.playing = false;
+    state.polygonOn = false;
+    state.lineOn = false;
+    state.beats = [];
+    state.lastCaption = null;
+    state.now = nowFn;
     if (alarmsVisible) {
-      const state = getOrCreateState(map, deps);
-      state.clock = clock;
-      state.clockPhase = "idle";
-      state.playing = false;
-      state.polygonOn = false;
-      state.lineOn = false;
-      state.beats = [];
-      state.now = nowFn;
       await ensureLayerFeatures(state, deps, "alarmFeatures", INVESTIGATION_ALARMS_FULL_ID);
       if (isStaleTimelineSyncRequest(map, syncRequest)) return;
       applyAlarmMode(map, state, "idle");
-      updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
-    } else if (existing) {
-      existing.clock = clock;
-      existing.clockPhase = "idle";
-      existing.playing = false;
-      existing.polygonOn = false;
-      existing.lineOn = false;
-      existing.beats = [];
-      applyAlarmMode(map, existing, "off");
-      updateCaption(existing, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
+    } else {
+      applyAlarmMode(map, state, "off");
     }
+    updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
     return;
   }
 
@@ -926,6 +981,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
       : "off";
 
   const state = getOrCreateState(map, deps);
+  applyCaptionDeps(state, map, deps);
   if (mem.polygonOn) {
     await ensureLayerFeatures(state, deps, "polygonFeatures", INVESTIGATION_POLYGONS_FULL_ID);
     if (isStaleTimelineSyncRequest(map, syncRequest)) return;
@@ -952,7 +1008,6 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   state.alarmMode = alarmMode;
   state.beats = Array.isArray(clock.beats) ? clock.beats : [];
   state.now = nowFn;
-  if (!state.captionEl) state.captionEl = ensureCaptionEl(map);
   applyStoryPlayback(map, state);
   applyPlayingVisuals(map, state, vis);
 
@@ -973,8 +1028,11 @@ export function disposeInvestigationTimelineForMap(map) {
   stopPlayback(map);
   const state = stateByMap.get(map);
   if (state) applyAlarmMode(map, state, "off");
-  if (state?.captionEl && state.captionEl.parentNode) {
+  if (state?.captionOwned && state.captionEl?.parentNode) {
     state.captionEl.parentNode.removeChild(state.captionEl);
+  } else if (state?.captionEl) {
+    state.captionEl.hidden = true;
+    state.captionEl.innerHTML = "";
   }
   stateByMap.delete(map);
 }

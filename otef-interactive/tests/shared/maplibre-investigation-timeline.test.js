@@ -70,6 +70,7 @@ describe("investigation polygon timeline", () => {
     expect(src).not.toMatch(/syncRouteProgressOverlaysToMap/);
     expect(src).not.toMatch(/usesRouteProgressOverlay/);
     expect(src).not.toMatch(/maplibre-flow-animation/);
+    expect(src).not.toMatch(/export function namesActiveAt/);
   });
 
   it("hold phase after last beat treats every polygon as past", () => {
@@ -773,6 +774,81 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(flashingCities()).toEqual([]);
   });
 
+  it("explainer alarm cities stay after jump one-shot animation ends", async () => {
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+    const map = makeMap();
+    let now = 10_000;
+    let rafCb = null;
+    vi.stubGlobal("requestAnimationFrame", (cb) => {
+      rafCb = cb;
+      return 1;
+    });
+    const clock = {
+      ...seekNliClock(idleNliClock(), 1, now, {
+        visibleMembership: [INVESTIGATION_ALARMS_FULL_ID],
+        beats: [400, 420, 740],
+      }),
+      revision: 11,
+    };
+    const groups = [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }];
+    const deps = {
+      captionEl: injected,
+      allowMapCaption: false,
+      featuresById: {
+        [INVESTIGATION_ALARMS_FULL_ID]: [
+          {
+            properties: { city: "B", alarm_minutes: [420], alarm_count_total: 1 },
+            geometry: { type: "Point", coordinates: [34.5, 31.5] },
+          },
+        ],
+      },
+      getLayerDataUrl: () => null,
+      now: () => now,
+    };
+    await syncInvestigationTimelineToMap(map, clock, groups, deps);
+    expect(injected.innerHTML).toMatch(/B/);
+    now = 10_000 + TIMELINE_BEAT_MS;
+    rafCb();
+    expect(injected.hidden).toBe(false);
+    expect(injected.innerHTML).toMatch(/B/);
+    expect(injected.innerHTML).toMatch(/nli-tl-row--alarms/);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("explainer keeps the last timestep after pack hold", async () => {
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+    const map = makeMap();
+    const start = 10_000;
+    let now = start;
+    let rafCb = null;
+    vi.stubGlobal("requestAnimationFrame", (cb) => {
+      rafCb = cb;
+      return 1;
+    });
+    const clock = playNliClock(idleNliClock(), [INVESTIGATION_ALARMS_FULL_ID], [420], start);
+    const groups = [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }];
+    await syncInvestigationTimelineToMap(map, clock, groups, {
+      captionEl: injected,
+      allowMapCaption: false,
+      featuresById: {
+        [INVESTIGATION_ALARMS_FULL_ID]: [
+          {
+            properties: { city: "B", alarm_minutes: [420], alarm_count_total: 1 },
+            geometry: { type: "Point", coordinates: [34.5, 31.5] },
+          },
+        ],
+      },
+      getLayerDataUrl: () => null,
+      now: () => now,
+    });
+    now = start + TIMELINE_BEAT_MS + 50;
+    rafCb();
+    expect(injected.hidden).toBe(false);
+    expect(injected.innerHTML).toMatch(/07:00/);
+    expect(injected.innerHTML).toMatch(/B/);
+    disposeInvestigationTimelineForMap(map);
+  });
+
   it("jump flash is not re-fired after dispose remount at the same revision", async () => {
     const map = makeMap();
     let now = 0;
@@ -941,6 +1017,370 @@ describe("syncInvestigationTimelineToMap", () => {
     releaseFetch();
     await playSync;
     expect(raf).not.toHaveBeenCalled();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("empty-name beat still shows the clock", async () => {
+    let captionEl = null;
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        className: "",
+        hidden: true,
+        innerHTML: "",
+        textContent: "",
+        dir: "",
+        setAttribute() {},
+      }),
+    });
+    const map = makeMap();
+    map.getContainer = vi.fn(() => ({
+      querySelector: () => captionEl,
+      appendChild: (el) => {
+        captionEl = el;
+      },
+    }));
+    const clock = playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [400], 0);
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { OBJECTID: 1, timeline_minutes: 400 } }],
+      },
+      now: () => 0,
+    });
+    expect(captionEl.hidden).toBe(false);
+    expect(captionEl.innerHTML).toMatch(/06:40/);
+    expect(captionEl.innerHTML).toMatch(/nli-tl-clock/);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("injected captionEl is not appended to the map container", async () => {
+    const appended = [];
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+    const map = makeMap();
+    map.getContainer = vi.fn(() => ({
+      querySelector: () => null,
+      appendChild: (el) => appended.push(el),
+    }));
+    const clock = playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [400], 0);
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      captionEl: injected,
+      allowMapCaption: false,
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 400 } }],
+      },
+      now: () => 0,
+    });
+    expect(appended).toEqual([]);
+    expect(injected.hidden).toBe(false);
+    expect(injected.innerHTML).toMatch(/nli-tl-row--lines/);
+    disposeInvestigationTimelineForMap(map);
+    expect(appended).toEqual([]);
+  });
+
+  it("dispose does not removeChild an injected captionEl", async () => {
+    const host = { children: [] };
+    host.removeChild = vi.fn();
+    const injected = {
+      className: "",
+      hidden: true,
+      innerHTML: "",
+      textContent: "",
+      setAttribute() {},
+      parentNode: host,
+    };
+    host.children.push(injected);
+    const appended = [];
+    const map = makeMap();
+    map.getContainer = vi.fn(() => ({
+      querySelector: () => null,
+      appendChild: (el) => appended.push(el),
+    }));
+    const clock = playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [400], 0);
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      captionEl: injected,
+      allowMapCaption: false,
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 400 } }],
+      },
+      now: () => 0,
+    });
+    disposeInvestigationTimelineForMap(map);
+    expect(host.removeChild).not.toHaveBeenCalled();
+    expect(injected.parentNode).toBe(host);
+    expect(appended).toEqual([]);
+  });
+
+  it("removes leftover map-container caption when captionEl is injected", async () => {
+    const leftover = { className: "nli-investigation-timeline-caption", hidden: false, innerHTML: "old" };
+    const appended = [];
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", dir: "", setAttribute() {} };
+    const container = {
+      _node: leftover,
+      querySelector(sel) {
+        if (sel.includes("nli-investigation-timeline-caption")) return this._node;
+        return null;
+      },
+      appendChild(el) {
+        appended.push(el);
+      },
+      removeChild(el) {
+        if (el === this._node) this._node = null;
+      },
+    };
+    const map = makeMap();
+    map.getContainer = vi.fn(() => container);
+    const clock = playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [400], 0);
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      captionEl: injected,
+      allowMapCaption: false,
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 400 } }],
+      },
+      now: () => 0,
+    });
+    expect(container.querySelector(".nli-investigation-timeline-caption")).toBe(null);
+    expect(appended).toEqual([]);
+    expect(injected.innerHTML).toMatch(/nli-tl-clock/);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("idle + explainerDebugVisible paints the sample, not the last beat", async () => {
+    const injected = { className: "", hidden: true, innerHTML: "LAST_BEAT", textContent: "", dir: "", setAttribute() {} };
+    const map = makeMap();
+    map.getContainer = vi.fn(() => ({
+      querySelector: () => null,
+      appendChild: () => {
+        throw new Error("must not append");
+      },
+      removeChild() {},
+    }));
+    await syncInvestigationTimelineToMap(map, idleNliClock(), bothGroups(), {
+      captionEl: injected,
+      allowMapCaption: false,
+      explainerDebugVisible: true,
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [],
+      },
+      now: () => 0,
+    });
+    expect(injected.hidden).toBe(false);
+    expect(injected.innerHTML).toMatch(/nli-tl-clock/);
+    expect(injected.innerHTML).not.toBe("LAST_BEAT");
+    expect(injected.innerHTML).toMatch(/nli-tl-row--polygons/);
+    await syncInvestigationTimelineToMap(map, idleNliClock(), bothGroups(), {
+      captionEl: injected,
+      allowMapCaption: false,
+      explainerDebugVisible: true,
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [],
+      },
+      now: () => 0,
+    });
+    expect(injected.innerHTML).toMatch(/nli-tl-row--polygons/);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("second sync rebinds captionEl after a no-caption first sync", async () => {
+    const appended = [];
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+    const map = makeMap();
+    map.getContainer = vi.fn(() => ({
+      querySelector: () => null,
+      appendChild: (el) => appended.push(el),
+    }));
+    const clock = playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [400], 0);
+    const depsBase = {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 400 } }],
+      },
+      now: () => 0,
+    };
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      ...depsBase,
+      allowMapCaption: false,
+    });
+    expect(appended).toEqual([]);
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      ...depsBase,
+      captionEl: injected,
+      allowMapCaption: false,
+    });
+    expect(appended).toEqual([]);
+    expect(injected.innerHTML).toMatch(/nli-tl-row--lines/);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("allowMapCaption false without captionEl does not append to the map", async () => {
+    const appended = [];
+    const map = makeMap();
+    map.getContainer = vi.fn(() => ({
+      querySelector: () => null,
+      appendChild: (el) => appended.push(el),
+    }));
+    const clock = playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [400], 0);
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      allowMapCaption: false,
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 400 } }],
+      },
+      now: () => 0,
+    });
+    expect(appended).toEqual([]);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("GIS caption and injected caption paint the same innerHTML", async () => {
+    let gisEl = null;
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        className: "",
+        hidden: true,
+        innerHTML: "",
+        textContent: "",
+        dir: "",
+        setAttribute() {},
+      }),
+    });
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+    const features = {
+      [INVESTIGATION_POLYGONS_FULL_ID]: [
+        { properties: { Name: "גן הדר\nהמשך סיפור", timeline_minutes: 400 } },
+      ],
+      [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 400 } }],
+    };
+    const clock = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID], [400], 0);
+    const gisMap = makeMap();
+    gisMap.getContainer = vi.fn(() => ({
+      querySelector: () => gisEl,
+      appendChild: (el) => {
+        gisEl = el;
+      },
+    }));
+    const projMap = makeMap();
+    projMap.getContainer = vi.fn(() => ({
+      querySelector: () => null,
+      appendChild: () => {
+        throw new Error("must not append");
+      },
+    }));
+    await syncInvestigationTimelineToMap(gisMap, clock, bothGroups(), { featuresById: features, now: () => 0 });
+    await syncInvestigationTimelineToMap(projMap, clock, bothGroups(), {
+      featuresById: features,
+      now: () => 0,
+      captionEl: injected,
+      allowMapCaption: false,
+    });
+    expect(gisEl.innerHTML).toBe(injected.innerHTML);
+    expect(gisEl.innerHTML).toMatch(/nli-tl-row--polygons/);
+    expect(gisEl.innerHTML).toContain("גן הדר\nהמשך סיפור");
+    expect(gisEl.innerHTML).not.toMatch(/nli-tl-names/);
+    expect(gisEl.dir).toBe("rtl");
+    disposeInvestigationTimelineForMap(gisMap);
+    disposeInvestigationTimelineForMap(projMap);
+  });
+
+  it("allowMapCaption false without captionEl removes owned GIS caption from the map", async () => {
+    let captionEl = null;
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        className: "",
+        hidden: true,
+        innerHTML: "",
+        textContent: "",
+        dir: "",
+        setAttribute() {},
+      }),
+    });
+    const container = {
+      querySelector(sel) {
+        if (sel.includes("nli-investigation-timeline-caption")) return captionEl;
+        return null;
+      },
+      appendChild(el) {
+        captionEl = el;
+      },
+      removeChild(el) {
+        if (el === captionEl) captionEl = null;
+      },
+    };
+    const map = makeMap();
+    map.getContainer = vi.fn(() => container);
+    const clock = playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [400], 0);
+    const depsBase = {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 400 } }],
+      },
+      now: () => 0,
+    };
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), depsBase);
+    expect(container.querySelector(".nli-investigation-timeline-caption")).toBeTruthy();
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      ...depsBase,
+      allowMapCaption: false,
+    });
+    expect(container.querySelector(".nli-investigation-timeline-caption")).toBe(null);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("GIS-allowed sync without captionEl rebinds off a prior injected host", async () => {
+    let gisEl = null;
+    vi.stubGlobal("document", {
+      createElement: () => ({
+        className: "",
+        hidden: true,
+        innerHTML: "",
+        textContent: "",
+        dir: "",
+        setAttribute() {},
+      }),
+    });
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", dir: "", setAttribute() {} };
+    const container = {
+      querySelector(sel) {
+        if (sel.includes("nli-investigation-timeline-caption")) return gisEl;
+        return null;
+      },
+      appendChild(el) {
+        gisEl = el;
+      },
+      removeChild(el) {
+        if (el === gisEl) gisEl = null;
+      },
+    };
+    const map = makeMap();
+    map.getContainer = vi.fn(() => container);
+    const clock = playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [400], 0);
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      captionEl: injected,
+      allowMapCaption: false,
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 400 } }],
+      },
+      now: () => 0,
+    });
+    expect(injected.innerHTML).toMatch(/nli-tl-row--lines/);
+    expect(gisEl).toBe(null);
+    injected.innerHTML = "STALE_INJECTED";
+    await syncInvestigationTimelineToMap(map, clock, bothGroups(), {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 400 } }],
+      },
+      now: () => 0,
+    });
+    expect(gisEl).toBeTruthy();
+    expect(gisEl).not.toBe(injected);
+    expect(gisEl.innerHTML).toMatch(/nli-tl-row--lines/);
+    expect(injected.innerHTML).toBe("STALE_INJECTED");
     disposeInvestigationTimelineForMap(map);
   });
 });

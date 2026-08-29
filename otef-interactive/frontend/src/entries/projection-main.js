@@ -37,6 +37,20 @@ import {
   applyProjectionSpanView,
   parseProjectionSpanId,
 } from "../projection/projection-span-view.js";
+import {
+  applyNliExplainerLayout,
+  applyNliExplainerHostPresence,
+  ensureNliExplainerHost,
+  mergeNliExplainerLayout,
+  nliExplainerSpanKey,
+  NLI_EXPLAINER_LAYOUT_STORAGE_KEY,
+  readNliExplainerLayoutStore,
+  shouldIgnoreExplainerLayoutStore,
+} from "../projection/nli-explainer-overlay.js";
+import {
+  installNliExplainerDebug,
+  isNliExplainerDebugRequestedInUrl,
+} from "../projection/nli-explainer-debug.js";
 
 function getEffectiveProjectionLayerGroups() {
   if (
@@ -252,6 +266,8 @@ async function bootstrapProjectionRuntime() {
   const disposers = [];
   /** @type {null | { toggle: () => void; setVisible: (v: boolean) => void; getActive: () => boolean; dispose: () => void }} */
   let shemotLabelDebugApi = null;
+  /** @type {null | { toggle: () => void; setVisible: (v: boolean) => void; isVisible: () => boolean; dispose: () => void }} */
+  let nliExplainerDebugApi = null;
   const registerDisposer = (fn) => {
     if (typeof fn === "function") disposers.push(fn);
   };
@@ -340,6 +356,35 @@ async function bootstrapProjectionRuntime() {
   map.on("load", async () => {
     applySpanCamera();
     ensureProjectionHighlightLayers(map);
+
+    const displayContainer = document.getElementById("displayContainer");
+    const { host: nliExplainerHost, captionEl: nliExplainerCaptionEl } =
+      ensureNliExplainerHost(displayContainer);
+    const applyStoredExplainerLayout = () => {
+      const search = typeof window !== "undefined" ? window.location.search : "";
+      let stored = {};
+      if (!shouldIgnoreExplainerLayoutStore(search)) {
+        try {
+          stored = readNliExplainerLayoutStore(localStorage.getItem(NLI_EXPLAINER_LAYOUT_STORAGE_KEY));
+        } catch {
+          stored = {};
+        }
+      }
+      const spanKey = nliExplainerSpanKey(search);
+      applyNliExplainerLayout(
+        nliExplainerHost,
+        mergeNliExplainerLayout(spanKey, stored, MapProjectionConfig.NLI_EXPLAINER_LAYOUT),
+      );
+      applyNliExplainerHostPresence(nliExplainerHost, spanKey);
+    };
+    applyStoredExplainerLayout();
+    const onExplainerResize = () => {
+      if (window.NliExplainerDebug?.isVisible?.()) return;
+      applyStoredExplainerLayout();
+    };
+    window.addEventListener("resize", onExplainerResize);
+    registerDisposer(() => window.removeEventListener("resize", onExplainerResize));
+
     registerDisposer(() => {
       disposeRouteProgressOverlaysForMap(map);
       disposeInvestigationTimelineForMap(map);
@@ -375,6 +420,7 @@ async function bootstrapProjectionRuntime() {
         visibilityLayerGroups: overlayGroups,
       });
     };
+    let explainerDebugVisible = false;
     const syncContextInvestigation = () => {
       const { currentGroups, overlayGroups, presentationActive } = projectionOverlayContext();
       const clock =
@@ -384,12 +430,40 @@ async function bootstrapProjectionRuntime() {
       const overlayClock = presentationActive ? idleNliClock(clock) : clock;
       void syncInvestigationTimelineToMap(map, overlayClock, currentGroups, {
         visibilityLayerGroups: overlayGroups,
+        captionEl: nliExplainerCaptionEl,
+        allowMapCaption: false,
+        explainerDebugVisible: explainerDebugVisible === true,
         now: () =>
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()
             : Date.now(),
       });
     };
+    try {
+      nliExplainerDebugApi = installNliExplainerDebug({
+        host: nliExplainerHost,
+        captionEl: nliExplainerCaptionEl,
+        registerDisposer,
+        initialVisible: isNliExplainerDebugRequestedInUrl(
+          typeof window !== "undefined" ? window.location.search : "",
+        ),
+        onVisibleChange: (visible) => {
+          explainerDebugVisible = visible === true;
+          syncContextInvestigation();
+        },
+      });
+      if (typeof window !== "undefined" && nliExplainerDebugApi) {
+        window.NliExplainerDebug = nliExplainerDebugApi;
+        registerDisposer(() => {
+          if (window.NliExplainerDebug === nliExplainerDebugApi) {
+            delete window.NliExplainerDebug;
+          }
+          nliExplainerDebugApi = null;
+        });
+      }
+    } catch (e) {
+      console.warn("[projection-main] NLI explainer debug failed to load", e);
+    }
     const syncContextFlowAnimations = () => {
       syncContextRouteProgress();
       syncContextInvestigation();
@@ -822,6 +896,10 @@ async function bootstrapProjectionRuntime() {
     }
     if (key === "l" && shemotLabelDebugApi) {
       shemotLabelDebugApi.toggle();
+      return;
+    }
+    if (key === "e" && window.NliExplainerDebug) {
+      window.NliExplainerDebug.toggle();
       return;
     }
   };

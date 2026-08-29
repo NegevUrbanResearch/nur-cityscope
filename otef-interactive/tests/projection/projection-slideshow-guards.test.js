@@ -92,4 +92,35 @@ describe("projection-main slideshow overlay wiring", () => {
     expect(src).toContain("syncPresentationOverlays");
     expect(src).toMatch(/visibilityLayerGroups:\s*overlayGroups/);
   });
+
+  it("injects nli explainer captionEl and does not use map.getContainer for it", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../../frontend/src/entries/projection-main.js"),
+      "utf8",
+    );
+    expect(src).toMatch(/ensureNliExplainerHost\(displayContainer\)/);
+    expect(src).toMatch(/captionEl:\s*nliExplainerCaptionEl/);
+    expect(src).toMatch(/allowMapCaption:\s*false/);
+    expect(src).toMatch(/shouldIgnoreExplainerLayoutStore/);
+    expect(src).toMatch(/nli-explainer-overlay/);
+    expect(src).toMatch(/NLI_EXPLAINER_LAYOUT_STORAGE_KEY/);
+    expect(src).toMatch(/readNliExplainerLayoutStore/);
+    const loadIdx = src.indexOf('map.on("load"');
+    expect(loadIdx).toBeGreaterThan(-1);
+    const afterLoad = src.slice(loadIdx);
+    const hostIdx = afterLoad.indexOf("ensureNliExplainerHost");
+    const syncIdx = afterLoad.indexOf("syncInvestigationTimelineToMap");
+    expect(hostIdx).toBeGreaterThan(-1);
+    expect(syncIdx).toBeGreaterThan(hostIdx);
+  });
+
+  it("GIS map-main does not inject projection caption flags", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../../frontend/src/entries/map-main.js"),
+      "utf8",
+    );
+    expect(src).not.toMatch(/nliExplainerCaptionEl/);
+    expect(src).not.toMatch(/allowMapCaption:\s*false/);
+    expect(src).not.toMatch(/ensureNliExplainerHost/);
+  });
 });
