@@ -142,6 +142,7 @@ def group_nli_category(raw: Any) -> Any:
 
 NLI_AUTHORITY_URL = "https://www.nli.org.il/he/authorities/{mms_id}"
 DEFAULT_AUTHORITIES_PATH = Path(__file__).resolve().parent / "nli_mazal_authorities.json"
+DEFAULT_PID_MMS_PATH = Path(__file__).resolve().parent / "nli_oct7_mms_by_pid.json"
 _MARC_SUBFIELD = re.compile(r"\$\$[a-z0-9]")
 _MMS_ID = re.compile(r"^\d{17,19}$")
 OLDER_CATALOG_ZIP_NAME = "geojson/older versions/noam_layer.geojson"
@@ -210,6 +211,22 @@ def load_nli_authorities(path: Path) -> List[Dict[str, str]]:
     return rows
 
 
+def load_pid_mms_ids(path: Path) -> Dict[str, str]:
+    if not path.is_file():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mapped: Dict[str, str] = {}
+    if not isinstance(payload, dict):
+        return mapped
+    for raw_pid, raw_mms in payload.items():
+        pid = str(raw_pid or "").strip()
+        mms_id = str(raw_mms or "").strip()
+        if not pid or not _MMS_ID.fullmatch(mms_id):
+            continue
+        mapped[pid] = mms_id
+    return mapped
+
+
 def _authority_name_index(authorities: Sequence[Dict[str, str]]) -> Dict[str, set]:
     index: Dict[str, set] = {}
     for row in authorities:
@@ -232,9 +249,19 @@ def attach_nli_catalog_links(
     collection: Dict[str, Any],
     authorities: Sequence[Dict[str, str]],
     catalog_features: Optional[Sequence[Dict[str, Any]]] = None,
+    pid_mms_ids: Optional[Dict[str, str]] = None,
 ) -> Dict[str, int]:
-    """Attach string mms_id + NLI authority URL for unique name matches."""
+    """Attach string mms_id + NLI authority URL.
+
+    Prefer a unique oct7 pid → mms_id map (cleaned NLI catalog / oct7database).
+    Fall back to unique name matches, then old-catalog names for that pid.
+    """
     index = _authority_name_index(authorities)
+    pid_map = {
+        str(pid).strip(): str(mms_id).strip()
+        for pid, mms_id in (pid_mms_ids or {}).items()
+        if str(pid).strip() and _MMS_ID.fullmatch(str(mms_id).strip())
+    }
     catalog_by_pid: Dict[str, List[Dict[str, Any]]] = {}
     for feature in catalog_features or []:
         props = feature.get("properties") or {}
@@ -244,13 +271,24 @@ def attach_nli_catalog_links(
         catalog_by_pid.setdefault(str(pid), []).append(props)
 
     linked = 0
+    linked_by_pid = 0
+    linked_by_name = 0
     ambiguous = 0
     unmatched = 0
     for feature in collection.get("features") or []:
         props = dict(feature.get("properties") or {})
+        pid = str(props.get("pid") or "").strip()
+        mapped = pid_map.get(pid)
+        if mapped:
+            props["mms_id"] = mapped
+            props["nli_url"] = nli_authority_url(mapped)
+            feature["properties"] = props
+            linked += 1
+            linked_by_pid += 1
+            continue
         hits = _lookup_mms_ids(index, props.get("hebrew_name"), props.get("name"))
         if len(hits) != 1:
-            for catalog_props in catalog_by_pid.get(str(props.get("pid") or ""), []):
+            for catalog_props in catalog_by_pid.get(pid, []):
                 hits |= _lookup_mms_ids(
                     index,
                     catalog_props.get("name_he"),
@@ -262,11 +300,18 @@ def attach_nli_catalog_links(
             props["nli_url"] = nli_authority_url(mms_id)
             feature["properties"] = props
             linked += 1
+            linked_by_name += 1
         elif len(hits) > 1:
             ambiguous += 1
         else:
             unmatched += 1
-    return {"linked": linked, "ambiguous": ambiguous, "unmatched": unmatched}
+    return {
+        "linked": linked,
+        "linked_by_pid": linked_by_pid,
+        "linked_by_name": linked_by_name,
+        "ambiguous": ambiguous,
+        "unmatched": unmatched,
+    }
 
 
 def rewrite_nli_layer_properties(stem: str, collection: Dict[str, Any]) -> int:
@@ -862,6 +907,7 @@ def prepare_nli_pack(
     popup_path: Optional[Path | Sequence[Path]] = None,
     authorities_path: Optional[Path] = None,
     alarms_path: Optional[Path] = None,
+    pid_mms_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     gis_dir = pack_dir / "gis"
     styles_dir = pack_dir / "styles"
@@ -869,6 +915,9 @@ def prepare_nli_pack(
     styles_dir.mkdir(parents=True, exist_ok=True)
     summary: Dict[str, Any] = {"layers": {}}
     authorities = load_nli_authorities(authorities_path or DEFAULT_AUTHORITIES_PATH)
+    pid_mms_ids = load_pid_mms_ids(
+        pid_mms_path if pid_mms_path is not None else DEFAULT_PID_MMS_PATH
+    )
     with zipfile.ZipFile(zip_path) as archive:
         by_name = {zip_entry_name(info): info for info in archive.infolist()}
         catalog_features = _catalog_features_from_zip(by_name, archive)
@@ -883,9 +932,9 @@ def prepare_nli_pack(
                 reproject_web_mercator_collection_to_wgs84(collection)
             if stem in TIMELINE_STEMS:
                 apply_timeline_minutes(collection)
-            if stem == "people" and authorities:
+            if stem == "people" and (authorities or pid_mms_ids):
                 summary["nli_catalog_links"] = attach_nli_catalog_links(
-                    collection, authorities, catalog_features
+                    collection, authorities, catalog_features, pid_mms_ids
                 )
             if stem == "people":
                 moved = jitter_coincident_points(collection.get("features") or [])

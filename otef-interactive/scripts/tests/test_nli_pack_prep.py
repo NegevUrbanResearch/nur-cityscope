@@ -419,6 +419,39 @@ class CatalogLinkTests(unittest.TestCase):
         self.assertEqual(stats["linked"], 1)
         self.assertEqual(people["features"][0]["properties"]["mms_id"], "987012345678901234")
 
+    def test_pid_mms_map_links_when_names_do_not_match(self):
+        people = {
+            "features": [
+                _point(34.47, 31.40, pid=15, hebrew_name="לא ידוע", name="Rajan Phulara"),
+            ]
+        }
+        stats = attach_nli_catalog_links(
+            people,
+            [{"mms_id": "987012802865205171", "he": "פולרה, ראג'ן", "en": "Rajan, Phulara"}],
+            pid_mms_ids={"15": "987012802865205171"},
+        )
+        self.assertEqual(stats["linked"], 1)
+        self.assertEqual(stats.get("linked_by_pid"), 1)
+        self.assertEqual(people["features"][0]["properties"]["mms_id"], "987012802865205171")
+        self.assertEqual(
+            people["features"][0]["properties"]["nli_url"],
+            nli_authority_url("987012802865205171"),
+        )
+
+    def test_pid_mms_map_overrides_conflicting_name_match(self):
+        people = {
+            "features": [
+                _point(34.47, 31.40, pid=65, hebrew_name="לוי דניאל", name="Daniel Levy"),
+            ]
+        }
+        stats = attach_nli_catalog_links(
+            people,
+            [{"mms_id": "987012802828105171", "he": "לוי, דניאל", "en": "Levy, Daniel"}],
+            pid_mms_ids={"65": "987012770614205171"},
+        )
+        self.assertEqual(stats["linked"], 1)
+        self.assertEqual(people["features"][0]["properties"]["mms_id"], "987012770614205171")
+
 
 class PreparePackTests(unittest.TestCase):
     def test_merge_popup_config_preserves_other_packs(self):
