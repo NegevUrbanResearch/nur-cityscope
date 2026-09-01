@@ -28,3 +28,17 @@
 - Source churn per slideshow tick is limited to newly needed packs plus bounded retention eviction.
 - Slideshow loaded source count remains bounded by the configured retention limit plus the active pack and non-vector overlays.
 - No regression in desync duration.
+
+## NLI investigation scheduler
+
+- Run the densest completed NLI timeline state on both GIS and projection after
+  warm-up.
+- Capture at least 1,000 `nliSchedulerMs` samples per display.
+- Require a 95th-percentile scheduler callback of 8 ms or less.
+- Confirm one scheduler per map and no orphaned animation frame or timer after
+  **Stop**, layer disable, style disposal, or page disposal.
+- Confirm steady completed-route flow does not call full-source `setData()`,
+  scan the full style, or repeatedly call `moveLayer()`.
+- Confirm reduced motion keeps a stationary directional pattern and does not
+  schedule continuous completed-route flow.
+- Record GIS and projection results in `nli-exhibit-verification.md`.

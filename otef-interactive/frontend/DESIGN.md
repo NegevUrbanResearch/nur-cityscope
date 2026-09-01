@@ -157,6 +157,44 @@ Implementation: **logical properties** (`padding-inline`, `margin-inline`, `inse
 
 This is the **main-area** body for the Navigation tab (`#remote-panel-navigation` / `#navigationSection`) — not the **footer** tab bar (`bottom-nav`).
 
+#### People and NLI archive actions
+
+- The existing search shell has a compact **Settlements / People** selector; it
+  does not add a fourth bottom tab or mix both result types in one list.
+- People results show name and location. After acknowledged selection, the
+  search field retains the name and one full-width **Open NLI record** action
+  appears. The GIS, not the remote, shows the location bubble and halo.
+- Missing links use a focused localized dialog and keep the person selected.
+- The presenter uses the remote **Open NLI record** action. GIS resolves the
+  validated local NLI URL and opens or reuses the named top-level
+  `otef-nli-archive` context on demand. The browser's one-time popup allowlist
+  for `http://localhost:80` is technician setup, not a presenter action.
+- Only the matching `navigation_attempted` result changes the Navigation
+  content to **Back to map**. An unavailable or closed context, timeout,
+  selection change, or superseding request cancels the pending state and
+  restores a usable open or error state. Popup denial reports `unavailable`.
+- **Back to map** closes the named archive window and restores GIS focus when
+  the browser permits it. `navigation_attempted` reports local handle
+  acquisition and navigation assignment only; it does not prove that the
+  cross-origin NLI document loaded or reached the intended display.
+- Archive presentation is local and ephemeral. Selection change, acknowledged
+  close, or reload returns to ordinary map controls; do not add a second
+  palette, persistent archive card, or hidden URL state. One trusted GIS
+  producer on the existing OTEF channel is the operational assumption; request
+  and source correlation prevent stale transitions but do not provide
+  multi-GIS arbitration.
+- Treat cross-origin load, foreground focus, and display placement as manual
+  exhibit checks.
+
+### Person-selection transport recovery
+
+If an HTTP person-selection request uses revision 4 and the WebSocket publishes
+authoritative revision 5 before the HTTP response arrives, the client retries
+the original command once with revision 5. The client uses the safest current
+or authoritative snapshot, and a second stale conflict remains visible. The
+same one-retry rule applies to selection and clear commands; `clock_active`
+conflicts are not treated as stale conflicts.
+
 - **Panel chrome:** Use `--nav-panel-padding-block-start` and `--nav-panel-padding-block-end` (default 12px / 16px) plus `env(safe-area-inset-bottom)` on the bottom panel padding. Horizontal inset follows `--spacing-unit` (maps from `spacing.md`).
 - **Card inset:** The pan/zoom block uses `--nav-panel-section-padding-block` and `--nav-panel-section-padding-inline` (12px / 16px) so the `control-section` does not add extra vertical air.
 - **Vertical distribution (portrait):** `.navigation-panel-stack` is **`flex: 1`** so it fills the tab body; **`.navigation-group--zoom`** uses **`margin-block-start: auto`** so the pan/joystick cluster stays toward the **top** and the zoom block toward the **bottom**, with spare height absorbed between them (not an empty band below zoom). **`--nav-panel-group-gap`** still sets the minimum step between the two groups; pan/zoom inner groups use **`gap: --space-xs`** for label-to-control rhythm.
@@ -169,6 +207,37 @@ This is the **main-area** body for the Navigation tab (`#remote-panel-navigation
 - **Layers tab:** Full-page list; same actions as current sheet (groups, chevrons, row toggles, pack/processed rows, animation chips).
   - Superseded for remote layers UX by 'Layers panel (chosen mockup: Variant C sharpened)' until Task 7 aligns implementation.
 - **Touch:** Prefer **`spacing.touch` (56px)** on pad, zoom, and nav targets; 8–16px gaps between hit areas.
+
+## NLI investigation timeline
+
+The GIS and projection share the same NLI timeline semantics. Display profiles
+can change scale and contrast, but they do not change state meaning.
+
+- With the timeline off, during playback, or after **Stop**, every visible
+  investigation route remains in the red route family. Future and revealing
+  routes use solid red, and the active reveal follows its reviewed travel
+  direction.
+- A completed route keeps a solid `#c31f4f` red carrier and adds a black,
+  line-based dashed overlay that flows across its full geometry in the reviewed
+  direction. Completed motion continues through **Pause** and **End**. When the
+  timeline is off or returns to idle after **Stop**, every visible route uses
+  this final completed flow state. Reduced-motion mode uses a static
+  directional dashed overlay without an ambient animation frame.
+- Investigation polygons are timeline-only. Geometry intersection never
+  activates a polygon. A polygon-only beat activates at its authored beat; a
+  polygon sharing a route beat waits until that route reveal completes.
+- Settlement outlines use an inclusive OR: they activate when an associated
+  investigation polygon turns red or when a revealing route reaches or crosses
+  the settlement boundary.
+- Projection renders the named `nliCaptionMode: "clock-only"` caption as a
+  large `HH:MM` story clock during NLI playback. This mode is projection-only;
+  it does not alter the remote **Presentation** tab, slideshow behavior, or
+  `presentationActive` state.
+- The committed left projection calibration comes from
+  `C:\Users\tuval\Downloads\nli-explainer-layout.json` and is represented by
+  `leftPct: 48.675`, `topPct: 30.126982017200937`, `widthPct: 10.936875`,
+  `heightPct: 9.69473807662236`, `fontPx: 15`, and `rotateDeg: 0` in
+  `NLI_EXPLAINER_LAYOUT.left`; `full` and `right` remain unchanged.
 
 ## Elevation & Depth
 
@@ -218,7 +287,9 @@ When **`curation.html`** is loaded in an iframe with **`?embed=1`** (or `embed=t
 
 **Do**
 
-- Keep **warm neutrals** + **one terracotta**; reserve green/amber/red for **connection semantics** only.
+- Keep **warm neutrals** + **one terracotta** in the remote controller chrome;
+  reserve green/amber/red there for **connection semantics**. NLI map layers
+  use their named timeline tokens for route, polygon, and settlement state.
 - Default **Hebrew** and **RTL**; toggle updates `lang`, `dir`, and mirrored spacing.
 - Preserve **OTEFDataContext**, **WebSocket/API**, **layer sheet** behaviors when moving to the Layers tab; preserve **nipplejs**, **`#table-switcher`**, **global overlay**, and **single parent heartbeat** for curation embed.
 - Localize visible strings per locale module; format row labels with **`formatLayerLabelForDisplay`** (`layer-name-utils.js`) only—never rewrite canonical ids.

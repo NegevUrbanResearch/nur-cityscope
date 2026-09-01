@@ -13,6 +13,8 @@ Interactive mapping module for the OTEF physical model with synchronized project
 - Maptastic.js calibration for projection adjustment
 - Flow animation metadata for selected line layers (default OFF on fresh load)
 - Remote layer-sheet animation toggles (layer + pack, animatable layers only)
+- NLI investigation timeline shared by GIS and projection
+- Remote People search with GIS halo/bubble and remote-only NLI archive-window control
 
 ## Access Points
 
@@ -101,6 +103,59 @@ POST /api/otef_viewport/
 
 ## Usage
 
+### NLI investigation and people records
+
+- With the timeline off, during playback, or after **Stop**, every visible
+  investigation route remains in the red route family. Future and revealing
+  routes show a solid red route; the active reveal follows its reviewed travel
+  direction.
+- After a route completes, it keeps a solid `#c31f4f` red carrier and adds a
+  black, line-based dashed overlay that flows across the full route in the
+  reviewed direction. The motion continues through **Pause** and **End**. When
+  the timeline is off or returns to idle after **Stop**, all visible routes use
+  this final-state flow. Reduced-motion mode uses a static directional dashed
+  overlay.
+- Investigation polygons activate only at their authored timeline beat. If a
+  route shares that beat, the polygon waits until the route reveal completes;
+  a polygon-only beat activates immediately.
+- Settlement outlines activate when either an associated investigation polygon
+  turns red or a revealing route reaches or crosses the settlement boundary.
+- Alarms remain yellow; cumulative volume changes radius, and new onsets flash
+  with one ripple.
+- In remote **Navigation**, use **Settlements / People** to search and select a
+  person. The GIS shows the selected name and location; the remote provides
+  **Open NLI record** and **Back to map**.
+- Projection uses a large `HH:MM` NLI story clock during timeline playback.
+  This `clock-only` caption applies only to the projection NLI timeline; it
+  does not change the remote **Presentation** tab, slideshow mode, or
+  `presentationActive` behavior.
+- The presenter uses the remote **Open NLI record** action. GIS resolves the
+  validated local record URL and opens or reuses the named top-level
+  `otef-nli-archive` window on demand. The remote changes to **Back to map**
+  only after GIS reports the matching `navigation_attempted` result.
+- Configure the exhibit browser once to allow popups from exactly
+  `http://localhost:80`. From the repository root, run the following command in
+  Windows PowerShell as administrator:
+
+  ```powershell
+  & '.\otef-interactive\scripts\configure-chrome-popup-policy.ps1' -Mode Install
+  ```
+
+  Running the script without `-Mode Install` only reports policy status. This
+  is technician setup, not a presenter action. Popup denial or a closed context
+  reports `unavailable`; the remote keeps the action usable or shows its
+  localized unavailable state. **Back to map** closes the archive window and
+  restores GIS focus when the browser permits it.
+- The NLI site cannot be embedded. `navigation_attempted` proves only local
+  handle acquisition and navigation assignment; it is not proof that the
+  cross-origin NLI document loaded. See [NLI exhibit verification](docs/nli-exhibit-verification.md)
+  for the required browser check and current limitations.
+
+The person-selection transport handles an interleaved stale response: if a
+WebSocket advances the canonical revision from 4 to 5 while the HTTP request
+for revision 4 is in flight, the first stale conflict retries once with
+revision 5. A second conflict remains visible to the presenter.
+
 ### Control Interface
 - Pan/zoom to explore the map
 - Tap features for information
@@ -113,6 +168,13 @@ POST /api/otef_viewport/
 - **Shift+Z** - Enter calibration mode
 - **F** - Fullscreen
 - **X** - Reset calibration
+
+The committed left projection calibration comes from
+`C:\Users\tuval\Downloads\nli-explainer-layout.json` and is stored in
+`NLI_EXPLAINER_LAYOUT.left` as
+`leftPct: 48.675`, `topPct: 30.126982017200937`, `widthPct: 10.936875`,
+`heightPct: 9.69473807662236`, `fontPx: 15`, and `rotateDeg: 0`.
+The `full` and `right` layouts remain unchanged.
 
 ### Remote Controller
 - Directional pad and virtual joystick for navigation
