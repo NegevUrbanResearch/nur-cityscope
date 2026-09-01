@@ -12,11 +12,13 @@ import {
   NLI_PLAYABLE_IDS,
   TIMELINE_BEAT_MS,
   clockStoryDurationMs,
+  collectTimelineBeats,
   formatMinutesAsLocalClock,
   isNliPlayableFullId,
 } from "../shared/nli-investigation-beats.js";
 import {
   beatsForMembership,
+  clockPositionMs,
   endNliClock,
   evaluateClock,
   idleNliClock,
@@ -30,6 +32,8 @@ import {
   stepNliClock,
   stopNliClock,
 } from "../shared/nli-investigation-clock.js";
+import { completedInvestigationBeats } from "../shared/nli-investigation-visual-state.js";
+import { resolveMotionMode } from "../shared/reduced-motion.js";
 
 const NLI_ICON_PLAY = `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>`;
 const NLI_ICON_PAUSE = `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>`;
@@ -269,6 +273,32 @@ export function isNliPlayableLayerLocked(clock, fullLayerIds) {
   return (fullLayerIds || []).some((id) => isNliPlayableFullId(id));
 }
 
+function completedNliBeats(clock, options, nowMs) {
+  if (Array.isArray(options.completedBeats)) {
+    return nliFiniteBeatMinutes(options.completedBeats);
+  }
+  const beats = nliFiniteBeatMinutes(clock?.beats);
+  if (beats.length === 0) return [];
+  const vis = evaluateClock(clock, nowMs);
+  return completedInvestigationBeats(vis, clock, beats);
+}
+
+/**
+ * Derive route-flow status from visible line membership and completed line
+ * feature beats. A missing line bag or reduced motion fails closed.
+ */
+export function isNliRouteFlowActive(clock, options = {}) {
+  if (options.motionMode === "reduced") return false;
+  const visibleMembership = options.visibleMembership ??
+    clock?.visibleMembership ?? clock?.effectiveMembership ?? clock?.membership;
+  if (!Array.isArray(visibleMembership) || !visibleMembership.includes(INVESTIGATION_LINES_FULL_ID)) return false;
+  const lineBeats = nliFiniteBeatMinutes(options.lineBeats ?? collectTimelineBeats(options.lineFeatures));
+  if (lineBeats.length === 0) return false;
+  const completed = completedNliBeats(clock, options, options.nowMs ?? nliNowMs());
+  const lineBeatSet = new Set(lineBeats);
+  return completed.some((beat) => lineBeatSet.has(beat));
+}
+
 /**
  * @param {import("../shared/nli-investigation-clock.js").NliInvestigationClock} clock
  * @param {{
@@ -276,6 +306,12 @@ export function isNliPlayableLayerLocked(clock, fullLayerIds) {
  *   stepScrubDisabled?: boolean,
  *   presentationActive?: boolean,
  *   displayBeats?: number[],
+ *   visibleMembership?: string[],
+ *   lineFeatures?: object[],
+ *   lineBeats?: number[],
+ *   completedBeats?: number[],
+ *   motionMode?: 'full'|'reduced',
+ *   nowMs?: number,
  * }} [options]
  * @returns {string}
  */
@@ -349,6 +385,9 @@ export function nliTransportSheetHtml(selected, clock, cache, presentationActive
     stepScrubDisabled: controlsOff,
     presentationActive,
     displayBeats,
+    visibleMembership: visible,
+    lineFeatures: nliFeatureBagsFromCache(cache).lineFeatures,
+    motionMode: resolveMotionMode(),
   });
 }
 
@@ -542,9 +581,8 @@ export const nliTimelineHostMethods = {
     }
     if (!clock || clock.loop || clock.phase !== "playing") return;
     const now = nliNowMs();
-    const epoch = Number(clock.playEpochMs);
     const dur = clockStoryDurationMs(clock.beats);
-    const delay = Number.isFinite(epoch) ? Math.max(0, epoch + dur - now) : dur;
+    const delay = Math.max(0, dur - clockPositionMs(clock, now));
     const revision = clock.revision;
     this._nliEndTimer = setTimeout(() => {
       this._nliEndTimer = null;

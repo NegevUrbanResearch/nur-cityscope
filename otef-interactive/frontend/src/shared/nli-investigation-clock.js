@@ -24,9 +24,9 @@ const SEEK_KINDS = ["none", "jump"];
  * @property {string[]} membership
  * @property {number[]} beats
  * @property {boolean} loop
- * @property {number} beatIndex
- * @property {number} beatElapsedMs
- * @property {number|null} playEpochMs
+ * @property {number} positionMs Absolute narrative position at anchorMs.
+ * @property {number|null} anchorMs Corrected wall time for positionMs.
+ * @property {number|undefined} alarmOnsetOriginMs Stable corrected-time alarm origin.
  * @property {"none"|"jump"} seekKind
  * @property {number} revision
  * @property {number|null} serverNowMs
@@ -64,31 +64,65 @@ function filterPlayableMembership(list) {
   return out;
 }
 
-function playEpochMs(nowMs, beatIndex, beatElapsedMs) {
-  const index = Number.isFinite(beatIndex) && beatIndex >= 0 ? beatIndex : 0;
-  const elapsed = Number(beatElapsedMs);
-  const inBeat = Number.isFinite(elapsed) ? elapsed : 0;
-  return Number(nowMs) - (index * TIMELINE_BEAT_MS + inBeat);
+function nonnegativeNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, number) : fallback;
 }
 
-function elapsedMsForClock(clock, nowMs) {
-  if (!clock || clock.phase === "idle" || clock.phase === "ended") return 0;
-  const epoch = finiteTimestamp(clock.playEpochMs);
-  if (clock.phase === "playing" && epoch != null) {
-    return Number(nowMs) - epoch;
-  }
-  const index = Number.isFinite(clock.beatIndex) && clock.beatIndex >= 0 ? clock.beatIndex : 0;
-  const elapsed = Number(clock.beatElapsedMs);
-  return index * TIMELINE_BEAT_MS + (Number.isFinite(elapsed) ? elapsed : 0);
+function responseMetadata(src) {
+  return {
+    revision: Number.isFinite(Number(src?.revision)) ? Number(src.revision) : 0,
+    serverNowMs: finiteTimestamp(src?.serverNowMs),
+  };
+}
+
+function withAlarmOrigin(clock, originMs) {
+  const origin = finiteTimestamp(originMs);
+  if (!clock.membership.includes(INVESTIGATION_ALARMS_FULL_ID) || origin == null) return clock;
+  return { ...clock, alarmOnsetOriginMs: origin };
+}
+
+export function clockPositionMs(clock, nowMs) {
+  const base = nonnegativeNumber(clock?.positionMs);
+  const anchor = finiteTimestamp(clock?.anchorMs);
+  if (clock?.phase !== "playing" || anchor == null) return base;
+  return base + Math.max(0, Number(nowMs) - anchor);
+}
+
+function absoluteBeatStart(clock, positionMs) {
+  const beats = Array.isArray(clock?.beats) ? clock.beats : [];
+  const duration = clockStoryDurationMs(beats);
+  if (!duration || beats.length === 0) return null;
+  const absolute = nonnegativeNumber(positionMs);
+  const cycle = clock.loop ? Math.floor(absolute / duration) : 0;
+  const within = clock.loop ? absolute - cycle * duration : absolute;
+  const index = Math.min(beats.length - 1, Math.floor(within / TIMELINE_BEAT_MS));
+  if (index < 0 || within >= beats.length * TIMELINE_BEAT_MS) return null;
+  return cycle * duration + index * TIMELINE_BEAT_MS;
+}
+
+function currentAlarmOrigin(clock, nowMs, positionMs) {
+  const start = absoluteBeatStart(clock, positionMs);
+  if (start == null) return finiteTimestamp(clock?.alarmOnsetOriginMs);
+  const anchoredStart = absoluteBeatStart(clock, clock?.positionMs);
+  const explicit = finiteTimestamp(clock?.alarmOnsetOriginMs);
+  if (explicit != null && anchoredStart === start) return explicit;
+  const anchor = finiteTimestamp(clock?.anchorMs);
+  if (anchor == null) return finiteTimestamp(clock?.alarmOnsetOriginMs);
+  return anchor + start - nonnegativeNumber(clock.positionMs);
 }
 
 function armedClock(prev, membership, beats, extras) {
   const base = prev && typeof prev === "object" ? prev : idleNliClock();
   return {
-    ...base,
+    ...responseMetadata(base),
+    phase: "paused",
     membership: filterPlayableMembership(membership),
     beats: cloneBeats(beats),
     loop: !!base.loop,
+    positionMs: 0,
+    anchorMs: null,
+    seekKind: "none",
     ...extras,
   };
 }
@@ -104,12 +138,10 @@ export function idleNliClock(prev) {
     membership: [],
     beats: [],
     loop: !!src.loop,
-    beatIndex: -1,
-    beatElapsedMs: 0,
-    playEpochMs: null,
+    positionMs: 0,
+    anchorMs: null,
     seekKind: "none",
-    revision: Number.isFinite(Number(src.revision)) ? Number(src.revision) : 0,
-    serverNowMs: finiteTimestamp(src.serverNowMs),
+    ...responseMetadata(src),
   };
 }
 
@@ -158,9 +190,8 @@ export function playNliClock(prev, membership, beats, nowMs) {
   if (list.length === 0) return idleNliClock(prev);
   return armedClock(prev, membership, list, {
     phase: "playing",
-    beatIndex: 0,
-    beatElapsedMs: 0,
-    playEpochMs: playEpochMs(nowMs, 0, 0),
+    positionMs: 0,
+    anchorMs: finiteTimestamp(nowMs),
     seekKind: "none",
   });
 }
@@ -184,15 +215,15 @@ export function pauseNliClock(clock, nowMs) {
   const src = clock && typeof clock === "object" ? clock : idleNliClock();
   if (src.phase !== "playing") return src;
   const vis = evaluateClock(src, nowMs);
-  const atHoldOrEnd = vis.mode === "hold" || vis.phase === "ended";
-  return {
+  const positionMs = clockPositionMs(src, nowMs);
+  if (vis.phase === "ended") return endNliClock(src);
+  return withAlarmOrigin({
     ...src,
-    phase: vis.phase === "ended" ? "ended" : "paused",
-    beatIndex: atHoldOrEnd ? -1 : vis.index,
-    beatElapsedMs: vis.phase === "ended" ? 0 : vis.beatElapsedMs,
-    playEpochMs: null,
+    phase: "paused",
+    positionMs,
+    anchorMs: finiteTimestamp(nowMs),
     seekKind: "none",
-  };
+  }, currentAlarmOrigin(src, nowMs, positionMs));
 }
 
 /**
@@ -203,20 +234,11 @@ export function pauseNliClock(clock, nowMs) {
 export function resumeNliClock(clock, nowMs) {
   const src = clock && typeof clock === "object" ? clock : idleNliClock();
   if (src.phase !== "paused") return src;
-  const vis = evaluateClock(src, nowMs);
-  const elapsed = Number(vis.beatElapsedMs);
-  const inBeat = Number.isFinite(elapsed) ? elapsed : 0;
-  const n = Array.isArray(src.beats) ? src.beats.length : 0;
-  const inHold = vis.mode === "hold" || !(Number.isFinite(vis.index) && vis.index >= 0);
-  const index = inHold ? -1 : vis.index;
   return {
     ...src,
     phase: "playing",
-    beatIndex: index,
-    beatElapsedMs: inBeat,
-    playEpochMs: inHold
-      ? Number(nowMs) - (n * TIMELINE_BEAT_MS + inBeat)
-      : playEpochMs(nowMs, index, inBeat),
+    positionMs: nonnegativeNumber(src.positionMs),
+    anchorMs: finiteTimestamp(nowMs),
     seekKind: "none",
   };
 }
@@ -236,9 +258,8 @@ function armIfIdle(clock, arm) {
   const membership = filterPlayableMembership(arm?.visibleMembership);
   return armedClock(clock, membership, beats, {
     phase: "paused",
-    beatIndex: 0,
-    beatElapsedMs: 0,
-    playEpochMs: null,
+    positionMs: 0,
+    anchorMs: null,
     seekKind: "none",
   });
 }
@@ -261,15 +282,14 @@ export function seekNliClock(clock, beatIndex, nowMs, arm) {
   if (beats.length === 0) return idleNliClock(next);
   const raw = Number(beatIndex);
   const index = Number.isFinite(raw) ? Math.max(0, Math.min(beats.length - 1, Math.trunc(raw))) : 0;
-  return {
+  return withAlarmOrigin({
     ...next,
     phase: "paused",
     beats,
-    beatIndex: index,
-    beatElapsedMs: 0,
-    playEpochMs: finiteTimestamp(nowMs),
+    positionMs: index * TIMELINE_BEAT_MS,
+    anchorMs: finiteTimestamp(nowMs),
     seekKind: "jump",
-  };
+  }, nowMs);
 }
 
 /**
@@ -288,87 +308,40 @@ export function stepNliClock(clock, delta, nowMs, arm) {
     if (deltaN <= 0) return src;
     const armed = armIfIdle(src, arm);
     if (armed.phase === "idle") return armed;
-    return {
-      ...armed,
-      phase: "paused",
-      beatIndex: 0,
-      beatElapsedMs: 0,
-      playEpochMs: finiteTimestamp(nowMs),
-      seekKind: "jump",
-    };
+    return seekNliClock(armed, 0, nowMs);
   }
 
   const beats = cloneBeats(src.beats);
   const n = beats.length;
   if (n === 0) return idleNliClock(src);
-
-  const vis = src.phase === "playing" ? evaluateClock(src, nowMs) : null;
-  const pausedHold =
-    src.phase === "paused" && !(Number.isFinite(src.beatIndex) && src.beatIndex >= 0 && src.beatIndex < n);
-  const playingHold = !!(vis && vis.mode === "hold" && vis.phase !== "ended");
-  const inHold = pausedHold || playingHold;
-  const last = n - 1;
-
-  let current;
-  if (src.phase === "playing") {
-    current = vis.mode === "beat" && vis.index >= 0 ? vis.index : last;
-  } else if (src.phase === "ended" || pausedHold) {
-    current = last;
-  } else {
-    current = Number.isFinite(src.beatIndex) ? src.beatIndex : -1;
-  }
-
-  const nextIndex = (Number.isFinite(current) && current >= 0 ? current : 0) + deltaN;
-
+  const positionMs = clockPositionMs(src, nowMs);
+  const vis = evaluateClock(src, nowMs);
+  const current = vis.mode === "beat" && vis.index >= 0 ? vis.index : n - 1;
+  const nextIndex = current + deltaN;
   if (nextIndex < 0) return src;
-
   if (nextIndex >= n) {
-    if (src.loop) {
-      return {
-        ...src,
-        phase: "paused",
-        beats,
-        beatIndex: 0,
-        beatElapsedMs: 0,
-        playEpochMs: finiteTimestamp(nowMs),
-        seekKind: "jump",
-      };
-    }
-    if (inHold) {
-      if (src.phase === "paused") return src;
-      const holdElapsed = vis && Number.isFinite(vis.beatElapsedMs) ? vis.beatElapsedMs : 0;
-      return {
-        ...src,
-        phase: "paused",
-        beats,
-        beatIndex: -1,
-        beatElapsedMs: holdElapsed,
-        playEpochMs: null,
-        seekKind: "none",
-      };
-    }
-    if (src.phase === "paused") return src;
-    const elapsed = vis && vis.mode === "beat" ? vis.beatElapsedMs : src.beatElapsedMs;
-    return {
+    if (!src.loop) return src.phase === "playing" ? pauseNliClock(src, nowMs) : src;
+    const duration = clockStoryDurationMs(beats);
+    const nextCycle = Math.floor(positionMs / duration) + 1;
+    return withAlarmOrigin({
       ...src,
       phase: "paused",
       beats,
-      beatIndex: current,
-      beatElapsedMs: Number.isFinite(elapsed) ? elapsed : 0,
-      playEpochMs: null,
-      seekKind: "none",
-    };
+      positionMs: nextCycle * duration,
+      anchorMs: finiteTimestamp(nowMs),
+      seekKind: "jump",
+    }, nowMs);
   }
-
-  return {
+  const duration = clockStoryDurationMs(beats);
+  const cycle = src.loop && duration ? Math.floor(positionMs / duration) : 0;
+  return withAlarmOrigin({
     ...src,
     phase: "paused",
     beats,
-    beatIndex: nextIndex,
-    beatElapsedMs: 0,
-    playEpochMs: finiteTimestamp(nowMs),
+    positionMs: cycle * duration + nextIndex * TIMELINE_BEAT_MS,
+    anchorMs: finiteTimestamp(nowMs),
     seekKind: "jump",
-  };
+  }, nowMs);
 }
 
 /**
@@ -400,31 +373,9 @@ export function evaluateClock(clock, nowMs) {
     return { phase: src.phase === "playing" ? "ended" : src.phase, mode: "hold", clock: null, index: -1, beatElapsedMs: 0 };
   }
 
-  if (src.phase === "paused") {
-    const index = Number.isFinite(src.beatIndex) ? src.beatIndex : -1;
-    const stored = Number(src.beatElapsedMs);
-    const storedElapsed = Number.isFinite(stored) ? stored : 0;
-    const epoch = finiteTimestamp(src.playEpochMs);
-    const onBeat = index >= 0 && index < n;
-    const beatElapsedMs =
-      onBeat && epoch != null
-        ? Math.min(TIMELINE_BEAT_MS, Math.max(0, Number(nowMs) - epoch))
-        : storedElapsed;
-    if (!onBeat) {
-      return { phase: "paused", mode: "hold", clock: null, index: -1, beatElapsedMs };
-    }
-    return {
-      phase: "paused",
-      mode: "beat",
-      clock: beats[index],
-      index,
-      beatElapsedMs,
-    };
-  }
-
   const beatSpan = n * TIMELINE_BEAT_MS;
   const storyMs = clockStoryDurationMs(beats);
-  let t = elapsedMsForClock(src, nowMs);
+  let t = clockPositionMs(src, nowMs);
   if (src.loop) {
     const wrap = storyMs || 1;
     t = ((t % wrap) + wrap) % wrap;
@@ -432,7 +383,13 @@ export function evaluateClock(clock, nowMs) {
     return { phase: "ended", mode: "hold", clock: null, index: -1, beatElapsedMs: 0 };
   }
   if (t >= beatSpan) {
-    return { phase: src.phase, mode: "hold", clock: null, index: -1, beatElapsedMs: t - beatSpan };
+    return {
+      phase: src.phase,
+      mode: "hold",
+      clock: null,
+      index: -1,
+      beatElapsedMs: t - beatSpan,
+    };
   }
   const index = Math.floor(t / TIMELINE_BEAT_MS);
   return {
@@ -459,66 +416,74 @@ export function flashPreviousClock(beats, clockMinutes, opts = {}) {
 
 /**
  * @param {unknown} raw
- * @param {NliInvestigationClock|null|undefined} [prev]
  * @returns {NliInvestigationClock}
  */
-export function normalizeNliClock(raw, prev) {
+export function normalizeNliClock(raw) {
   const src = raw && typeof raw === "object" ? raw : {};
-  const fallback = idleNliClock(prev);
-  const phase = PHASES.includes(src.phase) ? src.phase : fallback.phase;
-  const seekKind = SEEK_KINDS.includes(src.seekKind) ? src.seekKind : "none";
-  const loop = typeof src.loop === "boolean" ? src.loop : fallback.loop;
+  const phase = PHASES.includes(src.phase) ? src.phase : "idle";
+  const metadata = responseMetadata(src);
+  const loop = typeof src.loop === "boolean" ? src.loop : false;
+  if (phase === "idle") return idleNliClock({ ...metadata, loop });
+
   const membership = filterPlayableMembership(src.membership);
   const beats = cloneBeats(src.beats);
-  const beatIndexRaw = Number(src.beatIndex);
-  let beatIndex = Number.isFinite(beatIndexRaw) ? Math.trunc(beatIndexRaw) : fallback.beatIndex;
-  if (phase === "idle") {
-    return idleNliClock({
-      ...fallback,
-      loop,
-      revision: Number.isFinite(Number(src.revision)) ? Number(src.revision) : fallback.revision,
-      serverNowMs: src.serverNowMs === undefined ? finiteTimestamp(fallback.serverNowMs) : finiteTimestamp(src.serverNowMs),
-    });
-  }
-  if (phase === "ended") {
-    return {
-      ...fallback,
-      phase: "ended",
-      membership,
-      beats,
-      loop,
-      beatIndex: -1,
-      beatElapsedMs: 0,
-      playEpochMs: null,
-      seekKind: "none",
-      revision: Number.isFinite(Number(src.revision)) ? Number(src.revision) : fallback.revision,
-      serverNowMs: src.serverNowMs === undefined ? finiteTimestamp(fallback.serverNowMs) : finiteTimestamp(src.serverNowMs),
-    };
-  }
-  if (beats.length === 0) return idleNliClock({ ...fallback, loop });
-  if (phase === "paused" && beatIndex < 0) {
-    beatIndex = -1;
+  if (beats.length === 0) return idleNliClock({ ...metadata, loop });
+  const seekKind = phase === "paused" && SEEK_KINDS.includes(src.seekKind)
+    ? src.seekKind
+    : "none";
+  let positionMs;
+  let anchorMs;
+  if (Object.prototype.hasOwnProperty.call(src, "positionMs")) {
+    positionMs = nonnegativeNumber(src.positionMs);
+    anchorMs = phase === "ended" ? null : finiteTimestamp(src.anchorMs) ?? 0;
+  } else if (phase === "playing") {
+    positionMs = 0;
+    anchorMs = finiteTimestamp(src.narrativeEpochMs ?? src.playEpochMs) ?? 0;
+  } else if (phase === "ended") {
+    const duration = clockStoryDurationMs(beats);
+    const cycle = nonnegativeNumber(src.cycleIndex);
+    const within = Number.isFinite(Number(src.narrativeElapsedMs))
+      ? nonnegativeNumber(src.narrativeElapsedMs)
+      : duration;
+    positionMs = loop ? cycle * duration + within : within;
+    anchorMs = null;
   } else {
-    if (beatIndex < 0) beatIndex = 0;
-    if (beatIndex >= beats.length) beatIndex = beats.length - 1;
+    const duration = clockStoryDurationMs(beats);
+    const cycle = Math.trunc(nonnegativeNumber(src.cycleIndex));
+    const narrativeElapsed = Number(src.narrativeElapsedMs);
+    if (Number.isFinite(narrativeElapsed)) {
+      positionMs = (loop ? cycle * duration : 0) + Math.max(0, narrativeElapsed);
+    } else {
+      const index = Math.trunc(Number(src.beatIndex));
+      const elapsed = nonnegativeNumber(src.beatElapsedMs);
+      positionMs = (index >= 0 ? Math.min(index, beats.length - 1) : beats.length) *
+        TIMELINE_BEAT_MS + elapsed;
+    }
+    const legacyJumpOrigin = seekKind === "jump" ? finiteTimestamp(src.playEpochMs) : null;
+    const narrativeEpoch = finiteTimestamp(src.narrativeEpochMs);
+    anchorMs = legacyJumpOrigin ?? (narrativeEpoch == null ? 0 : narrativeEpoch + positionMs);
   }
-  const elapsedRaw = Number(src.beatElapsedMs);
-  const beatElapsedMs = Number.isFinite(elapsedRaw) ? Math.max(0, elapsedRaw) : 0;
-  const playEpoch =
-    phase === "playing" || phase === "paused" ? finiteTimestamp(src.playEpochMs) : null;
-  return {
-    ...fallback,
+
+  const normalized = {
     phase,
     membership,
     beats,
     loop,
-    beatIndex,
-    beatElapsedMs,
-    playEpochMs: playEpoch,
-    seekKind: phase === "paused" ? seekKind : "none",
-    revision: Number.isFinite(Number(src.revision)) ? Number(src.revision) : fallback.revision,
-    serverNowMs: src.serverNowMs === undefined ? finiteTimestamp(fallback.serverNowMs) : finiteTimestamp(src.serverNowMs),
+    positionMs,
+    anchorMs,
+    seekKind,
+    ...metadata,
   };
+  const explicitOrigin = finiteTimestamp(
+    src.alarmOnsetOriginMs ?? src.alarmOnset?.originMs,
+  );
+  if (explicitOrigin != null) normalized.alarmOnsetOriginMs = explicitOrigin;
+  else if (
+    membership.includes(INVESTIGATION_ALARMS_FULL_ID) &&
+    seekKind === "jump" &&
+    anchorMs != null
+  ) normalized.alarmOnsetOriginMs = anchorMs;
+  return normalized;
 }
 
 /**
@@ -527,12 +492,13 @@ export function normalizeNliClock(raw, prev) {
  */
 export function endNliClock(clock) {
   const src = clock && typeof clock === "object" ? clock : idleNliClock();
-  return {
+  const ended = {
     ...src,
     phase: "ended",
-    beatIndex: -1,
-    beatElapsedMs: 0,
-    playEpochMs: null,
+    positionMs: clockStoryDurationMs(src.beats),
+    anchorMs: null,
     seekKind: "none",
   };
+  delete ended.alarmOnsetOriginMs;
+  return ended;
 }

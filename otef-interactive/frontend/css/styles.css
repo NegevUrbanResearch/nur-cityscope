@@ -618,6 +618,16 @@ body {
   box-sizing: border-box;
   pointer-events: none;
   overflow: visible;
+  --nli-projection-clock-size: clamp(2.25rem, 5vw, 5rem);
+}
+#nliExplainerHost .nli-tl-clock--clock-only {
+  color: #fff;
+  font-size: var(--nli-projection-clock-size);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
 }
 #nliExplainerHost .nli-investigation-timeline-caption {
   position: absolute;

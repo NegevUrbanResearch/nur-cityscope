@@ -97,7 +97,14 @@ const MapProjectionConfig = {
   // full/left: 2026-08-29 table parks (nli-explainer-layout.json).
   NLI_EXPLAINER_LAYOUT: {
     full: { leftPct: 31.83, topPct: 48.95, widthPct: 16.7, heightPct: 19.75, fontPx: 12, rotateDeg: -48.5 },
-    left: { leftPct: 46.8, topPct: 18.79, widthPct: 21.64, heightPct: 22.83, fontPx: 15, rotateDeg: 0 },
+    left: {
+      leftPct: 48.675,
+      topPct: 30.126982017200937,
+      widthPct: 10.936875,
+      heightPct: 9.69473807662236,
+      fontPx: 15,
+      rotateDeg: 0,
+    },
     right: { leftPct: 58, topPct: 68, widthPct: 42, heightPct: 26, fontPx: 22, rotateDeg: 0 },
   },
 

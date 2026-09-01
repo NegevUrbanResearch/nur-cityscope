@@ -120,6 +120,25 @@ describe("buildNliExplainerModel", () => {
     expect(html).toContain("06:40");
   });
 
+  it("clock-only mode renders the NLI clock without explainer rows", () => {
+    const model = buildNliExplainerModel({
+      polygonOn: true,
+      lineOn: true,
+      alarmPlay: true,
+      polygonFeatures: polys,
+      lineFeatures: lines,
+      alarmFeatures: alarms,
+      clock: 400,
+      previousClock: null,
+    });
+    const html = nliExplainerInnerHtml(model, { nliCaptionMode: "clock-only" });
+    expect(html).toContain('class="nli-tl-clock nli-tl-clock--clock-only"');
+    expect(html).toContain("06:40");
+    expect(html).not.toContain("nli-tl-row");
+    expect(html).not.toContain("שטחים");
+    expect(nliExplainerInnerHtml(model)).toContain("nli-tl-row--polygons");
+  });
+
   it("sample model is worst-case (12 alarms + overflow)", () => {
     const polys = NLI_EXPLAINER_SAMPLE_MODEL.rows.find((r) => r.kind === "polygons");
     const lines = NLI_EXPLAINER_SAMPLE_MODEL.rows.find((r) => r.kind === "lines");

@@ -5,10 +5,8 @@ import {
   TIMELINE_BEAT_MS,
   TIMELINE_HOLD_MS,
   clockStoryDurationMs,
-  collectPlaybackTimelineBeats,
 } from "../../frontend/src/shared/nli-investigation-beats.js";
 import {
-  beatsForMembership,
   endNliClock,
   evaluateClock,
   flashPreviousClock,
@@ -24,360 +22,283 @@ import {
   stopNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
 
-const poly = [
-  { properties: { timeline_minutes: 400 } },
-  { properties: { timeline_minutes: 420 } },
+const polygons = INVESTIGATION_POLYGONS_FULL_ID;
+const alarms = INVESTIGATION_ALARMS_FULL_ID;
+const beats = [400, 420, 440];
+const canonicalSemanticKeys = [
+  "anchorMs", "beats", "loop", "membership", "phase", "positionMs", "seekKind",
 ];
-const alarms = [
-  { properties: { alarm_minutes: [391, 401, 402, 430] } },
+const removedSemanticKeys = [
+  "beatIndex", "beatElapsedMs", "playEpochMs", "narrativeEpochMs",
+  "narrativeElapsedMs", "cycleIndex", "cycleKey", "alarmOnsetBeat",
+  "alarmOnsetCycleIndex",
 ];
-const bags = { polygonFeatures: poly, lineFeatures: [], alarmFeatures: alarms };
 
-describe("nli-investigation-clock", () => {
-  it("idle keeps loop from previous stop", () => {
+function expectCanonical(clock, { onset = false } = {}) {
+  const semantic = Object.keys(clock)
+    .filter((key) => key !== "revision" && key !== "serverNowMs")
+    .sort();
+  expect(semantic).toEqual(
+    [...canonicalSemanticKeys, ...(onset ? ["alarmOnsetOriginMs"] : [])].sort(),
+  );
+  for (const key of removedSemanticKeys) expect(clock).not.toHaveProperty(key);
+}
+
+describe("canonical clock actions", () => {
+  it("play and replay start at absolute position zero at now", () => {
+    const playing = playNliClock(idleNliClock(), [polygons], beats, 1_000);
+    expect(playing).toMatchObject({
+      phase: "playing", membership: [polygons], beats,
+      positionMs: 0, anchorMs: 1_000, seekKind: "none",
+    });
+    expectCanonical(playing);
+    expect(evaluateClock(playing, 1_800)).toMatchObject({
+      phase: "playing", mode: "beat", clock: 400, index: 0, beatElapsedMs: 800,
+    });
+
+    const replayed = replayNliClock(endNliClock(playing), 9_000);
+    expect(replayed).toMatchObject({
+      positionMs: 0, anchorMs: 9_000, membership: [polygons], beats,
+    });
+    expect(evaluateClock(replayed, 9_000).clock).toBe(400);
+    expectCanonical(replayed);
+  });
+
+  it("stop returns canonical idle and preserves loop", () => {
     const stopped = stopNliClock(setNliLoop(idleNliClock(), true));
-    expect(stopped).toMatchObject({ phase: "idle", membership: [], beats: [], loop: true, seekKind: "none" });
+    expect(stopped).toEqual({
+      phase: "idle", membership: [], beats: [], loop: true,
+      positionMs: 0, anchorMs: null, seekKind: "none",
+      revision: 0, serverNowMs: null,
+    });
+    expectCanonical(stopped);
   });
 
-  it("play freezes membership; hitchhike does not add alarm bins", () => {
-    const membership = [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_ALARMS_FULL_ID];
-    const beats = beatsForMembership(membership, bags);
-    expect(beats).toEqual([400, 420]);
+  it("pause freezes exact multi-cycle position and resume reanchors", () => {
+    const duration = clockStoryDurationMs(beats);
+    const looping = setNliLoop(
+      playNliClock(idleNliClock(), [polygons], beats, 0),
+      true,
+    );
+    const absolute = duration * 2 + TIMELINE_BEAT_MS + 275;
+    const paused = pauseNliClock(looping, absolute);
+    expect(paused).toMatchObject({
+      phase: "paused", positionMs: absolute, anchorMs: absolute, seekKind: "none",
+    });
+    expect(evaluateClock(paused, 999_999)).toMatchObject({
+      clock: 420, index: 1, beatElapsedMs: 275,
+    });
+
+    const resumed = resumeNliClock(paused, 50_000);
+    expect(resumed).toMatchObject({
+      phase: "playing", positionMs: absolute, anchorMs: 50_000, seekKind: "none",
+    });
+    expect(evaluateClock(resumed, 50_000)).toMatchObject({
+      clock: 420, index: 1, beatElapsedMs: 275,
+    });
+    expect(evaluateClock(resumed, 50_200).beatElapsedMs).toBe(475);
+    expectCanonical(paused);
+    expectCanonical(resumed);
+  });
+
+  it("pause and resume preserve the serialized alarm onset", () => {
+    const playing = playNliClock(idleNliClock(), [alarms], beats, 1_000);
+    const paused = pauseNliClock(playing, 1_400);
+    const resumed = resumeNliClock(paused, 5_000);
+    expect(paused.alarmOnsetOriginMs).toBe(1_000);
+    expect(resumed.alarmOnsetOriginMs).toBe(1_000);
+  });
+
+  it("preserves beat, hold, end, and loop boundaries", () => {
+    const oneBeat = playNliClock(idleNliClock(), [polygons], [400], 0);
+    const duration = clockStoryDurationMs([400]);
+    expect(duration).toBe(TIMELINE_BEAT_MS + TIMELINE_HOLD_MS);
+    expect(evaluateClock(oneBeat, TIMELINE_BEAT_MS)).toMatchObject({
+      mode: "hold", beatElapsedMs: 0,
+    });
+    expect(evaluateClock(oneBeat, duration - 1).phase).toBe("playing");
+    expect(evaluateClock(oneBeat, duration).phase).toBe("ended");
+    expect(evaluateClock(setNliLoop(oneBeat, true), duration)).toMatchObject({
+      phase: "playing", mode: "beat", clock: 400, beatElapsedMs: 0,
+    });
+  });
+
+  it("pause in hold preserves all completed narrative state", () => {
+    const playing = playNliClock(idleNliClock(), [polygons], beats, 0);
+    const holdPosition = beats.length * TIMELINE_BEAT_MS + 400;
+    const paused = pauseNliClock(playing, holdPosition);
+    expect(paused.positionMs).toBe(holdPosition);
+    expect(evaluateClock(paused, 99_000)).toMatchObject({
+      phase: "paused", mode: "hold", index: -1, beatElapsedMs: 400,
+    });
+    const resumed = resumeNliClock(paused, 20_000);
+    expect(evaluateClock(resumed, 20_000)).toMatchObject({
+      mode: "hold", beatElapsedMs: 400,
+    });
     expect(
-      collectPlaybackTimelineBeats(false, false, true, null, null, alarms).length,
-    ).toBeGreaterThan(2);
-    const clock = playNliClock(idleNliClock(), membership, beats, 1000);
-    expect(clock.phase).toBe("playing");
-    expect(clock.membership).toEqual(membership);
-    expect(evaluateClock(clock, 1000)).toMatchObject({ mode: "beat", clock: 400, index: 0, beatElapsedMs: 0 });
+      evaluateClock(resumed, 20_000 + TIMELINE_HOLD_MS - 400).phase,
+    ).toBe("ended");
   });
 
-  it("play from idle starts at beat 0; play from paused resumes the armed beat", () => {
-    const beats = [400, 420];
-    const fromIdle = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], beats, 0);
-    expect(evaluateClock(fromIdle, 0).clock).toBe(400);
-    const armed = seekNliClock(idleNliClock(), 1, 0, {
-      visibleMembership: [INVESTIGATION_POLYGONS_FULL_ID],
-      beats,
+  it("end freezes the canonical terminal position", () => {
+    const ended = endNliClock(
+      playNliClock(idleNliClock(), [polygons], beats, 0),
+    );
+    expect(ended).toMatchObject({
+      phase: "ended", positionMs: clockStoryDurationMs(beats),
+      anchorMs: null, seekKind: "none",
     });
-    expect(armed.phase).toBe("paused");
-    expect(armed.beatIndex).toBe(1);
-    const resumed = resumeNliClock(armed, 50);
-    expect(resumed.phase).toBe("playing");
-    expect(evaluateClock(resumed, 50).clock).toBe(420);
+    expectCanonical(ended);
   });
+});
 
-  it("pause freezes in-beat progress; resume continues", () => {
-    let clock = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], [400, 420], 0);
-    clock = pauseNliClock(clock, 800);
-    expect(clock.phase).toBe("paused");
-    expect(clock.beatElapsedMs).toBe(800);
-    expect(evaluateClock(clock, 99999)).toMatchObject({ clock: 400, beatElapsedMs: 800 });
-    clock = resumeNliClock(clock, 5000);
-    expect(evaluateClock(clock, 5000)).toMatchObject({ clock: 400, beatElapsedMs: 800 });
-  });
-
-  it("seek jump flash uses previous story beat, not drag origin; beat 0 empty window", () => {
-    expect(flashPreviousClock([400, 410, 420], 420, { isJump: true })).toBe(410);
-    expect(flashPreviousClock([400, 420], 400, { isJump: true })).toBe(400);
-    expect(flashPreviousClock([400, 420], 400, { isJump: false })).toBe(null);
-  });
-
-  it("loop off evaluate ended after hold; loop on wraps without PATCH", () => {
-    const beats = [400];
-    const dur = clockStoryDurationMs(beats);
-    expect(dur).toBe(TIMELINE_BEAT_MS + TIMELINE_HOLD_MS);
-    const clock = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], beats, 0);
-    expect(evaluateClock(clock, TIMELINE_BEAT_MS).mode).toBe("hold");
-    expect(evaluateClock(clock, dur).phase).toBe("ended");
-    const looping = setNliLoop(playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], beats, 0), true);
-    expect(evaluateClock(looping, dur).mode).toBe("beat");
-    expect(evaluateClock(looping, dur).clock).toBe(400);
-  });
-
-  it("replay from ended reuses membership and restarts beat 0", () => {
-    const membership = [INVESTIGATION_POLYGONS_FULL_ID];
-    const beats = [400, 420];
-    const ended = endNliClock(playNliClock(idleNliClock(), membership, beats, 0));
-    expect(ended.phase).toBe("ended");
-    const again = replayNliClock(ended, 9000);
-    expect(again.phase).toBe("playing");
-    expect(again.membership).toEqual(membership);
-    expect(again.beats).toEqual(beats);
-    expect(evaluateClock(again, 9000).clock).toBe(400);
-  });
-
-  it("step from idle arms paused; step while playing ends paused", () => {
-    const beats = [400, 420];
-    const arm = { visibleMembership: [INVESTIGATION_POLYGONS_FULL_ID], beats };
-    const stepped = stepNliClock(idleNliClock(), 1, 0, arm);
-    expect(stepped.phase).toBe("paused");
-    expect(stepped.beatIndex).toBe(0);
-    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], beats, 0);
-    const afterStep = stepNliClock(playing, 1, 0);
-    expect(afterStep.phase).toBe("paused");
-    expect(afterStep.beatIndex).toBe(1);
-    const atEnd = seekNliClock(playing, 1, 0);
-    const noWrap = stepNliClock({ ...atEnd, phase: "paused", beatIndex: 1, loop: false }, 1, 0);
-    expect(noWrap.phase).toBe("paused");
-    expect(noWrap.beatIndex).toBe(1);
-    const emptyArm = stepNliClock(idleNliClock(), 1, 0, {
-      visibleMembership: [INVESTIGATION_POLYGONS_FULL_ID],
-      beats: [],
+describe("seek and step boundary policy", () => {
+  it("seek arms idle at a boundary and stamps the serialized origin", () => {
+    const jumped = seekNliClock(idleNliClock(), 1, 10_000, {
+      visibleMembership: [polygons], beats,
     });
-    expect(emptyArm.phase).toBe("idle");
-  });
-
-  it("pause during hold stays in hold, not last beat at elapsed 0", () => {
-    const beats = [400, 420];
-    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], beats, 0);
-    const holdNow = beats.length * TIMELINE_BEAT_MS;
-    expect(evaluateClock(playing, holdNow)).toMatchObject({ mode: "hold", clock: null });
-    const paused = pauseNliClock(playing, holdNow);
-    expect(paused.phase).toBe("paused");
-    expect(evaluateClock(paused, holdNow)).toMatchObject({ mode: "hold", clock: null, index: -1 });
-  });
-
-  it("step +1 at last beat while playing, loop off, stays paused on that beat without jump reset", () => {
-    const beats = [400, 420];
-    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], beats, 0);
-    const nowMs = TIMELINE_BEAT_MS + 800;
-    expect(evaluateClock(playing, nowMs)).toMatchObject({ mode: "beat", index: 1, beatElapsedMs: 800 });
-    const stepped = stepNliClock(playing, 1, nowMs);
-    expect(stepped.phase).toBe("paused");
-    expect(stepped.beatIndex).toBe(1);
-    expect(stepped.beatElapsedMs).toBe(800);
-    expect(stepped.seekKind).not.toBe("jump");
-    expect(evaluateClock(stepped, nowMs)).toMatchObject({ clock: 420, index: 1, beatElapsedMs: 800 });
-  });
-
-  it("step -1 at beat 0 with loop on is a no-op", () => {
-    const beats = [400, 420];
-    const paused = seekNliClock(idleNliClock(), 0, 0, {
-      visibleMembership: [INVESTIGATION_POLYGONS_FULL_ID],
-      beats,
+    expect(jumped).toMatchObject({
+      phase: "paused", positionMs: TIMELINE_BEAT_MS,
+      anchorMs: 10_000, seekKind: "jump",
     });
-    const looping = setNliLoop(paused, true);
-    expect(looping.beatIndex).toBe(0);
-    const stepped = stepNliClock(looping, -1, 0);
-    expect(stepped.beatIndex).toBe(0);
-    expect(stepped.phase).toBe("paused");
-  });
-
-  it("stop/normalize keeps null timestamps instead of coercing to 0", () => {
-    const stopped = stopNliClock({ ...idleNliClock(), serverNowMs: null });
-    expect(stopped.serverNowMs).toBeNull();
-    const normalized = normalizeNliClock({ ...idleNliClock(), serverNowMs: null });
-    expect(normalized.serverNowMs).toBeNull();
-    const playing = normalizeNliClock({
-      phase: "playing",
-      membership: [INVESTIGATION_POLYGONS_FULL_ID],
-      beats: [400, 420],
-      beatIndex: 0,
-      beatElapsedMs: 0,
-      playEpochMs: null,
-      loop: false,
-      seekKind: "none",
+    expect(evaluateClock(jumped, 99_000)).toMatchObject({
+      phase: "paused", clock: 420, index: 1, beatElapsedMs: 0,
     });
-    expect(playing.phase).toBe("playing");
-    expect(playing.playEpochMs).toBeNull();
+    expectCanonical(jumped);
   });
 
-  it("playing hold reports hold elapsed greater than 0", () => {
-    const beats = [400, 420];
-    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], beats, 0);
-    const holdElapsed = 400;
-    const holdNow = beats.length * TIMELINE_BEAT_MS + holdElapsed;
-    expect(evaluateClock(playing, holdNow)).toMatchObject({
-      mode: "hold",
-      clock: null,
-      index: -1,
-      beatElapsedMs: holdElapsed,
+  it("step from idle arms beat zero and backward step is a no-op", () => {
+    const arm = { visibleMembership: [polygons], beats };
+    expect(stepNliClock(idleNliClock(), -1, 1_000, arm).phase).toBe("idle");
+    expect(stepNliClock(idleNliClock(), 1, 1_000, arm)).toMatchObject({
+      phase: "paused", positionMs: 0, anchorMs: 1_000, seekKind: "jump",
     });
   });
 
-  it("pause during hold then resume continues hold, not beat 0", () => {
-    const beats = [400, 420];
-    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], beats, 0);
-    const holdElapsed = 400;
-    const holdNow = beats.length * TIMELINE_BEAT_MS + holdElapsed;
-    const paused = pauseNliClock(playing, holdNow);
-    expect(paused.phase).toBe("paused");
-    expect(paused.beatIndex).toBe(-1);
-    expect(paused.beatElapsedMs).toBe(holdElapsed);
-    expect(evaluateClock(paused, 99999)).toMatchObject({
-      mode: "hold",
-      clock: null,
-      index: -1,
-      beatElapsedMs: holdElapsed,
+  it("step while playing jumps to a boundary and never wraps backward", () => {
+    const playing = setNliLoop(
+      playNliClock(idleNliClock(), [polygons], beats, 0),
+      true,
+    );
+    expect(stepNliClock(playing, 1, 800)).toMatchObject({
+      phase: "paused", positionMs: TIMELINE_BEAT_MS,
+      anchorMs: 800, seekKind: "jump",
     });
-    const resumed = resumeNliClock(paused, 20000);
-    expect(resumed.phase).toBe("playing");
-    expect(evaluateClock(resumed, 20000)).toMatchObject({
-      mode: "hold",
-      clock: null,
-      index: -1,
-      beatElapsedMs: holdElapsed,
-    });
+    const atFirst = seekNliClock(playing, 0, 1_000);
+    expect(stepNliClock(atFirst, -1, 1_500)).toBe(atFirst);
   });
 
-  it("after remaining hold time from resume, evaluate is ended", () => {
-    const beats = [400, 420];
-    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], beats, 0);
-    const holdElapsed = 400;
-    const holdNow = beats.length * TIMELINE_BEAT_MS + holdElapsed;
-    const resumeAt = 20000;
-    const resumed = resumeNliClock(pauseNliClock(playing, holdNow), resumeAt);
-    expect(evaluateClock(resumed, resumeAt + (TIMELINE_HOLD_MS - holdElapsed)).phase).toBe("ended");
-  });
-
-  it("step +1 while playing in hold, loop off, stays paused in hold with same elapsed", () => {
-    const beats = [400, 420];
-    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], beats, 0);
-    const holdElapsed = 400;
-    const holdNow = beats.length * TIMELINE_BEAT_MS + holdElapsed;
-    expect(evaluateClock(playing, holdNow)).toMatchObject({
-      mode: "hold",
-      clock: null,
-      index: -1,
-      beatElapsedMs: holdElapsed,
-    });
-    const stepped = stepNliClock(playing, 1, holdNow);
-    expect(stepped.phase).toBe("paused");
-    expect(stepped.beatIndex).toBe(-1);
-    expect(stepped.beatElapsedMs).toBe(holdElapsed);
-    expect(stepped.seekKind).not.toBe("jump");
-    expect(evaluateClock(stepped, holdNow)).toMatchObject({
-      mode: "hold",
-      clock: null,
-      index: -1,
-      beatElapsedMs: holdElapsed,
-    });
-    const resumeAt = 20000;
-    const resumed = resumeNliClock(stepped, resumeAt);
-    expect(resumed.phase).toBe("playing");
-    expect(evaluateClock(resumed, resumeAt)).toMatchObject({
-      mode: "hold",
-      clock: null,
-      index: -1,
-      beatElapsedMs: holdElapsed,
-    });
-    expect(evaluateClock(resumed, resumeAt + (TIMELINE_HOLD_MS - holdElapsed)).phase).toBe("ended");
-  });
-
-  it("normalize idle payload keeps incoming revision and serverNowMs", () => {
-    const normalized = normalizeNliClock({
-      phase: "idle",
-      loop: true,
-      revision: 7,
-      serverNowMs: 12345,
-    });
-    expect(normalized.phase).toBe("idle");
-    expect(normalized.loop).toBe(true);
-    expect(normalized.revision).toBe(7);
-    expect(normalized.serverNowMs).toBe(12345);
-  });
-
-  it("seek stamps playEpochMs and evaluateClock clamps to that beat", () => {
-    const now = 10_000;
-    const paused = playNliClock(idleNliClock(), ["nli.lines"], [400, 740], 0);
-    const jumped = seekNliClock(paused, 1, now);
-    expect(jumped.phase).toBe("paused");
-    expect(jumped.seekKind).toBe("jump");
-    expect(jumped.playEpochMs).toBe(now);
-    const mid = evaluateClock(jumped, now + 1600);
-    expect(mid.index).toBe(1);
-    expect(mid.beatElapsedMs).toBe(1600);
-    const late = evaluateClock(jumped, now + 10_000);
-    expect(late.index).toBe(1);
-    expect(late.beatElapsedMs).toBe(3200);
-    expect(late.phase).toBe("paused");
-  });
-
-  it("successful step stamps playEpochMs nowMs not full-story epoch", () => {
-    const now = 1_000;
-    const playing = playNliClock(idleNliClock(), ["nli.lines"], [400, 740], 0);
+  it("step past the last beat freezes progress when loop is off", () => {
+    const playing = playNliClock(idleNliClock(), [polygons], [400, 420], 0);
+    const now = TIMELINE_BEAT_MS + 800;
     const stepped = stepNliClock(playing, 1, now);
-    expect(stepped.phase).toBe("paused");
-    expect(stepped.seekKind).toBe("jump");
-    expect(stepped.beatElapsedMs).toBe(0);
-    expect(stepped.playEpochMs).toBe(now);
-    expect(stepped.playEpochMs).not.toBe(now - TIMELINE_BEAT_MS);
-  });
-
-  it("resume after jump freeze starts next beat not this beat at 0", () => {
-    const now = 10_000;
-    const jumped = seekNliClock(idleNliClock(), 1, now, {
-      visibleMembership: ["nli.lines"],
-      beats: [400, 420, 740],
+    expect(stepped).toMatchObject({
+      phase: "paused", positionMs: now, anchorMs: now, seekKind: "none",
     });
-    const freezeAt = now + TIMELINE_BEAT_MS;
-    expect(evaluateClock(jumped, freezeAt)).toMatchObject({
-      index: 1,
-      beatElapsedMs: TIMELINE_BEAT_MS,
-      phase: "paused",
-    });
-    const resumed = resumeNliClock(jumped, freezeAt);
-    expect(resumed.phase).toBe("playing");
-    expect(evaluateClock(resumed, freezeAt)).not.toMatchObject({
-      index: 1,
-      beatElapsedMs: 0,
-    });
-    expect(evaluateClock(resumed, freezeAt)).toMatchObject({
-      index: 2,
-      beatElapsedMs: 0,
-      clock: 740,
+    expect(evaluateClock(stepped, 99_000)).toMatchObject({
+      index: 1, beatElapsedMs: 800,
     });
   });
 
-  it("resume mid jump one-shot continues this trail", () => {
-    const now = 10_000;
-    const jumped = seekNliClock(idleNliClock(), 1, now, {
-      visibleMembership: ["nli.lines"],
-      beats: [400, 420, 740],
+  it("step past the last beat advances to the next absolute loop cycle", () => {
+    const duration = clockStoryDurationMs(beats);
+    const looping = setNliLoop(
+      playNliClock(idleNliClock(), [polygons], beats, 0),
+      true,
+    );
+    const now = duration * 2 + (beats.length - 1) * TIMELINE_BEAT_MS + 100;
+    const wrapped = stepNliClock(looping, 1, now);
+    expect(wrapped).toMatchObject({
+      phase: "paused", positionMs: duration * 3,
+      anchorMs: now, seekKind: "jump",
     });
-    const mid = now + 1600;
-    const resumed = resumeNliClock(jumped, mid);
-    expect(evaluateClock(resumed, mid)).toMatchObject({
-      index: 1,
-      beatElapsedMs: 1600,
-      clock: 420,
+    expect(evaluateClock(wrapped, now)).toMatchObject({ index: 0, clock: 400 });
+  });
+
+  it("jump flash retains the previous-story-beat boundary", () => {
+    expect(flashPreviousClock(beats, 420, { isJump: true })).toBe(400);
+    expect(flashPreviousClock(beats, 400, { isJump: true })).toBe(400);
+    expect(flashPreviousClock(beats, 400, { isJump: false })).toBeNull();
+  });
+});
+
+describe("context-free clock parsing", () => {
+  it("does not inherit any field from the previous client snapshot", () => {
+    const raw = {
+      phase: "paused", membership: [polygons], beats, loop: false,
+      positionMs: 725, anchorMs: 5_000, seekKind: "none",
+      revision: 8, serverNowMs: 6_000,
+    };
+    const hostilePrevious = {
+      ...raw, loop: true, positionMs: 99_999, alarmOnsetOriginMs: 123,
+    };
+    expect(normalizeNliClock(raw, hostilePrevious)).toEqual(normalizeNliClock(raw));
+    expect(normalizeNliClock(raw)).toEqual(raw);
+    expectCanonical(normalizeNliClock(raw));
+  });
+
+  it("reads legacy playing from narrativeEpochMs before playEpochMs", () => {
+    const legacy = normalizeNliClock({
+      phase: "playing", membership: [polygons], beats, loop: true,
+      beatIndex: 2, beatElapsedMs: 200, playEpochMs: 1_000,
+      narrativeEpochMs: 500, seekKind: "none", revision: 4,
+    });
+    expect(legacy).toMatchObject({
+      phase: "playing", positionMs: 0, anchorMs: 500, revision: 4,
+    });
+    expect(
+      evaluateClock(legacy, 500 + clockStoryDurationMs(beats) + 100),
+    ).toMatchObject({ index: 0, beatElapsedMs: 100 });
+    expectCanonical(legacy);
+  });
+
+  it("reads legacy paused cycle/narrative position before beat fallback", () => {
+    const duration = clockStoryDurationMs(beats);
+    const legacy = normalizeNliClock({
+      phase: "paused", membership: [polygons], beats, loop: true,
+      beatIndex: 0, beatElapsedMs: 12,
+      narrativeElapsedMs: TIMELINE_BEAT_MS + 350, cycleIndex: 2,
+      narrativeEpochMs: 1_000, seekKind: "none",
+    });
+    expect(legacy.positionMs).toBe(duration * 2 + TIMELINE_BEAT_MS + 350);
+    expect(legacy.anchorMs).toBe(1_000 + legacy.positionMs);
+    expect(evaluateClock(legacy, 999_000)).toMatchObject({
+      index: 1, beatElapsedMs: 350,
     });
   });
 
-  it("pauseNliClock still nulls playEpochMs and freeze stored elapsed", () => {
-    const playing = playNliClock(idleNliClock(), ["nli.lines"], [400, 740], 0);
-    const paused = pauseNliClock(playing, 800);
-    expect(paused.playEpochMs).toBeNull();
-    expect(paused.beatElapsedMs).toBe(800);
-    expect(evaluateClock(paused, 99999)).toMatchObject({ index: 0, beatElapsedMs: 800, phase: "paused" });
+  it("reads legacy paused hold and jump without using receipt time", () => {
+    const hold = normalizeNliClock({
+      phase: "paused", membership: [polygons], beats, loop: false,
+      beatIndex: -1, beatElapsedMs: 450, playEpochMs: null, seekKind: "none",
+    });
+    expect(hold.positionMs).toBe(beats.length * TIMELINE_BEAT_MS + 450);
+    expect(evaluateClock(hold, 999_000)).toMatchObject({
+      mode: "hold", beatElapsedMs: 450,
+    });
+
+    const jump = normalizeNliClock({
+      phase: "paused", membership: [polygons], beats, loop: false,
+      beatIndex: 1, beatElapsedMs: 0, playEpochMs: 12_345, seekKind: "jump",
+    });
+    expect(jump).toMatchObject({
+      positionMs: TIMELINE_BEAT_MS, anchorMs: 12_345, seekKind: "jump",
+    });
   });
 
-  it("normalizeNliClock keeps finite playEpochMs when paused", () => {
-    const normalized = normalizeNliClock({
-      phase: "paused",
-      membership: ["nli.lines"],
-      beats: [400, 740],
-      beatIndex: 1,
-      beatElapsedMs: 0,
-      playEpochMs: 12_345,
-      loop: false,
-      seekKind: "jump",
+  it("maps legacy idle and ended deterministically", () => {
+    expect(normalizeNliClock({ phase: "idle", loop: true, revision: 7 })).toEqual({
+      phase: "idle", membership: [], beats: [], loop: true,
+      positionMs: 0, anchorMs: null, seekKind: "none",
+      revision: 7, serverNowMs: null,
     });
-    expect(normalized.phase).toBe("paused");
-    expect(normalized.playEpochMs).toBe(12_345);
-    expect(normalized.seekKind).toBe("jump");
-    const idle = normalizeNliClock({
-      phase: "idle",
-      playEpochMs: 12_345,
-    });
-    expect(idle.playEpochMs).toBeNull();
     const ended = normalizeNliClock({
-      phase: "ended",
-      membership: ["nli.lines"],
-      beats: [400, 740],
-      playEpochMs: 12_345,
+      phase: "ended", membership: [polygons], beats, loop: false, revision: 9,
     });
-    expect(ended.playEpochMs).toBeNull();
+    expect(ended).toMatchObject({
+      phase: "ended", positionMs: clockStoryDurationMs(beats),
+      anchorMs: null, revision: 9,
+    });
+    expectCanonical(ended);
   });
 });

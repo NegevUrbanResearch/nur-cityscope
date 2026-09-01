@@ -16,5 +16,10 @@ describe("perf-telemetry", () => {
     expect(result.applyViewportMs.p95).toBeGreaterThan(0);
     expect(result.applyViewportMs.max).toBe(30);
   });
+
+  test("retains at least 1,000 scheduler samples", () => {
+    for (let index = 0; index < 1100; index += 1) telemetry.record("nliSchedulerMs", index);
+    expect(telemetry.summary().nliSchedulerMs.count).toBe(1000);
+  });
 });
 

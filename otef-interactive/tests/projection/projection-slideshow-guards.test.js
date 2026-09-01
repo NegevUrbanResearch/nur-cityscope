@@ -114,6 +114,20 @@ describe("projection-main slideshow overlay wiring", () => {
     expect(syncIdx).toBeGreaterThan(hostIdx);
   });
 
+  it("wires clock-only captions without changing Presentation suppression", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../../frontend/src/entries/projection-main.js"),
+      "utf8",
+    );
+    expect(src.match(/nliCaptionMode/g)).toHaveLength(1);
+    expect(src).toMatch(
+      /displayProfile:\s*"projection",\s*nliCaptionMode:\s*"clock-only",\s*motionMode:/,
+    );
+    expect(src).toMatch(/const overlayClock = presentationActive \? idleNliClock\(clock\) : clock;/);
+    expect(src).toContain("shouldSuppressProjectionHighlight");
+    expect(src).toContain("syncPresentationOverlays: syncContextFlowAnimations");
+  });
+
   it("GIS map-main does not inject projection caption flags", () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, "../../frontend/src/entries/map-main.js"),

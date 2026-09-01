@@ -71,6 +71,33 @@ describe("nli explainer layout", () => {
     );
   });
 
+  it("uses the committed calibrated left layout without changing full or right", () => {
+    expect(MapProjectionConfig.NLI_EXPLAINER_LAYOUT.left).toEqual({
+      leftPct: 48.675,
+      topPct: 30.126982017200937,
+      widthPct: 10.936875,
+      heightPct: 9.69473807662236,
+      fontPx: 15,
+      rotateDeg: 0,
+    });
+    expect(MapProjectionConfig.NLI_EXPLAINER_LAYOUT.full).toEqual({
+      leftPct: 31.83,
+      topPct: 48.95,
+      widthPct: 16.7,
+      heightPct: 19.75,
+      fontPx: 12,
+      rotateDeg: -48.5,
+    });
+    expect(MapProjectionConfig.NLI_EXPLAINER_LAYOUT.right).toEqual({
+      leftPct: 58,
+      topPct: 68,
+      widthPct: 42,
+      heightPct: 26,
+      fontPx: 22,
+      rotateDeg: 0,
+    });
+  });
+
   it("host is a sibling; uniform rotate is written; no skew or scale", () => {
     vi.stubGlobal("document", {
       createElement() {
@@ -162,7 +189,7 @@ describe("nli explainer layout", () => {
     expect(parsed.right.leftPct).toBe(58);
   });
 
-  it("overlap thirds come from PROJECTION_SPAN; defaults miss; bad boxes hit", () => {
+  it("overlap thirds come from PROJECTION_SPAN; committed defaults miss; bad boxes hit", () => {
     const span = MapProjectionConfig.PROJECTION_SPAN;
     const leftW = span.LEFT_X1 - span.LEFT_X0;
     const leftOverlap = nliExplainerOverlapPageRect("left");
@@ -176,7 +203,7 @@ describe("nli explainer layout", () => {
 
     const leftDef = MapProjectionConfig.NLI_EXPLAINER_LAYOUT.left;
     const rightDef = MapProjectionConfig.NLI_EXPLAINER_LAYOUT.right;
-    expect(nliExplainerBoxHitsOverlap(leftDef, "left")).toBe(true);
+    expect(nliExplainerBoxHitsOverlap(leftDef, "left")).toBe(false);
     expect(nliExplainerBoxHitsOverlap(rightDef, "right")).toBe(false);
     expect(
       nliExplainerBoxHitsOverlap(

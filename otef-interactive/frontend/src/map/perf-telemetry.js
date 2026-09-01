@@ -1,4 +1,6 @@
-const MAX_SAMPLES_PER_METRIC = 200;
+// Keep enough history for the NLI scheduler p95 gate and for a useful local
+// performance diagnosis. Older callers still receive the same summary shape.
+const MAX_SAMPLES_PER_METRIC = 1000;
 const metricSamples = new Map();
 
 function record(metricName, value) {

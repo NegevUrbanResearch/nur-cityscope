@@ -8,6 +8,12 @@ import { formatMinutesAsLocalClock } from "./nli-investigation-beats.js";
 
 const ALARM_CHIP_CAP = 12;
 
+export const NLI_CAPTION_MODE_CLOCK_ONLY = "clock-only";
+export const NLI_CAPTION_MODES = Object.freeze({
+  FULL: "full",
+  CLOCK_ONLY: NLI_CAPTION_MODE_CLOCK_ONLY,
+});
+
 export const NLI_EXPLAINER_KIND_LABELS = Object.freeze({
   polygons: Object.freeze({ he: "שטחים", en: "Areas" }),
   lines: Object.freeze({ he: "צירים", en: "Routes" }),
@@ -75,6 +81,7 @@ export function buildNliExplainerModel({
   clock,
   previousClock,
   locale,
+  nliCaptionMode,
 } = {}) {
   const rows = [];
   if (polygonOn) {
@@ -87,10 +94,14 @@ export function buildNliExplainerModel({
     const { items, overflowCount } = alarmRowItems(alarmFeatures, clock, previousClock);
     pushRow(rows, "alarms", locale, items, overflowCount);
   }
-  return {
+  const model = {
     clockLabel: formatMinutesAsLocalClock(clock),
     rows,
   };
+  if (nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY) {
+    model.nliCaptionMode = NLI_CAPTION_MODE_CLOCK_ONLY;
+  }
+  return model;
 }
 
 function escapeCaption(value) {
@@ -109,9 +120,14 @@ function chipsInnerHtml(items, overflowCount) {
   return chips.join('<span class="nli-tl-sep"> · </span>');
 }
 
-export function nliExplainerInnerHtml(model) {
+export function nliExplainerInnerHtml(model, options = {}) {
   if (!model) return "";
-  const clock = `<div class="nli-tl-clock" dir="ltr">${escapeCaption(model.clockLabel || "")}</div>`;
+  const clockOnly =
+    (options && options.nliCaptionMode) === NLI_CAPTION_MODE_CLOCK_ONLY ||
+    model.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY;
+  const clockClass = clockOnly ? "nli-tl-clock nli-tl-clock--clock-only" : "nli-tl-clock";
+  const clock = `<div class="${clockClass}" dir="ltr">${escapeCaption(model.clockLabel || "")}</div>`;
+  if (clockOnly) return clock;
   const rows = (model.rows || [])
     .map(
       (row) =>

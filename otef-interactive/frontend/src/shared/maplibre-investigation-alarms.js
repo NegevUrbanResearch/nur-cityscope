@@ -1,84 +1,45 @@
-/**
- * City running-total alarm circles on the investigation timeline clock.
- * Owns paint expressions, overlay GeoJSON count/flash, count labels, idle/play apply, and flash caption HTML.
- * Does not restack polygon/line story layers.
- */
+import {
+  INVESTIGATION_ALARMS_FULL_ID,
+  collectAlarmTimelineBeats,
+  quantizeAlarmMinutes,
+} from "./nli-investigation-beats.js";
+import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 
-export const INVESTIGATION_ALARMS_FULL_ID = "nli.alarms";
-export const ALARM_COUNT_COLOR_STOPS = [
-  [1, "#1e3a8a"],
-  [7, "#22d3ee"],
-  [26, "#a3e635"],
-  [77, "#7f1d1d"],
-];
-export const ALARM_COUNT_RADIUS_STOPS = [
-  [1, 4],
-  [7, 7],
-  [26, 12],
-  [77, 16],
-];
+export { INVESTIGATION_ALARMS_FULL_ID, collectAlarmTimelineBeats, quantizeAlarmMinutes };
+
+export const ALARM_COUNT_RADIUS_STOPS = NLI_VISUAL_TOKENS.alarmRadiusStops;
 
 const ALARM_LAYER_ID_PREFIX = INVESTIGATION_ALARMS_FULL_ID.replace(/\./g, "__");
 const ALARM_CIRCLE_LAYER_ID = "nli-investigation-alarm-circles";
-const ALARM_COUNT_LAYER_ID = "nli-investigation-alarm-count";
-const ALARM_COUNT_SOURCE_ID = "nli-investigation-alarm-count";
+const ALARM_RIPPLE_LAYER_ID = "nli-investigation-alarm-ripple";
+const ALARM_POINTS_SOURCE_ID = "nli-investigation-alarm-points";
 const ALARM_COUNT_CAP = 77;
-const ALARM_PULSE_MS = 900;
+const ALARM_PULSE_MS = NLI_VISUAL_TOKENS.alarmRippleDurationMs;
 const ALARM_RADIUS_HIDDEN = 1;
 const ALARM_FLASH_PULSE_PX = 4;
+const ALARM_RIPPLE_EXPANSION_PX = 8;
 const ALARM_OPACITY_SETTLED = 0.55;
 const ALARM_OPACITY_ACTIVE = 0.9;
-const ALARM_FLASH_COLOR = "#fde68a";
 const ALARM_PAINT_KEYS = ["circle-radius", "circle-color", "circle-opacity", "circle-stroke-width"];
 
 function isFiniteMinute(value) {
   return typeof value !== "boolean" && Number.isFinite(Number(value));
 }
 
-export function quantizeAlarmMinutes(minutes) {
-  return 5 * Math.floor(Number(minutes) / 5);
-}
-
-function alarmMinutesFromFeature(feature) {
-  const raw = feature?.properties?.alarm_minutes;
-  if (!Array.isArray(raw)) return [];
-  const minutes = [];
-  for (const value of raw) {
-    if (isFiniteMinute(value)) minutes.push(Number(value));
-  }
-  return minutes;
-}
-
-export function collectAlarmTimelineBeats(alarmFeatures) {
-  const beats = new Set();
-  for (const feature of alarmFeatures || []) {
-    for (const minutes of alarmMinutesFromFeature(feature)) {
-      beats.add(quantizeAlarmMinutes(minutes));
-    }
-  }
-  return [...beats].sort((a, b) => a - b);
-}
-
 export function countAlarmsAtClock(minutes, clock) {
   const list = Array.isArray(minutes) ? minutes : [];
   if (clock == null) return list.length;
   let n = 0;
-  for (const raw of list) {
-    if (isFiniteMinute(raw) && Number(raw) <= clock) n += 1;
-  }
+  for (const raw of list) if (isFiniteMinute(raw) && Number(raw) <= clock) n += 1;
   return n;
 }
 
 export function cityFlashedInWindow(minutes, clock, previousClock) {
   if (clock == null) return false;
   const prev = previousClock == null ? Number.NEGATIVE_INFINITY : previousClock;
-  const list = Array.isArray(minutes) ? minutes : [];
-  for (const raw of list) {
-    if (!isFiniteMinute(raw)) continue;
-    const m = Number(raw);
-    if (m > prev && m <= clock) return true;
-  }
-  return false;
+  return (Array.isArray(minutes) ? minutes : []).some(
+    (raw) => isFiniteMinute(raw) && Number(raw) > prev && Number(raw) <= clock,
+  );
 }
 
 export function flashingCityNames(features, clock, previousClock) {
@@ -86,114 +47,121 @@ export function flashingCityNames(features, clock, previousClock) {
   const prev = previousClock == null ? Number.NEGATIVE_INFINITY : previousClock;
   const rows = [];
   for (const feature of features || []) {
-    const minutes = feature?.properties?.alarm_minutes;
+    const minutes = Array.isArray(feature?.properties?.alarm_minutes) ? feature.properties.alarm_minutes : [];
     if (!cityFlashedInWindow(minutes, clock, previousClock)) continue;
     const city = feature?.properties?.city;
     if (typeof city !== "string" || !city) continue;
-    let n = 0;
-    for (const raw of minutes) {
-      if (!isFiniteMinute(raw)) continue;
-      const m = Number(raw);
-      if (m > prev && m <= clock) n += 1;
-    }
+    const n = minutes.filter((raw) => isFiniteMinute(raw) && Number(raw) > prev && Number(raw) <= clock).length;
     rows.push({ city, n });
   }
   rows.sort((a, b) => b.n - a.n || (a.city < b.city ? -1 : a.city > b.city ? 1 : 0));
   return { rows: rows.slice(0, 12), totalFlashing: rows.length };
 }
 
-function interpolateStopsExpression(input, stops) {
+function profileValue(profile, key, fallback) {
+  const value = Number(profile?.[key]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function interpolateStopsExpression(input, stops, multiplier = 1) {
   const expr = ["interpolate", ["linear"], input];
-  for (const [at, value] of stops) {
-    expr.push(at, value);
-  }
+  for (const [at, value] of stops) expr.push(at, value * multiplier);
   return expr;
 }
 
 function flashPulsePx(beatElapsedMs) {
   const t = Math.min(1, Math.max(0, Number(beatElapsedMs) / ALARM_PULSE_MS));
-  if (t <= 0.5) return ALARM_FLASH_PULSE_PX * (t / 0.5);
-  return ALARM_FLASH_PULSE_PX * (1 - (t - 0.5) / 0.5);
+  return t <= 0.5 ? ALARM_FLASH_PULSE_PX * (t / 0.5) : ALARM_FLASH_PULSE_PX * (1 - (t - 0.5) / 0.5);
+}
+
+function rippleExpansionPx(elapsedMs) {
+  return ALARM_RIPPLE_EXPANSION_PX * Math.min(1, Math.max(0, Number(elapsedMs) / ALARM_PULSE_MS));
 }
 
 function overlayCount() {
   return ["coalesce", ["get", "count"], 0];
 }
 
-function overlayFlash() {
-  return ["boolean", ["get", "flash"], false];
+function overlayOnset() {
+  return ["boolean", ["get", "onset"], false];
 }
 
 function alarmCountInputExpr() {
   return ["min", ALARM_COUNT_CAP, overlayCount()];
 }
 
-/** MapLibre circle paint from overlay GeoJSON count/flash. This is what apply sets on the map. */
-export function alarmCirclePaint(beatElapsedMs, allowFlash) {
+/** MapLibre circle paint from cumulative count. The color is always siren yellow. */
+export function alarmCirclePaint(beatElapsedMs, allowFlash, profile = NLI_DISPLAY_PROFILES.gis) {
+  const radiusMultiplier = profileValue(profile, "radiusMultiplier", 1);
   const count = overlayCount();
-  const settledRadius = interpolateStopsExpression(alarmCountInputExpr(), ALARM_COUNT_RADIUS_STOPS);
-  const settledColor = interpolateStopsExpression(alarmCountInputExpr(), ALARM_COUNT_COLOR_STOPS);
+  const settledRadius = interpolateStopsExpression(alarmCountInputExpr(), ALARM_COUNT_RADIUS_STOPS, radiusMultiplier);
+  const yellow = NLI_VISUAL_TOKENS.alarmYellow;
   if (!allowFlash) {
     return {
       radius: ["case", ["<=", count, 0], ALARM_RADIUS_HIDDEN, settledRadius],
-      color: ["case", ["<=", count, 0], ALARM_COUNT_COLOR_STOPS[0][1], settledColor],
+      color: ["case", ["<=", count, 0], yellow, yellow],
       opacity: ["case", ["<=", count, 0], 0, ALARM_OPACITY_SETTLED],
     };
   }
   const pulse = flashPulsePx(beatElapsedMs);
-  const flash = overlayFlash();
   return {
-    radius: [
-      "case",
-      ["<=", count, 0],
-      ALARM_RADIUS_HIDDEN,
-      flash,
-      ["+", settledRadius, pulse],
-      settledRadius,
-    ],
-    color: [
-      "case",
-      ["<=", count, 0],
-      ALARM_COUNT_COLOR_STOPS[0][1],
-      flash,
-      ALARM_FLASH_COLOR,
-      settledColor,
-    ],
-    opacity: [
-      "case",
-      ["<=", count, 0],
-      0,
-      flash,
-      ALARM_OPACITY_ACTIVE,
-      ALARM_OPACITY_SETTLED,
-    ],
+    radius: ["case", ["<=", count, 0], ALARM_RADIUS_HIDDEN, overlayOnset(), ["+", settledRadius, pulse], settledRadius],
+    color: yellow,
+    opacity: ["case", ["<=", count, 0], 0, overlayOnset(), ALARM_OPACITY_ACTIVE, ALARM_OPACITY_SETTLED],
   };
 }
 
 function styleLayers(map) {
   try {
-    const style = typeof map.getStyle === "function" ? map.getStyle() : null;
+    const style = typeof map?.getStyle === "function" ? map.getStyle() : null;
     return Array.isArray(style?.layers) ? style.layers : [];
-  } catch (_) {
-    return [];
-  }
+  } catch (_) { return []; }
 }
 
 function collectAlarmCircleLayerIds(map) {
-  const ids = [];
-  for (const layer of styleLayers(map)) {
-    if (!layer || typeof layer.id !== "string") continue;
-    if (!layer.id.startsWith(ALARM_LAYER_ID_PREFIX)) continue;
-    if (layer.type === "circle") ids.push(layer.id);
-  }
-  return ids;
+  return styleLayers(map)
+    .filter((layer) => typeof layer?.id === "string" && layer.id.startsWith(ALARM_LAYER_ID_PREFIX) && layer.type === "circle")
+    .map((layer) => layer.id);
 }
 
-function alarmFeatureId(feature) {
-  if (feature?.id != null && feature.id !== "") return feature.id;
-  const city = feature?.properties?.city;
-  if (typeof city === "string" && city) return city;
-  return null;
+function safelyGetSource(map, id) {
+  try { return typeof map?.getSource === "function" ? map.getSource(id) : null; } catch (_) { return null; }
+}
+
+function safelyGetLayer(map, id) {
+  try { return typeof map?.getLayer === "function" ? map.getLayer(id) : null; } catch (_) { return null; }
+}
+
+function removeOwned(map) {
+  for (const id of [ALARM_RIPPLE_LAYER_ID, ALARM_CIRCLE_LAYER_ID]) {
+    try { if (safelyGetLayer(map, id) && typeof map.removeLayer === "function") map.removeLayer(id); } catch (_) { /* style can disappear */ }
+  }
+  try { if (safelyGetSource(map, ALARM_POINTS_SOURCE_ID) && typeof map.removeSource === "function") map.removeSource(ALARM_POINTS_SOURCE_ID); } catch (_) { /* style can disappear */ }
+}
+
+function savePaints(map, layerIds) {
+  const saved = {};
+  for (const id of layerIds) {
+    saved[id] = {};
+    for (const key of ALARM_PAINT_KEYS) {
+      try { saved[id][key] = typeof map?.getPaintProperty === "function" ? map.getPaintProperty(id, key) : undefined; } catch (_) { saved[id][key] = undefined; }
+    }
+  }
+  return saved;
+}
+
+function restorePaints(map, saved) {
+  if (!saved || typeof map?.setPaintProperty !== "function") return;
+  for (const [id, properties] of Object.entries(saved)) {
+    for (const [key, value] of Object.entries(properties)) {
+      if (value === undefined) continue;
+      try { map.setPaintProperty(id, key, value); } catch (_) { /* layer can disappear */ }
+    }
+  }
+}
+
+function featureId(feature, index) {
+  return String(feature?.id ?? feature?.properties?.OBJECTID ?? feature?.properties?.city ?? `alarm-${index}`);
 }
 
 function cityAlarmCount(feature, clock) {
@@ -203,160 +171,52 @@ function cityAlarmCount(feature, clock) {
   return Number.isFinite(total) ? total : countAlarmsAtClock(props.alarm_minutes, null);
 }
 
-function cityAlarmSnapshots(features, clock, previousClock) {
-  const hold = clock == null;
-  return (features || []).map((feature) => {
-    const minutes = feature?.properties?.alarm_minutes;
+function buildAlarmStructuralRows(features) {
+  return (Array.isArray(features) ? features : []).map((feature, index) => {
+    const props = feature?.properties || {};
     return {
-      id: alarmFeatureId(feature),
-      city: feature?.properties?.city,
-      count: cityAlarmCount(feature, clock),
-      flash: hold ? false : cityFlashedInWindow(minutes, clock, previousClock),
+      id: featureId(feature, index),
+      city: props.city,
+      minutes: Array.isArray(props.alarm_minutes) ? props.alarm_minutes : [],
+      total: props.alarm_count_total,
       geometry: feature?.geometry || null,
     };
   });
 }
 
-function alarmCountFeatureCollection(snapshots) {
-  return {
-    type: "FeatureCollection",
-    features: snapshots.map((row) => ({
+function alarmRowsFromStructuralRows(rows, clock, onsetBeat, onsetStart, onsetActive) {
+  return rows.map((row) => {
+    const onset = onsetActive && Number.isFinite(Number(onsetBeat)) && row.minutes.some((raw) =>
+      isFiniteMinute(raw) && Number(raw) > onsetStart && Number(raw) <= Number(onsetBeat));
+    const total = Number(row.total);
+    const count = clock == null
+      ? Number.isFinite(total) ? total : countAlarmsAtClock(row.minutes, null)
+      : countAlarmsAtClock(row.minutes, clock);
+    return {
       type: "Feature",
       id: row.id,
-      properties: {
-        city: row.city,
-        count: row.count,
-        flash: Boolean(row.flash),
-      },
+      properties: { city: row.city, count, onset },
       geometry: row.geometry,
-    })),
-  };
-}
-
-function emptyPointFeatureCollection() {
-  return { type: "FeatureCollection", features: [] };
-}
-
-function ensureAlarmOverlayLayers(map) {
-  if (typeof map.addSource !== "function" || typeof map.addLayer !== "function") return;
-  const existingSource = typeof map.getSource === "function" ? map.getSource(ALARM_COUNT_SOURCE_ID) : null;
-  if (!existingSource) {
-    map.addSource(ALARM_COUNT_SOURCE_ID, {
-      type: "geojson",
-      data: emptyPointFeatureCollection(),
-    });
-  }
-  const hasLayer = (id) => typeof map.getLayer === "function" && map.getLayer(id);
-  if (!hasLayer(ALARM_CIRCLE_LAYER_ID)) {
-    const settled = alarmCirclePaint(0, false);
-    const circleLayer = {
-      id: ALARM_CIRCLE_LAYER_ID,
-      type: "circle",
-      source: ALARM_COUNT_SOURCE_ID,
-      paint: {
-        "circle-radius": settled.radius,
-        "circle-color": settled.color,
-        "circle-opacity": settled.opacity,
-        "circle-stroke-width": 0,
-      },
     };
-    if (hasLayer(ALARM_COUNT_LAYER_ID)) {
-      map.addLayer(circleLayer, ALARM_COUNT_LAYER_ID);
-    } else {
-      map.addLayer(circleLayer);
-    }
-  }
-  if (hasLayer(ALARM_COUNT_LAYER_ID)) return;
-  map.addLayer({
-    id: ALARM_COUNT_LAYER_ID,
-    type: "symbol",
-    source: ALARM_COUNT_SOURCE_ID,
-    filter: [">=", ["get", "count"], 15],
-    layout: {
-      "text-field": ["to-string", ["get", "count"]],
-      "text-size": 11,
-      "text-allow-overlap": true,
-      "text-ignore-placement": true,
-    },
-    paint: {
-      "text-color": "#ffffff",
-    },
   });
 }
 
-function applyAlarmCountOverlay(map, snapshots) {
-  const source = typeof map.getSource === "function" ? map.getSource(ALARM_COUNT_SOURCE_ID) : null;
-  if (source && typeof source.setData === "function") {
-    source.setData(alarmCountFeatureCollection(snapshots));
-  }
+function featureCollection(features) { return { type: "FeatureCollection", features }; }
+
+function sourceData(map, data) {
+  const source = safelyGetSource(map, ALARM_POINTS_SOURCE_ID);
+  if (source && typeof source.setData === "function") source.setData(data);
 }
 
-function removeAlarmOverlayLayers(map) {
-  for (const id of [ALARM_COUNT_LAYER_ID, ALARM_CIRCLE_LAYER_ID]) {
-    try {
-      if (typeof map.getLayer === "function" && map.getLayer(id) && map.removeLayer) {
-        map.removeLayer(id);
-      }
-    } catch (_) {
-      /* ignore */
-    }
-  }
-  try {
-    if (typeof map.getSource === "function" && map.getSource(ALARM_COUNT_SOURCE_ID) && map.removeSource) {
-      map.removeSource(ALARM_COUNT_SOURCE_ID);
-    }
-  } catch (_) {
-    /* ignore */
-  }
+function pointsSignature(features) {
+  return features.map((feature) => `${feature.id}:${feature.properties.count}:${feature.properties.onset}:${JSON.stringify(feature.geometry)}`).join("|");
 }
 
-function savePaints(map, layerIds, keys) {
-  const saved = {};
-  for (const id of layerIds) {
-    saved[id] = {};
-    for (const key of keys) {
-      try {
-        saved[id][key] =
-          typeof map.getPaintProperty === "function" ? map.getPaintProperty(id, key) : undefined;
-      } catch (_) {
-        saved[id][key] = undefined;
-      }
-    }
-  }
-  return saved;
-}
-
-function mergeSavedPaints(map, saved, layerIds, keys) {
-  const next = saved && typeof saved === "object" ? saved : {};
-  const fresh = (layerIds || []).filter((id) => !next[id]);
-  if (fresh.length === 0) return next;
-  return { ...next, ...savePaints(map, fresh, keys) };
-}
-
-function restorePaints(map, saved) {
-  if (!saved || typeof map.setPaintProperty !== "function") return;
-  for (const [id, props] of Object.entries(saved)) {
-    for (const [key, value] of Object.entries(props)) {
-      if (value === undefined) continue;
-      try {
-        map.setPaintProperty(id, key, value);
-      } catch (_) {
-        /* layer may have been removed */
-      }
-    }
-  }
-}
-
-function mountAlarmVisuals(map, state) {
-  const ids = collectAlarmCircleLayerIds(map);
-  state.savedAlarms = mergeSavedPaints(map, state.savedAlarms, ids, ALARM_PAINT_KEYS);
-  ensureAlarmOverlayLayers(map);
-}
-
-function unmountAlarmVisuals(map, state) {
-  restorePaints(map, state.savedAlarms);
-  state.savedAlarms = null;
-  removeAlarmOverlayLayers(map);
+function addSourceAndLayer(map, sourceId, layer, spec, beforeId) {
+  if (typeof map?.addSource !== "function" || typeof map?.addLayer !== "function") return;
+  if (!safelyGetSource(map, sourceId)) map.addSource(sourceId, spec);
+  if (safelyGetLayer(map, layer.id)) return;
+  try { beforeId ? map.addLayer(layer, beforeId) : map.addLayer(layer); } catch (_) { /* style can disappear */ }
 }
 
 function hidePackAlarmCircles(map, ids) {
@@ -364,54 +224,204 @@ function hidePackAlarmCircles(map, ids) {
     try {
       map.setPaintProperty(id, "circle-opacity", 0);
       map.setPaintProperty(id, "circle-stroke-width", 0);
-    } catch (_) {
-      /* ignore */
+    } catch (_) { /* layer can disappear during style replacement */ }
+  }
+}
+
+/** Create a fixed-yellow alarm renderer driven by the shared corrected-time frame. */
+export function createInvestigationAlarmRenderer(map, profile = NLI_DISPLAY_PROFILES.gis, deps = {}) {
+  const resolvedProfile = typeof profile === "string" ? NLI_DISPLAY_PROFILES[profile] || NLI_DISPLAY_PROFILES.gis : profile || NLI_DISPLAY_PROFILES.gis;
+  const radiusMultiplier = profileValue(resolvedProfile, "radiusMultiplier", 1);
+  const beforeId = resolvedProfile.beforeId || resolvedProfile.beforeLayerId;
+  const seenOnsets = new Set();
+  let mounted = false;
+  let disposed = false;
+  let savedAlarms = null;
+  let lastSignature = null;
+  let lastFrame = null;
+  let lastData = null;
+  let activeOnsetId = null;
+  let structuralFeatures = null;
+  let structuralDataVersion = Symbol("unset");
+  let structuralRows = [];
+  let structuralRowsBuildCount = 0;
+  const rowCache = new Map();
+  let resetDone = false;
+  let paintsRestored = false;
+
+  function mount() {
+    if (disposed) return;
+    resetDone = false;
+    paintsRestored = false;
+    const ids = collectAlarmCircleLayerIds(map);
+    if (!savedAlarms) savedAlarms = savePaints(map, ids);
+    else {
+      const fresh = ids.filter((id) => !Object.prototype.hasOwnProperty.call(savedAlarms, id));
+      if (fresh.length) savedAlarms = { ...savedAlarms, ...savePaints(map, fresh) };
+    }
+    hidePackAlarmCircles(map, ids);
+    addSourceAndLayer(map, ALARM_POINTS_SOURCE_ID, {
+      id: ALARM_CIRCLE_LAYER_ID,
+      type: "circle",
+      source: ALARM_POINTS_SOURCE_ID,
+      paint: {
+        "circle-radius": alarmCirclePaint(0, false, resolvedProfile).radius,
+        "circle-color": NLI_VISUAL_TOKENS.alarmYellow,
+        "circle-opacity": alarmCirclePaint(0, false, resolvedProfile).opacity,
+        "circle-stroke-width": 0,
+      },
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    addSourceAndLayer(map, ALARM_POINTS_SOURCE_ID, {
+      id: ALARM_RIPPLE_LAYER_ID,
+      type: "circle",
+      source: ALARM_POINTS_SOURCE_ID,
+      filter: ["==", ["get", "onset"], true],
+      paint: {
+        "circle-radius": 0,
+        "circle-color": NLI_VISUAL_TOKENS.alarmYellow,
+        "circle-opacity": 0,
+        "circle-stroke-color": NLI_VISUAL_TOKENS.alarmYellow,
+        "circle-stroke-opacity": 0,
+        "circle-stroke-width": 1.4,
+      },
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
+    mounted = true;
+  }
+
+  function render(frame = {}, data = {}) {
+    if (disposed) return;
+    if (!mounted || !safelyGetSource(map, ALARM_POINTS_SOURCE_ID)) mount();
+    const features = Array.isArray(data) ? data : Array.isArray(data.alarmFeatures) ? data.alarmFeatures : [];
+    const onset = frame?.alarmOnset || null;
+    const onsetId = frame?.alarmOnsetId || onset?.id || null;
+    const elapsedMs = Number.isFinite(Number(onset?.elapsedMs)) ? Math.max(0, Number(onset.elapsedMs)) : ALARM_PULSE_MS;
+    const onsetActive = !!onsetId && elapsedMs < ALARM_PULSE_MS &&
+      (onsetId === activeOnsetId || !seenOnsets.has(onsetId));
+    if (onsetActive) {
+      activeOnsetId = onsetId;
+      seenOnsets.add(onsetId);
+    } else if (onsetId !== activeOnsetId || elapsedMs >= ALARM_PULSE_MS) {
+      activeOnsetId = null;
+    }
+    const rawActiveBeat = frame?.activeBeat;
+    const activeBeat = rawActiveBeat != null && Number.isFinite(Number(rawActiveBeat)) ? Number(rawActiveBeat) : null;
+    const completed = Array.isArray(frame?.completedBeats) ? frame.completedBeats : [];
+    const hasExplicitWindowStart = Object.prototype.hasOwnProperty.call(frame || {}, "alarmOnsetWindowStart");
+    const explicitWindowStart = frame?.alarmOnsetWindowStart;
+    const onsetStart = hasExplicitWindowStart
+      ? (explicitWindowStart != null && Number.isFinite(Number(explicitWindowStart)) ? Number(explicitWindowStart) : Number.NEGATIVE_INFINITY)
+      : completed.length ? Number(completed[completed.length - 1]) : Number.NEGATIVE_INFINITY;
+    const dataVersion = Object.prototype.hasOwnProperty.call(data || {}, "dataVersion") ? data.dataVersion : null;
+    if (features !== structuralFeatures || dataVersion !== structuralDataVersion) {
+      structuralFeatures = features;
+      structuralDataVersion = dataVersion;
+      structuralRows = buildAlarmStructuralRows(features);
+      structuralRowsBuildCount += 1;
+      rowCache.clear();
+      deps.onAlarmStructuralRowsBuild?.({ count: structuralRows.length, dataVersion });
+    }
+    const rowKey = [
+      activeBeat == null ? "" : activeBeat,
+      onset?.beat ?? activeBeat ?? "",
+      onsetStart,
+      onsetActive ? "on" : "off",
+    ].join("|");
+    let rows = rowCache.get(rowKey);
+    if (!rows) {
+      rows = alarmRowsFromStructuralRows(
+        structuralRows,
+        activeBeat,
+        onset?.beat ?? activeBeat,
+        onsetStart,
+        onsetActive,
+      );
+      rowCache.set(rowKey, rows);
+    }
+    const signature = pointsSignature(rows);
+    if (signature !== lastSignature) {
+      sourceData(map, featureCollection(rows));
+      lastSignature = signature;
+    }
+    lastFrame = frame;
+    lastData = data;
+    const allowFlash = onsetActive;
+    const basePaint = alarmCirclePaint(elapsedMs, allowFlash, resolvedProfile);
+    const settled = interpolateStopsExpression(alarmCountInputExpr(), ALARM_COUNT_RADIUS_STOPS, radiusMultiplier);
+    const rippleRadius = ["case", overlayOnset(), ["+", settled, rippleExpansionPx(elapsedMs)], 0];
+    if (typeof map?.setPaintProperty === "function") {
+      try {
+        map.setPaintProperty(ALARM_CIRCLE_LAYER_ID, "circle-radius", basePaint.radius);
+        map.setPaintProperty(ALARM_CIRCLE_LAYER_ID, "circle-color", NLI_VISUAL_TOKENS.alarmYellow);
+        map.setPaintProperty(ALARM_CIRCLE_LAYER_ID, "circle-opacity", basePaint.opacity);
+        map.setPaintProperty(ALARM_RIPPLE_LAYER_ID, "circle-radius", rippleRadius);
+        const opacity = allowFlash ? Math.max(0, 1 - elapsedMs / ALARM_PULSE_MS) : 0;
+        map.setPaintProperty(ALARM_RIPPLE_LAYER_ID, "circle-opacity", 0);
+        map.setPaintProperty(ALARM_RIPPLE_LAYER_ID, "circle-stroke-opacity", opacity);
+      } catch (_) { /* style can disappear between reconciliation calls */ }
     }
   }
-}
 
-function applyOverlayCirclePaint(map, paint) {
-  try {
-    map.setPaintProperty(ALARM_CIRCLE_LAYER_ID, "circle-radius", paint.radius);
-    map.setPaintProperty(ALARM_CIRCLE_LAYER_ID, "circle-color", paint.color);
-    map.setPaintProperty(ALARM_CIRCLE_LAYER_ID, "circle-opacity", paint.opacity);
-    map.setPaintProperty(ALARM_CIRCLE_LAYER_ID, "circle-stroke-width", 0);
-  } catch (_) {
-    /* ignore */
+  function reset({ preserveBasePaints = false } = {}) {
+    if (disposed) return;
+    if (resetDone) return;
+    removeOwned(map);
+    if (!preserveBasePaints && !paintsRestored) {
+      restorePaints(map, savedAlarms);
+      paintsRestored = true;
+    }
+    lastSignature = null;
+    lastFrame = null;
+    lastData = null;
+    activeOnsetId = null;
+    mounted = false;
+    resetDone = true;
   }
+
+  function dispose({ preserveBasePaints = false } = {}) {
+    if (disposed) return;
+    disposed = true;
+    removeOwned(map);
+    if (!preserveBasePaints && !paintsRestored) {
+      restorePaints(map, savedAlarms);
+      paintsRestored = true;
+    }
+    savedAlarms = null;
+    seenOnsets.clear();
+    activeOnsetId = null;
+    lastSignature = null;
+    lastFrame = null;
+    lastData = null;
+    mounted = false;
+    structuralFeatures = null;
+    structuralDataVersion = Symbol("disposed");
+    structuralRows = [];
+    rowCache.clear();
+  }
+
+  return {
+    mount,
+    render,
+    reset,
+    dispose,
+    getDiagnostics: () => ({ structuralRowsBuilds: structuralRowsBuildCount }),
+  };
 }
 
-function applyAlarmTimelinePaint(map, features, clock, previousClock, beatElapsedMs) {
-  if (typeof map.setPaintProperty !== "function") return;
-  const ids = collectAlarmCircleLayerIds(map);
-  if (ids.length === 0) return;
-  hidePackAlarmCircles(map, ids);
-  ensureAlarmOverlayLayers(map);
-  const allowFlash = clock != null;
-  const paint = alarmCirclePaint(allowFlash ? beatElapsedMs : 0, allowFlash);
-  applyOverlayCirclePaint(map, paint);
-  const snapshots = cityAlarmSnapshots(features, clock, previousClock);
-  applyAlarmCountOverlay(map, snapshots);
-}
-
-/**
- * @param {object} map
- * @param {object} state
- * @param {'off' | 'idle' | 'play'} mode
- * @param {{ clock?: number | null, previousClock?: number | null, beatElapsedMs?: number }} [phase]
- */
+/** Compatibility adapter for callers that still switch alarm modes directly. */
 export function applyAlarmMode(map, state, mode, phase = {}) {
   if (!state) return;
-  const prev = state.alarmMode || "off";
+  const renderer = state.alarmRenderer;
+  if (!renderer) throw new Error("Investigation timeline alarm renderer is not initialized");
+  const previousMode = state.alarmMode || "off";
   if (mode === "off") {
-    if (prev !== "off") unmountAlarmVisuals(map, state);
+    if (previousMode !== "off") renderer.reset();
     state.alarmMode = "off";
     return;
   }
-  mountAlarmVisuals(map, state);
+  if (previousMode === "off") renderer.mount();
   state.alarmMode = mode;
-  const clock = mode === "play" ? (phase.clock ?? null) : null;
-  const previousClock = mode === "play" ? (phase.previousClock ?? null) : null;
-  const beatElapsedMs = mode === "play" ? (phase.beatElapsedMs ?? 0) : 0;
-  applyAlarmTimelinePaint(map, state.alarmFeatures, clock, previousClock, beatElapsedMs);
+  if (phase.frame) renderer.render(phase.frame, {
+    alarmFeatures: state.alarmFeatures,
+    dataVersion: phase.dataVersion ?? state.dataVersion,
+  });
 }

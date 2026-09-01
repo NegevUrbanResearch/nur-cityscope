@@ -1,4 +1,5 @@
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
+import { prepareInvestigationTimelineForStyleReload } from "../shared/maplibre-investigation-timeline.js";
 
 const maplibregl =
   (typeof globalThis !== "undefined" && globalThis.maplibregl) ||
@@ -16,6 +17,32 @@ if (!maplibregl || !Protocol) {
     "[maplibre-map] Missing maplibregl/pmtiles globals. Ensure CDN scripts are loaded before map-main.js.",
   );
 }
+
+const MAPLIBRE_RTL_TEXT_PLUGIN_URL =
+  "https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.2.3/mapbox-gl-rtl-text.js";
+
+function ensureMapLibreRTLTextPlugin() {
+  if (!maplibregl || typeof maplibregl.setRTLTextPlugin !== "function") {
+    return;
+  }
+  if (typeof maplibregl.getRTLTextPluginStatus === "function") {
+    const status = maplibregl.getRTLTextPluginStatus();
+    if (status === "loaded" || status === "loading") {
+      return;
+    }
+  }
+  try {
+    // The third argument defers loading until MapLibre first needs RTL shaping.
+    maplibregl.setRTLTextPlugin(MAPLIBRE_RTL_TEXT_PLUGIN_URL, null, true);
+  } catch (err) {
+    console.warn(
+      "[maplibre-map] setRTLTextPlugin failed; Hebrew labels may render incorrectly",
+      err,
+    );
+  }
+}
+
+ensureMapLibreRTLTextPlugin();
 
 const pmtilesProtocol = new Protocol();
 maplibregl.addProtocol("pmtiles", pmtilesProtocol.tile);
@@ -51,27 +78,13 @@ const BASEMAP_STYLES = {
     },
     layers: [{ id: "esri-tiles", type: "raster", source: "esri" }],
   },
-  dark: {
-    version: 8,
-    sources: {
-      carto: {
-        type: "raster",
-        tiles: [
-          "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-          "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-          "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-        ],
-        tileSize: 256,
-        attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-      },
-    },
-    layers: [{ id: "carto-dark-tiles", type: "raster", source: "carto" }],
-  },
+  dark: "https://tiles.openfreemap.org/styles/dark",
 };
 
 export function setGISBasemap(map, basemap) {
   const style = BASEMAP_STYLES[basemap];
   if (!map || !style || typeof map.setStyle !== "function") return false;
+  prepareInvestigationTimelineForStyleReload(map);
   map.setStyle(style, { diff: false });
   return true;
 }

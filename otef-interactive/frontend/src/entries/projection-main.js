@@ -24,6 +24,7 @@ import {
   syncInvestigationTimelineToMap,
 } from "../shared/maplibre-investigation-timeline.js";
 import { idleNliClock } from "../shared/nli-investigation-clock.js";
+import { resolveMotionMode } from "../shared/reduced-motion.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
   createSlideshowPackRuntime,
@@ -430,6 +431,9 @@ async function bootstrapProjectionRuntime() {
       const overlayClock = presentationActive ? idleNliClock(clock) : clock;
       void syncInvestigationTimelineToMap(map, overlayClock, currentGroups, {
         visibilityLayerGroups: overlayGroups,
+        displayProfile: "projection",
+        nliCaptionMode: "clock-only",
+        motionMode: resolveMotionMode(),
         captionEl: nliExplainerCaptionEl,
         allowMapCaption: false,
         explainerDebugVisible: explainerDebugVisible === true,

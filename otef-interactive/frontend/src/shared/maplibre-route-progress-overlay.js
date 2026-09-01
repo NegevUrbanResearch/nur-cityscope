@@ -10,6 +10,11 @@ import {
   fullLayerIdAnimationAliases,
   usesRouteProgressOverlay,
 } from "./maplibre-flow-animation.js";
+import {
+  buildLinePathMetrics,
+  buildLineProgressGradient,
+  pointAtLineProgress,
+} from "./maplibre-line-progress-primitives.js";
 
 /** @typedef {{ routeKey: string, sourceId: string, lineLayerId: string, baseLineIds: string[], baselineOpacity: Map<string, unknown>, loopMs: number, color: string, lineWidth: number, headSourceId: string|null, headLayerId: string|null, headRadius: number, hideHeadAtEnd: boolean, paths: Array<{ coords: [number, number][], cum: number[], total: number }> }} RouteOverlayEntry */
 
@@ -188,38 +193,6 @@ function collectPathCoordinates(featureCollection) {
   return out;
 }
 
-function segmentLengthApprox(a, b) {
-  const latScale = Math.cos((((a[1] + b[1]) * Math.PI) / 180) / 2);
-  const dx = (b[0] - a[0]) * Math.max(0.0001, latScale);
-  const dy = b[1] - a[1];
-  return Math.hypot(dx, dy);
-}
-
-function buildPathMetrics(coords) {
-  if (!Array.isArray(coords) || coords.length < 2) return { cum: [0], total: 0 };
-  const cum = [0];
-  for (let i = 1; i < coords.length; i++) {
-    cum.push(cum[i - 1] + segmentLengthApprox(coords[i - 1], coords[i]));
-  }
-  return { cum, total: cum[cum.length - 1] || 0 };
-}
-
-function pointAtProgress(coords, cum, total, t) {
-  if (!Array.isArray(coords) || coords.length === 0) return null;
-  if (!Number.isFinite(total) || total <= 0 || coords.length === 1) return coords[0];
-  const clamped = Math.min(1, Math.max(0, t));
-  const target = clamped * total;
-  let seg = 0;
-  while (seg < cum.length - 1 && cum[seg + 1] < target) seg++;
-  const a = coords[seg];
-  const b = coords[Math.min(seg + 1, coords.length - 1)];
-  const segStart = cum[seg];
-  const segEnd = cum[Math.min(seg + 1, cum.length - 1)];
-  const segLen = Math.max(1e-12, segEnd - segStart);
-  const local = Math.min(1, Math.max(0, (target - segStart) / segLen));
-  return [a[0] + (b[0] - a[0]) * local, a[1] + (b[1] - a[1]) * local];
-}
-
 function emptyPointFeatureCollection() {
   return { type: "FeatureCollection", features: [] };
 }
@@ -260,23 +233,6 @@ function toOpaqueAndTransparent(color) {
     }
   }
   return { opaque: c, transparent: "rgba(200,24,24,0)" };
-}
-
-function buildLineGradientExpression(t, color) {
-  const tt = Math.min(1, Math.max(0, t));
-  const { opaque, transparent } = toOpaqueAndTransparent(color);
-  // MapLibre requires strictly ascending interpolate stop inputs.
-  // Near edges (tt≈0 or tt≈1), duplicate stops (e.g. hi===tt or tt===0/1) fail validation.
-  const eps = 0.00015;
-  if (tt <= eps) {
-    return ["interpolate", ["linear"], ["line-progress"], 0, opaque, eps, transparent, 1, transparent];
-  }
-  if (tt >= 1 - eps) {
-    return ["interpolate", ["linear"], ["line-progress"], 0, opaque, 1 - eps, opaque, 1, transparent];
-  }
-  const lo = tt;
-  const hi = tt + eps;
-  return ["interpolate", ["linear"], ["line-progress"], 0, opaque, lo, opaque, hi, transparent, 1, transparent];
 }
 
 function layerIdsForSource(map, sourceId) {
@@ -377,7 +333,8 @@ function tickOverlays(ts) {
       const u = (tMs % entry.loopMs) / entry.loopMs;
       try {
         if (typeof map.getLayer === "function" && map.getLayer(entry.lineLayerId)) {
-          map.setPaintProperty(entry.lineLayerId, "line-gradient", buildLineGradientExpression(u, entry.color));
+          const { opaque, transparent } = toOpaqueAndTransparent(entry.color);
+          map.setPaintProperty(entry.lineLayerId, "line-gradient", buildLineProgressGradient(u, opaque, transparent));
         }
         if (entry.headSourceId && entry.paths.length > 0) {
           const headSource = typeof map.getSource === "function" ? map.getSource(entry.headSourceId) : null;
@@ -387,7 +344,7 @@ function tickOverlays(ts) {
               headSource.setData(emptyPointFeatureCollection());
             } else {
               const coords = entry.paths
-                .map((path) => pointAtProgress(path.coords, path.cum, path.total, u))
+                .map((path) => pointAtLineProgress(path.coords, { cumulative: path.cum, total: path.total }, u))
                 .filter((coord) => !!coord);
               headSource.setData(pointsFeatureCollection(coords));
             }
@@ -493,8 +450,8 @@ export async function syncRouteProgressOverlaysToMap(map, animState, layerGroups
       const pathCoordsList = collectPathCoordinates(normalized);
       const paths = pathCoordsList
         .map((coords) => {
-          const metrics = buildPathMetrics(coords);
-          return { coords, cum: metrics.cum, total: metrics.total };
+          const metrics = buildLinePathMetrics(coords);
+          return { coords, cum: metrics.cumulative, total: metrics.total };
         })
         .filter((p) => p.total > 0);
 
@@ -525,6 +482,7 @@ export async function syncRouteProgressOverlaysToMap(map, animState, layerGroups
       }
 
       const { color, width } = sampleLinePaintFromBase(map, baseLineIds);
+      const initialGradientColors = toOpaqueAndTransparent(color);
       const { headRadius, hideHeadAtEnd } = resolveTrailHeadConfig(canonical);
       const baselineOpacity = new Map();
       for (const lid of baseLineIds) {
@@ -560,12 +518,12 @@ export async function syncRouteProgressOverlaysToMap(map, animState, layerGroups
         },
         paint: {
           "line-width": width,
-          "line-gradient": buildLineGradientExpression(0, color),
+          "line-gradient": buildLineProgressGradient(0, initialGradientColors.opaque, initialGradientColors.transparent),
         },
       });
       if (headRadius > 0 && paths.length > 0) {
         const initialCoords = paths
-          .map((path) => pointAtProgress(path.coords, path.cum, path.total, 0))
+          .map((path) => pointAtLineProgress(path.coords, { cumulative: path.cum, total: path.total }, 0))
           .filter((coord) => !!coord);
         map.addSource(headSourceId, {
           type: "geojson",

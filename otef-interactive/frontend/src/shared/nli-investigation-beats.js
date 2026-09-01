@@ -3,21 +3,39 @@
  * Alarms hitchhike polygon/line beats; alarms-only uses 5-minute bins.
  */
 
-import {
-  INVESTIGATION_ALARMS_FULL_ID,
-  collectAlarmTimelineBeats,
-} from "./maplibre-investigation-alarms.js";
+import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 
 export const INVESTIGATION_POLYGONS_FULL_ID = "nli.investigation_polygons";
 export const INVESTIGATION_LINES_FULL_ID = "nli.lines";
-export { INVESTIGATION_ALARMS_FULL_ID };
+export const INVESTIGATION_ALARMS_FULL_ID = "nli.alarms";
 export const NLI_PLAYABLE_IDS = Object.freeze([
   INVESTIGATION_POLYGONS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_ALARMS_FULL_ID,
 ]);
-export const TIMELINE_BEAT_MS = 3200;
+export const TIMELINE_BEAT_MS = NLI_VISUAL_TOKENS.revealDurationMs;
 export const TIMELINE_HOLD_MS = 2500;
+
+function isFiniteAlarmMinute(value) {
+  return typeof value !== "boolean" && Number.isFinite(Number(value));
+}
+
+export function quantizeAlarmMinutes(minutes) {
+  return 5 * Math.floor(Number(minutes) / 5);
+}
+
+/** Collect the five-minute alarm bins without importing a renderer. */
+export function collectAlarmTimelineBeats(alarmFeatures) {
+  const beats = new Set();
+  for (const feature of alarmFeatures || []) {
+    const values = feature?.properties?.alarm_minutes;
+    if (!Array.isArray(values)) continue;
+    for (const value of values) {
+      if (isFiniteAlarmMinute(value)) beats.add(quantizeAlarmMinutes(value));
+    }
+  }
+  return [...beats].sort((a, b) => a - b);
+}
 
 export function formatMinutesAsLocalClock(minutes) {
   if (!Number.isFinite(minutes)) return "";

@@ -3,16 +3,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ALARM_COUNT_COLOR_STOPS,
-  ALARM_COUNT_RADIUS_STOPS,
   alarmCirclePaint,
+  applyAlarmMode,
   cityFlashedInWindow,
   collectAlarmTimelineBeats,
   countAlarmsAtClock,
+  createInvestigationAlarmRenderer,
   flashingCityNames,
   INVESTIGATION_ALARMS_FULL_ID,
   quantizeAlarmMinutes,
 } from "../../frontend/src/shared/maplibre-investigation-alarms.js";
+import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
 import { buildNliExplainerModel, nliExplainerInnerHtml } from "../../frontend/src/shared/nli-explainer-model.js";
 import { flashPreviousClock, idleNliClock, playNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
 import {
@@ -127,34 +128,206 @@ describe("investigation alarm helpers", () => {
     expect(html).toMatch(/nli-tl-chip/);
   });
 
-  it("paints overlay GeoJSON count interpolate expressions, not feature-state", () => {
-    expect(ALARM_COUNT_COLOR_STOPS).toEqual([
-      [1, "#1e3a8a"],
-      [7, "#22d3ee"],
-      [26, "#a3e635"],
-      [77, "#7f1d1d"],
-    ]);
-    expect(ALARM_COUNT_RADIUS_STOPS).toEqual([
-      [1, 4],
-      [7, 7],
-      [26, 12],
-      [77, 16],
-    ]);
+  it("paints one yellow semantic color and profile-scaled radius", () => {
     const settled = alarmCirclePaint(0, false);
     expect(JSON.stringify(settled.color)).toMatch(/"get","count"/);
     expect(JSON.stringify(settled.color)).not.toMatch(/feature-state/);
-    expect(JSON.stringify(settled.color)).toMatch(/#1e3a8a/i);
-    expect(JSON.stringify(settled.color)).toMatch(/#7f1d1d/i);
-    expect(JSON.stringify(settled.color)).toMatch(/interpolate/i);
-    expect(JSON.stringify(settled.color)).not.toMatch(/#ef4444/);
-    expect(JSON.stringify(settled.color)).not.toMatch(/fde68a/i);
+    expect(JSON.stringify(settled.color)).toMatch(new RegExp(NLI_VISUAL_TOKENS.alarmYellow, "i"));
+    expect(JSON.stringify(settled.color)).not.toMatch(/interpolate/i);
     expect(JSON.stringify(settled.opacity)).toMatch(/0\.55/);
     const hiddenBranch = JSON.stringify(settled.radius);
     expect(hiddenBranch).toMatch(/"case"/);
     const flash = alarmCirclePaint(0, true);
-    expect(JSON.stringify(flash.color)).toMatch(/#fde68a/i);
+    expect(JSON.stringify(flash.color)).toMatch(new RegExp(NLI_VISUAL_TOKENS.alarmYellow, "i"));
     expect(JSON.stringify(flash.opacity)).toMatch(/0\.9/);
   });
+
+  it("uses exact fixed radius stops for GIS and projection profiles", () => {
+    for (const profile of [NLI_DISPLAY_PROFILES.gis, NLI_DISPLAY_PROFILES.projection]) {
+      const paint = alarmCirclePaint(0, false, profile);
+      const encoded = JSON.stringify(paint.radius);
+      for (const [count, radius] of NLI_VISUAL_TOKENS.alarmRadiusStops) {
+        expect(encoded).toContain(String(count));
+        expect(encoded).toContain(String(radius * profile.radiusMultiplier));
+      }
+    }
+  });
+
+  it("renderer mounts one fixed-yellow circle layer and no numeric symbol layer", () => {
+    const map = makeRendererMap();
+    const renderer = createInvestigationAlarmRenderer(map, "gis");
+    renderer.mount();
+    renderer.render(
+      {
+        activeBeat: 400,
+        activeProgress: 0,
+        alarmOnsetId: "cycle:alarms:400:0",
+        alarmOnsetOriginMs: 1000,
+        alarmOnset: { id: "cycle:alarms:400:0", originMs: 1000, elapsedMs: 0 },
+      },
+      {
+        alarmFeatures: [
+          { id: "A", properties: { city: "A", alarm_minutes: [400] }, geometry: { type: "Point", coordinates: [1, 2] } },
+          { id: "B", properties: { city: "B", alarm_minutes: [420] }, geometry: { type: "Point", coordinates: [3, 4] } },
+        ],
+      },
+    );
+    const circle = map.addLayer.mock.calls.find((call) => call[0]?.id === "nli-investigation-alarm-circles");
+    expect(circle?.[0]?.type).toBe("circle");
+    expect(JSON.stringify(circle?.[0])).toMatch(new RegExp(NLI_VISUAL_TOKENS.alarmYellow, "i"));
+    expect(map.addLayer.mock.calls.some((call) => call[0]?.type === "symbol")).toBe(false);
+    expect(map.getSource("nli-investigation-alarm-points")?.setData).toHaveBeenCalledTimes(1);
+    const data = map.getSource("nli-investigation-alarm-points").setData.mock.calls[0][0];
+    expect(data.features.map((feature) => feature.properties)).toEqual([
+      expect.objectContaining({ city: "A", count: 1, onset: true }),
+      expect.objectContaining({ city: "B", count: 0, onset: false }),
+    ]);
+    renderer.dispose();
+  });
+
+  it("does not register a style reload listener", () => {
+    const map = makeRendererMap();
+    createInvestigationAlarmRenderer(map, "gis");
+    expect(map.on).not.toHaveBeenCalled();
+  });
+
+  it("skips host alarm paint restoration when a coordinated renderer is disposed", () => {
+    const map = makeRendererMap();
+    const renderer = createInvestigationAlarmRenderer(map, "gis");
+    renderer.mount();
+    map.setPaintProperty.mockClear();
+
+    renderer.dispose({ preserveBasePaints: true });
+
+    expect(map.setPaintProperty).not.toHaveBeenCalled();
+    expect(map.getSource("nli-investigation-alarm-points")).toBeNull();
+  });
+
+  it("updates structural points once and completes one corrected-time ripple through pause revisions", () => {
+    const map = makeRendererMap();
+    const renderer = createInvestigationAlarmRenderer(map, NLI_DISPLAY_PROFILES.gis);
+    const alarmFeatures = [
+      { id: "A", properties: { city: "A", alarm_minutes: [400] }, geometry: { type: "Point", coordinates: [1, 2] } },
+    ];
+    const data = { alarmFeatures };
+    const onset = { id: "cycle:alarms:400:0", originMs: 1000, elapsedMs: 0 };
+    renderer.render({ activeBeat: 400, activeProgress: 0, alarmOnsetId: onset.id, alarmOnset: onset }, data);
+    const source = map.getSource("nli-investigation-alarm-points");
+    expect(source.setData).toHaveBeenCalledTimes(1);
+    renderer.render({ activeBeat: 400, activeProgress: 0.2, alarmOnsetId: onset.id, alarmOnset: { ...onset, elapsedMs: 200 } }, data);
+    renderer.render({ activeBeat: 400, activeProgress: 0.2, alarmOnsetId: onset.id, alarmOnset: { ...onset, elapsedMs: 950 } }, data);
+    expect(source.setData).toHaveBeenCalledTimes(2);
+    const rippleOpacity = map.setPaintProperty.mock.calls.filter(
+      (call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-opacity",
+    );
+    expect(rippleOpacity.at(-1)?.[2]).toBe(0);
+    renderer.reset();
+    expect(map.getSource("nli-investigation-alarm-points")).toBeFalsy();
+    expect(map.getLayer("nli-investigation-alarm-ripple")).toBeFalsy();
+    renderer.dispose();
+  });
+
+  it("keeps the ripple as a monotonic ring with fill opacity zero", () => {
+    const map = makeRendererMap();
+    const renderer = createInvestigationAlarmRenderer(map, "gis");
+    const data = {
+      alarmFeatures: [{ id: "A", properties: { city: "A", alarm_minutes: [400] }, geometry: { type: "Point", coordinates: [1, 2] } }],
+    };
+    const renderAt = (elapsedMs) => renderer.render({
+      activeBeat: 400,
+      completedBeats: [],
+      alarmOnsetId: "cycle:400",
+      alarmOnset: { id: "cycle:400", beat: 400, elapsedMs },
+    }, data);
+    renderAt(0);
+    renderAt(450);
+    renderAt(900);
+    const radii = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-radius")
+      .map((call) => call[2][2][2]);
+    expect(radii).toEqual([0, 4, 8]);
+    const fills = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-opacity")
+      .map((call) => call[2]);
+    expect(fills).toEqual([0, 0, 0]);
+    const strokes = map.setPaintProperty.mock.calls
+      .filter((call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-stroke-opacity")
+      .map((call) => call[2]);
+    expect(strokes).toEqual([1, 0.5, 0]);
+    renderer.dispose();
+  });
+
+  it("does not mark every prior alarm when an intentional jump selects the first beat", () => {
+    const map = makeRendererMap();
+    const renderer = createInvestigationAlarmRenderer(map, "gis");
+    const features = [
+      { id: "A", properties: { city: "A", alarm_minutes: [389] }, geometry: { type: "Point", coordinates: [1, 2] } },
+      { id: "B", properties: { city: "B", alarm_minutes: [420] }, geometry: { type: "Point", coordinates: [3, 4] } },
+    ];
+    renderer.render({ activeBeat: 400, completedBeats: [], alarmOnsetId: "jump:first", alarmOnset: { id: "jump:first", beat: 400, elapsedMs: 0 }, alarmOnsetWindowStart: 400 }, { alarmFeatures: features });
+    const first = map.getSource("nli-investigation-alarm-points").setData.mock.calls.at(-1)[0];
+    expect(first.features.map((feature) => feature.properties.onset)).toEqual([false, false]);
+    renderer.render({ activeBeat: 420, completedBeats: [400], alarmOnsetId: "jump:later", alarmOnset: { id: "jump:later", beat: 420, elapsedMs: 0 }, alarmOnsetWindowStart: 400 }, { alarmFeatures: features });
+    const later = map.getSource("nli-investigation-alarm-points").setData.mock.calls.at(-1)[0];
+    expect(later.features.map((feature) => feature.properties.onset)).toEqual([false, true]);
+    renderer.dispose();
+  });
+
+  it("keeps reset and off idempotent when the coordinator injects its renderer", () => {
+    const map = makeRendererMap();
+    const renderer = createInvestigationAlarmRenderer(map, "gis");
+    renderer.render({ activeBeat: 400 }, { alarmFeatures: [] });
+    renderer.reset();
+    const removesAfterReset = map.removeLayer.mock.calls.length;
+    const writesAfterReset = map.setPaintProperty.mock.calls.length;
+    expect(map.getSource("nli-investigation-alarm-points")).toBeFalsy();
+    expect(map.getLayer("nli-investigation-alarm-circles")).toBeFalsy();
+    expect(map.removeLayer.mock.calls.length).toBe(removesAfterReset);
+    renderer.reset();
+    expect(map.setPaintProperty.mock.calls.length).toBe(writesAfterReset);
+    const state = { alarmFeatures: [], alarmRenderer: renderer, displayProfile: "gis", alarmMode: "off" };
+    applyAlarmMode(map, state, "play", { frame: { activeBeat: 400 } });
+    applyAlarmMode(map, state, "off");
+    const secondOffRemoves = map.removeLayer.mock.calls.length;
+    applyAlarmMode(map, state, "off");
+    expect(map.removeLayer.mock.calls.length).toBe(secondOffRemoves);
+    renderer.dispose();
+  });
+
+  it("fails directly when the coordinator has no owned alarm renderer", () => {
+    expect(() => applyAlarmMode(makeRendererMap(), { alarmMode: "off" }, "play"))
+      .toThrow(/alarm renderer/i);
+  });
+
+  function makeRendererMap() {
+    const alarmId = "nli__alarms__circle__0";
+    const layers = [{ id: alarmId, type: "circle", source: "nli__alarms" }];
+    const sources = {};
+    const paints = {
+      [alarmId]: {
+        "circle-radius": 4,
+        "circle-color": "#fbbf24",
+        "circle-opacity": 0.4,
+        "circle-stroke-width": 0.5,
+      },
+    };
+    const map = {
+      getStyle: vi.fn(() => ({ layers })),
+      getLayer: vi.fn((id) => layers.find((layer) => layer.id === id)),
+      getSource: vi.fn((id) => sources[id] || null),
+      addSource: vi.fn((id, spec) => { sources[id] = { ...spec, setData: vi.fn() }; }),
+      addLayer: vi.fn((layer) => { layers.push(layer); }),
+      removeLayer: vi.fn((id) => { const index = layers.findIndex((layer) => layer.id === id); if (index >= 0) layers.splice(index, 1); }),
+      removeSource: vi.fn((id) => { delete sources[id]; }),
+      getPaintProperty: vi.fn((id, key) => paints[id]?.[key]),
+      setPaintProperty: vi.fn((id, key, value) => {
+        if (!paints[id]) paints[id] = {};
+        paints[id][key] = value;
+      }),
+      on: vi.fn(),
+    };
+    return map;
+  }
 
   it("jump to later beat flashes only the native window", () => {
     const names = flashingCityNames(
@@ -300,20 +473,20 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     expect(overlayRadius[0][2]).toEqual(expected.radius);
     expect(overlayColor[0][2]).toEqual(expected.color);
     expect(overlayOpacity[0][2]).toEqual(expected.opacity);
-    expect(JSON.stringify(overlayColor[0][2])).toMatch(/"get","count"/);
+    expect(JSON.stringify(overlayColor[0][2])).not.toMatch(/"get","count"/);
     expect(JSON.stringify(overlayColor[0][2])).not.toMatch(/feature-state/);
-    expect(JSON.stringify(overlayColor[0][2])).toMatch(/#1e3a8a/i);
+    expect(JSON.stringify(overlayColor[0][2])).toMatch(/#f5c542/i);
     expect(JSON.stringify(overlayColor[0][2])).not.toMatch(/#ef4444/);
     const packHidden = map.setPaintProperty.mock.calls.filter(
       (call) => call[0] === alarmId && call[1] === "circle-opacity" && call[2] === 0,
     );
     expect(packHidden.length).toBeGreaterThan(0);
     expect(map.setFeatureState).not.toHaveBeenCalled();
-    const overlaySource = map.getSource("nli-investigation-alarm-count");
+    const overlaySource = map.getSource("nli-investigation-alarm-points");
     const overlayFc = overlaySource.setData.mock.calls.at(-1)[0];
     expect(overlayFc.features).toHaveLength(2);
     expect(overlayFc.features[0].properties).toEqual(
-      expect.objectContaining({ city: "שדרות", count: 1, flash: true }),
+      expect.objectContaining({ city: "שדרות", count: 1, onset: true }),
     );
     const alarmMovedToTop = map.moveLayer.mock.calls.some(
       (call) => call[0] === alarmId && call.length === 1,
@@ -327,26 +500,16 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     const lineOverlayRaised = map.moveLayer.mock.calls.some((call) =>
       String(call[0]).startsWith("nli-investigation-line-"),
     );
-    expect(lineOverlayRaised).toBe(true);
+    expect(lineOverlayRaised).toBe(false);
     const overlayCircle = map.addLayer.mock.calls.find((call) => call[0]?.id === overlayCircleId);
     expect(overlayCircle).toBeDefined();
     expect(overlayCircle[0].type).toBe("circle");
     expect(JSON.stringify(overlayCircle[0])).not.toMatch(/feature-state/);
-    const countLayer = map.addLayer.mock.calls.find((call) => call[0]?.id === "nli-investigation-alarm-count");
-    expect(countLayer).toBeDefined();
-    expect(countLayer[0].type).toBe("symbol");
-    expect(JSON.stringify(countLayer[0].layout)).not.toMatch(/feature-state/);
-    expect(JSON.stringify(countLayer[0].filter)).not.toMatch(/feature-state/);
-    expect(JSON.stringify(countLayer[0])).toMatch(/15/);
-    expect(JSON.stringify(countLayer[0].paint?.["text-color"] || countLayer[0])).toMatch(/#ffffff|#fff/i);
+    expect(map.addLayer.mock.calls.some((call) => call[0]?.type === "symbol")).toBe(false);
     const overlayCircleIndex = map.addLayer.mock.calls.findIndex(
       (call) => call[0]?.id === overlayCircleId,
     );
-    const countIndex = map.addLayer.mock.calls.findIndex(
-      (call) => call[0]?.id === "nli-investigation-alarm-count",
-    );
     expect(overlayCircleIndex).toBeGreaterThanOrEqual(0);
-    expect(countIndex).toBeGreaterThan(overlayCircleIndex);
     disposeInvestigationTimelineForMap(map);
   });
 
@@ -381,7 +544,7 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     );
     expect(restored.length).toBeGreaterThan(0);
     expect(map.removeLayer).toHaveBeenCalledWith("nli-investigation-alarm-circles");
-    expect(map.removeLayer).toHaveBeenCalledWith("nli-investigation-alarm-count");
+    expect(map.removeLayer).toHaveBeenCalledWith("nli-investigation-alarm-ripple");
     disposeInvestigationTimelineForMap(map);
   });
 
@@ -419,23 +582,17 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     const overlayCircle = map.addLayer.mock.calls.find(
       (call) => call[0]?.id === "nli-investigation-alarm-circles",
     );
-    const countLayer = map.addLayer.mock.calls.find((call) => call[0]?.id === "nli-investigation-alarm-count");
     expect(overlayCircle).toBeDefined();
     expect(overlayCircle[0].type).toBe("circle");
     expect(JSON.stringify(overlayCircle[0])).not.toMatch(/feature-state/);
-    expect(countLayer).toBeDefined();
-    expect(JSON.stringify(countLayer[0].layout)).not.toMatch(/feature-state/);
-    expect(JSON.stringify(countLayer[0].filter)).not.toMatch(/feature-state/);
-    expect(JSON.stringify(countLayer[0].layout["text-field"])).toMatch(/"get"/);
-    expect(JSON.stringify(countLayer[0].filter)).toMatch(/15/);
-    expect(JSON.stringify(countLayer[0].paint?.["text-color"])).toMatch(/#ffffff|#fff/i);
+    expect(map.addLayer.mock.calls.some((call) => call[0]?.type === "symbol")).toBe(false);
     const overlayMovedToTop = map.moveLayer.mock.calls.some(
       (call) =>
         (call[0] === "nli-investigation-alarm-circles" || call[0] === "nli-investigation-alarm-count") &&
         call.length === 1,
     );
     expect(overlayMovedToTop).toBe(false);
-    const sourceId = countLayer[0].source;
+    const sourceId = "nli-investigation-alarm-points";
     expect(overlayCircle[0].source).toBe(sourceId);
     expect(sourceId).not.toBe("nli__alarms");
     const setData = map.getSource(sourceId)?.setData;
@@ -443,7 +600,7 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     const fc = setData.mock.calls.at(-1)[0];
     expect(fc.features).toHaveLength(2);
     expect(fc.features.every((f) => typeof f.properties.count === "number")).toBe(true);
-    expect(fc.features.every((f) => typeof f.properties.flash === "boolean")).toBe(true);
+    expect(fc.features.every((f) => typeof f.properties.onset === "boolean")).toBe(true);
     disposeInvestigationTimelineForMap(map);
   });
 
@@ -563,16 +720,16 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     );
     expect(raf).not.toHaveBeenCalled();
     expect(map.setFeatureState).not.toHaveBeenCalled();
-    const overlayFc = map.getSource("nli-investigation-alarm-count").setData.mock.calls.at(-1)[0];
+    const overlayFc = map.getSource("nli-investigation-alarm-points").setData.mock.calls.at(-1)[0];
     expect(overlayFc.features[0].properties).toEqual(
-      expect.objectContaining({ city: "שדרות", count: 2, flash: false }),
+      expect.objectContaining({ city: "שדרות", count: 2, onset: false }),
     );
     const expected = alarmCirclePaint(0, false);
     const color = map.setPaintProperty.mock.calls.find(
       (call) => call[0] === "nli-investigation-alarm-circles" && call[1] === "circle-color",
     );
-    expect(color?.[2]).toEqual(expected.color);
-    expect(JSON.stringify(color?.[2])).toMatch(/"get","count"/);
+    expect(color?.[2]).toBe(NLI_VISUAL_TOKENS.alarmYellow);
+    expect(JSON.stringify(color?.[2])).not.toMatch(/"get","count"/);
     expect(JSON.stringify(color?.[2])).not.toMatch(/feature-state/);
     expect(JSON.stringify(color?.[2])).not.toMatch(/fde68a/i);
     const polygonRestack = map.moveLayer.mock.calls.filter((call) =>
@@ -610,16 +767,16 @@ describe("syncInvestigationTimelineToMap alarms", () => {
         now: () => now,
       },
     );
-    const overlaySource = map.getSource("nli-investigation-alarm-count");
+    const overlaySource = map.getSource("nli-investigation-alarm-points");
     const firstFc = overlaySource.setData.mock.calls.at(-1)[0];
     expect(firstFc.features[0].properties).toEqual(
-      expect.objectContaining({ city: "שדרות", count: 1, flash: true }),
+      expect.objectContaining({ city: "שדרות", count: 1, onset: true }),
     );
     now = TIMELINE_BEAT_MS * 2;
     rafCb();
     const lastFc = overlaySource.setData.mock.calls.at(-1)[0];
     expect(lastFc.features[0].properties).toEqual(
-      expect.objectContaining({ city: "שדרות", count: 2, flash: false }),
+      expect.objectContaining({ city: "שדרות", count: 2, onset: false }),
     );
     disposeInvestigationTimelineForMap(map);
   });
@@ -642,13 +799,47 @@ describe("syncInvestigationTimelineToMap alarms", () => {
     };
     await syncInvestigationTimelineToMap(map, idleNliClock(), liveOn, deps);
     expect(map.getLayer("nli-investigation-alarm-circles")).toBeTruthy();
-    expect(map.getSource("nli-investigation-alarm-count")).toBeTruthy();
+    expect(map.getSource("nli-investigation-alarm-points")).toBeTruthy();
     await syncInvestigationTimelineToMap(map, idleNliClock(), liveOn, {
       ...deps,
       visibilityLayerGroups: slideshowOff,
     });
     expect(map.getLayer("nli-investigation-alarm-circles")).toBeFalsy();
-    expect(map.getSource("nli-investigation-alarm-count")).toBeFalsy();
+    expect(map.getSource("nli-investigation-alarm-points")).toBeFalsy();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("resets idle-visible alarms when playback switches to lines-only", async () => {
+    const map = makeMap();
+    const alarmsVisible = [{ id: "nli", layers: [{ id: "alarms", enabled: true }] }];
+    const linesOnly = [{ id: "nli", layers: [{ id: "lines", enabled: true }] }];
+    const alarmFeatures = [
+      { id: "שדרות", properties: { city: "שדרות", alarm_minutes: [400], alarm_count_total: 1 } },
+    ];
+    const deps = {
+      featuresById: {
+        [INVESTIGATION_ALARMS_FULL_ID]: alarmFeatures,
+        [INVESTIGATION_LINES_FULL_ID]: [],
+      },
+      getLayerDataUrl: () => null,
+      now: () => 0,
+    };
+
+    await syncInvestigationTimelineToMap(map, idleNliClock(), alarmsVisible, deps);
+    expect(map.getLayer("nli-investigation-alarm-circles")).toBeTruthy();
+    expect(map.getPaintProperty("nli__alarms__circle__0", "circle-opacity")).toBe(0);
+
+    await syncInvestigationTimelineToMap(
+      map,
+      playClock([INVESTIGATION_LINES_FULL_ID], [400]),
+      linesOnly,
+      deps,
+    );
+
+    expect(map.getLayer("nli-investigation-alarm-circles")).toBeFalsy();
+    expect(map.getSource("nli-investigation-alarm-points")).toBeFalsy();
+    expect(map.getPaintProperty("nli__alarms__circle__0", "circle-opacity")).toBe(0.4);
+    expect(map.getPaintProperty("nli__alarms__circle__0", "circle-stroke-width")).toBe(0.5);
     disposeInvestigationTimelineForMap(map);
   });
 });

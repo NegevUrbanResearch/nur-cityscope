@@ -7,10 +7,14 @@
  * Alarms hitchhike polygon/line beats when those layers play; alarms-only uses 5-minute bins.
  */
 
-import { applyAlarmMode } from "./maplibre-investigation-alarms.js";
+import {
+  applyAlarmMode,
+  createInvestigationAlarmRenderer,
+} from "./maplibre-investigation-alarms.js";
 import {
   buildNliExplainerModel,
   nliExplainerInnerHtml,
+  NLI_CAPTION_MODE_CLOCK_ONLY,
   NLI_EXPLAINER_SAMPLE_MODEL,
 } from "./nli-explainer-model.js";
 import {
@@ -23,8 +27,28 @@ import {
   evaluateClock,
   flashPreviousClock,
   normalizeNliClock,
+  nliPlayableIdsFromGroups,
 } from "./nli-investigation-clock.js";
-import layerRegistry from "./layer-registry.js";
+import {
+  DEFAULT_INVESTIGATION_SETTLEMENTS_URL,
+  buildInvestigationLineFeaturesForFrame,
+  buildInvestigationSettlementOutlineIdsForFrame,
+  buildInvestigationSettlementIndexes,
+  createInvestigationTimelineData,
+  ensureInvestigationLayerFeatures,
+  ensureInvestigationSettlementFeatures,
+  getInvestigationTimelineDataDiagnostics,
+  investigationRouteBeats,
+  lineProgressAt,
+  objectIdsActiveAt,
+  parseLocalTimelineToMinutes,
+  refreshInvestigationTimelineData,
+} from "./nli-investigation-timeline-data.js";
+import { createInvestigationLineRenderer } from "./maplibre-investigation-lines.js";
+import { createInvestigationPolygonRenderer } from "./maplibre-investigation-polygons.js";
+import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
+import { record as recordPerfSample } from "../map/perf-telemetry.js";
+import { deriveInvestigationFrame } from "./nli-investigation-visual-state.js";
 
 export {
   INVESTIGATION_ALARMS_FULL_ID,
@@ -40,44 +64,17 @@ export {
   previousTimelineBeat,
   timelinePhaseAt,
 } from "./nli-investigation-beats.js";
+export {
+  buildInvestigationSettlementIndexes,
+  lineProgressAt,
+  objectIdsActiveAt,
+  parseLocalTimelineToMinutes,
+} from "./nli-investigation-timeline-data.js";
 
-const FILL_FUTURE = 0.06;
-const FILL_PAST = 0.55;
-const FILL_ACTIVE = 0.88;
-const FILL_COLOR_FUTURE = "#f79009";
-const FILL_COLOR_PAST = "#f79009";
-const FILL_COLOR_ACTIVE = "#f79009";
-const LINE_OPACITY_FUTURE = 0.22;
-const LINE_OPACITY_PAST = 0.95;
-const LINE_OPACITY_ACTIVE = 0.55;
-const LINE_WIDTH_FUTURE = 0.9;
-const LINE_WIDTH_PAST = 1.8;
-const LINE_WIDTH_ACTIVE = 2.1;
-const LINE_COLOR_FUTURE = "#b54708";
-const LINE_COLOR_PAST = "#b54708";
-const LINE_COLOR_ACTIVE = "#ffffff";
-
-const POLYGON_LAYER_ID_PREFIX = INVESTIGATION_POLYGONS_FULL_ID.replace(/\./g, "__");
 const LINE_LAYER_ID_PREFIX = INVESTIGATION_LINES_FULL_ID.replace(/\./g, "__");
-const LINE_PAST_SOURCE_ID = "nli-investigation-line-past";
-const LINE_PAST_LAYER_ID = "nli-investigation-line-past-line";
-const LINE_ACTIVE_SOURCE_ID = "nli-investigation-line-active";
-const LINE_ACTIVE_LAYER_ID = "nli-investigation-line-active-line";
-const LINE_PROGRESS_COLOR = "#c31f4f";
-const LINE_PROGRESS_WIDTH = 2.6;
-const LINE_HEAD_SOURCE_ID = "nli-investigation-line-head";
-const LINE_HEAD_LAYER_ID = "nli-investigation-line-head-circle";
-const LINE_HEAD_RADIUS = 3.2;
-const LINE_HEAD_HIDE_AT = 0.999;
 
 /** @type {WeakMap<object, object>} */
 const stateByMap = new WeakMap();
-
-/** Jump flash consume keyed by revision; survives dispose/remount of the same map. @type {WeakMap<object, number>} */
-const consumedJumpRevisionByMap = new WeakMap();
-
-/** Per-map paused+jump one-shot origin: first non-stale apply of that revision. @type {WeakMap<object, { revision: number, originMs: number }>} */
-const jumpOneShotOriginByMap = new WeakMap();
 
 /** In-flight sync generation + requested revision so a later Stop can abort an older Play. @type {WeakMap<object, { generation: number, revision: number }>} */
 const syncRequestByMap = new WeakMap();
@@ -99,169 +96,6 @@ function isStaleTimelineSyncRequest(map, request) {
   return false;
 }
 
-export function parseLocalTimelineToMinutes(value) {
-  if (typeof value !== "string") return null;
-  const match = /^local\s+(\d{1,2}):(\d{2})$/i.exec(value.trim());
-  if (!match) return null;
-  return Number(match[1]) * 60 + Number(match[2]);
-}
-
-export function objectIdsActiveAt(features, minutes) {
-  const active = [];
-  for (const feature of features || []) {
-    if (Number(feature?.properties?.timeline_minutes) !== minutes) continue;
-    const oid = feature?.properties?.OBJECTID;
-    if (oid != null) active.push(oid);
-  }
-  return active;
-}
-
-export function lineProgressAt(minutes, clock, beatElapsedMs) {
-  if (!Number.isFinite(Number(minutes))) return 0;
-  if (clock == null) return 1;
-  if (minutes < clock) return 1;
-  if (minutes > clock) return 0;
-  const u = Number(beatElapsedMs) / TIMELINE_BEAT_MS;
-  if (!Number.isFinite(u) || u <= 0) return 0;
-  return Math.min(1, u);
-}
-
-export function orientLineCoordinatesTowardIsrael(coords) {
-  if (!Array.isArray(coords) || coords.length < 2) return coords;
-  const start = coords[0];
-  const end = coords[coords.length - 1];
-  if (!Array.isArray(start) || !Array.isArray(end)) return coords;
-  if (!(end[0] < start[0])) return coords;
-  return [...coords].reverse();
-}
-
-function reverseLineGeometry(geometry) {
-  if (!geometry || !Array.isArray(geometry.coordinates)) return geometry;
-  if (geometry.type === "LineString") {
-    return { ...geometry, coordinates: [...geometry.coordinates].reverse() };
-  }
-  if (geometry.type === "MultiLineString") {
-    return {
-      ...geometry,
-      coordinates: geometry.coordinates.map((part) => (Array.isArray(part) ? [...part].reverse() : part)),
-    };
-  }
-  return geometry;
-}
-
-function orientFeatureTowardIsrael(feature) {
-  const coords = getLineCoordinatesFromFeature(feature);
-  const oriented = orientLineCoordinatesTowardIsrael(coords);
-  if (oriented === coords || oriented.length < 2) return feature;
-  return {
-    ...feature,
-    geometry: reverseLineGeometry(feature?.geometry),
-  };
-}
-
-function getLineCoordinatesFromFeature(feature) {
-  const geom = feature && feature.geometry;
-  if (!geom || !Array.isArray(geom.coordinates)) return [];
-  if (geom.type === "LineString") {
-    return geom.coordinates.filter(
-      (c) => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]),
-    );
-  }
-  if (geom.type === "MultiLineString") {
-    let best = [];
-    for (const part of geom.coordinates) {
-      if (!Array.isArray(part)) continue;
-      const coords = part.filter(
-        (c) => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]),
-      );
-      if (coords.length > best.length) best = coords;
-    }
-    return best;
-  }
-  return [];
-}
-
-function segmentLengthApprox(a, b) {
-  const latScale = Math.cos((((a[1] + b[1]) * Math.PI) / 180) / 2);
-  const dx = (b[0] - a[0]) * Math.max(0.0001, latScale);
-  const dy = b[1] - a[1];
-  return Math.hypot(dx, dy);
-}
-
-function buildPathMetrics(coords) {
-  if (!Array.isArray(coords) || coords.length < 2) return { cum: [0], total: 0 };
-  const cum = [0];
-  for (let i = 1; i < coords.length; i++) {
-    cum.push(cum[i - 1] + segmentLengthApprox(coords[i - 1], coords[i]));
-  }
-  return { cum, total: cum[cum.length - 1] || 0 };
-}
-
-function pointAtProgress(coords, cum, total, t) {
-  if (!Array.isArray(coords) || coords.length === 0) return null;
-  if (!Number.isFinite(total) || total <= 0 || coords.length === 1) return coords[0];
-  const clamped = Math.min(1, Math.max(0, t));
-  const target = clamped * total;
-  let seg = 0;
-  while (seg < cum.length - 1 && cum[seg + 1] < target) seg++;
-  const a = coords[seg];
-  const b = coords[Math.min(seg + 1, coords.length - 1)];
-  const segStart = cum[seg];
-  const segEnd = cum[Math.min(seg + 1, cum.length - 1)];
-  const segLen = Math.max(1e-12, segEnd - segStart);
-  const local = Math.min(1, Math.max(0, (target - segStart) / segLen));
-  return [a[0] + (b[0] - a[0]) * local, a[1] + (b[1] - a[1]) * local];
-}
-
-function emptyPointFeatureCollection() {
-  return { type: "FeatureCollection", features: [] };
-}
-
-function pointsFeatureCollection(coords) {
-  if (!Array.isArray(coords) || coords.length === 0) return emptyPointFeatureCollection();
-  return {
-    type: "FeatureCollection",
-    features: coords
-      .filter((coord) => coord && Number.isFinite(coord[0]) && Number.isFinite(coord[1]))
-      .map((coord) => ({
-        type: "Feature",
-        properties: {},
-        geometry: { type: "Point", coordinates: coord },
-      })),
-  };
-}
-
-export function lineHeadCoordinatesAt(features, clock, beatElapsedMs) {
-  if (clock == null) return [];
-  const progress = lineProgressAt(clock, clock, beatElapsedMs);
-  if (progress >= LINE_HEAD_HIDE_AT) return [];
-  const coords = [];
-  for (const feature of features || []) {
-    const minutes = Number(feature?.properties?.timeline_minutes);
-    if (minutes !== clock) continue;
-    const path = orientLineCoordinatesTowardIsrael(getLineCoordinatesFromFeature(feature));
-    if (path.length < 2) continue;
-    const { cum, total } = buildPathMetrics(path);
-    const point = pointAtProgress(path, cum, total, progress);
-    if (point) coords.push(point);
-  }
-  return coords;
-}
-
-function asGroupsArray(layerGroups) {
-  if (Array.isArray(layerGroups)) return layerGroups;
-  if (layerGroups && typeof layerGroups === "object") return Object.values(layerGroups);
-  return [];
-}
-
-function isNliLayerEnabled(layerGroups, layerId) {
-  const groups = asGroupsArray(layerGroups);
-  const group = groups.find((g) => g && g.id === "nli");
-  if (!group || !Array.isArray(group.layers)) return false;
-  const layer = group.layers.find((l) => l && l.id === layerId);
-  return !!(layer && layer.enabled);
-}
-
 function membershipFromClock(clock) {
   const set = new Set(Array.isArray(clock?.membership) ? clock.membership : []);
   return {
@@ -271,6 +105,74 @@ function membershipFromClock(clock) {
   };
 }
 
+function resolveDisplayProfile(value) {
+  const source = typeof value === "string"
+    ? NLI_DISPLAY_PROFILES[value] || NLI_DISPLAY_PROFILES.gis
+    : value && typeof value === "object"
+      ? value
+      : NLI_DISPLAY_PROFILES.gis;
+  return { ...NLI_DISPLAY_PROFILES.gis, ...source };
+}
+
+function displayProfileFromDeps(deps = {}, fallback = NLI_DISPLAY_PROFILES.gis) {
+  const profile = resolveDisplayProfile(deps.displayProfile ?? fallback);
+  const beforeId = deps.beforeId ?? deps.beforeLayerId ?? deps.layerOrderAnchor ?? profile.beforeId ?? profile.beforeLayerId;
+  if (beforeId) profile.beforeId = beforeId;
+  return profile;
+}
+
+function effectiveMembership(clock, layerGroups) {
+  const semantic = new Set(Array.isArray(clock?.membership) ? clock.membership.map(String) : []);
+  const visible = new Set(nliPlayableIdsFromGroups(layerGroups));
+  return {
+    visible,
+    ids: new Set([...semantic].filter((id) => visible.has(id))),
+    polygonOn: semantic.has(INVESTIGATION_POLYGONS_FULL_ID) && visible.has(INVESTIGATION_POLYGONS_FULL_ID),
+    lineOn: semantic.has(INVESTIGATION_LINES_FULL_ID) && visible.has(INVESTIGATION_LINES_FULL_ID),
+    alarmPlay: semantic.has(INVESTIGATION_ALARMS_FULL_ID) && visible.has(INVESTIGATION_ALARMS_FULL_ID),
+    alarmVisible: visible.has(INVESTIGATION_ALARMS_FULL_ID),
+  };
+}
+
+function findLayerOrderAnchor(map, profile) {
+  if (profile?.beforeId || profile?.beforeLayerId) return profile.beforeId || profile.beforeLayerId;
+  const projection = Number(profile?.lineWidthMultiplier) > 1;
+  const candidates = styleLayers(map);
+  const preferred = projection
+    ? candidates.find((layer) => /projection[-_ ]?highlight/i.test(String(layer?.id || "")))
+    : candidates.find((layer) => layer?.type === "symbol" && /(settlement|people[_-]?names|(^|[_-])names|label)/i.test(String(layer?.id || ""))) ||
+      candidates.find((layer) => /(settlement|people[_-]?names|(^|[_-])names|label)/i.test(String(layer?.id || "")));
+  return preferred?.id || null;
+}
+
+function rendererFactories(map, state) {
+  const anchor = findLayerOrderAnchor(map, state.displayProfile);
+  if (anchor) state.displayProfile.beforeId = anchor;
+  state.lineRenderer = createInvestigationLineRenderer(map, state.displayProfile);
+  state.polygonRenderer = createInvestigationPolygonRenderer(map, state.displayProfile, state.rendererDeps);
+  state.alarmRenderer = createInvestigationAlarmRenderer(map, state.displayProfile, {
+    ...state.rendererDeps,
+    onAlarmStructuralRowsBuild: (...args) => {
+      state.alarmStructuralRowsBuilds += 1;
+      state.rendererDeps?.onAlarmStructuralRowsBuild?.(...args);
+    },
+  });
+}
+
+function discardRendererHandles(state, { preserveBasePaints = false } = {}) {
+  if (!state) return;
+  for (const renderer of [state.alarmRenderer, state.lineRenderer, state.polygonRenderer]) {
+    try { renderer?.dispose?.({ preserveBasePaints }); } catch (_) { /* style can already be gone */ }
+  }
+  state.alarmRenderer = null;
+  state.lineRenderer = null;
+  state.polygonRenderer = null;
+  state.savedBaseLines = null;
+  state.linePlaybackActive = false;
+  state.polygonPlaybackActive = false;
+  state.alarmMode = "off";
+}
+
 function styleLayers(map) {
   try {
     const style = typeof map.getStyle === "function" ? map.getStyle() : null;
@@ -278,18 +180,6 @@ function styleLayers(map) {
   } catch (_) {
     return [];
   }
-}
-
-function collectPolygonPaintLayers(map) {
-  const fillIds = [];
-  const lineIds = [];
-  for (const layer of styleLayers(map)) {
-    if (!layer || typeof layer.id !== "string") continue;
-    if (!layer.id.startsWith(POLYGON_LAYER_ID_PREFIX)) continue;
-    if (layer.type === "fill") fillIds.push(layer.id);
-    else if (layer.type === "line") lineIds.push(layer.id);
-  }
-  return { fillIds, lineIds };
 }
 
 function collectBaseLineLayerIds(map) {
@@ -302,51 +192,11 @@ function collectBaseLineLayerIds(map) {
   return ids;
 }
 
-function timelineCaseExpression(clock, { future, past, active }) {
-  if (clock == null) return past;
-  return [
-    "case",
-    ["==", ["get", "timeline_minutes"], clock],
-    active,
-    ["<", ["get", "timeline_minutes"], clock],
-    past,
-    future,
-  ];
-}
-
 function mergeSavedPaints(map, saved, layerIds, keys) {
   const next = saved && typeof saved === "object" ? saved : {};
   const fresh = (layerIds || []).filter((id) => !next[id]);
   if (fresh.length === 0) return next;
   return { ...next, ...savePaints(map, fresh, keys) };
-}
-
-function raiseLineOverlays(map) {
-  if (!map || typeof map.moveLayer !== "function") return;
-  for (const id of [LINE_PAST_LAYER_ID, LINE_ACTIVE_LAYER_ID, LINE_HEAD_LAYER_ID]) {
-    try {
-      if (typeof map.getLayer === "function" && map.getLayer(id)) {
-        map.moveLayer(id);
-      }
-    } catch (_) {
-      /* ignore */
-    }
-  }
-}
-
-function raiseStoryLayers(map) {
-  if (!map || typeof map.moveLayer !== "function") return;
-  const { fillIds, lineIds } = collectPolygonPaintLayers(map);
-  for (const id of [...fillIds, ...lineIds]) {
-    try {
-      if (typeof map.getLayer === "function" && map.getLayer(id)) {
-        map.moveLayer(id);
-      }
-    } catch (_) {
-      /* ignore */
-    }
-  }
-  raiseLineOverlays(map);
 }
 
 function savePaints(map, layerIds, keys) {
@@ -379,231 +229,12 @@ function restorePaints(map, saved) {
   }
 }
 
-function applyPolygonTimelinePaint(map, clock) {
-  const { fillIds, lineIds } = collectPolygonPaintLayers(map);
-  if (typeof map.setPaintProperty !== "function") return;
-  const fillOpacity = timelineCaseExpression(clock, {
-    future: FILL_FUTURE,
-    past: FILL_PAST,
-    active: FILL_ACTIVE,
+function invalidateTimelineSyncRequests(map) {
+  const previous = syncRequestByMap.get(map);
+  syncRequestByMap.set(map, {
+    generation: (previous?.generation || 0) + 1,
+    revision: Number.POSITIVE_INFINITY,
   });
-  const fillColor = timelineCaseExpression(clock, {
-    future: FILL_COLOR_FUTURE,
-    past: FILL_COLOR_PAST,
-    active: FILL_COLOR_ACTIVE,
-  });
-  const lineOpacity = timelineCaseExpression(clock, {
-    future: LINE_OPACITY_FUTURE,
-    past: LINE_OPACITY_PAST,
-    active: LINE_OPACITY_ACTIVE,
-  });
-  const lineWidth = timelineCaseExpression(clock, {
-    future: LINE_WIDTH_FUTURE,
-    past: LINE_WIDTH_PAST,
-    active: LINE_WIDTH_ACTIVE,
-  });
-  const lineColor = timelineCaseExpression(clock, {
-    future: LINE_COLOR_FUTURE,
-    past: LINE_COLOR_PAST,
-    active: LINE_COLOR_ACTIVE,
-  });
-  for (const id of fillIds) {
-    try {
-      map.setPaintProperty(id, "fill-opacity", fillOpacity);
-      map.setPaintProperty(id, "fill-color", fillColor);
-    } catch (_) {
-      /* ignore */
-    }
-  }
-  for (const id of lineIds) {
-    try {
-      map.setPaintProperty(id, "line-opacity", lineOpacity);
-      map.setPaintProperty(id, "line-width", lineWidth);
-      map.setPaintProperty(id, "line-color", lineColor);
-    } catch (_) {
-      /* ignore */
-    }
-  }
-}
-
-function lineFeatureCollection(features) {
-  return {
-    type: "FeatureCollection",
-    features: (features || []).map((feature) => {
-      const oriented = orientFeatureTowardIsrael(feature);
-      const oid = oriented?.properties?.OBJECTID;
-      return {
-        type: "Feature",
-        id: oid,
-        properties: oriented?.properties || {},
-        geometry: oriented?.geometry || null,
-      };
-    }),
-  };
-}
-
-function partitionLineFeatures(features, clock) {
-  const past = [];
-  const active = [];
-  for (const feature of features || []) {
-    const minutes = Number(feature?.properties?.timeline_minutes);
-    if (!Number.isFinite(minutes)) continue;
-    if (clock == null || minutes < clock) past.push(feature);
-    else if (minutes === clock) active.push(feature);
-  }
-  return { past, active };
-}
-
-function toOpaqueAndTransparent(color) {
-  const c = typeof color === "string" ? color.trim() : LINE_PROGRESS_COLOR;
-  if (c.startsWith("#") && (c.length === 7 || c.length === 4)) {
-    const hex = c.length === 4 ? `#${c[1]}${c[1]}${c[2]}${c[2]}${c[3]}${c[3]}` : c;
-    const n = parseInt(hex.slice(1), 16);
-    if (Number.isFinite(n)) {
-      const r = (n >> 16) & 255;
-      const g = (n >> 8) & 255;
-      const b = n & 255;
-      return { opaque: `rgb(${r},${g},${b})`, transparent: `rgba(${r},${g},${b},0)` };
-    }
-  }
-  return { opaque: c, transparent: "rgba(195,31,79,0)" };
-}
-
-function buildLineGradientExpression(t, color) {
-  const tt = Math.min(1, Math.max(0, t));
-  const { opaque, transparent } = toOpaqueAndTransparent(color);
-  const eps = 0.00015;
-  if (tt <= eps) {
-    return ["interpolate", ["linear"], ["line-progress"], 0, opaque, eps, transparent, 1, transparent];
-  }
-  if (tt >= 1 - eps) {
-    return ["interpolate", ["linear"], ["line-progress"], 0, opaque, 1 - eps, opaque, 1, transparent];
-  }
-  const lo = tt;
-  const hi = tt + eps;
-  return ["interpolate", ["linear"], ["line-progress"], 0, opaque, lo, opaque, hi, transparent, 1, transparent];
-}
-
-function ensureLineOverlay(map, sourceId, layerId, { lineMetrics, paint }) {
-  const existing = typeof map.getSource === "function" ? map.getSource(sourceId) : null;
-  if (existing) return existing;
-  if (typeof map.addSource !== "function" || typeof map.addLayer !== "function") return null;
-  map.addSource(sourceId, {
-    type: "geojson",
-    data: lineFeatureCollection([]),
-    lineMetrics: !!lineMetrics,
-  });
-  map.addLayer({
-    id: layerId,
-    type: "line",
-    source: sourceId,
-    layout: {
-      "line-cap": "round",
-      "line-join": "round",
-    },
-    paint,
-  });
-  return typeof map.getSource === "function" ? map.getSource(sourceId) : null;
-}
-
-function ensureLineHeadOverlay(map) {
-  const existing = typeof map.getSource === "function" ? map.getSource(LINE_HEAD_SOURCE_ID) : null;
-  if (existing) return existing;
-  if (typeof map.addSource !== "function" || typeof map.addLayer !== "function") return null;
-  map.addSource(LINE_HEAD_SOURCE_ID, {
-    type: "geojson",
-    data: emptyPointFeatureCollection(),
-  });
-  map.addLayer({
-    id: LINE_HEAD_LAYER_ID,
-    type: "circle",
-    source: LINE_HEAD_SOURCE_ID,
-    paint: {
-      "circle-color": LINE_PROGRESS_COLOR,
-      "circle-radius": Math.max(2.25, LINE_HEAD_RADIUS),
-      "circle-blur": 0.25,
-      "circle-opacity": 0.95,
-      "circle-stroke-color": "#ffffff",
-      "circle-stroke-width": 1.1,
-    },
-  });
-  return typeof map.getSource === "function" ? map.getSource(LINE_HEAD_SOURCE_ID) : null;
-}
-
-function ensureLineProgressOverlay(map) {
-  ensureLineOverlay(map, LINE_PAST_SOURCE_ID, LINE_PAST_LAYER_ID, {
-    lineMetrics: false,
-    paint: {
-      "line-color": LINE_PROGRESS_COLOR,
-      "line-width": LINE_PROGRESS_WIDTH,
-      "line-opacity": 1,
-    },
-  });
-  ensureLineOverlay(map, LINE_ACTIVE_SOURCE_ID, LINE_ACTIVE_LAYER_ID, {
-    lineMetrics: true,
-    paint: {
-      "line-width": LINE_PROGRESS_WIDTH,
-      "line-gradient": buildLineGradientExpression(0, LINE_PROGRESS_COLOR),
-    },
-  });
-  ensureLineHeadOverlay(map);
-}
-
-function setOverlayData(map, sourceId, features) {
-  const source = typeof map.getSource === "function" ? map.getSource(sourceId) : null;
-  if (source && typeof source.setData === "function") {
-    source.setData(lineFeatureCollection(features));
-  }
-}
-
-function setHeadData(map, coordinates) {
-  const source = typeof map.getSource === "function" ? map.getSource(LINE_HEAD_SOURCE_ID) : null;
-  if (source && typeof source.setData === "function") {
-    source.setData(pointsFeatureCollection(coordinates));
-  }
-}
-
-function applyLineTrailVisuals(map, features, clock, beatElapsedMs) {
-  const { past, active } = partitionLineFeatures(features, clock);
-  setOverlayData(map, LINE_PAST_SOURCE_ID, past);
-  setOverlayData(map, LINE_ACTIVE_SOURCE_ID, active);
-  setHeadData(map, lineHeadCoordinatesAt(features, clock, beatElapsedMs));
-  if (typeof map.setPaintProperty !== "function") return;
-  const progress = clock == null ? 1 : lineProgressAt(clock, clock, beatElapsedMs);
-  try {
-    if (typeof map.getLayer === "function" && map.getLayer(LINE_ACTIVE_LAYER_ID)) {
-      map.setPaintProperty(
-        LINE_ACTIVE_LAYER_ID,
-        "line-gradient",
-        buildLineGradientExpression(progress, LINE_PROGRESS_COLOR),
-      );
-    }
-  } catch (_) {
-    /* ignore */
-  }
-}
-
-function removeLineProgressOverlay(map) {
-  for (const [layerId, sourceId] of [
-    [LINE_HEAD_LAYER_ID, LINE_HEAD_SOURCE_ID],
-    [LINE_ACTIVE_LAYER_ID, LINE_ACTIVE_SOURCE_ID],
-    [LINE_PAST_LAYER_ID, LINE_PAST_SOURCE_ID],
-  ]) {
-    try {
-      if (typeof map.getLayer === "function" && map.getLayer(layerId) && map.removeLayer) {
-        map.removeLayer(layerId);
-      }
-    } catch (_) {
-      /* ignore */
-    }
-    try {
-      if (typeof map.getSource === "function" && map.getSource(sourceId) && map.removeSource) {
-        map.removeSource(sourceId);
-      }
-    } catch (_) {
-      /* ignore */
-    }
-  }
 }
 
 function hideBaseLines(map, saved) {
@@ -664,6 +295,9 @@ function ensureCaptionEl(map) {
 }
 
 function applyCaptionDeps(state, map, deps = {}) {
+  state.nliCaptionMode = deps.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY
+    ? NLI_CAPTION_MODE_CLOCK_ONLY
+    : "full";
   state.explainerDebugVisible = deps.explainerDebugVisible === true;
   if (deps.captionEl) {
     removeLeftoverMapCaption(map, deps.captionEl);
@@ -688,7 +322,7 @@ function applyCaptionDeps(state, map, deps = {}) {
 }
 
 function explainerPreviousClock(state, clockMinutes) {
-  const beats = Array.isArray(state.beats) ? state.beats : [];
+  const beats = Array.isArray(state.clock?.beats) ? state.clock.beats : [];
   return flashPreviousClock(beats, clockMinutes);
 }
 
@@ -718,14 +352,16 @@ function updateCaption(state, phase, _previousClock) {
       polygonOn: snap.polygonOn,
       lineOn: snap.lineOn,
       alarmPlay: snap.alarmPlay,
-      polygonFeatures: state.polygonFeatures,
-      lineFeatures: state.lineFeatures,
-      alarmFeatures: state.alarmFeatures,
+      polygonFeatures: state.data.polygonFeatures,
+      lineFeatures: state.data.lineFeatures,
+      alarmFeatures: state.data.alarmFeatures,
       clock: snap.clock,
       previousClock: snap.previousClock,
     });
     el.hidden = false;
-    el.innerHTML = nliExplainerInnerHtml(model);
+    el.innerHTML = nliExplainerInnerHtml(model, {
+      nliCaptionMode: state.nliCaptionMode,
+    });
     return;
   }
   if (state.explainerDebugVisible) {
@@ -737,107 +373,242 @@ function updateCaption(state, phase, _previousClock) {
   el.innerHTML = "";
 }
 
-function rememberJumpOneShotOrigin(map, clock, nowMs) {
-  if (clock?.phase !== "paused" || clock?.seekKind !== "jump") return;
-  const revision = Number(clock.revision);
-  const rec = jumpOneShotOriginByMap.get(map);
-  if (rec && rec.revision === revision) return;
-  jumpOneShotOriginByMap.set(map, { revision, originMs: nowMs });
-}
-
-function clockWithJumpOrigin(map, clock) {
-  if (clock?.phase !== "paused" || clock?.seekKind !== "jump") return clock;
-  const rec = jumpOneShotOriginByMap.get(map);
-  if (!rec || rec.revision !== Number(clock.revision)) return clock;
-  return { ...clock, playEpochMs: rec.originMs };
-}
-
-function jumpPreviousClock(map, state, vis) {
+function jumpPreviousClock(state, vis, frame) {
   const clock = state.clock;
-  const beats = Array.isArray(clock?.beats) ? clock.beats : state.beats;
+  const beats = Array.isArray(clock?.beats) ? clock.beats : [];
   const isJump = clock?.seekKind === "jump";
   if (!isJump) return flashPreviousClock(beats, vis.clock, { isJump });
-  const alreadyConsumed = consumedJumpRevisionByMap.get(map) === clock.revision;
-  if (alreadyConsumed) return vis.clock;
-  const oneShotActive = clock.phase === "paused" && vis.beatElapsedMs < TIMELINE_BEAT_MS;
-  if (oneShotActive) {
-    return flashPreviousClock(beats, vis.clock, { isJump });
-  }
-  consumedJumpRevisionByMap.set(map, clock.revision);
-  return vis.clock;
+  return frame?.activeProgress < 1
+    ? flashPreviousClock(beats, vis.clock, { isJump })
+    : vis.clock;
 }
 
-function applyPlayingVisuals(map, state, phase) {
-  const previousClock = jumpPreviousClock(map, state, phase);
-  applyAlarmMode(map, state, state.alarmMode, {
-    clock: phase.clock,
-    previousClock,
-    beatElapsedMs: phase.beatElapsedMs,
+function applyRestingRoutePaints(map, visible) {
+  if (typeof map?.setPaintProperty !== "function") return;
+  for (const id of collectBaseLineLayerIds(map)) {
+    try {
+      map.setPaintProperty(id, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+      map.setPaintProperty(
+        id,
+        "line-opacity",
+        visible ? NLI_VISUAL_TOKENS.routeRestingOpacity : 0,
+      );
+    } catch (_) {
+      // A style reload can remove a base layer during idle reconciliation.
+    }
+  }
+}
+
+/** Render visible routes in the completed narrative state while the timeline is idle. */
+function applyIdleFinalRouteVisuals(map, state, nowMs) {
+  if (!state?.lineOn || !Array.isArray(state.data?.lineFeatures)) return;
+  const beats = investigationRouteBeats(state.data);
+  const ambientClock = normalizeNliClock({
+    phase: "ended",
+    membership: [INVESTIGATION_LINES_FULL_ID],
+    beats,
+    revision: state.clock?.revision,
+    serverNowMs: state.clock?.serverNowMs,
   });
-  if (state.polygonOn) applyPolygonTimelinePaint(map, phase.clock);
+  const frame = deriveInvestigationFrame(
+    ambientClock,
+    nowMs,
+    [INVESTIGATION_LINES_FULL_ID],
+    { motionMode: state.motionMode || "full", routeBeats: beats },
+  );
+  state.clock = ambientClock;
+  state.lastFrame = frame;
+  state.lastRenderNow = nowMs;
+  state.lineRenderer?.render(frame, buildInvestigationLineFeaturesForFrame(state.data, frame));
+  if (shouldRafClock(frame)) scheduleFrame(map, state);
+  else cancelScheduledFrame(state);
+}
+
+function deriveTimelineFrame(state, nowMs, enabledIds = [...(state.effectiveIds || [])]) {
+  return deriveInvestigationFrame(state.clock, nowMs, enabledIds, {
+    motionMode: state.motionMode || "full",
+    routeBeats: Array.isArray(state.data.lineFeatures)
+      ? investigationRouteBeats(state.data)
+      : [],
+  });
+}
+
+function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = state.alarmMode) {
+  const resolvedFrame = frame || deriveTimelineFrame(state, state.now?.() || 0);
+  const previousClock = jumpPreviousClock(state, phase, frame);
+  let alarmFrame = frame
+    ? {
+        ...frame,
+        // The first ordinary beat uses an open window. An intentional jump
+        // carries the explicit previous-clock boundary, so it cannot replay
+        // every earlier alarm as a first-beat megawave.
+        alarmOnsetWindowStart: state.clock?.seekKind === "jump"
+          ? previousClock
+          : frame.completedBeats?.length
+            ? frame.completedBeats[frame.completedBeats.length - 1]
+            : null,
+      }
+    : null;
+  if (alarmFrame?.alarmOnsetId) {
+    const onsetId = alarmFrame.alarmOnsetId;
+    const onsetElapsedMs = Number(alarmFrame.alarmOnset?.elapsedMs);
+    const onsetConsumed = state.alarmOnsetHistory.has(onsetId);
+    const onsetFinished = Number.isFinite(onsetElapsedMs) &&
+      onsetElapsedMs >= NLI_VISUAL_TOKENS.alarmRippleDurationMs;
+    if (onsetConsumed || onsetFinished) {
+      alarmFrame = { ...alarmFrame, alarmOnset: null, alarmOnsetId: null };
+      if (onsetFinished) state.alarmOnsetHistory.add(onsetId);
+    }
+  }
+  applyAlarmMode(map, state, targetAlarmMode, {
+    frame: alarmFrame || resolvedFrame,
+    dataVersion: state.data.dataVersion,
+  });
+  // Ambient idle route flow owns only the line carrier/motion. Settlement
+  // outlines stay reset until a real timeline phase reaches the route.
+  if (state.polygonOn || (state.lineOn && state.clockPhase !== "idle")) {
+    const lineData = Array.isArray(state.data.lineFeatures)
+      ? buildInvestigationLineFeaturesForFrame(state.data, resolvedFrame)
+      : { futureFeatures: [], completedFeatures: [], activeFeatures: [] };
+    const polygonFrame = {
+      ...resolvedFrame,
+      achievedSettlementOutlineIds: [
+        ...buildInvestigationSettlementOutlineIdsForFrame(
+          state.data,
+          resolvedFrame,
+          lineData,
+        ),
+      ],
+    };
+    const renderSettlement = state.polygonOn
+      ? state.polygonRenderer?.render
+      : state.polygonRenderer?.renderSettlement;
+    renderSettlement?.call(state.polygonRenderer, polygonFrame, {
+      polygonFeatures: state.data.polygonFeatures,
+      locationToOutlineObjectId: state.data.locationToOutlineObjectId,
+      settlementFeatures: state.data.settlementFeatures,
+      settlementFeaturesByOutlineId: state.data.settlementFeaturesByOutlineId,
+      dataVersion: state.data.dataVersion,
+    });
+  }
   if (state.lineOn) {
-    applyLineTrailVisuals(map, state.lineFeatures, phase.clock, phase.beatElapsedMs);
+    state.lineRenderer?.render(
+      resolvedFrame,
+      buildInvestigationLineFeaturesForFrame(state.data, resolvedFrame),
+    );
   }
-  if (state.polygonOn || state.lineOn || state.alarmMode === "play") {
-    raiseStoryLayers(map);
-  }
+  // Keep the adapter's previous mode available until it applies the transition,
+  // then publish the target mode for captions and subsequent animation ticks.
+  state.alarmMode = targetAlarmMode;
   updateCaption(state, phase, previousClock);
 }
 
 function enablePolygonPlayback(map, state) {
-  const { fillIds, lineIds } = collectPolygonPaintLayers(map);
-  state.savedFills = mergeSavedPaints(map, state.savedFills, fillIds, ["fill-opacity", "fill-color"]);
-  state.savedLines = mergeSavedPaints(map, state.savedLines, lineIds, [
-    "line-opacity",
-    "line-width",
-    "line-color",
-  ]);
+  state.polygonRenderer?.mount();
+  state.polygonPlaybackActive = true;
 }
 
-function disablePolygonPlayback(map, state) {
-  restorePaints(map, state.savedFills);
-  restorePaints(map, state.savedLines);
-  state.savedFills = null;
-  state.savedLines = null;
+function disablePolygonPlayback(map, state, { preserveBasePaints = false } = {}) {
+  if (!state.polygonPlaybackActive) return;
+  state.polygonRenderer?.reset({ preserveBasePaints });
+  state.polygonPlaybackActive = false;
 }
 
 function enableLinePlayback(map, state) {
   const baseIds = collectBaseLineLayerIds(map);
-  state.savedBaseLines = mergeSavedPaints(map, state.savedBaseLines, baseIds, ["line-opacity"]);
-  hideBaseLines(map, state.savedBaseLines);
-  ensureLineProgressOverlay(map);
-  raiseLineOverlays(map);
+  if (!state.linePlaybackActive) {
+    state.savedBaseLines = mergeSavedPaints(map, state.savedBaseLines, baseIds, ["line-opacity"]);
+    hideBaseLines(map, state.savedBaseLines);
+    state.linePlaybackActive = true;
+  } else {
+    const previousIds = new Set(Object.keys(state.savedBaseLines || {}));
+    const freshIds = baseIds.filter((id) => !previousIds.has(id));
+    if (freshIds.length) {
+      state.savedBaseLines = mergeSavedPaints(map, state.savedBaseLines, freshIds, ["line-opacity"]);
+      hideBaseLines(map, Object.fromEntries(freshIds.map((id) => [id, state.savedBaseLines[id]])));
+    }
+  }
+  state.lineRenderer?.mount();
 }
 
-function disableLinePlayback(map, state) {
-  restorePaints(map, state.savedBaseLines);
+function disableLinePlayback(map, state, { preserveBasePaints = false } = {}) {
+  if (!state.linePlaybackActive && !state.savedBaseLines) {
+    state.lineRenderer?.reset({ preserveBasePaints });
+    return;
+  }
+  if (!preserveBasePaints) restorePaints(map, state.savedBaseLines);
   state.savedBaseLines = null;
-  removeLineProgressOverlay(map);
+  state.lineRenderer?.reset({ preserveBasePaints });
+  state.linePlaybackActive = false;
 }
 
 function createTimelineState(map, deps = {}) {
-  return {
-    playing: false,
+  const displayProfile = displayProfileFromDeps(deps);
+  const requestAnimationFrameFn = typeof deps.requestAnimationFrame === "function"
+    ? deps.requestAnimationFrame
+    : typeof map.requestAnimationFrame === "function"
+      ? map.requestAnimationFrame.bind(map)
+      : typeof globalThis.requestAnimationFrame === "function"
+        ? globalThis.requestAnimationFrame.bind(globalThis)
+        : null;
+  const cancelAnimationFrameFn = typeof deps.cancelAnimationFrame === "function"
+    ? deps.cancelAnimationFrame
+    : typeof map.cancelAnimationFrame === "function"
+      ? map.cancelAnimationFrame.bind(map)
+      : typeof globalThis.cancelAnimationFrame === "function"
+        ? globalThis.cancelAnimationFrame.bind(globalThis)
+        : null;
+  const monotonicNow = typeof deps.monotonicNow === "function"
+    ? deps.monotonicNow
+    : typeof deps.schedulerNow === "function"
+      ? deps.schedulerNow
+      : typeof globalThis.performance?.now === "function"
+        ? () => globalThis.performance.now()
+        : () => Date.now();
+  const state = {
     clockPhase: "idle",
     clock: null,
     polygonOn: false,
     lineOn: false,
     alarmMode: "off",
-    polygonFeatures: null,
-    lineFeatures: null,
-    alarmFeatures: null,
-    beats: [],
+    data: createInvestigationTimelineData(deps),
     now: typeof deps.now === "function" ? deps.now : () => Date.now(),
+    monotonicNow,
     rafId: null,
+    requestAnimationFrame: requestAnimationFrameFn,
+    cancelAnimationFrame: cancelAnimationFrameFn,
+    lastRenderNow: null,
+    lastFrame: null,
     captionEl: null,
     captionOwned: false,
     explainerDebugVisible: false,
+    nliCaptionMode: deps.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY
+      ? NLI_CAPTION_MODE_CLOCK_ONLY
+      : "full",
     lastCaption: null,
-    savedFills: null,
-    savedLines: null,
     savedBaseLines: null,
-    savedAlarms: null,
+    displayProfile,
+    alarmRenderer: null,
+    lineRenderer: null,
+    polygonRenderer: null,
+    polygonPlaybackActive: false,
+    linePlaybackActive: false,
+    motionMode: deps.motionMode === "reduced" ? "reduced" : "full",
+    rendererDeps: deps,
+    styleListener: null,
+    styleReady: true,
+    awaitingStyleRemount: false,
+    effectiveIds: new Set(),
+    routeLayerVisible: false,
+    alarmOnsetHistory: new Set(),
+    alarmStructuralRowsBuilds: 0,
   };
+  Object.defineProperties(state, {
+    alarmFeatures: { enumerable: false, get: () => state.data.alarmFeatures },
+    dataVersion: { enumerable: false, get: () => state.data.dataVersion },
+  });
+  rendererFactories(map, state);
+  return state;
 }
 
 function getOrCreateState(map, deps = {}) {
@@ -845,80 +616,158 @@ function getOrCreateState(map, deps = {}) {
   if (!state) {
     state = createTimelineState(map, deps);
     stateByMap.set(map, state);
+    attachTimelineStyleListeners(map, state);
   }
+  state.rendererDeps = deps;
+  if (typeof deps.requestAnimationFrame === "function") state.requestAnimationFrame = deps.requestAnimationFrame;
+  else if (!state.requestAnimationFrame && typeof map.requestAnimationFrame === "function") state.requestAnimationFrame = map.requestAnimationFrame.bind(map);
+  if (typeof deps.cancelAnimationFrame === "function") state.cancelAnimationFrame = deps.cancelAnimationFrame;
+  else if (!state.cancelAnimationFrame && typeof map.cancelAnimationFrame === "function") state.cancelAnimationFrame = map.cancelAnimationFrame.bind(map);
+  if (typeof deps.monotonicNow === "function") state.monotonicNow = deps.monotonicNow;
+  else if (typeof deps.schedulerNow === "function") state.monotonicNow = deps.schedulerNow;
   return state;
 }
 
-function stopPlayback(map) {
+function attachTimelineStyleListeners(map, state) {
+  if (state.styleListener || typeof map?.on !== "function") return;
+  const handleStyleReload = () => {
+    cancelScheduledFrame(state);
+    if (state.alarmRenderer || state.lineRenderer || state.polygonRenderer) {
+      discardRendererHandles(state, { preserveBasePaints: true });
+    }
+    state.styleReady = true;
+    state.awaitingStyleRemount = true;
+  };
+  state.styleListener = handleStyleReload;
+  map.on("style.load", handleStyleReload);
+}
+
+function cancelScheduledFrame(state) {
+  if (!state || state.rafId == null) return;
+  try { state.cancelAnimationFrame?.(state.rafId); } catch (_) { /* map may be destroyed */ }
+  state.rafId = null;
+}
+
+function scheduleFrame(map, state) {
+  if (!state || state.rafId != null || state.awaitingStyleRemount || !state.requestAnimationFrame) return;
+  state.rafId = state.requestAnimationFrame(() => {
+    state.rafId = null;
+    tick(map);
+  });
+}
+
+function stopPlayback(map, { preserveBasePaints = false } = {}) {
   const state = stateByMap.get(map);
   if (!state) return;
-  if (state.rafId != null && typeof cancelAnimationFrame === "function") {
-    cancelAnimationFrame(state.rafId);
-  }
-  state.rafId = null;
-  state.playing = false;
+  cancelScheduledFrame(state);
   state.clockPhase = "idle";
+  state.alarmMode = "off";
   state.lastCaption = null;
-  disablePolygonPlayback(map, state);
-  disableLinePlayback(map, state);
+  state.lastFrame = null;
+  state.lastRenderNow = null;
+  const polygonWasPlaying = state.polygonPlaybackActive;
+  disablePolygonPlayback(map, state, { preserveBasePaints });
+  if (!polygonWasPlaying) state.polygonRenderer?.reset({ preserveBasePaints });
+  disableLinePlayback(map, state, { preserveBasePaints });
+  state.alarmRenderer?.reset({ preserveBasePaints });
   updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
 }
 
-function shouldRafClock(clock, vis) {
-  if (!clock || !vis) return false;
-  if (clock.phase === "playing" && vis.phase !== "ended") return true;
-  return (
-    clock.phase === "paused" &&
-    clock.seekKind === "jump" &&
-    vis.beatElapsedMs < TIMELINE_BEAT_MS
-  );
+function shouldRafClock(frame) {
+  return !!frame?.needsNextFrame;
 }
 
 function tick(map) {
   const state = stateByMap.get(map);
-  if (!state?.clock) return;
+  if (!state?.clock || state.awaitingStyleRemount) return;
   const clock = state.clock;
   const nowFn = state.now || (() => Date.now());
   const nowMs = nowFn();
-  const vis = evaluateClock(clockWithJumpOrigin(map, clock), nowMs);
-  if (clock.phase === "playing" || (clock.phase === "paused" && clock.seekKind === "jump")) {
-    applyPlayingVisuals(map, state, vis);
+  const started = state.monotonicNow();
+  const frame = deriveTimelineFrame(state, nowMs);
+  const rippleEnded = state.lastFrame?.rippleNeedsFrames === true && frame.rippleNeedsFrames === false;
+  const renderDue = state.lastRenderNow == null ||
+    nowMs - state.lastRenderNow >= NLI_VISUAL_TOKENS.completedFlowStepMs ||
+    rippleEnded;
+  if (renderDue) {
+    const vis = evaluateClock(clock, nowMs);
+    if (
+      clock.phase === "playing" ||
+      clock.phase === "ended" ||
+      (clock.phase === "paused" && clock.seekKind === "jump") ||
+      frame.completedFlowNeedsFrames ||
+      frame.rippleNeedsFrames ||
+      rippleEnded
+    ) {
+      applyPlayingVisuals(map, state, vis, frame, state.alarmMode);
+    }
+    state.lastRenderNow = nowMs;
+    state.lastFrame = frame;
   }
-  if (shouldRafClock(clock, vis) && typeof requestAnimationFrame === "function") {
-    state.rafId = requestAnimationFrame(() => tick(map));
-  } else {
-    state.rafId = null;
-  }
-}
-
-async function loadLayerFeatures(deps, fullId) {
-  const provided = deps.featuresById && deps.featuresById[fullId];
-  if (Array.isArray(provided)) return provided;
-  if (fullId === INVESTIGATION_POLYGONS_FULL_ID && Array.isArray(deps.features)) {
-    return deps.features;
-  }
-  const getLayerDataUrl =
-    typeof deps.getLayerDataUrl === "function"
-      ? deps.getLayerDataUrl
-      : (id) => layerRegistry.getLayerDataUrl(id);
-  const url = getLayerDataUrl(fullId);
-  if (!url) return [];
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const json = await res.json();
-  return Array.isArray(json?.features) ? json.features : [];
-}
-
-async function ensureLayerFeatures(state, deps, key, fullId) {
-  if (Array.isArray(state[key])) return;
-  state[key] = await loadLayerFeatures(deps, fullId);
+  const elapsed = Math.max(0, state.monotonicNow() - started);
+  recordPerfSample("nliSchedulerMs", elapsed);
+  if (shouldRafClock(frame)) scheduleFrame(map, state);
 }
 
 function applyStoryPlayback(map, state) {
-  if (state.polygonOn) enablePolygonPlayback(map, state);
-  else disablePolygonPlayback(map, state);
+  ensureRendererHandles(map, state);
+  if (state.polygonOn) {
+    if (!state.polygonPlaybackActive) enablePolygonPlayback(map, state);
+  } else {
+    disablePolygonPlayback(map, state);
+    if (!state.lineOn) state.polygonRenderer?.reset({ preserveBasePaints: true });
+  }
   if (state.lineOn) enableLinePlayback(map, state);
   else disableLinePlayback(map, state);
+}
+
+function resetEffectiveRenderers(map, state, nextMembership, { preservePolygonBasePaints = true } = {}) {
+  if (state.lineOn && !nextMembership.lineOn) {
+    disableLinePlayback(map, state);
+    applyRestingRoutePaints(
+      map,
+      nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID),
+    );
+  }
+  if (state.polygonOn && !nextMembership.polygonOn) {
+    // The host polygon layer can be hidden independently of the narrative.
+    // Remove the owned settlement overlay immediately while retaining the
+    // current base paint expression until this sync computes its next frame.
+    disablePolygonPlayback(map, state, { preserveBasePaints: preservePolygonBasePaints });
+  }
+  if (state.alarmMode !== "off" && !nextMembership.alarmVisible) applyAlarmMode(map, state, "off");
+}
+
+function ensureRendererHandles(map, state) {
+  if (state.alarmRenderer && state.lineRenderer && state.polygonRenderer) return;
+  rendererFactories(map, state);
+}
+
+/**
+ * Invalidate renderer handles before a host `setStyle` call. Cached feature
+ * data and clock state stay in the coordinator; fresh handles are created on
+ * the first sync after the host style has loaded.
+ */
+export function prepareInvestigationTimelineForStyleReload(map) {
+  const state = stateByMap.get(map);
+  if (!state) return;
+  invalidateTimelineSyncRequests(map);
+  cancelScheduledFrame(state);
+  state.styleReady = false;
+  state.awaitingStyleRemount = true;
+  discardRendererHandles(state, { preserveBasePaints: true });
+}
+
+/** Return bounded coordinator counters used by scheduler and cache tests. */
+export function getInvestigationTimelineDiagnostics(map) {
+  const state = stateByMap.get(map);
+  const data = getInvestigationTimelineDataDiagnostics(state?.data);
+  return {
+    linePartitionBuilds: data.linePartitionBuilds,
+    linePartitionFrameBuilds: data.linePartitionFrameBuilds,
+    collisionIndexBuilds: data.collisionIndexBuilds,
+    alarmStructuralRowsBuilds: state?.alarmStructuralRowsBuilds || 0,
+  };
 }
 
 /**
@@ -929,8 +778,20 @@ function applyStoryPlayback(map, state) {
  *   features?: object[],
  *   featuresById?: Record<string, object[]>,
  *   getLayerDataUrl?: (fullId: string) => string | null,
+ *   investigationSettlementsUrl?: string,
+ *   settlementFeatures?: object[],
+ *   locationToOutlineObjectId?: Map<string, string|number>|Record<string, string|number>,
+ *   settlementFeaturesByOutlineId?: Map<string, object>|Record<string, object>,
+ *   dataVersion?: string|number,
+ *   fetchJson?: (url: string) => Promise<unknown>,
  *   now?: () => number,
+ *   monotonicNow?: () => number,
+ *   requestAnimationFrame?: (callback: (timestamp: number) => void) => number,
+ *   cancelAnimationFrame?: (id: number) => void,
  *   visibilityLayerGroups?: unknown,
+ *   displayProfile?: 'gis'|'projection'|object,
+ *   nliCaptionMode?: 'full'|'clock-only',
+ *   motionMode?: 'full'|'reduced',
  *   captionEl?: HTMLElement | null,
  *   allowMapCaption?: boolean,
  *   explainerDebugVisible?: boolean,
@@ -938,33 +799,68 @@ function applyStoryPlayback(map, state) {
  */
 export async function syncInvestigationTimelineToMap(map, clockInput, layerGroups, deps = {}) {
   if (!map || typeof map.getStyle !== "function") return;
+  const state = getOrCreateState(map, deps);
   const visibilityGroups = deps.visibilityLayerGroups != null ? deps.visibilityLayerGroups : layerGroups;
   const clock = normalizeNliClock(clockInput);
   const syncRequest = beginTimelineSyncRequest(map, clock);
-  const nowFn = typeof deps.now === "function" ? deps.now : () => Date.now();
+  const nowFn = typeof deps.now === "function" ? deps.now : state.now || (() => Date.now());
+  state.now = nowFn;
+  state.motionMode = deps.motionMode === "reduced" ? "reduced" : "full";
+  state.displayProfile = displayProfileFromDeps(deps, state.displayProfile);
+  state.rendererDeps = deps;
+  applyCaptionDeps(state, map, deps);
+
+  // A setStyle call can fire style.load before the host has re-synced its base
+  // layers. The style listener marks the coordinator ready; this branch keeps
+  // stale calls inert until that lifecycle event arrives.
+  if (state.awaitingStyleRemount && !state.styleReady) {
+    state.clock = clock;
+    state.clockPhase = clock.phase;
+    refreshInvestigationTimelineData(state.data, deps);
+    return;
+  }
+  if (state.awaitingStyleRemount) {
+    ensureRendererHandles(map, state);
+    state.awaitingStyleRemount = false;
+  }
+
+  refreshInvestigationTimelineData(state.data, deps);
+  const nextMembership = effectiveMembership(clock, visibilityGroups);
+  state.routeLayerVisible = nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID);
+  // Visibility changes are applied before any optional network work so a
+  // hidden renderer cannot remain visible while its sibling dataset loads.
+  resetEffectiveRenderers(map, state, nextMembership, { preservePolygonBasePaints: clock.phase !== "idle" });
 
   if (clock.phase === "idle") {
-    const state = getOrCreateState(map, deps);
-    applyCaptionDeps(state, map, deps);
-    if (state.clockPhase !== "idle") {
-      stopPlayback(map);
-    } else if (state.rafId != null && typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(state.rafId);
-      state.rafId = null;
-    }
-    const alarmsVisible = isNliLayerEnabled(visibilityGroups, "alarms");
+    if (state.clockPhase !== "idle") stopPlayback(map);
+    else cancelScheduledFrame(state);
     state.clock = clock;
     state.clockPhase = "idle";
-    state.playing = false;
     state.polygonOn = false;
-    state.lineOn = false;
-    state.beats = [];
+    state.lineOn = nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID);
+    state.effectiveIds = state.lineOn ? new Set([INVESTIGATION_LINES_FULL_ID]) : new Set();
     state.lastCaption = null;
-    state.now = nowFn;
-    if (alarmsVisible) {
-      await ensureLayerFeatures(state, deps, "alarmFeatures", INVESTIGATION_ALARMS_FULL_ID);
+    if (state.lineOn) {
+      await ensureInvestigationLayerFeatures(state.data, deps, "lineFeatures", INVESTIGATION_LINES_FULL_ID, {
+        request: syncRequest,
+        isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+      });
       if (isStaleTimelineSyncRequest(map, syncRequest)) return;
-      applyAlarmMode(map, state, "idle");
+      enableLinePlayback(map, state);
+      applyIdleFinalRouteVisuals(map, state, nowFn());
+    } else {
+      applyRestingRoutePaints(map, false);
+    }
+    const alarmsVisible = nextMembership.alarmVisible;
+    if (alarmsVisible) {
+      await ensureInvestigationLayerFeatures(state.data, deps, "alarmFeatures", INVESTIGATION_ALARMS_FULL_ID, {
+        request: syncRequest,
+        isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+      });
+      if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+      applyAlarmMode(map, state, "idle", {
+        frame: deriveInvestigationFrame(clock, nowFn(), [], { motionMode: state.motionMode || "full" }),
+      });
     } else {
       applyAlarmMode(map, state, "off");
     }
@@ -972,65 +868,99 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     return;
   }
 
-  const mem = membershipFromClock(clock);
   /** @type {'off' | 'idle' | 'play'} */
-  const alarmMode = mem.alarmPlay
+  const alarmMode = nextMembership.alarmPlay
     ? "play"
-    : isNliLayerEnabled(visibilityGroups, "alarms")
+    : nextMembership.alarmVisible
       ? "idle"
       : "off";
 
-  const state = getOrCreateState(map, deps);
-  applyCaptionDeps(state, map, deps);
-  if (mem.polygonOn) {
-    await ensureLayerFeatures(state, deps, "polygonFeatures", INVESTIGATION_POLYGONS_FULL_ID);
+  if (nextMembership.polygonOn) {
+    await ensureInvestigationLayerFeatures(state.data, deps, "polygonFeatures", INVESTIGATION_POLYGONS_FULL_ID, {
+      request: syncRequest,
+      isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+    });
     if (isStaleTimelineSyncRequest(map, syncRequest)) return;
   }
-  if (mem.lineOn) {
-    await ensureLayerFeatures(state, deps, "lineFeatures", INVESTIGATION_LINES_FULL_ID);
+  if (nextMembership.lineOn || nextMembership.polygonOn) {
+    await ensureInvestigationSettlementFeatures(state.data, deps, {
+      request: syncRequest,
+      isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+    });
+    if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+    await ensureInvestigationLayerFeatures(state.data, deps, "lineFeatures", INVESTIGATION_LINES_FULL_ID, {
+      request: syncRequest,
+      isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+    });
     if (isStaleTimelineSyncRequest(map, syncRequest)) return;
   }
   if (alarmMode !== "off") {
-    await ensureLayerFeatures(state, deps, "alarmFeatures", INVESTIGATION_ALARMS_FULL_ID);
+    await ensureInvestigationLayerFeatures(state.data, deps, "alarmFeatures", INVESTIGATION_ALARMS_FULL_ID, {
+      request: syncRequest,
+      isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+    });
     if (isStaleTimelineSyncRequest(map, syncRequest)) return;
   }
 
   const nowMs = nowFn();
-  rememberJumpOneShotOrigin(map, clock, nowMs);
-  const vis = evaluateClock(clockWithJumpOrigin(map, clock), nowMs);
-  const shouldRaf = shouldRafClock(clock, vis);
-
+  const semantic = membershipFromClock(clock);
+  const vis = evaluateClock(clock, nowMs);
   state.clock = clock;
   state.clockPhase = clock.phase;
-  state.playing = clock.phase === "playing" || clock.phase === "paused" || clock.phase === "ended";
-  state.polygonOn = mem.polygonOn;
-  state.lineOn = mem.lineOn;
-  state.alarmMode = alarmMode;
-  state.beats = Array.isArray(clock.beats) ? clock.beats : [];
-  state.now = nowFn;
+  state.polygonOn = nextMembership.polygonOn;
+  state.lineOn = nextMembership.lineOn;
+  state.effectiveIds = nextMembership.ids;
+  const frame = deriveInvestigationFrame(
+    clock,
+    nowMs,
+    [...state.effectiveIds],
+    {
+      motionMode: state.motionMode,
+      routeBeats: investigationRouteBeats(state.data),
+    },
+  );
+  state.lastFrame = frame;
+  state.lastRenderNow = nowMs;
   applyStoryPlayback(map, state);
-  applyPlayingVisuals(map, state, vis);
-
-  if (shouldRaf) {
-    if (state.rafId == null && typeof requestAnimationFrame === "function") {
-      state.rafId = requestAnimationFrame(() => tick(map));
-    }
-  } else if (state.rafId != null) {
-    if (typeof cancelAnimationFrame === "function") {
-      cancelAnimationFrame(state.rafId);
-    }
-    state.rafId = null;
+  applyPlayingVisuals(map, state, vis, frame, alarmMode);
+  if (semantic.polygonOn && !nextMembership.polygonOn) {
+    const semanticFrame = deriveInvestigationFrame(
+      clock,
+      nowMs,
+      clock.membership || [],
+      {
+        motionMode: state.motionMode,
+        routeBeats: investigationRouteBeats(state.data),
+      },
+    );
+    state.polygonRenderer?.render(semanticFrame, {
+      polygonFeatures: state.data.polygonFeatures,
+      locationToOutlineObjectId: state.data.locationToOutlineObjectId,
+      settlementFeatures: state.data.settlementFeatures,
+      settlementFeaturesByOutlineId: state.data.settlementFeaturesByOutlineId,
+      dataVersion: state.data.dataVersion,
+    });
+    state.polygonRenderer?.reset({ preserveBasePaints: true });
   }
+
+  if (shouldRafClock(frame)) scheduleFrame(map, state);
+  else cancelScheduledFrame(state);
 }
 
 export function disposeInvestigationTimelineForMap(map) {
   if (!map) return;
-  stopPlayback(map);
+  invalidateTimelineSyncRequests(map);
   const state = stateByMap.get(map);
-  if (state) applyAlarmMode(map, state, "off");
-  if (state?.captionOwned && state.captionEl?.parentNode) {
+  if (!state) return;
+  stopPlayback(map);
+  applyRestingRoutePaints(map, state.routeLayerVisible);
+  discardRendererHandles(state);
+  if (state.styleListener && typeof map.off === "function") {
+    try { map.off("style.load", state.styleListener); } catch (_) { /* map may be destroyed */ }
+  }
+  if (state.captionOwned && state.captionEl?.parentNode) {
     state.captionEl.parentNode.removeChild(state.captionEl);
-  } else if (state?.captionEl) {
+  } else if (state.captionEl) {
     state.captionEl.hidden = true;
     state.captionEl.innerHTML = "";
   }

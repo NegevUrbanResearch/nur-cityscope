@@ -12,14 +12,17 @@ import {
   nliBeatIndexFromOccupiedHourPct,
   nliBeatIndexFromPointer,
   nliBeatPctOccupiedHour,
+  isNliRouteFlowActive,
 } from "../../frontend/src/remote/nli-timeline-transport.js";
 import {
+  clockPositionMs,
   endNliClock,
   idleNliClock,
   pauseNliClock,
   playNliClock,
+  replayNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
-import { clockStoryDurationMs } from "../../frontend/src/shared/nli-investigation-beats.js";
+import { clockStoryDurationMs, TIMELINE_BEAT_MS } from "../../frontend/src/shared/nli-investigation-beats.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LINES_ID = "nli.lines";
@@ -192,6 +195,85 @@ describe("nli timeline transport", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  test("route flow activity covers visibility, completion, hold, override, loop, replay, and reduced motion", () => {
+    const selected = [LINES_ID];
+    const hidden = [];
+    const playing = playNliClock(idleNliClock(), [LINES_ID], [400, 740], 0);
+    const notCompleted = {
+      ...playing,
+      phase: "paused",
+      positionMs: TIMELINE_BEAT_MS - 1,
+      anchorMs: TIMELINE_BEAT_MS - 1,
+    };
+    const completed = {
+      ...notCompleted,
+      positionMs: TIMELINE_BEAT_MS,
+      anchorMs: TIMELINE_BEAT_MS,
+    };
+    const cases = [
+      ["incomplete", selected, notCompleted, false],
+      ["completed", selected, completed, true],
+      ["hidden", hidden, completed, false],
+      ["ended", selected, endNliClock(playing), true],
+    ];
+    const routeActive = (clock, options = {}) => isNliRouteFlowActive(clock, {
+      visibleMembership: selected,
+      lineFeatures: lineFeatures(),
+      motionMode: "full",
+      nowMs: 1000,
+      ...options,
+    });
+    for (const [name, groups, clock, active] of cases) {
+      expect(routeActive(clock, { visibleMembership: groups }), name).toBe(active);
+    }
+
+    const hold = {
+      ...playing,
+      phase: "paused",
+      positionMs: playing.beats.length * TIMELINE_BEAT_MS,
+      anchorMs: playing.beats.length * TIMELINE_BEAT_MS,
+    };
+    const override = { ...playing, phase: "paused", positionMs: 0, anchorMs: 0 };
+    const loop = { ...playing, loop: true };
+    const replay = replayNliClock(endNliClock(playing), 9_000);
+    for (const [name, clock, options, active] of [
+      ["paused hold", hold, {}, true],
+      ["explicit completed beats", override, { completedBeats: [740] }, true],
+      ["loop after first beat", loop, { nowMs: TIMELINE_BEAT_MS + 1 }, true],
+      ["replay before first beat", replay, { nowMs: 9_000 }, false],
+      ["replay after first beat", replay, { nowMs: 9_000 + TIMELINE_BEAT_MS }, true],
+    ]) {
+      expect(routeActive(clock, options), name).toBe(active);
+    }
+    for (const [name, options] of [["missing line data", { lineFeatures: undefined }], ["empty line data", { lineFeatures: [] }]]) {
+      expect(routeActive(completed, options), name).toBe(false);
+    }
+    expect(routeActive(completed, { motionMode: "reduced" })).toBe(false);
+  });
+
+  test("transport omits the redundant status row while paused and route flow is active", () => {
+    const clock = {
+      ...playNliClock(idleNliClock(), [LINES_ID], [400, 740], 0),
+      phase: "paused",
+      positionMs: TIMELINE_BEAT_MS,
+      anchorMs: TIMELINE_BEAT_MS,
+    };
+    const html = renderNliTimelineTransport(clock, {
+      displayBeats: [400, 740],
+      visibleMembership: [LINES_ID],
+      lineFeatures: lineFeatures(),
+      motionMode: "full",
+      nowMs: 1000,
+    });
+
+    expect(html).not.toContain("nli-tl-status");
+    expect(html).not.toContain("nliTimelinePaused");
+    expect(html).not.toContain("nliRouteFlowActive");
+    expect(html).toContain("data-nli-tl-play");
+    expect(html).toContain("data-nli-tl-stop");
+    expect(html).toContain("data-nli-tl-scrub");
   });
 
   test("people row stays unlocked while clock is playing", () => {
@@ -447,7 +529,7 @@ describe("nli timeline transport", () => {
     await c.handleNliTimelinePlay();
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
     expect(ctx.patchInvestigationClock.mock.calls[0][0].phase).toBe("playing");
-    expect(ctx.patchInvestigationClock.mock.calls[0][0].beatIndex).toBe(0);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].positionMs).toBe(0);
 
     const playing = playNliClock(idleNliClock(), [LINES_ID], [400, 740], 1000);
     ctx.getInvestigationClock = () => playing;
@@ -463,7 +545,7 @@ describe("nli timeline transport", () => {
     ctx.getInvestigationClock = () => ended;
     await c.handleNliTimelinePlay();
     expect(ctx.patchInvestigationClock.mock.calls[3][0].phase).toBe("playing");
-    expect(ctx.patchInvestigationClock.mock.calls[3][0].beatIndex).toBe(0);
+    expect(ctx.patchInvestigationClock.mock.calls[3][0].positionMs).toBe(0);
   });
 
   test("play uses replay when evaluateClock already ended", async () => {
@@ -476,7 +558,7 @@ describe("nli timeline transport", () => {
     await c.handleNliTimelinePlay();
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
     expect(ctx.patchInvestigationClock.mock.calls[0][0].phase).toBe("playing");
-    expect(ctx.patchInvestigationClock.mock.calls[0][0].beatIndex).toBe(0);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].positionMs).toBe(0);
   });
 
   test("step +1 from idle PATCHes paused at index 0; step -1 is no-op", async () => {
@@ -488,9 +570,9 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
     const next = ctx.patchInvestigationClock.mock.calls[0][0];
     expect(next.phase).toBe("paused");
-    expect(next.beatIndex).toBe(0);
+    expect(next.positionMs).toBe(0);
     expect(next.seekKind).toBe("jump");
-    expect(next.playEpochMs).toBe(1000);
+    expect(next.anchorMs).toBe(1000);
   });
 
   test("idle scrub PATCH includes seekKind jump", async () => {
@@ -500,9 +582,9 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
     expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({
       phase: "paused",
-      beatIndex: 1,
+      positionMs: TIMELINE_BEAT_MS,
       seekKind: "jump",
-      playEpochMs: 1000,
+      anchorMs: 1000,
     });
   });
 
@@ -513,7 +595,7 @@ describe("nli timeline transport", () => {
     await c.handleNliTimelineStep(1);
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
     expect(ctx.patchInvestigationClock.mock.calls[0][0].phase).toBe("paused");
-    expect(ctx.patchInvestigationClock.mock.calls[0][0].beatIndex).toBe(1);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].positionMs).toBe(TIMELINE_BEAT_MS);
   });
 
   test("stop PATCHes idle and keeps loop", async () => {
@@ -549,7 +631,7 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(2);
     expect(ctx.patchInvestigationClock.mock.calls[1][0]).toMatchObject({
       phase: "paused",
-      beatIndex: 1,
+      positionMs: TIMELINE_BEAT_MS,
     });
   });
 
@@ -573,7 +655,7 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
     expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({
       phase: "paused",
-      beatIndex: 0,
+      positionMs: 0,
     });
   });
 
@@ -667,7 +749,7 @@ describe("nli timeline transport", () => {
     const index = Math.round(Math.max(0, Math.min(1, t)) * (beatCount - 1));
     await c.handleNliTimelineScrubPointerUp(index);
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(2);
-    expect(ctx.patchInvestigationClock.mock.calls[1][0].beatIndex).toBe(0);
+    expect(ctx.patchInvestigationClock.mock.calls[1][0].positionMs).toBe(0);
   });
 
   test("render does not replace sheet-content while scrub pointer is captured", () => {
@@ -761,7 +843,7 @@ describe("nli timeline transport", () => {
     const c = makeController();
     c._syncNliEndedTimer(playing);
     expect(c._nliEndTimer).not.toBeNull();
-    const delay = Math.max(0, playing.playEpochMs + clockStoryDurationMs(playing.beats) - now);
+    const delay = Math.max(0, clockStoryDurationMs(playing.beats) - clockPositionMs(playing, now));
     await vi.advanceTimersByTimeAsync(delay - 1);
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
