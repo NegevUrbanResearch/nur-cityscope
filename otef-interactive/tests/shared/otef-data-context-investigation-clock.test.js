@@ -7,9 +7,8 @@ function wireClock(overrides = {}) {
     membership: [INVESTIGATION_LINES_FULL_ID],
     beats: [400, 420],
     loop: false,
-    beatIndex: 1,
-    beatElapsedMs: 0,
-    playEpochMs: null,
+    positionMs: 3200,
+    anchorMs: 24_000,
     seekKind: "jump",
     revision: 4,
     serverNowMs: 25_000,
@@ -39,7 +38,7 @@ describe("OTEFDataContext investigation clock", () => {
       phase: "paused",
       membership: [INVESTIGATION_LINES_FULL_ID],
       beats: [400, 420],
-      beatIndex: 1,
+      positionMs: 3200,
       seekKind: "jump",
       revision: 4,
       serverNowMs: 25_000,
@@ -54,28 +53,28 @@ describe("OTEFDataContext investigation clock", () => {
     const { default: OTEFDataContext } = await import(
       "../../frontend/src/shared/OTEFDataContext.js"
     );
-    OTEFDataContext._setInvestigationClock(wireClock({ revision: 4, phase: "paused", beatIndex: 1 }));
+    OTEFDataContext._setInvestigationClock(wireClock({ revision: 4, phase: "paused", positionMs: 3200 }));
 
     expect(typeof websocket.applyInvestigationClockIfNewer).toBe("function");
 
     websocket.applyInvestigationClockIfNewer(
       OTEFDataContext,
-      wireClock({ revision: 4, phase: "playing", beatIndex: 0, seekKind: "none" }),
+      wireClock({ revision: 4, phase: "playing", positionMs: 0, seekKind: "none" }),
     );
     expect(OTEFDataContext.getInvestigationClock()).toMatchObject({
       phase: "paused",
       revision: 4,
-      beatIndex: 1,
+      positionMs: 3200,
     });
 
     websocket.applyInvestigationClockIfNewer(
       OTEFDataContext,
-      wireClock({ revision: 3, phase: "playing", beatIndex: 0 }),
+      wireClock({ revision: 3, phase: "playing", positionMs: 0 }),
     );
     expect(OTEFDataContext.getInvestigationClock()).toMatchObject({
       phase: "paused",
       revision: 4,
-      beatIndex: 1,
+      positionMs: 3200,
     });
   });
 
@@ -94,8 +93,8 @@ describe("OTEFDataContext investigation clock", () => {
       wireClock({
         revision: 5,
         phase: "playing",
-        beatIndex: 0,
-        playEpochMs: 1_000,
+        positionMs: 0,
+        anchorMs: 1_000,
         seekKind: "none",
         serverNowMs: 21_000,
       }),
@@ -104,7 +103,7 @@ describe("OTEFDataContext investigation clock", () => {
     expect(OTEFDataContext.getInvestigationClock()).toMatchObject({
       phase: "playing",
       revision: 5,
-      beatIndex: 0,
+      positionMs: 0,
     });
     expect(OTEFDataContext.getClockOffsetMs()).toBe(1_000);
   });
@@ -138,8 +137,8 @@ describe("OTEFDataContext investigation clock", () => {
     OTEFDataContext._tableName = "otef";
     OTEFDataContext._clientId = "clock-client";
 
-    const first = wireClock({ phase: "playing", revision: 1, seekKind: "none", playEpochMs: 100 });
-    const second = wireClock({ phase: "paused", revision: 1, beatIndex: 1 });
+    const first = wireClock({ phase: "playing", revision: 1, seekKind: "none", positionMs: 0, anchorMs: 100 });
+    const second = wireClock({ phase: "paused", revision: 1, positionMs: 3200 });
     const p1 = OTEFDataContext.patchInvestigationClock(first);
     const p2 = OTEFDataContext.patchInvestigationClock(second);
 
@@ -179,9 +178,12 @@ describe("OTEFDataContext investigation clock", () => {
     OTEFDataContext._clientId = "clock-client";
 
     await OTEFDataContext.patchInvestigationClock(
-      wireClock({ phase: "playing", revision: 8, playEpochMs: 1 }),
+      wireClock({ phase: "playing", revision: 8, positionMs: 0, anchorMs: 1 }),
     );
 
+    expect(api.OTEF_API.updateInvestigationClock.mock.calls[0][1]).not.toHaveProperty(
+      "serverNowMs",
+    );
     expect(api.OTEF_API.updateInvestigationClock).toHaveBeenCalledWith(
       "otef",
       expect.objectContaining({ phase: "playing" }),
@@ -201,7 +203,7 @@ describe("OTEFDataContext investigation clock", () => {
       json: async () => ({}),
     });
     const { OTEF_API } = await import("../../frontend/src/shared/api-client.js");
-    const clock = { phase: "idle", loop: true };
+    const clock = { phase: "idle", loop: true, serverNowMs: 1234 };
 
     await OTEF_API.updateInvestigationClock("otef", clock, {
       sourceId: "remote-1",
@@ -209,7 +211,7 @@ describe("OTEFDataContext investigation clock", () => {
     });
 
     const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-    expect(body.investigation_clock).toEqual(clock);
+    expect(body.investigation_clock).toEqual({ phase: "idle", loop: true });
     expect(body.sourceId).toBe("remote-1");
     expect(body.timestamp).toBe(42);
   });

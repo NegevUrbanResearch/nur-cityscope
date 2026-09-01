@@ -13,6 +13,8 @@ export const OTEF_MESSAGE_TYPES = {
   PROJECTION_SLIDESHOW_CHANGED: "otef_projection_slideshow_changed",
   INVESTIGATION_CLOCK_CHANGED: "otef_investigation_clock_changed",
   PLACE_NAVIGATION_COMMAND: "otef_place_navigation_command",
+  ARCHIVE_WINDOW_COMMAND: "otef_archive_window_command",
+  ARCHIVE_WINDOW_RESULT: "otef_archive_window_result",
 };
 
 export const DEFAULT_LAYER_STATES = {

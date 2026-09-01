@@ -2,6 +2,7 @@ import { OTEF_API } from "../api-client.js";
 import { isGisBasemapId, normalizeGisBasemap } from "../gis-basemap.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
 import { normalizeNliClock } from "../nli-investigation-clock.js";
+import { normalizePersonSelection } from "../person-selection.js";
 import { OTEFWebSocketClient } from "../websocket-client.js";
 import { recordTraceEvent } from "../otef-trace.js";
 import { OTEFDataContextInternals } from "./index.js";
@@ -16,6 +17,7 @@ function fallbackLogger() {
 }
 
 const getLogger = OTEFDataContextInternals.getLogger || fallbackLogger;
+const PERSON_SELECTION_CHANGED = "otef_person_selection_changed";
 
 function stampClockOffset(ctx, clock) {
   const serverNowMs = Number(clock && clock.serverNowMs);
@@ -29,13 +31,13 @@ function applyInvestigationClockHydrate(ctx, raw, { notify } = { notify: true })
     ctx._setInvestigationClock(raw);
     return;
   }
-  const normalized = normalizeNliClock(raw, ctx._investigationClock);
+  const normalized = normalizeNliClock(raw);
   ctx._investigationClock = normalized;
   stampClockOffset(ctx, normalized);
 }
 
 function applyInvestigationClockIfNewer(ctx, raw) {
-  const incoming = normalizeNliClock(raw, ctx._investigationClock);
+  const incoming = normalizeNliClock(raw);
   const localRev = Number(ctx._investigationClock && ctx._investigationClock.revision) || 0;
   if (!(incoming.revision > localRev)) return;
   if (typeof ctx._setInvestigationClock === "function") {
@@ -44,6 +46,17 @@ function applyInvestigationClockIfNewer(ctx, raw) {
   }
   ctx._investigationClock = incoming;
   stampClockOffset(ctx, incoming);
+}
+
+function applyPersonSelectionIfNewer(ctx, raw) {
+  const incoming = normalizePersonSelection(raw);
+  const local = normalizePersonSelection(ctx._personSelection);
+  if (incoming.revision <= local.revision) return;
+  if (typeof ctx._setPersonSelection === "function") {
+    ctx._setPersonSelection(incoming);
+  } else {
+    ctx._personSelection = incoming;
+  }
 }
 
 function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
@@ -74,6 +87,9 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
       typeof state.investigation_clock === "object"
     ) {
       applyInvestigationClockHydrate(ctx, state.investigation_clock, { notify: true });
+    }
+    if (Object.prototype.hasOwnProperty.call(state, "person_selection")) {
+      ctx._setPersonSelection(state.person_selection);
     }
   } else {
     if (state.viewport) {
@@ -110,6 +126,9 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
       typeof state.investigation_clock === "object"
     ) {
       applyInvestigationClockHydrate(ctx, state.investigation_clock, { notify: false });
+    }
+    if (Object.prototype.hasOwnProperty.call(state, "person_selection")) {
+      ctx._personSelection = normalizePersonSelection(state.person_selection);
     }
   }
 }
@@ -326,11 +345,26 @@ function setupWebSocket(ctx) {
     }
   });
 
+  ctx._wsClient.on(PERSON_SELECTION_CHANGED, (msg = {}) => {
+    if (msg && msg.personSelection) {
+      applyPersonSelectionIfNewer(ctx, msg.personSelection);
+    }
+  });
+
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.PLACE_NAVIGATION_COMMAND, (msg = {}) => {
     const command = msg.command && typeof msg.command === "object" ? msg.command : null;
     if (!command) return;
     if (command.sourceId && command.sourceId === ctx._clientId) return;
     ctx._emitNavigationCommand(command);
+  });
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.ARCHIVE_WINDOW_COMMAND, (msg = {}) => {
+    if (msg.table && msg.table !== ctx._tableName) return;
+    ctx._notify("archiveWindow", msg);
+  });
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.ARCHIVE_WINDOW_RESULT, (msg = {}) => {
+    if (msg.table && msg.table !== ctx._tableName) return;
+    if (msg.sourceId && msg.sourceId === ctx._clientId) return;
+    ctx._notify("archiveWindowResult", msg);
   });
 
   ctx._wsClient.connect();
@@ -340,6 +374,12 @@ OTEFDataContextInternals.websocket = {
   applyStateFromApi,
   setupWebSocket,
   applyInvestigationClockIfNewer,
+  applyPersonSelectionIfNewer,
 };
 
-export { applyStateFromApi, setupWebSocket, applyInvestigationClockIfNewer };
+export {
+  applyStateFromApi,
+  setupWebSocket,
+  applyInvestigationClockIfNewer,
+  applyPersonSelectionIfNewer,
+};

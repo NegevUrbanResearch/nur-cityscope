@@ -46,6 +46,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             # Handle OTEF-specific messages
             if message_type.startswith('otef_'):
                 await self.handle_otef_message(data)
+            elif message_type.endswith('_changed'):
+                return
             else:
                 # Generic broadcast for other message types
                 await self.channel_layer.group_send(
@@ -80,11 +82,7 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             elif action == 'zoom':
                 await self._execute_zoom_command(table_name, data)
             else:
-                # Forward command to any connected GIS maps for real-time execution
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {'type': 'broadcast_message', 'message': data}
-                )
+                return
 
         elif message_type == 'otef_layer_update':
             # Layer visibility change
@@ -117,11 +115,8 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             )
 
         else:
-            # Unknown OTEF message - just broadcast
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {'type': 'broadcast_message', 'message': data}
-            )
+            # State changes are server-originated; reject unknown OTEF inputs.
+            return
 
     async def _execute_pan_command(self, table_name, data):
         """Execute pan command server-side and broadcast result"""

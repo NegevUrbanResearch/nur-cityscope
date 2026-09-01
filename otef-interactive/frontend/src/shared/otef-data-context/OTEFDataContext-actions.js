@@ -8,6 +8,12 @@ import {
 import { generateTraceId, recordTraceEvent } from "../otef-trace.js";
 import { isNliPlayableFullId } from "../nli-investigation-beats.js";
 import { OTEFDataContextInternals } from "./index.js";
+import {
+  archiveWindowCommand,
+  archiveWindowResult,
+  clearPerson,
+  selectPerson,
+} from "./OTEFDataContext-person-actions.js";
 
 function fallbackLogger() {
   return {
@@ -739,7 +745,9 @@ async function setBasemap(ctx, basemap) {
 async function patchInvestigationClock(ctx, next) {
   const run = async () => {
     if (!ctx._tableName) return;
-    const state = await OTEF_API.updateInvestigationClock(ctx._tableName, next, {
+    const writeClock = { ...next };
+    delete writeClock.serverNowMs;
+    const state = await OTEF_API.updateInvestigationClock(ctx._tableName, writeClock, {
       sourceId: ctx._clientId,
       timestamp: Date.now(),
     });
@@ -894,6 +902,10 @@ OTEFDataContextInternals.actions = {
   setBasemap,
   patchInvestigationClock,
   navigateToPlace,
+  selectPerson,
+  clearPerson,
+  archiveWindowCommand,
+  archiveWindowResult,
   computePanViewport,
   computeZoomViewport,
 };
@@ -913,6 +925,10 @@ export {
   setBasemap,
   patchInvestigationClock,
   navigateToPlace,
+  selectPerson,
+  clearPerson,
+  archiveWindowCommand,
+  archiveWindowResult,
   computePanViewport,
   computeZoomViewport,
 };

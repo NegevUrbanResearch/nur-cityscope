@@ -11,6 +11,11 @@ import layerRegistry from "../shared/layer-registry.js";
 
 /** Query box padding so 4px circle-radius points remain clickable. */
 export const GIS_POPUP_HIT_PADDING_PX = 8;
+export const GIS_PEOPLE_SOURCE_ID = "nli.people";
+
+export function hasGisPeopleHit(renderedFeatures) {
+  return Array.isArray(renderedFeatures) && renderedFeatures.some((feature) => feature?.source === GIS_PEOPLE_SOURCE_ID);
+}
 
 /**
  * Pick the topmost queried feature that has a registry popup config.
@@ -24,6 +29,7 @@ export function resolveGisPopupHit(renderedFeatures, getLayerConfig) {
   if (!Array.isArray(renderedFeatures) || typeof getLayerConfig !== "function") {
     return null;
   }
+  if (hasGisPeopleHit(renderedFeatures)) return null;
   for (const feature of renderedFeatures) {
     const fullId = feature && feature.source != null ? String(feature.source) : "";
     if (!fullId || fullId.startsWith("curated")) {
@@ -50,7 +56,7 @@ function defaultGetLayerConfig(fullId) {
  *
  * @param {object} map
  * @param {{ Popup: new (opts?: object) => object }} maplibregl
- * @param {{ getLayerConfig?: (fullId: string) => object|null, hitPadding?: number }} [options]
+ * @param {{ getLayerConfig?: (fullId: string) => object|null, hitPadding?: number, onGisClick?: (event: object, features: object[]) => boolean }} [options]
  * @returns {() => void} disposer
  */
 export function attachGisFeaturePopups(map, maplibregl, options = {}) {
@@ -86,6 +92,14 @@ export function attachGisFeaturePopups(map, maplibregl, options = {}) {
       typeof map.queryRenderedFeatures === "function"
         ? map.queryRenderedFeatures(bbox)
         : [];
+    if (options.onGisClick?.(e, features) === true) {
+      popup.remove();
+      return;
+    }
+    if (hasGisPeopleHit(features)) {
+      popup.remove();
+      return;
+    }
     const hit = resolveGisPopupHit(features, getLayerConfig);
     if (!hit) {
       popup.remove();

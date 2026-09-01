@@ -1,6 +1,7 @@
 import { OTEF_API } from "./api-client.js";
 import { normalizeGisBasemap } from "./gis-basemap.js";
 import { idleNliClock, normalizeNliClock } from "./nli-investigation-clock.js";
+import { normalizePersonSelection } from "./person-selection.js";
 import { OTEFDataContextInternals } from "./otef-data-context/index.js";
 import { recordTraceEvent } from "./otef-trace.js";
 import {
@@ -63,6 +64,24 @@ function viewportEqual(a, b) {
   for (let i = 0; i < ba.length; i++) {
     if (Math.abs(ba[i] - bb[i]) > 0.01) return false;
   }
+
+  const ca = a.corners;
+  const cb = b.corners;
+  if (ca || cb) {
+    if (!ca || !cb) return false;
+    for (const corner of ["sw", "se", "nw", "ne"]) {
+      const pa = ca[corner];
+      const pb = cb[corner];
+      if (
+        !pa ||
+        !pb ||
+        Math.abs(pa.x - pb.x) > 0.01 ||
+        Math.abs(pa.y - pb.y) > 0.01
+      ) {
+        return false;
+      }
+    }
+  }
   return true;
 }
 
@@ -87,7 +106,10 @@ class OTEFDataContextClass {
       orientation: new Set(),
       projectionSlideshow: new Set(),
       investigationClock: new Set(),
+      personSelection: new Set(),
       navigationCommand: new Set(),
+      archiveWindow: new Set(),
+      archiveWindowResult: new Set(),
     };
 
     this._wsClient = null;
@@ -112,6 +134,7 @@ class OTEFDataContextClass {
     /** @type {Record<string, unknown> | null} */
     this._projectionSlideshow = null;
     this._investigationClock = idleNliClock();
+    this._personSelection = normalizePersonSelection(null);
     this._clockOffsetMs = 0;
     this._clockPatchQueue = null;
   }
@@ -304,7 +327,7 @@ class OTEFDataContextClass {
    * @param {unknown} clock
    */
   _setInvestigationClock(clock) {
-    const next = normalizeNliClock(clock, this._investigationClock);
+    const next = normalizeNliClock(clock);
     if (Number.isFinite(next.serverNowMs)) {
       this._clockOffsetMs = next.serverNowMs - Date.now();
     }
@@ -365,6 +388,46 @@ class OTEFDataContextClass {
 
   getInvestigationClock() {
     return this._investigationClock;
+  }
+
+  _setPersonSelection(selection) {
+    const next = normalizePersonSelection(selection);
+    if (JSON.stringify(this._personSelection) === JSON.stringify(next)) return;
+    this._personSelection = next;
+    this._notify("personSelection", this._personSelection);
+  }
+
+  getPersonSelection() {
+    return this._personSelection;
+  }
+
+  _personSelectionAction(name, ...args) {
+    const actions = OTEFDataContextInternals.actions;
+    if (!actions || typeof actions[name] !== "function") {
+      getLogger().error(`[OTEFDataContext] Missing ${name} action helper`);
+      return Promise.reject(new Error(`Missing ${name} action helper`));
+    }
+    return actions[name](this, ...args);
+  }
+
+  selectPerson(personId, datasetVersion) {
+    return this._personSelectionAction("selectPerson", personId, datasetVersion);
+  }
+
+  clearPerson() {
+    return this._personSelectionAction("clearPerson");
+  }
+
+  archiveWindowCommand(action, personId, datasetVersion, requestId) {
+    const helper = OTEFDataContextInternals.actions?.archiveWindowCommand;
+    return typeof helper === "function" ? helper(this, action, personId, datasetVersion, requestId) : Promise.resolve({ ok: false, reason: "missing_action" });
+  }
+
+  archiveWindowResult(outcome, personId, datasetVersion, requestId) {
+    const helper = OTEFDataContextInternals.actions?.archiveWindowResult;
+    return typeof helper === "function"
+      ? helper(this, outcome, personId, datasetVersion, requestId)
+      : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 
   getClockOffsetMs() {
@@ -621,6 +684,9 @@ class OTEFDataContextClass {
         break;
       case "investigationClock":
         current = this._investigationClock;
+        break;
+      case "personSelection":
+        current = this._personSelection;
         break;
       case "navigationCommand":
         current = undefined;

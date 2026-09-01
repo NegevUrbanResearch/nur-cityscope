@@ -102,6 +102,17 @@ describe("resolveGisPopupHit", () => {
     );
     expect(hit).toBeNull();
   });
+
+  test("blocks a people hit from falling through to an underlying generic popup", () => {
+    const hit = resolveGisPopupHit(
+      [
+        { source: "nli.nli_catalog", properties: { name_he: "underlying" } },
+        { source: "nli.people", properties: { pid: "p-1" } },
+      ],
+      getLayerConfig,
+    );
+    expect(hit).toBeNull();
+  });
 });
 
 describe("attachGisFeaturePopups", () => {

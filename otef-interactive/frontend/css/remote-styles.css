@@ -524,6 +524,35 @@ body.otef-remote-shell {
   position: relative;
 }
 
+.place-search-modes {
+  display: inline-flex;
+  align-self: start;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-pill);
+  background: var(--color-surface);
+}
+
+.place-search-mode {
+  min-block-size: 44px;
+  min-inline-size: 44px;
+  padding-inline: 12px;
+  border: 0;
+  border-radius: var(--rounded-pill);
+  background: transparent;
+  color: var(--color-ink-muted);
+  font: var(--font-label-sm);
+  cursor: pointer;
+}
+
+.place-search-mode.is-active {
+  background: var(--color-surface-raised);
+  color: var(--color-primary);
+}
+
+.place-search-mode:focus-visible { outline: none; box-shadow: var(--focus-ring-primary); }
+
 .place-search-icon {
   position: absolute;
   inset-inline-start: 0.85rem;
@@ -678,6 +707,47 @@ body.otef-remote-shell {
   text-align: end;
   overflow-wrap: anywhere;
 }
+
+.person-suggestion { align-items: baseline; }
+.person-suggestion__location { color: var(--color-ink-muted); font-size: 0.8125rem; text-align: end; }
+
+.place-search-archive-button {
+  min-block-size: 48px;
+  inline-size: 100%;
+  padding: 0.75rem 1rem;
+  border: 0;
+  border-radius: var(--rounded-md);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font: var(--font-body-md);
+  cursor: pointer;
+}
+
+.place-search-archive-button:focus-visible { outline: none; box-shadow: var(--focus-ring-primary); }
+
+#navigationSection.is-archive-open .navigation-panel-stack > .navigation-group:not(.navigation-group--place-search),
+#navigationSection.is-archive-open .navigation-group--place-search > :not(.place-search-archive-button):not(.nli-record-dialog) {
+  display: none;
+}
+
+#navigationSection.is-archive-open .navigation-group--place-search {
+  min-block-size: 14rem;
+  justify-content: center;
+}
+
+.nli-record-dialog {
+  max-inline-size: min(22rem, calc(100vw - 2rem));
+  padding: 1.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-lg);
+  background: var(--color-surface-raised);
+  color: var(--color-ink);
+  text-align: center;
+}
+
+.nli-record-dialog::backdrop { background: rgb(20 18 16 / 70%); }
+.nli-record-dialog p { margin: 0 0 1rem; }
+.nli-record-dialog button { min-block-size: 44px; padding-inline: 1.25rem; }
 
 .place-search-status {
   min-height: 0;

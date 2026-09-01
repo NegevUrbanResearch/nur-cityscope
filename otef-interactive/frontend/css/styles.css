@@ -435,6 +435,37 @@ body {
   }
 }
 
+.gis-person-bubble-popup .maplibregl-popup-content {
+  --gis-person-selection-color: #c31f4f;
+  --gis-person-selection-halo: 2px;
+  --gis-person-selection-padding: 8px 10px;
+  --gis-person-selection-contrast: #171717;
+  --gis-person-selection-secondary-contrast: #4a2732;
+  --gis-person-selection-text-size: 13px;
+  border: var(--gis-person-selection-halo) solid var(--gis-person-selection-color);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--gis-person-selection-contrast);
+  box-shadow: 0 2px 8px rgba(35, 18, 24, 0.2);
+  min-width: 120px;
+  max-width: 240px;
+  padding: var(--gis-person-selection-padding);
+}
+
+.gis-person-bubble { direction: auto; line-height: 1.35; }
+.gis-person-bubble__name,
+.gis-person-bubble__location {
+  display: -webkit-box;
+  font-size: var(--gis-person-selection-text-size);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: normal;
+}
+.gis-person-bubble__name { font-weight: 700; }
+.gis-person-bubble__location { margin-top: 2px; color: var(--gis-person-selection-secondary-contrast); }
+
 /* Pink line curated layer: node markers (no numbers), tooltip on hover */
 .pink-line-node-marker {
   background: transparent;

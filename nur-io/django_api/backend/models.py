@@ -396,6 +396,8 @@ class OTEFViewportState(models.Model):
     # Shared NLI investigation clock (play/pause/seek), replicated over otef WebSocket
     investigation_clock = models.JSONField(default=dict, blank=True)
 
+    person_selection = models.JSONField(default=dict, blank=True)
+
     basemap = models.CharField(max_length=16, default="osm")
 
     updated_at = models.DateTimeField(auto_now=True)

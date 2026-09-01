@@ -263,6 +263,23 @@ describe("remote-locale", () => {
     expect(t("placeSearchFailed")).toBe("Could not navigate to settlement");
   });
 
+  test("people mode strings resolve for both locales", async () => {
+    installLocaleTestEnv();
+    const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    const keys = ["settlementsMode", "peopleMode", "peopleSearchPlaceholder", "peopleSearchLoading", "peopleSearchUnavailable", "peopleSearchDisconnected", "peopleSearchEmpty", "peopleSearchStopping", "peopleSearchStopFailed", "peopleSearchSelectionFailed"];
+    for (const locale of ["he", "en"]) {
+      setLocale(locale, { force: true });
+      expect(keys.every((key) => t(key) !== key)).toBe(true);
+    }
+  });
+
+  test("Hebrew openNliRecord uses the archive action label", async () => {
+    installLocaleTestEnv();
+    const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    setLocale("he", { force: true });
+    expect(t("openNliRecord")).toBe("פתיחת ארכיון הספרייה");
+  });
+
   test("slideshow settlement-names toggle strings resolve for both locales", async () => {
     installLocaleTestEnv();
     const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");

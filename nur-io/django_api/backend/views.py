@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 from django.http import JsonResponse
 from rest_framework import viewsets, status
@@ -42,6 +42,13 @@ from .serializers import (
     OTEFViewportStateSerializer,
     LayerGroupSerializer,
     LayerStateSerializer,
+)
+from .otef_person_selection import (
+    build_person_selection_event,
+    lock_person_selection_state,
+    normalize_person_selection,
+    parse_person_selection_command,
+    transition_person_selection,
 )
 
 
@@ -127,9 +134,8 @@ def _idle_investigation_clock(loop=False, revision=0):
         "membership": [],
         "beats": [],
         "loop": bool(loop),
-        "beatIndex": -1,
-        "beatElapsedMs": 0,
-        "playEpochMs": None,
+        "positionMs": 0,
+        "anchorMs": None,
         "seekKind": "none",
         "revision": int(revision),
     }
@@ -147,131 +153,150 @@ def _investigation_clock_for_response(raw):
     return _stamp_investigation_clock_server_now(raw)
 
 
-def _previous_investigation_clock_loop(prev):
-    if isinstance(prev, dict) and isinstance(prev.get("loop"), bool):
-        return prev["loop"]
-    return False
+def _clock_patch_error(message):
+    return Response({"error": message}, status=status.HTTP_400_BAD_REQUEST)
 
 
-def _normalize_investigation_clock_patch(raw, prev=None):
+def _normalize_investigation_clock_patch(raw):
     """
     Validate and normalize investigation_clock PATCH body.
     Returns (normalized_dict, None) or (None, error Response).
     revision and serverNowMs are assigned by the caller.
     """
     if not isinstance(raw, dict):
-        return None, Response(
-            {"error": "investigation_clock must be an object"},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return None, _clock_patch_error("investigation_clock must be an object")
     phase = raw.get("phase")
     if phase not in _INVESTIGATION_CLOCK_PHASES:
-        return None, Response(
-            {
-                "error": (
-                    'investigation_clock.phase must be '
-                    '"idle", "playing", "paused", or "ended"'
-                )
-            },
-            status=status.HTTP_400_BAD_REQUEST,
+        return None, _clock_patch_error(
+            'investigation_clock.phase must be "idle", "playing", "paused", or "ended"'
         )
 
-    if "seekKind" in raw and raw.get("seekKind") not in _INVESTIGATION_CLOCK_SEEK_KINDS:
-        return None, Response(
-            {"error": 'investigation_clock.seekKind must be "none" or "jump"'},
-            status=status.HTTP_400_BAD_REQUEST,
+    allowed = {
+        "phase",
+        "membership",
+        "beats",
+        "loop",
+        "positionMs",
+        "anchorMs",
+        "seekKind",
+        "alarmOnsetOriginMs",
+        "revision",
+        "serverNowMs",
+    }
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        return None, _clock_patch_error(
+            f"investigation_clock contains unsupported fields: {', '.join(unknown)}"
         )
 
-    membership = []
-    if "membership" in raw:
-        membership = raw["membership"]
-        if not isinstance(membership, list):
-            return None, Response(
-                {"error": "investigation_clock.membership must be an array"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        for item in membership:
-            if item not in _NLI_PLAYABLE_IDS:
-                return None, Response(
-                    {
-                        "error": (
-                            "investigation_clock.membership ids must be "
-                            "nli.investigation_polygons, nli.lines, or nli.alarms"
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-        membership = [str(x) for x in membership]
-
-    beats = []
-    if "beats" in raw:
-        beats_raw = raw["beats"]
-        if not isinstance(beats_raw, list):
-            return None, Response(
-                {"error": "investigation_clock.beats must be an array"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        for item in beats_raw:
-            number = _finite_number(item)
-            if number is None:
-                return None, Response(
-                    {"error": "investigation_clock.beats must be finite numbers"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            beats.append(int(number) if number == int(number) else number)
-
-    if "loop" in raw:
-        if not isinstance(raw["loop"], bool):
-            return None, Response(
-                {"error": "investigation_clock.loop must be a boolean"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        loop = raw["loop"]
-    else:
-        loop = _previous_investigation_clock_loop(prev)
-
+    if not isinstance(raw.get("loop"), bool):
+        return None, _clock_patch_error("investigation_clock.loop must be a boolean")
     if phase == "idle":
-        return _idle_investigation_clock(loop=loop), None
+        return _idle_investigation_clock(loop=raw["loop"]), None
 
-    seek_kind = raw.get("seekKind", "none")
+    required = {
+        "membership",
+        "beats",
+        "loop",
+        "positionMs",
+        "anchorMs",
+        "seekKind",
+    }
+    missing = sorted(required - set(raw))
+    if missing:
+        return None, _clock_patch_error(
+            f"investigation_clock is missing required fields: {', '.join(missing)}"
+        )
+
+    membership = raw["membership"]
+    if not isinstance(membership, list) or not membership:
+        return None, _clock_patch_error(
+            "investigation_clock.membership must be a non-empty array"
+        )
+    if any(
+        not isinstance(item, str) or item not in _NLI_PLAYABLE_IDS
+        for item in membership
+    ) or len(set(membership)) != len(membership):
+        return None, _clock_patch_error(
+            "investigation_clock.membership must contain unique playable NLI ids"
+        )
+
+    beats = raw["beats"]
+    if not isinstance(beats, list) or not beats:
+        return None, _clock_patch_error(
+            "investigation_clock.beats must be a non-empty array"
+        )
+    if any(
+        isinstance(item, bool)
+        or not isinstance(item, (int, float))
+        or not math.isfinite(item)
+        for item in beats
+    ):
+        return None, _clock_patch_error(
+            "investigation_clock.beats must contain finite numbers"
+        )
+    if any(current <= previous for previous, current in zip(beats, beats[1:])):
+        return None, _clock_patch_error(
+            "investigation_clock.beats must be strictly increasing"
+        )
+
+    position = raw["positionMs"]
+    if (
+        isinstance(position, bool)
+        or not isinstance(position, (int, float))
+        or not math.isfinite(position)
+        or position < 0
+    ):
+        return None, _clock_patch_error(
+            "investigation_clock.positionMs must be a non-negative finite number"
+        )
+
+    anchor = raw["anchorMs"]
+    if phase == "ended":
+        if anchor is not None:
+            return None, _clock_patch_error(
+                "investigation_clock.anchorMs must be null when ended"
+            )
+    elif (
+        isinstance(anchor, bool)
+        or not isinstance(anchor, (int, float))
+        or not math.isfinite(anchor)
+    ):
+        return None, _clock_patch_error(
+            "investigation_clock.anchorMs must be a finite number"
+        )
+
+    seek_kind = raw["seekKind"]
     if seek_kind not in _INVESTIGATION_CLOCK_SEEK_KINDS:
-        seek_kind = "none"
-    if phase != "paused":
-        seek_kind = "none"
+        return None, _clock_patch_error(
+            'investigation_clock.seekKind must be "none" or "jump"'
+        )
+    if phase != "paused" and seek_kind != "none":
+        return None, _clock_patch_error(
+            'investigation_clock.seekKind must be "none" unless paused'
+        )
 
-    beat_index = raw.get("beatIndex", 0)
-    try:
-        beat_index = int(beat_index)
-    except (TypeError, ValueError):
-        beat_index = 0
-
-    beat_elapsed = raw.get("beatElapsedMs", 0)
-    try:
-        beat_elapsed = 0 if beat_elapsed is None else int(round(float(beat_elapsed)))
-        if beat_elapsed < 0:
-            beat_elapsed = 0
-    except (TypeError, ValueError):
-        beat_elapsed = 0
-
-    play_epoch = None
-    if phase in ("playing", "paused"):
-        play_raw = raw.get("playEpochMs")
-        if play_raw is not None:
-            number = _finite_number(play_raw)
-            if number is not None:
-                play_epoch = int(number) if number == int(number) else number
-
-    return {
-        "phase": phase,
-        "membership": membership,
-        "beats": beats,
-        "loop": loop,
-        "beatIndex": beat_index,
-        "beatElapsedMs": beat_elapsed,
-        "playEpochMs": play_epoch,
-        "seekKind": seek_kind,
-    }, None
-
+    normalized = {key: raw[key] for key in (
+        "phase",
+        "membership",
+        "beats",
+        "loop",
+        "positionMs",
+        "anchorMs",
+        "seekKind",
+    )}
+    if "alarmOnsetOriginMs" in raw:
+        origin = raw["alarmOnsetOriginMs"]
+        if (
+            isinstance(origin, bool)
+            or not isinstance(origin, (int, float))
+            or not math.isfinite(origin)
+        ):
+            return None, _clock_patch_error(
+                "investigation_clock.alarmOnsetOriginMs must be a finite number"
+            )
+        normalized["alarmOnsetOriginMs"] = origin
+    return normalized, None
 
 def _finite_number(value):
     try:
@@ -537,6 +562,131 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             payload.update(extra)
         print("[OTEF TRACE] " + json.dumps(payload, ensure_ascii=False))
 
+    def _broadcast_person_selection(self, table_name, snapshot, metadata=None):
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+
+        message = {
+            "type": "broadcast_message",
+            "message": build_person_selection_event(table_name, snapshot, metadata),
+        }
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)("otef_channel", message)
+
+    def _schedule_person_selection_broadcast(self, table_name, snapshot, metadata):
+        captured = dict(snapshot)
+        transaction.on_commit(
+            lambda: self._broadcast_person_selection(table_name, captured, dict(metadata or {}))
+        )
+
+    def _broadcast_archive_window_command(self, table_name, command):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {"type": "otef_archive_window_command", "table": table_name, **command},
+        })
+
+    def _broadcast_archive_window_result(self, table_name, result):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {"type": "otef_archive_window_result", "table": table_name, **result},
+        })
+
+    def _archive_window_result(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        raw_values = {key: payload.get(key) for key in ("outcome", "personId", "datasetVersion", "requestId", "sourceId")}
+        if any(not isinstance(value, str) or not value.strip() or len(value.strip()) > 128 for value in raw_values.values()):
+            return Response({"error": "archive result fields must be bounded strings"}, status=status.HTTP_400_BAD_REQUEST)
+        outcome, person_id, version, request_id, source_id = (raw_values[key].strip() for key in ("outcome", "personId", "datasetVersion", "requestId", "sourceId"))
+        if outcome not in ("navigation_attempted", "unavailable", "closed"):
+            return Response({"error": "invalid archive result outcome"}, status=status.HTTP_400_BAD_REQUEST)
+        if not all((person_id, version, request_id, source_id)) or any(len(value) > 128 for value in (person_id, version, request_id, source_id)):
+            return Response({"error": "personId, datasetVersion, requestId, and sourceId are required"}, status=status.HTTP_400_BAD_REQUEST)
+        result = {
+            "outcome": outcome,
+            "personId": person_id, "datasetVersion": version, "requestId": request_id,
+            "sourceId": source_id, "acknowledged": True,
+        }
+        transaction.on_commit(lambda: self._broadcast_archive_window_result(table.name, dict(result)))
+        return Response({"status": "ok", "action": "archive_window_result", "requestId": request_id, "acknowledged": True})
+
+    def _archive_window_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        action = payload.get("archiveAction")
+        if action not in ("open", "close"):
+            return Response({"error": "archive action must be open or close"}, status=status.HTTP_400_BAD_REQUEST)
+        raw_values = {key: payload.get(key) for key in ("personId", "datasetVersion", "requestId", "sourceId")}
+        if any(not isinstance(value, str) or not value.strip() or len(value.strip()) > 128 for value in raw_values.values()):
+            return Response({"error": "personId, datasetVersion, requestId, and sourceId must be bounded strings"}, status=status.HTTP_400_BAD_REQUEST)
+        person_id, version, request_id, source_id = (raw_values[key].strip() for key in ("personId", "datasetVersion", "requestId", "sourceId"))
+        command = {
+            "action": action,
+            "personId": person_id, "datasetVersion": version, "requestId": request_id,
+            "sourceId": source_id, "acknowledged": True,
+        }
+        if action == "open":
+            with transaction.atomic():
+                state = OTEFViewportState.objects.select_for_update().filter(table=table).first()
+                selection = normalize_person_selection(state.person_selection if state else {})
+                clock = state.investigation_clock if state else {}
+                if selection.get("personId") != person_id or selection.get("datasetVersion") != version:
+                    return Response({"error": "archive person selection mismatch"}, status=status.HTTP_409_CONFLICT)
+                if isinstance(clock, dict) and clock.get("phase") not in (None, "idle"):
+                    return Response({"error": "archive unavailable while timeline is active"}, status=status.HTTP_409_CONFLICT)
+                transaction.on_commit(lambda: self._broadcast_archive_window_command(table.name, dict(command)))
+        else:
+            transaction.on_commit(lambda: self._broadcast_archive_window_command(table.name, dict(command)))
+        return Response({"status": "ok", "action": action, "requestId": request_id, "acknowledged": True})
+
+    def _selection_command(self, table, action, request):
+        command, error = parse_person_selection_command(action, request.data)
+        if error:
+            return Response(
+                {"error": error},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            locked = lock_person_selection_state(table.otef_viewport)
+            snapshot, changed, error, reason = transition_person_selection(
+                locked,
+                command["target"],
+                expected_revision=command["expected_revision"],
+            )
+            if error:
+                conflict = reason in ("stale", "clock_active")
+                payload = {"error": error}
+                if conflict:
+                    payload["reason"] = reason
+                    payload["person_selection"] = snapshot
+                return Response(
+                    payload,
+                    status=status.HTTP_409_CONFLICT if conflict else status.HTTP_400_BAD_REQUEST,
+                )
+            if changed:
+                self._schedule_person_selection_broadcast(
+                    table.name,
+                    snapshot,
+                    {
+                        "sourceId": request.data.get("sourceId"),
+                        "timestamp": request.data.get("timestamp"),
+                        "traceId": request.data.get("traceId"),
+                    },
+                )
+        return Response({"status": "ok", "action": action, "person_selection": snapshot})
+
     def _broadcast_state_change(
         self,
         table_name,
@@ -701,7 +851,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     'message': {
                         'type': 'otef_investigation_clock_changed',
                         'table': table_name,
-                        'investigationClock': clock,
+                        'investigationClock': _investigation_clock_for_response(clock),
                         'sourceId': source_id,
                         'timestamp': int(timestamp),
                         'traceId': trace_id,
@@ -778,6 +928,8 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 table_name=table_name,
             )
             changed_fields = []
+            selection_cleared = False
+            clock_persisted = False
 
             # Partial updates for each field
             if 'viewport' in request.data:
@@ -856,26 +1008,49 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 changed_fields.append('projection_slideshow')
 
             if 'investigation_clock' in request.data:
-                prev_clock = state.investigation_clock or {}
                 normalized, err = _normalize_investigation_clock_patch(
-                    request.data['investigation_clock'],
-                    prev_clock,
+                    request.data['investigation_clock']
                 )
                 if err is not None:
                     return err
-                rev = 0
-                if isinstance(prev_clock, dict):
+                with transaction.atomic():
+                    locked = lock_person_selection_state(state)
+                    for field in changed_fields:
+                        attr = "bounds_polygon" if field == "bounds" else field
+                        if hasattr(locked, attr):
+                            setattr(locked, attr, getattr(state, attr))
+                    if normalized.get("phase") != "idle":
+                        cleared, selection_changed, _error, _reason = transition_person_selection(
+                            locked,
+                            {"personId": None, "datasetVersion": None},
+                            normalizer=normalize_person_selection,
+                        )
+                        if selection_changed:
+                            self._schedule_person_selection_broadcast(table_name, cleared, {"sourceId": request.data.get("sourceId"), "timestamp": request.data.get("timestamp"), "traceId": trace_id})
+                            selection_cleared = True
+                    prev_clock = locked.investigation_clock or {}
                     try:
-                        rev = int(prev_clock.get('revision') or 0)
+                        rev = int(prev_clock.get('revision') or 0) if isinstance(prev_clock, dict) else 0
                     except (TypeError, ValueError):
                         rev = 0
-                normalized['revision'] = rev + 1
-                state.investigation_clock = _stamp_investigation_clock_server_now(
-                    normalized
-                )
+                    normalized['revision'] = rev + 1
+                    locked.investigation_clock = normalized
+                    update_fields = [
+                        "investigation_clock",
+                        "updated_at",
+                        *[
+                            "bounds_polygon" if field == "bounds" else field
+                            for field in changed_fields
+                            if hasattr(locked, "bounds_polygon" if field == "bounds" else field)
+                        ],
+                    ]
+                    locked.save(update_fields=list(dict.fromkeys(update_fields)))
+                    state = locked
+                    clock_persisted = True
                 changed_fields.append('investigation_clock')
 
-            state.save()
+            if not clock_persisted:
+                state.save()
             self._emit_trace_event(
                 trace_id,
                 "django.patch.saved",
@@ -884,15 +1059,19 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             )
 
             # Broadcast notifications for each changed field
-            self._broadcast_state_change(
-                table_name,
-                changed_fields,
-                {
-                    'sourceId': request.data.get('sourceId') or request_viewport.get('sourceId'),
-                    'timestamp': request.data.get('timestamp') or request_viewport.get('timestamp'),
-                    'traceId': trace_id,
-                },
-            )
+            broadcast_metadata = {
+                'sourceId': request.data.get('sourceId') or request_viewport.get('sourceId'),
+                'timestamp': request.data.get('timestamp') or request_viewport.get('timestamp'),
+                'traceId': trace_id,
+            }
+            if selection_cleared and 'investigation_clock' in changed_fields:
+                transaction.on_commit(
+                    lambda: self._broadcast_state_change(
+                        table_name, list(changed_fields), dict(broadcast_metadata)
+                    )
+                )
+            else:
+                self._broadcast_state_change(table_name, changed_fields, broadcast_metadata)
 
         # Return state with defaults applied (for both GET and PATCH)
         response_data = {
@@ -918,6 +1097,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             'investigation_clock': _investigation_clock_for_response(
                 state.investigation_clock
             ),
+            'person_selection': normalize_person_selection(state.person_selection),
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -1543,6 +1723,15 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             extra={"action": action},
         )
 
+        if action in ("select_person", "clear_person"):
+            return self._selection_command(table, action, request)
+
+        if action == "archive_window":
+            return self._archive_window_command(table, request)
+
+        if action == "archive_window_result":
+            return self._archive_window_result(table, request)
+
         if action in (
             "set_layer_toggles",
             "set_layers_enabled",
@@ -1643,7 +1832,29 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 "timestamp": int(timestamp),
                 "traceId": trace_id,
             }
-            self._broadcast_place_navigation_command(table_name, command_payload)
+            with transaction.atomic():
+                locked = lock_person_selection_state(state)
+                cleared, selection_changed, _error, _reason = transition_person_selection(
+                    locked,
+                    {"personId": None, "datasetVersion": None},
+                    normalizer=normalize_person_selection,
+                )
+                if selection_changed:
+                    self._schedule_person_selection_broadcast(
+                        table_name,
+                        cleared,
+                        {
+                            "sourceId": command_payload.get("sourceId"),
+                            "timestamp": command_payload.get("timestamp"),
+                            "traceId": trace_id,
+                        },
+                    )
+                state = locked
+                transaction.on_commit(
+                    lambda: self._broadcast_place_navigation_command(
+                        table_name, dict(command_payload)
+                    )
+                )
             return Response(
                 {
                     "status": "ok",

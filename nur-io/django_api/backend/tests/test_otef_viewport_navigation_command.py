@@ -22,18 +22,19 @@ class OTEFPlaceNavigationCommandTests(TestCase):
             viewport={"bbox": [1, 2, 3, 4], "corners": None, "zoom": 12},
         )
 
-        response = self.client.post(
-            "/api/otef_viewport/by-table/otef/command/",
-            {
-                "action": "navigate_to_place",
-                "placeId": "yeshuv-0067",
-                "cameraHint": {"center": {"lng": 34.6, "lat": 31.5}, "zoom": 15},
-                "transition": {"animate": True, "durationMs": 1600},
-                "sourceId": "remote-a",
-                "timestamp": 123,
-            },
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                "/api/otef_viewport/by-table/otef/command/",
+                {
+                    "action": "navigate_to_place",
+                    "placeId": "yeshuv-0067",
+                    "cameraHint": {"center": {"lng": 34.6, "lat": 31.5}, "zoom": 15},
+                    "transition": {"animate": True, "durationMs": 1600},
+                    "sourceId": "remote-a",
+                    "timestamp": 123,
+                },
+                format="json",
+            )
 
         self.assertEqual(response.status_code, 200)
         state.refresh_from_db()

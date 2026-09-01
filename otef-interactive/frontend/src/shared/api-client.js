@@ -109,7 +109,12 @@ export const OTEF_API = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(command),
       });
-      if (!response.ok) throw new Error(`Failed to execute command: ${response.status}`);
+      if (!response.ok) {
+        const error = new Error(`Failed to execute command: ${response.status}`);
+        error.status = response.status;
+        try { error.details = await response.json(); } catch (_error) {}
+        throw error;
+      }
       const value = await response.json();
       this._stateCache.delete(tableName);
       if (traceId) {
@@ -138,6 +143,27 @@ export const OTEF_API = {
       action: "navigate_to_place",
       ...payload,
     });
+  },
+
+  /** Signature: selectPerson(personId, datasetVersion, expectedRevision, { tableName, ...meta }). */
+  async selectPerson(personId, datasetVersion, expectedRevision, meta = {}) {
+    const { tableName: target = this.defaultTable, ...requestMeta } = meta || {};
+    return this.executeCommand(target, { action: "select_person", personId, datasetVersion, expectedRevision, ...requestMeta });
+  },
+
+  /** Signature: clearPerson(expectedRevision, { tableName, ...meta }). */
+  async clearPerson(expectedRevision, meta = {}) {
+    const { tableName: target = this.defaultTable, ...requestMeta } = meta || {};
+    return this.executeCommand(target, { action: "clear_person", expectedRevision, ...requestMeta });
+  },
+
+  async archiveWindowCommand(tableName = this.defaultTable, command) {
+    const { action: archiveAction, ...rest } = command || {};
+    return this.executeCommand(tableName, { action: "archive_window", archiveAction, ...rest });
+  },
+
+  async archiveWindowResult(tableName = this.defaultTable, result) {
+    return this.executeCommand(tableName, { action: "archive_window_result", ...result });
   },
 
   async updateLayerGroups(tableName = this.defaultTable, layerGroups, meta = {}) {
@@ -179,7 +205,9 @@ export const OTEF_API = {
   },
 
   async updateInvestigationClock(tableName = this.defaultTable, clock, meta = {}) {
-    return this.updateState(tableName, { investigation_clock: clock, ...meta });
+    const writeClock = clock && typeof clock === "object" ? { ...clock } : clock;
+    if (writeClock && typeof writeClock === "object") delete writeClock.serverNowMs;
+    return this.updateState(tableName, { investigation_clock: writeClock, ...meta });
   },
 
   async updateViewport(tableName = this.defaultTable, viewport) {
