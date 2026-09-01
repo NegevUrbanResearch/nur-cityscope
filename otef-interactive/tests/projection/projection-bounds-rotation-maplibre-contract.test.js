@@ -146,15 +146,14 @@ test("projection entry keeps ResizeObserver reflow with window resize fallback",
   expect(src).toContain("map.resize()");
   expect(src).toContain("pendingResizeIdleHandler");
   expect(src).toContain("map.off(\"idle\", pendingResizeIdleHandler)");
-  expect(src).toContain("map.once(\"idle\", pendingResizeIdleHandler)");
-  expect(src).toContain("requestAnimationFrame(syncHighlight)");
+  expect(src).toContain("runWhenMapIdle");
   const onResizeStart = src.indexOf("const onResize = () => {");
   const onResizeSlice =
     onResizeStart >= 0
       ? src.slice(onResizeStart, src.indexOf("const handleWindowResize", onResizeStart))
       : "";
   expect(onResizeSlice.indexOf("map.resize()")).toBeLessThan(
-    onResizeSlice.indexOf("map.once("),
+    onResizeSlice.indexOf("runWhenMapIdle"),
   );
 });
 
@@ -163,6 +162,8 @@ test("projection entry applies span view after full-model fitBounds on resize", 
   expect(src).toContain("parseProjectionSpanId");
   expect(src).toContain("applyProjectionSpanView");
   expect(src).toContain('from "../projection/projection-span-view.js"');
+  expect(src).toContain("runWhenMapIdle");
+  expect(src).toContain("clearProjectionSpanBase");
 
   const onResizeStart = src.indexOf("const onResize = () => {");
   const onResizeSlice =
@@ -170,13 +171,29 @@ test("projection entry applies span view after full-model fitBounds on resize", 
       ? src.slice(onResizeStart, src.indexOf("const handleWindowResize", onResizeStart))
       : "";
   expect(onResizeSlice).toContain("map.fitBounds(modelBounds.bounds");
+  // MapLibre fitBounds defaults bearing to 0. Passing viewer_angle here, then
+  // span-adding transform3 -50, stacked ~-109° vs old TD (north-up map + raster -50).
+  expect(onResizeSlice).not.toContain("bearing: modelBounds.bearing");
   const spanApplyName = onResizeSlice.includes("applySpanCamera")
     ? "applySpanCamera"
     : "applyProjectionSpanView";
   expect(onResizeSlice).toContain(spanApplyName);
+  expect(onResizeSlice).toContain("runWhenMapIdle");
   expect(onResizeSlice.indexOf("map.fitBounds")).toBeLessThan(
     onResizeSlice.indexOf(spanApplyName),
   );
+});
+
+test("createProjectionMap fitBounds does not pass viewer_angle (defaults to north-up like old TD)", () => {
+  const src = read("frontend/src/projection/maplibre-projection.js");
+  const start = src.indexOf("export function createProjectionMap");
+  const end = src.indexOf("export function updateProjectionViewport");
+  const slice = start >= 0 ? src.slice(start, end > start ? end : start + 900) : "";
+  const fb = slice.indexOf("map.fitBounds");
+  expect(fb).toBeGreaterThan(-1);
+  const fbSlice = slice.slice(fb, fb + 280);
+  expect(fbSlice).toContain("modelBounds.bounds");
+  expect(fbSlice).not.toMatch(/\bbearing\s*:/);
 });
 
 test("projection entry applies span after load fitBounds without CSS pixel-ratio pumping", () => {
@@ -198,6 +215,8 @@ test("projection entry applies span after load fitBounds without CSS pixel-ratio
     ? "applySpanCamera"
     : "applyProjectionSpanView";
   expect(loadSlice).toContain(loadApplyName);
+  expect(loadSlice).toContain("runWhenMapIdle");
+  expect(loadSlice).toContain("clearProjectionSpanBase");
   expect(loadSlice.indexOf(loadApplyName)).toBeLessThan(
     loadSlice.indexOf("ensureProjectionHighlightLayers"),
   );

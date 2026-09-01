@@ -71,13 +71,13 @@ const MapProjectionConfig = {
   // URL `?mapPixelRatio=` / `?mpr=` overrides this (see projection-main).
   PROJECTION_MAP_PIXEL_RATIO: null,
 
-  // Dual-projector screen slices. Must match Tesuga: transform3 then crop.
+  // Dual-projector screen slices. Must match Tesuga: transform3 then crop, then transform1/2.
   // crop1 cropleft/cropright = 0 / 0.6, crop2 = 0.4 / 1.0.
   // transform3: sx=sy=1.41, rotate=-50, tx=0.01 (1% of width), ty=0.
-  // POST_SCALE fills the Tesuga crop into 1920. 1/0.6 is the exact 60% crop;
-  // 1.55 is a little wider so table edges (bottom-right) stay on the Stoner mesh.
-  // Do not use transform1's old 2x — that zoomed past the Gain-3 table extent.
-  // TD ty<0 shifts the plate down (more T3 top visible). Span fill center is 0.5 + POST_TY/2.
+  // POST_SCALE 2.0 matches old TD transform1/2 after Fit Best. Visible T3 is
+  // left [0.05, 0.55] / right [0.45, 0.95] (10% overlap). 1.55 widens that to
+  // ~25% and double-paints seam names (רעים, בארי) from the two MapLibre maps.
+  // Fill y is 0.5 - POST_TY/POST_SCALE so ty<0 matches TD (more T3 bottom, not extra top).
   PROJECTION_SPAN: {
     LEFT_X0: 0,
     LEFT_X1: 0.6,
@@ -87,7 +87,7 @@ const MapProjectionConfig = {
     PRE_ROTATE_DEG: -50,
     PRE_TX: 0.01,
     PRE_TY: 0,
-    POST_SCALE: 1.55,
+    POST_SCALE: 2.0,
     POST_TX: 0,
     POST_TY: -0.049,
   },

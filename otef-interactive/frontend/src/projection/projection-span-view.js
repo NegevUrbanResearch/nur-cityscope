@@ -67,28 +67,29 @@ export function computeTesugaPreT3JumpTo({
   };
 }
 
-function applyTesugaPreT3Camera(map) {
+function applyTesugaPreT3Camera(map, snapshot) {
   if (
     !map ||
+    !snapshot ||
     typeof map.jumpTo !== "function" ||
-    typeof map.getZoom !== "function" ||
-    typeof map.getBearing !== "function" ||
-    typeof map.unproject !== "function"
+    typeof map.unproject !== "function" ||
+    !Number.isFinite(snapshot.zoom) ||
+    !Number.isFinite(snapshot.bearing)
   ) {
-    return;
+    return null;
   }
   const container = typeof map.getContainer === "function" ? map.getContainer() : null;
   const width = container?.clientWidth || 1920;
   const height = container?.clientHeight || 1080;
-  map.jumpTo(
-    computeTesugaPreT3JumpTo({
-      zoom: map.getZoom(),
-      bearing: map.getBearing(),
-      width,
-      height,
-      unproject: (pt) => map.unproject(pt),
-    }),
-  );
+  const jump = computeTesugaPreT3JumpTo({
+    zoom: snapshot.zoom,
+    bearing: snapshot.bearing,
+    width,
+    height,
+    unproject: (pt) => map.unproject(pt),
+  });
+  map.jumpTo(jump);
+  return jump;
 }
 
 export function spanVisibleCenterInT3({ x0, x1, spanConfig = MapProjectionConfig.PROJECTION_SPAN }) {
@@ -102,9 +103,10 @@ export function spanVisibleCenterInT3({ x0, x1, spanConfig = MapProjectionConfig
   const t3x1 = x0 + (0.75 - fitPad);
   return {
     x: (t3x0 + t3x1) / 2,
-    // TD transform ty<0 moves the image down, revealing more of the T3 *top*.
-    // MapLibre y grows downward, so the 2x-fill center must move the same way.
-    y: 0.5 + postTy / 2,
+    // TD transform1/2: output = 0.5 + POST_SCALE*(input-0.5) + ty.
+    // Visible input center is 0.5 - ty/POST_SCALE. ty<0 moves the raster down.
+    // 0.5+ty/2 was the wrong sign and clipped T3 bottom (east after -50°) on both eyes.
+    y: 0.5 - postTy / 2,
   };
 }
 
@@ -128,14 +130,15 @@ export function computeTesugaPostFillJumpTo({
   };
 }
 
-function applyTesugaPostFillCamera(map, rect) {
+function applyTesugaPostFillCamera(map, rect, preJump) {
   if (
     !map ||
     !rect ||
+    !preJump ||
     typeof map.jumpTo !== "function" ||
-    typeof map.getZoom !== "function" ||
-    typeof map.getBearing !== "function" ||
-    typeof map.unproject !== "function"
+    typeof map.unproject !== "function" ||
+    !Number.isFinite(preJump.zoom) ||
+    !Number.isFinite(preJump.bearing)
   ) {
     return;
   }
@@ -144,8 +147,8 @@ function applyTesugaPostFillCamera(map, rect) {
   const height = container?.clientHeight || 1080;
   map.jumpTo(
     computeTesugaPostFillJumpTo({
-      zoom: map.getZoom(),
-      bearing: map.getBearing(),
+      zoom: preJump.zoom,
+      bearing: preJump.bearing,
       width,
       height,
       unproject: (pt) => map.unproject(pt),
@@ -341,13 +344,48 @@ function resetSpanDom(imageEl, containerEl, map) {
   }
 }
 
+function getSpanBaseSnapshot(map) {
+  if (!map || typeof map.getZoom !== "function" || typeof map.getBearing !== "function") {
+    return null;
+  }
+  const stored = map._otefSpanBase;
+  if (stored && Number.isFinite(stored.zoom) && Number.isFinite(stored.bearing)) {
+    return stored;
+  }
+  const base = { zoom: map.getZoom(), bearing: map.getBearing() };
+  map._otefSpanBase = base;
+  return base;
+}
+
+export function clearProjectionSpanBase(map) {
+  if (!map) return;
+  delete map._otefSpanBase;
+}
+
+/** Run fn now if the camera is settled. Otherwise wait for idle (fitBounds can skip idle if already still). */
+export function runWhenMapIdle(map, fn) {
+  if (typeof fn !== "function") return;
+  const moving = typeof map?.isMoving === "function" && map.isMoving();
+  if (!moving) {
+    fn();
+    return;
+  }
+  if (typeof map.once === "function") {
+    map.once("idle", fn);
+    return;
+  }
+  fn();
+}
+
 export function clearProjectionSpanView({ map, imageEl, containerEl }) {
+  clearProjectionSpanBase(map);
   resetSpanDom(imageEl, containerEl, map);
 }
 
 export function applyProjectionSpanView({ map, imageEl, containerEl, spanId }) {
   const rect = getProjectionSpanRect(spanId);
   if (!rect) {
+    clearProjectionSpanBase(map);
     resetSpanDom(imageEl, containerEl, map);
     return;
   }
@@ -358,6 +396,7 @@ export function applyProjectionSpanView({ map, imageEl, containerEl, spanId }) {
   unwrapSpanLayers(containerEl);
   applySpanTransform(resolveMapSpanEl(map, containerEl), null);
   applySpanTransform(imageEl, spanImageFinalTransformStyle(rect));
-  applyTesugaPreT3Camera(map);
-  applyTesugaPostFillCamera(map, rect);
+  const snapshot = getSpanBaseSnapshot(map);
+  const preJump = applyTesugaPreT3Camera(map, snapshot);
+  applyTesugaPostFillCamera(map, rect, preJump);
 }

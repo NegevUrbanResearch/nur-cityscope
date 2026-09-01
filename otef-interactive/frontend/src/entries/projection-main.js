@@ -36,7 +36,9 @@ import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
 import {
   applyProjectionSpanView,
+  clearProjectionSpanBase,
   parseProjectionSpanId,
+  runWhenMapIdle,
 } from "../projection/projection-span-view.js";
 import {
   applyNliExplainerLayout,
@@ -355,7 +357,13 @@ async function bootstrapProjectionRuntime() {
   }
 
   map.on("load", async () => {
-    applySpanCamera();
+    if (modelBounds && modelBounds.bounds && typeof map.fitBounds === "function") {
+      map.fitBounds(modelBounds.bounds, { animate: false, padding: 0 });
+    }
+    runWhenMapIdle(map, () => {
+      clearProjectionSpanBase(map);
+      applySpanCamera();
+    });
     ensureProjectionHighlightLayers(map);
 
     const displayContainer = document.getElementById("displayContainer");
@@ -812,23 +820,19 @@ async function bootstrapProjectionRuntime() {
         }
       }
       const syncHighlight = () => {
+        pendingResizeIdleHandler = null;
+        clearProjectionSpanBase(map);
         applySpanCamera();
         syncProjectionHighlight(lastViewport);
       };
-      if (typeof map.once === "function") {
-        if (pendingResizeIdleHandler) {
-          map.off("idle", pendingResizeIdleHandler);
-        }
-        pendingResizeIdleHandler = () => {
-          pendingResizeIdleHandler = null;
-          syncHighlight();
-        };
-        map.once("idle", pendingResizeIdleHandler);
-      } else {
-        window.requestAnimationFrame(() => {
-          window.requestAnimationFrame(syncHighlight);
-        });
+      if (pendingResizeIdleHandler && typeof map.off === "function") {
+        map.off("idle", pendingResizeIdleHandler);
+        pendingResizeIdleHandler = null;
       }
+      if (typeof map.isMoving === "function" && map.isMoving()) {
+        pendingResizeIdleHandler = syncHighlight;
+      }
+      runWhenMapIdle(map, syncHighlight);
     }, 120);
   };
   const handleWindowResize = () => onResize();

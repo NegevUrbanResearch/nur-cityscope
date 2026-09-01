@@ -8,6 +8,7 @@ import {
   computeTesugaPreT3JumpTo,
   getProjectionSpanRect,
   parseProjectionSpanId,
+  runWhenMapIdle,
   spanHorizontalScale,
   spanVisibleCenterInT3,
   spanWidthZoomDelta,
@@ -99,8 +100,38 @@ test("PROJECTION_SPAN matches TouchDesigner crop fractions and transform3", () =
   expect(s.PRE_ROTATE_DEG).toBe(-50);
   expect(s.PRE_TX).toBe(0.01);
   expect(s.PRE_TY).toBe(0);
-  expect(s.POST_SCALE).toBeCloseTo(1.55, 10);
+  expect(s.POST_SCALE).toBe(2);
   expect(s.POST_TY).toBe(-0.049);
+});
+
+test("2× fill overlap is 10% of transform3 so seam names are not double-painted", () => {
+  const s = MapProjectionConfig.PROJECTION_SPAN;
+  const half = 1 / (2 * s.POST_SCALE);
+  const left = spanVisibleCenterInT3({ x0: 0, x1: 0.6 });
+  const right = spanVisibleCenterInT3({ x0: 0.4, x1: 1 });
+  const leftX1 = left.x + half;
+  const rightX0 = right.x - half;
+  expect(s.POST_SCALE).toBe(2);
+  expect(leftX1).toBeCloseTo(0.55, 5);
+  expect(rightX0).toBeCloseTo(0.45, 5);
+  expect(leftX1 - rightX0).toBeCloseTo(0.1, 5);
+  expect(leftX1 - rightX0).toBeLessThan(0.15);
+});
+
+test("runWhenMapIdle applies immediately when the map is already idle", () => {
+  const fn = vi.fn();
+  const once = vi.fn();
+  runWhenMapIdle({ isMoving: () => false, once }, fn);
+  expect(fn).toHaveBeenCalledTimes(1);
+  expect(once).not.toHaveBeenCalled();
+});
+
+test("runWhenMapIdle waits for idle only while the camera is moving", () => {
+  const fn = vi.fn();
+  const once = vi.fn();
+  runWhenMapIdle({ isMoving: () => true, once }, fn);
+  expect(fn).not.toHaveBeenCalled();
+  expect(once).toHaveBeenCalledWith("idle", fn);
 });
 
 describe("parseProjectionSpanId", () => {
@@ -133,7 +164,7 @@ test("span fill camera zooms to the 60% Tesuga crop so 1920 samples are native",
   const visRight = spanVisibleCenterInT3({ x0: 0.4, x1: 1 });
   expect(visLeft.x).toBeCloseTo(0.3, 5);
   expect(visRight.x).toBeCloseTo(0.7, 5);
-  expect(visLeft.y).toBeCloseTo(0.5 + -0.049 / 2, 5);
+  expect(visLeft.y).toBeCloseTo(0.5 - -0.049 / 2, 5);
   const jump = computeTesugaPostFillJumpTo({
     zoom: 10 + Math.log2(1.41),
     bearing: -50,
@@ -143,7 +174,7 @@ test("span fill camera zooms to the 60% Tesuga crop so 1920 samples are native",
     x0: 0,
     x1: 0.6,
   });
-  expect(jump.zoom).toBeCloseTo(10 + Math.log2(1.41 * 1.55), 10);
+  expect(jump.zoom).toBeCloseTo(10 + Math.log2(1.41 * 2), 10);
   expect(jump.bearing).toBe(-50);
   expect(jump.center.lng).toBeCloseTo(0.3 * 1920, 5);
 });
@@ -151,6 +182,26 @@ test("span fill camera zooms to the 60% Tesuga crop so 1920 samples are native",
 test("spanWidthZoomDelta is log2 of inverse width fraction and is not a camera zoom", () => {
   expect(spanWidthZoomDelta(0, 0.6)).toBeCloseTo(Math.log2(1 / 0.6), 10);
   expect(spanWidthZoomDelta(0.4, 1)).toBeCloseTo(Math.log2(1 / 0.6), 10);
+});
+
+test("span transform3 rotate is -50 from fitBounds north-up, not stacked on viewer_angle", () => {
+  const unproject = (p) => ({ lng: p[0], lat: p[1] });
+  const fromNorthUp = computeTesugaPreT3JumpTo({
+    zoom: 10,
+    bearing: 0,
+    width: 1920,
+    height: 1080,
+    unproject,
+  });
+  const fromViewerAngle = computeTesugaPreT3JumpTo({
+    zoom: 10,
+    bearing: -59.007,
+    width: 1920,
+    height: 1080,
+    unproject,
+  });
+  expect(fromNorthUp.bearing).toBe(-50);
+  expect(fromViewerAngle.bearing).toBeCloseTo(-109.007, 5);
 });
 
 test("computeTesugaPreT3JumpTo adds transform3 scale and rotate to the fitBounds camera", () => {
@@ -201,7 +252,7 @@ test("applyProjectionSpanView jumpTos T3 then transform1 fill and does not wrap 
   );
   expect(jumpTo.mock.calls[1][0]).toEqual(
     expect.objectContaining({
-      zoom: 10 + Math.log2(1.41 * 1.55),
+      zoom: 10 + Math.log2(1.41 * 2),
       bearing: -50,
       animate: false,
     }),
@@ -214,7 +265,7 @@ test("applyProjectionSpanView jumpTos T3 then transform1 fill and does not wrap 
   expect(mapContainerEl.style.transform || "").toBe("");
   expect(canvasEl.style.transform).toBeUndefined();
   expect(imageEl.style.transform).toContain("rotate(-50deg)");
-  expect(imageEl.style.transform).toContain(`scale(${1.41 * 1.55})`);
+  expect(imageEl.style.transform).toContain(`scale(${1.41 * 2})`);
   const visLeft = spanVisibleCenterInT3({ x0: 0, x1: 0.6 });
   expect(imageEl.style.transformOrigin).toBe(`${visLeft.x * 100}% ${visLeft.y * 100}%`);
 });
@@ -236,6 +287,16 @@ test("applyProjectionSpanView is idempotent and does not insert wrappers", () =>
   applyProjectionSpanView({ map, imageEl, containerEl, spanId: "right" });
   expect(containerEl.children).toEqual([imageEl, mapContainerEl]);
   expect(containerEl.querySelector("#projectionSpanFitBest")).toBe(null);
+});
+
+test("applyProjectionSpanView left then left does not stack bearing or fill zoom", () => {
+  const { containerEl, imageEl, map } = makeSpanFixture();
+  expect(map.getZoom()).toBe(10);
+  expect(map.getBearing()).toBe(0);
+  applyProjectionSpanView({ map, imageEl, containerEl, spanId: "left" });
+  applyProjectionSpanView({ map, imageEl, containerEl, spanId: "left" });
+  expect(map.getBearing()).toBe(-50);
+  expect(map.getZoom()).toBeCloseTo(10 + Math.log2(1.41 * 2), 10);
 });
 
 test("applyProjectionSpanView unwraps leftover Tesuga wrappers", () => {
