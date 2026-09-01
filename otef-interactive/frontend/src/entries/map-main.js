@@ -4,6 +4,10 @@ import { createGISMap, setGISBasemap, maplibregl } from "../map/maplibre-map.js"
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
 import { applyLayerGroupsToMap, clearAllLayers, removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
 import { attachGisFeaturePopups } from "../map/maplibre-gis-popups.js";
+import { createGisPersonSelection } from "../map/maplibre-person-selection.js";
+import { createNliArchiveCommandBridge, createNliArchiveWindowController } from "../map/nli-archive-window.js";
+import { createGisPersonController } from "../map/maplibre-gis-person-controller.js";
+import { installGisStyleReload } from "./map-main-style-lifecycle.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
@@ -22,6 +26,7 @@ import {
   syncInvestigationTimelineToMap,
 } from "../shared/maplibre-investigation-timeline.js";
 import { idleNliClock } from "../shared/nli-investigation-clock.js";
+import { resolveMotionMode } from "../shared/reduced-motion.js";
 
 const DEFAULT_MAP_CENTER = [34.5, 31.4];
 
@@ -194,6 +199,8 @@ async function bootstrapMapRuntime() {
           : idleNliClock();
       void syncInvestigationTimelineToMap(map, clock, currentGroups, {
         visibilityLayerGroups: groupsAsArray,
+        displayProfile: "gis",
+        motionMode: resolveMotionMode(),
         now: () =>
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()
@@ -208,7 +215,6 @@ async function bootstrapMapRuntime() {
     registerDisposer(OTEFDataContext.subscribe("investigationClock", syncContextInvestigation));
 
     registerDisposer(setupViewportSync(map, OTEFDataContext));
-    registerDisposer(attachGisFeaturePopups(map, maplibregl));
     let activeCuratedIds = new Set();
 
     const layerGroups = OTEFDataContext.getLayerGroups();
@@ -218,6 +224,29 @@ async function bootstrapMapRuntime() {
     const initialGroups = filterGroupsForGisMap(rawInitialLayerGroups);
     applyLayerGroupsToMap(map, initialGroups);
     syncContextFlowAnimations();
+    const personVisual = createGisPersonSelection({ map, maplibregl });
+    const archiveWindow = createNliArchiveWindowController();
+    const archiveBridge = createNliArchiveCommandBridge({
+      windowController: archiveWindow,
+      resolvePerson: (personId, datasetVersion) => personVisual.resolve(personId, datasetVersion),
+      getPersonSelection: () => OTEFDataContext.getPersonSelection(),
+      emitResult: (result) => OTEFDataContext.archiveWindowResult(
+        result.outcome,
+        result.personId,
+        result.datasetVersion,
+        result.requestId,
+      ),
+    });
+    registerDisposer(OTEFDataContext.subscribe("archiveWindow", (command) => { void archiveBridge.handleCommand(command); }));
+    registerDisposer(OTEFDataContext.subscribe("personSelection", (selection) => archiveBridge.handlePersonSelection(selection)));
+    const personController = createGisPersonController({
+      map,
+      context: OTEFDataContext,
+      visual: personVisual,
+      reducedMotion: resolveMotionMode(),
+    });
+    registerDisposer(() => personController.dispose?.());
+    registerDisposer(attachGisFeaturePopups(map, maplibregl, { onGisClick: personController.handleMapClick }));
 
     updateConnectionStatus(!!OTEFDataContext.isConnected?.());
     registerDisposer(
@@ -255,7 +284,7 @@ async function bootstrapMapRuntime() {
       }
     }
 
-    const refreshCuratedLayers = async ({ affectedCuratedFullLayerIds, groupsOverride } = {}) => {
+    const refreshCuratedLayers = async ({ affectedCuratedFullLayerIds, groupsOverride, syncFlow = true } = {}) => {
       const rawGroups = groupsOverride ?? OTEFDataContext.getLayerGroups();
       const groupsAsArray = Array.isArray(rawGroups)
         ? rawGroups
@@ -264,7 +293,8 @@ async function bootstrapMapRuntime() {
 
       // Apply non-curated layer changes via registry path.
       applyLayerGroupsToMap(map, currentGroups);
-      syncContextFlowAnimations();
+      personVisual.bringToFront?.();
+      if (syncFlow) syncContextFlowAnimations();
 
       // Determine which curated ids to refresh.
       const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
@@ -295,7 +325,8 @@ async function bootstrapMapRuntime() {
       }
 
       if (toRefresh.length === 0) {
-        syncContextFlowAnimations();
+        if (syncFlow) syncContextFlowAnimations();
+        personVisual.bringToFront?.();
         syncPinkLineAxisCompanionForMapLibre(map, groupsAsArray);
         return;
       }
@@ -308,7 +339,8 @@ async function bootstrapMapRuntime() {
           console.warn(`[map-main] Failed to load curated layer ${fullId}`, err);
         }
       }
-      syncContextFlowAnimations();
+      if (syncFlow) syncContextFlowAnimations();
+      personVisual.bringToFront?.();
       syncPinkLineAxisCompanionForMapLibre(map, groupsAsArray);
     };
 
@@ -320,16 +352,23 @@ async function bootstrapMapRuntime() {
         const nextBasemap = normalizeGisBasemap(basemap);
         if (nextBasemap === currentBasemap) return;
 
-        const reapplyAfterStyleLoad = () => {
+        const reapplyAfterStyleLoad = async ({ groupsOverride, syncFlow = false } = {}) => {
           currentBasemap = nextBasemap;
           clearAllLayers(map);
           activeCuratedIds = new Set();
-          void refreshCuratedLayers({ groupsOverride: OTEFDataContext.getLayerGroups() });
+          await refreshCuratedLayers({
+            groupsOverride: groupsOverride ?? OTEFDataContext.getLayerGroups(),
+            syncFlow,
+          });
+          if (!syncFlow) syncContextFlowAnimations();
         };
 
-        if (typeof map.once === "function") {
-          map.once("style.load", reapplyAfterStyleLoad);
-        }
+        installGisStyleReload({
+          map,
+          refreshLayers: reapplyAfterStyleLoad,
+          personVisual,
+          getLayerGroups: () => OTEFDataContext.getLayerGroups(),
+        });
 
         if (!setGISBasemap(map, nextBasemap)) return;
         if (typeof map.once !== "function") {
