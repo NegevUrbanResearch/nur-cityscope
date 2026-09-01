@@ -121,6 +121,15 @@ describe("getLayerDisplayLabel", () => {
     ).toBe("Alarms");
   });
 
+  test("glossary for nli highway 232 overlay", () => {
+    expect(
+      getLayerDisplayLabel("nli.ציר_232", "he", "ציר_232", ["nli.ציר_232"]),
+    ).toBe("כביש 232");
+    expect(
+      getLayerDisplayLabel("nli.ציר_232", "en", "ציר_232", ["nli.ציר_232"]),
+    ).toBe("Highway 232");
+  });
+
   test("glossary for workshop pink line companion", () => {
     expect(
       getLayerDisplayLabel(

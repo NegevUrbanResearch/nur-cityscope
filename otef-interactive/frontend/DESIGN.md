@@ -233,10 +233,10 @@ can change scale and contrast, but they do not change state meaning.
   large `HH:MM` story clock during NLI playback. This mode is projection-only;
   it does not alter the remote **Presentation** tab, slideshow behavior, or
   `presentationActive` state.
-- The committed left projection calibration comes from
-  `C:\Users\tuval\Downloads\nli-explainer-layout.json` and is represented by
-  `leftPct: 48.675`, `topPct: 30.126982017200937`, `widthPct: 10.936875`,
-  `heightPct: 9.69473807662236`, `fontPx: 15`, and `rotateDeg: 0` in
+- The committed left projection calibration comes from the 2026-09-01 lab
+  clock park and is represented by `leftPct: 48.88333333333333`,
+  `topPct: 26.175280590197644`, `widthPct: 13.572916666666666`,
+  `heightPct: 11.732162458836443`, `fontPx: 15`, and `rotateDeg: 0` in
   `NLI_EXPLAINER_LAYOUT.left`; `full` and `right` remain unchanged.
 
 ## Elevation & Depth

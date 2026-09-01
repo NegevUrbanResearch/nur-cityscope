@@ -130,6 +130,30 @@ describe("irToMapLibreLayers", () => {
     expect(lineP.paint["line-width"]).toBeCloseTo(2 * PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE);
   });
 
+  it("applies the projection stroke scale to nli highway 232", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#e8c478", width: 2, opacity: 0.5 },
+          ],
+        },
+      },
+    };
+    const gis = irToMapLibreLayers("nli.ציר_232", "nli__ציר_232", layerConfig);
+    const proj = irToMapLibreLayers("nli.ציר_232", "nli__ציר_232", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    const lineG = gis.find((l) => l.type === "line");
+    const lineP = proj.find((l) => l.type === "line");
+    expect(lineG.paint["line-width"]).toBe(2);
+    expect(lineP.paint["line-width"]).toBeCloseTo(2 * PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE);
+    expect(lineG.paint["line-opacity"]).toBe(0.5);
+    expect(lineP.paint["line-opacity"]).toBe(0.5);
+  });
+
   it("converts a uniqueValue renderer with match expression", () => {
     const layerConfig = {
       geometryType: "polygon",

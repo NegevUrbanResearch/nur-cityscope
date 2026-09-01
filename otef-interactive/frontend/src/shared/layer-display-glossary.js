@@ -293,6 +293,10 @@ const LAYER_DISPLAY_LABELS = {
     he: "אזעקות",
     en: "Alarms",
   },
+  "nli.ציר_232": {
+    he: "כביש 232",
+    en: "Highway 232",
+  },
 };
 
 /**

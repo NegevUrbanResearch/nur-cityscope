@@ -130,6 +130,9 @@ def _layer_render_sort_key(layer: Any) -> Any:
         return (0, lid)
     if lid == "satellite_imagery":
         return (1, lid)
+    # NLI copy of future_development ציר_232: keep under infiltration lines and people.
+    if lid == "ציר_232":
+        return (2, "k_nli_route_232")
     return (2, lid)
 
 

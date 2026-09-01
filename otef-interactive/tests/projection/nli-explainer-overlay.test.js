@@ -73,10 +73,10 @@ describe("nli explainer layout", () => {
 
   it("uses the committed calibrated left layout without changing full or right", () => {
     expect(MapProjectionConfig.NLI_EXPLAINER_LAYOUT.left).toEqual({
-      leftPct: 48.675,
-      topPct: 30.126982017200937,
-      widthPct: 10.936875,
-      heightPct: 9.69473807662236,
+      leftPct: 48.88333333333333,
+      topPct: 26.175280590197644,
+      widthPct: 13.572916666666666,
+      heightPct: 11.732162458836443,
       fontPx: 15,
       rotateDeg: 0,
     });

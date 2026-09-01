@@ -61,10 +61,9 @@ browser, display arrangement, console result, and outcome in the result record.
 - [ ] In projection, confirm the NLI timeline caption shows only the readable
   `HH:MM` story clock. Confirm the remote **Presentation** tab, slideshow, and
   `presentationActive` behavior remain unchanged.
-- [ ] Confirm the projection `left` span uses the calibration source
-  `C:\Users\tuval\Downloads\nli-explainer-layout.json` with
-  `48.675, 30.126982017200937, 10.936875, 9.69473807662236, 15, 0` for
-  `leftPct, topPct, widthPct, heightPct, fontPx, rotateDeg`.
+- [ ] Confirm the projection `left` span uses the 2026-09-01 lab clock park
+  `48.88333333333333, 26.175280590197644, 13.572916666666666, 11.732162458836443, 15, 0`
+  for `leftPct, topPct, widthPct, heightPct, fontPx, rotateDeg`.
 
 ## Technician browser setup
 

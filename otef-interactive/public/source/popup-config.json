@@ -100,6 +100,25 @@
             "key": "alarm_count_total"
           }
         ]
+      },
+      "ציר_232": {
+        "titleField": "NAME",
+        "hideEmpty": true,
+        "legendLabel": "Highway 232",
+        "fields": [
+          {
+            "label": "Name",
+            "key": "NAME"
+          },
+          {
+            "label": "Number",
+            "key": "NUM"
+          },
+          {
+            "label": "Plan name",
+            "key": "MAVAT_NAME"
+          }
+        ]
       }
     }
   }

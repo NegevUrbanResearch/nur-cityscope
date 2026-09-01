@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
 import re
+import shutil
 import struct
 import zipfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from otef_layer_processing.styles import find_lyrx_file
 
 DEFAULT_JITTER_SIZE_DEG = 0.005
 
@@ -761,8 +765,22 @@ def resolve_zip_layer_info(
         f"Zip has multiple matches for {stem}: {[name for name, _ in matches]}"
     )
 
+# Local overlay copied from future_development (not part of the NLI zip allowlist).
+# Thin sand stroke for black GIS; projection uses the shared 0.3x MapLibre stroke scale.
+ROUTE_232_STEM = "ציר_232"
+ROUTE_232_SOURCE_PACK = "future_development"
+ROUTE_232_STROKE_WIDTH_PT = 1.5
+ROUTE_232_STROKE_COLOR = (232, 196, 120)
+ROUTE_232_STROKE_ALPHA = 50
+ROUTE_232_LABEL_HEIGHT_SCALE = 1.0
+ROUTE_232_LABEL_FILL = (255, 232, 196)
+
 # Derived stems (not in the zip map) must survive obsolete-file cleanup.
-NLI_KEEP_STEMS = set(ZIP_LAYER_MAP.values()) | {"people_names", "alarms"}
+NLI_KEEP_STEMS = set(ZIP_LAYER_MAP.values()) | {
+    "people_names",
+    "alarms",
+    ROUTE_232_STEM,
+}
 
 PROJECTED_STEMS = {"investigation_polygons", "lines"}
 TIMELINE_STEMS = {"investigation_polygons", "lines"}
@@ -812,6 +830,16 @@ NLI_POPUP_CONFIG = {
                 "fields": [
                     {"label": "City", "key": "city"},
                     {"label": "Alerts", "key": "alarm_count_total"},
+                ],
+            },
+            ROUTE_232_STEM: {
+                "titleField": "NAME",
+                "hideEmpty": True,
+                "legendLabel": "Highway 232",
+                "fields": [
+                    {"label": "Name", "key": "NAME"},
+                    {"label": "Number", "key": "NUM"},
+                    {"label": "Plan name", "key": "MAVAT_NAME"},
                 ],
             },
         }
@@ -877,6 +905,136 @@ def _write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _restyle_line_strokes(
+    layers: List[Any],
+    width_pt: float,
+    color: Sequence[int],
+    alpha: int,
+) -> List[Any]:
+    out: List[Any] = []
+    for layer in layers:
+        if (
+            not isinstance(layer, dict)
+            or layer.get("type") != "CIMSolidStroke"
+            or not layer.get("enable", True)
+        ):
+            out.append(layer)
+            continue
+        core = copy.deepcopy(layer)
+        core["width"] = width_pt
+        core["color"] = _rgb(color, alpha)
+        out.append(core)
+    return out
+
+
+def _restyle_symbol_layer_lists(obj: Any) -> None:
+    if isinstance(obj, dict):
+        layers = obj.get("symbolLayers")
+        if isinstance(layers, list):
+            for layer in layers:
+                _restyle_symbol_layer_lists(layer)
+            obj["symbolLayers"] = _restyle_line_strokes(
+                layers,
+                ROUTE_232_STROKE_WIDTH_PT,
+                ROUTE_232_STROKE_COLOR,
+                ROUTE_232_STROKE_ALPHA,
+            )
+            for key, value in obj.items():
+                if key == "symbolLayers":
+                    continue
+                _restyle_symbol_layer_lists(value)
+            return
+        for value in obj.values():
+            _restyle_symbol_layer_lists(value)
+        return
+    if isinstance(obj, list):
+        for item in obj:
+            _restyle_symbol_layer_lists(item)
+
+
+def _tint_text_symbol(obj: Dict[str, Any]) -> None:
+    height = obj.get("height")
+    if isinstance(height, (int, float)):
+        obj["height"] = float(height) * ROUTE_232_LABEL_HEIGHT_SCALE
+    halo = obj.get("haloSize")
+    if isinstance(halo, (int, float)):
+        obj["haloSize"] = max(float(halo) * ROUTE_232_LABEL_HEIGHT_SCALE, 1.2)
+    else:
+        obj["haloSize"] = 1.2
+    obj["haloColor"] = _rgb((20, 16, 12), 80)
+    fill = _rgb(ROUTE_232_LABEL_FILL)
+    obj["color"] = fill
+    nested = obj.get("symbol")
+    if isinstance(nested, dict):
+        for layer in nested.get("symbolLayers") or []:
+            if isinstance(layer, dict) and layer.get("type") == "CIMSolidFill":
+                layer["color"] = fill
+
+
+def _scale_text_symbol_heights(obj: Any) -> None:
+    if isinstance(obj, dict):
+        if obj.get("type") == "CIMTextSymbol":
+            _tint_text_symbol(obj)
+        for value in obj.values():
+            _scale_text_symbol_heights(value)
+        return
+    if isinstance(obj, list):
+        for item in obj:
+            _scale_text_symbol_heights(item)
+
+
+def emphasize_copied_line_lyrx(lyrx: Dict[str, Any]) -> Dict[str, Any]:
+    payload = copy.deepcopy(lyrx)
+    _restyle_symbol_layer_lists(payload)
+    _scale_text_symbol_heights(payload)
+    return payload
+
+
+def _route_232_source_geojson(source_pack: Path) -> Optional[Path]:
+    gis_dir = source_pack / "gis" if (source_pack / "gis").is_dir() else source_pack
+    if not gis_dir.is_dir():
+        return None
+    exact = gis_dir / f"{ROUTE_232_STEM}.geojson"
+    if exact.is_file():
+        return exact
+    matches = [path for path in gis_dir.glob("*.geojson") if "232" in path.stem]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def install_nli_route_232_overlay(
+    pack_dir: Path,
+    overlay_source_root: Optional[Path] = None,
+) -> Dict[str, Any]:
+    source_root = overlay_source_root or pack_dir.parent
+    src_pack = source_root / ROUTE_232_SOURCE_PACK
+    src_geo = _route_232_source_geojson(src_pack)
+    if src_geo is None:
+        return {"installed": False, "reason": "missing_source_geojson"}
+    src_styles = src_pack / "styles"
+    lyrx_path, match_method = find_lyrx_file(src_geo, src_styles)
+    if lyrx_path is None:
+        return {"installed": False, "reason": "missing_source_lyrx"}
+    gis_dir = pack_dir / "gis"
+    styles_dir = pack_dir / "styles"
+    gis_dir.mkdir(parents=True, exist_ok=True)
+    styles_dir.mkdir(parents=True, exist_ok=True)
+    dest_geo = gis_dir / f"{ROUTE_232_STEM}.geojson"
+    dest_lyrx = styles_dir / f"{ROUTE_232_STEM}.lyrx"
+    shutil.copy2(src_geo, dest_geo)
+    lyrx = json.loads(lyrx_path.read_text(encoding="utf-8"))
+    _write_json(dest_lyrx, emphasize_copied_line_lyrx(lyrx))
+    return {
+        "installed": True,
+        "stem": ROUTE_232_STEM,
+        "source_geojson": str(src_geo),
+        "source_lyrx": str(lyrx_path),
+        "lyrx_match": match_method,
+        "stroke_width_pt": ROUTE_232_STROKE_WIDTH_PT,
+    }
+
+
 def merge_popup_config(popup_path: Path, nli_config: Dict[str, Any]) -> None:
     existing: Dict[str, Any] = {}
     if popup_path.is_file():
@@ -908,6 +1066,7 @@ def prepare_nli_pack(
     authorities_path: Optional[Path] = None,
     alarms_path: Optional[Path] = None,
     pid_mms_path: Optional[Path] = None,
+    overlay_source_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     gis_dir = pack_dir / "gis"
     styles_dir = pack_dir / "styles"
@@ -965,6 +1124,11 @@ def prepare_nli_pack(
     _write_json(styles_dir / "people.lyrx", unique_value_point_lyrx("status", OCT7_STATUS_CLASSES))
     _write_json(styles_dir / "lines.lyrx", simple_line_lyrx())
     _write_json(styles_dir / "people_names.lyrx", labels_only_point_lyrx())
+    summary["overlays"] = {
+        "route_232": install_nli_route_232_overlay(
+            pack_dir, overlay_source_root=overlay_source_root or pack_dir.parent
+        )
+    }
     keep_stems = NLI_KEEP_STEMS
     removed = []
     for folder in (gis_dir, styles_dir):

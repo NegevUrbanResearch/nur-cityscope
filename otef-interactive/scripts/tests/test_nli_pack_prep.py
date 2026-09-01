@@ -14,7 +14,13 @@ from nli_pack_prep import (
     NLI_CATALOG_STROKE,
     NLI_CATALOG_STROKE_WIDTH,
     NLI_KEEP_STEMS,
+    ROUTE_232_STEM,
+    ROUTE_232_STROKE_ALPHA,
+    ROUTE_232_STROKE_COLOR,
+    ROUTE_232_STROKE_WIDTH_PT,
     ZIP_LAYER_MAP,
+    emphasize_copied_line_lyrx,
+    install_nli_route_232_overlay,
     apply_alarm_timeline_minutes,
     apply_timeline_minutes,
     ashkelon_north_lat,
@@ -46,6 +52,7 @@ from nli_pack_prep import (
     unit_from_seed,
     zip_entry_name,
 )
+from otef_layer_processing.orchestrator import _layer_render_sort_key
 from otef_layer_processing.styles import parse_lyrx_style
 
 
@@ -478,6 +485,10 @@ class PreparePackTests(unittest.TestCase):
             data["nli"]["layers"]["lines"]["legendLabel"],
             "Infiltration routes",
         )
+        self.assertEqual(
+            data["nli"]["layers"][ROUTE_232_STEM]["legendLabel"],
+            "Highway 232",
+        )
 
     def test_alarms_popup_is_city_and_count(self):
         tmp = Path(tempfile.mkdtemp())
@@ -531,6 +542,10 @@ class PreparePackTests(unittest.TestCase):
     def test_keep_stems_include_alarms(self):
         self.assertIn("alarms", NLI_KEEP_STEMS)
         self.assertNotIn("alarms", ZIP_LAYER_MAP.values())
+
+    def test_keep_stems_include_route_232_overlay(self):
+        self.assertIn(ROUTE_232_STEM, NLI_KEEP_STEMS)
+        self.assertNotIn(ROUTE_232_STEM, ZIP_LAYER_MAP.values())
 
     def test_prepare_copies_jittered_people_to_people_names(self):
         tmp = Path(tempfile.mkdtemp())
@@ -652,6 +667,134 @@ class PreparePackTests(unittest.TestCase):
         self.assertEqual(summary["layers"]["alarms"]["jittered"], 0)
         cities = {feat["properties"]["city"] for feat in out["features"]}
         self.assertNotIn("תל אביב - מרכז העיר", cities)
+
+
+def _cim_stroke_widths(payload):
+    widths = []
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            if obj.get("type") == "CIMSolidStroke" and obj.get("enable", True):
+                widths.append(obj.get("width"))
+            for value in obj.values():
+                walk(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+
+    walk(payload)
+    return widths
+
+
+class Route232OverlayTests(unittest.TestCase):
+    def test_restyle_uses_thin_sand_stroke_without_casing(self):
+        payload = simple_line_lyrx(width=4.0)
+        out = emphasize_copied_line_lyrx(payload)
+        widths = _cim_stroke_widths(out)
+        self.assertEqual(widths, [ROUTE_232_STROKE_WIDTH_PT])
+        parsed = parse_lyrx_style(_write_lyrx(out))
+        self.assertIsNotNone(parsed)
+        strokes = [
+            layer
+            for layer in parsed.to_dict()["defaultSymbol"]["symbolLayers"]
+            if layer.get("type") == "stroke"
+        ]
+        self.assertEqual(len(strokes), 1)
+        self.assertEqual(strokes[0]["width"], ROUTE_232_STROKE_WIDTH_PT * (96 / 72))
+        self.assertEqual(strokes[0]["color"], "#e8c478")
+        self.assertAlmostEqual(strokes[0]["opacity"], ROUTE_232_STROKE_ALPHA / 100.0)
+        self.assertEqual(tuple(ROUTE_232_STROKE_COLOR), (232, 196, 120))
+
+    def test_install_skips_when_future_development_is_missing(self):
+        tmp = Path(tempfile.mkdtemp())
+        result = install_nli_route_232_overlay(tmp / "nli", overlay_source_root=tmp)
+        self.assertFalse(result["installed"])
+        self.assertEqual(result["reason"], "missing_source_geojson")
+
+    def test_install_copies_source_and_renames_lyrx_to_geojson_stem(self):
+        tmp = Path(tempfile.mkdtemp())
+        src_gis = tmp / "future_development" / "gis"
+        src_styles = tmp / "future_development" / "styles"
+        src_gis.mkdir(parents=True)
+        src_styles.mkdir(parents=True)
+        geo = {
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "EPSG:2039"}},
+            "features": [],
+        }
+        (src_gis / f"{ROUTE_232_STEM}.geojson").write_text(
+            json.dumps(geo), encoding="utf-8"
+        )
+        (src_styles / "232_ציר.lyrx").write_text(
+            json.dumps(simple_line_lyrx(width=4.0)), encoding="utf-8"
+        )
+        pack_dir = tmp / "nli"
+        result = install_nli_route_232_overlay(pack_dir, overlay_source_root=tmp)
+        self.assertTrue(result["installed"])
+        self.assertEqual(result["lyrx_match"], "token_sorted")
+        dest_geo = pack_dir / "gis" / f"{ROUTE_232_STEM}.geojson"
+        dest_lyrx = pack_dir / "styles" / f"{ROUTE_232_STEM}.lyrx"
+        self.assertTrue(dest_geo.is_file())
+        self.assertTrue(dest_lyrx.is_file())
+        copied = json.loads(dest_geo.read_text(encoding="utf-8"))
+        self.assertEqual(copied["crs"]["properties"]["name"], "EPSG:2039")
+        widths = _cim_stroke_widths(json.loads(dest_lyrx.read_text(encoding="utf-8")))
+        self.assertEqual(widths, [ROUTE_232_STROKE_WIDTH_PT])
+
+    def test_prepare_keeps_route_232_overlay_and_skips_without_source(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = tmp / "nli.zip"
+        people = {
+            "type": "FeatureCollection",
+            "features": [_point(34.47, 31.40, name="Ada", oct7_pid=1)],
+        }
+        empty = {"type": "FeatureCollection", "features": []}
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("geojson/people_7_10.json", json.dumps(people))
+            archive.writestr("geojson/polygons_7_10.geojson", json.dumps(empty))
+            archive.writestr("geojson/lines_7_10.geojson", json.dumps(empty))
+        pack_dir = tmp / "nli"
+        skipped = prepare_nli_pack(
+            zip_path, pack_dir, authorities_path=tmp / "missing.json", overlay_source_root=tmp
+        )
+        self.assertFalse(skipped["overlays"]["route_232"]["installed"])
+
+        src_gis = tmp / "future_development" / "gis"
+        src_styles = tmp / "future_development" / "styles"
+        src_gis.mkdir(parents=True)
+        src_styles.mkdir(parents=True)
+        (src_gis / f"{ROUTE_232_STEM}.geojson").write_text(
+            json.dumps({"type": "FeatureCollection", "features": []}), encoding="utf-8"
+        )
+        (src_styles / f"{ROUTE_232_STEM}.lyrx").write_text(
+            json.dumps(simple_line_lyrx(width=4.0)), encoding="utf-8"
+        )
+        kept = prepare_nli_pack(
+            zip_path, pack_dir, authorities_path=tmp / "missing.json", overlay_source_root=tmp
+        )
+        self.assertTrue(kept["overlays"]["route_232"]["installed"])
+        self.assertTrue((pack_dir / "gis" / f"{ROUTE_232_STEM}.geojson").is_file())
+        self.assertTrue((pack_dir / "styles" / f"{ROUTE_232_STEM}.lyrx").is_file())
+        removed = kept.get("removed_obsolete") or []
+        self.assertNotIn(f"{ROUTE_232_STEM}.geojson", removed)
+        self.assertNotIn(f"{ROUTE_232_STEM}.lyrx", removed)
+
+    def test_route_232_renders_under_infiltration_lines_and_people(self):
+        ordered = sorted(
+            [
+                {"id": "people"},
+                {"id": ROUTE_232_STEM},
+                {"id": "lines"},
+                {"id": "investigation_polygons"},
+                {"id": "alarms"},
+                {"id": "people_names"},
+            ],
+            key=_layer_render_sort_key,
+        )
+        ids = [layer["id"] for layer in ordered]
+        self.assertLess(ids.index(ROUTE_232_STEM), ids.index("lines"))
+        self.assertLess(ids.index(ROUTE_232_STEM), ids.index("people"))
+        self.assertGreater(ids.index(ROUTE_232_STEM), ids.index("investigation_polygons"))
 
 
 INVESTIGATION_TIMELINE_FIXTURE = [
