@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 
 const index = {
@@ -39,6 +40,24 @@ describe("remote people search", () => {
       fetchJson: (url) => Promise.resolve({ data: url.includes("release") ? mismatched : index, bytes: new Uint8Array([1]) }),
       hashBytes: async () => "hash",
     }).load()).rejects.toThrow(/version/);
+  });
+
+  test("loads with the default hasher when Web Crypto SubtleCrypto is missing", async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify(index));
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const { createPeopleSearchRuntime } = await import("../../frontend/src/remote/remote-people-search.js");
+    vi.stubGlobal("crypto", { subtle: undefined });
+    try {
+      const runtime = createPeopleSearchRuntime({
+        fetchJson: async (url) => url.includes("release")
+          ? { data: { datasetVersion: "v1", runtimeArtifactHashes: { "people-search-index.json": digest } }, bytes: new Uint8Array() }
+          : { data: index, bytes },
+      });
+      await expect(runtime.load()).resolves.toBe(runtime);
+      expect(runtime.search("dana", "en").map((row) => row.pid)).toEqual(["3"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test("ranks exact, prefix, and substring matches by PID, caps eight, and resolves names safely", async () => {

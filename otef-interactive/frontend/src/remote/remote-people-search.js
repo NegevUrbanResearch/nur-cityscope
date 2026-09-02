@@ -1,4 +1,5 @@
 import { getLocale } from "./remote-locale.js";
+import { sha256Hex } from "../shared/sha256-hex.js";
 export const PEOPLE_INDEX_URL = "/otef-interactive/public/processed/layers/nli/people-search-index.json";
 export const PEOPLE_RELEASE_METADATA_URL = "/otef-interactive/public/processed/layers/nli/release-metadata.json";
 const UNKNOWN_NAME = "לא ידוע";
@@ -14,9 +15,8 @@ async function fetchJson(url) {
   return { data: JSON.parse(new TextDecoder().decode(bytes)), bytes };
 }
 async function hashBytes(bytes) {
-  if (!(bytes instanceof Uint8Array) || !globalThis.crypto?.subtle) throw new Error("People search byte hashing unavailable");
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+  if (!(bytes instanceof Uint8Array)) throw new Error("People search byte hashing unavailable");
+  return sha256Hex(bytes);
 }
 function displayName(row, locale = getLocale()) {
   const names = (Array.isArray(row?.nameForms) ? row.nameForms : []).map(clean).filter(Boolean);
