@@ -1,20 +1,28 @@
 <#
 .SYNOPSIS
-    Configure the Chrome popup allowlist for the local OTEF exhibit.
+    Configure Chrome for the local OTEF exhibit.
 
 .DESCRIPTION
     Installs or removes one machine-level Chrome policy entry for the exact
     exhibit origin http://localhost:80. Other popup settings and other numbered
     allowlist entries remain unchanged.
 
-    Install and Remove require an elevated Windows PowerShell session because
-    Chrome reads this policy from HKLM. Status is read-only and does not need
-    elevation.
+    Install also adds --disable-features=CrossOriginOpenerPolicy to existing
+    Google Chrome shortcuts so GIS can close the named NLI archive window.
+    Chrome must be fully quit and started from an updated shortcut (or with
+    that flag) before the close path works.
+
+    Install and Remove require an elevated Windows PowerShell session for the
+    HKLM popup policy. Shortcut updates use the current user when elevation
+    is unavailable. Status is read-only and does not need elevation.
 
 .PARAMETER Mode
-    Install adds the localhost origin to the first unused numbered value.
-    Remove removes entries whose value is exactly http://localhost:80.
-    Status reports the current entries without changing the registry.
+    Install adds the localhost origin to the first unused numbered value and
+    adds the Chrome launch flag to Google Chrome.lnk shortcuts.
+    Remove removes entries whose value is exactly http://localhost:80 and
+    removes the launch flag from those shortcuts.
+    Status reports the current entries and shortcut flags without changing
+    the registry.
 
 .EXAMPLE
     .\configure-chrome-popup-policy.ps1 -Mode Status
@@ -37,6 +45,8 @@ $ErrorActionPreference = 'Stop'
 
 $PolicyPath = 'HKLM:\Software\Policies\Google\Chrome\PopupsAllowedForUrls'
 $AllowedOrigin = 'http://localhost:80'
+$ChromeFeature = 'CrossOriginOpenerPolicy'
+$ChromeDisableFeatures = '--disable-features=CrossOriginOpenerPolicy'
 
 function Test-IsAdministrator {
     try {
@@ -93,6 +103,180 @@ function Get-NextPolicySlot {
     return [string]$slot
 }
 
+function Get-ChromeShortcutPaths {
+    return @(
+        (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Google Chrome.lnk'),
+        (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Google Chrome.lnk'),
+        (Join-Path $env:USERPROFILE 'Desktop\Google Chrome.lnk'),
+        (Join-Path $env:PUBLIC 'Desktop\Google Chrome.lnk'),
+        (Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\Google Chrome.lnk')
+    )
+}
+
+function Get-ShortcutArguments {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($Path)
+    $target = [string]$shortcut.TargetPath
+    $arguments = [string]$shortcut.Arguments
+    if ($target -notmatch '(?i)[\\/]chrome\.exe$') {
+        return $null
+    }
+    return [pscustomobject]@{
+        Path      = $Path
+        Target    = $target
+        Arguments = $arguments
+        Shortcut  = $shortcut
+        Shell     = $shell
+    }
+}
+
+function Add-ChromeDisableFeature {
+    param(
+        [string]$Arguments,
+        [Parameter(Mandatory)][string]$Feature
+    )
+
+    $trimmed = if ($null -eq $Arguments) { '' } else { $Arguments.Trim() }
+    if ($trimmed -match '--disable-features=([^\s]+)') {
+        $features = @($Matches[1] -split ',' | Where-Object { $_ })
+        if ($features -contains $Feature) {
+            return $trimmed
+        }
+        $features += $Feature
+        return ($trimmed -replace '--disable-features=[^\s]+', ('--disable-features=' + ($features -join ','))).Trim()
+    }
+    if ($trimmed.Length -eq 0) {
+        return "--disable-features=$Feature"
+    }
+    return "$trimmed --disable-features=$Feature"
+}
+
+function Remove-ChromeDisableFeature {
+    param(
+        [string]$Arguments,
+        [Parameter(Mandatory)][string]$Feature
+    )
+
+    $trimmed = if ($null -eq $Arguments) { '' } else { $Arguments.Trim() }
+    if ($trimmed -notmatch '--disable-features=([^\s]+)') {
+        return $trimmed
+    }
+    $features = @($Matches[1] -split ',' | Where-Object { $_ -and $_ -ne $Feature })
+    if ($features.Count -eq 0) {
+        return ($trimmed -replace '\s*--disable-features=[^\s]+', '').Trim()
+    }
+    return ($trimmed -replace '--disable-features=[^\s]+', ('--disable-features=' + ($features -join ','))).Trim()
+}
+
+function Test-HasChromeFeature {
+    param(
+        [string]$Arguments,
+        [Parameter(Mandatory)][string]$Feature
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Arguments)) {
+        return $false
+    }
+    if ($Arguments -notmatch '--disable-features=([^\s]+)') {
+        return $false
+    }
+    return @($Matches[1] -split ',') -contains $Feature
+}
+
+function Save-ShortcutArguments {
+    param(
+        [Parameter(Mandatory)]$Info,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Arguments
+    )
+
+    $Info.Shortcut.Arguments = $Arguments
+    $Info.Shortcut.Save()
+}
+
+function Install-ChromeLaunchFlag {
+    $updated = 0
+    foreach ($path in Get-ChromeShortcutPaths) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            continue
+        }
+        $info = Get-ShortcutArguments -Path $path
+        if ($null -eq $info) {
+            continue
+        }
+        $next = Add-ChromeDisableFeature -Arguments $info.Arguments -Feature $ChromeFeature
+        if ($next -eq $info.Arguments.Trim()) {
+            Write-Host "Launch flag already present: $path" -ForegroundColor Green
+            continue
+        }
+        if ($PSCmdlet.ShouldProcess($path, "Add $ChromeDisableFeatures")) {
+            try {
+                Save-ShortcutArguments -Info $info -Arguments $next
+                Write-Host "Added $ChromeDisableFeatures to $path" -ForegroundColor Green
+                $updated++
+            } catch {
+                Write-Host "Could not update $path : $_" -ForegroundColor Yellow
+            }
+        }
+    }
+    if ($updated -eq 0) {
+        Write-Host "No Google Chrome.lnk shortcuts were changed. Start GIS Chrome with $ChromeDisableFeatures after a full Chrome quit." -ForegroundColor Yellow
+    }
+}
+
+function Remove-ChromeLaunchFlag {
+    foreach ($path in Get-ChromeShortcutPaths) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            continue
+        }
+        $info = Get-ShortcutArguments -Path $path
+        if ($null -eq $info) {
+            continue
+        }
+        $next = Remove-ChromeDisableFeature -Arguments $info.Arguments -Feature $ChromeFeature
+        if ($next -eq $info.Arguments.Trim()) {
+            continue
+        }
+        if ($PSCmdlet.ShouldProcess($path, "Remove $ChromeDisableFeatures")) {
+            try {
+                Save-ShortcutArguments -Info $info -Arguments $next
+                Write-Host "Removed $ChromeDisableFeatures from $path" -ForegroundColor Green
+            } catch {
+                Write-Host "Could not update $path : $_" -ForegroundColor Yellow
+            }
+        }
+    }
+}
+
+function Show-LaunchFlagStatus {
+    Write-Host "Chrome NLI close flag: $ChromeDisableFeatures" -ForegroundColor Cyan
+    $found = $false
+    foreach ($path in Get-ChromeShortcutPaths) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            continue
+        }
+        $info = Get-ShortcutArguments -Path $path
+        if ($null -eq $info) {
+            continue
+        }
+        $found = $true
+        $marker = if (Test-HasChromeFeature -Arguments $info.Arguments -Feature $ChromeFeature) {
+            ' (flag present)'
+        } else {
+            ' (flag missing)'
+        }
+        Write-Host "  $path$marker"
+        if (-not [string]::IsNullOrWhiteSpace($info.Arguments)) {
+            Write-Host "    $($info.Arguments)" -ForegroundColor Gray
+        }
+    }
+    if (-not $found) {
+        Write-Host 'No Google Chrome.lnk shortcuts found.' -ForegroundColor Yellow
+    }
+    Write-Host 'Quit Chrome completely, then start GIS from an updated shortcut so the flag applies.' -ForegroundColor Yellow
+}
+
 function Show-Status {
     $entries = @(Get-PolicyEntries)
     Write-Host "Chrome popup policy: $PolicyPath" -ForegroundColor Cyan
@@ -100,25 +284,25 @@ function Show-Status {
 
     if ($entries.Count -eq 0) {
         Write-Host 'No policy entries found.' -ForegroundColor Yellow
-        return
-    }
-
-    Write-Host 'Current entries:' -ForegroundColor Gray
-    foreach ($entry in $entries) {
-        $marker = if ($entry.Value -eq $AllowedOrigin) { ' (exhibit origin)' } else { '' }
-        Write-Host "  $($entry.Name) = $($entry.Value)$marker"
-    }
-
-    $matchingEntries = @($entries | Where-Object { $_.Value -eq $AllowedOrigin })
-    if ($matchingEntries.Count -gt 0) {
-        Write-Host 'The exact localhost origin is configured.' -ForegroundColor Green
     } else {
-        Write-Host 'The exact localhost origin is not configured.' -ForegroundColor Yellow
+        Write-Host 'Current entries:' -ForegroundColor Gray
+        foreach ($entry in $entries) {
+            $marker = if ($entry.Value -eq $AllowedOrigin) { ' (exhibit origin)' } else { '' }
+            Write-Host "  $($entry.Name) = $($entry.Value)$marker"
+        }
+
+        $matchingEntries = @($entries | Where-Object { $_.Value -eq $AllowedOrigin })
+        if ($matchingEntries.Count -gt 0) {
+            Write-Host 'The exact localhost origin is configured.' -ForegroundColor Green
+        } else {
+            Write-Host 'The exact localhost origin is not configured.' -ForegroundColor Yellow
+        }
     }
+
+    Show-LaunchFlagStatus
 }
 
 function Install-Policy {
-    Assert-Administrator
     $entries = @(Get-PolicyEntries)
     $matchingEntries = @($entries | Where-Object { $_.Value -eq $AllowedOrigin })
 
@@ -126,6 +310,8 @@ function Install-Policy {
         Write-Host 'The exact localhost origin is already configured; no registry changes were made.' -ForegroundColor Green
         return
     }
+
+    Assert-Administrator
 
     if (-not (Test-Path -LiteralPath $PolicyPath)) {
         if (-not $PSCmdlet.ShouldProcess($PolicyPath, 'Create Chrome popup allowlist key')) {
@@ -164,9 +350,15 @@ function Remove-Policy {
 
 try {
     switch ($Mode) {
-        'Install' { Install-Policy }
-        'Remove'  { Remove-Policy }
-        'Status'  { Show-Status }
+        'Install' {
+            Install-Policy
+            Install-ChromeLaunchFlag
+        }
+        'Remove' {
+            Remove-Policy
+            Remove-ChromeLaunchFlag
+        }
+        'Status' { Show-Status }
     }
 } catch {
     Write-Error $_
