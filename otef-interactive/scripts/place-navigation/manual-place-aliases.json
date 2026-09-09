@@ -263,6 +263,13 @@
       "aliases": { "en": ["Sapir"] }
     },
     {
+      "id": "yeshuv-nvaP",
+      "type": "yeshuv",
+      "citycode": "nvaP",
+      "name": { "en": "Nova" },
+      "selectable": false
+    },
+    {
       "id": "custom-reim-parking",
       "type": "custom",
       "name": {
@@ -270,8 +277,8 @@
         "en": "Re'im Parking"
       },
       "aliases": {
-        "he": ["\u05e8\u05e2\u05d9\u05dd \u05d7\u05e0\u05d9\u05d5\u05df"],
-        "en": ["Reim parking", "Re'im festival parking"]
+        "he": ["\u05e8\u05e2\u05d9\u05dd \u05d7\u05e0\u05d9\u05d5\u05df", "\u05e0\u05d5\u05d1\u05d4"],
+        "en": ["Reim parking", "Re'im festival parking", "Nova"]
       },
       "priority": 80,
       "center": {
