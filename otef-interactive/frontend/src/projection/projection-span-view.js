@@ -24,6 +24,56 @@ export function getProjectionSpanRect(spanId, spanConfig = MapProjectionConfig.P
   return null;
 }
 
+/**
+ * Convert UV from the span-filled MapLibre viewport back to post-Tesuga T3 canvas UV.
+ * This inverts the same post-fill center and scale applied by `applyProjectionSpanView`.
+ * Off-viewport projections are rejected so they cannot be misclassified inside a span.
+ */
+export function spanViewportUvToT3Uv(
+  uv,
+  rect,
+  spanConfig = MapProjectionConfig.PROJECTION_SPAN,
+) {
+  if (!uv || !rect) return null;
+  const u = Number(uv.u);
+  const v = Number(uv.v);
+  const x0 = Number(rect.x0);
+  const x1 = Number(rect.x1);
+  const postScale = Number(spanConfig.POST_SCALE) || 1;
+  if (
+    ![u, v, x0, x1, postScale].every(Number.isFinite) ||
+    postScale <= 0 ||
+    u < 0 ||
+    u > 1 ||
+    v < 0 ||
+    v > 1
+  ) {
+    return null;
+  }
+  const visibleCenter = spanVisibleCenterInT3({ x0, x1, spanConfig });
+  return {
+    u: visibleCenter.x + (u - 0.5) / postScale,
+    v: visibleCenter.y + (v - 0.5) / postScale,
+  };
+}
+
+/**
+ * True when canvas UV lies inside a span crop window.
+ * `rect` is `{ x0, x1 }` from `getProjectionSpanRect` (T3 u in [x0, x1], v in [0, 1]).
+ * Does not read or mutate `PROJECTION_SPAN`.
+ */
+export function uvInsideSpanRect(uv, rect) {
+  if (!uv || !rect) return false;
+  const u = Number(uv.u);
+  const v = Number(uv.v);
+  const x0 = Number(rect.x0);
+  const x1 = Number(rect.x1);
+  const y0 = rect.y0 == null ? 0 : Number(rect.y0);
+  const y1 = rect.y1 == null ? 1 : Number(rect.y1);
+  if (![u, v, x0, x1, y0, y1].every(Number.isFinite)) return false;
+  return u >= x0 && u <= x1 && v >= y0 && v <= y1;
+}
+
 function spanWidthFraction(x0, x1) {
   const widthFrac = x1 - x0;
   if (!(widthFrac > 0) || !Number.isFinite(widthFrac)) {

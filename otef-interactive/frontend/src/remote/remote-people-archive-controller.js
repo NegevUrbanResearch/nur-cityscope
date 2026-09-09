@@ -38,7 +38,7 @@ export function createRemotePeopleArchiveController(options = {}) {
   const state = {
     destroyed: false,
     person: { acknowledged: null, pending: null, revision: -1, generation: 0, requestToken: 0 },
-    archive: { phase: "closed", person: null, requestId: null, generation: 0, timeoutId: null },
+    archive: { phase: "closed", person: null, requestId: null, lastRequestId: null, closedAppliedRequestId: null, generation: 0, timeoutId: null },
   };
 
   const archiveButton = document.createElement("button");
@@ -136,6 +136,7 @@ export function createRemotePeopleArchiveController(options = {}) {
       phase: action === "open" ? "opening" : "closing",
       person,
       requestId,
+      lastRequestId: requestId,
       generation,
     });
     syncArchiveButton();
@@ -179,7 +180,26 @@ export function createRemotePeopleArchiveController(options = {}) {
 
   function handleArchiveResult(result = {}) {
     const archive = state.archive;
-    if (!isAlive() || !archive.requestId || result.requestId !== archive.requestId) return;
+    if (!isAlive()) return;
+    const matchesCurrent = Boolean(archive.requestId && result.requestId === archive.requestId);
+    const matchesLast = Boolean(archive.lastRequestId && result.requestId === archive.lastRequestId);
+    if (result.outcome === "unavailable" && result.requestId === archive.closedAppliedRequestId) return;
+    if (result.outcome === "closed" && (matchesCurrent || matchesLast)) {
+      if (!samePerson(result, state.person.acknowledged)) return;
+      clearArchiveTimeout();
+      transition("archive", {
+        phase: "closed",
+        person: null,
+        requestId: null,
+        generation: archive.generation + 1,
+        closedAppliedRequestId: result.requestId,
+      });
+      navigationSection.classList?.toggle?.("is-archive-open", false);
+      setStatus("");
+      syncArchiveButton();
+      return;
+    }
+    if (!matchesCurrent) return;
     if (!samePerson(result, state.person.acknowledged)) return;
     clearArchiveTimeout();
     const generation = archive.generation;

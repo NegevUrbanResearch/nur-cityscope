@@ -10,8 +10,10 @@ import {
   parseProjectionSpanId,
   runWhenMapIdle,
   spanHorizontalScale,
+  spanViewportUvToT3Uv,
   spanVisibleCenterInT3,
   spanWidthZoomDelta,
+  uvInsideSpanRect,
 } from "../../frontend/src/projection/projection-span-view.js";
 
 function createDomNode(tag = "div", id = "") {
@@ -152,6 +154,51 @@ test("getProjectionSpanRect maps ids to crop windows", () => {
   expect(getProjectionSpanRect("left")).toEqual({ x0: 0, x1: 0.6 });
   expect(getProjectionSpanRect("right")).toEqual({ x0: 0.4, x1: 1 });
   expect(getProjectionSpanRect(null)).toBe(null);
+});
+
+test("uvInsideSpanRect classifies synthetic UV inside/outside a visible rect without changing PROJECTION_SPAN", () => {
+  const spanBefore = { ...MapProjectionConfig.PROJECTION_SPAN };
+  const rect = { x0: 0.25, x1: 0.75 };
+  expect(uvInsideSpanRect({ u: 0.5, v: 0.5 }, rect)).toBe(true);
+  expect(uvInsideSpanRect({ u: 0.25, v: 0 }, rect)).toBe(true);
+  expect(uvInsideSpanRect({ u: 0.75, v: 1 }, rect)).toBe(true);
+  expect(uvInsideSpanRect({ u: 0.249, v: 0.5 }, rect)).toBe(false);
+  expect(uvInsideSpanRect({ u: 0.751, v: 0.5 }, rect)).toBe(false);
+  expect(uvInsideSpanRect({ u: 0.5, v: -0.01 }, rect)).toBe(false);
+  expect(uvInsideSpanRect({ u: 0.5, v: 1.01 }, rect)).toBe(false);
+  const right = getProjectionSpanRect("right");
+  const midU = (right.x0 + right.x1) / 2;
+  expect(uvInsideSpanRect({ u: midU, v: 0.5 }, right)).toBe(true);
+  expect(uvInsideSpanRect({ u: right.x0 - 0.01, v: 0.5 }, right)).toBe(false);
+  expect(MapProjectionConfig.PROJECTION_SPAN).toEqual(spanBefore);
+});
+
+test("spanViewportUvToT3Uv inverts the applied post-fill camera", () => {
+  const right = getProjectionSpanRect("right");
+  const visibleCenter = spanVisibleCenterInT3(right);
+  const postScale = MapProjectionConfig.PROJECTION_SPAN.POST_SCALE;
+  const halfVisibleExtent = 0.5 / postScale;
+
+  expect(spanViewportUvToT3Uv({ u: 0, v: 0 }, right)).toEqual({
+    u: visibleCenter.x - halfVisibleExtent,
+    v: visibleCenter.y - halfVisibleExtent,
+  });
+  expect(spanViewportUvToT3Uv({ u: 0.5, v: 0.5 }, right)).toEqual({
+    u: visibleCenter.x,
+    v: visibleCenter.y,
+  });
+  expect(spanViewportUvToT3Uv({ u: 1, v: 1 }, right)).toEqual({
+    u: visibleCenter.x + halfVisibleExtent,
+    v: visibleCenter.y + halfVisibleExtent,
+  });
+});
+
+test("spanViewportUvToT3Uv rejects project results outside the live viewport", () => {
+  const right = getProjectionSpanRect("right");
+  expect(spanViewportUvToT3Uv({ u: -0.001, v: 0.5 }, right)).toBe(null);
+  expect(spanViewportUvToT3Uv({ u: 1.001, v: 0.5 }, right)).toBe(null);
+  expect(spanViewportUvToT3Uv({ u: 0.5, v: -0.001 }, right)).toBe(null);
+  expect(spanViewportUvToT3Uv({ u: 0.5, v: 1.001 }, right)).toBe(null);
 });
 
 test("spanHorizontalScale is inverse width fraction", () => {
