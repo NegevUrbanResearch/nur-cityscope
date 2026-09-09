@@ -141,8 +141,11 @@ POST /api/otef_viewport/
   & '.\otef-interactive\scripts\configure-chrome-popup-policy.ps1' -Mode Install
   ```
 
-  Running the script without `-Mode Install` only reports policy status. This
-  is technician setup, not a presenter action. Popup denial or a closed context
+  Running the script without `-Mode Install` only reports policy status. The
+  same Install adds `--disable-features=CrossOriginOpenerPolicy` to Google
+  Chrome shortcuts. Quit Chrome fully and start GIS from an updated shortcut
+  so archive close can work. This is technician setup, not a presenter action.
+  Popup denial or a closed context
   reports `unavailable`; the remote keeps the action usable or shows its
   localized unavailable state. **Back to map** closes the archive window and
   restores GIS focus when the browser permits it.

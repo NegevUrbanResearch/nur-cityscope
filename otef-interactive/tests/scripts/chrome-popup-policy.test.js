@@ -21,6 +21,16 @@ describe("Chrome popup policy setup script", () => {
     expect(source).not.toContain("DefaultPopupsSetting");
   });
 
+  test("installs the CrossOriginOpenerPolicy Chrome launch flag on existing shortcuts", () => {
+    const source = readScript();
+
+    expect(source).toContain("--disable-features=CrossOriginOpenerPolicy");
+    expect(source).toContain("CrossOriginOpenerPolicy");
+    expect(source).toContain("WScript.Shell");
+    expect(source).toContain("Install-ChromeLaunchFlag");
+    expect(source).toContain("Google Chrome.lnk");
+  });
+
   test("offers idempotent install, remove, and status modes", () => {
     const source = readScript();
 

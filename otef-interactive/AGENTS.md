@@ -31,7 +31,10 @@
   & '.\otef-interactive\scripts\configure-chrome-popup-policy.ps1' -Mode Install
   ```
 
-  Running the script without `-Mode Install` only reports policy status. This
+  Running the script without `-Mode Install` only reports policy status. The
+  same Install also adds `--disable-features=CrossOriginOpenerPolicy` to Google
+  Chrome shortcuts so GIS can close the NLI archive window. Quit Chrome fully
+  and start GIS from an updated shortcut before that close path works. This
   setup is a technician action; the presenter interacts only with the remote.
 
 ## Interaction and rendering contracts
