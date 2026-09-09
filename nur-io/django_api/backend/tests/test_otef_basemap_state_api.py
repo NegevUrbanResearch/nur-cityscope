@@ -1,4 +1,5 @@
 import json
+from unittest.mock import AsyncMock, patch
 
 from backend.models import OTEFViewportState, Table
 from django.test import TestCase
@@ -27,23 +28,43 @@ class OTEFBasemapStateApiTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["basemap"], "osm")
 
-    def test_patch_basemap_accepts_supported_values(self):
-        res = self.client.patch(
-            "/api/otef_viewport/by-table/otef/",
-            data=json.dumps({"basemap": "satellite"}),
-            content_type="application/json",
-        )
+    @patch("channels.layers.get_channel_layer")
+    def test_patch_basemap_accepts_supported_values(self, get_layer):
+        get_layer.return_value.group_send = AsyncMock()
+        with self.captureOnCommitCallbacks(execute=True):
+            res = self.client.patch(
+                "/api/otef_viewport/by-table/otef/",
+                data=json.dumps({"basemap": "satellite"}),
+                content_type="application/json",
+            )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["basemap"], "satellite")
 
         state = OTEFViewportState.objects.get(table=self.table)
         self.assertEqual(state.basemap, "satellite")
 
-        res = self.client.patch(
-            "/api/otef_viewport/by-table/otef/",
-            data=json.dumps({"basemap": "dark"}),
-            content_type="application/json",
-        )
+        get_layer.return_value.group_send.reset_mock()
+        with self.captureOnCommitCallbacks(execute=True):
+            res = self.client.patch(
+                "/api/otef_viewport/by-table/otef/",
+                data=json.dumps({"basemap": "satellite_bw"}),
+                content_type="application/json",
+            )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["basemap"], "satellite_bw")
+
+        state = OTEFViewportState.objects.get(table=self.table)
+        self.assertEqual(state.basemap, "satellite_bw")
+        message = get_layer.return_value.group_send.call_args.args[1]["message"]
+        self.assertEqual(message["type"], "otef_basemap_changed")
+        self.assertEqual(message["basemap"], "satellite_bw")
+
+        with self.captureOnCommitCallbacks(execute=True):
+            res = self.client.patch(
+                "/api/otef_viewport/by-table/otef/",
+                data=json.dumps({"basemap": "dark"}),
+                content_type="application/json",
+            )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["basemap"], "dark")
         state = OTEFViewportState.objects.get(table=self.table)

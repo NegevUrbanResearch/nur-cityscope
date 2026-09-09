@@ -73,6 +73,7 @@ function formatLayerLabelForDisplay(name) {
 }
 
 if (typeof window !== "undefined") {
+  // Compatibility for legacy non-module layer controls; module callers import the exports below.
   window.normalizeLayerBaseName = normalizeLayerBaseName;
   window.parseLayerNameWithGeometrySuffix = parseLayerNameWithGeometrySuffix;
   window.formatLayerLabelForDisplay = formatLayerLabelForDisplay;

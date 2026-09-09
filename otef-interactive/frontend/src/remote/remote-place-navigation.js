@@ -44,6 +44,9 @@ export function initRemotePlaceNavigation(options = {}) {
     typeof options.canNavigateToPlace === "function" ? options.canNavigateToPlace : () => true;
   const modeButtons = Array.from(root.querySelectorAll?.("[data-search-mode]") || []);
   const navigationSection = root.closest?.("#navigationSection") || root;
+  const isNarrativeActive = typeof options.narrativeActive === "function"
+    ? options.narrativeActive
+    : () => options.narrativeActive === true;
 
   if (!input || !clear || !list || !status) return null;
 
@@ -113,9 +116,11 @@ export function initRemotePlaceNavigation(options = {}) {
 
   function syncModeUi() {
     modeButtons.forEach((button) => { const active = button.dataset.searchMode === mode;
-      button.classList?.toggle?.("is-active", active); button.setAttribute("aria-pressed", active ? "true" : "false"); });
+      button.classList?.toggle?.("is-active", active); button.setAttribute("aria-pressed", active ? "true" : "false");
+      button.disabled = button.dataset.searchMode === "people" && isNarrativeActive(); });
     input.placeholder = t(mode === "people" ? "peopleSearchPlaceholder" : "placeSearchPlaceholder");
     input.setAttribute("aria-label", t(mode === "people" ? "peopleSearchAria" : "placeSearchAria"));
+    input.disabled = mode === "people" && isNarrativeActive();
   }
 
   function closeSuggestions() {
@@ -150,7 +155,20 @@ export function initRemotePlaceNavigation(options = {}) {
     syncInputDirection(input);
     setHidden(clear, query.length === 0);
     list.setAttribute("aria-label", t(mode === "people" ? "peopleSuggestionsAria" : "placeSuggestionsAria"));
-    input.setAttribute("aria-disabled", isConnected() ? "false" : "true"); setRootClass("is-disconnected", !isConnected());
+    const narrativeConflict = mode === "people" && isNarrativeActive();
+    input.setAttribute(
+      "aria-disabled",
+      isConnected() && !narrativeConflict ? "false" : "true",
+    );
+    setRootClass("is-disconnected", !isConnected());
+
+    if (narrativeConflict) {
+      peopleSearchRequest += 1;
+      input.disabled = true;
+      render([]);
+      setStatus(t("peopleNarrativeDisabled"));
+      return;
+    }
 
     if (!isConnected()) {
       render([]);
@@ -168,7 +186,11 @@ export function initRemotePlaceNavigation(options = {}) {
       const request = ++peopleSearchRequest;
       setStatus(t("peopleSearchLoading"));
       void peopleRuntime.load().then(() => {
-        if (request !== peopleSearchRequest || mode !== "people") return;
+        if (
+          request !== peopleSearchRequest ||
+          mode !== "people" ||
+          isNarrativeActive()
+        ) return;
         const results = peopleRuntime.search(query, getLocale(), 8);
         render(results);
         setStatus(results.length ? "" : t("peopleSearchEmpty"));
@@ -233,6 +255,7 @@ export function initRemotePlaceNavigation(options = {}) {
     syncInputDirection: () => syncInputDirection(input),
     onModeUiChange: syncModeUi,
     onRefresh: refresh,
+    isNarrativeActive,
   });
 
   input.setAttribute("role", "combobox");

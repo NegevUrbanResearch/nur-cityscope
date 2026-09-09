@@ -3,7 +3,12 @@
 // Uses centralized OTEFDataContext for shared state (viewport, layers, animations, connection)
 
 import { rotateViewerVectorToItm } from "../shared/orientation-transform.js";
-import { isGisBasemapId, normalizeGisBasemap } from "../shared/gis-basemap.js";
+import {
+  isGisBasemapId,
+  isSatelliteBasemap,
+  normalizeGisBasemap,
+} from "../shared/gis-basemap.js";
+import { normalizeNarrativeState } from "../shared/nli-narratives.js";
 import {
   LOCALE_EVENT,
   getLocale,
@@ -23,12 +28,14 @@ let currentState = {
   isConnected: false,
   viewerAngleDeg: 0,
   basemap: "osm",
+  narrativeState: normalizeNarrativeState(null),
 };
 
 // Control state management (prevent simultaneous use)
 let activeControl = null; // null, 'dpad', or 'joystick'
 let joystickManager = null; // Nipple.js instance
 let joystickInterval = null; // For continuous pan updates
+let basemapControlController = null;
 
 // Throttle/debounce timers
 let zoomThrottleTimer = null;
@@ -114,8 +121,17 @@ async function initialize() {
   );
 
   unsubscribeFunctions.push(
+    OTEFDataContext.subscribe("narrativeState", (narrativeState) => {
+      currentState.narrativeState = normalizeNarrativeState(narrativeState);
+      updateBasemapUI(currentState.basemap);
+      updateUI();
+    }),
+  );
+
+  unsubscribeFunctions.push(
     OTEFDataContext.subscribe("connection", (isConnected) => {
       currentState.isConnected = !!isConnected;
+      updateBasemapUI(currentState.basemap);
       updateConnectionStatus(isConnected ? "connected" : "disconnected");
     }),
   );
@@ -447,27 +463,178 @@ function initializeZoomControls() {
 function initializeBasemapControls() {
   const control = document.getElementById("basemapControl");
   if (!control) return;
-
-  control.addEventListener("click", (e) => {
-    const button = e.target.closest("[data-basemap]");
-    if (!button || !control.contains(button) || !currentState.isConnected) return;
-    const basemap = button.getAttribute("data-basemap");
-    if (!isGisBasemapId(basemap)) return;
-    currentState.basemap = basemap;
-    updateBasemapUI(basemap);
-    void OTEFDataContext.setBasemap(basemap);
+  basemapControlController?.destroy?.();
+  basemapControlController = createRemoteBasemapController({
+    root: control,
+    initialBasemap: currentState.basemap,
+    getBasemap: () => OTEFDataContext.getBasemap(),
+    isConnected: () => currentState.isConnected,
+    isNarrativeActive: () => normalizeNarrativeState(currentState.narrativeState).id !== null,
+    setBasemap: (basemap) => OTEFDataContext.setBasemap(basemap),
+    onBasemapSelected: (basemap) => {
+      currentState.basemap = basemap;
+    },
+    onError: (error) => {
+      console.error("[Remote] Basemap command failed:", error);
+    },
   });
+}
 
-  updateBasemapUI(currentState.basemap);
+export function deriveBasemapControlState(
+  basemap,
+  narrativeActive = false,
+  connected = true,
+) {
+  const normalized = normalizeGisBasemap(basemap);
+  return {
+    parentActive: isSatelliteBasemap(normalized),
+    colorPressed: normalized === "satellite",
+    bwPressed: normalized === "satellite_bw",
+    disabled: !!narrativeActive || !connected,
+  };
+}
+
+function renderRemoteBasemapControls(
+  root,
+  basemap,
+  narrativeActive,
+  connected,
+  menuOpen = false,
+  pending = false,
+) {
+  const normalized = normalizeGisBasemap(basemap);
+  const state = deriveBasemapControlState(normalized, narrativeActive, connected);
+  root.querySelectorAll(".basemap-button[data-basemap]").forEach((button) => {
+    const isParent = button.id === "basemapSatellite";
+    const isActive = isParent
+      ? state.parentActive
+      : button.getAttribute("data-basemap") === normalized;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    button.disabled = state.disabled || pending;
+    button.setAttribute("aria-disabled", button.disabled ? "true" : "false");
+    button.style.opacity = button.disabled ? "0.5" : "1";
+    button.style.pointerEvents = button.disabled ? "none" : "auto";
+  });
+  const parent = root.querySelector("#basemapSatellite");
+  parent?.setAttribute("aria-expanded", menuOpen ? "true" : "false");
+  const variants = root.querySelector("#basemapSatelliteVariants");
+  if (variants) variants.hidden = !menuOpen;
+  return state;
+}
+
+export function createRemoteBasemapController(options = {}) {
+  const root = options.root;
+  if (!root) return null;
+  let basemap = normalizeGisBasemap(options.initialBasemap);
+  let confirmedBasemap = basemap;
+  let menuOpen = false;
+  let pending = false;
+  const documentTarget = options.document ?? (
+    typeof document !== "undefined" ? document : null
+  );
+  const render = (nextBasemap = basemap, { confirmed = true } = {}) => {
+    basemap = normalizeGisBasemap(nextBasemap);
+    if (confirmed) confirmedBasemap = basemap;
+    const narrativeActive = options.isNarrativeActive?.() === true;
+    const connected = options.isConnected?.() !== false;
+    if (narrativeActive || !connected) menuOpen = false;
+    return renderRemoteBasemapControls(
+      root,
+      basemap,
+      narrativeActive,
+      connected,
+      menuOpen,
+      pending,
+    );
+  };
+  const closeMenu = ({ restoreFocus = false } = {}) => {
+    if (!menuOpen) return;
+    menuOpen = false;
+    render(basemap, { confirmed: false });
+    if (restoreFocus) root.querySelector("#basemapSatellite")?.focus?.();
+  };
+  const parent = root.querySelector("#basemapSatellite");
+  const variants = root.querySelector("#basemapSatelliteVariants");
+  const parentWrapper = parent?.closest?.(".basemap-satellite-wrapper");
+  parentWrapper?.append?.(variants);
+  const handleClick = (event) => {
+    const button = event?.target?.closest?.("[data-basemap]");
+    if (
+      !button ||
+      !root.contains(button) ||
+      button.disabled ||
+      options.isConnected?.() === false ||
+      options.isNarrativeActive?.() === true
+    ) return;
+    if (button.id === "basemapSatellite") {
+      menuOpen = !menuOpen;
+      render(basemap, { confirmed: false });
+      if (menuOpen) variants?.querySelector?.("[data-basemap]")?.focus?.();
+      return;
+    }
+    const nextBasemap = button.getAttribute("data-basemap");
+    if (!isGisBasemapId(nextBasemap)) return;
+    const requestedBasemap = normalizeGisBasemap(nextBasemap);
+    basemap = requestedBasemap;
+    menuOpen = false;
+    pending = true;
+    options.onBasemapSelected?.(requestedBasemap);
+    render(requestedBasemap, { confirmed: false });
+    Promise.resolve()
+      .then(() => options.setBasemap?.(requestedBasemap))
+      .then((result) => {
+        if (result?.ok === false) throw result.error ?? "Basemap command failed";
+        confirmedBasemap = requestedBasemap;
+      })
+      .catch((error) => options.onError?.(error))
+      .finally(() => {
+        pending = false;
+        if (basemap !== confirmedBasemap) {
+          const authoritative = options.getBasemap?.();
+          basemap = normalizeGisBasemap(authoritative ?? confirmedBasemap);
+        }
+        render(basemap);
+      });
+  };
+  const handleDocumentClick = (event) => {
+    if (menuOpen && !root.contains(event?.target)) closeMenu();
+  };
+  const handleDocumentKeydown = (event) => {
+    if (event?.key === "Escape") closeMenu({ restoreFocus: true });
+  };
+  const handleDocumentFocusIn = (event) => {
+    if (menuOpen && !root.contains(event?.target)) closeMenu();
+  };
+  root.addEventListener("click", handleClick);
+  documentTarget?.addEventListener("click", handleDocumentClick);
+  documentTarget?.addEventListener("keydown", handleDocumentKeydown);
+  documentTarget?.addEventListener("focusin", handleDocumentFocusIn);
+  render(basemap);
+  return {
+    render,
+    destroy() {
+      root.removeEventListener("click", handleClick);
+      documentTarget?.removeEventListener("click", handleDocumentClick);
+      documentTarget?.removeEventListener("keydown", handleDocumentKeydown);
+      documentTarget?.removeEventListener("focusin", handleDocumentFocusIn);
+    },
+  };
 }
 
 function updateBasemapUI(basemap) {
-  const normalized = normalizeGisBasemap(basemap);
-  document.querySelectorAll(".basemap-button[data-basemap]").forEach((button) => {
-    const isActive = button.getAttribute("data-basemap") === normalized;
-    button.classList.toggle("is-active", isActive);
-    button.setAttribute("aria-pressed", isActive ? "true" : "false");
-  });
+  if (basemapControlController) {
+    basemapControlController.render(basemap);
+    return;
+  }
+  const root = document.getElementById("basemapControl");
+  if (!root) return;
+  renderRemoteBasemapControls(
+    root,
+    basemap,
+    normalizeNarrativeState(currentState.narrativeState).id !== null,
+    currentState.isConnected,
+  );
 }
 
 function getLiveViewport() {
@@ -673,7 +840,7 @@ function updateUI() {
     ".dpad-button, .zoom-button, .zoom-slider, .basemap-button, .layer-toggle, .layer-toggle-with-action",
   );
   controls.forEach((control) => {
-    if (currentState.isConnected) {
+    if (currentState.isConnected && !control.disabled) {
       control.style.opacity = "1";
       control.style.pointerEvents = "auto";
     } else {
@@ -700,6 +867,10 @@ if (typeof window !== "undefined") {
       }
     });
     unsubscribeFunctions = [];
+
+    window.layerSheetController?.destroy?.();
+    basemapControlController?.destroy?.();
+    basemapControlController = null;
 
     if (joystickManager) {
       joystickManager.destroy();

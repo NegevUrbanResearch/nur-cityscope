@@ -30,6 +30,12 @@ describe("maplibre basemap switching", () => {
     });
 
     map.setStyle.mockClear();
+    expect(setGISBasemap(map, "satellite_bw")).toBe(true);
+    expect(map.setStyle).toHaveBeenCalledWith(BASEMAP_STYLES.satellite_bw, {
+      diff: false,
+    });
+
+    map.setStyle.mockClear();
     expect(setGISBasemap(map, "dark")).toBe(true);
     expect(map.setStyle).toHaveBeenCalledWith(BASEMAP_STYLES.dark, {
       diff: false,
@@ -39,6 +45,19 @@ describe("maplibre basemap switching", () => {
     map.setStyle.mockClear();
     expect(setGISBasemap(map, "not-real")).toBe(false);
     expect(map.setStyle).not.toHaveBeenCalled();
+  });
+
+  it("renders the B&W satellite variant from the shared Esri tiles", async () => {
+    const { BASEMAP_STYLES } = await import(
+      "../../frontend/src/map/maplibre-map.js"
+    );
+
+    expect(BASEMAP_STYLES.satellite_bw.layers[0].paint).toEqual({
+      "raster-saturation": -1,
+    });
+    expect(BASEMAP_STYLES.satellite_bw.sources.esri.tiles).toEqual(
+      BASEMAP_STYLES.satellite.sources.esri.tiles,
+    );
   });
 
   it("uses the exact keyless OpenFreeMap dark style URL", async () => {

@@ -61,12 +61,7 @@ test("projection entry wires MapLibre curated pipeline (manual Supabase sync via
   expect(src.includes("fromSlideshowTick,")).toBe(true);
   expect(src.includes("loadCuratedLayerToMapLibre(map, fullId,")).toBe(true);
   expect(src.includes("skipInitialVectorLayerSync")).toBe(false);
-  const idxSubscribe = src.indexOf('OTEFDataContext.subscribe("layerGroups"');
-  expect(idxSubscribe).toBeGreaterThan(-1);
-  const subSlice = src.slice(idxSubscribe, idxSubscribe + 800);
-  expect(subSlice.includes("getEffectiveProjectionLayerGroups()")).toBe(true);
-  expect(
-    subSlice.includes("groupsOverride: groups") &&
-      /subscribe\(\s*["']layerGroups["']\s*,\s*\(\s*groups\s*\)/.test(subSlice),
-  ).toBe(false);
+  const curatedSubscription = /OTEFDataContext\.subscribe\(\s*["']layerGroups["']\s*,\s*\(\)\s*=>\s*\{[\s\S]{0,800}?groupsOverride:\s*getEffectiveProjectionLayerGroups\(\)/;
+  expect(src).toMatch(curatedSubscription);
+  expect(src).not.toMatch(/OTEFDataContext\.subscribe\(\s*["']layerGroups["']\s*,\s*\(\s*groups\s*\)[\s\S]{0,800}?groupsOverride:\s*groups/);
 });

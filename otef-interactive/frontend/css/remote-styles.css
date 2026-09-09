@@ -1240,9 +1240,9 @@ body.otef-remote-shell {
 }
 
 .basemap-segmented {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   width: min(100%, 16rem);
   align-self: center;
   padding: 3px;
@@ -1250,6 +1250,44 @@ body.otef-remote-shell {
   border-radius: var(--rounded-sm);
   background: rgba(38, 35, 32, 0.72);
   box-shadow: var(--shadow-pressed-inset);
+}
+
+.basemap-primary-row {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.basemap-satellite-wrapper {
+  position: relative;
+  min-width: 0;
+}
+
+.basemap-satellite-parent {
+  width: 100%;
+}
+
+.basemap-satellite-variants {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 50%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  width: min(10rem, calc(100vw - 2rem));
+  max-inline-size: min(10rem, calc(100vw - 2rem));
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--rounded-sm);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-warm);
+  transform: translateX(-50%);
+}
+
+.basemap-satellite-variants[hidden] {
+  display: none;
 }
 
 .basemap-button {
@@ -1277,6 +1315,32 @@ body.otef-remote-shell {
 .basemap-button:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring-primary);
+}
+
+.basemap-satellite-parent {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.basemap-disclosure-indicator {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-inline-end: 2px solid currentColor;
+  border-block-end: 2px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform var(--transition-speed) ease;
+}
+
+.basemap-satellite-parent[aria-expanded="true"] .basemap-disclosure-indicator {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.basemap-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .basemap-button:active:not(:focus-visible) {
@@ -2241,28 +2305,112 @@ body.otef-remote-shell {
 }
 
 .layers-variant-c--nli {
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
   padding-bottom: 0;
 }
 
 .layers-variant-c--nli .group-layers--tiles {
-  padding-bottom: 10.5rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(var(--nli-bottom-dock-height, 14.5rem) + 0.5rem);
 }
 
-.nli-tl-sheet {
+.sheet-content--nli {
+  overflow: hidden;
+}
+
+.nli-bottom-dock {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 3;
+  min-width: 0;
+  overflow-x: hidden;
   background: var(--color-surface);
   border-top: 1px solid var(--color-border-strong);
-  padding: 10px 8px 12px;
   box-shadow: 0 -16px 28px rgba(0, 0, 0, 0.4);
+}
+
+.nli-tl-sheet {
+  padding: 10px 8px 12px;
 }
 
 .nli-tl-sheet[aria-disabled="true"] {
   opacity: 0.55;
   pointer-events: none;
+}
+
+.nli-narrative-sheet {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+  padding: 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+}
+
+.nli-narrative-title {
+  color: var(--color-ink-muted);
+  font: var(--font-label-sm);
+  white-space: nowrap;
+}
+
+.nli-narrative-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.nli-narrative-actions > :only-child {
+  grid-column: 1 / -1;
+}
+
+.nli-narrative-button {
+  min-height: 40px;
+  min-width: 0;
+  padding: 6px 10px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: var(--font-label-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nli-narrative-button.is-active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.nli-narrative-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.nli-narrative-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-primary);
+}
+
+.nli-narrative-feedback {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--color-ink-muted);
+  font: var(--font-label-sm);
+  text-align: start;
 }
 
 .nli-tl-clock {

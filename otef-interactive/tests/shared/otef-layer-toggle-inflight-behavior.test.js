@@ -51,7 +51,7 @@ describe("otef layer toggle inflight behavior", () => {
           {
             id: AXIS,
             enabled: true,
-            layers: [{ id: LAYER, displayName: "Demo", enabled: !!changes[0]?.enabled }],
+            layers: [{ id: LAYER, displayName: "Demo", enabled: !!changes.find((change) => change.full_layer_id === fullId)?.enabled }],
           },
         ],
       }),
@@ -100,7 +100,7 @@ describe("otef layer toggle inflight behavior", () => {
     let call = 0;
     apiMocks.setLayerToggles.mockImplementation((_table, changes) => {
       const i = call++;
-      const enabled = !!changes[0]?.enabled;
+      const enabled = !!changes.find((change) => change.full_layer_id === fullId)?.enabled;
       if (i === 0) {
         return d0.promise.then(() => ({
           layerGroups: [

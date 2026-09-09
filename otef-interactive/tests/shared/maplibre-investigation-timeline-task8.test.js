@@ -795,9 +795,10 @@ describe("Task 8 investigation timeline coordinator", () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const mapMain = fs.readFileSync(path.resolve(here, "../../frontend/src/entries/map-main.js"), "utf8");
     const lifecycle = fs.readFileSync(path.resolve(here, "../../frontend/src/entries/map-main-style-lifecycle.js"), "utf8");
-    expect(mapMain).toContain('import { installGisStyleReload } from "./map-main-style-lifecycle.js";');
-    expect(mapMain).toContain("installGisStyleReload({");
-    expect(mapMain).toContain("refreshLayers: reapplyAfterStyleLoad");
+    expect(mapMain).toContain('import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";');
+    expect(mapMain).toContain("const basemapCoordinator = createGisBasemapStyleCoordinator({");
+    expect(mapMain).toContain("refreshLayers: async ({ basemap, groupsOverride, syncFlow = false, isCurrent }) => {");
+    expect(lifecycle).toContain("disposeStyleReload = installGisStyleReload({");
     expect(lifecycle).toContain("syncFlow: false");
     expect(lifecycle.indexOf("await refreshLayers")).toBeLessThan(lifecycle.indexOf("personVisual?.bringToFront?."));
   });

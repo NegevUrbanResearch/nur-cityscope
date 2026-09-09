@@ -1,6 +1,7 @@
 import { OTEF_API } from "./api-client.js";
 import { normalizeGisBasemap } from "./gis-basemap.js";
 import { idleNliClock, normalizeNliClock } from "./nli-investigation-clock.js";
+import { normalizeNarrativeState } from "./nli-narratives.js";
 import { normalizePersonSelection } from "./person-selection.js";
 import { OTEFDataContextInternals } from "./otef-data-context/index.js";
 import { recordTraceEvent } from "./otef-trace.js";
@@ -85,6 +86,11 @@ function viewportEqual(a, b) {
   return true;
 }
 
+function isAuthoritativeHttpFailure(error) {
+  const status = Number(error?.status);
+  return Number.isInteger(status) && status >= 400 && status < 500;
+}
+
 class OTEFDataContextClass {
   constructor() {
     this._tableName = null;
@@ -92,6 +98,7 @@ class OTEFDataContextClass {
     this._layerGroups = null;
     this._animations = null;
     this._basemap = "osm";
+    this._independentBasemapGeneration = 0;
     this._bounds = null;
     this._viewerAngleDeg = 0;
     this._isConnected = false;
@@ -110,6 +117,9 @@ class OTEFDataContextClass {
       navigationCommand: new Set(),
       archiveWindow: new Set(),
       archiveWindowResult: new Set(),
+      narrativeState: new Set(),
+      narrativePresentation: new Set(),
+      narrativePresentationResult: new Set(),
     };
 
     this._wsClient = null;
@@ -135,6 +145,7 @@ class OTEFDataContextClass {
     this._projectionSlideshow = null;
     this._investigationClock = idleNliClock();
     this._personSelection = normalizePersonSelection(null);
+    this._narrativeState = normalizeNarrativeState(null);
     this._clockOffsetMs = 0;
     this._clockPatchQueue = null;
   }
@@ -165,9 +176,10 @@ class OTEFDataContextClass {
 
   async _doInit(tableName) {
     this._tableName = tableName;
+    const coupledBaseline = this._captureNarrativeSceneBaseline();
     try {
       const state = await OTEF_API.getState(this._tableName, { forceFresh: true });
-      this._applyStateFromApi(state, { notify: false });
+      this._applyStateFromApi(state, { notify: true, hydrate: true, coupledBaseline });
       this._setupWebSocket();
       this._initialized = true;
     } finally {
@@ -184,13 +196,13 @@ class OTEFDataContextClass {
     websocket.setupWebSocket(this);
   }
 
-  _applyStateFromApi(state, { notify } = { notify: true }) {
+  _applyStateFromApi(state, options = {}) {
     const websocket = OTEFDataContextInternals.websocket;
     if (!websocket || typeof websocket.applyStateFromApi !== "function") {
       getLogger().error("[OTEFDataContext] Missing websocket helpers");
       return;
     }
-    websocket.applyStateFromApi(this, state, { notify });
+    websocket.applyStateFromApi(this, state, options);
   }
 
   _setConnection(isConnected) {
@@ -288,6 +300,11 @@ class OTEFDataContextClass {
     this._notify("basemap", this._basemap);
   }
 
+  _setConfirmedBasemap(basemap) {
+    this._independentBasemapGeneration += 1;
+    this._setBasemap(basemap);
+  }
+
   _setBounds(bounds) {
     this._bounds = bounds;
     this._notify("bounds", this._bounds);
@@ -382,6 +399,13 @@ class OTEFDataContextClass {
         }
         return;
       } catch (err) {
+        if (isAuthoritativeHttpFailure(err)) {
+          getLogger().warn(
+            "[OTEFDataContext] projection slideshow command rejected by the server",
+            err,
+          );
+          throw err;
+        }
         getLogger().warn(
           "[OTEFDataContext] projection slideshow PATCH failed; using BroadcastChannel fallback",
           err,
@@ -410,6 +434,83 @@ class OTEFDataContextClass {
     return this._personSelection;
   }
 
+  getNarrativeState() {
+    return this._narrativeState;
+  }
+
+  _captureNarrativeSceneBaseline() {
+    return {
+      independentBasemapGeneration: this._independentBasemapGeneration,
+      investigationClockRevision: Number(this._investigationClock?.revision) || 0,
+      personSelectionRevision: normalizePersonSelection(this._personSelection).revision,
+    };
+  }
+
+  _applyNarrativeScene(scene, options = {}) {
+    if (!scene || typeof scene !== "object") return false;
+    const incoming = normalizeNarrativeState(scene.narrativeState);
+    const sceneRevision = scene.sceneRevision;
+    if (!Number.isInteger(sceneRevision) || sceneRevision !== incoming.revision) return false;
+    const localRevision = normalizeNarrativeState(this._narrativeState).revision;
+    const isAdvance = sceneRevision > localRevision;
+    const isEqual = sceneRevision === localRevision;
+    if (sceneRevision < localRevision || (isEqual && !options.allowSameRevision)) {
+      return false;
+    }
+    for (const key of ["basemap", "investigationClock", "personSelection"]) {
+      if (!Object.prototype.hasOwnProperty.call(scene, key)) return false;
+    }
+
+    const incomingBasemap = normalizeGisBasemap(scene.basemap);
+    const incomingClock = normalizeNliClock(scene.investigationClock);
+    const incomingPerson = normalizePersonSelection(scene.personSelection);
+    const localClock = normalizeNliClock(this._investigationClock);
+    const localPerson = normalizePersonSelection(this._personSelection);
+    const hydrate = options.hydrate === true;
+    const baseline = options.coupledBaseline;
+    const hasBasemapBaseline = Number.isInteger(baseline?.independentBasemapGeneration);
+    const canAdoptBasemap =
+      !hasBasemapBaseline ||
+      baseline.independentBasemapGeneration === this._independentBasemapGeneration;
+    const hasClockBaseline = Number.isInteger(baseline?.investigationClockRevision);
+    const canHydrateClock = hydrate && (
+      !hasClockBaseline || baseline.investigationClockRevision === localClock.revision
+    );
+    const hasPersonBaseline = Number.isInteger(baseline?.personSelectionRevision);
+    const canHydratePerson = hydrate && (
+      !hasPersonBaseline || baseline.personSelectionRevision === localPerson.revision
+    );
+
+    const nextNarrative = isAdvance || hydrate ? incoming : this._narrativeState;
+    const nextBasemap = canAdoptBasemap ? incomingBasemap : this._basemap;
+    const nextClock = canHydrateClock || incomingClock.revision > localClock.revision
+      ? incomingClock
+      : this._investigationClock;
+    const nextPerson = canHydratePerson || incomingPerson.revision > localPerson.revision
+      ? incomingPerson
+      : this._personSelection;
+    const narrativeChanged = JSON.stringify(this._narrativeState) !== JSON.stringify(nextNarrative);
+    const basemapChanged = this._basemap !== nextBasemap;
+    const clockChanged = JSON.stringify(this._investigationClock) !== JSON.stringify(nextClock);
+    const personChanged = JSON.stringify(this._personSelection) !== JSON.stringify(nextPerson);
+
+    this._narrativeState = nextNarrative;
+    this._basemap = nextBasemap;
+    this._investigationClock = nextClock;
+    this._personSelection = nextPerson;
+    if ((canHydrateClock || clockChanged) && Number.isFinite(nextClock.serverNowMs)) {
+      this._clockOffsetMs = nextClock.serverNowMs - Date.now();
+    }
+
+    if (options.notify !== false) {
+      if (isAdvance || narrativeChanged) this._notify("narrativeState", this._narrativeState);
+      if (isAdvance || basemapChanged) this._notify("basemap", this._basemap);
+      if (isAdvance || clockChanged) this._notify("investigationClock", this._investigationClock);
+      if (isAdvance || personChanged) this._notify("personSelection", this._personSelection);
+    }
+    return true;
+  }
+
   _personSelectionAction(name, ...args) {
     const actions = OTEFDataContextInternals.actions;
     if (!actions || typeof actions[name] !== "function") {
@@ -436,6 +537,27 @@ class OTEFDataContextClass {
     const helper = OTEFDataContextInternals.actions?.archiveWindowResult;
     return typeof helper === "function"
       ? helper(this, outcome, personId, datasetVersion, requestId)
+      : Promise.resolve({ ok: false, reason: "missing_action" });
+  }
+
+  setNarrative(id) {
+    const helper = OTEFDataContextInternals.actions?.setNarrative;
+    return typeof helper === "function"
+      ? helper(this, id)
+      : Promise.resolve({ ok: false, reason: "missing_action" });
+  }
+
+  narrativePresentationCommand(action, id, requestId) {
+    const helper = OTEFDataContextInternals.actions?.narrativePresentationCommand;
+    return typeof helper === "function"
+      ? helper(this, action, id, requestId)
+      : Promise.resolve({ ok: false, reason: "missing_action" });
+  }
+
+  narrativePresentationResult(outcome, id, requestId) {
+    const helper = OTEFDataContextInternals.actions?.narrativePresentationResult;
+    return typeof helper === "function"
+      ? helper(this, outcome, id, requestId)
       : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 
@@ -697,6 +819,9 @@ class OTEFDataContextClass {
       case "personSelection":
         current = this._personSelection;
         break;
+      case "narrativeState":
+        current = this._narrativeState;
+        break;
       case "navigationCommand":
         current = undefined;
         break;
@@ -704,7 +829,13 @@ class OTEFDataContextClass {
         break;
     }
 
-    if (key !== "navigationCommand" && current !== null && current !== undefined) {
+    if (
+      key !== "navigationCommand" &&
+      key !== "narrativePresentation" &&
+      key !== "narrativePresentationResult" &&
+      current !== null &&
+      current !== undefined
+    ) {
       try {
         callback(current);
       } catch (err) {

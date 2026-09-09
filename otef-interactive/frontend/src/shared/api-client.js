@@ -167,6 +167,29 @@ export const OTEF_API = {
     return this.executeCommand(tableName, { action: "archive_window_result", ...result });
   },
 
+  async setNarrative(tableName = this.defaultTable, narrativeId, expectedRevision, meta = {}) {
+    return this.executeCommand(tableName, {
+      action: "set_narrative",
+      narrativeId,
+      expectedRevision,
+      ...meta,
+    });
+  },
+
+  async narrativePresentationCommand(tableName = this.defaultTable, command) {
+    return this.executeCommand(tableName, {
+      action: "narrative_presentation",
+      ...command,
+    });
+  },
+
+  async narrativePresentationResult(tableName = this.defaultTable, result) {
+    return this.executeCommand(tableName, {
+      action: "narrative_presentation_result",
+      ...result,
+    });
+  },
+
   async updateLayerGroups(tableName = this.defaultTable, layerGroups, meta = {}) {
     return this.updateState(tableName, { layerGroups, ...meta });
   },

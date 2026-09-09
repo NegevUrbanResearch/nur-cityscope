@@ -15,6 +15,9 @@ export const OTEF_MESSAGE_TYPES = {
   PLACE_NAVIGATION_COMMAND: "otef_place_navigation_command",
   ARCHIVE_WINDOW_COMMAND: "otef_archive_window_command",
   ARCHIVE_WINDOW_RESULT: "otef_archive_window_result",
+  NARRATIVE_SCENE_CHANGED: "otef_narrative_scene_changed",
+  NARRATIVE_PRESENTATION_COMMAND: "otef_narrative_presentation_command",
+  NARRATIVE_PRESENTATION_RESULT: "otef_narrative_presentation_result",
 };
 
 export const DEFAULT_LAYER_STATES = {

@@ -20,6 +20,31 @@ if (!maplibregl || !Protocol) {
 
 const MAPLIBRE_RTL_TEXT_PLUGIN_URL =
   "https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.2.3/mapbox-gl-rtl-text.js";
+const ESRI_WORLD_IMAGERY_TILES = Object.freeze([
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+]);
+
+function createEsriRasterStyle(paint) {
+  return {
+    version: 8,
+    sources: {
+      esri: {
+        type: "raster",
+        tiles: ESRI_WORLD_IMAGERY_TILES,
+        tileSize: 256,
+        attribution: "Esri, Maxar, Earthstar Geographics",
+      },
+    },
+    layers: [
+      {
+        id: "esri-tiles",
+        type: "raster",
+        source: "esri",
+        ...(paint ? { paint } : {}),
+      },
+    ],
+  };
+}
 
 function ensureMapLibreRTLTextPlugin() {
   if (!maplibregl || typeof maplibregl.setRTLTextPlugin !== "function") {
@@ -64,20 +89,8 @@ const BASEMAP_STYLES = {
     },
     layers: [{ id: "osm-tiles", type: "raster", source: "osm" }],
   },
-  satellite: {
-    version: 8,
-    sources: {
-      esri: {
-        type: "raster",
-        tiles: [
-          "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        ],
-        tileSize: 256,
-        attribution: "Esri, Maxar, Earthstar Geographics",
-      },
-    },
-    layers: [{ id: "esri-tiles", type: "raster", source: "esri" }],
-  },
+  satellite: createEsriRasterStyle(),
+  satellite_bw: createEsriRasterStyle({ "raster-saturation": -1 }),
   dark: "https://tiles.openfreemap.org/styles/dark",
 };
 

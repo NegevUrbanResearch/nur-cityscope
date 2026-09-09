@@ -779,12 +779,16 @@ describe('OTEFDataContext actions', () => {
       _setBasemap: vi.fn(function setBasemapState(next) {
         this._basemap = next;
       }),
+      _setConfirmedBasemap: vi.fn(function setConfirmedBasemapState(next) {
+        this._setBasemap(next);
+      }),
     };
 
     const result = await setBasemap(ctx, 'satellite');
 
     expect(result).toEqual({ ok: true });
     expect(ctx._setBasemap).toHaveBeenCalledWith('satellite');
+    expect(ctx._setConfirmedBasemap).toHaveBeenCalledWith('satellite');
     const body = JSON.parse(global.fetch.mock.calls[0][1].body);
     expect(global.fetch.mock.calls[0][0]).toContain('/otef/');
     expect(global.fetch.mock.calls[0][1].method).toBe('PATCH');
@@ -800,12 +804,16 @@ describe('OTEFDataContext actions', () => {
       _setBasemap: vi.fn(function setBasemapState(next) {
         this._basemap = next;
       }),
+      _setConfirmedBasemap: vi.fn(function setConfirmedBasemapState(next) {
+        this._setBasemap(next);
+      }),
     };
 
     const result = await setBasemap(ctx, 'dark');
 
     expect(result).toEqual({ ok: true });
     expect(ctx._setBasemap).toHaveBeenCalledWith('dark');
+    expect(ctx._setConfirmedBasemap).toHaveBeenCalledWith('dark');
     const body = JSON.parse(global.fetch.mock.calls[0][1].body);
     expect(body.basemap).toBe('dark');
   });

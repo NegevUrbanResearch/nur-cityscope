@@ -31,6 +31,12 @@ import {
   nliTransportSheetHtml,
   renderNliTimelineTransport,
 } from "./nli-timeline-transport.js";
+import { normalizeNarrativeState } from "../shared/nli-narratives.js";
+import {
+  consumeNliNarrativeButtonClick,
+  createNliNarrativePresentationController,
+  nliNarrativeControlsHtml,
+} from "./nli-narrative-controls.js";
 import {
   ensureWorkshopSubmissionColorsLoaded,
   pickWorkshopRowSwatchCssColor,
@@ -366,6 +372,12 @@ class LayerSheetController {
     this._nliScrubEl = null;
     this._nliOptimisticClock = null;
     this._nliCacheFetchInflight = false;
+    this._nliNarrativeTransitionPending = false;
+    this._nliNarrativeFeedback = "";
+    this._nliNarrativePresentationController = null;
+    this._nliDockResizeObserver = null;
+    this._subscriptions = [];
+    this._remoteLocaleHandler = null;
 
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", () => {
@@ -398,19 +410,82 @@ class LayerSheetController {
     this.render();
 
     if (typeof OTEFDataContext !== "undefined") {
-      OTEFDataContext.subscribe("layerGroups", () => this.render());
-      OTEFDataContext.subscribe("animations", () => this.render());
-      OTEFDataContext.subscribe("investigationClock", (clock) => {
+      this._nliNarrativePresentationController = createNliNarrativePresentationController({
+        dataContext: OTEFDataContext,
+        onStateChange: () => this.render(),
+      });
+      this._subscribeDataContext("layerGroups", () => this.render());
+      this._subscribeDataContext("animations", () => this.render());
+      this._subscribeDataContext("investigationClock", (clock) => {
         this._nliOptimisticClock = null;
         this._syncNliEndedTimer(clock);
         this._syncNliPlayheadTicker(clock);
         this.render();
       });
-      OTEFDataContext.subscribe("projectionSlideshow", () => this.render());
+      this._subscribeDataContext("projectionSlideshow", () => this.render());
+      this._subscribeDataContext("narrativeState", (state) => {
+        this._nliNarrativeTransitionPending = false;
+        this._nliNarrativeFeedback = "";
+        this._nliNarrativePresentationController?.reset(
+          normalizeNarrativeState(state).id,
+        );
+        this.render();
+      });
     }
 
     if (typeof window !== "undefined") {
-      window.addEventListener(LOCALE_EVENT, () => this.render());
+      this._remoteLocaleHandler = () => this.render();
+      window.addEventListener(LOCALE_EVENT, this._remoteLocaleHandler);
+    }
+  }
+
+  _subscribeDataContext(topic, handler) {
+    if (
+      typeof OTEFDataContext === "undefined" ||
+      typeof OTEFDataContext.subscribe !== "function"
+    ) return () => {};
+    const unsubscribe = OTEFDataContext.subscribe(topic, handler);
+    if (typeof unsubscribe === "function") this._subscriptions.push(unsubscribe);
+    return unsubscribe;
+  }
+
+  destroy() {
+    if (this._nliEndTimer !== null) clearTimeout(this._nliEndTimer);
+    if (this._nliPlayheadTimer !== null) clearTimeout(this._nliPlayheadTimer);
+    this._nliEndTimer = null;
+    this._nliPlayheadTimer = null;
+    this._nliScrub = null;
+    this._nliScrubEl = null;
+    this._nliNarrativePresentationController?.destroy?.();
+    this._nliDockResizeObserver?.disconnect?.();
+    for (const unsubscribe of this._subscriptions.splice(0)) unsubscribe();
+    if (typeof window !== "undefined" && this._remoteLocaleHandler) {
+      window.removeEventListener(LOCALE_EVENT, this._remoteLocaleHandler);
+    }
+  }
+
+  _syncNliDockMeasurement(content) {
+    this._nliDockResizeObserver?.disconnect?.();
+    this._nliDockResizeObserver = null;
+    const dock = content?.querySelector?.(".nli-bottom-dock");
+    const host = content?.querySelector?.(".layers-variant-c--nli");
+    if (!dock || !host?.style) return;
+    const applyHeight = (height) => {
+      const pixels = Math.ceil(Number(height));
+      if (Number.isFinite(pixels) && pixels > 0) {
+        host.style.setProperty("--nli-bottom-dock-height", `${pixels}px`);
+      }
+    };
+    applyHeight(dock.getBoundingClientRect?.().height);
+    if (typeof ResizeObserver === "function") {
+      this._nliDockResizeObserver = new ResizeObserver((entries) => {
+        const entry = entries.find((candidate) => candidate.target === dock) || entries[0];
+        const borderSize = Array.isArray(entry?.borderBoxSize)
+          ? entry.borderBoxSize[0]?.blockSize
+          : entry?.borderBoxSize?.blockSize;
+        applyHeight(borderSize ?? entry?.contentRect?.height ?? dock.getBoundingClientRect?.().height);
+      });
+      this._nliDockResizeObserver.observe(dock);
     }
   }
 
@@ -442,6 +517,7 @@ class LayerSheetController {
         return;
       }
 
+      if (consumeNliNarrativeButtonClick(e, this)) return;
       if (consumeNliTimelineButtonClick(e, this)) return;
 
       const animBtn = e.target.closest("[data-animation-toggle]");
@@ -518,6 +594,50 @@ class LayerSheetController {
   clearLayerFocus() {
     this.primaryTileIdsJson = null;
     this.render();
+  }
+
+  _readNarrativeState() {
+    if (
+      typeof OTEFDataContext !== "undefined" &&
+      typeof OTEFDataContext.getNarrativeState === "function"
+    ) {
+      return normalizeNarrativeState(OTEFDataContext.getNarrativeState());
+    }
+    return normalizeNarrativeState(null);
+  }
+
+  _isNarrativeActive() {
+    return this._readNarrativeState().id !== null;
+  }
+
+  async setNarrative(id) {
+    if (this._nliNarrativeTransitionPending || this._isPresentationActive()) return;
+    if (
+      typeof OTEFDataContext === "undefined" ||
+      typeof OTEFDataContext.setNarrative !== "function"
+    ) return;
+    const acknowledged = this._readNarrativeState();
+    const targetId = acknowledged.id === id ? null : id;
+    this._nliNarrativeTransitionPending = true;
+    this._nliNarrativeFeedback = "";
+    this.render();
+    try {
+      const response = await OTEFDataContext.setNarrative(targetId);
+      if (response?.ok === false) throw new Error("narrative transition rejected");
+    } catch {
+      this._nliNarrativeFeedback = t("nliNarrativeTransitionFailed");
+    } finally {
+      this._nliNarrativeTransitionPending = false;
+      this.render();
+    }
+  }
+
+  runNarrativePresentation(action, id) {
+    if (!this._isNarrativeActive() || this._nliNarrativeTransitionPending) {
+      return Promise.resolve({ outcome: "unavailable", narrativeId: id, requestId: null });
+    }
+    return this._nliNarrativePresentationController?.run(action, id) ||
+      Promise.resolve({ outcome: "unavailable", narrativeId: id, requestId: null });
   }
 
   async runLayerTileToggleFromElement(layerTile) {
@@ -787,6 +907,31 @@ class LayerSheetController {
       this._nliFeatureCache,
       presentationActive,
     );
+    const presentationState = this._nliNarrativePresentationController?.getState?.() || {
+      phase: "closed",
+      error: null,
+    };
+    const narrativeState = {
+      ...this._readNarrativeState(),
+      presentationPhase: presentationState.phase,
+      transitionPending: this._nliNarrativeTransitionPending,
+      feedback: this._nliNarrativeFeedback ||
+        (presentationState.error ? t("nliNarrativePresentationUnavailable") : ""),
+    };
+    const narrativeDisabledReason = presentationActive
+      ? t("nliNarrativeSlideshowDisabled")
+      : null;
+    const narrativeSheet = nliNarrativeControlsHtml(
+      selected,
+      narrativeState,
+      narrativeDisabledReason,
+    );
+    const nliBottomDock = selected.id === "nli"
+      ? `<div class="nli-bottom-dock">
+          ${narrativeSheet}
+          ${nliSheet}
+        </div>`
+      : "";
 
     return `
     <div class="${variantClass}">
@@ -833,7 +978,7 @@ class LayerSheetController {
         ${this.buildLayerRowsHtml(selected, animations)}
         </div>
       </div>
-      ${nliSheet}
+      ${nliBottomDock}
     </div>
   `;
   }
@@ -861,6 +1006,7 @@ class LayerSheetController {
     } else {
       this.focusedGroupId = this.resolveSelectedPackId(groups);
     }
+    content.classList?.toggle?.("sheet-content--nli", this.focusedGroupId === "nli");
 
     const animations =
       typeof OTEFDataContext !== "undefined" &&
@@ -898,6 +1044,7 @@ class LayerSheetController {
 
     this.updatePanelChrome(groups);
     applyRemoteChromeI18n();
+    this._syncNliDockMeasurement(content);
     if (this.focusedGroupId === "nli") {
       this._syncNliEndedTimer(this._liveNliClock());
       this._syncNliPlayheadTicker(this._liveNliClock());

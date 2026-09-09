@@ -202,7 +202,41 @@ class SlideshowTabController {
     return parsed == null ? fallback : parsed;
   }
 
+  isNarrativeActive() {
+    return !!OTEFDataContext.getNarrativeState?.()?.id;
+  }
+
+  setStatus(messageKey) {
+    const status = this.root?.querySelector?.("[data-slideshow-status]");
+    if (status) status.textContent = t(messageKey);
+  }
+
+  async startSlideshow(payload) {
+    if (this.isNarrativeActive()) {
+      this.setStatus("slideshowNarrativeDisabled");
+      return false;
+    }
+    try {
+      await OTEFDataContext.patchInvestigationClock(
+        stopNliClock(OTEFDataContext.getInvestigationClock()),
+      );
+      if (this.isNarrativeActive()) {
+        this.setStatus("slideshowNarrativeDisabled");
+        return false;
+      }
+      await OTEFDataContext.patchProjectionSlideshow({ type: "start", payload });
+      return true;
+    } catch {
+      this.setStatus("slideshowStartFailed");
+      return false;
+    }
+  }
+
   async handleStart() {
+    if (this.isNarrativeActive()) {
+      this.setStatus("slideshowNarrativeDisabled");
+      return;
+    }
     this.ensurePackOrder();
     if (this.packOrder.length === 0) {
       const status = this.root?.querySelector("[data-slideshow-status]");
@@ -211,13 +245,8 @@ class SlideshowTabController {
       }
       return;
     }
-    await OTEFDataContext.patchInvestigationClock(
-      stopNliClock(OTEFDataContext.getInvestigationClock()),
-    );
-    await OTEFDataContext.patchProjectionSlideshow({
-      type: "start",
-      payload: this.buildStartPayload(),
-    });
+    const started = await this.startSlideshow(this.buildStartPayload());
+    if (!started) return;
     this.running = true;
     this.renderStatusOnly();
   }
@@ -231,13 +260,7 @@ class SlideshowTabController {
     if (this.packOrder.length === 0) {
       return;
     }
-    await OTEFDataContext.patchInvestigationClock(
-      stopNliClock(OTEFDataContext.getInvestigationClock()),
-    );
-    await OTEFDataContext.patchProjectionSlideshow({
-      type: "start",
-      payload: { ...this.buildStartPayload(), keepSettlementNames: keepOn },
-    });
+    await this.startSlideshow({ ...this.buildStartPayload(), keepSettlementNames: keepOn });
   }
 
   async handleStop() {
@@ -302,6 +325,7 @@ class SlideshowTabController {
     const packNameById = new Map(this.availablePacks.map((pack) => [pack.id, pack.label]));
     const cfg = MapProjectionConfig?.PROJECTION_SLIDESHOW || {};
     const packListHeadingId = "slideshowPackListHeading";
+    const narrativeActive = this.isNarrativeActive();
     const packListMarkup =
       this.packOrder.length === 0
         ? `<div class="sheet-empty slideshow-pack-empty" role="status">${escapeHtml(
@@ -327,7 +351,9 @@ class SlideshowTabController {
         <h2 class="section-title" id="${packListHeadingId}">${escapeHtml(t("slideshowTitle"))}</h2>
         <p class="slideshow-hint">${escapeHtml(t("slideshowPackOrderHint"))}</p>
         <p class="slideshow-status" data-slideshow-status role="status" aria-live="polite">${
-          this.running
+          narrativeActive
+            ? escapeHtml(t("slideshowNarrativeDisabled"))
+            : this.running
             ? escapeHtml(t("slideshowStatusRunning"))
             : escapeHtml(t("slideshowStatusIdle"))
         }</p>
@@ -360,7 +386,7 @@ class SlideshowTabController {
         </div>
 
         <div class="slideshow-actions">
-          <button type="button" class="slideshow-actions__btn" data-slideshow-start>${escapeHtml(t("slideshowStart"))}</button>
+          <button type="button" class="slideshow-actions__btn" data-slideshow-start${narrativeActive ? " disabled" : ""}>${escapeHtml(t("slideshowStart"))}</button>
           <button type="button" class="slideshow-actions__btn" data-slideshow-stop>${escapeHtml(t("slideshowStop"))}</button>
         </div>
       </section>
@@ -373,6 +399,7 @@ class SlideshowTabController {
     this.root = document.getElementById(this.rootId);
     if (!this.root) return;
     this.bindEvents();
+    OTEFDataContext.subscribe?.("narrativeState", () => this.render());
     this.render();
   }
 }

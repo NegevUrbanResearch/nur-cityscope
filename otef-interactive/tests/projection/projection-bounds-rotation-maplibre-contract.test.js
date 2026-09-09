@@ -129,10 +129,11 @@ test("projection entry loads editors, injects MapLibre-safe callbacks, and wires
   expect(src).toContain("getModelBounds: () => itmBounds");
   expect(src).toContain("viewer_angle_deg: modelBoundsData.viewer_angle_deg");
 
-  expect(src).toContain('key === "b"');
+  expect(src).toMatch(/import\s*\{\s*dispatchProjectionDisplayHotkey,\s*readProjectionDisplayHotkey,?\s*\}\s*from\s*["']\.\.\/projection\/projection-display-hotkeys\.js["']/);
+  expect(src).toContain("const action = readProjectionDisplayHotkey(event)");
+  expect(src).toContain("dispatchProjectionDisplayHotkey(action, {");
   expect(src).toContain("window.ProjectionBoundsEditor");
   expect(src).toContain("ProjectionBoundsEditor.toggle");
-  expect(src).toContain('key === "r"');
   expect(src).toContain("ProjectionRotationEditor.toggle");
 });
 
@@ -720,6 +721,16 @@ test("projection entry publishes its live map for lab measurements", () => {
   const mapPublish = src.indexOf("window._maplibreMap = map", mapCreate);
   expect(mapCreate).toBeGreaterThan(-1);
   expect(mapPublish).toBeGreaterThan(mapCreate);
+});
+
+test("projection entry subscribes to narrative state while viewport remains the only highlight-camera path", () => {
+  const src = read("frontend/src/entries/projection-main.js");
+  expect(src).toContain("createProjectionNarrativeController");
+  expect(src).toMatch(/subscribe\("narrativeState"/);
+  expect(src).toContain("syncProjectionHighlight(viewport)");
+  expect(src).not.toContain("narrativeController.flyTo");
+  expect(src).not.toContain("narrativeController.jumpTo");
+  expect(src).not.toContain("narrativeController.easeTo");
 });
 
 test("Zikim measurement uses the projection runtime EPSG:2039 transform", () => {

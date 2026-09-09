@@ -28,6 +28,7 @@ import { idleNliClock } from "../shared/nli-investigation-clock.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
 import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
 import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
+import { createProjectionNarrativeController } from "../projection/projection-narrative-controller.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
   createSlideshowPackRuntime,
@@ -463,6 +464,7 @@ async function bootstrapProjectionRuntime() {
       });
     };
     let explainerDebugVisible = false;
+    let projectionNarrativeController = null;
     const syncContextInvestigation = () => {
       const { currentGroups, overlayGroups, presentationActive } = projectionOverlayContext();
       const clock =
@@ -483,6 +485,7 @@ async function bootstrapProjectionRuntime() {
             ? OTEFDataContext.correctedNow()
             : Date.now(),
         getPersonSelection: () => OTEFDataContext.getPersonSelection(),
+        narrativeFocus: projectionNarrativeController?.getDefinition(),
       });
     };
     try {
@@ -514,6 +517,17 @@ async function bootstrapProjectionRuntime() {
       syncContextRouteProgress();
       syncContextInvestigation();
     };
+    projectionNarrativeController = createProjectionNarrativeController({
+      map,
+      syncTimeline: syncContextInvestigation,
+    });
+    registerDisposer(() => projectionNarrativeController?.dispose());
+    registerDisposer(
+      OTEFDataContext.subscribe("narrativeState", (state) => {
+        projectionNarrativeController?.apply(state);
+      }),
+    );
+    projectionNarrativeController.apply(OTEFDataContext.getNarrativeState());
     registerDisposer(OTEFDataContext.subscribe("animations", syncContextRouteProgress));
     registerDisposer(OTEFDataContext.subscribe("investigationClock", syncContextInvestigation));
     registerDisposer(bindProjectionPersonHalo({
@@ -609,6 +623,7 @@ async function bootstrapProjectionRuntime() {
       if (toRefresh.length === 0) {
         syncContextFlowAnimations();
         syncPinkLineAxisCompanionForMapLibre(map, currentGroups);
+        projectionNarrativeController?.onStyleLoad();
         raiseProjectionHighlightLayers(map);
         return;
       }
@@ -629,6 +644,7 @@ async function bootstrapProjectionRuntime() {
       }
       syncContextFlowAnimations();
       syncPinkLineAxisCompanionForMapLibre(map, currentGroups);
+      projectionNarrativeController?.onStyleLoad();
       raiseProjectionHighlightLayers(map);
     };
     const shouldSkipLiveProjectionRefresh = () =>
@@ -695,6 +711,8 @@ async function bootstrapProjectionRuntime() {
     const syncProjectionLayersAndRaiseHighlight = (projectionMap, groups, options) => {
       syncProjectionLayers(projectionMap, groups, options);
       applyStoredNliLabelHeading(projectionMap);
+      syncContextFlowAnimations();
+      projectionNarrativeController?.onStyleLoad();
       raiseProjectionHighlightLayers(projectionMap);
     };
 
@@ -796,6 +814,7 @@ async function bootstrapProjectionRuntime() {
               );
               applyStoredNliLabelHeading(map);
               syncContextFlowAnimations();
+              projectionNarrativeController?.onStyleLoad();
               raiseProjectionHighlightLayers(map);
             },
             mapDeps: {},

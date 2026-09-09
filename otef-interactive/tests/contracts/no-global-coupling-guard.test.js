@@ -6,6 +6,7 @@ test("no window-based module coupling remains in src", () => {
     "window.shouldShowLayerOnGisMap",
     "window.normalizeLayerBaseName",
     "window.parseLayerNameWithGeometrySuffix",
+    "window.formatLayerLabelForDisplay",
     "window.WmtsLayerRenderer",
     "window.CanvasLayerRenderer",
     "window.pmtilesLayersWithConfigs",
@@ -26,4 +27,6 @@ test("no window-based module coupling remains in src", () => {
     .filter(Boolean)
     .filter((line) => !allowed.some((token) => line.includes(token)));
   expect(unexpected).toEqual([]);
+  const layerNames = require("fs").readFileSync("frontend/src/shared/layer-name-utils.js", "utf8");
+  expect(layerNames).toContain("Compatibility for legacy non-module layer controls");
 });

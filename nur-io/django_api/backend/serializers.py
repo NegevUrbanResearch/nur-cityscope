@@ -15,6 +15,7 @@ from .models import (
     LayerState,
 )
 from .otef_person_selection import normalize_person_selection
+from .otef_narrative import normalize_narrative_state
 
 
 class TableSerializer(serializers.ModelSerializer):
@@ -219,6 +220,7 @@ class OTEFModelConfigSerializer(serializers.ModelSerializer):
 class OTEFViewportStateSerializer(serializers.ModelSerializer):
     table_name = serializers.CharField(source="table.name", read_only=True)
     person_selection = serializers.SerializerMethodField()
+    narrative_state = serializers.SerializerMethodField()
 
     class Meta:
         model = OTEFViewportState
@@ -233,6 +235,7 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "projection_slideshow",
             "investigation_clock",
             "person_selection",
+            "narrative_state",
             "workshop_auto_publish",
             "workshop_autopublish_started_at",
             "updated_at",
@@ -242,11 +245,15 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "updated_at",
             "table_name",
             "person_selection",
+            "narrative_state",
             "workshop_autopublish_started_at",
         ]
 
     def get_person_selection(self, obj):
         return normalize_person_selection(obj.person_selection)
+
+    def get_narrative_state(self, obj):
+        return normalize_narrative_state(obj.narrative_state)
 
 
 class LayerStateSerializer(serializers.ModelSerializer):
