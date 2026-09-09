@@ -146,9 +146,10 @@ function renderSymbolSpan(item) {
  * Update cartographic legend from OTEFDataContext and layerRegistry.
  * Shows only enabled layers, grouped by pack and layer, with geometry-aware symbols.
  */
-async function updateMapLegend() {
+async function updateMapLegend(options = {}) {
+  const surface = options.surface === "projection" ? "projection" : "gis";
   try {
-    const model = await buildLegendModel();
+    const model = await buildLegendModel({ surface });
     renderLegend(model);
   } catch (e) {
     console.warn("[MapLegend] updateMapLegend failed:", e);

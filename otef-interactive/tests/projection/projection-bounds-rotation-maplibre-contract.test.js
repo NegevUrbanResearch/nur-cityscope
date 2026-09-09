@@ -241,19 +241,186 @@ test("viewportToHighlightGeoJSON returns Polygon feature for bbox viewport", asy
     return coords;
   };
   const modelBounds = { itm: { west: 0, south: 0, east: 1000, north: 800 } };
-  const fc = viewportToHighlightGeoJSON({ bbox: [100, 100, 500, 500] }, modelBounds);
+  const fc = viewportToHighlightGeoJSON({ bbox: [100, 100, 500, 500], zoom: 13 }, modelBounds);
   expect(fc && fc.features.length).toBe(1);
   expect(fc.features[0].geometry.type).toBe("Polygon");
   delete globalThis.proj4;
+});
+
+const HIGHLIGHT_MODEL_BOUNDS = { itm: { west: 0, south: 0, east: 1000, north: 800 } };
+const HIGHLIGHT_VALID_CORNERS = {
+  sw: { x: 120, y: 120 },
+  se: { x: 640, y: 90 },
+  ne: { x: 710, y: 690 },
+  nw: { x: 140, y: 720 },
+};
+const HIGHLIGHT_SMALL_BBOX = [100, 100, 500, 500];
+
+function stubHighlightProj4() {
+  globalThis.proj4 = (from, to, coords) => {
+    if (from === "EPSG:2039" && to === "EPSG:4326")
+      return [coords[0] * 1e-6, coords[1] * 1e-6];
+    return coords;
+  };
+}
+
+test("keeps highlight geometry below zoom 13", async () => {
+  const { viewportToHighlightGeoJSON } = await import(
+    "../../frontend/src/projection/maplibre-projection-viewport-geojson.js",
+  );
+  stubHighlightProj4();
+  const fc = viewportToHighlightGeoJSON(
+    { bbox: HIGHLIGHT_SMALL_BBOX, zoom: 12, corners: HIGHLIGHT_VALID_CORNERS },
+    HIGHLIGHT_MODEL_BOUNDS,
+  );
+  expect(fc.features.length).toBe(1);
+  expect(fc.features[0].geometry.type).toBe("Polygon");
+  const atDefaultGisZoom = viewportToHighlightGeoJSON(
+    { bbox: HIGHLIGHT_SMALL_BBOX, zoom: 11, corners: HIGHLIGHT_VALID_CORNERS },
+    HIGHLIGHT_MODEL_BOUNDS,
+  );
+  expect(atDefaultGisZoom.features.length).toBe(1);
+  delete globalThis.proj4;
+});
+
+test("keeps highlight geometry when viewport zoom is missing or non-finite", async () => {
+  const { viewportToHighlightGeoJSON } = await import(
+    "../../frontend/src/projection/maplibre-projection-viewport-geojson.js",
+  );
+  stubHighlightProj4();
+  const noZoom = viewportToHighlightGeoJSON(
+    { bbox: HIGHLIGHT_SMALL_BBOX, corners: HIGHLIGHT_VALID_CORNERS },
+    HIGHLIGHT_MODEL_BOUNDS,
+  );
+  expect(noZoom.features.length).toBe(1);
+  expect(noZoom.features[0].geometry.type).toBe("Polygon");
+  const undefinedZoom = viewportToHighlightGeoJSON(
+    { bbox: HIGHLIGHT_SMALL_BBOX, zoom: undefined, corners: HIGHLIGHT_VALID_CORNERS },
+    HIGHLIGHT_MODEL_BOUNDS,
+  );
+  expect(undefinedZoom.features.length).toBe(1);
+  const nanZoom = viewportToHighlightGeoJSON(
+    { bbox: HIGHLIGHT_SMALL_BBOX, zoom: Number.NaN, corners: HIGHLIGHT_VALID_CORNERS },
+    HIGHLIGHT_MODEL_BOUNDS,
+  );
+  expect(nanZoom.features.length).toBe(1);
+  delete globalThis.proj4;
+});
+
+test("shows highlight at zoom 13 when not full extent", async () => {
+  const { viewportToHighlightGeoJSON } = await import(
+    "../../frontend/src/projection/maplibre-projection-viewport-geojson.js",
+  );
+  stubHighlightProj4();
+  const fc = viewportToHighlightGeoJSON(
+    { bbox: HIGHLIGHT_SMALL_BBOX, zoom: 13, corners: HIGHLIGHT_VALID_CORNERS },
+    HIGHLIGHT_MODEL_BOUNDS,
+  );
+  expect(fc.features.length).toBe(1);
+  delete globalThis.proj4;
+});
+
+test("ensureProjectionHighlightLayers fill and line opacity default to 0", async () => {
+  const {
+    ensureProjectionHighlightLayers,
+    PROJECTION_HIGHLIGHT_FILL_LAYER_ID,
+    PROJECTION_HIGHLIGHT_LINE_LAYER_ID,
+  } = await loadProjectionHighlightModule();
+  const { NLI_VISUAL_TOKENS } = await import(
+    "../../frontend/src/shared/nli-investigation-theme.js",
+  );
+  const added = [];
+  const mockMap = {
+    getSource: vi.fn(() => null),
+    addSource: vi.fn(),
+    addLayer: vi.fn((layer) => added.push(layer)),
+  };
+  ensureProjectionHighlightLayers(mockMap);
+  const fill = added.find((layer) => layer.id === PROJECTION_HIGHLIGHT_FILL_LAYER_ID);
+  const line = added.find((layer) => layer.id === PROJECTION_HIGHLIGHT_LINE_LAYER_ID);
+  expect(fill.paint["fill-opacity"]).toBe(0);
+  expect(line.paint["line-opacity"]).toBe(0);
+  expect(line.paint["line-color"]).toBe("rgba(255,255,255,0.35)");
+  expect(line.paint["line-color"]).toBe(NLI_VISUAL_TOKENS.highlightLineColor);
+  expect(line.paint["line-width"]).toBe(1);
 });
 
 function createHighlightMockMap(setData, sourceId) {
   return {
     getSource: vi.fn((id) => (id === sourceId ? { setData } : null)),
     getLayer: vi.fn(),
+    setPaintProperty: vi.fn(),
     getContainer: vi.fn(() => ({ clientWidth: 800, clientHeight: 600 })),
   };
 }
+
+test("highlight layers fade opacity across zoom 13 instead of emptying the source", async () => {
+  const {
+    ensureProjectionHighlightLayers,
+    updateHighlightFromViewport,
+    PROJECTION_HIGHLIGHT_FILL_LAYER_ID,
+    PROJECTION_HIGHLIGHT_LINE_LAYER_ID,
+    PROJECTION_HIGHLIGHT_SOURCE_ID,
+  } = await loadProjectionHighlightModule();
+  stubHighlightProj4();
+  const paints = new Map();
+  const setData = vi.fn();
+  const mockMap = {
+    getSource: vi.fn(() => null),
+    getLayer: vi.fn((id) => paints.has(id) || true),
+    addSource: vi.fn(),
+    addLayer: vi.fn((layer) => paints.set(layer.id, layer.paint)),
+    setPaintProperty: vi.fn((id, key, value) => {
+      const paint = paints.get(id) || {};
+      paint[key] = value;
+      paints.set(id, paint);
+    }),
+    getContainer: vi.fn(() => ({ clientWidth: 800, clientHeight: 600 })),
+  };
+  ensureProjectionHighlightLayers(mockMap);
+  const fill = [...paints.values()][0] || mockMap.addLayer.mock.calls[0][0].paint;
+  expect(mockMap.addLayer.mock.calls[0][0].paint["fill-opacity-transition"]).toEqual({ duration: 400 });
+  expect(mockMap.addLayer.mock.calls[1][0].paint["line-opacity-transition"]).toEqual({ duration: 400 });
+  mockMap.getSource = vi.fn((id) =>
+    id === PROJECTION_HIGHLIGHT_SOURCE_ID ? { setData } : null,
+  );
+  updateHighlightFromViewport(
+    mockMap,
+    { bbox: HIGHLIGHT_SMALL_BBOX, zoom: 12, corners: HIGHLIGHT_VALID_CORNERS },
+    HIGHLIGHT_MODEL_BOUNDS,
+    null,
+  );
+  expect(setData.mock.calls.at(-1)[0].features.length).toBe(1);
+  expect(mockMap.setPaintProperty).toHaveBeenCalledWith(
+    PROJECTION_HIGHLIGHT_FILL_LAYER_ID,
+    "fill-opacity",
+    0,
+  );
+  expect(mockMap.setPaintProperty).toHaveBeenCalledWith(
+    PROJECTION_HIGHLIGHT_LINE_LAYER_ID,
+    "line-opacity",
+    0,
+  );
+  updateHighlightFromViewport(
+    mockMap,
+    { bbox: HIGHLIGHT_SMALL_BBOX, zoom: 13, corners: HIGHLIGHT_VALID_CORNERS },
+    HIGHLIGHT_MODEL_BOUNDS,
+    null,
+  );
+  expect(setData.mock.calls.at(-1)[0].features.length).toBe(1);
+  expect(mockMap.setPaintProperty).toHaveBeenCalledWith(
+    PROJECTION_HIGHLIGHT_FILL_LAYER_ID,
+    "fill-opacity",
+    0.05,
+  );
+  expect(mockMap.setPaintProperty).toHaveBeenCalledWith(
+    PROJECTION_HIGHLIGHT_LINE_LAYER_ID,
+    "line-opacity",
+    1,
+  );
+  void fill;
+  delete globalThis.proj4;
+});
 
 test("MapLibre projection highlight: GeoJSON path calls setData with FeatureCollection when highlight source exists", async () => {
   globalThis.proj4 = (from, to, coords) => {
@@ -271,7 +438,7 @@ test("MapLibre projection highlight: GeoJSON path calls setData with FeatureColl
   const modelBounds = { itm };
   const highlightEl = createProjectionDomElement({ w: 0, h: 0 });
 
-  const viewport = { bbox: [100, 150, 600, 550] };
+  const viewport = { bbox: [100, 150, 600, 550], zoom: 13 };
   updateHighlightFromViewport(mockMap, viewport, modelBounds, highlightEl);
 
   expect(mockMap.getSource).toHaveBeenCalledWith(PROJECTION_HIGHLIGHT_SOURCE_ID);
@@ -285,14 +452,18 @@ test("MapLibre projection highlight: GeoJSON path calls setData with FeatureColl
   delete globalThis.proj4;
 });
 
-test("MapLibre projection highlight: GeoJSON path clears features at full extent", async () => {
+test("MapLibre projection highlight: GeoJSON path keeps geometry at full extent", async () => {
   globalThis.proj4 = (from, to, coords) => {
     if (from === "EPSG:2039" && to === "EPSG:4326")
       return [coords[0] * 1e-6, coords[1] * 1e-6];
     return coords;
   };
-  const { updateHighlightFromViewport, PROJECTION_HIGHLIGHT_SOURCE_ID } =
-    await loadProjectionHighlightModule();
+  const {
+    updateHighlightFromViewport,
+    PROJECTION_HIGHLIGHT_SOURCE_ID,
+    PROJECTION_HIGHLIGHT_FILL_LAYER_ID,
+    PROJECTION_HIGHLIGHT_LINE_LAYER_ID,
+  } = await loadProjectionHighlightModule();
 
   const setData = vi.fn();
   const mockMap = createHighlightMockMap(setData, PROJECTION_HIGHLIGHT_SOURCE_ID);
@@ -303,7 +474,20 @@ test("MapLibre projection highlight: GeoJSON path clears features at full extent
 
   updateHighlightFromViewport(mockMap, { bbox: [0, 0, 1000, 800] }, modelBounds, highlightEl);
 
-  expect(setData).toHaveBeenCalledWith({ type: "FeatureCollection", features: [] });
+  const payload = setData.mock.calls.at(-1)[0];
+  expect(payload.type).toBe("FeatureCollection");
+  expect(payload.features.length).toBe(1);
+  expect(payload.features[0].geometry.type).toBe("Polygon");
+  expect(mockMap.setPaintProperty).toHaveBeenCalledWith(
+    PROJECTION_HIGHLIGHT_FILL_LAYER_ID,
+    "fill-opacity",
+    0,
+  );
+  expect(mockMap.setPaintProperty).toHaveBeenCalledWith(
+    PROJECTION_HIGHLIGHT_LINE_LAYER_ID,
+    "line-opacity",
+    0,
+  );
   delete globalThis.proj4;
 });
 
@@ -528,4 +712,21 @@ test("projection entry exposes Tesuga presentation flag via title, dataset, and 
   expect(src).toContain("pres=off");
   expect(src).toContain("OTEFPresentationActive");
   expect(src).toContain("dataset.presentation");
+});
+
+test("projection entry publishes its live map for lab measurements", () => {
+  const src = read("frontend/src/entries/projection-main.js");
+  const mapCreate = src.indexOf('const map = createProjectionMap("projectionMap"');
+  const mapPublish = src.indexOf("window._maplibreMap = map", mapCreate);
+  expect(mapCreate).toBeGreaterThan(-1);
+  expect(mapPublish).toBeGreaterThan(mapCreate);
+});
+
+test("Zikim measurement uses the projection runtime EPSG:2039 transform", () => {
+  const projectionHtml = read("frontend/projection.html");
+  const measurementScript = read("scripts/measure-zikim-span-uv.mjs");
+  const runtimeTransform =
+    "+towgs84=-24.0024,-17.1032,-17.8444,0.33077,-1.85269,1.66969,5.4248";
+  expect(projectionHtml).toContain(runtimeTransform);
+  expect(measurementScript).toContain(runtimeTransform);
 });

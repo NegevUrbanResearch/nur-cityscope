@@ -1,8 +1,15 @@
 /**
  * GIS-visible layer rule: single source of truth for which layers appear on the GIS map.
- * projector_base is projector-only except Tkuma_Area_LIne, which also appears on GIS.
- * (E.g. שמות_יישובים, Locations_Lines, and other projector pack layers stay off the GIS map.)
+ * projector_base is projector-only except the GIS allowlist (Tkuma_Area_LIne, ישובים).
+ * Settlement names (שמות_יישובים) and leaders (Locations_Lines) are temporarily muted on GIS;
+ * projection keepSettlementNames is unchanged. Allowlist does not force a layer on if the remote
+ * row is disabled.
  */
+
+const PROJECTOR_BASE_GIS_LAYERS = new Set([
+  "Tkuma_Area_LIne",
+  "ישובים",
+]);
 
 /**
  * True when `fullLayerId` is a curated pack layer id (`curated…<group>.<layer>`), including
@@ -47,10 +54,7 @@ function shouldShowLayerOnGisMap(groupId, layerId) {
     }
   }
 
-  // Legacy fallback: projector_base is projector-only except Tkuma_Area_LIne
-  if (groupId === "projector_base" && layerId !== "Tkuma_Area_LIne") {
-    return false;
-  }
+  if (groupId === "projector_base") return PROJECTOR_BASE_GIS_LAYERS.has(layerId);
   return true;
 }
 

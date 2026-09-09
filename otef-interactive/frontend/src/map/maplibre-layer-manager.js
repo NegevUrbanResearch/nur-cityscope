@@ -768,7 +768,7 @@ function rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, register
  *   applyProjectionHatchPresentation?: boolean,
  *   renderMapLabelsFromStyle?: boolean,
  * }} [layerStyleOptions] - projection passes `{ applyProjectionHatchPresentation: true }` for
- *   denser hatch rasters and to scope `style.labels` → symbol layers to שמות_יישובים only; GIS omits.
+ *   denser hatch rasters. GIS and projection both emit `style.labels` for שמות_יישובים (Task 5).
  */
 function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
   const { loadedSources, loadedLayerIds } = state;

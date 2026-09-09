@@ -1,12 +1,22 @@
 /**
- * Development tool: live-edit settlement name label offset/rotate for projector_base.שמות_יישובים,
- * export JSON for `שמות_label_overrides.json` (consumed by the layer processing merge).
+ * Development tool: live-edit settlement name label offset for projector_base.שמות_יישובים,
+ * plus one shared integer heading for people_names and שמות (not per-citycode rotate).
  * Toggle: **L** in projection-main (or `window.ShemotLabelDebug.toggle()` for embedded hosts).
  */
+import { PROJECTION_LAB_CHROME_Z_INDEX } from "./projection-display-hotkeys.js";
+import {
+  applyNliSharedTextHeading,
+  buildNliLabelHeadingExport,
+  readNliLabelHeading,
+  SHEMOT_LABEL_LAYER_ID,
+  snapNliLabelHeadingDeg,
+  writeNliLabelHeading,
+} from "../shared/nli-label-heading.js";
+
 const FULL_SOURCE_ID = "projector_base.שמות_יישובים";
-const LABEL_LAYER_ID = "projector_base__שמות_יישובים__labels";
+const LABEL_LAYER_ID = SHEMOT_LABEL_LAYER_ID;
 const DEFAULT_KEY_FIELD = "citycode";
-const DEFAULT_ROTATION_SNAP_DEG = 15;
+const DEFAULT_ROTATION_SNAP_DEG = 1;
 /** Match projection.html @font-face + map label stack (maplibre-style-bridge שמות). */
 const LABEL_MEASURE_FONT_STACK =
   '"Guttman Hatzvi", "Noto Sans Hebrew", "Noto Sans", Arial, sans-serif';
@@ -84,19 +94,6 @@ function normalizeRotateDeg(deg) {
   let x = d % 360;
   if (x < 0) x += 360;
   return x;
-}
-
-function snapRotationDeg(deg, stepDeg, disableSnap) {
-  if (disableSnap || !stepDeg || stepDeg <= 0) return normalizeRotateDeg(deg);
-  const s = snapRotationDegContinuous(normalizeRotateDeg(deg), stepDeg);
-  return normalizeRotateDeg(s);
-}
-
-/** Snap to nearest step on 0–360 (e.g. 15° grid). */
-function snapRotationDegContinuous(deg, step) {
-  const d = normalizeRotateDeg(deg);
-  const q = Math.round(d / step) * step;
-  return normalizeRotateDeg(q);
 }
 
 function measureLabelBox(text, fontSizePx) {
@@ -264,6 +261,8 @@ export function applyShemotDebugOverridesToFeatureCollection(fc, overrides, keyF
  *   setVisible: (v: boolean) => void;
  *   getActive: () => boolean;
  *   dispose: () => void;
+ *   getHeading: () => number;
+ *   setHeading: (deg: unknown) => number;
  * } | null}
  */
 export function installShemotLabelDebug(opts) {
@@ -277,6 +276,7 @@ export function installShemotLabelDebug(opts) {
       : DEFAULT_ROTATION_SNAP_DEG;
 
   const overrides = new Map();
+  let headingDeg = readNliLabelHeading(typeof window !== "undefined" ? window.localStorage : undefined);
   let selectedKey = "";
   /** @type {{ lng: number, lat: number } | null} */
   let selectedAnchorLngLat = null;
@@ -362,7 +362,7 @@ export function installShemotLabelDebug(opts) {
     "position:fixed",
     "top:10px",
     "right:10px",
-    "z-index:130",
+    `z-index:${PROJECTION_LAB_CHROME_Z_INDEX}`,
     "max-width:340px",
     "background:rgba(0,0,0,0.9)",
     "color:#fff",
@@ -375,11 +375,11 @@ export function installShemotLabelDebug(opts) {
   panel.innerHTML = [
     "<strong style=\"color:#0ff\">שמות label debug</strong>",
     "<p style=\"margin:8px 0 0;font-size:12px;color:#ccc\">",
-    "Click a label to select. Drag the box to move (offset). Drag the <strong>bottom-right</strong> handle to rotate — snaps every ",
+    "Click a label to select. Drag the box to move (offset). Drag the <strong>bottom-right</strong> handle to rotate all people and settlement names — snaps every ",
     String(snapStep),
-    "° (hold <strong>Shift</strong> for free rotation). Keys: arrows nudge; [ ] rotate ±",
+    "° (hold <strong>Shift</strong> for free rotation). Keys: arrows nudge offset; [ ] rotate ±",
     String(snapStep),
-    "°. <strong>Reset</strong> clears merged otef_* on the map for the selection or all features.",
+    "°. <strong>Reset</strong> clears merged otef_* offsets on the map for the selection or all features.",
     "</p>",
     "<p id=\"shemotDebugStatus\" style=\"margin:6px 0 0;font-size:12px;color:#9cf\">Mode off — press L to enable.</p>",
     "<div style=\"margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center\">",
@@ -530,7 +530,6 @@ export function installShemotLabelDebug(opts) {
         continue;
       }
       const e = getEntryForKey(key);
-      p[OTF_ROT] = normalizeRotateDeg(e.rotateDeg);
       p[OTF_OX] = e.offsetEm[0] || 0;
       p[OTF_OY] = e.offsetEm[1] || 0;
       const div = ts > 0 ? ts : OTF_OFFSET_NUMERATOR_DIV_DEFAULT;
@@ -550,7 +549,7 @@ export function installShemotLabelDebug(opts) {
     const e = getEntryForKey(selectedKey);
     const ox = e.offsetEm[0] || 0;
     const oy = e.offsetEm[1] || 0;
-    const rot = normalizeRotateDeg(e.rotateDeg);
+    const rot = headingDeg;
 
     let anchorPx;
     try {
@@ -598,9 +597,16 @@ export function installShemotLabelDebug(opts) {
     const e = getEntryForKey(selectedKey);
     const ex = e.offsetEm[0] || 0;
     const ey = e.offsetEm[1] || 0;
-    s.textContent = `On — keyField ${keyField} — selected: ${k} | rotate ${normalizeRotateDeg(
-      e.rotateDeg,
-    ).toFixed(1)}° | offset (px) [${ex.toFixed(1)}, ${ey.toFixed(1)}]`;
+    s.textContent = `On — keyField ${keyField} — selected: ${k} | heading ${headingDeg}° | offset (px) [${ex.toFixed(1)}, ${ey.toFixed(1)}]`;
+  };
+
+  const persistHeading = (deg) => {
+    const storage = typeof window !== "undefined" ? window.localStorage : undefined;
+    headingDeg = writeNliLabelHeading(deg, storage);
+    applyNliSharedTextHeading(map, headingDeg);
+    updateSelectionOverlay();
+    updateStatus();
+    return headingDeg;
   };
 
   const setVisible = (v) => {
@@ -637,6 +643,7 @@ export function installShemotLabelDebug(opts) {
     }
     updateStatus();
     if (active) {
+      applyNliSharedTextHeading(map, headingDeg);
       applyOverridesToSourceData();
     }
   };
@@ -694,8 +701,7 @@ export function installShemotLabelDebug(opts) {
     dragMode = isRotate ? "rotate" : "move";
     lastPoint = { x: ev.clientX, y: ev.clientY };
     if (isRotate) {
-      const e = getEntryForKey(selectedKey);
-      rotateBaseDeg = normalizeRotateDeg(e.rotateDeg);
+      rotateBaseDeg = headingDeg;
       rotateShiftSnapOff = !!ev.shiftKey;
       const rect = selBox.getBoundingClientRect();
       const cx = rect.left + rect.width / 2;
@@ -746,19 +752,10 @@ export function installShemotLabelDebug(opts) {
       const ang = Math.atan2(ev.clientY - cy, ev.clientX - cx);
       let deltaDeg = ((ang - rotateStartMouseAngle) * 180) / Math.PI;
       let next = rotateBaseDeg + deltaDeg;
-      next = snapRotationDeg(next, snapStep, rotateShiftSnapOff);
+      next = rotateShiftSnapOff ? next : snapNliLabelHeadingDeg(next);
       if (Math.abs(deltaDeg) > 0.01) dragDidMove = true;
-      if (!overrides.has(selectedKey)) {
-        overrides.set(selectedKey, { rotateDeg: normalizeRotateDeg(rotateBaseDeg), offsetEm: [0, 0] });
-      }
-      const base = getEntryForKey(selectedKey);
-      overrides.set(selectedKey, {
-        rotateDeg: next,
-        offsetEm: [base.offsetEm[0] || 0, base.offsetEm[1] || 0],
-      });
-      scheduleApplyOverridesToSourceData();
-      updateStatus();
-      updateSelectionOverlay();
+      persistHeading(next);
+      return;
     }
   };
 
@@ -778,9 +775,16 @@ export function installShemotLabelDebug(opts) {
   };
 
   const onKeyDown = (ev) => {
-    if (!active || !selectedKey) return;
+    if (!active) return;
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const k = ev.key;
+    if (k === "[" || k === "]") {
+      ev.preventDefault();
+      const delta = k === "[" ? -snapStep : snapStep;
+      persistHeading(headingDeg + delta);
+      return;
+    }
+    if (!selectedKey) return;
     if (k === "ArrowLeft" || k === "ArrowRight" || k === "ArrowUp" || k === "ArrowDown") {
       ev.preventDefault();
       pushUndo();
@@ -804,22 +808,6 @@ export function installShemotLabelDebug(opts) {
       updateStatus();
       return;
     }
-    if (k === "[" || k === "]") {
-      ev.preventDefault();
-      pushUndo();
-      const delta = k === "[" ? -snapStep : snapStep;
-      const cur = getEntryForKey(selectedKey);
-      if (!overrides.has(selectedKey)) {
-        overrides.set(selectedKey, { rotateDeg: normalizeRotateDeg(cur.rotateDeg), offsetEm: [0, 0] });
-      }
-      const base = getEntryForKey(selectedKey);
-      overrides.set(selectedKey, {
-        rotateDeg: normalizeRotateDeg(normalizeRotateDeg(base.rotateDeg) + delta),
-        offsetEm: [base.offsetEm[0] || 0, base.offsetEm[1] || 0],
-      });
-      applyOverridesToSourceData();
-      updateStatus();
-    }
   };
 
   const wirePanel = () => {
@@ -831,22 +819,7 @@ export function installShemotLabelDebug(opts) {
     const resetAll = document.getElementById("shemotDbgResetAll");
     const dl = document.getElementById("shemotDbgDownload");
     const nudgeRot = (delta) => {
-      if (!selectedKey) {
-        updateStatus();
-        return;
-      }
-      pushUndo();
-      const cur = getEntryForKey(selectedKey);
-      if (!overrides.has(selectedKey)) {
-        overrides.set(selectedKey, { rotateDeg: normalizeRotateDeg(cur.rotateDeg), offsetEm: [0, 0] });
-      }
-      const base = getEntryForKey(selectedKey);
-      overrides.set(selectedKey, {
-        rotateDeg: normalizeRotateDeg(normalizeRotateDeg(base.rotateDeg) + delta),
-        offsetEm: [base.offsetEm[0] || 0, base.offsetEm[1] || 0],
-      });
-      applyOverridesToSourceData();
-      updateStatus();
+      persistHeading(headingDeg + delta);
     };
     if (rotMinus) rotMinus.onclick = () => nudgeRot(-snapStep);
     if (rotPlus) rotPlus.onclick = () => nudgeRot(snapStep);
@@ -891,11 +864,16 @@ export function installShemotLabelDebug(opts) {
     }
     if (dl) {
       dl.onclick = () => {
-        const out = {
-          version: 1,
-          keyField,
-          overrides: Object.fromEntries(overrides),
-        };
+        const offsets = {};
+        for (const [k, v] of overrides) {
+          if (!v || typeof v !== "object") continue;
+          const ox = Array.isArray(v.offsetEm) ? Number(v.offsetEm[0]) || 0 : 0;
+          const oy = Array.isArray(v.offsetEm) ? Number(v.offsetEm[1]) || 0 : 0;
+          if (ox === 0 && oy === 0) continue;
+          offsets[k] = { offsetEm: [ox, oy] };
+        }
+        const out = { ...buildNliLabelHeadingExport(headingDeg) };
+        if (Object.keys(offsets).length > 0) out.offsets = offsets;
         const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
@@ -942,23 +920,19 @@ export function installShemotLabelDebug(opts) {
 
   registerDisposer(dispose);
 
+  applyNliSharedTextHeading(map, headingDeg);
+
   return {
     toggle: () => {
-      if (active) {
-        toggleActive();
-        return;
-      }
-      if (!map.getSource || !map.getSource(FULL_SOURCE_ID)) {
-        if (statusEl()) {
-          statusEl().textContent = `No source ${FULL_SOURCE_ID} on map (enable שמות_יישובים layer).`;
-        }
+      if (!active && (!map.getSource || !map.getSource(FULL_SOURCE_ID))) {
         console.warn(`[ShemotLabelDebug] Missing GeoJSON source ${FULL_SOURCE_ID}`);
-        return;
       }
       toggleActive();
     },
     setVisible,
     getActive: () => active,
     dispose,
+    getHeading: () => headingDeg,
+    setHeading: (deg) => persistHeading(deg),
   };
 }

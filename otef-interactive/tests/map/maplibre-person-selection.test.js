@@ -8,8 +8,11 @@ import {
   PEOPLE_RUNTIME_URL,
   PEOPLE_SOURCE_ID,
   createGisPersonSelection,
+  mountPersonHalo,
   normalizePeopleRuntime,
+  syncPersonHaloPaint,
 } from "../../frontend/src/map/maplibre-person-selection.js";
+import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
 
 const geojson = (coordinates = [30, 20]) => ({
   type: "FeatureCollection",
@@ -33,7 +36,11 @@ const popup = () => ({
   setLngLat: vi.fn().mockReturnThis(), setHTML: vi.fn().mockReturnThis(),
   addTo: vi.fn().mockReturnThis(), remove: vi.fn(),
 });
-function setup(fetchJson = vi.fn(async (url) => url.includes("index") ? fetched(index()) : url.includes("metadata") ? fetched(metadata()) : fetched(geojson())), hashBytes = vi.fn(async () => "geo-hash-v1")) {
+function setup(
+  fetchJson = vi.fn(async (url) => url.includes("index") ? fetched(index()) : url.includes("metadata") ? fetched(metadata()) : fetched(geojson())),
+  hashBytes = vi.fn(async () => "geo-hash-v1"),
+  extra = {},
+) {
   const map = createFakeMapLibreMap();
   Object.assign(map, {
     getCanvas: () => ({ clientWidth: 400, clientHeight: 300 }),
@@ -41,7 +48,13 @@ function setup(fetchJson = vi.fn(async (url) => url.includes("index") ? fetched(
     flyTo: vi.fn(),
   });
   const bubble = popup();
-  const visual = createGisPersonSelection({ map, maplibregl: { Popup: vi.fn(function Popup() { return bubble; }) }, fetchJson, hashBytes });
+  const visual = createGisPersonSelection({
+    map,
+    maplibregl: { Popup: vi.fn(function Popup() { return bubble; }) },
+    fetchJson,
+    hashBytes,
+    ...extra,
+  });
   return { map, bubble, visual, fetchJson, hashBytes };
 }
 
@@ -99,7 +112,10 @@ describe("GIS person selection visual", () => {
     const person = await d.visual.resolve("11", "v1");
     d.visual.show(person);
     expect(d.map.getSource(PEOPLE_SOURCE_ID)).toBeTruthy();
-    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-opacity"]).toBe(0);
+    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-opacity"]).toBe(0.25);
+    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-radius"]).toBe(
+      NLI_VISUAL_TOKENS.personGlowRadius * (NLI_DISPLAY_PROFILES.gis.radiusMultiplier || 1),
+    );
     expect(d.bubble.setHTML.mock.calls[0][0]).toContain("&lt;Ada&gt;");
     expect(d.bubble.setHTML.mock.calls[0][0]).toContain("Alumim");
     expect(d.bubble.setHTML.mock.calls[0][0].match(/dir="auto"/g)).toHaveLength(3);
@@ -107,11 +123,13 @@ describe("GIS person selection visual", () => {
   });
 
   test("focus uses camera and delays popup until idle, while hide permits remount", async () => {
-    const d = setup();
+    const beginCameraTravel = vi.fn();
+    const d = setup(undefined, undefined, { beginCameraTravel });
     const person = await d.visual.resolve("11", "v1");
     d.visual.show(person, { focus: true });
+    expect(beginCameraTravel).toHaveBeenCalled();
     expect(d.map.flyTo).toHaveBeenCalledWith(expect.objectContaining({
-      center: [30, 20], zoom: 15, duration: 1600, essential: true,
+      center: [30, 20], zoom: 16, duration: 1600, essential: true,
     }));
     expect(d.bubble.addTo).not.toHaveBeenCalled();
     d.map.emit("moveend");
@@ -177,10 +195,30 @@ describe("GIS person selection visual", () => {
     const person = await d.visual.resolve("11", "v1");
     d.visual.show(person, { focus: true, reducedMotion: true });
     expect(d.map.flyTo).toHaveBeenCalledWith(expect.objectContaining({
-      center: [30, 20], zoom: 15, duration: 0, essential: true,
+      center: [30, 20], zoom: 16, duration: 0, essential: true,
     }));
     expect(d.bubble.addTo).toHaveBeenCalledTimes(1);
     expect(d.map.listenerCount("moveend")).toBe(0);
+  });
+
+  test("halo helper does not start its own RAF", () => {
+    const map = createFakeMapLibreMap();
+    const raf = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", raf);
+    mountPersonHalo(map, { pid: "11", coordinates: [34.5, 31.4] }, { motionMode: "full" });
+    syncPersonHaloPaint(map, { motionMode: "full", nowMs: 1000 });
+    expect(raf).not.toHaveBeenCalled();
+  });
+
+  test("halo radius scales by display-profile radiusMultiplier", () => {
+    const map = createFakeMapLibreMap();
+    mountPersonHalo(map, { pid: "11", coordinates: [34.5, 31.4] }, {
+      motionMode: "full",
+      displayProfile: NLI_DISPLAY_PROFILES.projection,
+    });
+    expect(map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-radius"]).toBe(
+      14 * (NLI_DISPLAY_PROFILES.projection.radiusMultiplier || 1),
+    );
   });
 
   test("moveend snapshot replacement keeps the current camera listener alive", async () => {

@@ -311,6 +311,24 @@ export function setupViewportSync(map, dataContext) {
     }, PLACE_NAVIGATION_REPORT_INTERVAL_MS);
   };
 
+  const startNavigationTravel = (traceId) => {
+    activeNavigationTraceId = traceId || null;
+    navigationTravelActive = true;
+    clearNavigationReportTimer();
+    clearNavigationIdleHandler();
+    navigationIdleHandler = () => {
+      navigationIdleHandler = null;
+      reportToContext(onGISReportInteractionGuard, {
+        sharedUpdate: "immediate",
+        traceId,
+      });
+      navigationTravelActive = false;
+      activeNavigationTraceId = null;
+      clearNavigationReportTimer();
+    };
+    map.once("idle", navigationIdleHandler);
+  };
+
   const applyNavigationCommand = (command) => {
     const traceId = command?.traceId || command?.id || null;
     if (!command || command.id === lastNavigationCommandId) {
@@ -323,10 +341,7 @@ export function setupViewportSync(map, dataContext) {
     }
 
     lastNavigationCommandId = command.id;
-    activeNavigationTraceId = traceId;
-    navigationTravelActive = true;
-    clearNavigationReportTimer();
-    clearNavigationIdleHandler();
+    startNavigationTravel(traceId);
     const cameraOptions = {
       center,
       zoom: Number.isFinite(zoom) ? zoom : 15,
@@ -340,17 +355,6 @@ export function setupViewportSync(map, dataContext) {
     } else {
       map.jumpTo?.({ center, zoom: cameraOptions.zoom });
     }
-    navigationIdleHandler = () => {
-      navigationIdleHandler = null;
-      reportToContext(onGISReportInteractionGuard, {
-        sharedUpdate: "immediate",
-        traceId,
-      });
-      navigationTravelActive = false;
-      activeNavigationTraceId = null;
-      clearNavigationReportTimer();
-    };
-    map.once("idle", navigationIdleHandler);
   };
 
   const applyAcceptedViewport = (viewport, options = {}) => {
@@ -518,7 +522,7 @@ export function setupViewportSync(map, dataContext) {
   map.on("move", reportNavigationTravelViewport);
   map.on("zoomend", handleMapChange);
 
-  return () => {
+  const dispose = () => {
     syncActive = false;
     clearPostResizeIdleRegistration();
     if (typeof unsubscribeViewport === "function") unsubscribeViewport();
@@ -551,4 +555,8 @@ export function setupViewportSync(map, dataContext) {
       handleWindowResize = null;
     }
   };
+  dispose.beginCameraTravel = (traceId = "person-fly") => {
+    startNavigationTravel(traceId);
+  };
+  return dispose;
 }

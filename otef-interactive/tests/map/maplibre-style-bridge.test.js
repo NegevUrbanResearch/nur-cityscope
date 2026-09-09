@@ -130,14 +130,14 @@ describe("irToMapLibreLayers", () => {
     expect(lineP.paint["line-width"]).toBeCloseTo(2 * PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE);
   });
 
-  it("applies the projection stroke scale to nli highway 232", () => {
+  it("does not apply the projection stroke scale to nli highway 232", () => {
     const layerConfig = {
       geometryType: "line",
       style: {
         renderer: "simple",
         defaultSymbol: {
           symbolLayers: [
-            { type: "stroke", color: "#e8c478", width: 2, opacity: 0.5 },
+            { type: "stroke", color: "#873e23", width: 2, opacity: 1 },
           ],
         },
       },
@@ -149,9 +149,8 @@ describe("irToMapLibreLayers", () => {
     const lineG = gis.find((l) => l.type === "line");
     const lineP = proj.find((l) => l.type === "line");
     expect(lineG.paint["line-width"]).toBe(2);
-    expect(lineP.paint["line-width"]).toBeCloseTo(2 * PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE);
-    expect(lineG.paint["line-opacity"]).toBe(0.5);
-    expect(lineP.paint["line-opacity"]).toBe(0.5);
+    expect(lineP.paint["line-width"]).toBe(2);
+    expect(lineP.paint["line-width"]).not.toBeCloseTo(2 * PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE);
   });
 
   it("converts a uniqueValue renderer with match expression", () => {
@@ -1283,6 +1282,55 @@ describe("irToMapLibreLayers", () => {
     expect(sym.paint["text-halo-width"]).toBe(1);
   });
 
+  it("does not emit GIS labels for projector_base שמות_יישובים without applyProjectionHatchPresentation", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        defaultSymbol: { symbolLayers: [] },
+        labels: {
+          field: "cityname",
+          size: 14,
+          color: "#ffffff",
+          font: ["Guttman Hatzvi", "Noto Sans Regular"],
+          haloColor: "#fafafa",
+          haloSize: 1,
+          colorOpacity: 1,
+        },
+      },
+    };
+    const result = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig);
+    expect(result.find((L) => L.type === "symbol")).toBeUndefined();
+  });
+
+  it("keeps projector_base ישובים line-color equal on GIS and projection for the same IR stroke", () => {
+    const layerConfig = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#5a3a2a", width: 1.2, opacity: 1 },
+            {
+              type: "fill",
+              fillType: "hatch",
+              hatch: { color: "#c4a35a", rotation: 45, separation: 8, width: 1 },
+              opacity: 0.6,
+            },
+          ],
+        },
+      },
+    };
+    const gis = irToMapLibreLayers("projector_base.ישובים", "src", layerConfig);
+    const proj = irToMapLibreLayers("projector_base.ישובים", "src", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    const gisLine = gis.find((L) => L.type === "line");
+    const projLine = proj.find((L) => L.type === "line");
+    expect(gisLine.paint["line-color"]).toBe("#5a3a2a");
+    expect(projLine.paint["line-color"]).toBe(gisLine.paint["line-color"]);
+  });
+
   it("defaults missing labels.field to cityname for *.שמות_יישובים when map labels pass", () => {
     const layerConfig = {
       geometryType: "point",
@@ -1682,8 +1730,8 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const sym = irToMapLibreLayers("projector_base.שמות_יישובים", "src", layerConfig, {
-      applyProjectionHatchPresentation: true,
+    const sym = irToMapLibreLayers("a.b", "src", layerConfig, {
+      renderMapLabelsFromStyle: true,
     }).find((L) => L.type === "symbol");
     expect(sym.layout["text-rotate"]).toEqual([
       "to-number",
@@ -1805,9 +1853,8 @@ describe("irToMapLibreLayers", () => {
     }).find((L) => L.type === "symbol");
     expect(sym).toBeDefined();
     expect(sym.layout["symbol-placement"]).toBe("point");
-    const tr = sym.layout["text-rotate"];
-    expect(Array.isArray(tr)).toBe(true);
-    expect(tr[0]).toBe("to-number");
+    expect(sym.layout["text-rotate"]).toBe(0);
+    expect(Array.isArray(sym.layout["text-rotate"])).toBe(false);
     const to = sym.layout["text-offset"];
     expect(to[0]).toBe("coalesce");
     expect(to[1]).toEqual(["get", "otef_map_text_offset_em"]);
@@ -1815,6 +1862,33 @@ describe("irToMapLibreLayers", () => {
     expect(to[2][3][0]).toBe("/");
     expect(sym.paint["text-translate"]).toBeUndefined();
     expect(sym.layout["text-rotation-alignment"]).toBe("map");
+  });
+
+  it("emits static text-rotate for שמות instead of live per-feature otef_label_rotate_deg", () => {
+    const layerConfig = {
+      geometryType: "point",
+      style: {
+        renderer: "simple",
+        labels: {
+          field: "cityname",
+          angleFromProperties: true,
+          angleProperty: "otef_label_rotate_deg",
+          offsetArrayProperty: "otef_map_text_offset_em",
+          textRotationAlignment: "map",
+        },
+      },
+    };
+    const result = irToMapLibreLayers(
+      "projector_base.שמות_יישובים",
+      "projector_base__שמות_יישובים",
+      layerConfig,
+      { applyProjectionHatchPresentation: true },
+    );
+    const sym = result.find((layer) => layer.type === "symbol");
+    expect(sym.layout["text-rotate"]).toBe(0);
+    expect(Array.isArray(sym.layout["text-rotate"])).toBe(false);
+    expect(sym.layout["text-rotation-alignment"]).toBe("map");
+    expect(sym.layout["text-offset"][1]).toEqual(["get", "otef_map_text_offset_em"]);
   });
 
   it("emits forceVisible English name labels for nli.people_names on GIS and projection", () => {
@@ -1826,12 +1900,14 @@ describe("irToMapLibreLayers", () => {
         labels: {
           field: "name",
           font: ["Guttman Hatzvi", "Noto Sans Regular"],
-          size: 14,
+          size: 8,
           color: "#ffffff",
           haloColor: "#ffffff",
-          haloSize: 0.35,
+          haloSize: 0.12,
           forceVisible: true,
           hebrewBidiWrap: false,
+          offsetArrayProperty: "otef_map_text_offset_em",
+          textRotationAlignment: "map",
         },
       },
     };
@@ -1847,9 +1923,17 @@ describe("irToMapLibreLayers", () => {
       expect(JSON.stringify(sym.layout["text-field"])).toMatch(/name/i);
       expect(JSON.stringify(sym.layout["text-field"])).not.toMatch(/hebrew_name/i);
       expect(sym.layout["text-font"]).toEqual(["Guttman Hatzvi", "Noto Sans Regular"]);
-      expect(sym.layout["text-size"]).toBe(14);
+      expect(sym.layout["text-font"].some((face) => /Bold/i.test(face))).toBe(false);
+      expect(sym.layout["text-size"]).toBe(8);
       expect(sym.paint["text-color"]).toBe("#ffffff");
-      expect(sym.paint["text-halo-width"]).toBe(0.35);
+      expect(sym.paint["text-halo-width"]).toBe(0.12);
+      expect(sym.layout["text-rotation-alignment"]).toBe("map");
+      expect(sym.layout["text-rotate"]).toBe(0);
+      expect(sym.layout["text-offset"]).toEqual([
+        "coalesce",
+        ["get", "otef_map_text_offset_em"],
+        ["literal", [0, 0]],
+      ]);
       expect(sym.layout["text-allow-overlap"]).toBe(true);
       expect(sym.layout["text-ignore-placement"]).toBe(true);
       expect(result.find((layer) => layer.type === "circle")).toBeUndefined();

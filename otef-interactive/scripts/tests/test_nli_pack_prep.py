@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import tempfile
 import unittest
 import zipfile
@@ -15,6 +16,7 @@ from nli_pack_prep import (
     NLI_CATALOG_STROKE_WIDTH,
     NLI_KEEP_STEMS,
     ROUTE_232_STEM,
+    ROUTE_232_LABEL_FILL,
     ROUTE_232_STROKE_ALPHA,
     ROUTE_232_STROKE_COLOR,
     ROUTE_232_STROKE_WIDTH_PT,
@@ -22,6 +24,7 @@ from nli_pack_prep import (
     emphasize_copied_line_lyrx,
     install_nli_route_232_overlay,
     apply_alarm_timeline_minutes,
+    apply_people_name_offsets,
     apply_timeline_minutes,
     ashkelon_north_lat,
     attach_nli_catalog_links,
@@ -120,7 +123,79 @@ class JitterTests(unittest.TestCase):
         moved = jitter_coincident_points(features)
         self.assertEqual(moved, 0)
         self.assertEqual(features[0]["geometry"]["coordinates"], [34.47, 31.40])
-        self.assertNotIn("source_lon", features[0]["properties"])
+        self.assertEqual(features[0]["properties"]["source_lon"], 34.47)
+        self.assertEqual(features[0]["properties"]["source_lat"], 31.40)
+
+    def test_distant_singletons_get_zero_offsets_and_are_not_grouped(self):
+        features = [
+            _point(34.47, 31.40, oct7_pid=1),
+            _point(35.00, 32.00, oct7_pid=2),
+        ]
+        jitter_coincident_points(features)
+        apply_people_name_offsets(features)
+        for feat in features:
+            self.assertEqual(feat["properties"]["otef_map_text_offset_em"], [0, 0])
+            self.assertIn("source_lon", feat["properties"])
+            self.assertIn("source_lat", feat["properties"])
+        self.assertNotEqual(
+            (features[0]["properties"]["source_lon"], features[0]["properties"]["source_lat"]),
+            (features[1]["properties"]["source_lon"], features[1]["properties"]["source_lat"]),
+        )
+
+    def test_missing_source_keys_fall_back_to_geometry_not_a_shared_bucket(self):
+        features = [
+            _point(34.47, 31.40, oct7_pid=1),
+            _point(35.00, 32.00, oct7_pid=2),
+        ]
+        apply_people_name_offsets(features)
+        for feat in features:
+            self.assertEqual(feat["properties"]["otef_map_text_offset_em"], [0, 0])
+            self.assertNotIn("source_lon", feat["properties"])
+
+    def test_shared_source_coords_get_opposite_offsets_despite_jittered_geometry(self):
+        features = [
+            _point(34.47, 31.40, oct7_pid=1),
+            _point(34.47, 31.40, oct7_pid=2),
+        ]
+        jitter_coincident_points(features)
+        self.assertNotEqual(
+            features[0]["geometry"]["coordinates"],
+            features[1]["geometry"]["coordinates"],
+        )
+        self.assertEqual(features[0]["properties"]["source_lon"], 34.47)
+        self.assertEqual(features[1]["properties"]["source_lon"], 34.47)
+        apply_people_name_offsets(features)
+        off0 = features[0]["properties"]["otef_map_text_offset_em"]
+        off1 = features[1]["properties"]["otef_map_text_offset_em"]
+        self.assertEqual(len(off0), 2)
+        self.assertEqual(len(off1), 2)
+        self.assertNotEqual(off0, [0, 0])
+        self.assertNotEqual(off1, [0, 0])
+        self.assertAlmostEqual(off0[0] + off1[0], 0.0, places=9)
+        self.assertAlmostEqual(off0[1] + off1[1], 0.0, places=9)
+        self.assertAlmostEqual(math.hypot(off0[0], off0[1]), 1.8, places=6)
+        self.assertAlmostEqual(math.hypot(off1[0], off1[1]), 1.8, places=6)
+
+    def test_radial_offset_radius_caps_at_4_5(self):
+        features = [_point(34.47, 31.40, oct7_pid=i) for i in range(20)]
+        apply_people_name_offsets(features)
+        radii = [
+            math.hypot(*feat["properties"]["otef_map_text_offset_em"])
+            for feat in features
+        ]
+        self.assertTrue(all(abs(r - 4.5) < 1e-6 for r in radii))
+
+    def test_mixed_numeric_and_nonnumeric_pids_get_offsets_without_raising(self):
+        features = [
+            _point(34.47, 31.40, oct7_pid=1),
+            _point(34.47, 31.40, oct7_pid="abc"),
+        ]
+        apply_people_name_offsets(features)
+        offsets = [feat["properties"]["otef_map_text_offset_em"] for feat in features]
+        for offset in offsets:
+            self.assertEqual(len(offset), 2)
+            self.assertTrue(all(isinstance(value, (int, float)) for value in offset))
+        self.assertTrue(all(offset != [0, 0] for offset in offsets))
 
     def test_spreads_coincident_points_as_seeded_blob_not_ring(self):
         features = [
@@ -273,10 +348,15 @@ class LyrxBuilderTests(unittest.TestCase):
         self.assertTrue(labels["forceVisible"])
         self.assertFalse(labels["hebrewBidiWrap"])
         self.assertEqual(labels["font"], ["Guttman Hatzvi", "Noto Sans Regular"])
+        self.assertFalse(any("Bold" in str(face) for face in labels["font"]))
         self.assertEqual(labels["color"], "#ffffff")
-        self.assertEqual(float(labels["size"]), 14.0)
-        self.assertLessEqual(float(labels.get("haloSize") or 0), 0.35)
-        self.assertGreater(float(labels.get("haloSize") or 0), 0)
+        self.assertEqual(float(labels["size"]), 8.0)
+        self.assertAlmostEqual(float(labels.get("haloSize") or 0), 0.12)
+        self.assertEqual(labels.get("textRotationAlignment"), "map")
+        self.assertEqual(labels["offsetArrayProperty"], "otef_map_text_offset_em")
+        self.assertIsNot(labels.get("offsetEmFromProperties"), True)
+        self.assertIsNot(labels.get("angleFromProperties"), True)
+        self.assertNotEqual((labels.get("fontStyleName") or "Regular").lower(), "bold")
         symbol_layers = (data.get("defaultSymbol") or {}).get("symbolLayers") or []
         markers = [layer for layer in symbol_layers if layer.get("type") == "markerPoint"]
         self.assertFalse(markers, msg=f"expected labels-only, got markers {markers}")
@@ -575,6 +655,14 @@ class PreparePackTests(unittest.TestCase):
         )
         coords = [tuple(feat["geometry"]["coordinates"]) for feat in names_out["features"]]
         self.assertEqual(len(set(coords)), 2)
+        offsets = [feat["properties"].get("otef_map_text_offset_em") for feat in names_out["features"]]
+        self.assertTrue(all(isinstance(offset, list) and len(offset) == 2 for offset in offsets))
+        self.assertTrue(any(offset != [0, 0] for offset in offsets))
+        self.assertAlmostEqual(offsets[0][0] + offsets[1][0], 0.0, places=9)
+        self.assertAlmostEqual(offsets[0][1] + offsets[1][1], 0.0, places=9)
+        for feat in names_out["features"]:
+            self.assertIn("source_lon", feat["properties"])
+            self.assertIn("source_lat", feat["properties"])
 
     def test_prepare_accepts_dated_root_geojson_names(self):
         tmp = Path(tempfile.mkdtemp())
@@ -687,10 +775,14 @@ def _cim_stroke_widths(payload):
 
 
 class Route232OverlayTests(unittest.TestCase):
-    def test_restyle_uses_thin_sand_stroke_without_casing(self):
+    def test_restyle_uses_brown_stroke_without_casing(self):
         payload = simple_line_lyrx(width=4.0)
         out = emphasize_copied_line_lyrx(payload)
         widths = _cim_stroke_widths(out)
+        self.assertEqual(tuple(ROUTE_232_STROKE_COLOR), (135, 62, 35))
+        self.assertEqual(ROUTE_232_STROKE_WIDTH_PT, 2.0)
+        self.assertEqual(ROUTE_232_STROKE_ALPHA, 100)
+        self.assertEqual(tuple(ROUTE_232_LABEL_FILL), (255, 224, 210))
         self.assertEqual(widths, [ROUTE_232_STROKE_WIDTH_PT])
         parsed = parse_lyrx_style(_write_lyrx(out))
         self.assertIsNotNone(parsed)
@@ -700,10 +792,9 @@ class Route232OverlayTests(unittest.TestCase):
             if layer.get("type") == "stroke"
         ]
         self.assertEqual(len(strokes), 1)
+        self.assertEqual(strokes[0]["color"], "#873e23")
+        self.assertAlmostEqual(strokes[0]["opacity"], 1.0)
         self.assertEqual(strokes[0]["width"], ROUTE_232_STROKE_WIDTH_PT * (96 / 72))
-        self.assertEqual(strokes[0]["color"], "#e8c478")
-        self.assertAlmostEqual(strokes[0]["opacity"], ROUTE_232_STROKE_ALPHA / 100.0)
-        self.assertEqual(tuple(ROUTE_232_STROKE_COLOR), (232, 196, 120))
 
     def test_install_skips_when_future_development_is_missing(self):
         tmp = Path(tempfile.mkdtemp())

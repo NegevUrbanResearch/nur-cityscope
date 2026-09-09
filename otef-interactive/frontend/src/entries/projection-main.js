@@ -22,9 +22,12 @@ import {
 import {
   disposeInvestigationTimelineForMap,
   syncInvestigationTimelineToMap,
+  wakeInvestigationTimelinePersonGlow,
 } from "../shared/maplibre-investigation-timeline.js";
 import { idleNliClock } from "../shared/nli-investigation-clock.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
+import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
+import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
   createSlideshowPackRuntime,
@@ -41,6 +44,10 @@ import {
   runWhenMapIdle,
 } from "../projection/projection-span-view.js";
 import {
+  dispatchProjectionDisplayHotkey,
+  readProjectionDisplayHotkey,
+} from "../projection/projection-display-hotkeys.js";
+import {
   applyNliExplainerLayout,
   applyNliExplainerHostPresence,
   ensureNliExplainerHost,
@@ -54,6 +61,11 @@ import {
   installNliExplainerDebug,
   isNliExplainerDebugRequestedInUrl,
 } from "../projection/nli-explainer-debug.js";
+import {
+  applyNliSharedTextHeading,
+  NLI_LABEL_HEADING_STORAGE_KEY,
+  readNliLabelHeading,
+} from "../shared/nli-label-heading.js";
 
 function getEffectiveProjectionLayerGroups() {
   if (
@@ -64,6 +76,13 @@ function getEffectiveProjectionLayerGroups() {
     return window.LayerStateHelper.getEffectiveLayerGroups();
   }
   return OTEFDataContext.getLayerGroups();
+}
+
+function applyStoredNliLabelHeading(map) {
+  applyNliSharedTextHeading(
+    map,
+    readNliLabelHeading(typeof window !== "undefined" ? window.localStorage : undefined),
+  );
 }
 
 /**
@@ -243,6 +262,9 @@ async function bootstrapProjectionRuntime() {
   const map = createProjectionMap("projectionMap", modelBounds, {
     ...(urlOrConfigPixelRatio !== undefined ? { pixelRatio: urlOrConfigPixelRatio } : {}),
   });
+  if (typeof window !== "undefined") {
+    window._maplibreMap = map;
+  }
   const applySpanCamera = () => {
     applyProjectionSpanView({
       map,
@@ -387,6 +409,17 @@ async function bootstrapProjectionRuntime() {
       applyNliExplainerHostPresence(nliExplainerHost, spanKey);
     };
     applyStoredExplainerLayout();
+    try {
+      const { updateMapLegend } = await import("../map/map-legend.js");
+      registerDisposer(
+        OTEFDataContext.subscribe("layerGroups", () => {
+          updateMapLegend({ surface: "projection" });
+        }),
+      );
+      updateMapLegend({ surface: "projection" });
+    } catch (e) {
+      console.warn("[projection-main] Legend module not available:", e);
+    }
     const onExplainerResize = () => {
       if (window.NliExplainerDebug?.isVisible?.()) return;
       applyStoredExplainerLayout();
@@ -449,6 +482,7 @@ async function bootstrapProjectionRuntime() {
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()
             : Date.now(),
+        getPersonSelection: () => OTEFDataContext.getPersonSelection(),
       });
     };
     try {
@@ -482,6 +516,22 @@ async function bootstrapProjectionRuntime() {
     };
     registerDisposer(OTEFDataContext.subscribe("animations", syncContextRouteProgress));
     registerDisposer(OTEFDataContext.subscribe("investigationClock", syncContextInvestigation));
+    registerDisposer(bindProjectionPersonHalo({
+      map,
+      subscribe: (topic, listener) => OTEFDataContext.subscribe(topic, listener),
+      loadPeopleRuntime,
+      motionMode: resolveMotionMode(),
+    }));
+    const wakeProjectionPersonGlow = () => {
+      wakeInvestigationTimelinePersonGlow(map);
+    };
+    registerDisposer(OTEFDataContext.subscribe("personSelection", wakeProjectionPersonGlow));
+    const onNliLabelHeadingStorage = (event) => {
+      if (event.key !== NLI_LABEL_HEADING_STORAGE_KEY) return;
+      applyStoredNliLabelHeading(map);
+    };
+    window.addEventListener("storage", onNliLabelHeadingStorage);
+    registerDisposer(() => window.removeEventListener("storage", onNliLabelHeadingStorage));
 
     let activeCuratedIds = new Set();
 
@@ -529,6 +579,7 @@ async function bootstrapProjectionRuntime() {
       updateModelBaseImageVisibility(rawGroups, modelImgEl);
 
       syncProjectionLayers(map, currentGroups, layerStyleOptions);
+      applyStoredNliLabelHeading(map);
       syncContextFlowAnimations();
 
       const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
@@ -643,6 +694,7 @@ async function bootstrapProjectionRuntime() {
 
     const syncProjectionLayersAndRaiseHighlight = (projectionMap, groups, options) => {
       syncProjectionLayers(projectionMap, groups, options);
+      applyStoredNliLabelHeading(projectionMap);
       raiseProjectionHighlightLayers(projectionMap);
     };
 
@@ -742,6 +794,7 @@ async function bootstrapProjectionRuntime() {
                 map,
                 Array.isArray(groups) ? groups : Object.values(groups || {}),
               );
+              applyStoredNliLabelHeading(map);
               syncContextFlowAnimations();
               raiseProjectionHighlightLayers(map);
             },
@@ -869,47 +922,30 @@ async function bootstrapProjectionRuntime() {
   });
 
   const onKeyDown = (event) => {
-    if (event.defaultPrevented || event.repeat) return;
-    const target = event.target;
-    const targetTag = target?.tagName;
-    if (
-      targetTag === "INPUT" ||
-      targetTag === "TEXTAREA" ||
-      target?.isContentEditable
-    ) {
-      return;
-    }
-
-    const key = String(event.key || "").toLowerCase();
-    if (key === "h") {
-      const instructions = document.getElementById("instructions");
-      if (instructions) instructions.classList.toggle("hidden");
-      return;
-    }
-    if (key === "f") {
-      toggleProjectionFullscreen();
-      return;
-    }
-    if (key === "b" && window.ProjectionBoundsEditor) {
-      window.ProjectionBoundsEditor.toggle();
-      return;
-    }
-    if (key === "r" && window.ProjectionRotationEditor) {
-      window.ProjectionRotationEditor.toggle();
-      return;
-    }
-    if (key === "d" && projectionRenderDebugApi) {
-      projectionRenderDebugApi.toggle();
-      return;
-    }
-    if (key === "l" && shemotLabelDebugApi) {
-      shemotLabelDebugApi.toggle();
-      return;
-    }
-    if (key === "e" && window.NliExplainerDebug) {
-      window.NliExplainerDebug.toggle();
-      return;
-    }
+    const action = readProjectionDisplayHotkey(event);
+    if (!action) return;
+    dispatchProjectionDisplayHotkey(action, {
+      toggleHelp: () => {
+        const instructions = document.getElementById("instructions");
+        if (instructions) instructions.classList.toggle("hidden");
+      },
+      toggleFullscreen: toggleProjectionFullscreen,
+      toggleBounds: () => {
+        if (window.ProjectionBoundsEditor) window.ProjectionBoundsEditor.toggle();
+      },
+      toggleRotation: () => {
+        if (window.ProjectionRotationEditor) window.ProjectionRotationEditor.toggle();
+      },
+      toggleRenderDebug: () => {
+        if (projectionRenderDebugApi) projectionRenderDebugApi.toggle();
+      },
+      toggleLabelDebug: () => {
+        if (shemotLabelDebugApi) shemotLabelDebugApi.toggle();
+      },
+      toggleExplainerDebug: () => {
+        if (window.NliExplainerDebug) window.NliExplainerDebug.toggle();
+      },
+    });
   };
   window.addEventListener("keydown", onKeyDown);
   registerDisposer(() => window.removeEventListener("keydown", onKeyDown));

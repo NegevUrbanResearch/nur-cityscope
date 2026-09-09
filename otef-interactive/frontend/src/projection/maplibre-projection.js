@@ -3,6 +3,7 @@
  * Transparent background, no basemap, overlaid on model image.
  */
 import { itmBboxToWgs84SwNe } from "../map-utils/itm-bbox-to-wgs84-bounds.js";
+import { NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
 import { viewportToHighlightGeoJSON } from "./maplibre-projection-viewport-geojson.js";
 
 export const PROJECTION_HIGHLIGHT_SOURCE_ID = "projection-highlight-source";
@@ -201,14 +202,16 @@ export function ensureProjectionHighlightLayers(map) {
       type: "geojson",
       data: { type: "FeatureCollection", features: [] },
     });
-    // Match projection `.highlight-box` / `.highlight-box-fill` in frontend/css/styles.css
     map.addLayer({
       id: PROJECTION_HIGHLIGHT_FILL_LAYER_ID,
       type: "fill",
       source: PROJECTION_HIGHLIGHT_SOURCE_ID,
       paint: {
         "fill-color": "#ffffff",
-        "fill-opacity": 0.12,
+        "fill-opacity": 0,
+        "fill-opacity-transition": {
+          duration: NLI_VISUAL_TOKENS.highlightOpacityTransitionMs,
+        },
       },
     });
     map.addLayer({
@@ -216,8 +219,12 @@ export function ensureProjectionHighlightLayers(map) {
       type: "line",
       source: PROJECTION_HIGHLIGHT_SOURCE_ID,
       paint: {
-        "line-color": "rgba(255, 255, 255, 0.6)",
+        "line-color": NLI_VISUAL_TOKENS.highlightLineColor,
         "line-width": 1,
+        "line-opacity": 0,
+        "line-opacity-transition": {
+          duration: NLI_VISUAL_TOKENS.highlightOpacityTransitionMs,
+        },
       },
     });
   } catch (err) {
@@ -357,6 +364,19 @@ function tryHighlightPointsFromMapProject(map, highlightEl, itmPoints) {
   return points;
 }
 
+function highlightLayerOpacities(viewport, modelBounds) {
+  const zoom = Number(viewport?.zoom);
+  const fullExtent =
+    Array.isArray(viewport?.bbox) &&
+    viewport.bbox.length === 4 &&
+    modelBounds?.itm &&
+    isFullExtent(viewport.bbox, modelBounds);
+  if (!Number.isFinite(zoom) || zoom < NLI_VISUAL_TOKENS.highlightMinZoom || fullExtent) {
+    return { fill: 0, line: 0 };
+  }
+  return { fill: NLI_VISUAL_TOKENS.highlightFillOpacity, line: 1 };
+}
+
 /**
  * @param {object | null} map MapLibre Map; when null, uses legacy linear ITM→overlay (tests only).
  * @param {object} viewport
@@ -370,6 +390,11 @@ export function updateHighlightFromViewport(map, viewport, modelBounds, highligh
       return;
     }
     map.getSource(PROJECTION_HIGHLIGHT_SOURCE_ID).setData(geojson);
+    const { fill, line } = highlightLayerOpacities(viewport, modelBounds);
+    if (typeof map.setPaintProperty === "function") {
+      map.setPaintProperty(PROJECTION_HIGHLIGHT_FILL_LAYER_ID, "fill-opacity", fill);
+      map.setPaintProperty(PROJECTION_HIGHLIGHT_LINE_LAYER_ID, "line-opacity", line);
+    }
     return;
   }
 

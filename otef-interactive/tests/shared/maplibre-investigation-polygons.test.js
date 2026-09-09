@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createInvestigationPolygonRenderer } from "../../frontend/src/shared/maplibre-investigation-polygons.js";
+import { deriveInvestigationFrame } from "../../frontend/src/shared/nli-investigation-visual-state.js";
+import { idleNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
+import { INVESTIGATION_POLYGONS_FULL_ID } from "../../frontend/src/shared/nli-investigation-beats.js";
 
 function makeMap() {
   const layers = [
@@ -32,13 +35,19 @@ function makeMap() {
     }),
     getPaintProperty: vi.fn((id, key) => paints.get(`${id}:${key}`)),
     setPaintProperty: vi.fn((id, key, value) => paints.set(`${id}:${key}`, value)),
+    setLayoutProperty: vi.fn(),
     on: vi.fn(),
   };
 }
 
-const polygon = (objectId, minutes, location = "עלומים") => ({
+const polygon = (objectId, minutes, location = "עלומים", notes) => ({
   type: "Feature",
-  properties: { OBJECTID: objectId, timeline_minutes: minutes, מיקום: location },
+  properties: {
+    OBJECTID: objectId,
+    timeline_minutes: minutes,
+    מיקום: location,
+    ...(notes != null ? { Notes: notes } : {}),
+  },
   geometry: { type: "Polygon", coordinates: [[[34, 31], [34.01, 31], [34.01, 31.01], [34, 31]]] },
 });
 
@@ -49,30 +58,129 @@ const settlement = (outlineObjectId, coordinates = [[[34, 31], [34.02, 31], [34.
   geometry: { type: "Polygon", coordinates },
 });
 
-const frame = (achievedPolygonBeats) => ({ achievedPolygonBeats, narrative: { phase: "playing" } });
+const frame = (achievedPolygonBeats, extra = {}) => ({
+  achievedPolygonBeats,
+  narrative: { phase: "playing" },
+  ...extra,
+});
 
 describe("investigation polygon renderer", () => {
-  it("renders future polygons orange and turns polygons red at beat start", () => {
-    const map = makeMap();
-    const renderer = createInvestigationPolygonRenderer(map, { lineWidthMultiplier: 1 });
-    const features = [polygon(1, 400), polygon(2, 420)];
-
-    renderer.render(frame([]), { polygonFeatures: features });
-    expect(JSON.stringify(map.paints.get("nli__investigation_polygons__fill__0:fill-color"))).toContain("#f79009");
-
-    renderer.render(frame([400]), { polygonFeatures: features });
-    const activeColor = map.paints.get("nli__investigation_polygons__fill__0:fill-color");
-    expect(JSON.stringify(activeColor)).toContain("#c31f4f");
+  it("uses the same impact outline width on GIS and projection profiles", () => {
+    const gisMap = makeMap();
+    const projMap = makeMap();
+    const gis = createInvestigationPolygonRenderer(gisMap, { lineWidthMultiplier: 1 });
+    const proj = createInvestigationPolygonRenderer(projMap, { lineWidthMultiplier: 1.2 });
+    const idleFrame = frame([]);
+    gis.render(idleFrame, { polygonFeatures: [], settlementFeatures: [settlement(20)] });
+    proj.render(idleFrame, { polygonFeatures: [], settlementFeatures: [settlement(20)] });
+    const gisLayer = gisMap.getLayer("nli-investigation-settlement-impact-outline");
+    const projLayer = projMap.getLayer("nli-investigation-settlement-impact-outline");
+    expect(gisLayer.paint["line-color"]).toBe("#c31f4f");
+    expect(projLayer.paint["line-color"]).toBe("#c31f4f");
+    expect(gisLayer.paint["line-width"]).toBe(1.8);
+    expect(projLayer.paint["line-width"]).toBe(1.8);
   });
 
-  it("keeps achieved polygons red and removes later achievements on backward seek", () => {
+  it("omits unachieved polygons from the overlay source", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, { lineWidthMultiplier: 1 });
+    renderer.render(frame([400]), {
+      polygonFeatures: [polygon(1, 400), polygon(2, 420)],
+    });
+    const overlay = map.sources.get("nli-investigation-polygon-category");
+    const feats = overlay.setData.mock.calls.at(-1)[0].features;
+    expect(feats.map((f) => f.properties.timeline_minutes)).toEqual([400]);
+  });
+
+  it("hides host pack polygon layers while overlay is mounted", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    renderer.render(frame([400]), { polygonFeatures: [polygon(1, 400)] });
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "nli__investigation_polygons__fill__0",
+      "visibility",
+      "none",
+    );
+  });
+
+  it("filters category layers by Notes", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400);
+    battle.properties.Notes = "מרחב לחימה - קרב";
+    renderer.render(frame([400]), { polygonFeatures: [battle] });
+    const fill = map.addLayer.mock.calls.find(([layer]) => layer.id.includes("battle") && layer.type === "fill")[0];
+    expect(fill.filter).toEqual(["==", ["get", "Notes"], "מרחב לחימה - קרב"]);
+  });
+
+  it("battle outline uses completed-route line-gradient phase-step, not dashoffset", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400);
+    battle.properties.Notes = "מרחב לחימה - קרב";
+    renderer.render(frame([400], { motionMode: "full" }), { polygonFeatures: [battle] });
+    const outline = map.addLayer.mock.calls.find(([layer]) => layer.id.includes("battle") && layer.type === "line")[0];
+    expect(outline.source).toBe("nli-investigation-polygon-category-outline");
+    expect(outline.paint["line-gradient"]).toBeTruthy();
+    expect(outline.paint["line-dasharray"]).toBeUndefined();
+    expect(JSON.stringify(outline.paint["line-gradient"])).toContain("line-progress");
+  });
+
+  it("advances battle fill-opacity and line-gradient when nowMs changes", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const data = { polygonFeatures: [battle] };
+    const options = { motionMode: "full", storyBeats: [400], polygonMotionActive: true };
+    const at0 = deriveInvestigationFrame(idleNliClock(), 0, [INVESTIGATION_POLYGONS_FULL_ID], options);
+    const atHalfPeriod = deriveInvestigationFrame(idleNliClock(), 2000, [INVESTIGATION_POLYGONS_FULL_ID], options);
+    renderer.render(at0, data);
+    const opacity0 = map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity");
+    const gradient0 = map.paints.get("nli-investigation-polygon-category-line-battle:line-gradient");
+    renderer.render(atHalfPeriod, data);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).not.toEqual(opacity0);
+    expect(map.paints.get("nli-investigation-polygon-category-line-battle:line-gradient")).not.toEqual(gradient0);
+  });
+
+  it("writes closed LineString rings to the outline source with lineMetrics", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const open = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    open.geometry.coordinates[0] = [[34, 31], [34.01, 31], [34.01, 31.01]];
+    renderer.render(frame([400]), { polygonFeatures: [open] });
+    const spec = map.addSource.mock.calls.find(([id]) => id === "nli-investigation-polygon-category-outline")[1];
+    expect(spec.lineMetrics).toBe(true);
+    const outline = map.sources.get("nli-investigation-polygon-category-outline");
+    const feats = outline.setData.mock.calls.at(-1)[0].features;
+    expect(feats[0].geometry.type).toBe("LineString");
+    const coords = feats[0].geometry.coordinates;
+    expect(coords[0]).toEqual(coords[coords.length - 1]);
+  });
+
+  it("warns once per distinct unmatched Notes string", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const unknownA = polygon(1, 400, "עלומים", "לא ידוע");
+    const unknownB = polygon(2, 400, "עלומים", "לא ידוע");
+    renderer.render(frame([400]), { polygonFeatures: [unknownA, unknownB] });
+    const fallback = map.addLayer.mock.calls.find(([layer]) => layer.id.includes("fallback") && layer.type === "fill")[0];
+    expect(fallback.paint["fill-color"]).toBe("#9a9a9a");
+    expect(warn).toHaveBeenCalledTimes(1);
+    renderer.render(frame([400]), { polygonFeatures: [unknownA, unknownB] });
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it("keeps achieved polygons in the overlay and drops later achievements on backward seek", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
     const features = [polygon(1, 400), polygon(2, 420)];
     renderer.render(frame([400, 420]), { polygonFeatures: features });
     renderer.render(frame([400]), { polygonFeatures: features });
-    expect(JSON.stringify(map.paints.get("nli__investigation_polygons__fill__0:fill-color")))
-      .toContain("400");
+    const overlay = map.sources.get("nli-investigation-polygon-category");
+    const feats = overlay.setData.mock.calls.at(-1)[0].features;
+    expect(feats.map((f) => f.properties.timeline_minutes)).toEqual([400]);
   });
 
   it("deduplicates achieved settlement outlines and uses injected data without fetch", () => {
@@ -320,20 +428,45 @@ describe("investigation polygon renderer", () => {
     expect(map.addLayer.mock.calls.at(-1)[1]).toBe("labels");
   });
 
-  it("reset restores explicit orange styles and dispose removes owned state", () => {
+  it("reset restores host visibility without orange paints and dispose removes owned state", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
     renderer.mount();
     renderer.render(frame([400]), { polygonFeatures: [polygon(1, 400)] });
     renderer.reset();
-    expect(map.paints.get("nli__investigation_polygons__fill__0:fill-color")).toBe("#f79009");
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "nli__investigation_polygons__fill__0",
+      "visibility",
+      "visible",
+    );
+    expect(map.paints.get("nli__investigation_polygons__fill__0:fill-color")).not.toBe("#f79009");
     expect(map.getSource("nli-investigation-settlement-impact")).toBeNull();
+    expect(map.getSource("nli-investigation-polygon-category")).toBeNull();
     renderer.dispose();
     expect(map.sources.size).toBe(0);
     expect(map.layers.map((layer) => layer.id)).toEqual([
       "nli__investigation_polygons__fill__0",
       "nli__investigation_polygons__line__1",
     ]);
+  });
+
+  it("keeps host pack hidden when reset is caused by the polygons row becoming disabled", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    renderer.render(frame([400]), { polygonFeatures: [polygon(1, 400)] });
+    map.setLayoutProperty.mockClear();
+    renderer.reset({ restoreHostVisibility: false });
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
+      "nli__investigation_polygons__fill__0",
+      "visibility",
+      "visible",
+    );
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
+      "nli__investigation_polygons__line__1",
+      "visibility",
+      "visible",
+    );
+    expect(map.getSource("nli-investigation-polygon-category")).toBeNull();
   });
 
   it("preserves semantic host paints while removing the settlement overlay", () => {
@@ -352,7 +485,12 @@ describe("investigation polygon renderer", () => {
     expect(map.setPaintProperty).not.toHaveBeenCalled();
     expect(map.getSource("nli-investigation-settlement-impact")).toBeNull();
     renderer.render(frame([400]), data);
-    expect(JSON.stringify(map.paints.get("nli__investigation_polygons__fill__0:fill-color"))).toContain("#c31f4f");
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "nli__investigation_polygons__fill__0",
+      "visibility",
+      "none",
+    );
+    expect(map.getSource("nli-investigation-polygon-category")).not.toBeNull();
     expect(map.getSource("nli-investigation-settlement-impact")).not.toBeNull();
   });
 

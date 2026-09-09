@@ -53,7 +53,52 @@ describe("nli-investigation-theme", () => {
       routeFlowDutyCycle: 0.45,
       routeFlowSpeed: 0.00072,
       alarmRadiusStops: [[1, 4], [7, 8], [26, 14], [77, 19]],
+      personZoom: 16,
+      highlightMinZoom: 13,
+      highlightOpacityTransitionMs: 400,
+      highlightFillOpacity: 0.05,
+      highlightLineColor: "rgba(255,255,255,0.35)",
+      personGlowFillOpacity: 0.25,
+      personGlowRadius: 14,
+      personGlowStrokeWidth: 2.5,
+      personGlowPulseMs: 2400,
+      polygonFallbackFill: "#9a9a9a",
+      polygonCategories: {
+        "מרחב לחימה - קרב": {
+          fill: "#3d9a8c",
+          outline: "#2a6b62",
+          fillOpacity: 0.55,
+          periodMs: 4000,
+          fillOpacityMin: 0.45,
+          fillOpacityMax: 0.62,
+        },
+        "מוקד חטיפה": {
+          fill: "#e8a4b4",
+          outline: "#c47388",
+          fillOpacity: 0.55,
+          periodMs: 2800,
+          lineWidthMin: 1.4,
+          lineWidthMax: 2.2,
+          fillOpacityMin: 0.5,
+          fillOpacityMax: 0.62,
+        },
+        "שריפה": {
+          fill: "#d85a1f",
+          outline: "#a33d12",
+          fillOpacity: 0.55,
+          periodMs: 1800,
+          fillOpacityMin: 0.42,
+          fillOpacityMax: 0.7,
+        },
+      },
     });
+    const categoryFills = Object.values(NLI_VISUAL_TOKENS.polygonCategories).map(
+      (cat) => cat.fill,
+    );
+    expect(categoryFills).not.toContain("#c31f4f");
+    expect(categoryFills).not.toContain("#f5c542");
+    expect(categoryFills).not.toContain("#c4a35a");
+    expect(categoryFills).not.toContain("#6b2d5b");
     expect(NLI_DISPLAY_PROFILES.gis).toHaveProperty("lineWidthMultiplier");
     expect(NLI_DISPLAY_PROFILES.gis).toHaveProperty("routeScale", 1);
     expect(NLI_DISPLAY_PROFILES.projection.routeScale).toBeGreaterThan(1);
@@ -133,6 +178,7 @@ describe("deriveInvestigationFrame", () => {
       active: false,
       phase: Math.floor(1000 / 66) % frame.completedRouteFlow.patternSteps,
     });
+    expect(frame.nowMs).toBe(1000);
     expect(frame.motionMode).toBe("full");
     expect(frame.narrativeAdvances).toBe(true);
   });
@@ -286,14 +332,45 @@ describe("deriveInvestigationFrame", () => {
       stopNliClock(playing),
       99_000,
       enabled,
-      { motionMode: "full" },
+      { motionMode: "full", storyBeats: beats, polygonMotionActive: true },
     );
     expect(frame.cycleKey).toBe("idle");
     expect(frame.narrative.completedBeats).toEqual([]);
-    expect(frame.achievedPolygonBeats).toEqual([]);
+    expect(frame.achievedPolygonBeats).toEqual(beats);
     expect(frame.completedRouteFlow.active).toBe(false);
     expect(frame.completedRouteFlow.progress).toBe(0);
-    expect(frame.needsNextFrame).toBe(false);
+    expect(frame.needsNextFrame).toBe(true);
+  });
+
+  it("idle with storyBeats achieves every loaded polygon beat", () => {
+    const frame = deriveInvestigationFrame(idleNliClock(), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: [400, 420, 440],
+      polygonMotionActive: true,
+    });
+    expect(frame.achievedPolygonBeats).toEqual([400, 420, 440]);
+    expect(frame.needsNextFrame).toBe(true);
+  });
+
+  it("idle without storyBeats does not invent beats", () => {
+    const frame = deriveInvestigationFrame(stopNliClock(playNliClock(idleNliClock(), membership, beats, 0)), 99_000, enabled, {
+      motionMode: "full",
+    });
+    expect(frame.achievedPolygonBeats).toEqual([]);
+  });
+
+  it("ended still achieves clock.beats when storyBeats omitted", () => {
+    const playing = playNliClock(idleNliClock(), membership, beats, 0);
+    const frame = deriveInvestigationFrame(endNliClock(playing), 99_000, enabled, {});
+    expect(frame.achievedPolygonBeats).toEqual(beats);
+  });
+
+  it("personGlowActive keeps needsNextFrame true when no investigation layers are enabled", () => {
+    const frame = deriveInvestigationFrame(idleNliClock(), 99_000, [], {
+      motionMode: "full",
+      personGlowActive: true,
+    });
+    expect(frame.needsNextFrame).toBe(true);
   });
 
   it("finishes an alarm ripple from corrected wall time at its shared onset", () => {

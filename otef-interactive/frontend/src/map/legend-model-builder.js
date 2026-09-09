@@ -8,6 +8,8 @@
  */
 
 import { parseLayerNameWithGeometrySuffix } from "../shared/layer-name-utils.js";
+import { shouldShowLayerOnGisMap } from "../shared/gis-layer-filter.js";
+import { investigationPolygonLegendItems } from "../shared/nli-investigation-legend.js";
 import AdvancedStyleEngine from "../map-utils/advanced-style-engine.js";
 
 const DEFAULT_LAND_USE_SCHEME = { fill: "#E0E0E0", stroke: "#B0B0B0" };
@@ -433,12 +435,34 @@ function groupLayersByName(layers) {
   return result;
 }
 
+function shouldIncludeLayerInLegend(groupId, layerId, surface = "gis") {
+  switch (surface) {
+    case "projection":
+      return true;
+    case "gis":
+      return typeof shouldShowLayerOnGisMap !== "function" || shouldShowLayerOnGisMap(groupId, layerId);
+    default: {
+      throw new Error(`unknown legend surface: ${surface}`);
+    }
+  }
+}
+
 /**
  * Build one legend layer from style config.
  * uniqueValue with ui.legendLabel collapses to a single row (e.g. Gaza Roads).
  * uniqueValue without legendLabel expands every class (e.g. NLI points).
  */
 function legendLayerFromConfig(config, layer, options = {}) {
+  if (options.fullId === "nli.investigation_polygons") {
+    return {
+      id: layer.id,
+      name: config.ui?.legendLabel || config.name || layer.id,
+      geometryType: config.geometryType || "polygon",
+      items: investigationPolygonLegendItems(),
+      singleRowMultiSymbol: false,
+    };
+  }
+
   const style = config.style || {};
   const renderer = style.renderer || "simple";
   const geometryType = config.geometryType || "polygon";
@@ -482,7 +506,8 @@ function legendLayerFromConfig(config, layer, options = {}) {
 // buildLegendModel
 // ---------------------------------------------------------------------------
 
-async function buildLegendModel() {
+async function buildLegendModel(options = {}) {
+  const surface = options.surface === "projection" ? "projection" : "gis";
   const packs = [];
   const ctx = typeof OTEFDataContext !== "undefined" ? OTEFDataContext : null;
   const registry = typeof layerRegistry !== "undefined" ? layerRegistry : null;
@@ -549,10 +574,7 @@ async function buildLegendModel() {
       if (!layer.enabled) continue;
 
       const fullId = `${group.id}.${layer.id}`;
-      if (
-        typeof shouldShowLayerOnGisMap === "function" &&
-        !shouldShowLayerOnGisMap(group.id, layer.id)
-      ) {
+      if (!shouldIncludeLayerInLegend(group.id, layer.id, surface)) {
         continue;
       }
 
@@ -574,7 +596,7 @@ async function buildLegendModel() {
           : [];
       }
 
-      const built = legendLayerFromConfig(config, layer, { distinctLandUse });
+      const built = legendLayerFromConfig(config, layer, { distinctLandUse, fullId });
       if (!built || (built.items || []).length === 0) continue;
 
       packLayers.push(built);
@@ -603,6 +625,7 @@ async function buildLegendModel() {
 export {
   buildLegendModel,
   legendLayerFromConfig,
+  shouldIncludeLayerInLegend,
   symbolIRToLegendItems,
   // Also re-export helpers used by map-legend.js renderer
   getDashBackground,

@@ -244,31 +244,100 @@ describe("Task 8 investigation timeline coordinator", () => {
     expect(flowPaintWrites()).toBeGreaterThan(writesBeforeStop);
   });
 
-  it("does not remount settlement outlines on a post-Stop ambient route tick", async () => {
+  it("keeps settlement impact outlines after Stop when the polygons row is on", async () => {
     const map = mapWithHostLayers();
     let now = 0;
     const settlement = settlementFeature(42);
+    const polygonFeatures = [{
+      properties: { OBJECTID: 1, timeline_minutes: 400, מיקום: "עיר א", Notes: "מרחב לחימה - קרב" },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+    }];
     const clock = playNliClock(
       idleNliClock(),
-      [INVESTIGATION_LINES_FULL_ID],
+      [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID],
       [400],
       0,
     );
-    await syncInvestigationTimelineToMap(map, clock, groups, {
-      featuresById: features,
+    const deps = {
+      featuresById: {
+        ...features,
+        [INVESTIGATION_POLYGONS_FULL_ID]: polygonFeatures,
+      },
       settlementFeatures: [settlement],
       now: () => now,
-    });
-    await syncInvestigationTimelineToMap(map, stopNliClock(clock), groups, {
-      featuresById: features,
-      settlementFeatures: [settlement],
-      now: () => now,
-    });
+    };
+    await syncInvestigationTimelineToMap(map, clock, groups, deps);
+    await syncInvestigationTimelineToMap(map, stopNliClock(clock), groups, deps);
 
-    expect(map.getSource("nli-investigation-settlement-impact")).toBeNull();
+    expect(map.getSource("nli-investigation-settlement-impact")?.data?.features).toEqual([settlement]);
     now = 66;
     expect(map.driveAnimationFrame(66)).toBe(true);
-    expect(map.getSource("nli-investigation-settlement-impact")).toBeNull();
+    expect(map.getSource("nli-investigation-settlement-impact")?.data?.features).toEqual([settlement]);
+  });
+
+  it("schedules idle category motion when polygons are on and lines are off", async () => {
+    const map = mapWithHostLayers();
+    let now = 0;
+    const polygonGroups = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
+    const polygonFeatures = [{
+      properties: { OBJECTID: 1, timeline_minutes: 400, Notes: "מרחב לחימה - קרב", מיקום: "עיר א" },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+    }];
+    const clock = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], [400], 0);
+    const deps = {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: polygonFeatures },
+      settlementFeatures: [settlementFeature(42)],
+      now: () => now,
+      motionMode: "full",
+    };
+    await syncInvestigationTimelineToMap(map, clock, polygonGroups, deps);
+    await syncInvestigationTimelineToMap(map, stopNliClock(clock), polygonGroups, deps);
+    expect(map.pendingAnimationFrameCount()).toBe(1);
+    const opacity0 = map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity");
+    const gradient0 = map.getPaintProperty("nli-investigation-polygon-category-line-battle", "line-gradient");
+    now = 66;
+    expect(map.driveAnimationFrame(66)).toBe(true);
+    expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity")).not.toEqual(opacity0);
+    expect(map.getPaintProperty("nli-investigation-polygon-category-line-battle", "line-gradient")).not.toEqual(gradient0);
+  });
+
+  it("keeps every idle route after Stop when polygons and lines are both on", async () => {
+    const map = mapWithHostLayers();
+    let now = 0;
+    const lineFeatures = [
+      features[INVESTIGATION_LINES_FULL_ID][0],
+      {
+        properties: { OBJECTID: 3, timeline_minutes: 420, flow_direction: "east" },
+        geometry: { type: "LineString", coordinates: [[34.2, 31], [35.2, 32]] },
+      },
+    ];
+    const polygonFeatures = [{
+      properties: { OBJECTID: 1, timeline_minutes: 400, Notes: "מרחב לחימה - קרב", מיקום: "עיר א" },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+    }];
+    const clock = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID],
+      [400, 420],
+      0,
+    );
+    const deps = {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: polygonFeatures,
+        [INVESTIGATION_LINES_FULL_ID]: lineFeatures,
+      },
+      settlementFeatures: [settlementFeature(42)],
+      now: () => now,
+      motionMode: "full",
+    };
+    await syncInvestigationTimelineToMap(map, clock, groups, deps);
+    await syncInvestigationTimelineToMap(map, stopNliClock(clock), groups, deps);
+    expect(map.getSource("nli-investigation-line-completed-carrier").data.features).toHaveLength(2);
+    expect(map.getSource("nli-investigation-line-completed-motion").data.features).toHaveLength(2);
+    now = 66;
+    expect(map.driveAnimationFrame(66)).toBe(true);
+    expect(map.getSource("nli-investigation-line-completed-carrier").data.features).toHaveLength(2);
+    expect(map.getSource("nli-investigation-line-completed-motion").data.features).toHaveLength(2);
   });
 
   it("does not remount old renderer handles after style preparation", async () => {
@@ -549,6 +618,88 @@ describe("Task 8 investigation timeline coordinator", () => {
     expect(calls).toContain(SETTLEMENT_URL);
     expect(map.getSource("nli-investigation-settlement-impact").data.features).toEqual([settlement]);
     expect(map.getLayer("nli-investigation-polygon-future-fill")).toBeNull();
+  });
+
+  it("loads settlement sidecar on cold lines-only idle so route impact outlines appear", async () => {
+    const map = createFakeMapLibreMap({
+      layers: [
+        { id: "host__people_names", type: "symbol", source: "host" },
+        { id: "nli__lines__line__0", type: "line", source: "nli__lines" },
+        { id: "nli__alarms__circle__0", type: "circle", source: "nli__alarms" },
+      ],
+      paints: { "nli__lines__line__0": { "line-opacity": 1 } },
+    });
+    const route = {
+      properties: { OBJECTID: 2, timeline_minutes: 400, flow_direction: "forward" },
+      geometry: { type: "LineString", coordinates: [[33.9, 31], [34.2, 31]] },
+    };
+    const settlement = settlementFeature(42, ["עיר א"]);
+    const calls = [];
+    const lineGroups = [{
+      id: "nli",
+      layers: [
+        { id: "lines", enabled: true },
+        { id: "investigation_polygons", enabled: false },
+      ],
+    }];
+    await syncInvestigationTimelineToMap(map, idleNliClock(), lineGroups, {
+      featuresById: { [INVESTIGATION_LINES_FULL_ID]: [route] },
+      getLayerDataUrl: () => null,
+      fetchJson: async (url) => {
+        calls.push(url);
+        return { type: "FeatureCollection", features: [settlement] };
+      },
+      now: () => 0,
+    });
+
+    expect(calls).toContain(SETTLEMENT_URL);
+    expect(map.getSource("nli-investigation-settlement-impact")?.data?.features).toEqual([settlement]);
+  });
+
+  it("removes red settlement impact outlines when infiltration routes turn off", async () => {
+    const map = createFakeMapLibreMap({
+      layers: [
+        { id: "host__people_names", type: "symbol", source: "host" },
+        { id: "nli__lines__line__0", type: "line", source: "nli__lines" },
+        { id: "projector_base__ישובים__line__0", type: "line", source: "projector_base.ישובים" },
+      ],
+      paints: {
+        "nli__lines__line__0": { "line-opacity": 1, "line-color": "#c31f4f" },
+        "projector_base__ישובים__line__0": { "line-opacity": 1, "line-color": "#bfbf99" },
+      },
+    });
+    const route = {
+      properties: { OBJECTID: 2, timeline_minutes: 400, flow_direction: "forward" },
+      geometry: { type: "LineString", coordinates: [[33.9, 31], [34.2, 31]] },
+    };
+    const settlement = settlementFeature(42, ["עיר א"]);
+    const deps = {
+      featuresById: { [INVESTIGATION_LINES_FULL_ID]: [route] },
+      settlementFeatures: [settlement],
+      now: () => 0,
+    };
+    const linesOn = [{
+      id: "nli",
+      layers: [
+        { id: "lines", enabled: true },
+        { id: "investigation_polygons", enabled: false },
+      ],
+    }];
+    const linesOff = [{
+      id: "nli",
+      layers: [
+        { id: "lines", enabled: false },
+        { id: "investigation_polygons", enabled: false },
+      ],
+    }];
+    await syncInvestigationTimelineToMap(map, idleNliClock(), linesOn, deps);
+    expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeTruthy();
+    expect(map.getSource("nli-investigation-settlement-impact")?.data?.features).toEqual([settlement]);
+
+    await syncInvestigationTimelineToMap(map, idleNliClock(), linesOff, deps);
+    expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeNull();
+    expect(map.getSource("nli-investigation-settlement-impact")).toBeNull();
+    expect(map.getPaintProperty("projector_base__ישובים__line__0", "line-color")).toBe("#bfbf99");
   });
 
   it("fails closed when the production settlement sidecar is missing or blocked", async () => {

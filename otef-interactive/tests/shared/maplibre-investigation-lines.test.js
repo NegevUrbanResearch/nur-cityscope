@@ -94,6 +94,24 @@ describe("investigation line renderer", () => {
     expect(map.on).not.toHaveBeenCalled();
   });
 
+  it("does not paint future line features while playing", () => {
+    const map = makeMap();
+    const renderer = createInvestigationLineRenderer(map, { lineWidthMultiplier: 1 });
+    const frame = {
+      activeProgress: 0,
+      completedRouteFlow: { active: true, progress: 0.25 },
+      motionMode: "full",
+    };
+    renderer.render(frame, {
+      futureFeatures: [line(1, 400, [[34, 31], [35, 32]])],
+      completedFeatures: [],
+      activeFeatures: [],
+    });
+    const future = map.sources.get("nli-investigation-line-future");
+    const data = future?.setData?.mock?.calls?.at(-1)?.[0];
+    expect(data?.features || []).toEqual([]);
+  });
+
   it("renders every route state in the red family and shares cached line geometry", () => {
     const map = makeMap();
     const renderer = createInvestigationLineRenderer(map, { lineWidthMultiplier: 1 });
@@ -115,7 +133,7 @@ describe("investigation line renderer", () => {
     const futureData = map.sources.get("nli-investigation-line-future").setData.mock.calls.at(-1)[0];
     const carrierData = map.sources.get("nli-investigation-line-completed-carrier").setData.mock.calls.at(-1)[0];
     const flowData = map.sources.get("nli-investigation-line-completed-motion").setData.mock.calls.at(-1)[0];
-    expect(futureData.features[0].geometry.coordinates).toEqual(future[0].geometry.coordinates);
+    expect(futureData.features).toEqual([]);
     expect(carrierData.features[0].properties.OBJECTID).toBe(2);
     expect(flowData).toEqual(carrierData);
     expect(map.paints.get("nli-investigation-line-future-line:line-color")).toBe("#c31f4f");

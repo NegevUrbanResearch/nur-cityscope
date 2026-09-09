@@ -367,6 +367,32 @@ describe("maplibre-viewport-sync", () => {
     cleanup();
   });
 
+  it("person camera travel reports on move and skips self-apply until idle", () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6, fitBoundsZoom: 14 });
+    const dataContext = createDataContextMock();
+    dataContext.updateViewportFromUI = vi.fn((viewport) => {
+      dataContext.emitViewport({ ...viewport, sourceId: "test-client" });
+      return { accepted: true };
+    });
+    const cleanup = setupViewportSync(map, dataContext);
+
+    expect(typeof cleanup.beginCameraTravel).toBe("function");
+    cleanup.beginCameraTravel("person-fly-1");
+    map.flyTo({ center: { lng: 5, lat: 5 }, zoom: 16, duration: 1600 });
+
+    map.emit("move");
+    vi.advanceTimersByTime(100);
+    expect(dataContext.updateViewportFromUI).toHaveBeenCalledWith(
+      expect.objectContaining({ zoom: expect.any(Number), bbox: expect.any(Array) }),
+      "gis",
+      expect.objectContaining({ sharedUpdate: "immediate", traceId: "person-fly-1" }),
+    );
+    expect(map.fitBoundsCalls).toHaveLength(0);
+
+    map.emit("idle");
+    cleanup();
+  });
+
   it("keeps ordinary GIS map changes on the default debounced shared update path", () => {
     const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6 });
     const dataContext = createDataContextMock();

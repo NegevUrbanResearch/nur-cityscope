@@ -1,4 +1,9 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { buildNliLabelHeadingExport, snapNliLabelHeadingDeg } from "../../frontend/src/shared/nli-label-heading.js";
+import { PROJECTION_LAB_CHROME_Z_INDEX } from "../../frontend/src/projection/projection-display-hotkeys.js";
 import {
   applyShemotDebugOverridesToFeatureCollection,
   buildShemotDebugSeedMapFromFeatureCollection,
@@ -67,5 +72,21 @@ describe("Shemot label debug: pure merge/seed", () => {
     const m = buildShemotDebugSeedMapFromFeatureCollection(fc, "citycode");
     expect(m.get("9").offsetEm).toEqual([14, -7]);
     expect(m.get("9").rotateDeg).toBe(0);
+  });
+
+  it("export JSON is a single heading, not per-citycode rotate", () => {
+    expect(snapNliLabelHeadingDeg(14.6)).toBe(15);
+    expect(buildNliLabelHeadingExport(14.6)).toEqual({ version: 2, headingDeg: 15 });
+    expect(JSON.stringify(buildNliLabelHeadingExport(14.6))).not.toMatch(/otef_label_rotate_deg|citycode/);
+  });
+
+  it("paints the L panel above the cartographic #mapLegend", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const src = fs.readFileSync(
+      path.resolve(here, "../../frontend/src/projection/projection-shemot-label-debug.js"),
+      "utf8",
+    );
+    expect(PROJECTION_LAB_CHROME_Z_INDEX).toBeGreaterThan(1000);
+    expect(src).toMatch(/PROJECTION_LAB_CHROME_Z_INDEX/);
   });
 });

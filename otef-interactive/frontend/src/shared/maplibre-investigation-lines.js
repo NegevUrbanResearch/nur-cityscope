@@ -52,7 +52,6 @@ const OVERLAY = new Set([
   INVESTIGATION_LINE_LAYER_IDS.completedCarrier,
 ]);
 
-const FUTURE_OPACITY = 0.24;
 const COMPLETED_OPACITY = 1;
 const ACTIVE_OPACITY = 1;
 const HEAD_RADIUS = 3.2;
@@ -282,7 +281,12 @@ function flowProgress(flow, motionMode) {
   return Number.isFinite(phase) && steps > 0 ? ((phase / steps) % 1 + 1) % 1 : 0;
 }
 
-function buildDirectionalFlowGradient(flow, motionMode, profile) {
+export function buildDirectionalFlowGradient(
+  flow,
+  motionMode,
+  profile,
+  onColor = NLI_VISUAL_TOKENS.routeFlowColor,
+) {
   const phase = flowProgress(flow, motionMode);
   const density = profileValue(profile, "routeFlowDensity", NLI_VISUAL_TOKENS.routeFlowDensity);
   const dutyCycle = Math.min(
@@ -297,7 +301,7 @@ function buildDirectionalFlowGradient(flow, motionMode, profile) {
   return [
     "case",
     ["<", phaseExpression, dutyCycle],
-    NLI_VISUAL_TOKENS.routeFlowColor,
+    onColor,
     "rgba(0, 0, 0, 0)",
   ];
 }
@@ -334,7 +338,7 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       type: "line",
       source: INVESTIGATION_LINE_SOURCE_IDS.future,
       layout: { "line-cap": "round", "line-join": "round" },
-      paint: { "line-color": NLI_VISUAL_TOKENS.incidentRed, "line-opacity": FUTURE_OPACITY, "line-width": 1.2 * width },
+      paint: { "line-color": NLI_VISUAL_TOKENS.incidentRed, "line-width": 1.2 * width },
     }, { type: "geojson", data: featureCollection([]) }, beforeId);
     if (overlaysSuppressed) {
       mounted = true;
@@ -394,7 +398,7 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     const previousFrame = lastFrame;
     lastFrame = frame || {};
     lastData = data || {};
-    const future = dataFor(lastData, "futureFeatures");
+    const future = [];
     const completed = dataFor(lastData, "completedFeatures");
     const active = dataFor(lastData, "activeFeatures");
     function normalizeCollection(key, sourceFeatures) {
@@ -441,7 +445,6 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     try {
       if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.future) && typeof map.setPaintProperty === "function") {
         map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.future, "line-color", NLI_VISUAL_TOKENS.incidentRed);
-        map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.future, "line-opacity", FUTURE_OPACITY);
       }
       if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedCarrier) && typeof map.setPaintProperty === "function") {
         map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.completedCarrier, "line-color", NLI_VISUAL_TOKENS.incidentRed);

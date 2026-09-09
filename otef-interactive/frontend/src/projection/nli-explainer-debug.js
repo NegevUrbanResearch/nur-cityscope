@@ -1,8 +1,9 @@
 /**
- * Lab E-key editor for the NLI explainer slot (projection page only).
+ * Lab E-key editor for the NLI explainer slot (projection) and GIS clock host.
  * Timeline paints idle sample when explainerDebugVisible; this module does not write caption innerHTML.
  */
 
+import { PROJECTION_LAB_CHROME_Z_INDEX } from "./projection-display-hotkeys.js";
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
 import { NLI_EXPLAINER_SAMPLE_MODEL } from "../shared/nli-explainer-model.js";
 import {
@@ -16,6 +17,7 @@ import {
   nliExplainerShouldPaintOnSpan,
   nliExplainerSpanKey,
   NLI_EXPLAINER_LAYOUT_STORAGE_KEY,
+  NLI_GIS_CLOCK_DEFAULT_LAYOUT,
   readNliExplainerLayoutStore,
   serializeNliExplainerLayoutMap,
   shouldIgnoreExplainerLayoutStore,
@@ -45,24 +47,6 @@ const HANDLE_POS = {
 
 function searchString() {
   return typeof window !== "undefined" && window.location ? window.location.search : "";
-}
-
-function readStoredMap() {
-  try {
-    return readNliExplainerLayoutStore(localStorage.getItem(NLI_EXPLAINER_LAYOUT_STORAGE_KEY));
-  } catch {
-    return {};
-  }
-}
-
-function layoutFromStore() {
-  const search = searchString();
-  const stored = shouldIgnoreExplainerLayoutStore(search) ? {} : readStoredMap();
-  return mergeNliExplainerLayout(
-    nliExplainerSpanKey(search),
-    stored,
-    MapProjectionConfig.NLI_EXPLAINER_LAYOUT,
-  );
 }
 
 function layoutFieldsEqual(a, b) {
@@ -164,6 +148,13 @@ export function rotateLayoutByDelta(layout, dDeg) {
  *   registerDisposer: (fn: () => void) => void;
  *   initialVisible?: boolean;
  *   onVisibleChange?: (visible: boolean) => void;
+ *   storage?: Storage;
+ *   storageKey?: string;
+ *   defaultLayout?: object;
+ *   enableSpanGuards?: boolean;
+ *   enableLayoutMapExport?: boolean;
+ *   mergeProjectionLayout?: boolean;
+ *   enableRotation?: boolean;
  * }} opts
  * @returns {{ dispose: () => void; setVisible: (v: boolean) => void; toggle: () => void; isVisible: () => boolean } | null}
  */
@@ -173,11 +164,45 @@ export function installNliExplainerDebug({
   registerDisposer,
   initialVisible = false,
   onVisibleChange,
+  storage: storageArg,
+  storageKey = NLI_EXPLAINER_LAYOUT_STORAGE_KEY,
+  defaultLayout = NLI_GIS_CLOCK_DEFAULT_LAYOUT,
+  enableSpanGuards = true,
+  enableLayoutMapExport = true,
+  mergeProjectionLayout = true,
+  enableRotation = true,
 } = {}) {
   if (typeof document === "undefined" || !host) return null;
 
   const register = typeof registerDisposer === "function" ? registerDisposer : () => {};
   let visible = false;
+  const store = () => storageArg || localStorage;
+
+  function readStoredMap() {
+    try {
+      return readNliExplainerLayoutStore(store().getItem(storageKey));
+    } catch {
+      return {};
+    }
+  }
+
+  function layoutFromStore() {
+    if (!mergeProjectionLayout) {
+      const stored = readStoredMap();
+      if (Number.isFinite(Number(stored?.leftPct))) {
+        return clampNliExplainerLayout(stored, defaultLayout);
+      }
+      return clampNliExplainerLayout(defaultLayout, defaultLayout);
+    }
+    const search = searchString();
+    const stored = shouldIgnoreExplainerLayoutStore(search) ? {} : readStoredMap();
+    return mergeNliExplainerLayout(
+      nliExplainerSpanKey(search),
+      stored,
+      MapProjectionConfig.NLI_EXPLAINER_LAYOUT,
+    );
+  }
+
   let liveLayout = layoutFromStore();
   let drag = null;
 
@@ -204,24 +229,27 @@ export function installNliExplainerDebug({
     return el;
   });
 
-  const rotateHandle = document.createElement("div");
-  rotateHandle.dataset.nedHandle = "rotate";
-  rotateHandle.style.cssText = [
-    "position:absolute",
-    "left:50%",
-    "top:-22px",
-    "width:10px",
-    "height:10px",
-    "margin:-5px 0 0 -5px",
-    "border-radius:50%",
-    "background:#fbbf24",
-    "border:1px solid #f59e0b",
-    "cursor:grab",
-    "pointer-events:auto",
-    "z-index:3",
-    "display:none",
-  ].join(";");
-  host.appendChild(rotateHandle);
+  let rotateHandle = null;
+  if (enableRotation) {
+    rotateHandle = document.createElement("div");
+    rotateHandle.dataset.nedHandle = "rotate";
+    rotateHandle.style.cssText = [
+      "position:absolute",
+      "left:50%",
+      "top:-22px",
+      "width:10px",
+      "height:10px",
+      "margin:-5px 0 0 -5px",
+      "border-radius:50%",
+      "background:#fbbf24",
+      "border:1px solid #f59e0b",
+      "cursor:grab",
+      "pointer-events:auto",
+      "z-index:3",
+      "display:none",
+    ].join(";");
+    host.appendChild(rotateHandle);
+  }
 
   const hatch = document.createElement("div");
   hatch.style.cssText = [
@@ -244,7 +272,7 @@ export function installNliExplainerDebug({
     "position:fixed",
     "top:8px",
     "left:8px",
-    "z-index:130",
+    `z-index:${PROJECTION_LAB_CHROME_Z_INDEX}`,
     "box-sizing:border-box",
     "padding:10px 12px",
     "background:rgba(0,0,0,0.88)",
@@ -257,20 +285,29 @@ export function installNliExplainerDebug({
     "pointer-events:auto",
   ].join(";");
   const sampleAlarm = NLI_EXPLAINER_SAMPLE_MODEL.rows.find((row) => row.kind === "alarms");
+  const warnHtml = enableSpanGuards
+    ? `<div data-ned-warn style="display:none;color:#f87171;margin-bottom:6px">Box hits dual-span overlap</div>`
+    : "";
+  const exportButtons = enableLayoutMapExport
+    ? `<button type="button" data-ned-download>Download JSON</button>
+<button type="button" data-ned-copy>Copy JSON</button>`
+    : "";
+  const rotateField = enableRotation
+    ? `<label>rotateDeg <input data-ned-field="rotateDeg" type="number" step="0.1" style="width:72px"></label><br>`
+    : "";
   panel.innerHTML = `<div style="font-weight:bold;margin-bottom:6px">NLI explainer layout</div>
 <div data-ned-chip style="display:none;color:#fbbf24;margin-bottom:4px">override</div>
-<div data-ned-warn style="display:none;color:#f87171;margin-bottom:6px">Box hits dual-span overlap</div>
+${warnHtml}
 <div data-ned-overflow style="display:none;color:#ff00ff;margin-bottom:6px">Content overflows (enlarge box or lower font)</div>
 <label>left % <input data-ned-field="leftPct" type="number" step="0.1" style="width:72px"></label><br>
 <label>top % <input data-ned-field="topPct" type="number" step="0.1" style="width:72px"></label><br>
 <label>width % <input data-ned-field="widthPct" type="number" step="0.1" style="width:72px"></label><br>
 <label>height % <input data-ned-field="heightPct" type="number" step="0.1" style="width:72px"></label><br>
 <label>font px <input data-ned-field="fontPx" type="number" step="1" style="width:72px"></label><br>
-<label>rotateDeg <input data-ned-field="rotateDeg" type="number" step="0.1" style="width:72px"></label><br>
+${rotateField}
 <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
 <button type="button" data-ned-reset>Reset</button>
-<button type="button" data-ned-download>Download JSON</button>
-<button type="button" data-ned-copy>Copy JSON</button>
+${exportButtons}
 </div>
 <div style="margin-top:6px;color:#9ca3af;font-size:11px">Idle sample via timeline (${sampleAlarm?.items?.length || 12} alarms + multi-line Name). Drag box; handles resize in local axes.</div>`;
   document.body.appendChild(panel);
@@ -285,10 +322,16 @@ export function installNliExplainerDebug({
 
   function applyLive() {
     applyNliExplainerLayout(host, liveLayout);
-    applyNliExplainerHostPresence(host, nliExplainerSpanKey(searchString()));
+    if (enableSpanGuards) {
+      applyNliExplainerHostPresence(host, nliExplainerSpanKey(searchString()));
+    }
   }
 
   function syncHatch() {
+    if (!enableSpanGuards) {
+      hatch.style.display = "none";
+      return;
+    }
     const spanKey = nliExplainerSpanKey(searchString());
     const rect = nliExplainerOverlapPageRect(spanKey);
     if (!visible || !rect || !nliExplainerShouldPaintOnSpan(spanKey)) {
@@ -301,7 +344,6 @@ export function installNliExplainerDebug({
   }
 
   function refreshChromeSignals() {
-    const spanKey = nliExplainerSpanKey(searchString());
     const overflows = nliExplainerContentOverflows(captionEl);
     host.style.outline = visible
       ? overflows
@@ -309,16 +351,24 @@ export function installNliExplainerDebug({
         : "2px dashed #38bdf8"
       : "";
     if (overflowEl) overflowEl.style.display = visible && overflows ? "block" : "none";
-    const hits = nliExplainerBoxHitsOverlap(liveLayout, spanKey);
-    if (warnEl) warnEl.style.display = visible && hits ? "block" : "none";
-    const defaults = MapProjectionConfig.NLI_EXPLAINER_LAYOUT;
-    const committed = mergeNliExplainerLayout(spanKey, {}, defaults);
-    const stored = shouldIgnoreExplainerLayoutStore(searchString()) ? {} : readStoredMap();
-    const storedBox = stored[spanKey];
-    const overridden =
-      !!storedBox &&
-      !layoutFieldsEqual(clampNliExplainerLayout(storedBox, committed), committed);
-    if (chipEl) chipEl.style.display = visible && overridden ? "block" : "none";
+    if (enableSpanGuards) {
+      const spanKey = nliExplainerSpanKey(searchString());
+      const hits = nliExplainerBoxHitsOverlap(liveLayout, spanKey);
+      if (warnEl) warnEl.style.display = visible && hits ? "block" : "none";
+      const defaults = MapProjectionConfig.NLI_EXPLAINER_LAYOUT;
+      const committed = mergeNliExplainerLayout(spanKey, {}, defaults);
+      const stored = shouldIgnoreExplainerLayoutStore(searchString()) ? {} : readStoredMap();
+      const storedBox = stored[spanKey];
+      const overridden =
+        !!storedBox &&
+        !layoutFieldsEqual(clampNliExplainerLayout(storedBox, committed), committed);
+      if (chipEl) chipEl.style.display = visible && overridden ? "block" : "none";
+    } else {
+      if (warnEl) warnEl.style.display = "none";
+      const committed = clampNliExplainerLayout(defaultLayout, defaultLayout);
+      const overridden = !layoutFieldsEqual(clampNliExplainerLayout(liveLayout, committed), committed);
+      if (chipEl) chipEl.style.display = visible && overridden ? "block" : "none";
+    }
     syncHatch();
   }
 
@@ -331,15 +381,25 @@ export function installNliExplainerDebug({
   }
 
   function persist() {
-    if (shouldIgnoreExplainerLayoutStore(searchString())) {
+    if (mergeProjectionLayout && shouldIgnoreExplainerLayoutStore(searchString())) {
       refreshChromeSignals();
       return;
     }
-    const spanKey = nliExplainerSpanKey(searchString());
-    const stored = readStoredMap();
-    stored[spanKey] = clampNliExplainerLayout(liveLayout, liveLayout);
+    let payload;
+    if (!mergeProjectionLayout) {
+      payload = JSON.stringify(clampNliExplainerLayout(liveLayout, liveLayout));
+    } else {
+      const spanKey = nliExplainerSpanKey(searchString());
+      const stored = readStoredMap();
+      stored[spanKey] = clampNliExplainerLayout(liveLayout, liveLayout);
+      payload = JSON.stringify(stored);
+    }
     try {
-      localStorage.setItem(NLI_EXPLAINER_LAYOUT_STORAGE_KEY, JSON.stringify(stored));
+      if (storageArg) {
+        storageArg.setItem(storageKey, payload);
+      } else {
+        localStorage.setItem(storageKey, payload);
+      }
     } catch {
       /* storage disabled or quota */
     }
@@ -380,7 +440,7 @@ export function installNliExplainerDebug({
     host.style.pointerEvents = visible ? "auto" : "none";
     const handleDisplay = visible ? "block" : "none";
     for (const el of handles) el.style.display = handleDisplay;
-    rotateHandle.style.display = handleDisplay;
+    if (rotateHandle) rotateHandle.style.display = handleDisplay;
     panel.style.display = visible ? "block" : "none";
     if (visible) {
       applyLive();
@@ -488,31 +548,46 @@ export function installNliExplainerDebug({
   }
 
   panel.querySelector("[data-ned-reset]").addEventListener("click", () => {
-    const search = searchString();
-    const spanKey = nliExplainerSpanKey(search);
-    const stored = readStoredMap();
-    delete stored[spanKey];
-    if (!shouldIgnoreExplainerLayoutStore(search)) {
+    if (!mergeProjectionLayout) {
       try {
-        localStorage.setItem(NLI_EXPLAINER_LAYOUT_STORAGE_KEY, JSON.stringify(stored));
+        if (storageArg) {
+          storageArg.removeItem(storageKey);
+        } else {
+          localStorage.setItem(storageKey, JSON.stringify({}));
+        }
       } catch {
         /* storage disabled or quota */
       }
+      liveLayout = clampNliExplainerLayout(defaultLayout, defaultLayout);
+    } else {
+      const search = searchString();
+      const spanKey = nliExplainerSpanKey(search);
+      const stored = readStoredMap();
+      delete stored[spanKey];
+      if (!shouldIgnoreExplainerLayoutStore(search)) {
+        try {
+          localStorage.setItem(NLI_EXPLAINER_LAYOUT_STORAGE_KEY, JSON.stringify(stored));
+        } catch {
+          /* storage disabled or quota */
+        }
+      }
+      liveLayout = mergeNliExplainerLayout(spanKey, stored, MapProjectionConfig.NLI_EXPLAINER_LAYOUT);
     }
-    liveLayout = mergeNliExplainerLayout(spanKey, stored, MapProjectionConfig.NLI_EXPLAINER_LAYOUT);
     applyLive();
     refreshPanelFields();
     refreshChromeSignals();
   });
-  panel.querySelector("[data-ned-download]").addEventListener("click", () => {
-    downloadLayoutJson();
-  });
-  panel.querySelector("[data-ned-copy]").addEventListener("click", () => {
-    const json = exportJsonText();
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-      void navigator.clipboard.writeText(json);
-    }
-  });
+  if (enableLayoutMapExport) {
+    panel.querySelector("[data-ned-download]").addEventListener("click", () => {
+      downloadLayoutJson();
+    });
+    panel.querySelector("[data-ned-copy]").addEventListener("click", () => {
+      const json = exportJsonText();
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        void navigator.clipboard.writeText(json);
+      }
+    });
+  }
   for (const [name, input] of Object.entries(fieldInputs)) {
     input.addEventListener("change", () => commitNumeric(name, input.value));
   }
@@ -524,7 +599,7 @@ export function installNliExplainerDebug({
     window.removeEventListener("resize", onWindowResize);
     observer?.disconnect();
     for (const el of handles) el.remove();
-    rotateHandle.remove();
+    rotateHandle?.remove();
     hatch.remove();
     panel.remove();
     host.style.pointerEvents = "none";
