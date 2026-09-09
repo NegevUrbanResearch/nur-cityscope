@@ -1,12 +1,18 @@
-const ARCHIVE_WINDOW_NAME = "otef-nli-archive";
+export const NLI_ARCHIVE_CHANNEL_NAME = "otef-nli-archive";
+const ARCHIVE_WINDOW_NAME = NLI_ARCHIVE_CHANNEL_NAME;
 
 /** Best-effort controller for the named NLI archive window. */
 export function createNliArchiveWindowController({
   windowOpen = (url, name) => window.open(url, name),
   focus = () => window.focus?.(),
   onStateChange = () => {},
+  broadcastChannel,
 } = {}) {
+  const channel = broadcastChannel ?? (typeof BroadcastChannel !== "undefined"
+    ? new BroadcastChannel(NLI_ARCHIVE_CHANNEL_NAME)
+    : null);
   let handle = null;
+  let closedLiveHandle = false;
   function navigate(url) {
     if (typeof url !== "string" || !url.trim()) return { ok: false, reason: "missing_url" };
     try {
@@ -33,19 +39,59 @@ export function createNliArchiveWindowController({
       onStateChange({ armed: true });
       return { ok: true };
     } catch (_error) {
+      if (handle && handle.closed === false) {
+        try { handle.focus?.(); } catch (_focusError) {}
+        onStateChange({ armed: true });
+        return { ok: true };
+      }
       handle = null;
       onStateChange({ armed: false, reason: "unavailable" });
       return { ok: false, reason: "unavailable" };
     }
   }
-  function close() {
-    let result = { ok: true };
-    try { handle?.close?.(); } catch (_error) { result = { ok: false, reason: "unavailable" }; }
+  function postClose() {
+    try { channel?.postMessage?.({ type: "close" }); } catch (_error) {}
+  }
+
+  function closeLocal() {
+    const unavailable = { ok: false, reason: "unavailable" };
+    const finish = (result) => {
+      try { focus(); } catch (_error) {}
+      onStateChange({ armed: false, reason: result.reason });
+      return result;
+    };
+    if (!handle) return { ok: false, reason: "silent" };
+    try { handle.close(); } catch (_error) {}
+    if (!handle.closed) {
+      try { handle.location.replace("about:blank"); } catch (_error) {}
+      try { handle.close(); } catch (_error) {}
+    }
+    if (!handle.closed) return finish(unavailable);
     handle = null;
-    try { focus(); } catch (_error) {}
-    onStateChange({ armed: false, reason: result.reason });
+    closedLiveHandle = true;
+    return finish({ ok: true });
+  }
+
+  function close() {
+    if (!handle) {
+      postClose();
+      if (closedLiveHandle) {
+        closedLiveHandle = false;
+        return { ok: true };
+      }
+      return { ok: false, reason: "silent" };
+    }
+    const result = closeLocal();
+    postClose();
+    if (result.ok === true) closedLiveHandle = false;
     return result;
   }
+
+  channel?.addEventListener?.("message", (event) => {
+    if (event?.data?.type !== "close") return;
+    closeLocal();
+  });
+
   return { navigate, open: navigate, close, getHandle: () => handle };
 }
 
@@ -102,7 +148,9 @@ export function createNliArchiveCommandBridge({ windowController, resolvePerson,
       activePerson = null;
       pendingPerson = null;
       const closeResult = windowController.close();
-      await report(command, closeResult?.ok === false ? "unavailable" : "closed");
+      if (closeResult?.reason === "silent") return true;
+      if (closeResult?.ok === true) await report(command, "closed");
+      else if (closeResult?.ok === false && closeResult.reason === "unavailable") await report(command, "unavailable");
       return true;
     }
     if (command.action !== "open") return false;

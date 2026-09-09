@@ -273,6 +273,104 @@ describe("remote People and archive controller", () => {
     }
   });
 
+  test("Back to map reports unavailable when GIS close is a no-op", async () => {
+    const [{ initRemotePlaceNavigation }, { t }, { createNliArchiveCommandBridge, createNliArchiveWindowController }] = await Promise.all([
+      import("../../frontend/src/remote/remote-place-navigation.js"),
+      import("../../frontend/src/remote/remote-locale.js"),
+      import("../../frontend/src/map/nli-archive-window.js"),
+    ]);
+    const modeButton = createElement("peopleMode");
+    modeButton.dataset = { searchMode: "people" };
+    const root = document.getElementById("placeSearchGroup");
+    const originalQuerySelectorAll = root.querySelectorAll;
+    root.querySelectorAll = (selector) => selector === "[data-search-mode]" ? [modeButton] : originalQuerySelectorAll(selector);
+    const person = { pid: "11", name: "Ada", location: "Alumim", hasArchiveRecord: true, datasetVersion: "v1" };
+    const peopleRuntime = { load: vi.fn().mockResolvedValue(undefined), search: vi.fn(() => []), resolve: vi.fn(() => person) };
+    const subscriptions = {};
+    const handle = { closed: false, close: vi.fn(), location: { replace: vi.fn() } };
+    const windowController = createNliArchiveWindowController({ windowOpen: () => handle });
+    const bridge = createNliArchiveCommandBridge({
+      windowController,
+      resolvePerson: async () => ({ nliUrl: "https://www.nli.org.il/he/authorities/11" }),
+      getPersonSelection: () => ({ personId: "11", datasetVersion: "v1" }),
+      emitResult: async (result) => { subscriptions.archiveWindowResult?.(result); },
+    });
+    const dataContext = {
+      subscribe: vi.fn((topic, handler) => { subscriptions[topic] = handler; return vi.fn(); }),
+      archiveWindowCommand: vi.fn((action, pid, version, requestId) => {
+        void bridge.handleCommand({ action, personId: pid, datasetVersion: version, requestId, sourceId: "remote" });
+        return Promise.resolve({ acknowledged: true });
+      }),
+    };
+    initRemotePlaceNavigation({ dataContext, peopleRuntime, isConnected: () => true });
+    modeButton.dispatchEvent({ type: "click" });
+    subscriptions.personSelection({ personId: "11", datasetVersion: "v1", revision: 1 });
+    for (let i = 0; i < 4; i += 1) await Promise.resolve();
+
+    const archiveButton = root.children.find((child) => child.className === "place-search-archive-button");
+    archiveButton.click();
+    for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    expect(archiveButton.textContent).toBe(t("backToMap"));
+
+    archiveButton.click();
+    for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    expect(document.getElementById("placeSearchStatus").textContent).toBe(t("nliArchiveUnavailable"));
+    expect(archiveButton.textContent).toBe(t("openNliRecord"));
+    expect(handle.closed).toBe(false);
+  });
+
+  test("prefers closed over unavailable for the same archive requestId", async () => {
+    const { initRemotePlaceNavigation } = await import(
+      "../../frontend/src/remote/remote-place-navigation.js"
+    );
+    const modeButton = createElement("peopleMode");
+    modeButton.dataset = { searchMode: "people" };
+    const root = document.getElementById("placeSearchGroup");
+    const classNames = new Set();
+    root.classList = {
+      toggle(name, enabled) { enabled ? classNames.add(name) : classNames.delete(name); },
+      contains: (name) => classNames.has(name),
+    };
+    const originalQuerySelectorAll = root.querySelectorAll;
+    root.querySelectorAll = (selector) => selector === "[data-search-mode]"
+      ? [modeButton]
+      : originalQuerySelectorAll(selector);
+    const person = { pid: "11", name: "Ada", location: "Alumim", hasArchiveRecord: true, datasetVersion: "v1" };
+    const peopleRuntime = {
+      load: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn(() => []),
+      resolve: vi.fn(() => person),
+    };
+    const subscriptions = {};
+    const dataContext = {
+      archiveWindowCommand: vi.fn().mockResolvedValue({ acknowledged: true }),
+      subscribe: (topic, fn) => {
+        subscriptions[topic] = fn;
+        return () => {};
+      },
+      getInvestigationClock: () => ({ phase: "idle" }),
+    };
+    initRemotePlaceNavigation({ dataContext, peopleRuntime, isConnected: () => true });
+    modeButton.dispatchEvent({ type: "click" });
+    subscriptions.personSelection({ personId: "11", datasetVersion: "v1", revision: 1 });
+    for (let i = 0; i < 4; i += 1) await Promise.resolve();
+
+    const archiveButton = root.children.find((child) => child.className === "place-search-archive-button");
+    const navigationSection = root;
+    const status = document.getElementById("placeSearchStatus");
+    archiveButton.click();
+    await Promise.resolve();
+    const openId = dataContext.archiveWindowCommand.mock.calls[0][3];
+    subscriptions.archiveWindowResult({ requestId: openId, personId: "11", datasetVersion: "v1", outcome: "navigation_attempted" });
+    archiveButton.click();
+    await Promise.resolve();
+    const closeId = dataContext.archiveWindowCommand.mock.calls[1][3];
+    subscriptions.archiveWindowResult({ requestId: closeId, personId: "11", datasetVersion: "v1", outcome: "unavailable" });
+    subscriptions.archiveWindowResult({ requestId: closeId, personId: "11", datasetVersion: "v1", outcome: "closed" });
+    expect(navigationSection.classList.contains("is-archive-open")).toBe(false);
+    expect(status.textContent).toBe("");
+  });
+
   test("timeout cancels a slow GIS resolve and prevents late navigation", async () => {
     vi.useFakeTimers();
     try {
