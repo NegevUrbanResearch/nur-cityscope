@@ -54,16 +54,20 @@ browser, display arrangement, console result, and outcome in the result record.
   route reaches or crosses the boundary, and an associated investigation
   polygon turns red.
 - [ ] In remote **Navigation**, select a person and confirm the GIS animates
-  to zoom `15` over `1600 ms`, shows one halo and name/location bubble, and
+  to zoom `16` over `1600 ms`, shows one halo and name/location bubble, and
   keeps the suggestions closed after acknowledgement.
 - [ ] In the Hebrew remote, confirm the archive action reads
   `פתיחת ארכיון הספרייה`.
 - [ ] In projection, confirm the NLI timeline caption shows only the readable
   `HH:MM` story clock. Confirm the remote **Presentation** tab, slideshow, and
   `presentationActive` behavior remain unchanged.
-- [ ] Confirm the projection `left` span uses the 2026-09-01 lab clock park
-  `48.88333333333333, 26.175280590197644, 13.572916666666666, 11.732162458836443, 15, 0`
-  for `leftPct, topPct, widthPct, heightPct, fontPx, rotateDeg`.
+- [ ] Confirm GIS and projection clock parks match the 2026-09-07 afternoon spec
+  JSON (`otef.nliExplainerLayout.v2` / `otef.nliGisClockLayout.v2`): transparent
+  caption, type sized from `fontPx`, GIS rotate handle works. Left span:
+  `47.16458333333333, 14.320176309187765, 13.572916666666666, 11.732162458836443, 15, 91.18739188335852`
+  for `leftPct, topPct, widthPct, heightPct, fontPx, rotateDeg`. Full/right
+  unchanged. Full record: **2026-09-07 lab follow-up exhibit gates** Clock left
+  park.
 
 ## Technician browser setup
 
@@ -109,6 +113,38 @@ Record the browser, operating mode, display arrangement, and result.
 - [ ] Close the archive manually, then press **Back to map**. Confirm the action
   is safe and restores the remote Navigation content.
 
+## NLI Segev narrative matrix (Task 8)
+
+Run this matrix in the normal kiosk Chrome and physical projection setup. The
+automated contract test covers the trusted registry, surface ownership, and
+subscription wiring; it cannot prove Canva availability, popup/login state,
+physical projection legibility, or the observed camera result. Leave every row
+unchecked until it has been observed and recorded by the exhibit operator.
+
+- [ ] From the NLI sheet, manually select **Satellite Color** and **Satellite
+  B&W** and confirm the intended basemap appears on the GIS.
+- [ ] Start the Segev narrative and confirm entry targets the exact house at
+  zoom `18`; confirm no zoom-`19` request or visible zoom-`19` stop occurs.
+- [ ] Confirm the narrative does not open a Mila victim popup, select a victim,
+  or create NLI archive state.
+- [ ] Confirm the Hebrew `משפחת שגב` focus label is legible on both GIS and
+  projection.
+- [ ] Confirm Be'eri is bright while other settlement outlines remain dim.
+- [ ] Confirm the projection viewport highlight is centered on the house.
+- [ ] From the remote NLI sheet, open the Canva presentation and confirm it
+  loads in presentation mode without login, uses `no-referrer`, closes with
+  Escape, and keeps remote command/result correlation correct.
+- [ ] Close the Canva presentation from the remote and confirm the Segev
+  narrative map scene remains active.
+- [ ] While Segev is active and Canva is closed, Play/Pause/Stop/Loop/step/scrub
+  the NLI timeline and confirm polygons, alarms, and routes develop around the
+  house without the GIS leaving zoom 18.
+- [ ] Toggle the narrative off and confirm Canva closes and the GIS returns to
+  the dark configured OTEF-bounds center at zoom `10`.
+- [ ] Refresh or reconnect with durable active and inactive narrative state;
+  confirm both GIS and projection converge, and confirm Canva intentionally
+  remains closed after reload.
+
 ### Result record
 
 - Date and time:
@@ -137,6 +173,17 @@ Record the browser, operating mode, display arrangement, and result.
 - Programmatic cross-origin load claim: none (required)
 - `navigation_attempted` treated as load proof: no (required)
 - Interleaved revision-4 HTTP / revision-5 WebSocket retry: pass / fail
+- Segev Satellite Color / B&W selection: pass / fail
+- Segev exact-house zoom-18 entry (no zoom-19): pass / fail
+- Segev no Mila victim popup/archive state: pass / fail
+- Segev GIS + projection Hebrew label: pass / fail
+- Segev Be'eri focus and dim other settlements: pass / fail
+- Segev projection house highlight: pass / fail
+- Segev Canva presentation/no-login/no-referrer/Escape/correlation: pass / fail
+- Segev remote close preserves narrative map scene: pass / fail
+- Segev house-locked timeline Play/Pause/Stop/Loop/step/scrub at zoom 18: pass / fail
+- Segev exit closes Canva and returns to dark bounds center zoom 10: pass / fail
+- Segev refresh/reconnect convergence and closed-after-reload Canva: pass / fail
 - Notes:
 
 ## Later exhibit acceptance
@@ -151,3 +198,82 @@ These checks complete acceptance after the integration and window checks:
   percentile is at or below 8 ms.
 - Confirm **Stop** and disposal leave no animation frame, timer, duplicate
   source, or duplicate layer.
+
+## Zikim / sea crop UV record (Task 12)
+
+Measurement gate before any crop number edit. Do not change `PROJECTION_SPAN`,
+Tesuga constants, or `model-bounds` until this table has **recorded** UV (never
+guessed). Live map `project()` UV cannot be faked in Node.
+
+Catalog from spec: Zikim ITM `(154669.92, 613156.77)`, WGS84 `(34.5218, 31.6090)`.
+West point is 2.5 km west of Zikim.
+
+How to fill: from `otef-interactive`, run
+`node --experimental-detect-module scripts/measure-zikim-span-uv.mjs` (prints
+catalog points and committed `getProjectionSpanRect` windows). Then open
+`projection.html?span=right` and `projection.html?span=left` in the lab, wait
+until the Tesuga span camera is idle, and project Zikim and the west point with
+the projection page's `window._maplibreMap.project()`. Divide its pixels by the
+map container size to record span-viewport UV. Pass that UV with matching
+`--span right|left` plus
+`--uv-zikim` / `--uv-west`; the script computes T3 UV with
+`spanViewportUvToT3Uv(uv, getProjectionSpanRect(spanId))` before comparing it
+to both span rects via `uvInsideSpanRect`. Record both viewport and T3 UV.
+Attach screenshot/notes paths. Compare the older full-span TouchDesigner file
+as control (does that file still show the coast?).
+
+Lab filled these cells on 2026-09-06 from live TD webrender `projection.html?span=right` / `span=left` (1920×1080), classified with `node --experimental-detect-module scripts/measure-zikim-span-uv.mjs`. Digits are the recorded values; do not invent extra precision.
+
+| Span | Zikim viewport / T3 UV (u, v) | 2.5 km west viewport / T3 UV (u, v) | Zikim vs `getProjectionSpanRect("right")` | Zikim vs `getProjectionSpanRect("left")` | West vs `getProjectionSpanRect("right")` | West vs `getProjectionSpanRect("left")` | Screenshot / notes path | Older full-span TD control |
+|---|---|---|---|---|---|---|---|---|
+| `right` | viewport `0.665981, 0.036238` → T3 `0.7829905, 0.292619` | viewport `0.625837, -0.047967` → T3 outside live viewport | inside | outside | outside | outside | `docs/nli-exhibit-screenshots/span-right-webrender.png`, `projected-right-null6.png` | Older full-span `old_view` still shows a large sea slab (`old-view-full-null1.png`, `old-view-crop1.png`, `old-view-crop2.png`). Split right shows a thin coastal strip. |
+| `left` | viewport `1.465981, 0.036238` → T3 outside live viewport | viewport `1.425837, -0.047967` → T3 outside live viewport | outside | outside | outside | outside | `docs/nli-exhibit-screenshots/span-left-webrender.png`, `projected-left-null2.png` | Zikim and west are outside the live left viewport (not in either span rect). |
+
+- Operator: lab 2026-09-06
+- Date: 2026-09-06
+- TD file: `C:/Users/owner/Documents/NUR TouchDesigner Tkumap_split_projection_copy.toe`
+- Notes: Screenshots live under `otef-interactive/docs/nli-exhibit-screenshots/` (local; paths recorded even if the PNGs stay untracked). Skip key is Zikim UV vs the right rect, not the west sea point.
+
+**Task 13 skip:** Zikim UV in-rect; remaining table black is TD exhibit blocker.
+
+Zikim T3 `0.7829905, 0.292619` is inside `getProjectionSpanRect("right")` and outside left. Do **not** edit `PROJECTION_SPAN`, Tesuga, or `model-bounds` for this miss of the 2.5 km west sea point. Zikim base/sea and name-edge tradeoffs are deferred, not a Tesuga edit.
+
+**Deferred:** `POST_TY` / `POST_SCALE` (and any later projection-crop pass over Tesuga / AABB / `PROJECTION_SPAN`) are out of scope until a later projection board. This record does not authorize those edits.
+
+## Recorded exhibit gates (Task 14)
+
+Spec exhibit gates that unit tests cannot replace. Every cell below is a
+recorded result. Empty checkboxes are not a record. A fail that is an
+exhibit/TD blocker is labeled **blocker**, not a silent pass.
+
+Slideshow is the idle complete-story look (same as Stop/`idle`), not a separate
+visual.
+
+| Gate | Date | Operator | Surface | pass/fail/blocker | notes/screenshot path |
+|---|---|---|---|---|---|
+| Archive open/close on **kiosk Chrome** with the popup allowlist (`configure-chrome-popup-policy.ps1`) | 2026-09-06 | exhibit owner | kiosk Chrome (GIS + remote) | pending | Must record: remote never shows closed while `otef-nli-archive` is still open; close honesty matches Task 11; kiosk Chrome with popup allowlist (`configure-chrome-popup-policy.ps1`). Owner will record on kiosk Chrome + table; do not invent pass/fail. |
+| Densest `people_names` clusters on GIS **and** projection | 2026-09-06 | exhibit owner | GIS and projection | pending | Must record: one integer heading (default 41, snap 1°, `text-rotation-alignment: map`), size 8 readable on GIS **and** projection; dense clusters readable. See **2026-09-07 lab follow-up exhibit gates** One heading. Owner will record on kiosk Chrome + table; do not invent pass/fail. |
+| Category motion at **table distance** | 2026-09-06 | exhibit owner | table (GIS and projection) | pending | Must record: three `Notes` colors; battle/kidnap/fire motion slow enough; GIS and projection match. Owner will record at table distance; do not invent pass/fail. |
+| Crop (copy from Task 12/13) | 2026-09-06 | lab | projection `span=right` / `span=left` webrender + TD table | blocker | Zikim UV in-rect skip; Tesuga not edited. Zikim T3 `0.7829905, 0.292619` inside `getProjectionSpanRect("right")`, outside left. Remaining table black / coast-base deferred as TD/projection blocker, not a silent pass. UV table and screenshots in **Zikim / sea crop UV record (Task 12)** (`docs/nli-exhibit-screenshots/span-right-webrender.png`, `span-left-webrender.png`, `projected-right-null6.png`, `projected-left-null2.png`). |
+
+## 2026-09-07 lab follow-up exhibit gates
+
+Owner lab lock 2026-09-07 afternoon. Record date, operator, surface,
+pass/fail/blocker, and notes. Empty cells are not a record. Do not invent
+pass/fail.
+
+Afternoon lock supersedes a separate overlay legend, viewport-only heading, and
+leftover pack re-prep. Pack re-prep of `ציר_232` / `people_names` is blocking
+and must already have run. GIS mute and two-GIS archive remain pending operator
+rows. Crop Tesuga remains deferred; prior UV / TD blocker still stands.
+
+| Gate | Date | Operator | Surface | pass/fail/blocker | notes |
+|---|---|---|---|---|---|
+| Clock left park | 2026-09-08 | lab | GIS + projection | pending | Must record: `NLI_EXPLAINER_LAYOUT.left` is `46.90416666666667, 22.113809679110926, 8.886423224258024, 8.323215088627478, 56, 91.18739188335852`. Full/right unchanged. Keys `.v2`. Transparent caption, `fontPx`, GIS rotate. |
+| Legend in `#mapLegend` both surfaces | 2026-09-07 afternoon | lab | GIS + projection | pending | Must record: three rows קרב / חטיפה / שריפה in existing `#mapLegend` on GIS **and** projection. No `#nliInvestigationLegend` overlay. Hidden when polygons row off. Remote sheet still one glossary row. |
+| 232 brown on LIVE processed | 2026-09-07 afternoon | lab | GIS + table | pending | Must record: live `public/processed/layers/nli/styles.json` stroke `#873e23` (or rgb 135,62,35), opacity 1, width ~2.667px. Re-prep ran; not residual. |
+| Highlight no bounce after search | 2026-09-07 afternoon | lab | GIS fly + projection highlight | pending | Must record: person search flyTo does not bounce the table highlight. Keep-geometry + 400 ms fade across zoom 13. No highlight-geometry lerp. |
+| One heading | 2026-09-08 | lab | GIS people_names + projection people_names and שמות | pending | Must record: one integer heading, default 41 (`שמות_label_overrides` v2), snap 1°, `text-rotation-alignment: map`. Per-feature offsets stay. GIS שמות stay muted. |
+| GIS settlements | 2026-09-07 | lab | GIS (outlines); projection (names/leaders) | pending | Must record: outlines on GIS; `שמות_יישובים` + leaders off GIS; projection names/leaders still on. Owner will record on kiosk Chrome + table; do not invent pass/fail. |
+| Archive two GIS | 2026-09-07 | lab | two same-origin GIS + remote | pending | Must record: two same-origin GIS documents: close fans out; remote does not stick on `unavailable` while a named window remains. Note localhost vs 127.0.0.1 as a remaining origin split. Owner will record; do not invent pass/fail. |
+| Crop | 2026-09-07 | lab | projection / TD | blocker | No Tesuga edits this pass; prior UV / TD blocker still stands. Crop Tesuga still deferred. Copy: Zikim UV in-rect skip; remaining table black is TD exhibit blocker. See **Zikim / sea crop UV record (Task 12)**. |
