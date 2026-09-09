@@ -214,7 +214,8 @@ export function setupViewportSync(map, dataContext) {
       corners,
     };
     const result =
-      options && options.sharedUpdate === "immediate"
+      options &&
+      (options.sharedUpdate === "immediate" || options.sharedUpdate === "transient")
         ? dataContext.updateViewportFromUI(viewportPayload, "gis", options)
         : dataContext.updateViewportFromUI(viewportPayload, "gis");
 
@@ -238,7 +239,7 @@ export function setupViewportSync(map, dataContext) {
     reportToContext(
       null,
       navigationTravelActive
-        ? { sharedUpdate: "immediate", traceId: activeNavigationTraceId }
+        ? { sharedUpdate: "transient", traceId: activeNavigationTraceId }
         : undefined,
     );
   };
@@ -305,7 +306,7 @@ export function setupViewportSync(map, dataContext) {
       navigationReportTimer = null;
       if (!navigationTravelActive || !syncActive) return;
       reportToContext(onGISReportInteractionGuard, {
-        sharedUpdate: "immediate",
+        sharedUpdate: "transient",
         traceId: activeNavigationTraceId,
       });
     }, PLACE_NAVIGATION_REPORT_INTERVAL_MS);

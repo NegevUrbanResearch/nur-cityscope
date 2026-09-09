@@ -690,6 +690,46 @@ describe('OTEFDataContext actions', () => {
     expect(requestBody.traceId).toBe('place-nav-test');
   });
 
+  test('updateViewportFromUI relays transient navigation snapshots without an HTTP write', () => {
+    const send = vi.fn(() => true);
+    const ctx = {
+      _tableName: 'otef',
+      _clientId: 'test-client',
+      _velocity: { vx: 0, vy: 0 },
+      _lastVelocityUpdate: 0,
+      _currentInteractionSource: null,
+      _isViewportInsideBounds: () => true,
+      _setViewport: vi.fn((next) => next),
+      _viewport: null,
+      _lastLocalStateTimestamp: 0,
+      _wsClient: { getConnected: () => true, send },
+    };
+    const viewport = {
+      bbox: [100, 100, 200, 200],
+      zoom: 14,
+      corners: {
+        sw: { x: 100, y: 100 }, se: { x: 200, y: 100 },
+        nw: { x: 100, y: 200 }, ne: { x: 200, y: 200 },
+      },
+    };
+
+    const result = updateViewportFromUI(ctx, viewport, 'gis', {
+      sharedUpdate: 'transient',
+      traceId: 'place-nav-transient',
+    });
+
+    expect(result).toEqual({ accepted: true });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'otef_viewport_update',
+      table: 'otef',
+      viewport: expect.objectContaining({ bbox: viewport.bbox }),
+      sourceId: 'test-client',
+      traceId: 'place-nav-transient',
+      transient: true,
+    }));
+  });
+
   test('updateViewportFromUI preserves navigation metadata when viewport is unchanged', () => {
     const existingViewport = {
       bbox: [100, 100, 200, 200],

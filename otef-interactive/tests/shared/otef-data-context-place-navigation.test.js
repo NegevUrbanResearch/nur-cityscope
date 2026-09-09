@@ -104,4 +104,26 @@ describe("OTEFDataContext place navigation", () => {
     expect(callback).toHaveBeenCalledTimes(1);
     expect(OTEFDataContext.getViewport().corners.sw.x).toBe(baseViewport.corners.sw.x);
   });
+
+  test("ignores an older viewport snapshot that arrives after the settled snapshot", async () => {
+    const { default: OTEFDataContext } = await import(
+      "../../frontend/src/shared/OTEFDataContext.js"
+    );
+    const callback = vi.fn();
+    OTEFDataContext.subscribe("viewport", callback);
+
+    OTEFDataContext._setViewport({
+      bbox: [200, 200, 300, 300], zoom: 15, timestamp: 300,
+    });
+    OTEFDataContext._setViewport({
+      bbox: [100, 100, 400, 400], zoom: 13, timestamp: 200,
+    });
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(OTEFDataContext.getViewport()).toEqual(expect.objectContaining({
+      bbox: [200, 200, 300, 300],
+      zoom: 15,
+      timestamp: 300,
+    }));
+  });
 });
