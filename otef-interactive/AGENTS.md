@@ -39,8 +39,8 @@
 - GIS and projection share timeline semantics. Keep display differences in
   named theme/profile tokens.
 - **Pause** freezes narrative reveal but completed-line flow continues.
-  **Stop** resets timeline-authored polygons, settlement outlines, and alarms;
-  visible routes return to the animated final-state idle flow.
+  **Stop** / `idle` shows the complete investigation story (all category polygons,
+  settlement impact outlines, completed route flow). Alarms stay idle/off.
 - People selection belongs in the existing remote **Navigation** tab. The GIS
   bubble contains only name and location; archive actions belong on the remote.
 - Archive open/close is an ephemeral command. Do not add migrations, leases,
