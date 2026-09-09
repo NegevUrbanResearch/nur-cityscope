@@ -345,7 +345,7 @@ describe("maplibre-viewport-sync", () => {
         zoom: expect.any(Number),
       }),
       "gis",
-      expect.objectContaining({ sharedUpdate: "immediate" }),
+      expect.objectContaining({ sharedUpdate: "transient" }),
     );
     const reported = dataContext.updateViewportFromUI.mock.calls.at(-1)?.[0];
     expect(reported).not.toHaveProperty("placeId");
@@ -385,7 +385,7 @@ describe("maplibre-viewport-sync", () => {
     expect(dataContext.updateViewportFromUI).toHaveBeenCalledWith(
       expect.objectContaining({ zoom: expect.any(Number), bbox: expect.any(Array) }),
       "gis",
-      expect.objectContaining({ sharedUpdate: "immediate", traceId: "person-fly-1" }),
+      expect.objectContaining({ sharedUpdate: "transient", traceId: "person-fly-1" }),
     );
     expect(map.fitBoundsCalls).toHaveLength(0);
 
@@ -575,7 +575,7 @@ describe("maplibre-viewport-sync", () => {
         zoom: expect.any(Number),
       }),
       "gis",
-      expect.objectContaining({ sharedUpdate: "immediate" }),
+      expect.objectContaining({ sharedUpdate: "transient" }),
     );
     expect(dataContext.updateViewportFromUI).toHaveBeenNthCalledWith(
       2,
@@ -585,7 +585,7 @@ describe("maplibre-viewport-sync", () => {
         zoom: expect.any(Number),
       }),
       "gis",
-      expect.objectContaining({ sharedUpdate: "immediate" }),
+      expect.objectContaining({ sharedUpdate: "transient" }),
     );
 
     cleanup();

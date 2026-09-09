@@ -93,8 +93,13 @@ class GeneralConsumer(AsyncWebsocketConsumer):
             await self._save_animation(table_name, data.get('layerId'), data.get('enabled', False))
 
         elif message_type == 'otef_viewport_update':
-            # Viewport update from GIS map
-            await self._save_viewport(table_name, data)
+            # Search-travel frames are display-only. Relaying them without a
+            # database write prevents a persistence backlog from replaying
+            # after the GIS camera settles; its final idle frame uses PATCH.
+            if data.get('transient') is True:
+                await self._broadcast_change(table_name, 'viewport', data)
+            else:
+                await self._save_viewport(table_name, data)
 
         elif message_type == 'otef_velocity_update':
             # NEW: Velocity relay (transient bypass)

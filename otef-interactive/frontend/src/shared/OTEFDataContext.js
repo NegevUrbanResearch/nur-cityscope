@@ -200,6 +200,15 @@ class OTEFDataContextClass {
   }
 
   _setViewport(viewport) {
+    const currentTimestamp = Number(this._viewport?.timestamp);
+    const incomingTimestamp = Number(viewport?.timestamp);
+    if (
+      Number.isFinite(currentTimestamp) &&
+      Number.isFinite(incomingTimestamp) &&
+      incomingTimestamp < currentTimestamp
+    ) {
+      return this._viewport;
+    }
     if (viewportEqual(this._viewport, viewport)) return;
     const incomingSeq = Number.isFinite(viewport && viewport.seq) ? viewport.seq : null;
     const nextSeq =

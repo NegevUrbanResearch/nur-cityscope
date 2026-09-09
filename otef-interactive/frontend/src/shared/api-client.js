@@ -24,6 +24,7 @@ export const OTEF_API = {
   baseUrl: APP_CONFIG.api.viewportBase,
   defaultTable: APP_CONFIG.defaultTable,
   _viewportDebounce: null,
+  _viewportImmediateQueues: new Map(),
   _stateInFlight: new Map(),
   _stateCache: new Map(),
 
@@ -223,13 +224,55 @@ export const OTEF_API = {
   async updateViewportImmediate(tableName = this.defaultTable, viewport) {
     clearTimeout(this._viewportDebounce);
     this._viewportDebounce = null;
-    return this.updateViewport(tableName, viewport);
+
+    let queue = this._viewportImmediateQueues.get(tableName);
+    if (!queue) {
+      queue = { inFlight: false, pending: null };
+      this._viewportImmediateQueues.set(tableName, queue);
+    }
+
+    const result = new Promise((resolve, reject) => {
+      if (queue.pending) {
+        // While one PATCH is in flight, only the newest camera snapshot matters.
+        // Keep every caller attached to that newest write so promises still settle.
+        queue.pending.viewport = viewport;
+        queue.pending.waiters.push({ resolve, reject });
+      } else {
+        queue.pending = { viewport, waiters: [{ resolve, reject }] };
+      }
+    });
+
+    this._drainViewportImmediateQueue(tableName, queue);
+    return result;
+  },
+
+  _drainViewportImmediateQueue(tableName, queue) {
+    if (!queue || queue.inFlight || !queue.pending) return;
+
+    const item = queue.pending;
+    queue.pending = null;
+    queue.inFlight = true;
+    Promise.resolve(this.updateViewport(tableName, item.viewport))
+      .then((value) => {
+        item.waiters.forEach(({ resolve }) => resolve(value));
+      })
+      .catch((error) => {
+        item.waiters.forEach(({ reject }) => reject(error));
+      })
+      .finally(() => {
+        queue.inFlight = false;
+        if (queue.pending) {
+          this._drainViewportImmediateQueue(tableName, queue);
+        } else {
+          this._viewportImmediateQueues.delete(tableName);
+        }
+      });
   },
 
   updateViewportDebounced(tableName = this.defaultTable, viewport) {
     clearTimeout(this._viewportDebounce);
     this._viewportDebounce = setTimeout(() => {
-      this.updateViewport(tableName, viewport);
+      this.updateViewportImmediate(tableName, viewport);
     }, 120);
   },
 

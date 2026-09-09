@@ -461,7 +461,19 @@ function updateViewportFromUI(ctx, viewport, source = "gis", options = {}) {
     const appliedViewport = ctx._setViewport(nextViewport) || ctx._viewport || nextViewport;
     ctx._lastLocalStateTimestamp = now;
     const payload = { ...appliedViewport, ...nextViewport };
-    if (
+    if (options && options.sharedUpdate === "transient") {
+      if (ctx._wsClient?.getConnected?.()) {
+        ctx._wsClient.send({
+          type: OTEF_MESSAGE_TYPES.VIEWPORT_UPDATE,
+          table: ctx._tableName,
+          viewport: payload,
+          sourceId: ctx._clientId,
+          timestamp: nextViewport.timestamp,
+          traceId: nextViewport.traceId,
+          transient: true,
+        });
+      }
+    } else if (
       options &&
       options.sharedUpdate === "immediate" &&
       typeof OTEF_API.updateViewportImmediate === "function"
