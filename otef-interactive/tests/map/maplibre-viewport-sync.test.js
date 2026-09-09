@@ -333,7 +333,7 @@ describe("maplibre-viewport-sync", () => {
       }),
     );
     expect(map.fitBoundsCalls).toHaveLength(0);
-    expect(map.listenerCount("idle")).toBe(1);
+    expect(map.listenerCount("moveend")).toBeGreaterThan(1);
 
     map.emit("move");
     vi.advanceTimersByTime(100);
@@ -352,7 +352,7 @@ describe("maplibre-viewport-sync", () => {
     expect(reported).not.toHaveProperty("cameraHint");
     expect(reported).not.toHaveProperty("target");
 
-    map.emit("idle");
+    map.emit("moveend");
 
     expect(dataContext.updateViewportFromUI).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -367,7 +367,7 @@ describe("maplibre-viewport-sync", () => {
     cleanup();
   });
 
-  it("person camera travel reports on move and skips self-apply until idle", () => {
+  it("person camera travel reports on move and skips self-apply until moveend", async () => {
     const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6, fitBoundsZoom: 14 });
     const dataContext = createDataContextMock();
     dataContext.updateViewportFromUI = vi.fn((viewport) => {
@@ -379,6 +379,7 @@ describe("maplibre-viewport-sync", () => {
     expect(typeof cleanup.beginCameraTravel).toBe("function");
     cleanup.beginCameraTravel("person-fly-1");
     map.flyTo({ center: { lng: 5, lat: 5 }, zoom: 16, duration: 1600 });
+    await Promise.resolve();
 
     map.emit("move");
     vi.advanceTimersByTime(100);
@@ -389,7 +390,37 @@ describe("maplibre-viewport-sync", () => {
     );
     expect(map.fitBoundsCalls).toHaveLength(0);
 
+    map.emit("moveend");
+    cleanup();
+  });
+
+  it("keeps person travel locked through idle and unlocks on camera moveend", async () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6, fitBoundsZoom: 14 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    cleanup.beginCameraTravel("person-fly-1");
+    map.flyTo({ center: { lng: 5, lat: 5 }, zoom: 16, duration: 1600 });
+    await Promise.resolve();
+
     map.emit("idle");
+    dataContext.emitViewport({
+      sourceId: "test-client",
+      bbox: [100000, 500000, 150000, 550000],
+      zoom: 12,
+      seq: 1,
+    });
+    expect(map.fitBoundsCalls).toHaveLength(0);
+
+    map.emit("moveend");
+    dataContext.emitViewport({
+      sourceId: "test-client",
+      bbox: [200000, 500000, 250000, 550000],
+      zoom: 12,
+      seq: 2,
+    });
+    expect(map.fitBoundsCalls).toHaveLength(1);
+
     cleanup();
   });
 
@@ -448,7 +479,7 @@ describe("maplibre-viewport-sync", () => {
     map.emit("move");
     vi.advanceTimersByTime(100);
     map.setBoundsForTest([0, 0, 12, 12]);
-    map.emit("idle");
+    map.emit("moveend");
     vi.runOnlyPendingTimers();
 
     const widths = dataContext.updateViewportFromUI.mock.calls
@@ -488,7 +519,7 @@ describe("maplibre-viewport-sync", () => {
     expect(map.flyToCalls).toHaveLength(1);
     expect(map.fitBoundsCalls).toHaveLength(0);
 
-    map.emit("idle");
+    map.emit("moveend");
     expect(dataContext.updateViewportFromUI).toHaveBeenCalledTimes(2);
     expect(map.fitBoundsCalls).toHaveLength(0);
 
@@ -516,6 +547,45 @@ describe("maplibre-viewport-sync", () => {
     expect(map.flyToCalls).toHaveLength(1);
     expect(map.fitBoundsCalls).toHaveLength(0);
     expect(map.setZoomCalls).toHaveLength(0);
+
+    cleanup();
+  });
+
+  it("ignores remote viewports while camera travel is active so a leftover place snapshot cannot cancel a person fly", async () => {
+    const map = createMapMock({ bounds: [0, 0, 10, 10], zoom: 6, fitBoundsZoom: 14 });
+    const dataContext = createDataContextMock();
+    const cleanup = setupViewportSync(map, dataContext);
+
+    cleanup.beginCameraTravel("person-fly-1");
+    map.flyTo({ center: { lng: 5, lat: 5 }, zoom: 16, duration: 1600, essential: true });
+    await Promise.resolve();
+
+    dataContext.emitViewport({
+      sourceId: "remote-client",
+      bbox: [100000, 500000, 150000, 550000],
+      zoom: 15,
+      seq: 40,
+    });
+
+    expect(map.fitBoundsCalls).toHaveLength(0);
+    expect(map.setZoomCalls).toHaveLength(0);
+
+    map.emit("moveend");
+    dataContext.emitViewport({
+      sourceId: "remote-client",
+      bbox: [100000, 500000, 150000, 550000],
+      zoom: 15,
+      seq: 40,
+    });
+    expect(map.fitBoundsCalls).toHaveLength(0);
+
+    dataContext.emitViewport({
+      sourceId: "remote-client",
+      bbox: [200000, 500000, 250000, 550000],
+      zoom: 12,
+      seq: 41,
+    });
+    expect(map.fitBoundsCalls).toHaveLength(1);
 
     cleanup();
   });

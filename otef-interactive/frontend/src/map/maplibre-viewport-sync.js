@@ -148,7 +148,7 @@ export function setupViewportSync(map, dataContext) {
 
   const clearNavigationIdleHandler = () => {
     if (!navigationIdleHandler || typeof map.off !== "function") return;
-    map.off("idle", navigationIdleHandler);
+    map.off("moveend", navigationIdleHandler);
     navigationIdleHandler = null;
   };
 
@@ -312,22 +312,35 @@ export function setupViewportSync(map, dataContext) {
     }, PLACE_NAVIGATION_REPORT_INTERVAL_MS);
   };
 
+  const finishNavigationTravel = (traceId) => {
+    if (!navigationTravelActive) return;
+    reportToContext(onGISReportInteractionGuard, {
+      sharedUpdate: "immediate",
+      traceId,
+    });
+    navigationTravelActive = false;
+    activeNavigationTraceId = null;
+    clearNavigationReportTimer();
+  };
+
+  const armNavigationTravelEnd = (traceId) => {
+    clearNavigationIdleHandler();
+    if (!navigationTravelActive || !syncActive) return;
+    navigationIdleHandler = () => {
+      if (navigationIdleHandler === null) return;
+      clearNavigationIdleHandler();
+      finishNavigationTravel(traceId);
+    };
+    if (typeof map.once === "function") {
+      map.once("moveend", navigationIdleHandler);
+    }
+  };
+
   const startNavigationTravel = (traceId) => {
     activeNavigationTraceId = traceId || null;
     navigationTravelActive = true;
     clearNavigationReportTimer();
     clearNavigationIdleHandler();
-    navigationIdleHandler = () => {
-      navigationIdleHandler = null;
-      reportToContext(onGISReportInteractionGuard, {
-        sharedUpdate: "immediate",
-        traceId,
-      });
-      navigationTravelActive = false;
-      activeNavigationTraceId = null;
-      clearNavigationReportTimer();
-    };
-    map.once("idle", navigationIdleHandler);
   };
 
   const applyNavigationCommand = (command) => {
@@ -356,6 +369,7 @@ export function setupViewportSync(map, dataContext) {
     } else {
       map.jumpTo?.({ center, zoom: cameraOptions.zoom });
     }
+    armNavigationTravelEnd(traceId);
   };
 
   const applyAcceptedViewport = (viewport, options = {}) => {
@@ -445,27 +459,12 @@ export function setupViewportSync(map, dataContext) {
       viewport && Number.isFinite(viewport.seq) ? viewport.seq : null;
   };
 
-  const isLocalViewportEchoDuringNavigation = (viewport) =>
-    navigationTravelActive &&
-    viewport &&
-    viewport.sourceId &&
-    dataContext?._clientId &&
-    viewport.sourceId === dataContext._clientId;
-
-  const isUnattributedViewportDuringNavigation = (viewport) =>
-    navigationTravelActive &&
-    activeNavigationTraceId &&
-    viewport &&
-    !viewport.sourceId &&
-    !viewport.traceId;
-
   const unsubscribeViewport = dataContext.subscribe("viewport", (viewport) => {
-    const traceId = viewport?.traceId || activeNavigationTraceId || null;
-    if (isLocalViewportEchoDuringNavigation(viewport)) {
-      return;
-    }
-
-    if (isUnattributedViewportDuringNavigation(viewport)) {
+    if (navigationTravelActive) {
+      const seq = viewport && viewport.seq;
+      if (Number.isFinite(seq) && seq > lastAppliedViewportSeq) {
+        lastAppliedViewportSeq = seq;
+      }
       return;
     }
 
@@ -478,7 +477,7 @@ export function setupViewportSync(map, dataContext) {
       return;
     }
 
-    applyAcceptedViewport(viewport, { traceId });
+    applyAcceptedViewport(viewport);
   });
   const unsubscribeNavigationCommand = dataContext.subscribe(
     "navigationCommand",
@@ -558,6 +557,15 @@ export function setupViewportSync(map, dataContext) {
   };
   dispose.beginCameraTravel = (traceId = "person-fly") => {
     startNavigationTravel(traceId);
+    const arm = () => {
+      if (!syncActive || !navigationTravelActive) return;
+      armNavigationTravelEnd(traceId);
+    };
+    if (typeof queueMicrotask === "function") {
+      queueMicrotask(arm);
+    } else {
+      arm();
+    }
   };
   return dispose;
 }
