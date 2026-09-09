@@ -17,10 +17,13 @@ vi.mock("../../frontend/src/map/maplibre-layer-manager.js", async (importOrigina
 });
 
 import {
+  disposeInvestigationTimelineForMap,
   INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
+  syncInvestigationTimelineToMap,
 } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
+import { idleNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
 import MapProjectionConfig from "../../frontend/src/shared/map-projection-config.js";
 import {
   buildSlideshowIncomingGroups,
@@ -734,5 +737,91 @@ describe("slideshow runtime nli rotation", () => {
     expect(enabledPackId(sync.mock.calls[0][1])).toBe("pack_b");
     expectNliFullyOff(overlays.mock.calls[overlays.mock.calls.length - 1][0]);
     await runtime.stop();
+  });
+
+  it("keeps host investigation polygons hidden during NLI→other-slide warmup/crossfade", async () => {
+    vi.useFakeTimers();
+    const fillId = "nli__investigation_polygons__fill__0";
+    const lineId = "nli__investigation_polygons__line__1";
+    const paints = {
+      [fillId]: { "fill-opacity": 0.4, "fill-color": "#f79009" },
+      [lineId]: { "line-opacity": 1, "line-width": 1.6, "line-color": "#b54708" },
+    };
+    const layers = [
+      { id: fillId, type: "fill", source: "nli__investigation_polygons" },
+      { id: lineId, type: "line", source: "nli__investigation_polygons" },
+    ];
+    const sources = {};
+    const map = {
+      getStyle: vi.fn(() => ({ layers })),
+      getLayer: vi.fn((id) => layers.find((layer) => layer.id === id)),
+      getSource: vi.fn((id) => sources[id] || null),
+      addSource: vi.fn((id, spec) => {
+        sources[id] = { ...spec, setData: vi.fn() };
+      }),
+      addLayer: vi.fn((layer) => {
+        layers.push(layer);
+      }),
+      removeLayer: vi.fn((id) => {
+        const index = layers.findIndex((layer) => layer.id === id);
+        if (index >= 0) layers.splice(index, 1);
+      }),
+      removeSource: vi.fn((id) => {
+        delete sources[id];
+      }),
+      getPaintProperty: vi.fn((id, key) => paints[id]?.[key]),
+      setPaintProperty: vi.fn((id, key, value) => {
+        if (!paints[id]) paints[id] = {};
+        paints[id][key] = value;
+      }),
+      setLayoutProperty: vi.fn(),
+      on: vi.fn(),
+      getContainer: vi.fn(() => ({ querySelector: () => null, appendChild: vi.fn() })),
+    };
+    const polygonFeature = {
+      type: "Feature",
+      properties: {
+        OBJECTID: 1,
+        timeline_minutes: 400,
+        Notes: "מרחב לחימה - קרב",
+        מיקום: "עלומים",
+      },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.01, 31], [34.01, 31.01], [34, 31]]] },
+    };
+    const deps = {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [polygonFeature] },
+      now: () => 0,
+    };
+    const overlaySync = (groups) => syncInvestigationTimelineToMap(map, idleNliClock(), groups, deps);
+    const runtime = createSlideshowPackRuntime({
+      config: {
+        ...baseConfig(),
+        packOrder: ["nli", "pack_b"],
+        excludedPresentationPackIds: ["gaza"],
+        warmupLeadMs: 50,
+        crossfadeMs: 80,
+        intervalMs: 10_000,
+      },
+      getEffectiveLayerGroups: () => makeLiveGroupsWithNliOn(),
+      syncProjectionLayers: vi.fn(),
+      syncPresentationOverlays: overlaySync,
+      map,
+    });
+    runtime.start();
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(50);
+    await flushStart(runtime);
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(fillId, "visibility", "none");
+    map.setLayoutProperty.mockClear();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expectNliFullyOff(runtime.getLastIncomingGroups());
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(fillId, "visibility", "visible");
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(lineId, "visibility", "visible");
+
+    await runtime.stop();
+    disposeInvestigationTimelineForMap(map);
   });
 });

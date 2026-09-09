@@ -649,11 +649,10 @@ body {
   box-sizing: border-box;
   pointer-events: none;
   overflow: visible;
-  --nli-projection-clock-size: clamp(2.25rem, 5vw, 5rem);
 }
 #nliExplainerHost .nli-tl-clock--clock-only {
   color: #fff;
-  font-size: var(--nli-projection-clock-size);
+  font-size: inherit;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
   font-weight: 800;
@@ -672,5 +671,38 @@ body {
   font-size: inherit;
   text-align: start;
   overflow: hidden;
+  background: transparent;
+  padding: 0;
+}
+#nliGisClockHost {
+  position: absolute;
+  z-index: 12;
+  box-sizing: border-box;
+  pointer-events: none;
+  overflow: visible;
+}
+#nliGisClockHost .nli-tl-clock--clock-only {
+  color: #fff;
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
+}
+#nliGisClockHost .nli-investigation-timeline-caption {
+  position: absolute;
+  inset: 0;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  max-width: none;
+  width: 100%;
+  height: 100%;
+  font-size: inherit;
+  text-align: start;
+  overflow: hidden;
+  background: transparent;
+  padding: 0;
 }
 

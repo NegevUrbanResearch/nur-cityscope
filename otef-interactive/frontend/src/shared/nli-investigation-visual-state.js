@@ -38,6 +38,23 @@ function normalizedRouteBeats(value) {
   return new Set(values.map(Number).filter(Number.isFinite));
 }
 
+function uniqueFiniteStoryBeats(value) {
+  if (!Array.isArray(value) || value.length === 0) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of value) {
+    const number = Number(item);
+    if (!Number.isFinite(number) || seen.has(number)) continue;
+    seen.add(number);
+    out.push(number);
+  }
+  return out;
+}
+
+function isIdleOrEndedVisualPhase(src, phase) {
+  return src.phase === "idle" || phase.phase === "ended" || phase.phase === "idle";
+}
+
 function positionInfo(clock, nowMs, beats) {
   const absoluteMs = clockPositionMs(clock, nowMs);
   const durationMs = clockStoryDurationMs(beats);
@@ -119,7 +136,7 @@ function alarmOnsetFor(clock, phase, nowMs, enabled, beats, position) {
  * @param {import('./nli-investigation-clock.js').NliInvestigationClock|null|undefined} clock
  * @param {number} correctedNowMs
  * @param {string[]} effectiveEnabledIds
- * @param {{ motionMode?: 'full'|'reduced', routeBeats?: number[]|Set<number> }} [options]
+ * @param {{ motionMode?: 'full'|'reduced', routeBeats?: number[]|Set<number>, storyBeats?: number[], polygonMotionActive?: boolean, personGlowActive?: boolean }} [options]
  */
 export function deriveInvestigationFrame(
   clock,
@@ -146,17 +163,23 @@ export function deriveInvestigationFrame(
   const polygonEnabled = enabled.has(INVESTIGATION_POLYGONS_FULL_ID);
   const linesEnabled = enabled.has(INVESTIGATION_LINES_FULL_ID);
   const alarmEnabled = enabled.has(INVESTIGATION_ALARMS_FULL_ID);
-  const achievedPolygonBeats = polygonEnabled ? completedBeats.slice() : [];
-  if (
-    polygonEnabled &&
-    phase.mode === "beat" &&
-    phase.clock != null &&
-    !achievedPolygonBeats.includes(phase.clock) &&
-    !routeBeats?.has(Number(phase.clock))
-  ) {
-    // Polygon impact begins with the beat; line completion still waits for
-    // the reveal to reach 100 percent.
-    achievedPolygonBeats.push(phase.clock);
+  const storyBeats = uniqueFiniteStoryBeats(options?.storyBeats);
+  let achievedPolygonBeats = [];
+  if (polygonEnabled && isIdleOrEndedVisualPhase(src, phase)) {
+    if (storyBeats.length > 0) achievedPolygonBeats = storyBeats;
+    else if (phase.phase === "ended") achievedPolygonBeats = completedBeats.slice();
+  } else if (polygonEnabled) {
+    achievedPolygonBeats = completedBeats.slice();
+    if (
+      phase.mode === "beat" &&
+      phase.clock != null &&
+      !achievedPolygonBeats.includes(phase.clock) &&
+      !routeBeats?.has(Number(phase.clock))
+    ) {
+      // Polygon impact begins with the beat; line completion still waits for
+      // the reveal to reach 100 percent.
+      achievedPolygonBeats.push(phase.clock);
+    }
   }
   const completedRouteActive = linesEnabled && completedBeats.some(
     (beat) => routeBeats == null || routeBeats.has(Number(beat)),
@@ -189,6 +212,10 @@ export function deriveInvestigationFrame(
     (src.phase === "paused" && src.seekKind === "jump" && activeProgress < 1);
   const completedFlowNeedsFrames = completedRouteFlow.active;
   const narrativeNeedsFrames = narrativeAdvances && phase.phase !== "ended";
+  const polygonMotionNeedsFrames =
+    options.polygonMotionActive === true && motionMode === "full";
+  const personGlowNeedsFrames =
+    options.personGlowActive === true && motionMode === "full";
   return {
     cycleKey,
     narrative: {
@@ -209,12 +236,19 @@ export function deriveInvestigationFrame(
     alarmOnset,
     alarmOnsetId: alarmOnset?.id ?? null,
     alarmOnsetOriginMs: alarmOnset?.originMs ?? null,
+    nowMs,
     motionMode,
     routeTimelineEnabled: linesEnabled,
     narrativeAdvances,
     completedFlowNeedsFrames,
     rippleNeedsFrames,
-    needsNextFrame: narrativeNeedsFrames || completedFlowNeedsFrames || rippleNeedsFrames,
+    polygonMotionNeedsFrames,
+    needsNextFrame:
+      narrativeNeedsFrames ||
+      completedFlowNeedsFrames ||
+      rippleNeedsFrames ||
+      polygonMotionNeedsFrames ||
+      personGlowNeedsFrames,
     enabledIds: [...enabled],
   };
 }

@@ -24,12 +24,15 @@ import {
   syncInvestigationTimelineToMap,
   TIMELINE_BEAT_MS,
   timelinePhaseAt,
+  wakeInvestigationTimelinePersonGlow,
 } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
+import { PEOPLE_HALO_LAYER_ID } from "../../frontend/src/map/maplibre-person-selection.js";
 import {
   idleNliClock,
   pauseNliClock,
   playNliClock,
   seekNliClock,
+  stopNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
 
 const INVESTIGATION_FEATURES = [
@@ -223,6 +226,7 @@ describe("syncInvestigationTimelineToMap", () => {
         if (!paints[id]) paints[id] = {};
         paints[id][key] = value;
       }),
+      setLayoutProperty: vi.fn(),
       getContainer: vi.fn(() => {
         const el = { querySelector: () => null, appendChild: vi.fn() };
         return el;
@@ -336,7 +340,7 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
   });
 
-  it("restores ordinary polygon paints after an idle sync follows hidden semantic playback", async () => {
+  it("does not remount the polygon overlay when the polygons row is off after Stop", async () => {
     const map = makeMap();
     const visible = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
     const hidden = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: false }] }];
@@ -344,12 +348,188 @@ describe("syncInvestigationTimelineToMap", () => {
     const playing = playClock([INVESTIGATION_POLYGONS_FULL_ID], POLYGON_BEATS);
 
     await syncInvestigationTimelineToMap(map, playing, visible, deps);
-    expect(JSON.stringify(map.getPaintProperty("nli__investigation_polygons__fill__0", "fill-color"))).toContain("#c31f4f");
     await syncInvestigationTimelineToMap(map, playing, hidden, deps);
-    expect(JSON.stringify(map.getPaintProperty("nli__investigation_polygons__fill__0", "fill-color"))).toContain("#c31f4f");
+    map.setPaintProperty.mockClear();
     await syncInvestigationTimelineToMap(map, idleNliClock(), hidden, deps);
-    expect(map.getPaintProperty("nli__investigation_polygons__fill__0", "fill-color")).toBe("#f79009");
+    expect(map.getSource("nli-investigation-polygon-category")).toBeFalsy();
     expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
+    expect(map.setPaintProperty.mock.calls.some(
+      ([id, , value]) => String(id).startsWith("nli__investigation_polygons") && value === "#f79009",
+    )).toBe(false);
+  });
+
+  const STORY_POLYGON_A = {
+    type: "Feature",
+    properties: {
+      OBJECTID: 1,
+      timeline_minutes: 400,
+      Notes: "מרחב לחימה - קרב",
+      מיקום: "עיר א",
+    },
+    geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+  };
+  const STORY_POLYGON_B = {
+    type: "Feature",
+    properties: {
+      OBJECTID: 2,
+      timeline_minutes: 420,
+      Notes: "מוקד חטיפה",
+      מיקום: "עיר א",
+    },
+    geometry: { type: "Polygon", coordinates: [[[34.2, 31], [34.3, 31], [34.3, 31.1], [34.2, 31]]] },
+  };
+  const STORY_SETTLEMENT = {
+    type: "Feature",
+    id: "nli-settlement-outline-42",
+    properties: { outlineObjectId: 42, locations: ["עיר א"] },
+    geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+  };
+
+  function polygonOnlyGroups() {
+    return [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
+  }
+
+  it("idle Stop with polygons visible paints the complete category story", async () => {
+    const map = makeMap();
+    const polygons = [STORY_POLYGON_A, STORY_POLYGON_B];
+    const playing = playClock([INVESTIGATION_POLYGONS_FULL_ID], [400, 420]);
+    const deps = {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: polygons },
+      settlementFeatures: [STORY_SETTLEMENT],
+      now: () => 0,
+    };
+    await syncInvestigationTimelineToMap(map, playing, polygonOnlyGroups(), deps);
+    map.setPaintProperty.mockClear();
+    await syncInvestigationTimelineToMap(map, stopNliClock(playing), polygonOnlyGroups(), deps);
+
+    const overlay = map.getSource("nli-investigation-polygon-category").setData.mock.calls.at(-1)[0].features;
+    expect(overlay.map((feature) => feature.properties.timeline_minutes).sort((a, b) => a - b)).toEqual([400, 420]);
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "nli__investigation_polygons__fill__0",
+      "visibility",
+      "none",
+    );
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "nli__investigation_polygons__line__1",
+      "visibility",
+      "none",
+    );
+    expect(map.getSource("nli-investigation-settlement-impact").setData.mock.calls.at(-1)[0].features)
+      .toHaveLength(1);
+    expect(map.setPaintProperty.mock.calls.some(
+      ([id, , value]) => String(id).startsWith("nli__investigation_polygons") && value === "#f79009",
+    )).toBe(false);
+  });
+
+  it("idle storyBeats unions polygon and line timeline minutes", async () => {
+    const map = makeMap();
+    const polygons = [STORY_POLYGON_A, STORY_POLYGON_B];
+    const lines = [
+      LINE_FEATURES[0],
+      { ...LINE_FEATURES[2], properties: { ...LINE_FEATURES[2].properties, timeline_minutes: 740 } },
+    ];
+    await syncInvestigationTimelineToMap(map, idleNliClock(), bothGroups(), {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: polygons,
+        [INVESTIGATION_LINES_FULL_ID]: lines,
+      },
+      settlementFeatures: [STORY_SETTLEMENT],
+      now: () => 0,
+    });
+    const overlayMinutes = map.getSource("nli-investigation-polygon-category")
+      .setData.mock.calls.at(-1)[0].features
+      .map((feature) => feature.properties.timeline_minutes);
+    const completedMinutes = map.getSource("nli-investigation-line-completed-carrier")
+      .setData.mock.calls.at(-1)[0].features
+      .map((feature) => feature.properties.timeline_minutes);
+    expect([...new Set([...overlayMinutes, ...completedMinutes])].sort((a, b) => a - b)).toEqual(
+      collectUnionTimelineBeats(polygons, lines),
+    );
+  });
+
+  it("idle complete-story does not replace the clock with an ended ambient clock", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const src = fs.readFileSync(
+      path.resolve(here, "../../frontend/src/shared/maplibre-investigation-timeline.js"),
+      "utf8",
+    );
+    expect(src).toMatch(/storyBeats:\s*state\.storyBeats/);
+    expect(src).toMatch(/polygonMotionActive:\s*state\.polygonMotionActive/);
+    expect(src).toMatch(/personGlowActive:\s*state\.personGlowActive === true/);
+    expect(src).not.toMatch(/state\.clock\s*=\s*ambientClock/);
+    expect(src).toMatch(/syncPersonHaloPaint/);
+    expect(src).toMatch(/getPersonSelection/);
+  });
+
+  it("idle lines-off still RAF-paints person glow via the shared frame", async () => {
+    const map = makeMap();
+    map.addLayer({ id: PEOPLE_HALO_LAYER_ID, type: "circle", source: "otef-person-selection" });
+    const queued = [];
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      queued.push(callback);
+      return queued.length;
+    });
+    await syncInvestigationTimelineToMap(
+      map,
+      idleNliClock(),
+      [{
+        id: "nli",
+        layers: [
+          { id: "investigation_polygons", enabled: false },
+          { id: "lines", enabled: false },
+        ],
+      }],
+      {
+        now: () => 1000,
+        motionMode: "full",
+        getPersonSelection: () => ({ personId: "11", datasetVersion: "v1", revision: 1 }),
+      },
+    );
+    expect(queued.length).toBeGreaterThan(0);
+    map.setPaintProperty.mockClear();
+    queued[0]();
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      PEOPLE_HALO_LAYER_ID,
+      "circle-opacity",
+      expect.any(Number),
+    );
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("selecting a person after idle lines-off wakes shared glow RAF", async () => {
+    const map = makeMap();
+    map.addLayer({ id: PEOPLE_HALO_LAYER_ID, type: "circle", source: "otef-person-selection" });
+    const queued = [];
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      queued.push(callback);
+      return queued.length;
+    });
+    let selection = { personId: null, datasetVersion: null, revision: 0 };
+    const offGroups = [{
+      id: "nli",
+      layers: [
+        { id: "investigation_polygons", enabled: false },
+        { id: "lines", enabled: false },
+      ],
+    }];
+    const deps = {
+      now: () => 1000,
+      motionMode: "full",
+      getPersonSelection: () => selection,
+    };
+    await syncInvestigationTimelineToMap(map, idleNliClock(), offGroups, deps);
+    expect(queued).toHaveLength(0);
+    selection = { personId: "11", datasetVersion: "v1", revision: 1 };
+    wakeInvestigationTimelinePersonGlow(map);
+    expect(queued.length).toBeGreaterThan(0);
+    map.setPaintProperty.mockClear();
+    queued[0]();
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      PEOPLE_HALO_LAYER_ID,
+      "circle-opacity",
+      expect.any(Number),
+    );
+    disposeInvestigationTimelineForMap(map);
   });
 
   it("refreshes semantic polygon paint while hidden non-idle membership remains active", async () => {
@@ -365,8 +545,33 @@ describe("syncInvestigationTimelineToMap", () => {
     now = TIMELINE_BEAT_MS * 2;
     await syncInvestigationTimelineToMap(map, playing, hidden, deps);
 
-    const fillColor = map.getPaintProperty("nli__investigation_polygons__fill__0", "fill-color");
-    expect(JSON.stringify(fillColor)).toContain("420");
+    expect(map.getSource("nli-investigation-polygon-category")).toBeFalsy();
+    expect(JSON.stringify(map.getPaintProperty("nli__investigation_polygons__fill__0", "fill-color"))).not.toContain("420");
+  });
+
+  it("keeps host pack polygons hidden when the polygons row turns off (NLI→other-slide)", async () => {
+    const map = makeMap();
+    const visible = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
+    const hidden = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: false }] }];
+    const deps = { featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES }, now: () => 0 };
+    await syncInvestigationTimelineToMap(map, idleNliClock(), visible, deps);
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "nli__investigation_polygons__fill__0",
+      "visibility",
+      "none",
+    );
+    map.setLayoutProperty.mockClear();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), visible, {
+      ...deps,
+      visibilityLayerGroups: hidden,
+    });
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
+      "nli__investigation_polygons__fill__0",
+      "visibility",
+      "visible",
+    );
+    expect(map.getSource("nli-investigation-polygon-category")).toBeFalsy();
+    disposeInvestigationTimelineForMap(map);
   });
 
   it("stops playback and removes line overlays when visibilityLayerGroups has nli off", async () => {
@@ -646,11 +851,7 @@ describe("syncInvestigationTimelineToMap", () => {
     await syncInvestigationTimelineToMap(map, clock, armedGroups, deps);
     now = 800 + TIMELINE_BEAT_MS;
     await syncInvestigationTimelineToMap(map, clock, liveAlarmsOnlyGroups, deps);
-    const fillOpacity = [...map.setPaintProperty.mock.calls]
-      .reverse()
-      .find((call) => call[0].includes("investigation_polygons") && call[1] === "fill-opacity");
-    expect(JSON.stringify(fillOpacity[2])).toContain("410");
-    expect(JSON.stringify(fillOpacity[2])).not.toContain("385");
+    expect(map.getSource("nli-investigation-polygon-category")).toBeFalsy();
     cancelAnimationFrame.mockClear();
     await syncInvestigationTimelineToMap(map, clock, liveAlarmsOnlyGroups, deps);
     expect(cancelAnimationFrame).not.toHaveBeenCalled();
@@ -1115,6 +1316,7 @@ describe("syncInvestigationTimelineToMap", () => {
     const stopped = { ...idleNliClock(), revision: 2 };
     const playSync = syncInvestigationTimelineToMap(map, playing, bothGroups(), {
       featuresById: {},
+      settlementFeatures: [],
       getLayerDataUrl: () => "https://example.test/lines.json",
       now: () => 0,
     });
@@ -1123,6 +1325,7 @@ describe("syncInvestigationTimelineToMap", () => {
         [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES,
         [INVESTIGATION_LINES_FULL_ID]: LINE_FEATURES,
       },
+      settlementFeatures: [],
       now: () => 0,
     });
     await idleSync;
@@ -1495,6 +1698,91 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(injected.innerHTML).toBe("STALE_INJECTED");
     disposeInvestigationTimelineForMap(map);
   });
+
+  const YISHUVIM_FILL_ID = "projector_base__ישובים__fill__0";
+  const YISHUVIM_LINE_ID = "projector_base__ישובים__line__0";
+  const SHEMOT_LABEL_ID = "projector_base__שמות_יישובים__labels";
+  const LOCATIONS_LINE_ID = "projector_base__Locations_Lines__line__0";
+  const DOTTED_ORIENTATION_IDS = [
+    "projector_base.ישובים",
+    "projector_base.שמות_יישובים",
+    "projector_base.Locations_Lines",
+  ];
+
+  function makeOrientationMap() {
+    const map = makeMap();
+    const layers = map.getStyle().layers;
+    layers.push(
+      { id: YISHUVIM_FILL_ID, type: "fill", source: "projector_base.ישובים" },
+      { id: YISHUVIM_LINE_ID, type: "line", source: "projector_base.ישובים" },
+      { id: SHEMOT_LABEL_ID, type: "symbol", source: "projector_base.שמות_יישובים" },
+      { id: LOCATIONS_LINE_ID, type: "line", source: "projector_base.Locations_Lines" },
+    );
+    map.addSource("projector_base.שמות_יישובים", {
+      type: "geojson",
+      data: {
+        type: "FeatureCollection",
+        features: [{ type: "Feature", properties: { cityname: "עיר א" }, geometry: { type: "Point", coordinates: [34.4, 31.4] } }],
+      },
+    });
+    return map;
+  }
+
+  function orientationDeps() {
+    return {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      settlementFeatures: [STORY_SETTLEMENT],
+      now: () => 0,
+    };
+  }
+
+  function dottedOrientationPaintCalls(map) {
+    return map.setPaintProperty.mock.calls.filter(([id]) => DOTTED_ORIENTATION_IDS.includes(id));
+  }
+
+  it("dims mangled orientation layers while playing and lights achieved שמות names", async () => {
+    const map = makeOrientationMap();
+    await syncInvestigationTimelineToMap(
+      map,
+      playClock([INVESTIGATION_POLYGONS_FULL_ID], [400]),
+      polygonOnlyGroups(),
+      orientationDeps(),
+    );
+
+    expect(map.setPaintProperty).toHaveBeenCalledWith(YISHUVIM_FILL_ID, "fill-opacity", 0.28);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(YISHUVIM_LINE_ID, "line-opacity", 0.28);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(LOCATIONS_LINE_ID, "line-opacity", 0.28);
+    const textCall = [...map.setPaintProperty.mock.calls]
+      .reverse()
+      .find(([id, key]) => id === SHEMOT_LABEL_ID && key === "text-opacity");
+    expect(textCall).toBeDefined();
+    const expression = JSON.stringify(textCall[2]);
+    expect(expression).toContain("0.35");
+    expect(expression).toContain("1");
+    expect(expression).toContain("עיר א");
+    expect(dottedOrientationPaintCalls(map)).toEqual([]);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("idle restores orientation opacity 1 without a dim expression", async () => {
+    const map = makeOrientationMap();
+    const deps = orientationDeps();
+    const playing = playClock([INVESTIGATION_POLYGONS_FULL_ID], [400]);
+    await syncInvestigationTimelineToMap(map, playing, polygonOnlyGroups(), deps);
+    map.setPaintProperty.mockClear();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), deps);
+
+    expect(map.setPaintProperty).toHaveBeenCalledWith(YISHUVIM_FILL_ID, "fill-opacity", 1);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(YISHUVIM_LINE_ID, "line-opacity", 1);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(LOCATIONS_LINE_ID, "line-opacity", 1);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(SHEMOT_LABEL_ID, "text-opacity", 1);
+    const textCalls = map.setPaintProperty.mock.calls.filter(
+      ([id, key]) => id === SHEMOT_LABEL_ID && key === "text-opacity",
+    );
+    expect(textCalls.every(([, , value]) => value === 1)).toBe(true);
+    expect(dottedOrientationPaintCalls(map)).toEqual([]);
+    disposeInvestigationTimelineForMap(map);
+  });
 });
 
 function subscribeCallbackName(src, topic) {
@@ -1521,6 +1809,10 @@ describe("maps ignore leftover nli animation booleans", () => {
     expect(namedArrowFunctionBody(src, animCb)).not.toContain("syncContextInvestigation");
     expect(namedArrowFunctionBody(src, animCb)).not.toContain("syncInvestigationTimelineToMap");
     expect(namedArrowFunctionBody(src, clockCb)).toContain("syncInvestigationTimelineToMap");
+    expect(namedArrowFunctionBody(src, clockCb)).toContain("getPersonSelection");
+    expect(src).toMatch(/subscribe\("personSelection",\s*syncContextPersonSelection\)/);
+    expect(src).toMatch(/const syncContextPersonSelection = \(selection\) => \{[\s\S]*wakeInvestigationTimelinePersonGlow\(map\)/);
+    expect(src).toMatch(/const syncContextPersonSelection = \(selection\) => \{[\s\S]*handlePersonSelection/);
   });
 
   it("projection-main animations subscribe does not re-enter investigation sync", () => {
@@ -1535,5 +1827,8 @@ describe("maps ignore leftover nli animation booleans", () => {
     expect(namedArrowFunctionBody(src, animCb)).not.toContain("syncInvestigationTimelineToMap");
     expect(namedArrowFunctionBody(src, clockCb)).toContain("syncInvestigationTimelineToMap");
     expect(namedArrowFunctionBody(src, clockCb)).toContain("idleNliClock");
+    expect(namedArrowFunctionBody(src, clockCb)).toContain("getPersonSelection");
+    expect(src).toMatch(/subscribe\("personSelection",\s*syncContextInvestigation\)|subscribe\("personSelection",\s*wakeProjectionPersonGlow\)/);
+    expect(src).toMatch(/wakeInvestigationTimelinePersonGlow/);
   });
 });

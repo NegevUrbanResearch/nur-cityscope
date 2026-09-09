@@ -3,6 +3,7 @@
  * Toggle with **D** from projection-main (same pattern as B bounds / R rotation).
  * Embedded hosts: `?projectionRenderDebug=1` / `?prd=1`, or `window.ProjectionRenderDebug.toggle()` / `.setVisible(bool)`.
  */
+import { PROJECTION_LAB_CHROME_Z_INDEX } from "./projection-display-hotkeys.js";
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
 import { parseProjectionSpanId } from "./projection-span-view.js";
 
@@ -138,7 +139,7 @@ export function installProjectionRenderDebugOverlay({
     "max-width:min(520px,calc(100vw - 16px))",
     "max-height:min(70vh,calc(100% - 16px))",
     "overflow:auto",
-    "z-index:250",
+    `z-index:${PROJECTION_LAB_CHROME_Z_INDEX}`,
     "box-sizing:border-box",
     "padding:10px 12px",
     "background:rgba(0,0,0,0.88)",

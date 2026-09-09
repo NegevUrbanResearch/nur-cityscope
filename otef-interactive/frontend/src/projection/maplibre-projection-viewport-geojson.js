@@ -1,9 +1,8 @@
 /**
  * Viewport → GeoJSON highlight geometry (WGS84) for MapLibre sources.
  * Uses global `proj4` (EPSG:2039 → EPSG:4326), matching maplibre-projection.js.
+ * Zoom / full-extent hide is paint opacity, not an empty FeatureCollection.
  */
-
-const DEFAULT_FULL_EXTENT_TOLERANCE = 10;
 
 function isFinitePoint(point) {
   return (
@@ -70,19 +69,6 @@ function ringFromItmPoints(itmPoints) {
   return ring;
 }
 
-function isFullExtent(bbox, modelBounds) {
-  const tol =
-    (typeof MapProjectionConfig !== "undefined" && MapProjectionConfig.PROJECTION_FULL_EXTENT_TOLERANCE) ||
-    DEFAULT_FULL_EXTENT_TOLERANCE;
-  const mb = modelBounds.itm;
-  return (
-    Math.abs(bbox[0] - mb.west) < tol &&
-    Math.abs(bbox[1] - mb.south) < tol &&
-    Math.abs(bbox[2] - mb.east) < tol &&
-    Math.abs(bbox[3] - mb.north) < tol
-  );
-}
-
 /**
  * Build a GeoJSON FeatureCollection for the viewport highlight, or null if inputs/proj4 are invalid.
  * @param {object | null | undefined} viewport
@@ -92,10 +78,6 @@ function isFullExtent(bbox, modelBounds) {
 export function viewportToHighlightGeoJSON(viewport, modelBounds) {
   if (!viewport || !Array.isArray(viewport.bbox) || viewport.bbox.length !== 4 || !modelBounds?.itm) {
     return null;
-  }
-
-  if (isFullExtent(viewport.bbox, modelBounds)) {
-    return { type: "FeatureCollection", features: [] };
   }
 
   const mb = modelBounds.itm;

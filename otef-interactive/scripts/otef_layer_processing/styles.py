@@ -628,8 +628,8 @@ def _apply_people_names_label_ir(
     label_config: Optional[Dict[str, Any]], lyrx_path: Path
 ) -> None:
     """
-    `people_names` only: same type treatment as `שמות_יישובים` (Guttman + Noto, white,
-    thin halo, forceVisible) without shemot angle/offset IR.
+    `people_names` only: Guttman + Noto Regular, size 8, thin halo, map
+    rotation, radial offsets from ``otef_map_text_offset_em``.
     """
     if not label_config or lyrx_path.stem != PEOPLE_NAMES_LYRX_STEM:
         return
@@ -638,12 +638,16 @@ def _apply_people_names_label_ir(
         _SETTLEMENT_LABEL_NOTO_FALLBACK,
     ]
     label_config["color"] = "#ffffff"
-    label_config["size"] = 14.0
-    label_config["haloSize"] = min(float(label_config.get("haloSize") or 1.0), 0.35)
+    label_config["size"] = 8.0
+    label_config["haloSize"] = 0.12
     if not label_config.get("haloColor"):
         label_config["haloColor"] = "#ffffff"
     label_config["forceVisible"] = True
     label_config["hebrewBidiWrap"] = False
+    label_config["offsetArrayProperty"] = "otef_map_text_offset_em"
+    label_config["textRotationAlignment"] = "map"
+    label_config.pop("offsetEmFromProperties", None)
+    label_config.pop("angleFromProperties", None)
 
 
 def _finalize_people_names_style(style: StyleConfig, lyrx_path: Path) -> None:

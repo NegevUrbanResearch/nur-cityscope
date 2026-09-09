@@ -18,6 +18,7 @@ import {
   NLI_EXPLAINER_SAMPLE_MODEL,
 } from "./nli-explainer-model.js";
 import {
+  collectUnionTimelineBeats,
   INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
@@ -49,6 +50,13 @@ import { createInvestigationPolygonRenderer } from "./maplibre-investigation-pol
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 import { record as recordPerfSample } from "../map/perf-telemetry.js";
 import { deriveInvestigationFrame } from "./nli-investigation-visual-state.js";
+import {
+  achievedSettlementCitynames,
+  applySettlementOrientationPaint,
+  collectKnownCitynamesFromMap,
+  collectOrientationTargets,
+} from "./nli-settlement-orientation.js";
+import { syncPersonHaloPaint } from "../map/maplibre-person-selection.js";
 
 export {
   INVESTIGATION_ALARMS_FULL_ID,
@@ -366,7 +374,9 @@ function updateCaption(state, phase, _previousClock) {
   }
   if (state.explainerDebugVisible) {
     el.hidden = false;
-    el.innerHTML = nliExplainerInnerHtml(NLI_EXPLAINER_SAMPLE_MODEL);
+    el.innerHTML = nliExplainerInnerHtml(NLI_EXPLAINER_SAMPLE_MODEL, {
+      nliCaptionMode: state.nliCaptionMode,
+    });
     return;
   }
   el.hidden = true;
@@ -399,9 +409,7 @@ function applyRestingRoutePaints(map, visible) {
   }
 }
 
-/** Render visible routes in the completed narrative state while the timeline is idle. */
-function applyIdleFinalRouteVisuals(map, state, nowMs) {
-  if (!state?.lineOn || !Array.isArray(state.data?.lineFeatures)) return;
+function deriveIdleLineFrame(state, nowMs) {
   const beats = investigationRouteBeats(state.data);
   const ambientClock = normalizeNliClock({
     phase: "ended",
@@ -410,18 +418,53 @@ function applyIdleFinalRouteVisuals(map, state, nowMs) {
     revision: state.clock?.revision,
     serverNowMs: state.clock?.serverNowMs,
   });
-  const frame = deriveInvestigationFrame(
+  return deriveInvestigationFrame(
     ambientClock,
     nowMs,
     [INVESTIGATION_LINES_FULL_ID],
     { motionMode: state.motionMode || "full", routeBeats: beats },
   );
-  state.clock = ambientClock;
-  state.lastFrame = frame;
-  state.lastRenderNow = nowMs;
-  state.lineRenderer?.render(frame, buildInvestigationLineFeaturesForFrame(state.data, frame));
-  if (shouldRafClock(frame)) scheduleFrame(map, state);
-  else cancelScheduledFrame(state);
+}
+
+function emptyLinePartition() {
+  return { futureFeatures: [], completedFeatures: [], activeFeatures: [] };
+}
+
+function lineFrameForState(state, investigationFrame, nowMs) {
+  if (state.clockPhase === "idle" && state.lineOn) return deriveIdleLineFrame(state, nowMs);
+  return investigationFrame;
+}
+
+function assignVisibleStoryBeats(state, polygonsVisible, linesVisible) {
+  state.storyBeats = collectUnionTimelineBeats(
+    polygonsVisible ? state.data.polygonFeatures : null,
+    linesVisible ? state.data.lineFeatures : null,
+  );
+  state.polygonMotionActive = polygonsVisible === true;
+}
+
+function readPersonGlowActive(state) {
+  const getter = state.getPersonSelection;
+  if (typeof getter !== "function") return false;
+  let selection;
+  try {
+    selection = getter();
+  } catch {
+    return false;
+  }
+  const pid = selection?.personId ?? selection?.pid;
+  return pid != null && String(pid).trim() !== "";
+}
+
+function applyPersonGlow(state) {
+  state.personGlowActive = readPersonGlowActive(state);
+}
+
+function paintPersonHalo(map, state, nowMs) {
+  syncPersonHaloPaint(map, {
+    motionMode: state.motionMode || "full",
+    nowMs,
+  });
 }
 
 function deriveTimelineFrame(state, nowMs, enabledIds = [...(state.effectiveIds || [])]) {
@@ -430,11 +473,40 @@ function deriveTimelineFrame(state, nowMs, enabledIds = [...(state.effectiveIds 
     routeBeats: Array.isArray(state.data.lineFeatures)
       ? investigationRouteBeats(state.data)
       : [],
+    storyBeats: state.storyBeats,
+    polygonMotionActive: state.polygonMotionActive,
+    personGlowActive: state.personGlowActive === true,
+  });
+}
+
+function refreshOrientationTargets(map, state) {
+  const targets = collectOrientationTargets(map);
+  state.orientationLayers = targets.layers;
+  state.shemotSourceId = targets.shemotSourceId;
+}
+
+function clearOrientationTargets(state) {
+  if (!state) return;
+  state.orientationLayers = [];
+  state.shemotSourceId = null;
+}
+
+function applyOrientationVisuals(map, state, outlineIds = []) {
+  applySettlementOrientationPaint(map, {
+    phase: state.clockPhase,
+    achievedCitynames: achievedSettlementCitynames(
+      outlineIds,
+      state.data?.settlementFeatures,
+      collectKnownCitynamesFromMap(map, state.shemotSourceId),
+    ),
+    layers: state.orientationLayers,
   });
 }
 
 function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = state.alarmMode) {
   const resolvedFrame = frame || deriveTimelineFrame(state, state.now?.() || 0);
+  const nowMs = Number.isFinite(Number(resolvedFrame.nowMs)) ? Number(resolvedFrame.nowMs) : (state.now?.() || 0);
+  const lineFrame = lineFrameForState(state, resolvedFrame, nowMs);
   const previousClock = jumpPreviousClock(state, phase, frame);
   let alarmFrame = frame
     ? {
@@ -464,21 +536,21 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
     frame: alarmFrame || resolvedFrame,
     dataVersion: state.data.dataVersion,
   });
-  // Ambient idle route flow owns only the line carrier/motion. Settlement
-  // outlines stay reset until a real timeline phase reaches the route.
-  if (state.polygonOn || (state.lineOn && state.clockPhase !== "idle")) {
-    const lineData = Array.isArray(state.data.lineFeatures)
-      ? buildInvestigationLineFeaturesForFrame(state.data, resolvedFrame)
-      : { futureFeatures: [], completedFeatures: [], activeFeatures: [] };
+  let achievedSettlementOutlineIds = [];
+  if (state.polygonOn || state.lineOn) {
+    const lineData = state.lineOn && Array.isArray(state.data.lineFeatures)
+      ? buildInvestigationLineFeaturesForFrame(state.data, lineFrame)
+      : emptyLinePartition();
+    achievedSettlementOutlineIds = [
+      ...buildInvestigationSettlementOutlineIdsForFrame(
+        state.data,
+        resolvedFrame,
+        lineData,
+      ),
+    ];
     const polygonFrame = {
       ...resolvedFrame,
-      achievedSettlementOutlineIds: [
-        ...buildInvestigationSettlementOutlineIdsForFrame(
-          state.data,
-          resolvedFrame,
-          lineData,
-        ),
-      ],
+      achievedSettlementOutlineIds,
     };
     const renderSettlement = state.polygonOn
       ? state.polygonRenderer?.render
@@ -490,13 +562,16 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
       settlementFeaturesByOutlineId: state.data.settlementFeaturesByOutlineId,
       dataVersion: state.data.dataVersion,
     });
+  } else {
+    state.polygonRenderer?.reset({ preserveBasePaints: true, restoreHostVisibility: false });
   }
   if (state.lineOn) {
     state.lineRenderer?.render(
-      resolvedFrame,
-      buildInvestigationLineFeaturesForFrame(state.data, resolvedFrame),
+      lineFrame,
+      buildInvestigationLineFeaturesForFrame(state.data, lineFrame),
     );
   }
+  applyOrientationVisuals(map, state, achievedSettlementOutlineIds);
   // Keep the adapter's previous mode available until it applies the transition,
   // then publish the target mode for captions and subsequent animation ticks.
   state.alarmMode = targetAlarmMode;
@@ -508,9 +583,9 @@ function enablePolygonPlayback(map, state) {
   state.polygonPlaybackActive = true;
 }
 
-function disablePolygonPlayback(map, state, { preserveBasePaints = false } = {}) {
+function disablePolygonPlayback(map, state, { preserveBasePaints = false, restoreHostVisibility = true } = {}) {
   if (!state.polygonPlaybackActive) return;
-  state.polygonRenderer?.reset({ preserveBasePaints });
+  state.polygonRenderer?.reset({ preserveBasePaints, restoreHostVisibility });
   state.polygonPlaybackActive = false;
 }
 
@@ -570,6 +645,10 @@ function createTimelineState(map, deps = {}) {
     clock: null,
     polygonOn: false,
     lineOn: false,
+    storyBeats: [],
+    polygonMotionActive: false,
+    personGlowActive: false,
+    getPersonSelection: typeof deps.getPersonSelection === "function" ? deps.getPersonSelection : null,
     alarmMode: "off",
     data: createInvestigationTimelineData(deps),
     now: typeof deps.now === "function" ? deps.now : () => Date.now(),
@@ -602,6 +681,8 @@ function createTimelineState(map, deps = {}) {
     routeLayerVisible: false,
     alarmOnsetHistory: new Set(),
     alarmStructuralRowsBuilds: 0,
+    orientationLayers: [],
+    shemotSourceId: null,
   };
   Object.defineProperties(state, {
     alarmFeatures: { enumerable: false, get: () => state.data.alarmFeatures },
@@ -637,6 +718,7 @@ function attachTimelineStyleListeners(map, state) {
     }
     state.styleReady = true;
     state.awaitingStyleRemount = true;
+    clearOrientationTargets(state);
   };
   state.styleListener = handleStyleReload;
   map.on("style.load", handleStyleReload);
@@ -665,9 +747,12 @@ function stopPlayback(map, { preserveBasePaints = false } = {}) {
   state.lastCaption = null;
   state.lastFrame = null;
   state.lastRenderNow = null;
+  applyOrientationVisuals(map, state, []);
   const polygonWasPlaying = state.polygonPlaybackActive;
-  disablePolygonPlayback(map, state, { preserveBasePaints });
-  if (!polygonWasPlaying) state.polygonRenderer?.reset({ preserveBasePaints });
+  disablePolygonPlayback(map, state, { preserveBasePaints, restoreHostVisibility: false });
+  if (!polygonWasPlaying) {
+    state.polygonRenderer?.reset({ preserveBasePaints, restoreHostVisibility: false });
+  }
   disableLinePlayback(map, state, { preserveBasePaints });
   state.alarmRenderer?.reset({ preserveBasePaints });
   updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
@@ -684,11 +769,20 @@ function tick(map) {
   const nowFn = state.now || (() => Date.now());
   const nowMs = nowFn();
   const started = state.monotonicNow();
+  applyPersonGlow(state);
   const frame = deriveTimelineFrame(state, nowMs);
+  const lineFrame = clock.phase === "idle" && state.lineOn
+    ? deriveIdleLineFrame(state, nowMs)
+    : null;
   const rippleEnded = state.lastFrame?.rippleNeedsFrames === true && frame.rippleNeedsFrames === false;
   const renderDue = state.lastRenderNow == null ||
     nowMs - state.lastRenderNow >= NLI_VISUAL_TOKENS.completedFlowStepMs ||
     rippleEnded;
+  const idleNeedsVisuals = clock.phase === "idle" && (
+    frame.needsNextFrame === true ||
+    lineFrame?.needsNextFrame === true ||
+    lineFrame?.completedFlowNeedsFrames === true
+  );
   if (renderDue) {
     const vis = evaluateClock(clock, nowMs);
     if (
@@ -697,7 +791,8 @@ function tick(map) {
       (clock.phase === "paused" && clock.seekKind === "jump") ||
       frame.completedFlowNeedsFrames ||
       frame.rippleNeedsFrames ||
-      rippleEnded
+      rippleEnded ||
+      idleNeedsVisuals
     ) {
       applyPlayingVisuals(map, state, vis, frame, state.alarmMode);
     }
@@ -706,7 +801,8 @@ function tick(map) {
   }
   const elapsed = Math.max(0, state.monotonicNow() - started);
   recordPerfSample("nliSchedulerMs", elapsed);
-  if (shouldRafClock(frame)) scheduleFrame(map, state);
+  paintPersonHalo(map, state, nowMs);
+  if (shouldRafClock(frame) || shouldRafClock(lineFrame)) scheduleFrame(map, state);
 }
 
 function applyStoryPlayback(map, state) {
@@ -714,8 +810,10 @@ function applyStoryPlayback(map, state) {
   if (state.polygonOn) {
     if (!state.polygonPlaybackActive) enablePolygonPlayback(map, state);
   } else {
-    disablePolygonPlayback(map, state);
-    if (!state.lineOn) state.polygonRenderer?.reset({ preserveBasePaints: true });
+    disablePolygonPlayback(map, state, { restoreHostVisibility: false });
+    if (!state.lineOn) {
+      state.polygonRenderer?.reset({ preserveBasePaints: true, restoreHostVisibility: false });
+    }
   }
   if (state.lineOn) enableLinePlayback(map, state);
   else disableLinePlayback(map, state);
@@ -729,11 +827,11 @@ function resetEffectiveRenderers(map, state, nextMembership, { preservePolygonBa
       nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID),
     );
   }
-  if (state.polygonOn && !nextMembership.polygonOn) {
-    // The host polygon layer can be hidden independently of the narrative.
-    // Remove the owned settlement overlay immediately while retaining the
-    // current base paint expression until this sync computes its next frame.
-    disablePolygonPlayback(map, state, { preserveBasePaints: preservePolygonBasePaints });
+  if (state.polygonOn && !nextMembership.visible.has(INVESTIGATION_POLYGONS_FULL_ID)) {
+    disablePolygonPlayback(map, state, {
+      preserveBasePaints: preservePolygonBasePaints,
+      restoreHostVisibility: false,
+    });
   }
   if (state.alarmMode !== "off" && !nextMembership.alarmVisible) applyAlarmMode(map, state, "off");
 }
@@ -755,6 +853,7 @@ export function prepareInvestigationTimelineForStyleReload(map) {
   cancelScheduledFrame(state);
   state.styleReady = false;
   state.awaitingStyleRemount = true;
+  clearOrientationTargets(state);
   discardRendererHandles(state, { preserveBasePaints: true });
 }
 
@@ -795,6 +894,7 @@ export function getInvestigationTimelineDiagnostics(map) {
  *   captionEl?: HTMLElement | null,
  *   allowMapCaption?: boolean,
  *   explainerDebugVisible?: boolean,
+ *   getPersonSelection?: () => { personId?: string|null, pid?: string|null, datasetVersion?: string|null } | null,
  * }} [deps]
  */
 export async function syncInvestigationTimelineToMap(map, clockInput, layerGroups, deps = {}) {
@@ -808,6 +908,8 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   state.motionMode = deps.motionMode === "reduced" ? "reduced" : "full";
   state.displayProfile = displayProfileFromDeps(deps, state.displayProfile);
   state.rendererDeps = deps;
+  if (typeof deps.getPersonSelection === "function") state.getPersonSelection = deps.getPersonSelection;
+  applyPersonGlow(state);
   applyCaptionDeps(state, map, deps);
 
   // A setStyle call can fire style.load before the host has re-synced its base
@@ -825,45 +927,72 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   }
 
   refreshInvestigationTimelineData(state.data, deps);
+  refreshOrientationTargets(map, state);
   const nextMembership = effectiveMembership(clock, visibilityGroups);
-  state.routeLayerVisible = nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID);
+  const polygonsVisible = nextMembership.visible.has(INVESTIGATION_POLYGONS_FULL_ID);
+  const linesVisible = nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID);
+  state.routeLayerVisible = linesVisible;
   // Visibility changes are applied before any optional network work so a
   // hidden renderer cannot remain visible while its sibling dataset loads.
-  resetEffectiveRenderers(map, state, nextMembership, { preservePolygonBasePaints: clock.phase !== "idle" });
+  resetEffectiveRenderers(map, state, nextMembership, { preservePolygonBasePaints: true });
 
   if (clock.phase === "idle") {
-    if (state.clockPhase !== "idle") stopPlayback(map);
+    if (state.clockPhase !== "idle") stopPlayback(map, { preserveBasePaints: true });
     else cancelScheduledFrame(state);
     state.clock = clock;
     state.clockPhase = "idle";
-    state.polygonOn = false;
-    state.lineOn = nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID);
-    state.effectiveIds = state.lineOn ? new Set([INVESTIGATION_LINES_FULL_ID]) : new Set();
+    state.polygonOn = polygonsVisible;
+    state.lineOn = linesVisible;
+    state.effectiveIds = new Set([
+      ...(polygonsVisible ? [INVESTIGATION_POLYGONS_FULL_ID] : []),
+      ...(linesVisible ? [INVESTIGATION_LINES_FULL_ID] : []),
+    ]);
     state.lastCaption = null;
-    if (state.lineOn) {
+    if (polygonsVisible) {
+      await ensureInvestigationLayerFeatures(state.data, deps, "polygonFeatures", INVESTIGATION_POLYGONS_FULL_ID, {
+        request: syncRequest,
+        isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+      });
+      if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+    }
+    if (polygonsVisible || linesVisible) {
+      await ensureInvestigationSettlementFeatures(state.data, deps, {
+        request: syncRequest,
+        isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+      });
+      if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+    }
+    if (linesVisible) {
       await ensureInvestigationLayerFeatures(state.data, deps, "lineFeatures", INVESTIGATION_LINES_FULL_ID, {
         request: syncRequest,
         isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
       });
       if (isStaleTimelineSyncRequest(map, syncRequest)) return;
       enableLinePlayback(map, state);
-      applyIdleFinalRouteVisuals(map, state, nowFn());
     } else {
       applyRestingRoutePaints(map, false);
     }
+    assignVisibleStoryBeats(state, polygonsVisible, linesVisible);
+    if (polygonsVisible) enablePolygonPlayback(map, state);
     const alarmsVisible = nextMembership.alarmVisible;
+    /** @type {'off' | 'idle' | 'play'} */
+    const idleAlarmMode = alarmsVisible ? "idle" : "off";
     if (alarmsVisible) {
       await ensureInvestigationLayerFeatures(state.data, deps, "alarmFeatures", INVESTIGATION_ALARMS_FULL_ID, {
         request: syncRequest,
         isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
       });
       if (isStaleTimelineSyncRequest(map, syncRequest)) return;
-      applyAlarmMode(map, state, "idle", {
-        frame: deriveInvestigationFrame(clock, nowFn(), [], { motionMode: state.motionMode || "full" }),
-      });
-    } else {
-      applyAlarmMode(map, state, "off");
     }
+    const nowMs = nowFn();
+    const vis = evaluateClock(clock, nowMs);
+    const frame = deriveTimelineFrame(state, nowMs);
+    const lineFrame = linesVisible ? deriveIdleLineFrame(state, nowMs) : null;
+    applyPlayingVisuals(map, state, vis, frame, idleAlarmMode);
+    state.lastFrame = frame;
+    state.lastRenderNow = nowMs;
+    if (shouldRafClock(frame) || shouldRafClock(lineFrame)) scheduleFrame(map, state);
+    else cancelScheduledFrame(state);
     updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
     return;
   }
@@ -910,15 +1039,8 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   state.polygonOn = nextMembership.polygonOn;
   state.lineOn = nextMembership.lineOn;
   state.effectiveIds = nextMembership.ids;
-  const frame = deriveInvestigationFrame(
-    clock,
-    nowMs,
-    [...state.effectiveIds],
-    {
-      motionMode: state.motionMode,
-      routeBeats: investigationRouteBeats(state.data),
-    },
-  );
+  assignVisibleStoryBeats(state, nextMembership.polygonOn, nextMembership.lineOn);
+  const frame = deriveTimelineFrame(state, nowMs);
   state.lastFrame = frame;
   state.lastRenderNow = nowMs;
   applyStoryPlayback(map, state);
@@ -940,11 +1062,24 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
       settlementFeaturesByOutlineId: state.data.settlementFeaturesByOutlineId,
       dataVersion: state.data.dataVersion,
     });
-    state.polygonRenderer?.reset({ preserveBasePaints: true });
+    state.polygonRenderer?.reset({ preserveBasePaints: true, restoreHostVisibility: false });
   }
 
   if (shouldRafClock(frame)) scheduleFrame(map, state);
   else cancelScheduledFrame(state);
+}
+
+/** Re-read person selection and start the shared glow RAF. No helper-owned RAF. */
+export function wakeInvestigationTimelinePersonGlow(map) {
+  const state = stateByMap.get(map);
+  if (!state?.clock || state.awaitingStyleRemount) return;
+  applyPersonGlow(state);
+  const nowMs = Number(state.now?.() ?? 0);
+  const frame = deriveTimelineFrame(state, nowMs);
+  const lineFrame = state.clock.phase === "idle" && state.lineOn
+    ? deriveIdleLineFrame(state, nowMs)
+    : null;
+  if (shouldRafClock(frame) || shouldRafClock(lineFrame)) scheduleFrame(map, state);
 }
 
 export function disposeInvestigationTimelineForMap(map) {

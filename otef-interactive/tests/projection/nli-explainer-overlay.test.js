@@ -15,6 +15,8 @@ import {
   nliExplainerShouldPaintOnSpan,
   nliExplainerSpanKey,
   nliExplainerContentOverflows,
+  NLI_EXPLAINER_LAYOUT_STORAGE_KEY,
+  NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
   readNliExplainerLayoutStore,
   serializeNliExplainerLayoutMap,
   shouldIgnoreExplainerLayoutStore,
@@ -61,41 +63,43 @@ describe("nli explainer layout", () => {
     ).toBe(10);
   });
 
+  it("clamps width and height down to 2 percent so the box can hug the clock", () => {
+    const out = clampNliExplainerLayout(
+      { leftPct: 40, topPct: 40, widthPct: 1, heightPct: 1, fontPx: 12, rotateDeg: 0 },
+      fallback,
+    );
+    expect(out.widthPct).toBe(2);
+    expect(out.heightPct).toBe(2);
+  });
+
   it("merges stored span over defaults", () => {
     const stored = { left: { leftPct: 10, topPct: 10, widthPct: 20, heightPct: 20, fontPx: 18 } };
     const layout = mergeNliExplainerLayout("left", stored, MapProjectionConfig.NLI_EXPLAINER_LAYOUT);
     expect(layout.leftPct).toBe(10);
-    expect(layout.rotateDeg).toBe(0);
+    expect(layout.rotateDeg).toBe(MapProjectionConfig.NLI_EXPLAINER_LAYOUT.left.rotateDeg);
     expect(mergeNliExplainerLayout("full", stored, MapProjectionConfig.NLI_EXPLAINER_LAYOUT).leftPct).toBe(
       MapProjectionConfig.NLI_EXPLAINER_LAYOUT.full.leftPct,
     );
   });
 
   it("uses the committed calibrated left layout without changing full or right", () => {
-    expect(MapProjectionConfig.NLI_EXPLAINER_LAYOUT.left).toEqual({
-      leftPct: 48.88333333333333,
-      topPct: 26.175280590197644,
-      widthPct: 13.572916666666666,
-      heightPct: 11.732162458836443,
-      fontPx: 15,
-      rotateDeg: 0,
+    expect(MapProjectionConfig.NLI_EXPLAINER_LAYOUT).toEqual({
+      full: { leftPct: 31.83, topPct: 48.95, widthPct: 16.7, heightPct: 19.75, fontPx: 12, rotateDeg: -48.5 },
+      left: {
+        leftPct: 46.90416666666667,
+        topPct: 22.113809679110926,
+        widthPct: 8.886423224258024,
+        heightPct: 8.323215088627478,
+        fontPx: 56,
+        rotateDeg: 91.18739188335852,
+      },
+      right: { leftPct: 58, topPct: 68, widthPct: 42, heightPct: 26, fontPx: 22, rotateDeg: 0 },
     });
-    expect(MapProjectionConfig.NLI_EXPLAINER_LAYOUT.full).toEqual({
-      leftPct: 31.83,
-      topPct: 48.95,
-      widthPct: 16.7,
-      heightPct: 19.75,
-      fontPx: 12,
-      rotateDeg: -48.5,
-    });
-    expect(MapProjectionConfig.NLI_EXPLAINER_LAYOUT.right).toEqual({
-      leftPct: 58,
-      topPct: 68,
-      widthPct: 42,
-      heightPct: 26,
-      fontPx: 22,
-      rotateDeg: 0,
-    });
+  });
+
+  it("bumps layout stores to v2 so lab v1 parks cannot shadow", () => {
+    expect(NLI_EXPLAINER_LAYOUT_STORAGE_KEY).toBe("otef.nliExplainerLayout.v2");
+    expect(NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY).toBe("otef.nliGisClockLayout.v2");
   });
 
   it("host is a sibling; uniform rotate is written; no skew or scale", () => {

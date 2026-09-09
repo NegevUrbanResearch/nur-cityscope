@@ -13,6 +13,7 @@ export class FakeMapLibreMap {
     this._sources = new Map();
     this._listeners = new Map();
     this._paints = new Map();
+    this._layouts = new Map();
     this._nextFrameId = 1;
     this._frames = new Map();
     this._calls = [];
@@ -106,6 +107,18 @@ export class FakeMapLibreMap {
     properties[key] = value;
     this._paints.set(id, properties);
     this._calls.push({ method: "setPaintProperty", id, key, value });
+  }
+
+  getLayoutProperty(id, key) {
+    return this._layouts.get(id)?.[key];
+  }
+
+  setLayoutProperty(id, key, value) {
+    if (!this.getLayer(id)) throw new Error(`Layer does not exist: ${id}`);
+    const properties = this._layouts.get(id) || {};
+    properties[key] = value;
+    this._layouts.set(id, properties);
+    this._calls.push({ method: "setLayoutProperty", id, key, value });
   }
 
   on(type, listener) {

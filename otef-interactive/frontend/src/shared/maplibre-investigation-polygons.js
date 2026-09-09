@@ -9,12 +9,39 @@ import {
   INVESTIGATION_POLYGONS_FULL_ID,
 } from "./nli-investigation-beats.js";
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
+import { buildDirectionalFlowGradient } from "./maplibre-investigation-lines.js";
 
 const SETTLEMENT_SOURCE_ID = "nli-investigation-settlement-impact";
 const SETTLEMENT_LAYER_ID = "nli-investigation-settlement-impact-outline";
+const CATEGORY_SOURCE_ID = "nli-investigation-polygon-category";
+const CATEGORY_OUTLINE_SOURCE_ID = "nli-investigation-polygon-category-outline";
 const POLYGON_LAYER_PREFIX = INVESTIGATION_POLYGONS_FULL_ID.replace(/\./g, "__");
-const ORANGE = NLI_VISUAL_TOKENS.polygonOrange;
 const RED = NLI_VISUAL_TOKENS.incidentRed;
+const NOTES_BATTLE = "מרחב לחימה - קרב";
+const NOTES_KIDNAP = "מוקד חטיפה";
+const NOTES_FIRE = "שריפה";
+const KNOWN_NOTES = Object.freeze([NOTES_BATTLE, NOTES_KIDNAP, NOTES_FIRE]);
+const CATEGORY_SPECS = Object.freeze([
+  Object.freeze({ suffix: "battle", notes: NOTES_BATTLE }),
+  Object.freeze({ suffix: "kidnap", notes: NOTES_KIDNAP }),
+  Object.freeze({ suffix: "fire", notes: NOTES_FIRE }),
+]);
+const CATEGORY_FILL_LAYER_IDS = Object.freeze({
+  battle: `${CATEGORY_SOURCE_ID}-fill-battle`,
+  kidnap: `${CATEGORY_SOURCE_ID}-fill-kidnap`,
+  fire: `${CATEGORY_SOURCE_ID}-fill-fire`,
+  fallback: `${CATEGORY_SOURCE_ID}-fill-fallback`,
+});
+const CATEGORY_LINE_LAYER_IDS = Object.freeze({
+  battle: `${CATEGORY_SOURCE_ID}-line-battle`,
+  kidnap: `${CATEGORY_SOURCE_ID}-line-kidnap`,
+  fire: `${CATEGORY_SOURCE_ID}-line-fire`,
+  fallback: `${CATEGORY_SOURCE_ID}-line-fallback`,
+});
+const CATEGORY_LAYER_IDS = Object.freeze([
+  ...Object.values(CATEGORY_FILL_LAYER_IDS),
+  ...Object.values(CATEGORY_LINE_LAYER_IDS),
+]);
 
 function featureObjectId(feature) {
   return feature?.properties?.OBJECTID ?? feature?.id;
@@ -75,6 +102,95 @@ function featureCollection(features = []) {
   return { type: "FeatureCollection", features: asArray(features) };
 }
 
+function frameNowMs(frame, data) {
+  const value = Number(data?.nowMs ?? frame?.nowMs ?? frame?.correctedNow);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function oscillate(nowMs, periodMs, min, max) {
+  const period = Number(periodMs);
+  const low = Number(min);
+  const high = Number(max);
+  if (!Number.isFinite(period) || period <= 0 || !Number.isFinite(low) || !Number.isFinite(high)) {
+    return Number.isFinite(low) ? low : high;
+  }
+  const t = (((nowMs % period) + period) % period) / period;
+  const wave = 0.5 - 0.5 * Math.cos(t * Math.PI * 2);
+  return low + (high - low) * wave;
+}
+
+function closeRing(ring) {
+  if (!Array.isArray(ring) || ring.length < 2) return null;
+  const coords = ring
+    .filter((point) => Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
+    .map((point) => [Number(point[0]), Number(point[1])]);
+  if (coords.length < 2) return null;
+  const first = coords[0];
+  const last = coords[coords.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) coords.push([first[0], first[1]]);
+  return coords.length >= 2 ? coords : null;
+}
+
+function outlineFeaturesFromPolygons(features) {
+  const outlines = [];
+  for (const feature of features) {
+    const geom = feature?.geometry;
+    const rings = [];
+    if (geom?.type === "Polygon" && Array.isArray(geom.coordinates?.[0])) {
+      rings.push(geom.coordinates[0]);
+    } else if (geom?.type === "MultiPolygon") {
+      for (const polygon of geom.coordinates || []) {
+        if (Array.isArray(polygon?.[0])) rings.push(polygon[0]);
+      }
+    }
+    for (const ring of rings) {
+      const coordinates = closeRing(ring);
+      if (!coordinates) continue;
+      outlines.push({
+        type: "Feature",
+        properties: feature.properties && typeof feature.properties === "object" ? feature.properties : {},
+        geometry: { type: "LineString", coordinates },
+      });
+    }
+  }
+  return outlines;
+}
+
+function achievedPolygonFeatures(features, frame) {
+  const achieved = new Set(
+    asArray(frame?.achievedPolygonBeats).map(Number).filter(Number.isFinite),
+  );
+  return asArray(features).filter((feature) =>
+    achieved.has(Number(feature?.properties?.timeline_minutes)),
+  );
+}
+
+function notesEqualsFilter(notes) {
+  return ["==", ["get", "Notes"], notes];
+}
+
+function unmatchedNotesFilter() {
+  return ["!", ["in", ["get", "Notes"], ["literal", [...KNOWN_NOTES]]]];
+}
+
+function setPaint(map, id, property, value) {
+  if (typeof map?.setPaintProperty !== "function") return;
+  try {
+    map.setPaintProperty(id, property, value);
+  } catch (_) {
+    // The base style can be replaced between collection and application.
+  }
+}
+
+function setLayout(map, id, property, value) {
+  if (typeof map?.setLayoutProperty !== "function") return;
+  try {
+    map.setLayoutProperty(id, property, value);
+  } catch (_) {
+    // The base style can be replaced between collection and application.
+  }
+}
+
 function normalizeProfile(profile) {
   if (typeof profile === "string") return NLI_DISPLAY_PROFILES[profile] || NLI_DISPLAY_PROFILES.gis;
   return profile && typeof profile === "object" ? profile : NLI_DISPLAY_PROFILES.gis;
@@ -89,24 +205,6 @@ function achievedSettlementKey(frame) {
   return [...new Set(asArray(frame?.achievedSettlementOutlineIds).map(String))]
     .sort()
     .join(",");
-}
-
-function polygonPaintExpression(achieved, future, active) {
-  return [
-    "case",
-    ["in", ["get", "timeline_minutes"], ["literal", achieved]],
-    active,
-    future,
-  ];
-}
-
-function setPaint(map, id, property, value) {
-  if (typeof map?.setPaintProperty !== "function") return;
-  try {
-    map.setPaintProperty(id, property, value);
-  } catch (_) {
-    // The base style can be replaced between collection and application.
-  }
 }
 
 function sourcePresent(map, id) {
@@ -157,6 +255,10 @@ export function createInvestigationPolygonRenderer(
     dataVersion: deps.dataVersion ?? null,
     waitingForHostStyle: false,
     overlayMounted: false,
+    categoryMounted: false,
+    hostHidden: false,
+    lastCategoryMotionMode: null,
+    warnedNotes: new Set(),
     inputRefs: {
       polygonFeatures: undefined,
       locationToOutlineObjectId: undefined,
@@ -270,7 +372,7 @@ export function createInvestigationPolygonRenderer(
         paint: {
           "line-color": RED,
           "line-opacity": 0.95,
-          "line-width": 1.8 * Number(displayProfile.lineWidthMultiplier || 1),
+          "line-width": 1.8,
         },
       };
       const anchor = state.beforeId && layerPresent(map, state.beforeId);
@@ -280,6 +382,207 @@ export function createInvestigationPolygonRenderer(
       else map.addLayer(layer);
     }
     state.overlayMounted = sourcePresent(map, SETTLEMENT_SOURCE_ID) && layerPresent(map, SETTLEMENT_LAYER_ID);
+  }
+
+  function overlayBeforeId() {
+    const anchor = state.beforeId && layerPresent(map, state.beforeId);
+    const anchorIsBasePolygon = anchor && state.baseLayers.some((candidate) => candidate.id === state.beforeId);
+    return anchor && !anchorIsBasePolygon ? state.beforeId : null;
+  }
+
+  function addOwnedLayer(layer) {
+    if (layerPresent(map, layer.id) || typeof map.addLayer !== "function") return;
+    const beforeId = overlayBeforeId();
+    if (beforeId) map.addLayer(layer, beforeId);
+    else map.addLayer(layer);
+  }
+
+  function categoryFillPaint(token) {
+    return {
+      "fill-color": token.fill,
+      "fill-opacity": token.fillOpacity,
+    };
+  }
+
+  function categoryLinePaint(token, { gradient } = {}) {
+    const width = 1.8 * Number(displayProfile.lineWidthMultiplier || 1);
+    const paint = {
+      "line-color": token.outline,
+      "line-opacity": 0.95,
+      "line-width": Number.isFinite(Number(token.lineWidthMin)) && Number.isFinite(Number(token.lineWidthMax))
+        ? ((Number(token.lineWidthMin) + Number(token.lineWidthMax)) / 2) * Number(displayProfile.lineWidthMultiplier || 1)
+        : width,
+    };
+    if (gradient) paint["line-gradient"] = gradient;
+    return paint;
+  }
+
+  function mountCategoryOverlay() {
+    if (state.disposed || !map) return;
+    if (!sourcePresent(map, CATEGORY_SOURCE_ID) && typeof map.addSource === "function") {
+      map.addSource(CATEGORY_SOURCE_ID, { type: "geojson", data: featureCollection() });
+    }
+    if (!sourcePresent(map, CATEGORY_OUTLINE_SOURCE_ID) && typeof map.addSource === "function") {
+      map.addSource(CATEGORY_OUTLINE_SOURCE_ID, {
+        type: "geojson",
+        lineMetrics: true,
+        data: featureCollection(),
+      });
+    }
+    if (typeof map.addLayer !== "function") {
+      state.categoryMounted = sourcePresent(map, CATEGORY_SOURCE_ID) && sourcePresent(map, CATEGORY_OUTLINE_SOURCE_ID);
+      return;
+    }
+    const tokens = NLI_VISUAL_TOKENS.polygonCategories;
+    const motionMode = state.currentFrame?.motionMode === "full" ? "full" : "reduced";
+    for (const spec of CATEGORY_SPECS) {
+      const token = tokens[spec.notes];
+      const fillId = CATEGORY_FILL_LAYER_IDS[spec.suffix];
+      const lineId = CATEGORY_LINE_LAYER_IDS[spec.suffix];
+      const gradient = spec.suffix === "battle"
+        ? buildDirectionalFlowGradient(
+          { progress: 0 },
+          motionMode,
+          displayProfile,
+          token.outline,
+        )
+        : null;
+      addOwnedLayer({
+        id: fillId,
+        type: "fill",
+        source: CATEGORY_SOURCE_ID,
+        filter: notesEqualsFilter(spec.notes),
+        paint: categoryFillPaint(token),
+      });
+      addOwnedLayer({
+        id: lineId,
+        type: "line",
+        source: CATEGORY_OUTLINE_SOURCE_ID,
+        filter: notesEqualsFilter(spec.notes),
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: categoryLinePaint(token, { gradient }),
+      });
+    }
+    addOwnedLayer({
+      id: CATEGORY_FILL_LAYER_IDS.fallback,
+      type: "fill",
+      source: CATEGORY_SOURCE_ID,
+      filter: unmatchedNotesFilter(),
+      paint: {
+        "fill-color": NLI_VISUAL_TOKENS.polygonFallbackFill,
+        "fill-opacity": 0.55,
+      },
+    });
+    addOwnedLayer({
+      id: CATEGORY_LINE_LAYER_IDS.fallback,
+      type: "line",
+      source: CATEGORY_OUTLINE_SOURCE_ID,
+      filter: unmatchedNotesFilter(),
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": NLI_VISUAL_TOKENS.polygonFallbackFill,
+        "line-opacity": 0.95,
+        "line-width": 1.8 * Number(displayProfile.lineWidthMultiplier || 1),
+      },
+    });
+    state.categoryMounted = sourcePresent(map, CATEGORY_SOURCE_ID)
+      && sourcePresent(map, CATEGORY_OUTLINE_SOURCE_ID)
+      && layerPresent(map, CATEGORY_FILL_LAYER_IDS.battle);
+  }
+
+  function hideHostPack() {
+    if (state.hostHidden || state.baseLayers.length === 0) return;
+    for (const layer of state.baseLayers) {
+      if (layer.type === "fill" || layer.type === "line") {
+        setLayout(map, layer.id, "visibility", "none");
+      }
+    }
+    state.hostHidden = true;
+  }
+
+  function showHostPack() {
+    for (const layer of state.baseLayers) {
+      if (layer.type === "fill" || layer.type === "line") {
+        setLayout(map, layer.id, "visibility", "visible");
+      }
+    }
+    state.hostHidden = false;
+  }
+
+  function warnUnmatchedNotes(features) {
+    const known = NLI_VISUAL_TOKENS.polygonCategories;
+    for (const feature of features) {
+      const notes = feature?.properties?.Notes;
+      if (typeof notes === "string" && known[notes]) continue;
+      if (typeof notes !== "string" || notes === "") continue;
+      if (state.warnedNotes.has(notes)) continue;
+      state.warnedNotes.add(notes);
+      console.warn(`Unmatched investigation polygon Notes: ${notes}`);
+    }
+  }
+
+  function updateCategorySources(frame) {
+    const achieved = achievedPolygonFeatures(state.polygonFeatures, frame);
+    warnUnmatchedNotes(achieved);
+    const fillSource = map?.getSource?.(CATEGORY_SOURCE_ID);
+    if (fillSource && typeof fillSource.setData === "function") {
+      fillSource.setData(featureCollection(achieved));
+    }
+    const outlineSource = map?.getSource?.(CATEGORY_OUTLINE_SOURCE_ID);
+    if (outlineSource && typeof outlineSource.setData === "function") {
+      outlineSource.setData(featureCollection(outlineFeaturesFromPolygons(achieved)));
+    }
+  }
+
+  function applyCategoryMotion(frame, data) {
+    if (!state.categoryMounted) return;
+    const motionMode = frame?.motionMode === "full" ? "full" : "reduced";
+    if (motionMode !== "full" && state.lastCategoryMotionMode === motionMode) return;
+    const nowMs = frameNowMs(frame, data);
+    const widthMul = Number(displayProfile.lineWidthMultiplier || 1);
+    const tokens = NLI_VISUAL_TOKENS.polygonCategories;
+    const battle = tokens[NOTES_BATTLE];
+    const kidnap = tokens[NOTES_KIDNAP];
+    const fire = tokens[NOTES_FIRE];
+    const animate = motionMode === "full";
+    setPaint(
+      map,
+      CATEGORY_FILL_LAYER_IDS.battle,
+      "fill-opacity",
+      animate ? oscillate(nowMs, battle.periodMs, battle.fillOpacityMin, battle.fillOpacityMax) : battle.fillOpacity,
+    );
+    setPaint(
+      map,
+      CATEGORY_LINE_LAYER_IDS.battle,
+      "line-gradient",
+      buildDirectionalFlowGradient(
+        { progress: animate ? (((nowMs / battle.periodMs) % 1) + 1) % 1 : 0 },
+        motionMode,
+        displayProfile,
+        battle.outline,
+      ),
+    );
+    setPaint(
+      map,
+      CATEGORY_FILL_LAYER_IDS.kidnap,
+      "fill-opacity",
+      animate ? oscillate(nowMs, kidnap.periodMs, kidnap.fillOpacityMin, kidnap.fillOpacityMax) : kidnap.fillOpacity,
+    );
+    setPaint(
+      map,
+      CATEGORY_LINE_LAYER_IDS.kidnap,
+      "line-width",
+      (animate
+        ? oscillate(nowMs, kidnap.periodMs, kidnap.lineWidthMin, kidnap.lineWidthMax)
+        : (kidnap.lineWidthMin + kidnap.lineWidthMax) / 2) * widthMul,
+    );
+    setPaint(
+      map,
+      CATEGORY_FILL_LAYER_IDS.fire,
+      "fill-opacity",
+      animate ? oscillate(nowMs, fire.periodMs, fire.fillOpacityMin, fire.fillOpacityMax) : fire.fillOpacity,
+    );
+    state.lastCategoryMotionMode = motionMode;
   }
 
   function hostBaseReady() {
@@ -309,14 +612,18 @@ export function createInvestigationPolygonRenderer(
         saveBasePaints(state.baseLayers);
       }
     }
+    if (!settlementOnly) {
+      mountCategoryOverlay();
+      if (state.categoryMounted) hideHostPack();
+    }
     mountSettlementOverlay();
   }
 
   function render(frame = {}, data = {}, { renderPolygons = true } = {}) {
     if (state.disposed) return;
     absorbData(data);
-    mount({ settlementOnly: !renderPolygons });
     state.currentFrame = frame;
+    mount({ settlementOnly: !renderPolygons });
     const achieved = asArray(frame.achievedPolygonBeats)
       .map(Number)
       .filter(Number.isFinite);
@@ -326,34 +633,10 @@ export function createInvestigationPolygonRenderer(
     const membershipChanged = state.achievedMembershipKey !== key;
     const dataChanged = state.appliedRegistryGeneration !== state.registryGeneration;
     state.achievedMembershipKey = key;
-    const paintSignature = [
-      "polygon-paint-v1",
-      polygonKey,
-      state.mountGeneration,
-      Number(displayProfile.lineWidthMultiplier || 1),
-      state.registryGeneration,
-    ].join("|");
-    if (renderPolygons && state.appliedPaintSignature !== paintSignature) {
-      const fillColor = polygonPaintExpression(achieved, ORANGE, RED);
-      const lineColor = polygonPaintExpression(achieved, ORANGE, RED);
-      const fillOpacity = polygonPaintExpression(achieved, 0.16, 0.7);
-      const lineOpacity = polygonPaintExpression(achieved, 0.3, 0.95);
-      const lineWidth = polygonPaintExpression(
-        achieved,
-        0.9 * Number(displayProfile.lineWidthMultiplier || 1),
-        2 * Number(displayProfile.lineWidthMultiplier || 1),
-      );
-      for (const layer of state.baseLayers) {
-        if (layer.type === "fill") {
-          setPaint(map, layer.id, "fill-color", fillColor);
-          setPaint(map, layer.id, "fill-opacity", fillOpacity);
-        } else if (layer.type === "line") {
-          setPaint(map, layer.id, "line-color", lineColor);
-          setPaint(map, layer.id, "line-opacity", lineOpacity);
-          setPaint(map, layer.id, "line-width", lineWidth);
-        }
-      }
-      state.appliedPaintSignature = paintSignature;
+    if (renderPolygons && state.categoryMounted) {
+      hideHostPack();
+      if (membershipChanged || dataChanged) updateCategorySources(frame);
+      applyCategoryMotion(frame, data);
     }
     if (!membershipChanged && !dataChanged) return;
     const outlines = new Map();
@@ -394,36 +677,23 @@ export function createInvestigationPolygonRenderer(
     if (state.currentFrame) render(state.currentFrame, data);
   }
 
-  function restoreBasePaints() {
-    if (state.savedPaints) {
-      for (const [id, paints] of Object.entries(state.savedPaints)) {
-        for (const [property, value] of Object.entries(paints)) {
-          if (value !== undefined) setPaint(map, id, property, value);
-        }
-      }
-    }
-    for (const layer of polygonLayers(map)) {
-      if (layer.type === "fill") {
-        setPaint(map, layer.id, "fill-color", ORANGE);
-        setPaint(map, layer.id, "fill-opacity", 0.16);
-      } else if (layer.type === "line") {
-        setPaint(map, layer.id, "line-color", ORANGE);
-        setPaint(map, layer.id, "line-opacity", 0.3);
-        setPaint(map, layer.id, "line-width", 0.9 * Number(displayProfile.lineWidthMultiplier || 1));
-      }
-    }
-  }
-
   function removeOverlay() {
+    for (const id of CATEGORY_LAYER_IDS) {
+      if (layerPresent(map, id) && typeof map.removeLayer === "function") {
+        try { map.removeLayer(id); } catch (_) { /* stale style */ }
+      }
+    }
     if (layerPresent(map, SETTLEMENT_LAYER_ID) && typeof map.removeLayer === "function") {
       try { map.removeLayer(SETTLEMENT_LAYER_ID); } catch (_) { /* stale style */ }
     }
-    if (sourcePresent(map, SETTLEMENT_SOURCE_ID) && typeof map.removeSource === "function") {
-      try { map.removeSource(SETTLEMENT_SOURCE_ID); } catch (_) { /* stale style */ }
+    for (const sourceId of [CATEGORY_SOURCE_ID, CATEGORY_OUTLINE_SOURCE_ID, SETTLEMENT_SOURCE_ID]) {
+      if (sourcePresent(map, sourceId) && typeof map.removeSource === "function") {
+        try { map.removeSource(sourceId); } catch (_) { /* stale style */ }
+      }
     }
   }
 
-  function reset({ preserveBasePaints = false } = {}) {
+  function reset({ preserveBasePaints = false, restoreHostVisibility = true } = {}) {
     if (state.disposed) return;
     const hasOwnedState =
       state.mounted ||
@@ -431,12 +701,17 @@ export function createInvestigationPolygonRenderer(
       state.savedPaints ||
       state.baseLayersCaptured ||
       state.waitingForHostStyle ||
-      state.overlayMounted;
+      state.overlayMounted ||
+      state.categoryMounted ||
+      state.hostHidden;
     if (!hasOwnedState) return;
-    if (!preserveBasePaints) restoreBasePaints();
+    if (restoreHostVisibility) showHostPack();
+    else state.hostHidden = false;
     removeOverlay();
     state.mounted = false;
     state.overlayMounted = false;
+    state.categoryMounted = false;
+    state.lastCategoryMotionMode = null;
     state.waitingForHostStyle = false;
     state.baseLayers = [];
     state.baseLayersCaptured = false;
@@ -474,4 +749,6 @@ export function createInvestigationPolygonRenderer(
 export const INVESTIGATION_POLYGON_RENDERER_IDS = Object.freeze({
   settlementSource: SETTLEMENT_SOURCE_ID,
   settlementLayer: SETTLEMENT_LAYER_ID,
+  categorySource: CATEGORY_SOURCE_ID,
+  categoryOutlineSource: CATEGORY_OUTLINE_SOURCE_ID,
 });

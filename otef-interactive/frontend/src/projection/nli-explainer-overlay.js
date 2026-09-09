@@ -6,7 +6,16 @@
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
 import { parseProjectionSpanId } from "./projection-span-view.js";
 
-export const NLI_EXPLAINER_LAYOUT_STORAGE_KEY = "otef.nliExplainerLayout.v1";
+export const NLI_EXPLAINER_LAYOUT_STORAGE_KEY = "otef.nliExplainerLayout.v2";
+export const NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY = "otef.nliGisClockLayout.v2";
+export const NLI_GIS_CLOCK_DEFAULT_LAYOUT = {
+  leftPct: 30,
+  topPct: 88,
+  widthPct: 40,
+  heightPct: 8,
+  fontPx: 22,
+  rotateDeg: 0,
+};
 
 const SPAN_KEYS = ["full", "left", "right"];
 const HOST_FONT_FAMILY =
@@ -129,8 +138,8 @@ function clampNum(value, min, max) {
 export function clampNliExplainerLayout(raw, fallback) {
   const src = raw && typeof raw === "object" ? raw : {};
   const fb = fallback && typeof fallback === "object" ? fallback : {};
-  const widthPct = clampNum(pickFinite(src.widthPct, fb.widthPct), 8, 100);
-  const heightPct = clampNum(pickFinite(src.heightPct, fb.heightPct), 8, 100);
+  const widthPct = clampNum(pickFinite(src.widthPct, fb.widthPct), 2, 100);
+  const heightPct = clampNum(pickFinite(src.heightPct, fb.heightPct), 2, 100);
   const leftPct = clampNum(pickFinite(src.leftPct, fb.leftPct), 0, 100 - widthPct);
   const topPct = clampNum(pickFinite(src.topPct, fb.topPct), 0, 100 - heightPct);
   const fontPx = clampNum(pickFinite(src.fontPx, fb.fontPx), 8, 64);
@@ -174,11 +183,12 @@ export function applyNliExplainerLayout(hostEl, layout) {
   hostEl.style.fontFamily = HOST_FONT_FAMILY;
 }
 
-export function ensureNliExplainerHost(displayContainer) {
-  let host = displayContainer?.querySelector?.("#nliExplainerHost") || null;
+export function ensureNliExplainerHost(displayContainer, options = {}) {
+  const hostId = options.hostId || "nliExplainerHost";
+  let host = displayContainer?.querySelector?.(`#${hostId}`) || null;
   if (!host) {
     host = document.createElement("div");
-    host.id = "nliExplainerHost";
+    host.id = hostId;
     if (!host.style) host.style = {};
     displayContainer.appendChild(host);
   }

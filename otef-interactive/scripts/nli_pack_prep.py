@@ -58,7 +58,8 @@ def jitter_coincident_points(
         lat += rng() * size * sin(rng() * 2π)
         lon += rng() * size * cos(rng() * 2π)
 
-    Only groups of 2+ points that share rounded (lon, lat) are moved.
+    Every point gets ``source_lon`` / ``source_lat``. Only groups of 2+ that
+    share rounded (lon, lat) are moved.
     """
     groups: Dict[Tuple[float, float], List[int]] = defaultdict(list)
     for index, feature in enumerate(features):
@@ -74,11 +75,19 @@ def jitter_coincident_points(
     moved = 0
     two_pi = 2.0 * math.pi
     for indexes in groups.values():
+        for index in indexes:
+            feature = features[index]
+            lon0, lat0 = feature["geometry"]["coordinates"][:2]
+            props = dict(feature.get("properties") or {})
+            props["source_lon"] = float(lon0)
+            props["source_lat"] = float(lat0)
+            feature["properties"] = props
         if len(indexes) < 2:
             continue
         for index in indexes:
             feature = features[index]
-            lon0, lat0 = feature["geometry"]["coordinates"][:2]
+            lon0 = feature["properties"]["source_lon"]
+            lat0 = feature["properties"]["source_lat"]
             seed = _feature_seed(feature, seed_keys, str(index))
             dlat = (
                 unit_from_seed(seed, "r_lat")
@@ -90,16 +99,64 @@ def jitter_coincident_points(
                 * size_deg
                 * math.cos(unit_from_seed(seed, "ang_lon") * two_pi)
             )
-            props = dict(feature.get("properties") or {})
-            props["source_lon"] = float(lon0)
-            props["source_lat"] = float(lat0)
-            feature["properties"] = props
             feature["geometry"] = {
                 "type": "Point",
                 "coordinates": [float(lon0) + dlon, float(lat0) + dlat],
             }
             moved += 1
     return moved
+
+
+def _people_name_sort_key(feature: Dict[str, Any], index: int) -> Tuple[int, int, Any]:
+    props = feature.get("properties") or {}
+    for key in ("pid", "oct7_pid", "OBJECTID"):
+        val = props.get(key)
+        if val in (None, ""):
+            continue
+        try:
+            return (0, 0, int(val))
+        except (TypeError, ValueError):
+            return (0, 1, str(val))
+    return (1, 0, index)
+
+
+def apply_people_name_offsets(features: List[Dict[str, Any]]) -> int:
+    """Write radial ``otef_map_text_offset_em`` grouped by source lon/lat."""
+    groups: Dict[Tuple[float, float], List[int]] = defaultdict(list)
+    for index, feature in enumerate(features):
+        geometry = feature.get("geometry") or {}
+        if geometry.get("type") != "Point":
+            continue
+        props = feature.get("properties") or {}
+        lon = props.get("source_lon")
+        lat = props.get("source_lat")
+        if lon is None or lat is None:
+            coords = geometry.get("coordinates") or []
+            if len(coords) < 2:
+                continue
+            lon, lat = float(coords[0]), float(coords[1])
+        else:
+            lon, lat = float(lon), float(lat)
+        groups[(round(lon, 6), round(lat, 6))].append(index)
+
+    written = 0
+    two_pi = 2.0 * math.pi
+    for indexes in groups.values():
+        n = len(indexes)
+        ordered = sorted(indexes, key=lambda i: _people_name_sort_key(features[i], i))
+        radius = min(1.8 + 0.45 * (n - 2), 4.5) if n >= 2 else 0.0
+        for i, index in enumerate(ordered):
+            if n < 2:
+                offset = [0.0, 0.0]
+            else:
+                angle = two_pi * i / n
+                offset = [radius * math.cos(angle), radius * math.sin(angle)]
+            feature = features[index]
+            props = dict(feature.get("properties") or {})
+            props["otef_map_text_offset_em"] = offset
+            feature["properties"] = props
+            written += 1
+    return written
 
 
 OCT7_STATUS_CLASSES = [
@@ -659,8 +716,8 @@ def simple_line_lyrx(
 
 def labels_only_point_lyrx(
     field: str = "name",
-    height: float = 14.0,
-    halo_size: float = 0.35,
+    height: float = 11.0,
+    halo_size: float = 0.2,
     fill: Sequence[int] = (255, 255, 255),
     halo: Sequence[int] = (255, 255, 255),
 ) -> Dict[str, Any]:
@@ -766,14 +823,14 @@ def resolve_zip_layer_info(
     )
 
 # Local overlay copied from future_development (not part of the NLI zip allowlist).
-# Thin sand stroke for black GIS; projection uses the shared 0.3x MapLibre stroke scale.
+# Brown corridor stroke; projection keeps GIS width (nli.ציר_232 hatch-scale exempt).
 ROUTE_232_STEM = "ציר_232"
 ROUTE_232_SOURCE_PACK = "future_development"
-ROUTE_232_STROKE_WIDTH_PT = 1.5
-ROUTE_232_STROKE_COLOR = (232, 196, 120)
-ROUTE_232_STROKE_ALPHA = 50
+ROUTE_232_STROKE_WIDTH_PT = 2.0
+ROUTE_232_STROKE_COLOR = (135, 62, 35)
+ROUTE_232_STROKE_ALPHA = 100
 ROUTE_232_LABEL_HEIGHT_SCALE = 1.0
-ROUTE_232_LABEL_FILL = (255, 232, 196)
+ROUTE_232_LABEL_FILL = (255, 224, 210)
 
 # Derived stems (not in the zip map) must survive obsolete-file cleanup.
 NLI_KEEP_STEMS = set(ZIP_LAYER_MAP.values()) | {
@@ -1099,6 +1156,7 @@ def prepare_nli_pack(
                 moved = jitter_coincident_points(collection.get("features") or [])
             _write_json(gis_dir / f"{stem}.geojson", collection)
             if stem == "people":
+                apply_people_name_offsets(collection.get("features") or [])
                 _write_json(gis_dir / "people_names.geojson", collection)
             summary["layers"][stem] = {
                 "features": len(collection.get("features") or []),

@@ -128,13 +128,17 @@ describe("projection-main slideshow overlay wiring", () => {
     expect(src).toContain("syncPresentationOverlays: syncContextFlowAnimations");
   });
 
-  it("GIS map-main does not inject projection caption flags", () => {
+  it("GIS map-main injects clock-only caption on nliGisClockHost, not projection explainer", () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, "../../frontend/src/entries/map-main.js"),
       "utf8",
     );
     expect(src).not.toMatch(/nliExplainerCaptionEl/);
-    expect(src).not.toMatch(/allowMapCaption:\s*false/);
-    expect(src).not.toMatch(/ensureNliExplainerHost/);
+    expect(src).not.toMatch(/NLI_EXPLAINER_LAYOUT_STORAGE_KEY/);
+    expect(src).toMatch(/nliGisClockHost/);
+    expect(src).toMatch(/allowMapCaption:\s*false/);
+    expect(src).toMatch(/ensureNliExplainerHost/);
+    expect(src).toMatch(/nliCaptionMode:\s*"clock-only"/);
+    expect(src).toMatch(/NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY/);
   });
 });

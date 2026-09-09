@@ -73,7 +73,7 @@
         pointer-events: auto;
       }
 
-      /* Simple instruction overlay - press H to toggle */
+      /* Simple instruction overlay - press A or H to toggle */
       #instructions {
         position: fixed;
         top: 10px;
@@ -84,7 +84,7 @@
         border-radius: 5px;
         font-family: Arial, sans-serif;
         font-size: 14px;
-        z-index: 100;
+        z-index: 1100;
         max-width: 300px;
       }
       #instructions h3 {
@@ -165,10 +165,12 @@
       <svg id="boundsEditorOverlay"></svg>
     </div>
 
+    <div id="mapLegend" class="map-legend"></div>
+
     <div id="instructions" class="hidden">
       <h3>OTEF Projection Display</h3>
       <p><strong>Keyboard Shortcuts:</strong></p>
-      <p><strong>H</strong> - Toggle this help</p>
+      <p><strong>A</strong> or <strong>H</strong> - Toggle this help</p>
       <p><strong>F</strong> - Toggle fullscreen</p>
       <p><strong>B</strong> - Toggle bounds editor</p>
       <p><strong>R</strong> - Set orientation (viewer angle)</p>

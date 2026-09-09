@@ -179,8 +179,10 @@ function scalePointRadiusPaintForProjection(radius, hatchPresentation) {
 /**
  * @param {{ applyProjectionHatchPresentation?: boolean }} hatchPresentation
  * @param {number|Array|undefined} lineWidth
+ * @param {string} [fullLayerId]
  */
-function scaleLineWidthPaintForProjection(lineWidth, hatchPresentation) {
+function scaleLineWidthPaintForProjection(lineWidth, hatchPresentation, fullLayerId) {
+  if (String(fullLayerId) === "nli.ציר_232") return lineWidth;
   if (!hatchPresentation?.applyProjectionHatchPresentation) return lineWidth;
   const scale = Number(PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE);
   if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return lineWidth;
@@ -387,8 +389,15 @@ function buildLabelTextRotateFromProperty(propertyName) {
   return ["to-number", ["coalesce", ...variants.map((v) => ["get", v]), "0"]];
 }
 
+function usesNliSharedTextHeading(fullLayerId) {
+  return fullLayerId === "nli.people_names" || fullLayerId === "projector_base.שמות_יישובים";
+}
+
 /** @returns {number|Array} MapLibre text-rotate static number, data expression, or 0 */
-function buildLabelTextRotateValue(labels) {
+function buildLabelTextRotateValue(labels, fullLayerId) {
+  if (usesNliSharedTextHeading(fullLayerId)) {
+    return 0;
+  }
   if (labels?.angleFromProperties === true) {
     return buildLabelTextRotateFromProperty(labels.angleProperty);
   }
@@ -416,7 +425,7 @@ function buildLabelSymbolLayer(idBase, style, geometryType, fullLayerId) {
   const textField = labelTextFieldExpression(field);
   const size = Number(labels.size);
   const haloW = Number(labels.haloSize);
-  const textRotate = buildLabelTextRotateValue(labels);
+  const textRotate = buildLabelTextRotateValue(labels, fullLayerId);
 
   const layout = {
     "text-field": textField,
@@ -448,7 +457,9 @@ function buildLabelSymbolLayer(idBase, style, geometryType, fullLayerId) {
   if (labels.textWritingModeHorizontal === true) {
     layout["text-writing-mode"] = ["literal", ["horizontal"]];
   }
-  if (labels.angleFromProperties === true) {
+  if (usesNliSharedTextHeading(fullLayerId)) {
+    layout["text-rotation-alignment"] = "map";
+  } else if (labels.angleFromProperties === true) {
     // Data-driven angles (e.g. field-based rotation) use map space; keep glyphs aligned to the map.
     layout["text-rotation-alignment"] = "map";
     layout["text-pitch-alignment"] = "map";
@@ -702,7 +713,7 @@ function markerColorForMapLibre(hex, opacity) {
   return `rgba(${r},${g},${b},${Number(op)})`;
 }
 
-function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
+function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation, fullLayerId) {
   if (!symbolLayer || typeof symbolLayer !== "object") return null;
 
   if (symbolLayer.type === "fill") {
@@ -727,6 +738,7 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
       "line-width": scaleLineWidthPaintForProjection(
         symbolLayer.width ?? 1,
         hatchPresentation,
+        fullLayerId,
       ),
     };
     if (symbolLayer.opacity != null) paint["line-opacity"] = symbolLayer.opacity;
@@ -774,6 +786,7 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation) {
       "line-width": scaleLineWidthPaintForProjection(
         markerLineFallbackWidth(symbolLayer),
         hatchPresentation,
+        fullLayerId,
       ),
     };
     if (symbolLayer.opacity != null) paint["line-opacity"] = symbolLayer.opacity;
@@ -807,7 +820,7 @@ function sortMaplibreStyleLayersFillBeforeStroke(layers) {
   return [...fills, ...rest];
 }
 
-function buildSimpleLayers(idBase, symbol, hatchPresentation, sortFillBeforeStroke, geometryType) {
+function buildSimpleLayers(idBase, symbol, hatchPresentation, sortFillBeforeStroke, geometryType, fullLayerId) {
   const symbolLayers = Array.isArray(symbol?.symbolLayers) ? symbol.symbolLayers : [];
   const output = [];
 
@@ -817,7 +830,12 @@ function buildSimpleLayers(idBase, symbol, hatchPresentation, sortFillBeforeStro
       const mapLibreType = getMapLibreType(symbolLayer);
       if (mapLibreType === "fill" || mapLibreType === "line") continue;
     }
-    const mapLibreLayer = symbolLayerToMapLibre(symbolLayer, `${idBase}__${i}`, hatchPresentation);
+    const mapLibreLayer = symbolLayerToMapLibre(
+      symbolLayer,
+      `${idBase}__${i}`,
+      hatchPresentation,
+      fullLayerId,
+    );
     if (mapLibreLayer) output.push(mapLibreLayer);
   }
 
@@ -939,9 +957,9 @@ function buildUniqueValueGroups(uniqueValues, defaultSymbol) {
   return groups;
 }
 
-function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation, sortFillBeforeStroke, geometryType) {
+function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresentation, sortFillBeforeStroke, geometryType, fullLayerId) {
   const field = uniqueValues?.field;
-  if (!field) return buildSimpleLayers(idBase, defaultSymbol, hatchPresentation, sortFillBeforeStroke, geometryType);
+  if (!field) return buildSimpleLayers(idBase, defaultSymbol, hatchPresentation, sortFillBeforeStroke, geometryType, fullLayerId);
 
   const defaultSymbolLayers = Array.isArray(defaultSymbol?.symbolLayers) ? defaultSymbol.symbolLayers : [];
   const groups = buildUniqueValueGroups(uniqueValues, defaultSymbol);
@@ -972,6 +990,7 @@ function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresen
       group.entries,
       defaultSymbolLayer,
       hatchPresentation,
+      fullLayerId,
     );
     if (layer) output.push(layer);
   }
@@ -979,7 +998,7 @@ function buildUniqueValueLayers(idBase, uniqueValues, defaultSymbol, hatchPresen
   return sortFillBeforeStroke ? sortMaplibreStyleLayersFillBeforeStroke(output) : output;
 }
 
-function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, hatchPresentation) {
+function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, hatchPresentation, fullLayerId) {
   const paint = {};
 
   if (mapLibreType === "fill") {
@@ -1056,6 +1075,7 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
     paint["line-width"] = scaleLineWidthPaintForProjection(
       lineWidth != null ? lineWidth : 1,
       hatchPresentation,
+      fullLayerId,
     );
     const lineOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
     if (lineOpacity !== undefined) paint["line-opacity"] = lineOpacity;
@@ -1207,6 +1227,7 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
     paint["line-width"] = scaleLineWidthPaintForProjection(
       widthFromStroke ?? widthFromSize ?? 1,
       hatchPresentation,
+      fullLayerId,
     );
 
     const lineOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
@@ -1223,7 +1244,7 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
  * `Id`, `Shape_Length`, `Name`) and must not become MapLibre text layers by default.
  *
  * - GIS / default: no map labels from `style.labels`, except `*.people_names`.
- * - Projection (`applyProjectionHatchPresentation`): settlement-names stem and `*.people_names`.
+ * - Projection (`applyProjectionHatchPresentation`): settlement-names stem (`*.שמות_יישובים`) and `*.people_names`.
  * - Unit tests / explicit opt-in: `renderMapLabelsFromStyle: true`.
  *
  * @param {{ applyProjectionHatchPresentation?: boolean, renderMapLabelsFromStyle?: boolean }} [styleOptions]
@@ -1233,8 +1254,8 @@ function shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId) {
   if (styleOptions?.renderMapLabelsFromStyle === true) return true;
   const s = String(fullLayerId || "");
   if (/\.people_names$/.test(s)) return true;
-  if (styleOptions?.applyProjectionHatchPresentation === true) {
-    return /\.שמות_יישובים$/.test(s);
+  if (/\.שמות_יישובים$/.test(s)) {
+    return styleOptions?.applyProjectionHatchPresentation === true;
   }
   return false;
 }
@@ -1245,7 +1266,8 @@ function shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId) {
  *   applyProjectionHatchPresentation?: boolean,
  *   renderMapLabelsFromStyle?: boolean,
  * }} [styleOptions] - projection sets `applyLayerGroupsToMap` with `applyProjectionHatchPresentation`
- *   for hatch density; that flag also scopes label rendering to שמות_יישובים (plus nli.people_names).
+ *   for hatch density. `*.people_names` always emit. Settlement-name labels (`*.שמות_יישובים`) emit
+ *   only when `applyProjectionHatchPresentation` is true (projection); GIS default does not emit.
  */
 export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styleOptions = {}) {
   void sourceLayerId;
@@ -1275,8 +1297,9 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
           hatchPresentation,
           sortFillBeforeStroke,
           layerConfig?.geometryType,
+          fullLayerId,
         )
-      : buildSimpleLayers(idBase, defaultSymbol, hatchPresentation, sortFillBeforeStroke, layerConfig?.geometryType);
+      : buildSimpleLayers(idBase, defaultSymbol, hatchPresentation, sortFillBeforeStroke, layerConfig?.geometryType, fullLayerId);
 
   const baseLayers = isLineGeometryType(layerConfig?.geometryType)
     ? sortLinePackStrokeOrderForDashedVisibility(rawBaseLayers)
