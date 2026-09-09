@@ -7,6 +7,8 @@ import {
 } from "../../map-utils/curated-pink-axis-state.js";
 import { generateTraceId, recordTraceEvent } from "../otef-trace.js";
 import { isNliPlayableFullId } from "../nli-investigation-beats.js";
+import { normalizeNliClock } from "../nli-investigation-clock.js";
+import { getNliNarrative, normalizeNarrativeState } from "../nli-narratives.js";
 import { OTEFDataContextInternals } from "./index.js";
 import {
   archiveWindowCommand,
@@ -740,16 +742,29 @@ async function setBasemap(ctx, basemap) {
   }
 
   const previous = ctx._basemap || "osm";
+  const narrativeRevision = normalizeNarrativeState(ctx._narrativeState).revision;
+  const basemapGeneration = ctx._independentBasemapGeneration;
   ctx._setBasemap(basemap);
   try {
     await OTEF_API.updateBasemap(ctx._tableName, basemap, {
       sourceId: ctx._clientId,
       timestamp: Date.now(),
     });
+    if (
+      normalizeNarrativeState(ctx._narrativeState).revision === narrativeRevision &&
+      ctx._independentBasemapGeneration === basemapGeneration
+    ) {
+      ctx._setConfirmedBasemap(basemap);
+    }
     return { ok: true };
   } catch (err) {
     getLogger().error("[OTEFDataContext] Failed to update basemap:", err);
-    ctx._setBasemap(previous);
+    if (
+      normalizeNarrativeState(ctx._narrativeState).revision === narrativeRevision &&
+      ctx._independentBasemapGeneration === basemapGeneration
+    ) {
+      ctx._setBasemap(previous);
+    }
     return { ok: false, error: err };
   }
 }
@@ -757,6 +772,8 @@ async function setBasemap(ctx, basemap) {
 async function patchInvestigationClock(ctx, next) {
   const run = async () => {
     if (!ctx._tableName) return;
+    const narrativeRevision = normalizeNarrativeState(ctx._narrativeState).revision;
+    const clockRevision = normalizeNliClock(ctx._investigationClock).revision;
     const writeClock = { ...next };
     delete writeClock.serverNowMs;
     const state = await OTEF_API.updateInvestigationClock(ctx._tableName, writeClock, {
@@ -764,7 +781,12 @@ async function patchInvestigationClock(ctx, next) {
       timestamp: Date.now(),
     });
     if (state?.investigation_clock && typeof state.investigation_clock === "object") {
-      ctx._setInvestigationClock(state.investigation_clock);
+      const responseClock = normalizeNliClock(state.investigation_clock);
+      const currentClock = normalizeNliClock(ctx._investigationClock);
+      const sameNarrative = normalizeNarrativeState(ctx._narrativeState).revision === narrativeRevision;
+      if (sameNarrative && currentClock.revision <= clockRevision && responseClock.revision >= currentClock.revision) {
+        ctx._setInvestigationClock(responseClock);
+      }
     }
   };
   const queued = (ctx._clockPatchQueue || Promise.resolve()).then(run, run);
@@ -789,6 +811,65 @@ async function navigateToPlace(ctx, place) {
     traceId,
   };
   return OTEF_API.navigateToPlace(ctx._tableName, payload);
+}
+
+async function setNarrative(ctx, id) {
+  if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  if (id !== null && !getNliNarrative(id)) return { ok: false, reason: "unsupported_narrative" };
+  const coupledBaseline = ctx._captureNarrativeSceneBaseline();
+  try {
+    const response = await OTEF_API.setNarrative(
+      ctx._tableName,
+      id,
+      ctx.getNarrativeState().revision,
+      { sourceId: ctx._clientId, timestamp: Date.now() },
+    );
+    if (response?.scene) ctx._applyNarrativeScene(response.scene, { coupledBaseline });
+    return response;
+  } catch (error) {
+    const staleNarrative = error?.status === 409 &&
+      error?.details?.reason === "stale" &&
+      error.details.narrative_state &&
+      typeof error.details.narrative_state === "object";
+    if (staleNarrative) {
+      const coupledBaseline = ctx._captureNarrativeSceneBaseline();
+      try {
+        const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+        ctx._applyStateFromApi(state, { notify: true, coupledBaseline });
+      } catch (refreshError) {
+        getLogger().warn("[OTEFDataContext] Failed to reconcile stale narrative state:", refreshError);
+      }
+    }
+    throw error;
+  }
+}
+
+async function narrativePresentationCommand(ctx, action, id, requestId) {
+  if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  if ((action !== "open" && action !== "close") || !getNliNarrative(id)) {
+    return { ok: false, reason: "invalid_presentation_command" };
+  }
+  return OTEF_API.narrativePresentationCommand(ctx._tableName, {
+    presentationAction: action,
+    narrativeId: id,
+    requestId,
+    sourceId: ctx._clientId,
+    timestamp: Date.now(),
+  });
+}
+
+async function narrativePresentationResult(ctx, outcome, id, requestId) {
+  if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  if (!["opened", "closed", "unavailable"].includes(outcome) || !getNliNarrative(id)) {
+    return { ok: false, reason: "invalid_presentation_result" };
+  }
+  return OTEF_API.narrativePresentationResult(ctx._tableName, {
+    outcome,
+    narrativeId: id,
+    requestId,
+    sourceId: ctx._clientId,
+    timestamp: Date.now(),
+  });
 }
 
 function understandDirection(direction, delta, width, height) {
@@ -918,6 +999,9 @@ OTEFDataContextInternals.actions = {
   clearPerson,
   archiveWindowCommand,
   archiveWindowResult,
+  setNarrative,
+  narrativePresentationCommand,
+  narrativePresentationResult,
   computePanViewport,
   computeZoomViewport,
 };
@@ -941,6 +1025,9 @@ export {
   clearPerson,
   archiveWindowCommand,
   archiveWindowResult,
+  setNarrative,
+  narrativePresentationCommand,
+  narrativePresentationResult,
   computePanViewport,
   computeZoomViewport,
 };

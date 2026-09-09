@@ -68,17 +68,18 @@ class CuratedUnpublishEndpointTests(TestCase):
             is_active=True,
             order=1,
         )
-        self.assertEqual(layer.id, 1)
+        layer_id = str(layer.id)
+        collision_id = f"{layer.id}1"
         LayerState.objects.create(
-            table=self.table, layer_id="curated_moresht_axis.1", enabled=True
+            table=self.table, layer_id=f"curated_moresht_axis.{layer_id}", enabled=True
         )
         LayerState.objects.create(
-            table=self.table, layer_id="curated_moresht_axis.11", enabled=True
+            table=self.table, layer_id=f"curated_moresht_axis.{collision_id}", enabled=True
         )
 
         response = self.client.post(
             "/api/supabase/curated/unpublish/",
-            {"table": "otef", "layer_id": "1"},
+            {"table": "otef", "layer_id": layer_id},
             format="json",
             HTTP_X_CURATION_WRITE_TOKEN="test-token",
         )
@@ -86,12 +87,12 @@ class CuratedUnpublishEndpointTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertFalse(
             LayerState.objects.filter(
-                table=self.table, layer_id="curated_moresht_axis.1"
+                table=self.table, layer_id=f"curated_moresht_axis.{layer_id}"
             ).exists()
         )
         self.assertTrue(
             LayerState.objects.filter(
-                table=self.table, layer_id="curated_moresht_axis.11"
+                table=self.table, layer_id=f"curated_moresht_axis.{collision_id}"
             ).exists()
         )
 

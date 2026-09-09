@@ -492,6 +492,7 @@ function clearOrientationTargets(state) {
 }
 
 function applyOrientationVisuals(map, state, outlineIds = []) {
+  const focus = state.narrativeFocus;
   applySettlementOrientationPaint(map, {
     phase: state.clockPhase,
     achievedCitynames: achievedSettlementCitynames(
@@ -500,7 +501,23 @@ function applyOrientationVisuals(map, state, outlineIds = []) {
       collectKnownCitynamesFromMap(map, state.shemotSourceId),
     ),
     layers: state.orientationLayers,
+    mode: focus ? "narrative" : undefined,
+    focusCityname: focus?.focusSettlement,
+    focusOutlineObjectId: focus?.focusSettlementOutlineId,
   });
+}
+
+function narrativeSettlementOutlineId(state) {
+  const value = state?.narrativeFocus?.focusSettlementOutlineId;
+  return value != null && String(value).trim() !== "" ? value : null;
+}
+
+function includeNarrativeSettlementOutline(outlineIds, state) {
+  const focusOutlineId = narrativeSettlementOutlineId(state);
+  if (focusOutlineId == null) return outlineIds;
+  const merged = Array.isArray(outlineIds) ? [...outlineIds] : [];
+  if (!merged.some((id) => String(id) === String(focusOutlineId))) merged.push(focusOutlineId);
+  return merged;
 }
 
 function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = state.alarmMode) {
@@ -537,7 +554,7 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
     dataVersion: state.data.dataVersion,
   });
   let achievedSettlementOutlineIds = [];
-  if (state.polygonOn || state.lineOn) {
+  if (state.polygonOn || state.lineOn || narrativeSettlementOutlineId(state) != null) {
     const lineData = state.lineOn && Array.isArray(state.data.lineFeatures)
       ? buildInvestigationLineFeaturesForFrame(state.data, lineFrame)
       : emptyLinePartition();
@@ -548,6 +565,7 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
         lineData,
       ),
     ];
+    achievedSettlementOutlineIds = includeNarrativeSettlementOutline(achievedSettlementOutlineIds, state);
     const polygonFrame = {
       ...resolvedFrame,
       achievedSettlementOutlineIds,
@@ -683,6 +701,7 @@ function createTimelineState(map, deps = {}) {
     alarmStructuralRowsBuilds: 0,
     orientationLayers: [],
     shemotSourceId: null,
+    narrativeFocus: deps.narrativeFocus || null,
   };
   Object.defineProperties(state, {
     alarmFeatures: { enumerable: false, get: () => state.data.alarmFeatures },
@@ -700,6 +719,7 @@ function getOrCreateState(map, deps = {}) {
     attachTimelineStyleListeners(map, state);
   }
   state.rendererDeps = deps;
+  state.narrativeFocus = deps.narrativeFocus || null;
   if (typeof deps.requestAnimationFrame === "function") state.requestAnimationFrame = deps.requestAnimationFrame;
   else if (!state.requestAnimationFrame && typeof map.requestAnimationFrame === "function") state.requestAnimationFrame = map.requestAnimationFrame.bind(map);
   if (typeof deps.cancelAnimationFrame === "function") state.cancelAnimationFrame = deps.cancelAnimationFrame;
@@ -955,7 +975,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
       });
       if (isStaleTimelineSyncRequest(map, syncRequest)) return;
     }
-    if (polygonsVisible || linesVisible) {
+    if (polygonsVisible || linesVisible || narrativeSettlementOutlineId(state) != null) {
       await ensureInvestigationSettlementFeatures(state.data, deps, {
         request: syncRequest,
         isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
@@ -1011,7 +1031,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     });
     if (isStaleTimelineSyncRequest(map, syncRequest)) return;
   }
-  if (nextMembership.lineOn || nextMembership.polygonOn) {
+  if (nextMembership.lineOn || nextMembership.polygonOn || narrativeSettlementOutlineId(state) != null) {
     await ensureInvestigationSettlementFeatures(state.data, deps, {
       request: syncRequest,
       isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),

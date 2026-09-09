@@ -156,6 +156,25 @@ WebSocket advances the canonical revision from 4 to 5 while the HTTP request
 for revision 4 is in flight, the first stale conflict retries once with
 revision 5. A second conflict remains visible to the presenter.
 
+### Segev narrative
+
+- The NLI layer sheet owns the Segev narrative control. Starting it applies the
+  trusted `משפחת שגב` house focus at zoom `18` using the grayscale
+  `satellite_bw` basemap; GIS and projection render the same Hebrew focus
+  label, while the projection camera continues to follow the ordinary viewport
+  channel.
+- The remote can request the trusted Canva presentation only after the durable
+  narrative is active. GIS mounts it as a local, top-level iframe surface with
+  `no-referrer`; it is not an archive or a person-selection action. Escape and
+  the remote close action close the presentation without exiting the narrative.
+- Ending the narrative closes the Canva surface and returns GIS to the
+  configured OTEF-bounds center at zoom `10` on the dark basemap. Refresh and
+  reconnect restore the durable narrative scene but deliberately leave Canva
+  closed.
+- Complete the unchecked **NLI Segev narrative matrix** in
+  [the exhibit verification guide](docs/nli-exhibit-verification.md) on kiosk
+  Chrome and the physical projection before claiming exhibit acceptance.
+
 ### Control Interface
 - Pan/zoom to explore the map
 - Tap features for information

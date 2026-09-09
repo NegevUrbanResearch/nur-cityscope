@@ -33,6 +33,7 @@ export function createRemotePeopleArchiveController(options = {}) {
     syncInputDirection,
     onModeUiChange,
     onRefresh,
+    isNarrativeActive = () => false,
   } = options;
 
   const state = {
@@ -82,8 +83,9 @@ export function createRemotePeopleArchiveController(options = {}) {
     archiveButton.textContent = t(
       phase === "closing" ? "nliArchiveClosing" : pending ? "nliArchiveOpening" : (open ? "backToMap" : "openNliRecord"),
     );
-    archiveButton.hidden = open || pending ? false : !(getMode() === "people" && state.person.acknowledged);
-    archiveButton.disabled = pending;
+    const narrativeActive = isNarrativeActive();
+    archiveButton.hidden = narrativeActive || (open || pending ? false : !(getMode() === "people" && state.person.acknowledged));
+    archiveButton.disabled = narrativeActive || pending;
     void person;
   }
 
@@ -165,7 +167,7 @@ export function createRemotePeopleArchiveController(options = {}) {
   }
 
   archiveButton.addEventListener("click", () => {
-    if (!isAlive() || state.archive.phase === "opening" || state.archive.phase === "closing") return;
+    if (!isAlive() || isNarrativeActive() || state.archive.phase === "opening" || state.archive.phase === "closing") return;
     if (state.archive.phase === "open") {
       void runArchiveCommand("close", state.archive.person || state.person.acknowledged);
       return;
@@ -262,7 +264,10 @@ export function createRemotePeopleArchiveController(options = {}) {
   }
 
   async function selectPerson(person) {
-    if (!isAlive()) return;
+    if (!isAlive() || isNarrativeActive()) {
+      setStatus(t("peopleNarrativeDisabled"));
+      return;
+    }
     const generation = state.person.generation + 1;
     const requestToken = state.person.requestToken + 1;
     transition("person", {
@@ -376,6 +381,11 @@ export function createRemotePeopleArchiveController(options = {}) {
   async function switchMode(nextMode) {
     const currentMode = getMode();
     if (!isAlive() || nextMode === currentMode || !["people", "settlements"].includes(nextMode)) return;
+    if (nextMode === "people" && isNarrativeActive()) {
+      setStatus(t("peopleNarrativeDisabled"));
+      onModeUiChange?.();
+      return;
+    }
     if (nextMode === "settlements" && state.person.acknowledged) {
       const generation = state.person.generation + 1;
       const baselineRevision = state.person.revision;
@@ -415,6 +425,12 @@ export function createRemotePeopleArchiveController(options = {}) {
 
   const personSubscription = dataContext?.subscribe?.("personSelection", handlePersonSnapshot);
   const archiveResultSubscription = dataContext?.subscribe?.("archiveWindowResult", handleArchiveResult);
+  const narrativeSubscription = dataContext?.subscribe?.("narrativeState", () => {
+    if (isNarrativeActive()) cancelArchivePresentation();
+    onModeUiChange?.();
+    onRefresh?.("narrative");
+    syncArchiveButton();
+  });
 
   syncArchiveButton();
 
@@ -446,6 +462,7 @@ export function createRemotePeopleArchiveController(options = {}) {
       transition("archive", { generation: state.archive.generation + 1, requestId: null, person: null });
       personSubscription?.();
       archiveResultSubscription?.();
+      narrativeSubscription?.();
     },
   };
 }

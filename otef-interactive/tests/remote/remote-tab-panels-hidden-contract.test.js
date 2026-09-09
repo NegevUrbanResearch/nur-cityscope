@@ -67,4 +67,72 @@ test("remote-styles: basemap control lives as a compact layers-tab toolbar", () 
 
   expect(localeActive).toMatch(/background:\s*var\(--color-surface\)/);
   expect(localeActive).toMatch(/color:\s*var\(--color-primary\)/);
+  expect(css).toMatch(/\.basemap-satellite-wrapper\s*\{[^}]*position:\s*relative/s);
+  expect(css).toMatch(/\.basemap-satellite-variants\s*\{[^}]*position:\s*absolute/s);
+  expect(css).toMatch(/\.basemap-satellite-variants\s*\{[^}]*top:\s*calc\(100%/s);
+  expect(css).toMatch(/\.basemap-satellite-variants\s*\{[^}]*max-inline-size:\s*min\(/s);
+  expect(css).toMatch(/\.basemap-satellite-parent\[aria-expanded="true"\]\s+\.basemap-disclosure-indicator\s*\{[^}]*transform:/s);
+  expect(css).not.toMatch(/\.basemap-variant-row\s*\{/);
+  expect(cssBlock(css, ".basemap-primary-row")).toMatch(/grid-template-columns:\s*repeat\(3/);
+  expect(cssBlock(css, ".basemap-satellite-variants")).toMatch(/width:\s*min\(10rem/);
+  const source = fs.readFileSync(
+    path.resolve(__dirname, "../../frontend/src/remote/remote-controller.js"),
+    "utf8",
+  );
+  expect(source).toMatch(/parentWrapper\?\.append\?\.\(variants\)/);
+});
+
+test("basemap state keeps durable active selection independent from the popover", async () => {
+  const { deriveBasemapControlState } = await import(
+    "../../frontend/src/remote/remote-controller.js"
+  );
+  expect(deriveBasemapControlState("satellite", false)).toEqual({
+    parentActive: true,
+    colorPressed: true,
+    bwPressed: false,
+    disabled: false,
+  });
+  expect(deriveBasemapControlState("satellite_bw", true)).toEqual({
+    parentActive: true,
+    colorPressed: false,
+    bwPressed: true,
+    disabled: true,
+  });
+  expect(deriveBasemapControlState("osm", false).parentActive).toBe(false);
+  expect(deriveBasemapControlState("dark", false).parentActive).toBe(false);
+});
+
+test("remote-styles: NLI dock owns bottom anchoring and preserves exact child order", () => {
+  const css = readRemoteStyles();
+  const dock = cssBlock(css, ".nli-bottom-dock");
+  const timeline = cssBlock(css, ".nli-tl-sheet");
+  const narrativeButton = cssBlock(css, ".nli-narrative-button");
+  const nliVariant = cssBlock(css, ".layers-variant-c--nli");
+  const tileScroller = cssBlock(css, ".layers-variant-c--nli .group-layers--tiles");
+  expect(dock).toMatch(/position:\s*absolute/);
+  expect(dock).toMatch(/bottom:\s*0/);
+  expect(dock).toMatch(/left:\s*0/);
+  expect(dock).toMatch(/right:\s*0/);
+  expect(timeline).not.toMatch(/position:\s*absolute/);
+  expect(narrativeButton).toMatch(/min-height:\s*(?:4[0-9]|[5-9][0-9])px/);
+  expect(nliVariant).toMatch(/height:\s*100%/);
+  expect(nliVariant).toMatch(/overflow:\s*hidden/);
+  expect(tileScroller).toMatch(/flex:\s*1 1 auto/);
+  expect(tileScroller).toMatch(/overflow-y:\s*auto/);
+  expect(tileScroller).toMatch(/padding-bottom:\s*calc\(var\(--nli-bottom-dock-height,\s*14\.5rem\)/);
+
+  const source = fs.readFileSync(
+    path.resolve(__dirname, "../../frontend/src/remote/layer-sheet-controller.js"),
+    "utf8",
+  );
+  expect(source).toMatch(/class="nli-bottom-dock"[\s\S]*\$\{narrativeSheet\}[\s\S]*\$\{nliSheet\}/);
+  expect(source.indexOf("${narrativeSheet}")).toBeLessThan(source.indexOf("${nliSheet}"));
+});
+
+test("remote teardown destroys the LayerSheet-owned narrative lifecycle", () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, "../../frontend/src/remote/remote-controller.js"),
+    "utf8",
+  );
+  expect(source).toMatch(/beforeunload[\s\S]*layerSheetController[\s\S]*\.destroy/);
 });

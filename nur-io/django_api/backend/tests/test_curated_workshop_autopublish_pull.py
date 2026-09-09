@@ -3,7 +3,7 @@ import uuid
 from datetime import timedelta
 from unittest.mock import patch
 
-import pytest
+from django.test import TestCase
 from django.utils import timezone
 
 from backend.models import (
@@ -18,6 +18,11 @@ from backend.supabase_proxy import (
     _rows_to_geojson_feature_collection,
     pull_published_curated_layers_from_supabase,
 )
+
+
+def django_db(test_function):
+    """Keep the standalone tests callable while binding them to Django's TestCase runner below."""
+    return test_function
 
 
 def _assert_pull_response_task5_contract(out, expect_autopublished_ids_in_affected=False):
@@ -61,7 +66,7 @@ def _geo_features_response_rows(full_rows, params):
     return out
 
 
-@pytest.mark.django_db
+@django_db
 def test_pull_autopublishes_new_submission_when_workshop_on():
     project_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     existing_sid = "11111111-1111-1111-1111-111111111111"
@@ -122,7 +127,7 @@ def test_pull_autopublishes_new_submission_when_workshop_on():
     assert mock_bc.called
 
 
-@pytest.mark.django_db
+@django_db
 def test_pull_workshop_skips_when_no_project_id_on_published_layers():
     table = Table.objects.create(
         name=f"ws_nopid_{uuid.uuid4().hex[:10]}",
@@ -176,7 +181,7 @@ def test_pull_workshop_skips_when_no_project_id_on_published_layers():
     )
 
 
-@pytest.mark.django_db
+@django_db
 def test_pull_autopublish_fallback_project_id_from_pink_geo_features():
     """Published curated GeoJSON has no project_id; pink geo_features rows agree on one project."""
     project_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -254,7 +259,7 @@ def test_pull_autopublish_fallback_project_id_from_pink_geo_features():
     assert mock_bc.called
 
 
-@pytest.mark.django_db
+@django_db
 def test_pull_second_tick_autopublishes_new_pink_submission():
     """Second heartbeat pull must re-query geo_features list and see a new pink submission."""
     project_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -323,7 +328,7 @@ def test_pull_second_tick_autopublishes_new_pink_submission():
     ).count() >= 2
 
 
-@pytest.mark.django_db
+@django_db
 def test_pull_skips_autopublish_for_pink_submission_before_workshop_start():
     """
     submission_batches clock before workshop_autopublish_started_at is ineligible;
@@ -428,7 +433,7 @@ def test_pull_skips_autopublish_for_pink_submission_before_workshop_start():
     assert mock_bc.called
 
 
-@pytest.mark.django_db
+@django_db
 def test_pull_does_not_autopublish_after_suppression_recorded():
     project_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     existing_sid = "11111111-1111-1111-1111-111111111111"
@@ -515,7 +520,7 @@ def test_pull_does_not_autopublish_after_suppression_recorded():
     assert _find_active_curated_layer_for_submission(table, new_sid) is None
 
 
-@pytest.mark.django_db
+@django_db
 def test_pull_skips_full_geo_fetch_when_fingerprints_unchanged():
     """Lightweight select matches stored layer + batch — no select=* on geo_features."""
     project_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -564,7 +569,7 @@ def test_pull_skips_full_geo_fetch_when_fingerprints_unchanged():
     mock_full.assert_not_called()
 
 
-@pytest.mark.django_db
+@django_db
 def test_pull_runs_full_geo_when_lightweight_timestamp_changes():
     project_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     sid = "11111111-1111-1111-1111-111111111111"
@@ -612,3 +617,20 @@ def test_pull_runs_full_geo_when_lightweight_timestamp_changes():
     mock_bc.assert_called()
     layer = GISLayer.objects.get(pk=out["updated_layer_ids"][0])
     assert "2099-06-15" in json.dumps(layer.data)
+
+
+class TestCuratedWorkshopAutopublishPull(TestCase):
+    """Django discovers these formerly pytest-only contract scenarios."""
+
+
+def _bind_django_test(test_function):
+    def method(self):
+        return test_function()
+
+    method.__name__ = test_function.__name__
+    return method
+
+
+for _name, _test_function in tuple(globals().items()):
+    if _name.startswith("test_") and callable(_test_function):
+        setattr(TestCuratedWorkshopAutopublishPull, _name, _bind_django_test(_test_function))

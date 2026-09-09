@@ -14,7 +14,7 @@ const person = (pid = "p-1") => ({
   location: "Gaza envelope",
 });
 
-function setup({ selection = {}, snapshot = { personId: null, datasetVersion: null, revision: 0 }, groups } = {}) {
+function setup({ selection = {}, snapshot = { personId: null, datasetVersion: null, revision: 0 }, groups, isNarrativeActive = () => false, closeArchive = vi.fn() } = {}) {
   const map = createFakeMapLibreMap();
   map.queryRenderedFeatures = vi.fn(() => []);
   const state = { snapshot, groups: groups || [{ id: "nli", layers: [{ id: "people", enabled: true }] }] };
@@ -38,12 +38,12 @@ function setup({ selection = {}, snapshot = { personId: null, datasetVersion: nu
     dispose: vi.fn(),
     ...selection,
   };
-  const controller = createGisPersonController({ map, context, visual });
+  const controller = createGisPersonController({ map, context, visual, isNarrativeActive, closeArchive });
   const emit = (key, value) => {
     state[key === "personSelection" ? "snapshot" : "groups"] = value;
     listeners.get(key)?.(value);
   };
-  return { map, context, visual, controller, emit };
+  return { map, context, visual, controller, emit, closeArchive };
 }
 
 function setupImmediate({ snapshot, groups }) {
@@ -126,6 +126,31 @@ describe("GIS person controller", () => {
     await Promise.resolve();
     expect(d.context.selectPerson).not.toHaveBeenCalled();
     expect(d.context.clearPerson).not.toHaveBeenCalled();
+  });
+
+  test("an active narrative suppresses map people clicks and clears the acknowledged selection with its archive", async () => {
+    const d = setup({
+      snapshot: { personId: "p-1", datasetVersion: "v1", revision: 2 },
+      isNarrativeActive: () => true,
+    });
+    expect(d.controller.handleMapClick({ point: { x: 1, y: 2 } }, [{ source: "nli.people", properties: { pid: "p-2" } }])).toBe(false);
+    await Promise.resolve();
+    expect(d.context.selectPerson).not.toHaveBeenCalled();
+    expect(d.context.clearPerson).toHaveBeenCalledTimes(1);
+    expect(d.visual.hide).toHaveBeenCalled();
+    expect(d.closeArchive).toHaveBeenCalledTimes(1);
+  });
+
+  test("an active narrative clears incoming person renders and ordinary selection resumes after exit", async () => {
+    let active = true;
+    const d = setup({ isNarrativeActive: () => active });
+    d.emit("personSelection", { personId: "p-1", datasetVersion: "v1", revision: 1 });
+    await Promise.resolve();
+    expect(d.visual.show).not.toHaveBeenCalled();
+    active = false;
+    d.emit("personSelection", { personId: "p-1", datasetVersion: "v1", revision: 2 });
+    await Promise.resolve();
+    expect(d.visual.show).toHaveBeenCalledWith(expect.objectContaining({ pid: "p-1" }), expect.any(Object));
   });
 
   test("resolves and preserves acknowledged shared selection while the people layer is hidden", async () => {

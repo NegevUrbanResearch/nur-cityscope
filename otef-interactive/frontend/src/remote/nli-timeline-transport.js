@@ -305,6 +305,7 @@ export function isNliRouteFlowActive(clock, options = {}) {
  *   playDisabled?: boolean,
  *   stepScrubDisabled?: boolean,
  *   presentationActive?: boolean,
+ *   narrativeActive?: boolean,
  *   displayBeats?: number[],
  *   visibleMembership?: string[],
  *   lineFeatures?: object[],
@@ -371,7 +372,13 @@ export function renderNliTimelineTransport(clock, options = {}) {
 </div>`;
 }
 
-export function nliTransportSheetHtml(selected, clock, cache, presentationActive) {
+export function nliTransportSheetHtml(
+  selected,
+  clock,
+  cache,
+  presentationActive,
+  narrativeActive = false,
+) {
   if (!selected || selected.id !== "nli") return "";
   const visible = nliPlayableIdsFromGroups([selected]);
   const cacheReady = nliCacheReadyForIds(cache, visible);
@@ -510,6 +517,10 @@ export const nliTimelineHostMethods = {
     return !!(slideshow && slideshow.type === "start");
   },
 
+  _isNliControlDisabled() {
+    return this._isPresentationActive();
+  },
+
   _visibleNliPlayableIds() {
     return nliPlayableIdsFromGroups(this.getEffectiveGroupsForView());
   },
@@ -636,7 +647,7 @@ export const nliTimelineHostMethods = {
   },
 
   async handleNliTimelinePlay() {
-    if (this._isPresentationActive()) return;
+    if (this._isNliControlDisabled()) return;
     const clock = this._liveNliClock();
     const now = nliNowMs();
     const vis = evaluateClock(clock, now);
@@ -663,18 +674,18 @@ export const nliTimelineHostMethods = {
   },
 
   async handleNliTimelineStop() {
-    if (this._isPresentationActive()) return;
+    if (this._isNliControlDisabled()) return;
     await this._patchNliClock(stopNliClock(this._liveNliClock()));
   },
 
   async handleNliTimelineLoop() {
-    if (this._isPresentationActive()) return;
+    if (this._isNliControlDisabled()) return;
     const clock = this._liveNliClock();
     await this._patchNliClock(setNliLoop(clock, !clock.loop));
   },
 
   async handleNliTimelineStep(delta) {
-    if (this._isPresentationActive()) return;
+    if (this._isNliControlDisabled()) return;
     const clock = this._liveNliClock();
     const visible = this._visibleNliPlayableIds();
     if (visible.length === 0) return;
@@ -691,7 +702,7 @@ export const nliTimelineHostMethods = {
   },
 
   handleNliTimelineScrubPointerDown(clientX) {
-    if (this._isPresentationActive()) return;
+    if (this._isNliControlDisabled()) return;
     const clock = this._liveNliClock();
     const visible = this._visibleNliPlayableIds();
     const cacheIds = clock.phase === "idle" ? visible : clock.membership.length ? clock.membership : visible;
@@ -713,7 +724,7 @@ export const nliTimelineHostMethods = {
   },
 
   handleNliTimelineScrubPointerMove(clientX) {
-    if (this._isPresentationActive()) return;
+    if (this._isNliControlDisabled()) return;
     const track = this._nliScrubEl;
     if (!track || !this._nliScrub) return;
     const clock = this._readNliClock();
@@ -724,7 +735,7 @@ export const nliTimelineHostMethods = {
   },
 
   async handleNliTimelineScrubPointerUp(beatIndex) {
-    if (this._isPresentationActive()) return;
+    if (this._isNliControlDisabled()) return;
     const clock = this._liveNliClock();
     const visible = this._visibleNliPlayableIds();
     const cacheIds = clock.phase === "idle" ? visible : clock.membership.length ? clock.membership : visible;
@@ -750,7 +761,7 @@ export const nliTimelineHostMethods = {
   },
 
   async handleNliTimelineScrubPointerCancel() {
-    if (this._isPresentationActive()) return;
+    if (this._isNliControlDisabled()) return;
     const scrub = this._nliScrub;
     this._nliScrub = null;
     if (!scrub || !scrub.fromPlaying) {

@@ -56,11 +56,23 @@ export const NLI_DISPLAY_PROFILES = Object.freeze({
     radiusMultiplier: 1,
     routeScale: 1,
     textScaleMultiplier: 1,
+    narrativeFocus: Object.freeze({
+      haloRadius: 9,
+      haloStrokeWidth: 2,
+      textSize: 16,
+      textHaloWidth: 1.5,
+    }),
   }),
   projection: Object.freeze({
     lineWidthMultiplier: 1.2,
     radiusMultiplier: 1.15,
     routeScale: 1.15,
     textScaleMultiplier: 1.1,
+    narrativeFocus: Object.freeze({
+      haloRadius: 6,
+      haloStrokeWidth: 1.5,
+      textSize: 11,
+      textHaloWidth: 1.1,
+    }),
   }),
 });

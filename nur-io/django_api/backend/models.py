@@ -398,6 +398,8 @@ class OTEFViewportState(models.Model):
 
     person_selection = models.JSONField(default=dict, blank=True)
 
+    narrative_state = models.JSONField(default=dict, blank=True)
+
     basemap = models.CharField(max_length=16, default="osm")
 
     updated_at = models.DateTimeField(auto_now=True)

@@ -139,36 +139,67 @@
                   aria-label="בחירת מפת רקע"
                   aria-labelledby="basemapControlTitle"
                 >
-                  <button
-                    type="button"
-                    class="basemap-button is-active"
-                    id="basemapOsm"
-                    data-basemap="osm"
-                    data-i18n="basemapOsm"
-                    aria-pressed="true"
+                  <div class="basemap-satellite-wrapper">
+                    <div class="basemap-primary-row">
+                    <button
+                      type="button"
+                      class="basemap-button is-active"
+                      id="basemapOsm"
+                      data-basemap="osm"
+                      data-i18n="basemapOsm"
+                      aria-pressed="true"
+                    >
+                      רגילה
+                    </button>
+                    <div class="basemap-satellite-wrapper">
+                      <button
+                        type="button"
+                        class="basemap-button basemap-satellite-parent"
+                      id="basemapSatellite"
+                      data-basemap="satellite"
+                      aria-expanded="false"
+                      aria-controls="basemapSatelliteVariants"
+                      aria-pressed="false"
+                    >
+                      <span data-i18n="basemapSatellite">לוויין</span>
+                      <span class="basemap-disclosure-indicator" aria-hidden="true"></span>
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      class="basemap-button"
+                      id="basemapDark"
+                      data-basemap="dark"
+                      data-i18n="basemapDark"
+                      aria-pressed="false"
+                    >
+                      כהה
+                    </button>
+                    </div>
+                    <div
+                    class="basemap-satellite-variants"
+                    id="basemapSatelliteVariants"
+                    role="group"
+                    data-i18n-aria="basemapSatelliteVariantsAria"
+                    aria-label="סוג תצלום לוויין"
+                    hidden
                   >
-                    רגילה
-                  </button>
-                  <button
-                    type="button"
-                    class="basemap-button"
-                    id="basemapSatellite"
-                    data-basemap="satellite"
-                    data-i18n="basemapSatellite"
-                    aria-pressed="false"
-                  >
-                    לוויין
-                  </button>
-                  <button
-                    type="button"
-                    class="basemap-button"
-                    id="basemapDark"
-                    data-basemap="dark"
-                    data-i18n="basemapDark"
-                    aria-pressed="false"
-                  >
-                    כהה
-                  </button>
+                    <button
+                      type="button"
+                      class="basemap-button basemap-variant-button"
+                      data-basemap="satellite"
+                      data-i18n="basemapSatelliteColor"
+                      aria-pressed="false"
+                    >צבע</button>
+                    <button
+                      type="button"
+                      class="basemap-button basemap-variant-button"
+                      data-basemap="satellite_bw"
+                      data-i18n="basemapSatelliteBw"
+                      aria-pressed="false"
+                    >שחור־לבן</button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div class="sheet-content" id="layerPanelContent">

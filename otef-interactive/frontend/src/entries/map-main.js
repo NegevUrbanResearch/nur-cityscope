@@ -7,7 +7,9 @@ import { attachGisFeaturePopups } from "../map/maplibre-gis-popups.js";
 import { createGisPersonSelection } from "../map/maplibre-person-selection.js";
 import { createNliArchiveCommandBridge, createNliArchiveWindowController } from "../map/nli-archive-window.js";
 import { createGisPersonController } from "../map/maplibre-gis-person-controller.js";
-import { installGisStyleReload } from "./map-main-style-lifecycle.js";
+import { createNarrativePresentation, handleNarrativePresentationCommand } from "../map/nli-narrative-presentation.js";
+import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
+import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
@@ -241,6 +243,7 @@ async function bootstrapMapRuntime() {
     };
     let explainerDebugVisible = false;
     let nliGisClockDebugApi = null;
+    let narrativeController = null;
     const syncContextInvestigation = () => {
       const { groupsAsArray, currentGroups } = gisOverlayGroups();
       const clock =
@@ -260,6 +263,7 @@ async function bootstrapMapRuntime() {
             ? OTEFDataContext.correctedNow()
             : Date.now(),
         getPersonSelection: () => OTEFDataContext.getPersonSelection(),
+        narrativeFocus: narrativeController?.getDefinition?.() || null,
       });
     };
     try {
@@ -339,6 +343,42 @@ async function bootstrapMapRuntime() {
       beginCameraTravel: viewportSync.beginCameraTravel,
     });
     const archiveWindow = createNliArchiveWindowController();
+    const narrativePresentation = createNarrativePresentation(mapContainer, {
+      onResult: (result) => {
+        void OTEFDataContext.narrativePresentationResult(
+          result.outcome,
+          result.narrativeId,
+          result.requestId,
+        );
+      },
+    });
+    narrativeController = createGisNarrativeController({
+      map,
+      dataContext: OTEFDataContext,
+      viewportSync,
+      personVisual,
+      presentation: narrativePresentation,
+      closeArchive: () => archiveWindow.close(),
+      resolveExitCenter: () => resolveCenterFromBounds(OTEFDataContext.getBounds()) || DEFAULT_MAP_CENTER,
+      syncTimeline: syncContextInvestigation,
+    });
+    registerDisposer(() => narrativeController?.dispose?.());
+    registerDisposer(() => narrativePresentation.dispose());
+    registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => narrativeController?.apply(state)));
+    registerDisposer(OTEFDataContext.subscribe("narrativePresentation", (command) => {
+      handleNarrativePresentationCommand({
+        command,
+        definition: narrativeController?.getDefinition?.(),
+        presentation: narrativePresentation,
+        emitUnavailable: (failedCommand) => {
+          void OTEFDataContext.narrativePresentationResult(
+            "unavailable",
+            failedCommand?.narrativeId,
+            failedCommand?.requestId,
+          );
+        },
+      });
+    }));
     const archiveBridge = createNliArchiveCommandBridge({
       windowController: archiveWindow,
       resolvePerson: (personId, datasetVersion) => personVisual.resolve(personId, datasetVersion),
@@ -360,6 +400,8 @@ async function bootstrapMapRuntime() {
       map,
       context: OTEFDataContext,
       visual: personVisual,
+      isNarrativeActive: () => narrativeController?.isActive?.() === true,
+      closeArchive: () => archiveWindow.close(),
       reducedMotion: resolveMotionMode(),
     });
     registerDisposer(() => personController.dispose?.());
@@ -401,7 +443,8 @@ async function bootstrapMapRuntime() {
       }
     }
 
-    const refreshCuratedLayers = async ({ affectedCuratedFullLayerIds, groupsOverride, syncFlow = true } = {}) => {
+    const refreshCuratedLayers = async ({ affectedCuratedFullLayerIds, groupsOverride, syncFlow = true, isCurrent = () => true } = {}) => {
+      if (!isCurrent()) return;
       const rawGroups = groupsOverride ?? OTEFDataContext.getLayerGroups();
       const groupsAsArray = Array.isArray(rawGroups)
         ? rawGroups
@@ -409,6 +452,7 @@ async function bootstrapMapRuntime() {
       const currentGroups = filterGroupsForGisMap(groupsAsArray);
 
       // Apply non-curated layer changes via registry path.
+      if (!isCurrent()) return;
       applyLayerGroupsToMap(map, currentGroups);
       applyStoredNliLabelHeading(map);
       personVisual.bringToFront?.();
@@ -421,6 +465,7 @@ async function bootstrapMapRuntime() {
 
       // Disabled curated IDs must always be detached.
       for (const fullId of previousCuratedIds) {
+        if (!isCurrent()) return;
         if (!enabledCuratedIds.has(fullId)) {
           removeCuratedLayersByPrefix(map, fullId);
           removeCuratedHtmlMarkers(fullId);
@@ -432,6 +477,7 @@ async function bootstrapMapRuntime() {
         const affectedSet = new Set(affectedCuratedFullLayerIds.filter((id) => typeof id === "string"));
         // Remove all affected curated layers first, then re-load affected ids that remain enabled.
         for (const fullId of affectedSet) {
+          if (!isCurrent()) return;
           removeCuratedLayersByPrefix(map, fullId);
           removeCuratedHtmlMarkers(fullId);
         }
@@ -443,55 +489,63 @@ async function bootstrapMapRuntime() {
       }
 
       if (toRefresh.length === 0) {
+        if (!isCurrent()) return;
         if (syncFlow) syncContextFlowAnimations();
         personVisual.bringToFront?.();
         syncPinkLineAxisCompanionForMapLibre(map, groupsAsArray);
+        if (!isCurrent()) return;
+        narrativeController.onStyleLoad?.();
         return;
       }
 
       const maplibregl = await resolveMaplibregl();
       for (const fullId of toRefresh) {
+        if (!isCurrent()) return;
         try {
           await loadCuratedLayerToMapLibre(map, fullId, { maplibregl, force: true });
         } catch (err) {
           console.warn(`[map-main] Failed to load curated layer ${fullId}`, err);
         }
       }
+      if (!isCurrent()) return;
       if (syncFlow) syncContextFlowAnimations();
       personVisual.bringToFront?.();
       syncPinkLineAxisCompanionForMapLibre(map, groupsAsArray);
+      if (!isCurrent()) return;
+      narrativeController.onStyleLoad?.();
     };
 
     // Initial curated load for current layerGroups state (raw groups preserve parking toggle row).
     await refreshCuratedLayers({ groupsOverride: rawInitialLayerGroups });
+    narrativeController.apply(OTEFDataContext.getNarrativeState?.());
 
+    const basemapCoordinator = createGisBasemapStyleCoordinator({
+      map,
+      initialBasemap: currentBasemap,
+      setBasemap: setGISBasemap,
+      personVisual,
+      narrativeController,
+      getLayerGroups: () => OTEFDataContext.getLayerGroups(),
+      refreshLayers: async ({ basemap, groupsOverride, syncFlow = false, isCurrent }) => {
+        if (!isCurrent()) return;
+        currentBasemap = basemap;
+        clearAllLayers(map);
+        activeCuratedIds = new Set();
+        if (!isCurrent()) return;
+        await refreshCuratedLayers({
+          groupsOverride: groupsOverride ?? OTEFDataContext.getLayerGroups(),
+          syncFlow,
+          isCurrent,
+        });
+        if (!isCurrent()) return;
+        if (!syncFlow) syncContextFlowAnimations();
+      },
+    });
+    registerDisposer(() => basemapCoordinator.dispose());
     registerDisposer(
       OTEFDataContext.subscribe("basemap", (basemap) => {
         const nextBasemap = normalizeGisBasemap(basemap);
-        if (nextBasemap === currentBasemap) return;
-
-        const reapplyAfterStyleLoad = async ({ groupsOverride, syncFlow = false } = {}) => {
-          currentBasemap = nextBasemap;
-          clearAllLayers(map);
-          activeCuratedIds = new Set();
-          await refreshCuratedLayers({
-            groupsOverride: groupsOverride ?? OTEFDataContext.getLayerGroups(),
-            syncFlow,
-          });
-          if (!syncFlow) syncContextFlowAnimations();
-        };
-
-        installGisStyleReload({
-          map,
-          refreshLayers: reapplyAfterStyleLoad,
-          personVisual,
-          getLayerGroups: () => OTEFDataContext.getLayerGroups(),
-        });
-
-        if (!setGISBasemap(map, nextBasemap)) return;
-        if (typeof map.once !== "function") {
-          reapplyAfterStyleLoad();
-        }
+        basemapCoordinator.request(nextBasemap);
       }),
     );
 

@@ -12,7 +12,7 @@ export function createCurationApi() {
           ? window.CURATION_WRITE_TOKEN.trim()
           : "";
       const tokenFromStorage =
-        typeof localStorage !== "undefined"
+        typeof localStorage !== "undefined" && typeof localStorage.getItem === "function"
           ? (localStorage.getItem("curation_write_token") || "").trim()
           : "";
       const token = tokenFromWindow || tokenFromStorage;

@@ -64,6 +64,7 @@ async function boot() {
   initRemotePlaceNavigation({
     dataContext: OTEFDataContext,
     isConnected: () => OTEFDataContext.isConnected?.() !== false,
+    narrativeActive: () => !!OTEFDataContext.getNarrativeState?.()?.id,
     canNavigateToPlace: (place) => {
       const centerItm = place?.cameraHint?.centerItm;
       const bounds =

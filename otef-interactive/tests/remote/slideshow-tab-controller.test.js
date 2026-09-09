@@ -22,6 +22,7 @@ import {
   resolveSlideshowPackLabel,
 } from "../../frontend/src/remote/slideshow-tab-controller.js";
 import OTEFDataContext from "../../frontend/src/shared/OTEFDataContext.js";
+import { t } from "../../frontend/src/remote/remote-locale.js";
 
 const EXCLUDED = ["projector_base", "gaza", "curated_moresht_axis"];
 
@@ -208,11 +209,93 @@ describe("slideshow start stops NLI clock", () => {
     expectIdleClockPatchedBeforeStart();
   });
 
+  it("does not mark the slideshow running when its authoritative start command is rejected", async () => {
+    patchSlideshow.mockRejectedValueOnce(Object.assign(
+      new Error("narrative is active"),
+      { status: 409, details: { reason: "narrative_active" } },
+    ));
+    const status = { textContent: "" };
+    const c = controllerWithPacks();
+    c.root = { querySelector: (selector) => selector === "[data-slideshow-status]" ? status : null };
+
+    await c.handleStart();
+
+    expect(c.running).toBe(false);
+    expect(status.textContent).toBe(t("slideshowStartFailed"));
+  });
+
+  it("active narrative disables Start and prevents reciprocal slideshow ownership", async () => {
+    vi.spyOn(OTEFDataContext, "getNarrativeState").mockReturnValue({
+      id: "segev",
+      transition: "enter",
+      revision: 2,
+    });
+    const c = controllerWithPacks();
+    c.root = { innerHTML: "" };
+    c.render();
+    expect(c.root.innerHTML).toMatch(/data-slideshow-start[^>]*disabled/);
+    expect(c.root.innerHTML).toContain("\u05de\u05e6\u05d2\u05ea \u05d4\u05d4\u05e7\u05e8\u05e0\u05d4");
+    await c.handleStart();
+    expect(patchClock).not.toHaveBeenCalled();
+    expect(patchSlideshow).not.toHaveBeenCalled();
+  });
+
   it("handleKeepSettlementNamesChange patches idle clock before restarting slideshow", async () => {
     const c = controllerWithPacks();
     c.running = true;
     await c.handleKeepSettlementNamesChange();
     expectIdleClockPatchedBeforeStart();
+  });
+
+  it("active narrative blocks the keep-names restart even when local running is stale", async () => {
+    vi.spyOn(OTEFDataContext, "getNarrativeState").mockReturnValue({
+      id: "segev",
+      transition: "enter",
+      revision: 2,
+    });
+    const status = { textContent: "" };
+    const c = controllerWithPacks();
+    c.root = { querySelector: (selector) => selector === "[data-slideshow-status]" ? status : null };
+    c.running = true;
+
+    await c.handleKeepSettlementNamesChange();
+
+    expect(patchClock).not.toHaveBeenCalled();
+    expect(patchSlideshow).not.toHaveBeenCalled();
+    expect(status.textContent).toBe(t("slideshowNarrativeDisabled"));
+  });
+
+  it("rechecks narrative ownership after stopping the clock before a restart", async () => {
+    let narrativeActive = false;
+    let releaseClock;
+    vi.spyOn(OTEFDataContext, "getNarrativeState").mockImplementation(() => ({
+      id: narrativeActive ? "segev" : null,
+      transition: narrativeActive ? "enter" : "initial",
+      revision: narrativeActive ? 2 : 0,
+    }));
+    patchClock.mockImplementationOnce(() => new Promise((resolve) => { releaseClock = resolve; }));
+    const c = controllerWithPacks();
+    c.running = true;
+    const restarting = c.handleKeepSettlementNamesChange();
+    narrativeActive = true;
+    releaseClock();
+
+    await restarting;
+
+    expect(patchClock).toHaveBeenCalledTimes(1);
+    expect(patchSlideshow).not.toHaveBeenCalled();
+  });
+
+  it("handles a rejected keep-names restart without an unhandled promise", async () => {
+    patchSlideshow.mockRejectedValueOnce(new Error("restart rejected"));
+    const status = { textContent: "" };
+    const c = controllerWithPacks();
+    c.root = { querySelector: (selector) => selector === "[data-slideshow-status]" ? status : null };
+    c.running = true;
+
+    await expect(c.handleKeepSettlementNamesChange()).resolves.toBeUndefined();
+
+    expect(status.textContent).toBe(t("slideshowStartFailed"));
   });
 
   it("handleStop does not play NLI", async () => {

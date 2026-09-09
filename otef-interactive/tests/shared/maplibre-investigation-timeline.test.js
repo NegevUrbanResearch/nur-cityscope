@@ -340,6 +340,54 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
   });
 
+  it("keeps the authored Be'eri outline visible during narrative focus even when ordinary investigation layers are hidden", async () => {
+    const map = makeOrientationMap();
+    const hidden = [{ id: "nli", layers: [
+      { id: "investigation_polygons", enabled: false },
+      { id: "lines", enabled: false },
+    ] }];
+    const beeriOutline = {
+      type: "Feature",
+      properties: { outlineObjectId: 19, OBJECTID: 19, locations: ["בארי"] },
+      geometry: { type: "Polygon", coordinates: [[[34.45, 31.42], [34.46, 31.42], [34.46, 31.43], [34.45, 31.42]]] },
+    };
+    const labelsSourceId = map.getStyle().layers.find((layer) => layer.id === SHEMOT_LABEL_ID).source;
+    map.getSource(labelsSourceId).data = {
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        properties: { cityname: beeriOutline.properties.locations[0] },
+        geometry: { type: "Point", coordinates: [34.45, 31.42] },
+      }],
+    };
+    const deps = {
+      settlementFeatures: [beeriOutline],
+      narrativeFocus: { focusSettlement: "בארי", focusSettlementOutlineId: 19 },
+      now: () => 0,
+    };
+
+    await syncInvestigationTimelineToMap(map, idleNliClock(), hidden, deps);
+
+    expect(map.getSource("nli-investigation-settlement-impact")).toBeTruthy();
+    expect(map.getSource("nli-investigation-settlement-impact").setData.mock.calls.at(-1)[0]).toEqual({
+      type: "FeatureCollection",
+      features: [beeriOutline],
+    });
+    expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeTruthy();
+    expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity")).toEqual(
+      ["case", ["==", ["get", "OBJECTID"], 19], 1, 0.28],
+    );
+    expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toEqual(
+      ["case", ["==", ["get", "cityname"], "בארי"], 1, 0.35],
+    );
+
+    await syncInvestigationTimelineToMap(map, idleNliClock(), hidden, { ...deps, narrativeFocus: null });
+
+    expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
+    expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity")).toBe(1);
+    expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toBe(1);
+  });
+
   it("does not remount the polygon overlay when the polygons row is off after Stop", async () => {
     const map = makeMap();
     const visible = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];

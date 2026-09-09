@@ -30,6 +30,8 @@ export function createGisPersonController({
   visual,
   getLayerGroups,
   isPeopleLayerEnabled: layerPredicate = isPeopleLayerEnabled,
+  isNarrativeActive = () => false,
+  closeArchive = () => {},
   reducedMotion = false,
 } = {}) {
   let disposed = false;
@@ -39,6 +41,7 @@ export function createGisPersonController({
   let cameraGuard = false;
   let clearRevision = null;
   let peopleEnabled = true;
+  let archiveClosed = false;
   const readGroups = getLayerGroups || context?.getLayerGroups?.bind(context);
 
   const requestClear = (expected = snapshot) => {
@@ -46,17 +49,36 @@ export function createGisPersonController({
     clearRevision = expected.revision;
     Promise.resolve(context?.clearPerson?.()).catch(() => {});
   };
+  const narrativeActive = () => isNarrativeActive?.() === true;
+  const closeOpenArchive = () => {
+    if (archiveClosed) return;
+    archiveClosed = true;
+    closeArchive?.();
+  };
+  const suppressForNarrative = (expected = context?.getPersonSelection?.() || snapshot) => {
+    generation += 1;
+    activePerson = null;
+    cameraGuard = false;
+    visual?.hide?.();
+    closeOpenArchive();
+    requestClear(expected);
+  };
   const clear = () => {
     generation += 1;
     activePerson = null;
     cameraGuard = false;
     visual?.hide?.();
+    closeOpenArchive();
     requestClear(context?.getPersonSelection?.() || snapshot);
   };
   const renderSelection = (next) => {
     if (disposed) return;
     snapshot = next || { personId: null, datasetVersion: null, revision: 0 };
     const expected = snapshot;
+    if (narrativeActive()) {
+      suppressForNarrative(expected);
+      return;
+    }
     generation += 1;
     const token = generation;
     activePerson = null;
@@ -66,8 +88,14 @@ export function createGisPersonController({
       return;
     }
     clearRevision = null;
+    archiveClosed = false;
+    closeOpenArchive();
     Promise.resolve(visual?.resolve?.(expected.personId, expected.datasetVersion)).then((person) => {
       if (disposed || token !== generation || !sameSelection(snapshot, expected)) return;
+      if (narrativeActive()) {
+        suppressForNarrative(expected);
+        return;
+      }
       if (!person) {
         visual.hide?.();
         requestClear(snapshot);
@@ -84,6 +112,10 @@ export function createGisPersonController({
   };
   const handleMapClick = (event, renderedFeatures) => {
     if (disposed || !event?.point) return false;
+    if (narrativeActive()) {
+      suppressForNarrative();
+      return false;
+    }
     const features = Array.isArray(renderedFeatures) ? renderedFeatures : (() => {
       const { x, y } = event.point;
       return map?.queryRenderedFeatures?.([[x - HIT_PADDING_PX, y - HIT_PADDING_PX], [x + HIT_PADDING_PX, y + HIT_PADDING_PX]]) || [];
@@ -96,6 +128,7 @@ export function createGisPersonController({
     }
     const pid = personId(hit);
     generation += 1;
+    archiveClosed = false;
     visual?.hide?.();
     const token = generation;
     Promise.resolve(visual?.load?.()).then((runtime) => {
@@ -106,6 +139,10 @@ export function createGisPersonController({
   };
   const onMoveEnd = () => {
     if (disposed || !activePerson) return;
+    if (narrativeActive()) {
+      suppressForNarrative();
+      return;
+    }
     if (cameraGuard) {
       cameraGuard = false;
       return;

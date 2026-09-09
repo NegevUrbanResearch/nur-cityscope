@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import json
+import copy
 import math
 import os
 import re
@@ -50,6 +51,13 @@ from .otef_person_selection import (
     parse_person_selection_command,
     transition_person_selection,
 )
+from .otef_narrative import (
+    NARRATIVE_IDS,
+    StaleNarrativeRevision,
+    normalize_narrative_state,
+    transition_narrative_scene,
+)
+from .otef_investigation_clock import idle_investigation_clock
 
 
 def _normalize_projection_slideshow_patch(raw):
@@ -128,28 +136,15 @@ _INVESTIGATION_CLOCK_PHASES = ("idle", "playing", "paused", "ended")
 _INVESTIGATION_CLOCK_SEEK_KINDS = ("none", "jump")
 
 
-def _idle_investigation_clock(loop=False, revision=0):
-    return {
-        "phase": "idle",
-        "membership": [],
-        "beats": [],
-        "loop": bool(loop),
-        "positionMs": 0,
-        "anchorMs": None,
-        "seekKind": "none",
-        "revision": int(revision),
-    }
-
-
 def _stamp_investigation_clock_server_now(clock):
-    stamped = dict(clock) if isinstance(clock, dict) else _idle_investigation_clock()
+    stamped = dict(clock) if isinstance(clock, dict) else idle_investigation_clock()
     stamped["serverNowMs"] = int(time.time() * 1000)
     return stamped
 
 
 def _investigation_clock_for_response(raw):
     if not isinstance(raw, dict) or raw.get("phase") not in _INVESTIGATION_CLOCK_PHASES:
-        return _stamp_investigation_clock_server_now(_idle_investigation_clock())
+        return _stamp_investigation_clock_server_now(idle_investigation_clock())
     return _stamp_investigation_clock_server_now(raw)
 
 
@@ -192,7 +187,7 @@ def _normalize_investigation_clock_patch(raw):
     if not isinstance(raw.get("loop"), bool):
         return None, _clock_patch_error("investigation_clock.loop must be a boolean")
     if phase == "idle":
-        return _idle_investigation_clock(loop=raw["loop"]), None
+        return idle_investigation_clock(loop=raw["loop"]), None
 
     required = {
         "membership",
@@ -546,6 +541,24 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(table__name=table_name)
         return queryset
 
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {"error": "Use the by-table endpoint for viewport state updates"},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"error": "Use the by-table endpoint for viewport state updates"},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {"error": "Viewport state cannot be deleted"},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
     def _emit_trace_event(self, trace_id, stage, table_name=None, extra=None):
         if not isinstance(trace_id, str) or not trace_id.strip():
             return
@@ -578,6 +591,240 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         captured = dict(snapshot)
         transaction.on_commit(
             lambda: self._broadcast_person_selection(table_name, captured, dict(metadata or {}))
+        )
+
+    def _broadcast_narrative_scene(self, table_name, scene, metadata):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_narrative_scene_changed",
+                "table": table_name,
+                "scene": scene,
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+                "traceId": meta.get("traceId"),
+            },
+        })
+
+    def _schedule_narrative_scene_broadcast(self, table_name, scene, metadata):
+        captured_scene = copy.deepcopy(scene)
+        captured_metadata = dict(metadata or {})
+        transaction.on_commit(
+            lambda: self._broadcast_narrative_scene(
+                table_name, captured_scene, captured_metadata
+            )
+        )
+
+    def _broadcast_narrative_presentation(self, table_name, event_type, payload):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {"type": event_type, "table": table_name, **payload},
+        })
+
+    def _bounded_optional_string(self, payload, field):
+        value = payload.get(field)
+        if value is None:
+            return None, None
+        if not isinstance(value, str) or not value.strip() or len(value.strip()) > 128:
+            return None, f"{field} must be a bounded nonempty string"
+        return value.strip(), None
+
+    def _set_narrative_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        if "narrativeId" not in payload:
+            return Response(
+                {"error": "narrativeId is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        narrative_id = payload.get("narrativeId")
+        if narrative_id is not None and (
+            not isinstance(narrative_id, str) or narrative_id not in NARRATIVE_IDS
+        ):
+            return Response(
+                {"error": "unsupported narrativeId"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        expected_revision = payload.get("expectedRevision")
+        if (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision < 0
+        ):
+            return Response(
+                {"error": "expectedRevision must be a nonnegative integer"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            locked = OTEFViewportState.objects.select_for_update().get(table=table)
+            current = normalize_narrative_state(locked.narrative_state)
+            if current["revision"] != expected_revision:
+                return Response(
+                    {
+                        "error": "stale narrative revision",
+                        "reason": "stale",
+                        "narrative_state": current,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if narrative_id is not None:
+                slideshow = locked.projection_slideshow
+                if isinstance(slideshow, dict) and slideshow.get("type") == "start":
+                    return Response(
+                        {
+                            "error": "narrative unavailable while projection slideshow is active",
+                            "reason": "projection_active",
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+            try:
+                scene = transition_narrative_scene(
+                    locked, narrative_id, expected_revision
+                )
+            except StaleNarrativeRevision as exc:
+                return Response(
+                    {
+                        "error": str(exc),
+                        "reason": "stale",
+                        "narrative_state": exc.current,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            update_fields = ["narrative_state", "basemap", "updated_at"]
+            if narrative_id is not None:
+                update_fields.extend(["investigation_clock", "person_selection"])
+
+            locked.save(update_fields=list(dict.fromkeys(update_fields)))
+            self._schedule_narrative_scene_broadcast(
+                table.name,
+                scene,
+                {
+                    "sourceId": payload.get("sourceId"),
+                    "timestamp": payload.get("timestamp"),
+                    "traceId": payload.get("traceId"),
+                },
+            )
+        return Response({"status": "ok", "action": "set_narrative", "scene": scene})
+
+    def _narrative_presentation_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        presentation_action = payload.get("presentationAction")
+        narrative_id = payload.get("narrativeId")
+        request_id, request_error = self._bounded_optional_string(payload, "requestId")
+        source_id, source_error = self._bounded_optional_string(payload, "sourceId")
+        if presentation_action not in ("open", "close"):
+            return Response(
+                {"error": "presentationAction must be open or close"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(narrative_id, str) or narrative_id not in NARRATIVE_IDS:
+            return Response(
+                {"error": "unsupported narrativeId"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if request_error or request_id is None or source_error:
+            return Response(
+                {"error": request_error or source_error or "requestId is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        command = {
+            "presentationAction": presentation_action,
+            "narrativeId": narrative_id,
+            "requestId": request_id,
+            "sourceId": source_id,
+            "acknowledged": True,
+        }
+        if presentation_action == "open":
+            with transaction.atomic():
+                locked = OTEFViewportState.objects.select_for_update().get(table=table)
+                active = normalize_narrative_state(locked.narrative_state)
+                if active["id"] != narrative_id:
+                    return Response(
+                        {"error": "narrative presentation requires the active narrative"},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                transaction.on_commit(
+                    lambda: self._broadcast_narrative_presentation(
+                        table.name,
+                        "otef_narrative_presentation_command",
+                        dict(command),
+                    )
+                )
+        else:
+            transaction.on_commit(
+                lambda: self._broadcast_narrative_presentation(
+                    table.name,
+                    "otef_narrative_presentation_command",
+                    dict(command),
+                )
+            )
+        return Response(
+            {
+                "status": "ok",
+                "action": "narrative_presentation",
+                "requestId": request_id,
+                "acknowledged": True,
+            }
+        )
+
+    def _narrative_presentation_result(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        outcome = payload.get("outcome")
+        narrative_id = payload.get("narrativeId")
+        request_id, request_error = self._bounded_optional_string(payload, "requestId")
+        source_id, source_error = self._bounded_optional_string(payload, "sourceId")
+        if outcome not in ("opened", "closed", "unavailable"):
+            return Response(
+                {"error": "invalid narrative presentation outcome"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(narrative_id, str) or narrative_id not in NARRATIVE_IDS:
+            return Response(
+                {"error": "unsupported narrativeId"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if request_error or request_id is None or source_error:
+            return Response(
+                {"error": request_error or source_error or "requestId is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        result = {
+            "outcome": outcome,
+            "narrativeId": narrative_id,
+            "requestId": request_id,
+            "sourceId": source_id,
+            "acknowledged": True,
+        }
+        transaction.on_commit(
+            lambda: self._broadcast_narrative_presentation(
+                table.name,
+                "otef_narrative_presentation_result",
+                dict(result),
+            )
+        )
+        return Response(
+            {
+                "status": "ok",
+                "action": "narrative_presentation_result",
+                "requestId": request_id,
+                "acknowledged": True,
+            }
         )
 
     def _broadcast_archive_window_command(self, table_name, command):
@@ -660,6 +907,16 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             locked = lock_person_selection_state(table.otef_viewport)
+            narrative = normalize_narrative_state(locked.narrative_state)
+            if narrative["id"] is not None:
+                return Response(
+                    {
+                        "error": "person selection is unavailable while a narrative is active",
+                        "reason": "narrative_active",
+                        "narrative_state": narrative,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
             snapshot, changed, error, reason = transition_person_selection(
                 locked,
                 command["target"],
@@ -896,6 +1153,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
 
     @action(detail=False, methods=['get', 'patch'], url_path='by-table/(?P<table_name>[^/.]+)')
+    @transaction.atomic
     def by_table(self, request, table_name=None):
         """
         GET/PATCH state by table name.
@@ -916,6 +1174,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         )
 
         if request.method == 'PATCH':
+            state = OTEFViewportState.objects.select_for_update().get(pk=state.pk)
             request_viewport = (
                 request.data.get('viewport')
                 if isinstance(request.data.get('viewport'), dict)
@@ -927,8 +1186,52 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 "django.patch.received",
                 table_name=table_name,
             )
+            validated_projection = None
+            validated_clock = None
+            if 'basemap' in request.data:
+                basemap = request.data['basemap']
+                if basemap not in ('osm', 'satellite', 'satellite_bw', 'dark'):
+                    return Response(
+                        {
+                            'error': (
+                                'basemap must be "osm", "satellite", '
+                                '"satellite_bw", or "dark"'
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            if 'projection_slideshow' in request.data:
+                validated_projection, err = _normalize_projection_slideshow_patch(
+                    request.data['projection_slideshow']
+                )
+                if err is not None:
+                    return err
+            if 'investigation_clock' in request.data:
+                validated_clock, err = _normalize_investigation_clock_patch(
+                    request.data['investigation_clock']
+                )
+                if err is not None:
+                    return err
+
+            narrative = normalize_narrative_state(state.narrative_state)
+            if narrative["id"] is not None:
+                conflict = (
+                    'basemap' in request.data
+                    or (
+                        validated_projection is not None
+                        and validated_projection.get("type") == "start"
+                    )
+                )
+                if conflict:
+                    return Response(
+                        {
+                            "error": "state mutation is unavailable while a narrative is active",
+                            "reason": "narrative_active",
+                            "narrative_state": narrative,
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
             changed_fields = []
-            selection_cleared = False
             clock_persisted = False
 
             # Partial updates for each field
@@ -955,11 +1258,6 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
             if 'basemap' in request.data:
                 basemap = request.data['basemap']
-                if basemap not in ('osm', 'satellite', 'dark'):
-                    return Response(
-                        {'error': 'basemap must be "osm", "satellite", or "dark"'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
                 state.basemap = basemap
                 changed_fields.append('basemap')
 
@@ -991,11 +1289,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 changed_fields.append('workshop_auto_publish')
 
             if 'projection_slideshow' in request.data:
-                normalized, err = _normalize_projection_slideshow_patch(
-                    request.data['projection_slideshow']
-                )
-                if err is not None:
-                    return err
+                normalized = validated_projection
                 prev = state.projection_slideshow or {}
                 rev = 0
                 if isinstance(prev, dict):
@@ -1008,11 +1302,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 changed_fields.append('projection_slideshow')
 
             if 'investigation_clock' in request.data:
-                normalized, err = _normalize_investigation_clock_patch(
-                    request.data['investigation_clock']
-                )
-                if err is not None:
-                    return err
+                normalized = validated_clock
                 with transaction.atomic():
                     locked = lock_person_selection_state(state)
                     for field in changed_fields:
@@ -1027,7 +1317,6 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                         )
                         if selection_changed:
                             self._schedule_person_selection_broadcast(table_name, cleared, {"sourceId": request.data.get("sourceId"), "timestamp": request.data.get("timestamp"), "traceId": trace_id})
-                            selection_cleared = True
                     prev_clock = locked.investigation_clock or {}
                     try:
                         rev = int(prev_clock.get('revision') or 0) if isinstance(prev_clock, dict) else 0
@@ -1064,14 +1353,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 'timestamp': request.data.get('timestamp') or request_viewport.get('timestamp'),
                 'traceId': trace_id,
             }
-            if selection_cleared and 'investigation_clock' in changed_fields:
-                transaction.on_commit(
-                    lambda: self._broadcast_state_change(
-                        table_name, list(changed_fields), dict(broadcast_metadata)
-                    )
+            transaction.on_commit(
+                lambda: self._broadcast_state_change(
+                    table_name, list(changed_fields), dict(broadcast_metadata)
                 )
-            else:
-                self._broadcast_state_change(table_name, changed_fields, broadcast_metadata)
+            )
 
         # Return state with defaults applied (for both GET and PATCH)
         response_data = {
@@ -1098,6 +1384,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 state.investigation_clock
             ),
             'person_selection': normalize_person_selection(state.person_selection),
+            'narrative_state': normalize_narrative_state(state.narrative_state),
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -1722,6 +2009,15 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             table_name=table_name,
             extra={"action": action},
         )
+
+        if action == "set_narrative":
+            return self._set_narrative_command(table, request)
+
+        if action == "narrative_presentation":
+            return self._narrative_presentation_command(table, request)
+
+        if action == "narrative_presentation_result":
+            return self._narrative_presentation_result(table, request)
 
         if action in ("select_person", "clear_person"):
             return self._selection_command(table, action, request)

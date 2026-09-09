@@ -14,6 +14,7 @@ import {
   nliBeatPctOccupiedHour,
   isNliRouteFlowActive,
 } from "../../frontend/src/remote/nli-timeline-transport.js";
+import { LOCALE_EVENT } from "../../frontend/src/remote/remote-locale.js";
 import {
   clockPositionMs,
   endNliClock,
@@ -522,6 +523,111 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
   });
 
+  test("active narrative leaves timeline controls and handlers enabled", async () => {
+    const playing = playNliClock(idleNliClock(), [LINES_ID], [400, 740], 1000);
+    const ctx = stubContext({
+      getInvestigationClock: () => playing,
+      getNarrativeState: () => ({ id: "segev", transition: "enter", revision: 2 }),
+    });
+    const html = renderNliTimelineTransport(playing, {
+      displayBeats: [400, 740],
+      narrativeActive: true,
+    });
+    expect(html.match(/ disabled/g) || []).toEqual([]);
+    expect(html).toContain('aria-disabled="false"');
+    const c = makeController();
+    await c.handleNliTimelinePlay();
+    await c.handleNliTimelineStop();
+    await c.handleNliTimelineLoop();
+    await c.handleNliTimelineStep(1);
+    c.handleNliTimelineScrubPointerDown();
+    await c.handleNliTimelineScrubPointerUp(1);
+    expect(ctx.patchInvestigationClock).toHaveBeenCalled();
+  });
+
+  test("nli sheet HTML stays enabled while segev narrative is active", () => {
+    stubContext({
+      getNarrativeState: () => ({ id: "segev", transition: "enter", revision: 2 }),
+    });
+    const c = makeController();
+    const html = c.renderLayersTabContent(nliGroups(), {});
+    expect(html).toContain("data-nli-tl-play");
+    expect(html).toContain("data-nli-tl-stop");
+    expect(html).toContain("data-nli-tl-loop");
+    expect(html).toContain("data-nli-tl-step-back");
+    expect(html).toContain("data-nli-tl-step-forward");
+    expect(html).toContain("data-nli-tl-scrub");
+    expect(html).not.toMatch(/data-nli-tl-(?:play|stop|loop|step-back|step-forward)[^>]*\sdisabled/);
+    expect(html).toMatch(/class="nli-tl-sheet" aria-disabled="false"/);
+  });
+
+  test("LayerSheet destroy releases context, presentation, resize, locale, and timer resources", () => {
+    const disposeNarrative = vi.fn();
+    const disposeClock = vi.fn();
+    const presentationDestroy = vi.fn();
+    const resizeDisconnect = vi.fn();
+    const removeEventListener = vi.fn();
+    vi.stubGlobal("window", { removeEventListener });
+    const ctx = stubContext({
+      subscribe: vi.fn((topic) => topic === "narrativeState" ? disposeNarrative : disposeClock),
+    });
+    const c = makeController({
+      _subscriptions: [],
+      _nliNarrativePresentationController: { destroy: presentationDestroy },
+      _nliDockResizeObserver: { disconnect: resizeDisconnect },
+      _remoteLocaleHandler: vi.fn(),
+      _nliEndTimer: setTimeout(() => {}, 10_000),
+      _nliPlayheadTimer: setTimeout(() => {}, 10_000),
+    });
+    c._subscribeDataContext("narrativeState", vi.fn());
+    c._subscribeDataContext("investigationClock", vi.fn());
+
+    c.destroy();
+
+    expect(ctx.subscribe).toHaveBeenCalledTimes(2);
+    expect(disposeNarrative).toHaveBeenCalledTimes(1);
+    expect(disposeClock).toHaveBeenCalledTimes(1);
+    expect(presentationDestroy).toHaveBeenCalledTimes(1);
+    expect(resizeDisconnect).toHaveBeenCalledTimes(1);
+    expect(removeEventListener).toHaveBeenCalledWith(LOCALE_EVENT, c._remoteLocaleHandler);
+    expect(c._nliEndTimer).toBeNull();
+    expect(c._nliPlayheadTimer).toBeNull();
+  });
+
+  test("dock measurement follows dynamic feedback and locale-sized replacements", () => {
+    const observers = [];
+    vi.stubGlobal("ResizeObserver", class ResizeObserver {
+      constructor(callback) {
+        this.callback = callback;
+        this.observe = vi.fn();
+        this.disconnect = vi.fn();
+        observers.push(this);
+      }
+    });
+    const firstStyle = { setProperty: vi.fn() };
+    const firstDock = { getBoundingClientRect: () => ({ height: 181.2 }) };
+    const firstVariant = { style: firstStyle };
+    const firstContent = {
+      querySelector: (selector) => selector === ".nli-bottom-dock" ? firstDock : firstVariant,
+    };
+    const c = makeController({ _nliDockResizeObserver: null });
+
+    c._syncNliDockMeasurement(firstContent);
+    observers[0].callback([{ target: firstDock, contentRect: { height: 244.1 } }]);
+    expect(firstStyle.setProperty).toHaveBeenLastCalledWith("--nli-bottom-dock-height", "245px");
+
+    const secondStyle = { setProperty: vi.fn() };
+    const secondDock = { getBoundingClientRect: () => ({ height: 267.4 }) };
+    const secondVariant = { style: secondStyle };
+    const secondContent = {
+      querySelector: (selector) => selector === ".nli-bottom-dock" ? secondDock : secondVariant,
+    };
+    c._syncNliDockMeasurement(secondContent);
+    expect(observers[0].disconnect).toHaveBeenCalledTimes(1);
+    expect(secondStyle.setProperty).toHaveBeenCalledWith("--nli-bottom-dock-height", "268px");
+    expect(observers[1].observe).toHaveBeenCalledWith(secondDock);
+  });
+
   test("play matrix: idle plays, playing pauses, paused resumes, ended replays", async () => {
     const ctx = stubContext();
     const c = makeController();
@@ -705,18 +811,19 @@ describe("nli timeline transport", () => {
     expect(octHtml).not.toContain("nli-tl-sheet");
   });
 
-  test("nli-tl-sheet is absolute inside layers-variant-c not fixed", () => {
+  test("nli bottom dock is absolute while timeline is its bottom flow child", () => {
     const css = fs.readFileSync(
       path.resolve(__dirname, "../../frontend/css/remote-styles.css"),
       "utf8",
     );
+    const dockBlock = css.match(/\.nli-bottom-dock\s*\{[^}]+\}/);
     const sheetBlock = css.match(/\.nli-tl-sheet\s*\{[^}]+\}/);
-    expect(sheetBlock).not.toBeNull();
-    expect(sheetBlock[0]).toMatch(/position:\s*absolute/);
-    expect(sheetBlock[0]).toMatch(/left:\s*0/);
-    expect(sheetBlock[0]).toMatch(/right:\s*0/);
-    expect(sheetBlock[0]).toMatch(/bottom:\s*0/);
-    expect(sheetBlock[0]).not.toMatch(/position:\s*fixed/);
+    expect(dockBlock).not.toBeNull();
+    expect(dockBlock[0]).toMatch(/position:\s*absolute/);
+    expect(dockBlock[0]).toMatch(/left:\s*0/);
+    expect(dockBlock[0]).toMatch(/right:\s*0/);
+    expect(dockBlock[0]).toMatch(/bottom:\s*0/);
+    expect(sheetBlock[0]).not.toMatch(/position:\s*absolute/);
     expect(css).toMatch(/\.layers-variant-c\s*\{[^}]*position:\s*relative/s);
   });
 
@@ -1080,7 +1187,7 @@ describe("nli timeline transport", () => {
       path.resolve(__dirname, "../../frontend/src/remote/layer-sheet-controller.js"),
       "utf8",
     );
-    expect(src).toMatch(/subscribe\("investigationClock"[\s\S]*_syncNliPlayheadTicker/);
+    expect(src).toMatch(/_subscribeDataContext\("investigationClock"[\s\S]*_syncNliPlayheadTicker/);
     expect(src).toMatch(/focusedGroupId === "nli"[\s\S]*_syncNliPlayheadTicker/);
   });
 });

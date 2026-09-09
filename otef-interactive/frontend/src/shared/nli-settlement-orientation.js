@@ -121,9 +121,14 @@ export function collectOrientationTargets(map) {
       if (layer.type === "symbol") layers.push({ id, property: "text-opacity", role: "label" });
       continue;
     }
-    if (id.startsWith(YISHUVIM_LAYER_PREFIX) || id.startsWith(LOCATIONS_LAYER_PREFIX)) {
+    if (id.startsWith(YISHUVIM_LAYER_PREFIX)) {
       const property = opacityPropertyForType(layer.type);
       if (property) layers.push({ id, property, role: "geom" });
+      continue;
+    }
+    if (id.startsWith(LOCATIONS_LAYER_PREFIX)) {
+      const property = opacityPropertyForType(layer.type);
+      if (property) layers.push({ id, property, role: "location-line" });
     }
   }
   return { layers, shemotSourceId };
@@ -157,8 +162,20 @@ export function achievedSettlementCitynames(outlineIds, settlementFeatures, know
  * Dim ישובים + Locations_Lines while playing/paused; light achieved שמות
  * labels. Idle/ended restore opacity 1 and drop the dim expression.
  */
-export function applySettlementOrientationPaint(map, { phase, achievedCitynames, layers } = {}) {
+export function applySettlementOrientationPaint(map, {
+  phase,
+  achievedCitynames,
+  layers,
+  focusCityname,
+  focusOutlineObjectId,
+  mode,
+} = {}) {
   if (!map) return;
+  const narrativeFocus =
+    mode === "narrative" &&
+    typeof focusCityname === "string" &&
+    focusCityname.length > 0 &&
+    focusOutlineObjectId != null;
   const dim = phase === "playing" || phase === "paused";
   const geomOpacity = dim ? PLAY_OPACITY : FULL_OPACITY;
   const citynames = [
@@ -168,14 +185,21 @@ export function applySettlementOrientationPaint(map, { phase, achievedCitynames,
         ? achievedCitynames
         : []),
   ].map(String);
-  const textOpacity = dim
+  const textOpacity = narrativeFocus
+    ? ["case", ["==", ["get", "cityname"], focusCityname], FULL_OPACITY, DIM_TEXT_OPACITY]
+    : dim
     ? ["case", ["in", ["get", "cityname"], ["literal", citynames]], FULL_OPACITY, DIM_TEXT_OPACITY]
     : FULL_OPACITY;
   const targets = Array.isArray(layers) ? layers : collectOrientationTargets(map).layers;
 
   for (const target of targets) {
     if (!target?.id || !target.property) continue;
-    const value = target.role === "label" ? textOpacity : geomOpacity;
+    if (narrativeFocus && target.role === "location-line") continue;
+    const value = target.role === "label"
+      ? textOpacity
+      : narrativeFocus
+        ? ["case", ["==", ["get", "OBJECTID"], focusOutlineObjectId], FULL_OPACITY, PLAY_OPACITY]
+        : geomOpacity;
     setPaint(map, target.id, target.property, value);
   }
 }

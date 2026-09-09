@@ -2,6 +2,7 @@ import { OTEF_API } from "../api-client.js";
 import { isGisBasemapId, normalizeGisBasemap } from "../gis-basemap.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
 import { normalizeNliClock } from "../nli-investigation-clock.js";
+import { getNliNarrative, normalizeNarrativeState } from "../nli-narratives.js";
 import { normalizePersonSelection } from "../person-selection.js";
 import { OTEFWebSocketClient } from "../websocket-client.js";
 import { recordTraceEvent } from "../otef-trace.js";
@@ -59,8 +60,35 @@ function applyPersonSelectionIfNewer(ctx, raw) {
   }
 }
 
-function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
+function canonicalRestNarrativeScene(state) {
+  if (!Object.prototype.hasOwnProperty.call(state, "narrative_state")) return null;
+  for (const field of ["basemap", "investigation_clock", "person_selection"]) {
+    if (!Object.prototype.hasOwnProperty.call(state, field)) return null;
+  }
+  const narrativeState = normalizeNarrativeState(state.narrative_state);
+  return {
+    sceneRevision: narrativeState.revision,
+    narrativeState,
+    basemap: state.basemap,
+    investigationClock: state.investigation_clock,
+    personSelection: state.person_selection,
+  };
+}
+
+function applyStateFromApi(ctx, state, options = {}) {
   if (!state || typeof state !== "object") return;
+  const notify = options.notify !== false;
+
+  const hasNarrativeSnapshot = Object.prototype.hasOwnProperty.call(state, "narrative_state");
+  const restNarrativeScene = canonicalRestNarrativeScene(state);
+  if (restNarrativeScene) {
+    ctx._applyNarrativeScene(restNarrativeScene, {
+      notify,
+      allowSameRevision: true,
+      hydrate: options.hydrate === true || !notify,
+      coupledBaseline: options.coupledBaseline,
+    });
+  }
 
   if (notify) {
     if (state.viewport) ctx._setViewport(state.viewport);
@@ -71,7 +99,9 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
       }
     }
     if (state.animations) ctx._setAnimations(state.animations);
-    if (Object.prototype.hasOwnProperty.call(state, "basemap")) ctx._setBasemap(state.basemap);
+    if (!hasNarrativeSnapshot && Object.prototype.hasOwnProperty.call(state, "basemap")) {
+      ctx._setConfirmedBasemap(state.basemap);
+    }
     if (state.bounds_polygon || state.bounds) ctx._setBounds(state.bounds_polygon || state.bounds);
     if (typeof state.viewer_angle_deg === "number") ctx._setViewerAngleDeg(state.viewer_angle_deg);
     if (
@@ -82,13 +112,14 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
       ctx._setProjectionSlideshow(state.projection_slideshow);
     }
     if (
+      !hasNarrativeSnapshot &&
       Object.prototype.hasOwnProperty.call(state, "investigation_clock") &&
       state.investigation_clock &&
       typeof state.investigation_clock === "object"
     ) {
       applyInvestigationClockHydrate(ctx, state.investigation_clock, { notify: true });
     }
-    if (Object.prototype.hasOwnProperty.call(state, "person_selection")) {
+    if (!hasNarrativeSnapshot && Object.prototype.hasOwnProperty.call(state, "person_selection")) {
       ctx._setPersonSelection(state.person_selection);
     }
   } else {
@@ -106,7 +137,7 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
       }
     }
     if (state.animations) ctx._animations = state.animations;
-    if (Object.prototype.hasOwnProperty.call(state, "basemap")) {
+    if (!hasNarrativeSnapshot && Object.prototype.hasOwnProperty.call(state, "basemap")) {
       ctx._basemap = normalizeGisBasemap(state.basemap);
     }
     if (state.bounds_polygon || state.bounds) ctx._bounds = state.bounds_polygon || state.bounds;
@@ -121,13 +152,14 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
       ctx._projectionSlideshow = { ...state.projection_slideshow };
     }
     if (
+      !hasNarrativeSnapshot &&
       Object.prototype.hasOwnProperty.call(state, "investigation_clock") &&
       state.investigation_clock &&
       typeof state.investigation_clock === "object"
     ) {
       applyInvestigationClockHydrate(ctx, state.investigation_clock, { notify: false });
     }
-    if (Object.prototype.hasOwnProperty.call(state, "person_selection")) {
+    if (!hasNarrativeSnapshot && Object.prototype.hasOwnProperty.call(state, "person_selection")) {
       ctx._personSelection = normalizePersonSelection(state.person_selection);
     }
   }
@@ -136,8 +168,22 @@ function applyStateFromApi(ctx, state, { notify } = { notify: true }) {
 function setupWebSocket(ctx) {
   if (ctx._wsClient) return;
 
+  let hasConnected = false;
+
   ctx._wsClient = new OTEFWebSocketClient(`/ws/${ctx._tableName}/`, {
-    onConnect: () => ctx._setConnection(true),
+    onConnect: async () => {
+      const isReconnect = hasConnected;
+      hasConnected = true;
+      ctx._setConnection(true);
+      if (!isReconnect) return;
+      const coupledBaseline = ctx._captureNarrativeSceneBaseline();
+      try {
+        const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
+        applyStateFromApi(ctx, state, { notify: true, coupledBaseline });
+      } catch (err) {
+        getLogger().error("[OTEFDataContext] Failed to refresh state after reconnect:", err);
+      }
+    },
     onDisconnect: () => ctx._setConnection(false),
     onError: () => ctx._setConnection(false),
   });
@@ -293,13 +339,13 @@ function setupWebSocket(ctx) {
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.BASEMAP_CHANGED, async (msg = {}) => {
     if (msg && msg.sourceId === ctx._clientId) return;
     if (isGisBasemapId(msg.basemap)) {
-      ctx._setBasemap(msg.basemap);
+      ctx._setConfirmedBasemap(msg.basemap);
       return;
     }
     try {
       const state = await OTEF_API.getState(ctx._tableName, { forceFresh: true });
       if (state && Object.prototype.hasOwnProperty.call(state, "basemap")) {
-        ctx._setBasemap(state.basemap);
+        ctx._setConfirmedBasemap(state.basemap);
       }
     } catch (err) {
       getLogger().error("[OTEFDataContext] Failed to refresh basemap after BASEMAP_CHANGED:", err);
@@ -349,6 +395,44 @@ function setupWebSocket(ctx) {
     if (msg && msg.personSelection) {
       applyPersonSelectionIfNewer(ctx, msg.personSelection);
     }
+  });
+
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.NARRATIVE_SCENE_CHANGED, (msg = {}) => {
+    if (msg.table && msg.table !== ctx._tableName) return;
+    if (msg.sourceId && msg.sourceId === ctx._clientId) return;
+    if (msg.scene && typeof ctx._applyNarrativeScene === "function") {
+      ctx._applyNarrativeScene(msg.scene);
+    }
+  });
+
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_COMMAND, (msg = {}) => {
+    if (msg.table && msg.table !== ctx._tableName) return;
+    if (msg.sourceId && msg.sourceId === ctx._clientId) return;
+    if (!getNliNarrative(msg.narrativeId)) return;
+    if (msg.presentationAction !== "open" && msg.presentationAction !== "close") return;
+    if (typeof msg.requestId !== "string" || !msg.requestId.trim()) return;
+    ctx._notify("narrativePresentation", {
+      presentationAction: msg.presentationAction,
+      narrativeId: msg.narrativeId,
+      requestId: msg.requestId,
+      sourceId: typeof msg.sourceId === "string" ? msg.sourceId : null,
+      acknowledged: msg.acknowledged === true,
+    });
+  });
+
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_RESULT, (msg = {}) => {
+    if (msg.table && msg.table !== ctx._tableName) return;
+    if (msg.sourceId && msg.sourceId === ctx._clientId) return;
+    if (!getNliNarrative(msg.narrativeId)) return;
+    if (!["opened", "closed", "unavailable"].includes(msg.outcome)) return;
+    if (typeof msg.requestId !== "string" || !msg.requestId.trim()) return;
+    ctx._notify("narrativePresentationResult", {
+      outcome: msg.outcome,
+      narrativeId: msg.narrativeId,
+      requestId: msg.requestId,
+      sourceId: typeof msg.sourceId === "string" ? msg.sourceId : null,
+      acknowledged: msg.acknowledged === true,
+    });
   });
 
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.PLACE_NAVIGATION_COMMAND, (msg = {}) => {

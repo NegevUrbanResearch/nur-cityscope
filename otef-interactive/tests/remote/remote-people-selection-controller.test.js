@@ -63,6 +63,136 @@ describe("remote People selection controller", () => {
     expect(dataContext.selectPerson).toHaveBeenCalledWith("11", "v1");
   });
 
+  test("active narrative disables person search, selection, and archive affordances", async () => {
+    const { initRemotePlaceNavigation } = await import(
+      "../../frontend/src/remote/remote-place-navigation.js"
+    );
+    const modeButton = createElement("peopleMode");
+    modeButton.dataset = { searchMode: "people" };
+    const root = document.getElementById("placeSearchGroup");
+    const originalQuerySelectorAll = root.querySelectorAll;
+    root.querySelectorAll = (selector) => selector === "[data-search-mode]"
+      ? [modeButton]
+      : originalQuerySelectorAll(selector);
+    const person = { pid: "11", name: "Ada", location: "Alumim", hasArchiveRecord: true, datasetVersion: "v1" };
+    const subscriptions = {};
+    const dataContext = {
+      getNarrativeState: () => ({ id: "segev", transition: "enter", revision: 1 }),
+      subscribe: vi.fn((topic, handler) => { subscriptions[topic] = handler; return vi.fn(); }),
+      selectPerson: vi.fn(),
+      archiveWindowCommand: vi.fn(),
+    };
+    const peopleRuntime = {
+      load: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn(() => [person]),
+      resolve: vi.fn(() => person),
+    };
+    initRemotePlaceNavigation({
+      dataContext,
+      peopleRuntime,
+      isConnected: () => true,
+      narrativeActive: () => !!dataContext.getNarrativeState().id,
+    });
+    modeButton.dispatchEvent({ type: "click" });
+    const input = document.getElementById("placeSearchInput");
+    input.value = "Ada";
+    input.dispatchEvent({ type: "input" });
+    await Promise.resolve();
+    expect(modeButton.disabled).toBe(true);
+    expect(document.getElementById("placeSuggestions").children).toHaveLength(0);
+    expect(dataContext.selectPerson).not.toHaveBeenCalled();
+    const archiveButton = root.children.find((child) => child.className === "place-search-archive-button");
+    expect(archiveButton.disabled).toBe(true);
+    expect(archiveButton.hidden).toBe(true);
+  });
+
+  test("narrative activation disables an open People search accessibly", async () => {
+    const { initRemotePlaceNavigation } = await import(
+      "../../frontend/src/remote/remote-place-navigation.js"
+    );
+    const modeButton = createElement("peopleMode");
+    modeButton.dataset = { searchMode: "people" };
+    const root = document.getElementById("placeSearchGroup");
+    const originalQuerySelectorAll = root.querySelectorAll;
+    root.querySelectorAll = (selector) => selector === "[data-search-mode]"
+      ? [modeButton]
+      : originalQuerySelectorAll(selector);
+    let narrativeActive = false;
+    const subscriptions = {};
+    const dataContext = {
+      getNarrativeState: () => ({ id: narrativeActive ? "segev" : null, revision: 1 }),
+      subscribe: vi.fn((topic, handler) => { subscriptions[topic] = handler; return vi.fn(); }),
+    };
+    const peopleRuntime = {
+      load: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn(() => [{ pid: "11", name: "Ada", datasetVersion: "v1" }]),
+    };
+    initRemotePlaceNavigation({
+      dataContext,
+      peopleRuntime,
+      isConnected: () => true,
+      narrativeActive: () => narrativeActive,
+    });
+    modeButton.dispatchEvent({ type: "click" });
+    const input = document.getElementById("placeSearchInput");
+    input.value = "Ada";
+    input.dispatchEvent({ type: "input" });
+    await Promise.resolve();
+    expect(document.getElementById("placeSuggestions").children).toHaveLength(1);
+
+    narrativeActive = true;
+    subscriptions.narrativeState({ id: "segev", revision: 2 });
+
+    expect(modeButton.disabled).toBe(true);
+    expect(input.disabled).toBe(true);
+    expect(input.getAttribute("aria-disabled")).toBe("true");
+    expect(document.getElementById("placeSuggestions").children).toHaveLength(0);
+  });
+
+  test("narrative activation invalidates a deferred People search fulfillment", async () => {
+    const { initRemotePlaceNavigation } = await import(
+      "../../frontend/src/remote/remote-place-navigation.js"
+    );
+    const modeButton = createElement("peopleMode");
+    modeButton.dataset = { searchMode: "people" };
+    const root = document.getElementById("placeSearchGroup");
+    const originalQuerySelectorAll = root.querySelectorAll;
+    root.querySelectorAll = (selector) => selector === "[data-search-mode]"
+      ? [modeButton]
+      : originalQuerySelectorAll(selector);
+    let narrativeActive = false;
+    let resolveLoad;
+    const subscriptions = {};
+    const dataContext = {
+      subscribe: vi.fn((topic, handler) => { subscriptions[topic] = handler; return vi.fn(); }),
+    };
+    const peopleRuntime = {
+      load: vi.fn(() => new Promise((resolve) => { resolveLoad = resolve; })),
+      search: vi.fn(() => [{ pid: "11", name: "Ada", datasetVersion: "v1" }]),
+    };
+    initRemotePlaceNavigation({
+      dataContext,
+      peopleRuntime,
+      isConnected: () => true,
+      narrativeActive: () => narrativeActive,
+    });
+    modeButton.dispatchEvent({ type: "click" });
+    const input = document.getElementById("placeSearchInput");
+    input.value = "Ada";
+    input.dispatchEvent({ type: "input" });
+    expect(peopleRuntime.load).toHaveBeenCalledTimes(1);
+
+    narrativeActive = true;
+    subscriptions.narrativeState({ id: "segev", revision: 2 });
+    resolveLoad();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(peopleRuntime.search).not.toHaveBeenCalled();
+    expect(document.getElementById("placeSuggestions").children).toHaveLength(0);
+    expect(input.disabled).toBe(true);
+  });
+
   test("keeps the acknowledged person and shows a specific stop failure", async () => {
     const { initRemotePlaceNavigation } = await import(
       "../../frontend/src/remote/remote-place-navigation.js"

@@ -314,6 +314,29 @@ describe("remote-locale", () => {
     expect(t("slideshowWarmupLeadSecLabel")).toBe("Warmup lead (seconds)");
   });
 
+  test("satellite variants and narrative controls resolve exact Hebrew and English labels", async () => {
+    installLocaleTestEnv();
+    const { t, setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+
+    setLocale("he", { force: true });
+    expect(t("basemapSatelliteColor")).toBe("\u05e6\u05d1\u05e2");
+    expect(t("basemapSatelliteBw")).toBe("\u05e9\u05d7\u05d5\u05e8\u05be\u05dc\u05d1\u05df");
+    expect(t("nliNarrativesTitle")).toBe("\u05e0\u05e8\u05d8\u05d9\u05d1\u05d9\u05dd");
+    expect(t("nliNarrativeSegev")).toBe("\u05de\u05e9\u05e4\u05d7\u05ea \u05e9\u05d2\u05d1");
+    expect(t("nliNarrativePresentationOpen")).toBe("\u05e4\u05ea\u05d7 \u05de\u05e6\u05d2\u05ea");
+    expect(t("nliNarrativePresentationClose")).toBe("\u05e1\u05d2\u05d5\u05e8 \u05de\u05e6\u05d2\u05ea");
+    expect(t("slideshowStartFailed")).toBe("\u05dc\u05d0 \u05e0\u05d9\u05ea\u05df \u05dc\u05d4\u05e4\u05e2\u05d9\u05dc \u05d0\u05ea \u05de\u05e6\u05d2\u05ea \u05d4\u05d4\u05e7\u05e8\u05e0\u05d4");
+
+    setLocale("en", { force: true });
+    expect(t("basemapSatelliteColor")).toBe("Color");
+    expect(t("basemapSatelliteBw")).toBe("B&W");
+    expect(t("nliNarrativesTitle")).toBe("Narratives");
+    expect(t("nliNarrativeSegev")).toBe("Segev family");
+    expect(t("nliNarrativePresentationOpenAria")).toBe("Open Segev family presentation");
+    expect(t("nliNarrativePresentationCloseAria")).toBe("Close Segev family presentation");
+    expect(t("slideshowStartFailed")).toBe("Could not start the projection slideshow");
+  });
+
   test("setLocale dispatches otef:locale with detail.locale after apply", async () => {
     installLocaleTestEnv();
     const { setLocale, LOCALE_EVENT } = await import(

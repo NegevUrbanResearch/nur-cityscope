@@ -1,6 +1,11 @@
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+
 from django.test import TestCase
 from rest_framework.test import APIClient
 
+from backend.calibration_io import write_model_bounds_to_storage
 from backend.models import OTEFViewportState, Table, OTEFModelConfig
 
 
@@ -8,6 +13,23 @@ class BoundsApplyApiTests(TestCase):
     def setUp(self):
         self.table = Table.objects.create(name="otef", display_name="OTEF")
         self.client = APIClient()
+        self._temporary_directory = tempfile.TemporaryDirectory()
+        self._temporary_bounds_path = Path(self._temporary_directory.name) / "model-bounds.json"
+        self.addCleanup(self._temporary_directory.cleanup)
+
+        def write_to_temporary_storage(normalized, config, _production_path):
+            return write_model_bounds_to_storage(
+                normalized,
+                config,
+                str(self._temporary_bounds_path),
+            )
+
+        self._bounds_writer = patch(
+            "backend.views.write_model_bounds_to_storage",
+            side_effect=write_to_temporary_storage,
+        )
+        self._bounds_writer.start()
+        self.addCleanup(self._bounds_writer.stop)
 
     def test_post_saves_polygon_and_angle(self):
         payload = {
@@ -21,6 +43,7 @@ class BoundsApplyApiTests(TestCase):
         }
         res = self.client.post("/api/otef/bounds/apply/", payload, format="json")
         self.assertEqual(res.status_code, 200)
+        self.assertTrue(self._temporary_bounds_path.is_file())
 
         state = OTEFViewportState.objects.get(table=self.table)
         self.assertEqual(
@@ -59,4 +82,3 @@ class BoundsApplyApiTests(TestCase):
         res = self.client.post("/api/otef/bounds/apply/", payload, format="json")
         self.assertEqual(res.status_code, 400)
         self.assertIn("error", res.data)
-

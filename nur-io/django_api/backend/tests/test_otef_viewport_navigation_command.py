@@ -101,18 +101,19 @@ class OTEFPlaceNavigationCommandTests(TestCase):
             },
         )
 
-        response = self.client.patch(
-            "/api/otef_viewport/by-table/otef/",
-            {
-                "viewport": {
-                    "bbox": [125, 0, 175, 500],
-                    "corners": None,
-                    "zoom": 14,
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.patch(
+                "/api/otef_viewport/by-table/otef/",
+                {
+                    "viewport": {
+                        "bbox": [125, 0, 175, 500],
+                        "corners": None,
+                        "zoom": 14,
+                    },
+                    "sourceId": "legacy-client",
                 },
-                "sourceId": "legacy-client",
-            },
-            format="json",
-        )
+                format="json",
+            )
 
         self.assertEqual(response.status_code, 200)
         state.refresh_from_db()
@@ -131,20 +132,21 @@ class OTEFPlaceNavigationCommandTests(TestCase):
             viewport={"bbox": [1, 2, 3, 4], "corners": None, "zoom": 12},
         )
 
-        response = self.client.patch(
-            "/api/otef_viewport/by-table/otef/",
-            {
-                "viewport": {
-                    "bbox": [10, 20, 30, 40],
-                    "corners": None,
-                    "zoom": 15,
-                    "sourceId": "gis-client",
-                    "timestamp": 1234,
-                    "traceId": "place-nav-test",
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.patch(
+                "/api/otef_viewport/by-table/otef/",
+                {
+                    "viewport": {
+                        "bbox": [10, 20, 30, 40],
+                        "corners": None,
+                        "zoom": 15,
+                        "sourceId": "gis-client",
+                        "timestamp": 1234,
+                        "traceId": "place-nav-test",
+                    },
                 },
-            },
-            format="json",
-        )
+                format="json",
+            )
 
         self.assertEqual(response.status_code, 200)
         layer.group_send.assert_called_once()
