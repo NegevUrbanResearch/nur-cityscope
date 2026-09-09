@@ -40,4 +40,15 @@ describe("place catalog", () => {
     expect(starters.length).toBeGreaterThan(0);
     expect(starters.length).toBeLessThanOrEqual(5);
   });
+
+  test("Nova aliases resolve to Re'im Parking only", () => {
+    const novaHe = searchPlaces("נובה", { limit: 8 });
+    const novaEn = searchPlaces("nova", { limit: 8 });
+    expect(novaHe.map((place) => place.id)).toEqual(["custom-reim-parking"]);
+    expect(novaEn.map((place) => place.id)).toEqual(["custom-reim-parking"]);
+    const novaYeshuv = catalog.entries.find((place) => place.citycode === "nvaP");
+    expect(novaYeshuv).toBeTruthy();
+    expect(novaYeshuv.selectable).toBe(false);
+    expect(novaYeshuv.name.he).toBe("נובה");
+  });
 });

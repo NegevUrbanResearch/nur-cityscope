@@ -15,12 +15,14 @@ const catalog = {
       "aliases": {
         "he": [
           "חניון רעים",
-          "רעים חניון"
+          "רעים חניון",
+          "נובה"
         ],
         "en": [
           "Re'im Parking",
           "Reim parking",
-          "Re'im festival parking"
+          "Re'im festival parking",
+          "Nova"
         ]
       },
       "priority": 80,
@@ -1650,6 +1652,41 @@ const catalog = {
         "centerItm": {
           "x": 161754.720024,
           "y": 601812.647215
+        },
+        "zoom": 15
+      }
+    },
+    {
+      "id": "yeshuv-nvaP",
+      "type": "yeshuv",
+      "citycode": "nvaP",
+      "source": {
+        "kind": "geojson",
+        "file": "projector_base/שמות_יישובים.geojson",
+        "featureId": "nvaP"
+      },
+      "name": {
+        "he": "נובה",
+        "en": "Nova"
+      },
+      "aliases": {
+        "he": [
+          "נובה"
+        ],
+        "en": [
+          "Nova"
+        ]
+      },
+      "priority": 10,
+      "selectable": false,
+      "cameraHint": {
+        "center": {
+          "lng": 34.469821,
+          "lat": 31.397217
+        },
+        "centerItm": {
+          "x": 149581.301448,
+          "y": 589706.379082
         },
         "zoom": 15
       }
