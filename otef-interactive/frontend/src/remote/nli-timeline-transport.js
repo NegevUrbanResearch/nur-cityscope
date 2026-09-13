@@ -445,6 +445,7 @@ export function bindNliTimelinePointerListeners(content, host) {
     if (!scrub) return;
     e.preventDefault();
     host._nliScrubEl = scrub;
+    host._nliScrubPointerId = e.pointerId;
     host.handleNliTimelineScrubPointerDown(e.clientX);
     if (typeof scrub.setPointerCapture === "function") {
       try {

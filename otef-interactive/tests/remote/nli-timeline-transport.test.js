@@ -98,6 +98,7 @@ function makeController(overrides = {}) {
   c._nliScrub = null;
   c._nliScrubEl = null;
   c._nliOptimisticClock = null;
+  c._nliPackPane = "layers";
   c._nliCacheFetchInflight = false;
   c.focusedGroupId = "nli";
   c.primaryTileIdsJson = null;
@@ -550,6 +551,7 @@ describe("nli timeline transport", () => {
       getNarrativeState: () => ({ id: "segev", transition: "enter", revision: 2 }),
     });
     const c = makeController();
+    c._nliPackPane = "timeline";
     const html = c.renderLayersTabContent(nliGroups(), {});
     expect(html).toContain("data-nli-tl-play");
     expect(html).toContain("data-nli-tl-stop");
@@ -561,11 +563,10 @@ describe("nli timeline transport", () => {
     expect(html).toMatch(/class="nli-tl-sheet" aria-disabled="false"/);
   });
 
-  test("LayerSheet destroy releases context, presentation, resize, locale, and timer resources", () => {
+  test("LayerSheet destroy releases context, presentation, locale, and timer resources", () => {
     const disposeNarrative = vi.fn();
     const disposeClock = vi.fn();
     const presentationDestroy = vi.fn();
-    const resizeDisconnect = vi.fn();
     const removeEventListener = vi.fn();
     vi.stubGlobal("window", { removeEventListener });
     const ctx = stubContext({
@@ -574,58 +575,20 @@ describe("nli timeline transport", () => {
     const c = makeController({
       _subscriptions: [],
       _nliNarrativePresentationController: { destroy: presentationDestroy },
-      _nliDockResizeObserver: { disconnect: resizeDisconnect },
       _remoteLocaleHandler: vi.fn(),
       _nliEndTimer: setTimeout(() => {}, 10_000),
       _nliPlayheadTimer: setTimeout(() => {}, 10_000),
     });
     c._subscribeDataContext("narrativeState", vi.fn());
     c._subscribeDataContext("investigationClock", vi.fn());
-
     c.destroy();
-
     expect(ctx.subscribe).toHaveBeenCalledTimes(2);
     expect(disposeNarrative).toHaveBeenCalledTimes(1);
     expect(disposeClock).toHaveBeenCalledTimes(1);
     expect(presentationDestroy).toHaveBeenCalledTimes(1);
-    expect(resizeDisconnect).toHaveBeenCalledTimes(1);
     expect(removeEventListener).toHaveBeenCalledWith(LOCALE_EVENT, c._remoteLocaleHandler);
     expect(c._nliEndTimer).toBeNull();
     expect(c._nliPlayheadTimer).toBeNull();
-  });
-
-  test("dock measurement follows dynamic feedback and locale-sized replacements", () => {
-    const observers = [];
-    vi.stubGlobal("ResizeObserver", class ResizeObserver {
-      constructor(callback) {
-        this.callback = callback;
-        this.observe = vi.fn();
-        this.disconnect = vi.fn();
-        observers.push(this);
-      }
-    });
-    const firstStyle = { setProperty: vi.fn() };
-    const firstDock = { getBoundingClientRect: () => ({ height: 181.2 }) };
-    const firstVariant = { style: firstStyle };
-    const firstContent = {
-      querySelector: (selector) => selector === ".nli-bottom-dock" ? firstDock : firstVariant,
-    };
-    const c = makeController({ _nliDockResizeObserver: null });
-
-    c._syncNliDockMeasurement(firstContent);
-    observers[0].callback([{ target: firstDock, contentRect: { height: 244.1 } }]);
-    expect(firstStyle.setProperty).toHaveBeenLastCalledWith("--nli-bottom-dock-height", "245px");
-
-    const secondStyle = { setProperty: vi.fn() };
-    const secondDock = { getBoundingClientRect: () => ({ height: 267.4 }) };
-    const secondVariant = { style: secondStyle };
-    const secondContent = {
-      querySelector: (selector) => selector === ".nli-bottom-dock" ? secondDock : secondVariant,
-    };
-    c._syncNliDockMeasurement(secondContent);
-    expect(observers[0].disconnect).toHaveBeenCalledTimes(1);
-    expect(secondStyle.setProperty).toHaveBeenCalledWith("--nli-bottom-dock-height", "268px");
-    expect(observers[1].observe).toHaveBeenCalledWith(secondDock);
   });
 
   test("play matrix: idle plays, playing pauses, paused resumes, ended replays", async () => {
@@ -792,39 +755,22 @@ describe("nli timeline transport", () => {
     expect(ctx.setLayersEnabled).not.toHaveBeenCalled();
   });
 
-  test("nli pack html includes the transport sheet; other packs do not", () => {
+  test("nli pack html includes the transport sheet only on timeline pane; other packs do not", () => {
     const c = makeController();
-    const nliHtml = c.renderLayersTabContent(nliGroups(), {});
-    expect(nliHtml).toContain("nli-tl-sheet");
-    expect(nliHtml).toContain("data-nli-tl-play");
+    const nliLayers = c.renderLayersTabContent(nliGroups(), {});
+    expect(nliLayers).not.toContain("nli-tl-sheet");
+    expect(nliLayers).toContain("nli-pack-panes");
+    c._nliPackPane = "timeline";
+    const nliTimeline = c.renderLayersTabContent(nliGroups(), {});
+    expect(nliTimeline).toContain("nli-tl-sheet");
+    expect(nliTimeline).toContain("data-nli-tl-play");
     c.focusedGroupId = "october_7th";
     const octHtml = c.renderLayersTabContent(
-      [
-        {
-          id: "october_7th",
-          name: "Oct",
-          layers: [{ id: "route", enabled: true, name: "route" }],
-        },
-      ],
+      [{ id: "october_7th", name: "Oct", layers: [{ id: "route", enabled: true, name: "route" }] }],
       {},
     );
     expect(octHtml).not.toContain("nli-tl-sheet");
-  });
-
-  test("nli bottom dock is absolute while timeline is its bottom flow child", () => {
-    const css = fs.readFileSync(
-      path.resolve(__dirname, "../../frontend/css/remote-styles.css"),
-      "utf8",
-    );
-    const dockBlock = css.match(/\.nli-bottom-dock\s*\{[^}]+\}/);
-    const sheetBlock = css.match(/\.nli-tl-sheet\s*\{[^}]+\}/);
-    expect(dockBlock).not.toBeNull();
-    expect(dockBlock[0]).toMatch(/position:\s*absolute/);
-    expect(dockBlock[0]).toMatch(/left:\s*0/);
-    expect(dockBlock[0]).toMatch(/right:\s*0/);
-    expect(dockBlock[0]).toMatch(/bottom:\s*0/);
-    expect(sheetBlock[0]).not.toMatch(/position:\s*absolute/);
-    expect(css).toMatch(/\.layers-variant-c\s*\{[^}]*position:\s*relative/s);
+    expect(octHtml).not.toContain("nli-pack-panes");
   });
 
   test("scrub pointerdown while playing does not render the captured track", () => {
@@ -1189,5 +1135,86 @@ describe("nli timeline transport", () => {
     );
     expect(src).toMatch(/_subscribeDataContext\("investigationClock"[\s\S]*_syncNliPlayheadTicker/);
     expect(src).toMatch(/focusedGroupId === "nli"[\s\S]*_syncNliPlayheadTicker/);
+  });
+
+  test("nli layers pane omits extras; timeline pane omits tiles", () => {
+    stubContext();
+    const c = makeController();
+    c._nliPackPane = "layers";
+    const layersHtml = c.renderLayersTabContent(nliGroups(), {});
+    expect(layersHtml).toContain("nli-pack-panes");
+    expect(layersHtml).toContain("layer-tile-grid");
+    expect(layersHtml).toContain("data-layers-bulk-visibility");
+    expect(layersHtml).not.toContain("nli-tl-sheet");
+    expect(layersHtml).not.toContain("nli-narrative-sheet");
+    expect(layersHtml).not.toContain("nli-bottom-dock");
+    c._nliPackPane = "timeline";
+    const timelineHtml = c.renderLayersTabContent(nliGroups(), {});
+    expect(timelineHtml).toContain("nli-tl-sheet");
+    expect(timelineHtml).toContain("nli-narrative-sheet");
+    expect(timelineHtml).not.toContain("layer-tile-grid");
+    expect(timelineHtml).not.toContain("data-layers-bulk-visibility");
+    expect(timelineHtml).toContain("layerPanelCount");
+  });
+
+  function bindRealRender(c) {
+    c.render = LayerSheetController.prototype.render;
+    c.updatePanelChrome = () => {};
+    c._syncNliEndedTimer = () => {};
+    c._syncNliPlayheadTicker = () => {};
+    c._ensureNliFeatureCache = () => {};
+    c._liveNliClock = () => idleNliClock();
+    const content = {
+      innerHTML: "",
+      classList: { toggle: vi.fn(), remove: vi.fn() },
+      querySelector: () => null,
+    };
+    c.sheet = { querySelector: () => content };
+    return content;
+  }
+
+  test("clock-driven render while timeline pane does not reset to layers", () => {
+    stubContext();
+    const c = makeController();
+    const content = bindRealRender(c);
+    c._nliPackPane = "timeline";
+    c.focusedGroupId = "nli";
+    c.render();
+    expect(c._nliPackPane).toBe("timeline");
+    expect(content.innerHTML).toContain("nli-tl-sheet");
+    expect(content.innerHTML).not.toContain("layer-tile-grid");
+  });
+
+  test("selecting another pack then nli again yields layers pane", () => {
+    const c = makeController();
+    c._nliPackPane = "timeline";
+    c.focusOnGroup("october_7th");
+    expect(c._nliPackPane).toBe("timeline");
+    c.focusOnGroup("nli");
+    expect(c._nliPackPane).toBe("layers");
+  });
+
+  test("clicking already-selected nli pack does not change pane", () => {
+    const c = makeController();
+    c._nliPackPane = "timeline";
+    c.focusedGroupId = "nli";
+    c.focusOnGroup("nli");
+    expect(c._nliPackPane).toBe("timeline");
+  });
+
+  test("setNliPackPane cancels scrub then renders (does not hit render skip)", async () => {
+    stubContext();
+    const c = makeController();
+    const content = bindRealRender(c);
+    c._nliPackPane = "timeline";
+    c.focusedGroupId = "nli";
+    c._nliScrub = { fromPlaying: false };
+    c._nliScrubEl = { releasePointerCapture: vi.fn() };
+    await c.setNliPackPane("layers");
+    expect(c._nliScrub).toBeNull();
+    expect(c._nliScrubEl).toBeNull();
+    expect(c._nliPackPane).toBe("layers");
+    expect(content.innerHTML).toContain("layer-tile-grid");
+    expect(content.innerHTML).not.toContain("nli-tl-sheet");
   });
 });

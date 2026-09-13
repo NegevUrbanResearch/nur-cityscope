@@ -31,6 +31,13 @@ import {
   nliTransportSheetHtml,
   renderNliTimelineTransport,
 } from "./nli-timeline-transport.js";
+import { pauseNliClock } from "../shared/nli-investigation-clock.js";
+import {
+  consumeNliPackPaneClick,
+  NLI_PACK_PANE_DEFAULT,
+  nliPackPaneSwitchHtml,
+  normalizeNliPackPane,
+} from "./nli-pack-panes.js";
 import { normalizeNarrativeState } from "../shared/nli-narratives.js";
 import {
   consumeNliNarrativeButtonClick,
@@ -370,12 +377,13 @@ class LayerSheetController {
     this._nliFeatureCache = Object.create(null);
     this._nliScrub = null;
     this._nliScrubEl = null;
+    this._nliScrubPointerId = null;
     this._nliOptimisticClock = null;
+    this._nliPackPane = NLI_PACK_PANE_DEFAULT;
     this._nliCacheFetchInflight = false;
     this._nliNarrativeTransitionPending = false;
     this._nliNarrativeFeedback = "";
     this._nliNarrativePresentationController = null;
-    this._nliDockResizeObserver = null;
     this._subscriptions = [];
     this._remoteLocaleHandler = null;
 
@@ -457,35 +465,45 @@ class LayerSheetController {
     this._nliScrub = null;
     this._nliScrubEl = null;
     this._nliNarrativePresentationController?.destroy?.();
-    this._nliDockResizeObserver?.disconnect?.();
     for (const unsubscribe of this._subscriptions.splice(0)) unsubscribe();
     if (typeof window !== "undefined" && this._remoteLocaleHandler) {
       window.removeEventListener(LOCALE_EVENT, this._remoteLocaleHandler);
     }
   }
 
-  _syncNliDockMeasurement(content) {
-    this._nliDockResizeObserver?.disconnect?.();
-    this._nliDockResizeObserver = null;
-    const dock = content?.querySelector?.(".nli-bottom-dock");
-    const host = content?.querySelector?.(".layers-variant-c--nli");
-    if (!dock || !host?.style) return;
-    const applyHeight = (height) => {
-      const pixels = Math.ceil(Number(height));
-      if (Number.isFinite(pixels) && pixels > 0) {
-        host.style.setProperty("--nli-bottom-dock-height", `${pixels}px`);
+  _cancelNliScrubForDomReplaceSync() {
+    const captured = this._nliScrubEl;
+    const fromPlaying = !!(this._nliScrub && this._nliScrub.fromPlaying);
+    if (captured && typeof captured.releasePointerCapture === "function") {
+      try {
+        captured.releasePointerCapture(this._nliScrubPointerId);
+      } catch {
+        // invalid pointer id after detach is fine
       }
-    };
-    applyHeight(dock.getBoundingClientRect?.().height);
-    if (typeof ResizeObserver === "function") {
-      this._nliDockResizeObserver = new ResizeObserver((entries) => {
-        const entry = entries.find((candidate) => candidate.target === dock) || entries[0];
-        const borderSize = Array.isArray(entry?.borderBoxSize)
-          ? entry.borderBoxSize[0]?.blockSize
-          : entry?.borderBoxSize?.blockSize;
-        applyHeight(borderSize ?? entry?.contentRect?.height ?? dock.getBoundingClientRect?.().height);
-      });
-      this._nliDockResizeObserver.observe(dock);
+    }
+    this._nliScrub = null;
+    this._nliScrubEl = null;
+    this._nliOptimisticClock = null;
+    return fromPlaying;
+  }
+
+  async setNliPackPane(pane) {
+    const next = normalizeNliPackPane(pane);
+    if (this.focusedGroupId !== "nli") return;
+    if (next === this._nliPackPane) return;
+    const fromPlaying = this._cancelNliScrubForDomReplaceSync();
+    this._nliPackPane = next;
+    this.render();
+    if (fromPlaying) {
+      const now = typeof OTEFDataContext !== "undefined" &&
+        typeof OTEFDataContext.correctedNow === "function"
+        ? OTEFDataContext.correctedNow()
+        : Date.now();
+      await this._patchNliClock(pauseNliClock(this._liveNliClock(), now));
+    }
+    if (next === "timeline") {
+      this._paintNliPlayhead?.(this._liveNliClock());
+      this._syncNliPlayheadTicker(this._liveNliClock());
     }
   }
 
@@ -517,6 +535,7 @@ class LayerSheetController {
         return;
       }
 
+      if (consumeNliPackPaneClick(e, this)) return;
       if (consumeNliNarrativeButtonClick(e, this)) return;
       if (consumeNliTimelineButtonClick(e, this)) return;
 
@@ -586,8 +605,15 @@ class LayerSheetController {
   }
 
   focusOnGroup(groupId) {
+    const prev = this.focusedGroupId;
     this.primaryTileIdsJson = null;
     this.focusedGroupId = String(groupId);
+    if (this.focusedGroupId === "nli" && prev !== "nli") {
+      this._nliPackPane = NLI_PACK_PANE_DEFAULT;
+    }
+    if (this.focusedGroupId !== prev) {
+      this._cancelNliScrubForDomReplaceSync();
+    }
     this.render();
   }
 
@@ -899,14 +925,19 @@ class LayerSheetController {
 
     const clock = this._readNliClock();
     const presentationActive = this._isPresentationActive();
-    const variantClass =
-      selected.id === "nli" ? "layers-variant-c layers-variant-c--nli" : "layers-variant-c";
-    const nliSheet = nliTransportSheetHtml(
-      selected,
-      clock,
-      this._nliFeatureCache,
-      presentationActive,
-    );
+    const pane = selected.id === "nli"
+      ? normalizeNliPackPane(this._nliPackPane)
+      : "layers";
+    const variantClass = "layers-variant-c";
+    const paneSwitch = nliPackPaneSwitchHtml(selected, pane);
+    const nliSheet = selected.id === "nli" && pane === "timeline"
+      ? nliTransportSheetHtml(
+          selected,
+          clock,
+          this._nliFeatureCache,
+          presentationActive,
+        )
+      : "";
     const presentationState = this._nliNarrativePresentationController?.getState?.() || {
       phase: "closed",
       error: null,
@@ -926,41 +957,11 @@ class LayerSheetController {
       narrativeState,
       narrativeDisabledReason,
     );
-    const nliBottomDock = selected.id === "nli"
-      ? `<div class="nli-bottom-dock">
-          ${narrativeSheet}
-          ${nliSheet}
-        </div>`
+    const extras = selected.id === "nli" && pane === "timeline"
+      ? `${narrativeSheet}${nliSheet}`
       : "";
-
-    return `
-    <div class="${variantClass}">
-      <div
-        class="layers-pack-strip-wrap"
-        role="region"
-      >
-        <div class="layers-pack-strip">
-          <div class="layers-pack-strip__viewport">
-            <div class="layers-pack-strip__edge layers-pack-strip__edge--start" aria-hidden="true"></div>
-            <div class="layers-pack-strip__edge layers-pack-strip__edge--end" aria-hidden="true"></div>
-            <div class="layers-pack-strip__scroller">
-              <div class="layers-pack-strip__band">
-                <div class="layers-pack-strip__row">${row1}</div>
-                <div class="layers-pack-strip__row">${row2}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="layers-active-summary" role="status">
-        <span
-          class="layer-count"
-          data-i18n="layersActiveCount"
-          data-i18n-n="0"
-          id="layerPanelCount"
-        ></span>
-      </div>
-      <div class="focused-pack-toolbar">
+    const bulkAndTiles = !(selected.id === "nli" && pane === "timeline")
+      ? `<div class="focused-pack-toolbar">
         <span class="focused-pack-toolbar__label" data-i18n="layersBulkVisibility">${escapeHtmlSafe(t("layersBulkVisibility"))}</span>
         <label class="group-toggle layer-bulk-visibility">
           <input
@@ -977,8 +978,36 @@ class LayerSheetController {
         <div class="layer-tile-grid">
         ${this.buildLayerRowsHtml(selected, animations)}
         </div>
+      </div>`
+      : "";
+
+    return `
+    <div class="${variantClass}">
+      <div class="layers-pack-strip-wrap" role="region">
+        <div class="layers-pack-strip">
+          <div class="layers-pack-strip__viewport">
+            <div class="layers-pack-strip__edge layers-pack-strip__edge--start" aria-hidden="true"></div>
+            <div class="layers-pack-strip__edge layers-pack-strip__edge--end" aria-hidden="true"></div>
+            <div class="layers-pack-strip__scroller">
+              <div class="layers-pack-strip__band">
+                <div class="layers-pack-strip__row">${row1}</div>
+                <div class="layers-pack-strip__row">${row2}</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      ${nliBottomDock}
+      ${paneSwitch}
+      <div class="layers-active-summary" role="status">
+        <span
+          class="layer-count"
+          data-i18n="layersActiveCount"
+          data-i18n-n="0"
+          id="layerPanelCount"
+        ></span>
+      </div>
+      ${bulkAndTiles}
+      ${extras}
     </div>
   `;
   }
@@ -1000,13 +1029,17 @@ class LayerSheetController {
     if (!content) return;
     if (this._nliScrub && this._nliScrubEl) return;
 
+    const prevFocused = this.focusedGroupId;
     const groups = this.getEffectiveGroupsForView();
     if (groups.length === 0) {
       this.focusedGroupId = null;
     } else {
       this.focusedGroupId = this.resolveSelectedPackId(groups);
     }
-    content.classList?.toggle?.("sheet-content--nli", this.focusedGroupId === "nli");
+    if (this.focusedGroupId === "nli" && prevFocused !== "nli") {
+      this._nliPackPane = NLI_PACK_PANE_DEFAULT;
+    }
+    content.classList?.remove?.("sheet-content--nli");
 
     const animations =
       typeof OTEFDataContext !== "undefined" &&
@@ -1036,7 +1069,10 @@ class LayerSheetController {
         const anyOn = layers.some((l) => l.enabled);
         const anyOff = layers.some((l) => !l.enabled);
         const bulkInput = content.querySelector("input[data-layers-bulk-visibility]");
-        if (bulkInput instanceof HTMLInputElement) {
+        if (
+          typeof HTMLInputElement !== "undefined" &&
+          bulkInput instanceof HTMLInputElement
+        ) {
           bulkInput.indeterminate = anyOn && anyOff;
         }
       }
@@ -1044,7 +1080,6 @@ class LayerSheetController {
 
     this.updatePanelChrome(groups);
     applyRemoteChromeI18n();
-    this._syncNliDockMeasurement(content);
     if (this.focusedGroupId === "nli") {
       this._syncNliEndedTimer(this._liveNliClock());
       this._syncNliPlayheadTicker(this._liveNliClock());
