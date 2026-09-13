@@ -54,6 +54,7 @@ export function initRemotePlaceNavigation(options = {}) {
   let activeIndex = -1;
   let mode = "settlements";
   let peopleSearchRequest = 0;
+  let cancelRequest = 0;
   const peopleRuntime = options.peopleRuntime || createPeopleSearchRuntime(options.peopleRuntimeOptions);
 
   function setStatus(message = "") {
@@ -115,11 +116,18 @@ export function initRemotePlaceNavigation(options = {}) {
   }
 
   function syncModeUi() {
+    const placeholderKey = mode === "people" ? "peopleSearchPlaceholder" : "placeSearchPlaceholder";
+    const inputAriaKey = mode === "people" ? "peopleSearchAria" : "placeSearchAria";
+    const listAriaKey = mode === "people" ? "peopleSuggestionsAria" : "placeSuggestionsAria";
     modeButtons.forEach((button) => { const active = button.dataset.searchMode === mode;
       button.classList?.toggle?.("is-active", active); button.setAttribute("aria-pressed", active ? "true" : "false");
       button.disabled = button.dataset.searchMode === "people" && isNarrativeActive(); });
-    input.placeholder = t(mode === "people" ? "peopleSearchPlaceholder" : "placeSearchPlaceholder");
-    input.setAttribute("aria-label", t(mode === "people" ? "peopleSearchAria" : "placeSearchAria"));
+    input.setAttribute("data-i18n-placeholder", placeholderKey);
+    input.setAttribute("data-i18n-aria", inputAriaKey);
+    list.setAttribute("data-i18n-aria", listAriaKey);
+    input.placeholder = t(placeholderKey);
+    input.setAttribute("aria-label", t(inputAriaKey));
+    list.setAttribute("aria-label", t(listAriaKey));
     input.disabled = mode === "people" && isNarrativeActive();
   }
 
@@ -266,6 +274,11 @@ export function initRemotePlaceNavigation(options = {}) {
   list.setAttribute("aria-label", t("placeSuggestionsAria"));
   syncModeUi();
   syncInputDirection(input);
+  const unsubscribeConnection = dataContext?.subscribe?.("connection", () => {
+    syncModeUi();
+    refresh("connection");
+  });
+  refresh("connection");
 
   input.addEventListener("focus", () => {
     if (peopleController.shouldSuppressFocus()) {
@@ -306,13 +319,27 @@ export function initRemotePlaceNavigation(options = {}) {
     }
   });
 
-  clear.addEventListener("click", () => {
-    if (!peopleController.restoreAcknowledgedQuery()) {
-      input.value = "";
-      syncInputDirection(input);
-      setHidden(clear, true);
-      closeSuggestions();
-      setStatus("");
+  clear.addEventListener("click", async () => {
+    const request = ++cancelRequest;
+    const previousValue = input.value;
+    const previousMode = mode;
+    input.value = "";
+    syncInputDirection(input);
+    setHidden(clear, true);
+    closeSuggestions();
+    syncModeUi();
+    setStatus("");
+    try {
+      const response = await dataContext?.cancelNavigationFocus?.();
+      if (response?.ok === false) throw new Error("Navigation focus cancel was not acknowledged");
+    } catch (_) {
+      if (request !== cancelRequest || input.value || mode !== previousMode) return;
+      if (!peopleController.restoreAcknowledgedQuery()) {
+        input.value = previousValue;
+        syncInputDirection(input);
+        setHidden(clear, !input.value);
+      }
+      setStatus(t("placeSearchFailed"));
     }
   });
 
@@ -340,6 +367,7 @@ export function initRemotePlaceNavigation(options = {}) {
     destroy() {
       document.removeEventListener?.("pointerdown", handleDocumentPointerDown);
       window.removeEventListener?.(LOCALE_EVENT, handleLocaleChange);
+      unsubscribeConnection?.();
       peopleController.destroy();
     },
   };

@@ -1891,7 +1891,7 @@ describe("irToMapLibreLayers", () => {
     expect(sym.layout["text-offset"][1]).toEqual(["get", "otef_map_text_offset_em"]);
   });
 
-  it("emits forceVisible Hebrew name labels for nli.people_names on GIS and projection", () => {
+  it("reserves runtime NLI name rendering for the name field, with explicit style inspection opt-in", () => {
     const layerConfig = {
       geometryType: "point",
       style: {
@@ -1915,7 +1915,9 @@ describe("irToMapLibreLayers", () => {
     const proj = irToMapLibreLayers("nli.people_names", "nli__people_names", layerConfig, {
       applyProjectionHatchPresentation: true,
     });
-    for (const result of [gis, proj]) {
+    expect(gis.filter(layer => layer.type === 'symbol')).toEqual([]);
+    expect(proj.filter(layer => layer.type === 'symbol')).toEqual([]);
+    for (const result of [irToMapLibreLayers('nli.people_names','nli__people_names',layerConfig,{renderMapLabelsFromStyle:true})]) {
       const symbols = result.filter((layer) => layer.type === "symbol");
       expect(symbols).toHaveLength(1);
       const sym = symbols[0];

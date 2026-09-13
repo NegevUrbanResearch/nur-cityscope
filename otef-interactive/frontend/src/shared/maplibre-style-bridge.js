@@ -1243,7 +1243,8 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
  * ArcGIS-derived `style.labels` exists on many processed layers as metadata (class fields like
  * `Id`, `Shape_Length`, `Name`) and must not become MapLibre text layers by default.
  *
- * - GIS / default: no map labels from `style.labels`, except `*.people_names`.
+ * - NLI memorial names are rendered by the shared name-field controller, including startup.
+ * - GIS / default: no map labels from `style.labels`, except other `*.people_names`.
  * - Projection (`applyProjectionHatchPresentation`): settlement-names stem (`*.שמות_יישובים`) and `*.people_names`.
  * - Unit tests / explicit opt-in: `renderMapLabelsFromStyle: true`.
  *
@@ -1253,6 +1254,7 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
 function shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId) {
   if (styleOptions?.renderMapLabelsFromStyle === true) return true;
   const s = String(fullLayerId || "");
+  if (s === "nli.people_names") return false;
   if (/\.people_names$/.test(s)) return true;
   if (/\.שמות_יישובים$/.test(s)) {
     return styleOptions?.applyProjectionHatchPresentation === true;
@@ -1266,7 +1268,7 @@ function shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId) {
  *   applyProjectionHatchPresentation?: boolean,
  *   renderMapLabelsFromStyle?: boolean,
  * }} [styleOptions] - projection sets `applyLayerGroupsToMap` with `applyProjectionHatchPresentation`
- *   for hatch density. `*.people_names` always emit. Settlement-name labels (`*.שמות_יישובים`) emit
+ *   for hatch density. `nli.people_names` uses its dedicated field renderer; other `*.people_names` emit. Settlement-name labels (`*.שמות_יישובים`) emit
  *   only when `applyProjectionHatchPresentation` is true (projection); GIS default does not emit.
  */
 export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styleOptions = {}) {

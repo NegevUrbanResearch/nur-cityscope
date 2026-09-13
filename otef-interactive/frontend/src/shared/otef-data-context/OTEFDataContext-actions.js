@@ -813,6 +813,13 @@ async function navigateToPlace(ctx, place) {
   return OTEF_API.navigateToPlace(ctx._tableName, payload);
 }
 
+async function cancelNavigationFocus(ctx) {
+  if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  return OTEF_API.cancelNavigationFocus(ctx._tableName, {
+    sourceId: ctx._clientId, timestamp: Date.now(), traceId: generateTraceId("focus-cancel"),
+  });
+}
+
 async function setNarrative(ctx, id) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   if (id !== null && !getNliNarrative(id)) return { ok: false, reason: "unsupported_narrative" };
@@ -995,6 +1002,7 @@ OTEFDataContextInternals.actions = {
   setBasemap,
   patchInvestigationClock,
   navigateToPlace,
+  cancelNavigationFocus,
   selectPerson,
   clearPerson,
   archiveWindowCommand,
@@ -1021,6 +1029,7 @@ export {
   setBasemap,
   patchInvestigationClock,
   navigateToPlace,
+  cancelNavigationFocus,
   selectPerson,
   clearPerson,
   archiveWindowCommand,

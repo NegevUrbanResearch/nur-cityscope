@@ -104,6 +104,7 @@ describe("remote people search", () => {
     const dataContext = { getPersonSelection: () => snapshot, subscribe: (key, fn) => { listeners.set(key, fn); fn(snapshot); return () => {}; },
       selectPerson: vi.fn(async (pid, version) => { snapshot = { personId: pid, datasetVersion: version, revision: Math.max(snapshot.revision + 1, forceAckRevision) }; listeners.get("personSelection")(snapshot); return { person_selection: snapshot }; }),
       clearPerson: vi.fn(async () => { snapshot = { personId: null, datasetVersion: null, revision: snapshot.revision + 1 }; listeners.get("personSelection")(snapshot); return { person_selection: snapshot }; }),
+      cancelNavigationFocus: vi.fn(async () => { snapshot = { personId: null, datasetVersion: null, revision: snapshot.revision + 1 }; listeners.get("personSelection")(snapshot); return { status: "ok" }; }),
       archiveWindowCommand: vi.fn(async (action, pid, version, requestId) => {
         listeners.get("archiveWindow")?.({ action, personId: pid, datasetVersion: version, requestId });
         listeners.get("archiveWindowResult")?.({
@@ -159,8 +160,11 @@ describe("remote people search", () => {
     archiveButton.dispatchEvent({ type: "click" });
     await Promise.resolve(); await Promise.resolve();
     expect(root.classList.contains("is-archive-open")).toBe(false);
+    dataContext.cancelNavigationFocus.mockRejectedValueOnce(new Error("timeout"));
     clear.dispatchEvent({ type: "click" });
+    await Promise.resolve(); await Promise.resolve();
     expect(input.value).toBe("David Cohen");
+    expect(status.textContent).toBeTruthy();
     dataContext.clearPerson.mockRejectedValueOnce(new Error("timeout"));
     settlementButton.dispatchEvent({ type: "click" });
     await Promise.resolve();
@@ -212,9 +216,14 @@ describe("remote people search", () => {
     resolveLate({ person_selection: { personId: "1", datasetVersion: "v1", revision: 1 } });
     await Promise.resolve(); await Promise.resolve();
     expect(input.value).toBe("David Cohen");
-    listeners.get("personSelection")({ personId: null, datasetVersion: null, revision: 9 });
-    await Promise.resolve();
+    clear.dispatchEvent({ type: "click" });
+    await Promise.resolve(); await Promise.resolve();
+    expect(dataContext.cancelNavigationFocus).toHaveBeenCalledTimes(2);
     expect(input.value).toBe("");
+    expect(peopleButton.attributes["aria-pressed"]).toBe("true");
+    expect(input.attributes["aria-label"]).toBe("חיפוש אדם");
+    expect(input.attributes["data-i18n-aria"]).toBe("peopleSearchAria");
+    expect(input.attributes["data-i18n-placeholder"]).toBe("peopleSearchPlaceholder");
     expect(root.classList.contains("is-pending")).toBe(false);
   });
 
