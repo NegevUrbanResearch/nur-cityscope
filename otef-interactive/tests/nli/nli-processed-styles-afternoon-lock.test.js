@@ -42,6 +42,7 @@ describe("live nli processed styles afternoon lock", () => {
     const labels = names.labels || {};
     expect(Number(labels.size)).toBe(8);
     expect(Number(labels.haloSize)).toBeCloseTo(0.12, 5);
+    expect(labels.field).toBe("hebrew_name");
     expect(labels.offsetArrayProperty).toBe("otef_map_text_offset_em");
     expect(labels.textRotationAlignment).toBe("map");
   });

@@ -715,7 +715,7 @@ def simple_line_lyrx(
 
 
 def labels_only_point_lyrx(
-    field: str = "name",
+    field: str = "hebrew_name",
     height: float = 11.0,
     halo_size: float = 0.2,
     fill: Sequence[int] = (255, 255, 255),
@@ -905,6 +905,109 @@ NLI_POPUP_CONFIG = {
 
 _TIME_ONLY = re.compile(r"^(\d{2}):(\d{2}):(\d{2})$")
 _WEB_MERCATOR_A = 6378137.0
+
+
+UNKNOWN_HEBREW_NAME = "לא ידוע"
+PEOPLE_OVERLAY_MIN_MOVE_M = 1.0
+
+
+def _person_pid(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else str(value)
+    text = str(value).strip()
+    try:
+        number = float(text)
+    except ValueError:
+        return text
+    if number.is_integer():
+        return str(int(number))
+    return text
+
+
+def _overlay_text(props: Dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = props.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _is_blank_hebrew(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return True
+    return value.strip() == UNKNOWN_HEBREW_NAME
+
+
+def _point_lonlat(feature: Dict[str, Any]) -> Optional[Tuple[float, float]]:
+    geometry = feature.get("geometry") or {}
+    if geometry.get("type") != "Point":
+        return None
+    coords = geometry.get("coordinates") or []
+    if len(coords) < 2:
+        return None
+    return float(coords[0]), float(coords[1])
+
+
+def _planar_meters(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    lon1, lat1 = a
+    lon2, lat2 = b
+    dy = (lat2 - lat1) * 111320.0
+    dx = (lon2 - lon1) * 111320.0 * math.cos(math.radians((lat1 + lat2) / 2.0))
+    return math.hypot(dx, dy)
+
+
+def apply_people_source_overlay(
+    collection: Dict[str, Any],
+    overlay: Dict[str, Any],
+    *,
+    min_move_m: float = PEOPLE_OVERLAY_MIN_MOVE_M,
+) -> Dict[str, int]:
+    """Copy Hebrew names, English name fixes, and moved points from a shapefile export.
+
+    Leaves long ``info`` / ``links`` fields on the Aug 27 GeoJSON untouched.
+    """
+    by_pid: Dict[str, Dict[str, Any]] = {}
+    for feature in overlay.get("features") or []:
+        pid = _person_pid((feature.get("properties") or {}).get("pid"))
+        if pid:
+            by_pid[pid] = feature
+    stats = {"hebrew_name": 0, "name": 0, "geometry": 0, "matched": 0}
+    for feature in collection.get("features") or []:
+        props = dict(feature.get("properties") or {})
+        pid = _person_pid(props.get("pid"))
+        source = by_pid.get(pid)
+        if source is None:
+            continue
+        stats["matched"] += 1
+        overlay_props = source.get("properties") or {}
+        hebrew = _overlay_text(overlay_props, "hebrew_name", "hebrew_nam")
+        if hebrew and hebrew != UNKNOWN_HEBREW_NAME and (
+            _is_blank_hebrew(props.get("hebrew_name")) or str(props.get("hebrew_name") or "").strip() != hebrew
+        ):
+            props["hebrew_name"] = hebrew
+            stats["hebrew_name"] += 1
+        name = _overlay_text(overlay_props, "name")
+        current_name = props.get("name")
+        current_stripped = current_name.strip() if isinstance(current_name, str) else ""
+        if name and name != current_stripped:
+            props["name"] = name
+            stats["name"] += 1
+        src_xy = _point_lonlat(feature)
+        overlay_xy = _point_lonlat(source)
+        if src_xy and overlay_xy and _planar_meters(src_xy, overlay_xy) >= min_move_m:
+            feature["geometry"] = {
+                "type": "Point",
+                "coordinates": [overlay_xy[0], overlay_xy[1]],
+            }
+            stats["geometry"] += 1
+        feature["properties"] = props
+    return stats
 
 
 def drop_null_geometries(collection: Dict[str, Any]) -> int:
@@ -1124,6 +1227,7 @@ def prepare_nli_pack(
     alarms_path: Optional[Path] = None,
     pid_mms_path: Optional[Path] = None,
     overlay_source_root: Optional[Path] = None,
+    people_overlay_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     gis_dir = pack_dir / "gis"
     styles_dir = pack_dir / "styles"
@@ -1148,6 +1252,10 @@ def prepare_nli_pack(
                 reproject_web_mercator_collection_to_wgs84(collection)
             if stem in TIMELINE_STEMS:
                 apply_timeline_minutes(collection)
+            overlay_stats: Optional[Dict[str, int]] = None
+            if stem == "people" and people_overlay_path and Path(people_overlay_path).is_file():
+                overlay = json.loads(Path(people_overlay_path).read_text(encoding="utf-8"))
+                overlay_stats = apply_people_source_overlay(collection, overlay)
             if stem == "people" and (authorities or pid_mms_ids):
                 summary["nli_catalog_links"] = attach_nli_catalog_links(
                     collection, authorities, catalog_features, pid_mms_ids
@@ -1158,13 +1266,16 @@ def prepare_nli_pack(
             if stem == "people":
                 apply_people_name_offsets(collection.get("features") or [])
                 _write_json(gis_dir / "people_names.geojson", collection)
-            summary["layers"][stem] = {
+            layer_summary: Dict[str, Any] = {
                 "features": len(collection.get("features") or []),
                 "dropped_null_geometry": dropped,
                 "jittered": moved,
                 "time_fields_rewritten": times,
                 "legend_values_rewritten": grouped,
             }
+            if overlay_stats is not None:
+                layer_summary["overlay"] = overlay_stats
+            summary["layers"][stem] = layer_summary
     if alarms_path is not None and Path(alarms_path).is_file():
         alarms_collection = json.loads(Path(alarms_path).read_text(encoding="utf-8"))
         dropped = drop_null_geometries(alarms_collection)
@@ -1216,7 +1327,17 @@ def main() -> None:
         repo / "otef-interactive" / "public" / "source" / "layers" / "popup-config.json",
     ]
     alarms_path = Path.home() / "Downloads" / "oct7_alarms_2023-10-07.geojson"
-    summary = prepare_nli_pack(zip_path, pack_dir, popup_paths, alarms_path=alarms_path)
+    people_overlay = Path.home() / "Downloads" / "people_7_10_09092026.geojson"
+    downloads_zip = Path.home() / "Downloads" / "drive-download-20260827T125810Z-1-001.zip"
+    if not zip_path.is_file() and downloads_zip.is_file():
+        zip_path = downloads_zip
+    summary = prepare_nli_pack(
+        zip_path,
+        pack_dir,
+        popup_paths,
+        alarms_path=alarms_path,
+        people_overlay_path=people_overlay if people_overlay.is_file() else None,
+    )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
