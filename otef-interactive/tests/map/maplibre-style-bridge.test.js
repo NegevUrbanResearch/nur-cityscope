@@ -1891,14 +1891,14 @@ describe("irToMapLibreLayers", () => {
     expect(sym.layout["text-offset"][1]).toEqual(["get", "otef_map_text_offset_em"]);
   });
 
-  it("emits forceVisible English name labels for nli.people_names on GIS and projection", () => {
+  it("emits forceVisible Hebrew name labels for nli.people_names on GIS and projection", () => {
     const layerConfig = {
       geometryType: "point",
       style: {
         renderer: "simple",
         defaultSymbol: { symbolLayers: [] },
         labels: {
-          field: "name",
+          field: "hebrew_name",
           font: ["Guttman Hatzvi", "Noto Sans Regular"],
           size: 8,
           color: "#ffffff",
@@ -1920,8 +1920,7 @@ describe("irToMapLibreLayers", () => {
       expect(symbols).toHaveLength(1);
       const sym = symbols[0];
       expect(sym._labelSymbol).toBe(true);
-      expect(JSON.stringify(sym.layout["text-field"])).toMatch(/name/i);
-      expect(JSON.stringify(sym.layout["text-field"])).not.toMatch(/hebrew_name/i);
+      expect(JSON.stringify(sym.layout["text-field"])).toMatch(/hebrew_name/);
       expect(sym.layout["text-font"]).toEqual(["Guttman Hatzvi", "Noto Sans Regular"]);
       expect(sym.layout["text-font"].some((face) => /Bold/i.test(face))).toBe(false);
       expect(sym.layout["text-size"]).toBe(8);
