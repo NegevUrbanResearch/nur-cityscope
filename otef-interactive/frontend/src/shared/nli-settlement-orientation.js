@@ -12,6 +12,78 @@ const KIBBUTZ_PREFIX = /^קיבוץ /;
 const PLAY_OPACITY = 0.28;
 const DIM_TEXT_OPACITY = 0.35;
 const FULL_OPACITY = 1;
+const MEMORIAL_OPACITY = 0.18;
+const MEMORIAL_TRANSITION = { duration: 350, delay: 0 };
+const paintStates = new WeakMap();
+const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+function paintState(map) {
+  let state = paintStates.get(map);
+  if (!state) {
+    state = { memorial: null, values: new Map() };
+    paintStates.set(map, state);
+  }
+  return state;
+}
+
+function pruneMissingTargets(map) {
+  if (!map.getLayer) return;
+  const state = paintState(map);
+  for (const id of state.values.keys()) {
+    if (!map.getLayer(id)) state.values.delete(id);
+  }
+}
+
+function rememberTarget(map, target) {
+  const state = paintState(map);
+  const layer = map.getLayer?.(target.id);
+  const previous = state.values.get(target.id);
+  if (previous && previous.layer === layer && previous.property === target.property) return previous;
+  const value = map.getPaintProperty?.(target.id, target.property) ?? FULL_OPACITY;
+  const entry = { layer, property: target.property, value,
+    transition: map.getPaintProperty?.(target.id, `${target.property}-transition`) };
+  state.values.set(target.id, entry);
+  return entry;
+}
+
+function paintTarget(map, target) {
+  const state = paintState(map);
+  if (map.getLayer && !map.getLayer(target.id)) {
+    state.values.delete(target.id);
+    return;
+  }
+  const entry = rememberTarget(map, target);
+  const memorial = state.memorial;
+  const value = memorial === null ? entry.value : target.role === "label" && memorial.placeName
+    ? ["case", ["==", ["get", "cityname"], memorial.placeName], FULL_OPACITY, MEMORIAL_OPACITY]
+    : MEMORIAL_OPACITY;
+  const transitionKey = `${target.property}-transition`;
+  const transition = memorial === null ? entry.transition ?? null : MEMORIAL_TRANSITION;
+  if (!equal(map.getPaintProperty?.(target.id, transitionKey) ?? null, transition)) {
+    setPaint(map, target.id, transitionKey, transition);
+  }
+  if (!equal(map.getPaintProperty?.(target.id, target.property), value)) {
+    setPaint(map, target.id, target.property, value);
+  }
+}
+
+/** Memorial presentation owns effective settlement opacity while mounted. */
+export function setMemorialSettlementFocus(map, { active = false, placeName = null } = {}) {
+  if (!map) return;
+  const state = paintState(map);
+  pruneMissingTargets(map);
+  const next = active ? { placeName } : null;
+  if (equal(state.memorial, next)) return;
+  state.memorial = next;
+  for (const target of collectOrientationTargets(map).layers) paintTarget(map, target);
+}
+
+/** Reapply the memorial policy after a style replaces the layer objects. */
+export function refreshMemorialSettlementFocus(map) {
+  if (!map || paintState(map).memorial === null) return;
+  pruneMissingTargets(map);
+  for (const target of collectOrientationTargets(map).layers) paintTarget(map, target);
+}
 
 /** @type {Set<string>} */
 const warnedUnmatchedLocations = new Set();
@@ -194,12 +266,18 @@ export function applySettlementOrientationPaint(map, {
 
   for (const target of targets) {
     if (!target?.id || !target.property) continue;
-    if (narrativeFocus && target.role === "location-line") continue;
+    if (map.getLayer && !map.getLayer(target.id)) {
+      paintState(map).values.delete(target.id);
+      continue;
+    }
+    if (narrativeFocus && target.role === "location-line" && paintState(map).memorial === null) continue;
     const value = target.role === "label"
       ? textOpacity
       : narrativeFocus
         ? ["case", ["==", ["get", "OBJECTID"], focusOutlineObjectId], FULL_OPACITY, PLAY_OPACITY]
         : geomOpacity;
-    setPaint(map, target.id, target.property, value);
+    const entry = rememberTarget(map, target);
+    if (!(narrativeFocus && target.role === "location-line")) entry.value = value;
+    paintTarget(map, target);
   }
 }

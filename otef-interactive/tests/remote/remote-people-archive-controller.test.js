@@ -104,7 +104,7 @@ describe("remote People and archive controller", () => {
     expect(input.getAttribute("aria-expanded")).toBe("false");
   });
 
-  test("clearing an acknowledged people selection keeps its name without reopening suggestions", async () => {
+  test("clearing an acknowledged people selection cancels focus without reopening suggestions", async () => {
     const { initRemotePlaceNavigation } = await import(
       "../../frontend/src/remote/remote-place-navigation.js"
     );
@@ -122,6 +122,7 @@ describe("remote People and archive controller", () => {
       resolve: vi.fn(() => person),
     };
     const dataContext = {
+      cancelNavigationFocus: vi.fn().mockResolvedValue({ ok: true }),
       selectPerson: vi.fn().mockResolvedValue({
         person_selection: { personId: "11", datasetVersion: "v1", revision: 1 },
       }),
@@ -140,7 +141,8 @@ describe("remote People and archive controller", () => {
     document.getElementById("placeSearchClear").click();
     for (let i = 0; i < 4; i += 1) await Promise.resolve();
 
-    expect(input.value).toBe("Ada");
+    expect(input.value).toBe("");
+    expect(dataContext.cancelNavigationFocus).toHaveBeenCalledOnce();
     expect(document.getElementById("placeSuggestions").children).toHaveLength(0);
     expect(input.getAttribute("aria-expanded")).toBe("false");
   });

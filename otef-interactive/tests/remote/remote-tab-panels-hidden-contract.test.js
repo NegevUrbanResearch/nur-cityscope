@@ -102,30 +102,27 @@ test("basemap state keeps durable active selection independent from the popover"
   expect(deriveBasemapControlState("dark", false).parentActive).toBe(false);
 });
 
-test("remote-styles: NLI dock owns bottom anchoring and preserves exact child order", () => {
+test("remote-styles: NLI pack panes do not use an absolute overlay dock", () => {
   const css = readRemoteStyles();
-  const dock = cssBlock(css, ".nli-bottom-dock");
-  const timeline = cssBlock(css, ".nli-tl-sheet");
-  const narrativeButton = cssBlock(css, ".nli-narrative-button");
-  const nliVariant = cssBlock(css, ".layers-variant-c--nli");
-  const tileScroller = cssBlock(css, ".layers-variant-c--nli .group-layers--tiles");
-  expect(dock).toMatch(/position:\s*absolute/);
-  expect(dock).toMatch(/bottom:\s*0/);
-  expect(dock).toMatch(/left:\s*0/);
-  expect(dock).toMatch(/right:\s*0/);
-  expect(timeline).not.toMatch(/position:\s*absolute/);
-  expect(narrativeButton).toMatch(/min-height:\s*(?:4[0-9]|[5-9][0-9])px/);
-  expect(nliVariant).toMatch(/height:\s*100%/);
-  expect(nliVariant).toMatch(/overflow:\s*hidden/);
-  expect(tileScroller).toMatch(/flex:\s*1 1 auto/);
-  expect(tileScroller).toMatch(/overflow-y:\s*auto/);
-  expect(tileScroller).toMatch(/padding-bottom:\s*calc\(var\(--nli-bottom-dock-height,\s*14\.5rem\)/);
+  expect(css).not.toMatch(/\.nli-bottom-dock\s*\{/);
+  expect(css).not.toMatch(/\.layers-variant-c--nli\s*\{/);
+  expect(css).not.toMatch(/\.sheet-content--nli\s*\{/);
+  expect(css).not.toMatch(/--nli-bottom-dock-height,\s*14\.5rem/);
+  const panes = cssBlock(css, ".nli-pack-panes");
+  const paneBtn = cssBlock(css, ".nli-pack-pane");
+  expect(panes).toMatch(/display:\s*grid/);
+  expect(paneBtn).toMatch(/min-height:\s*44px/);
+  expect(panes).not.toMatch(/direction:\s*ltr/);
 
   const source = fs.readFileSync(
     path.resolve(__dirname, "../../frontend/src/remote/layer-sheet-controller.js"),
     "utf8",
   );
-  expect(source).toMatch(/class="nli-bottom-dock"[\s\S]*\$\{narrativeSheet\}[\s\S]*\$\{nliSheet\}/);
+  expect(source).toMatch(/nliPackPaneSwitchHtml/);
+  expect(source).toMatch(/setNliPackPane/);
+  expect(source).toMatch(/nliNarrativeControlsHtml\(/);
+  expect(source).toMatch(/focusedGroupId === "nli"[\s\S]*_syncNliPlayheadTicker/);
+  expect(source).not.toMatch(/_syncNliDockMeasurement/);
   expect(source.indexOf("${narrativeSheet}")).toBeLessThan(source.indexOf("${nliSheet}"));
 });
 

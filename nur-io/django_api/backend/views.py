@@ -2080,6 +2080,37 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 }
             )
 
+        if action == "cancel_navigation_focus":
+            import time
+
+            timestamp = request.data.get("timestamp")
+            if not isinstance(timestamp, (int, float)):
+                timestamp = int(time.time() * 1000)
+            command_payload = {
+                "id": f"nav-cancel-{int(timestamp)}",
+                "cancelFocus": True,
+                "sourceId": request.data.get("sourceId"),
+                "timestamp": int(timestamp),
+                "traceId": trace_id,
+            }
+            with transaction.atomic():
+                locked = lock_person_selection_state(state)
+                cleared, selection_changed, _error, _reason = transition_person_selection(
+                    locked,
+                    {"personId": None, "datasetVersion": None},
+                    normalizer=normalize_person_selection,
+                )
+                if selection_changed:
+                    self._schedule_person_selection_broadcast(
+                        table_name,
+                        cleared,
+                        {"sourceId": command_payload["sourceId"], "timestamp": command_payload["timestamp"], "traceId": trace_id},
+                    )
+                transaction.on_commit(
+                    lambda: self._broadcast_place_navigation_command(table_name, dict(command_payload))
+                )
+            return Response({"status": "ok", "action": action, "command": command_payload})
+
         if action == "navigate_to_place":
             import time
 

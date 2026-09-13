@@ -25,6 +25,7 @@ from nli_pack_prep import (
     install_nli_route_232_overlay,
     apply_alarm_timeline_minutes,
     apply_people_name_offsets,
+    apply_people_source_overlay,
     apply_timeline_minutes,
     ashkelon_north_lat,
     attach_nli_catalog_links,
@@ -335,7 +336,7 @@ class LyrxBuilderTests(unittest.TestCase):
         self.assertEqual(NLI_CATALOG_MARKER_SIZE, 10.0)
         self.assertEqual(NLI_CATALOG_STROKE_WIDTH, 0.6)
 
-    def test_people_names_lyrx_is_labels_only_point_with_name_and_force_visible(self):
+    def test_people_names_lyrx_is_labels_only_point_with_hebrew_name_and_force_visible(self):
         payload = labels_only_point_lyrx()
         parsed = parse_lyrx_style(_write_lyrx(payload, "people_names.lyrx"))
         self.assertIsNotNone(parsed)
@@ -344,7 +345,7 @@ class LyrxBuilderTests(unittest.TestCase):
         self.assertEqual(data["renderer"], "simple")
         self.assertNotIn("uniqueValues", data)
         labels = data["labels"]
-        self.assertEqual(labels["field"], "name")
+        self.assertEqual(labels["field"], "hebrew_name")
         self.assertTrue(labels["forceVisible"])
         self.assertFalse(labels["hebrewBidiWrap"])
         self.assertEqual(labels["font"], ["Guttman Hatzvi", "Noto Sans Regular"])
@@ -1063,6 +1064,147 @@ class AnimationOverrideContractTests(unittest.TestCase):
         self.assertIsNone(alarm_style.get("labels"))
         layers = (alarm_style.get("defaultSymbol") or {}).get("symbolLayers") or []
         self.assertTrue(any(layer.get("type") == "markerPoint" for layer in layers))
+        names = data.get("people_names") or {}
+        self.assertEqual((names.get("labels") or {}).get("field"), "hebrew_name")
+
+
+class PeopleSourceOverlayTests(unittest.TestCase):
+    def test_overlay_fills_hebrew_names_and_english_fixes_without_truncating_info(self):
+        people = {
+            "type": "FeatureCollection",
+            "features": [
+                _point(
+                    34.55,
+                    31.50,
+                    pid=801,
+                    name="Shani Louk",
+                    hebrew_name="לא ידוע",
+                    info="full biography that must not be chopped",
+                    links="https://example.com/long",
+                ),
+                _point(
+                    34.40,
+                    31.30,
+                    pid=1597,
+                    name="Michael Muzarkov",
+                    hebrew_name=None,
+                    info="keep me",
+                ),
+                _point(
+                    34.41,
+                    31.31,
+                    pid=100,
+                    name="Unchanged Person",
+                    hebrew_name="שם קיים",
+                    info="also keep",
+                ),
+            ],
+        }
+        overlay = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "pid": 801,
+                        "name": "Shani Louk",
+                        "hebrew_nam": "שני לוק",
+                        "info": "chopped",
+                        "links": "https://ex",
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [34.559255847, 31.505946785],
+                    },
+                },
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "pid": 1597,
+                        "name": "Michael Murzakhanov",
+                        "hebrew_nam": "מיכאל מורזאחנוב",
+                        "info": "x",
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [34.400000001, 31.300000001],
+                    },
+                },
+            ],
+        }
+        stats = apply_people_source_overlay(people, overlay)
+        by_pid = {
+            str(feat["properties"]["pid"]): feat for feat in people["features"]
+        }
+        shani = by_pid["801"]["properties"]
+        self.assertEqual(shani["hebrew_name"], "שני לוק")
+        self.assertEqual(shani["info"], "full biography that must not be chopped")
+        self.assertEqual(shani["links"], "https://example.com/long")
+        self.assertAlmostEqual(by_pid["801"]["geometry"]["coordinates"][0], 34.559255847)
+        michael = by_pid["1597"]["properties"]
+        self.assertEqual(michael["name"], "Michael Murzakhanov")
+        self.assertEqual(michael["hebrew_name"], "מיכאל מורזאחנוב")
+        self.assertEqual(michael["info"], "keep me")
+        unchanged = by_pid["100"]["properties"]
+        self.assertEqual(unchanged["hebrew_name"], "שם קיים")
+        self.assertEqual(unchanged["name"], "Unchanged Person")
+        self.assertEqual(stats["hebrew_name"], 2)
+        self.assertEqual(stats["name"], 1)
+        self.assertEqual(stats["geometry"], 1)
+
+    def test_prepare_applies_people_overlay_before_jitter(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = tmp / "nli.zip"
+        people = {
+            "type": "FeatureCollection",
+            "features": [
+                _point(34.55, 31.50, pid=801, name="Shani Louk", hebrew_name="לא ידוע"),
+            ],
+        }
+        empty = {"type": "FeatureCollection", "features": []}
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("geojson/people_7_10.json", json.dumps(people))
+            archive.writestr("geojson/polygons_7_10.geojson", json.dumps(empty))
+            archive.writestr("geojson/lines_7_10.geojson", json.dumps(empty))
+        overlay_path = tmp / "people_overlay.geojson"
+        overlay_path.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "properties": {
+                                "pid": 801,
+                                "name": "Shani Louk",
+                                "hebrew_nam": "שני לוק",
+                            },
+                            "geometry": {
+                                "type": "Point",
+                                "coordinates": [34.559255847, 31.505946785],
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        pack_dir = tmp / "nli"
+        summary = prepare_nli_pack(
+            zip_path,
+            pack_dir,
+            authorities_path=tmp / "missing.json",
+            people_overlay_path=overlay_path,
+        )
+        out = json.loads((pack_dir / "gis" / "people.geojson").read_text(encoding="utf-8"))
+        props = out["features"][0]["properties"]
+        self.assertEqual(props["hebrew_name"], "שני לוק")
+        self.assertAlmostEqual(props["source_lon"], 34.559255847)
+        self.assertAlmostEqual(props["source_lat"], 31.505946785)
+        lyrx = json.loads((pack_dir / "styles" / "people_names.lyrx").read_text(encoding="utf-8"))
+        expression = lyrx["layerDefinitions"][0]["labelClasses"][0]["expression"]
+        self.assertIn("hebrew_name", expression)
+        self.assertEqual(summary["layers"]["people"]["overlay"]["hebrew_name"], 1)
 
 
 if __name__ == "__main__":

@@ -578,6 +578,12 @@ class OTEFDataContextClass {
     return actions.navigateToPlace(this, place);
   }
 
+
+  cancelNavigationFocus() {
+    const actions = OTEFDataContextInternals.actions;
+    return actions.cancelNavigationFocus(this);
+  }
+
   _notify(key, value) {
     const subs = this._subscribers[key];
     if (!subs || subs.size === 0) return;

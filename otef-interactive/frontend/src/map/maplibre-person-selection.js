@@ -76,8 +76,9 @@ export function normalizePeopleRuntime(geojson, index, metadata, { geometryVersi
     duplicate(features, pid, "geometry");
     if (!isPoint(feature)) throw new Error(`People geometry missing for PID: ${pid}`);
     const properties = feature.properties || {};
+    const recorded = [properties.source_lon, properties.source_lat];
     features.set(pid, {
-      coordinates: feature.geometry.coordinates.slice(0, 2),
+      coordinates: recorded.every(Number.isFinite) ? recorded : feature.geometry.coordinates.slice(0, 2),
       names: [clean(properties.hebrew_name), clean(properties.name)].filter(Boolean),
       nliUrl: clean(properties.nli_url || properties.nliUrl || properties.archive_url),
       location: clean(properties.location), sublocation: clean(properties.sublocation),

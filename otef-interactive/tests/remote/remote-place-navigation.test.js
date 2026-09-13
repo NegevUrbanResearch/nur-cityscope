@@ -36,8 +36,9 @@ describe("remote place navigation", () => {
       "../../frontend/src/remote/remote-place-navigation.js"
     );
 
+    const cancelNavigationFocus = vi.fn().mockResolvedValue({ ok: true });
     initRemotePlaceNavigation({
-      dataContext: { navigateToPlace: vi.fn() },
+      dataContext: { navigateToPlace: vi.fn(), cancelNavigationFocus },
       searchPlaces: vi.fn(() => [places[0]]),
       isConnected: () => true,
     });
@@ -50,6 +51,33 @@ describe("remote place navigation", () => {
     document.getElementById("placeSearchClear").click();
     expect(input.value).toBe("");
     expect(document.querySelectorAll(".place-suggestion")).toHaveLength(0);
+    expect(cancelNavigationFocus).toHaveBeenCalledOnce();
+  });
+
+  test("connection changes enable search and unsubscribe on destroy", async () => {
+    const { initRemotePlaceNavigation } = await import(
+      "../../frontend/src/remote/remote-place-navigation.js"
+    );
+    let connected = false;
+    let onConnection;
+    const unsubscribe = vi.fn();
+    const dataContext = { subscribe: vi.fn((topic, callback) => {
+      if (topic === "connection") {
+        onConnection = callback;
+        return unsubscribe;
+      }
+      return () => {};
+    }) };
+    const controller = initRemotePlaceNavigation({ dataContext, isConnected: () => connected });
+    const input = document.getElementById("placeSearchInput");
+    expect(input.getAttribute("aria-disabled")).toBe("true");
+    connected = true;
+    onConnection(true);
+    expect(input.disabled).toBe(false);
+    expect(input.getAttribute("aria-disabled")).toBe("false");
+    expect(document.getElementById("placeSearchStatus").textContent).toBe("");
+    controller.destroy();
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
   test("resolved navigation failure shows placeSearchFailed", async () => {

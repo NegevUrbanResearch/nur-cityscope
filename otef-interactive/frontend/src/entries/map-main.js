@@ -7,6 +7,7 @@ import { attachGisFeaturePopups } from "../map/maplibre-gis-popups.js";
 import { createGisPersonSelection } from "../map/maplibre-person-selection.js";
 import { createNliArchiveCommandBridge, createNliArchiveWindowController } from "../map/nli-archive-window.js";
 import { createGisPersonController } from "../map/maplibre-gis-person-controller.js";
+import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
 import { createNarrativePresentation, handleNarrativePresentationCommand } from "../map/nli-narrative-presentation.js";
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
@@ -194,6 +195,8 @@ async function bootstrapMapRuntime() {
   }
 
   map.on("load", async () => {
+    const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "gis", motionMode: resolveMotionMode() });
+    registerDisposer(() => nameFieldController.dispose());
     registerDisposer(() => {
       disposeRouteProgressOverlaysForMap(map);
       disposeInvestigationTimelineForMap(map);
@@ -315,6 +318,7 @@ async function bootstrapMapRuntime() {
     const onNliLabelHeadingStorage = (event) => {
       if (event.key !== NLI_LABEL_HEADING_STORAGE_KEY) return;
       applyStoredNliLabelHeading(map);
+      nameFieldController.reload();
     };
     window.addEventListener("storage", onNliLabelHeadingStorage);
     registerDisposer(() => window.removeEventListener("storage", onNliLabelHeadingStorage));
@@ -455,6 +459,7 @@ async function bootstrapMapRuntime() {
       if (!isCurrent()) return;
       applyLayerGroupsToMap(map, currentGroups);
       applyStoredNliLabelHeading(map);
+      nameFieldController.sync(currentGroups);
       personVisual.bringToFront?.();
       if (syncFlow) syncContextFlowAnimations();
 

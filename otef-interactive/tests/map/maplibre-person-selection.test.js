@@ -32,6 +32,14 @@ const metadata = (datasetVersion = "v1") => ({
   },
 });
 const fetched = (data, bytes = new TextEncoder().encode("geo-hash-v1")) => ({ data, bytes });
+
+test("selected person uses the recorded location rather than the display jitter", () => {
+  const data = geojson([34.501,31.401]);
+  Object.assign(data.features[0].properties, {source_lon:34.5,source_lat:31.4});
+  const runtime = normalizePeopleRuntime(data,index(),metadata());
+  expect(runtime.resolve("11","v1").coordinates).toEqual([34.5,31.4]);
+  expect(data.features[0].geometry.coordinates).toEqual([34.501,31.401]);
+});
 const popup = () => ({
   setLngLat: vi.fn().mockReturnThis(), setHTML: vi.fn().mockReturnThis(),
   addTo: vi.fn().mockReturnThis(), remove: vi.fn(),

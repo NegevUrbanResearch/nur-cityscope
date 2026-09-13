@@ -146,6 +146,10 @@ export const OTEF_API = {
     });
   },
 
+  async cancelNavigationFocus(tableName = this.defaultTable, payload = {}) {
+    return this.executeCommand(tableName, { action: "cancel_navigation_focus", ...payload });
+  },
+
   /** Signature: selectPerson(personId, datasetVersion, expectedRevision, { tableName, ...meta }). */
   async selectPerson(personId, datasetVersion, expectedRevision, meta = {}) {
     const { tableName: target = this.defaultTable, ...requestMeta } = meta || {};

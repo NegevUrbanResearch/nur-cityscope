@@ -28,6 +28,7 @@ import { idleNliClock } from "../shared/nli-investigation-clock.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
 import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
 import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
+import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
 import { createProjectionNarrativeController } from "../projection/projection-narrative-controller.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
@@ -380,6 +381,8 @@ async function bootstrapProjectionRuntime() {
   }
 
   map.on("load", async () => {
+    const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "projection", projectionSpan: projectionSpanId, motionMode: resolveMotionMode() });
+    registerDisposer(() => nameFieldController.dispose());
     if (modelBounds && modelBounds.bounds && typeof map.fitBounds === "function") {
       map.fitBounds(modelBounds.bounds, { animate: false, padding: 0 });
     }
@@ -543,6 +546,7 @@ async function bootstrapProjectionRuntime() {
     const onNliLabelHeadingStorage = (event) => {
       if (event.key !== NLI_LABEL_HEADING_STORAGE_KEY) return;
       applyStoredNliLabelHeading(map);
+      nameFieldController.reload();
     };
     window.addEventListener("storage", onNliLabelHeadingStorage);
     registerDisposer(() => window.removeEventListener("storage", onNliLabelHeadingStorage));
@@ -594,6 +598,7 @@ async function bootstrapProjectionRuntime() {
 
       syncProjectionLayers(map, currentGroups, layerStyleOptions);
       applyStoredNliLabelHeading(map);
+      nameFieldController.sync(currentGroups);
       syncContextFlowAnimations();
 
       const enabledCuratedIds = new Set(collectEnabledCuratedIds(currentGroups));
@@ -710,6 +715,7 @@ async function bootstrapProjectionRuntime() {
 
     const syncProjectionLayersAndRaiseHighlight = (projectionMap, groups, options) => {
       syncProjectionLayers(projectionMap, groups, options);
+      nameFieldController.sync(groups);
       applyStoredNliLabelHeading(projectionMap);
       syncContextFlowAnimations();
       projectionNarrativeController?.onStyleLoad();
@@ -813,6 +819,7 @@ async function bootstrapProjectionRuntime() {
                 Array.isArray(groups) ? groups : Object.values(groups || {}),
               );
               applyStoredNliLabelHeading(map);
+              nameFieldController.sync(Array.isArray(groups) ? groups : Object.values(groups || {}));
               syncContextFlowAnimations();
               projectionNarrativeController?.onStyleLoad();
               raiseProjectionHighlightLayers(map);

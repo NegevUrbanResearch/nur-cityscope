@@ -12,6 +12,20 @@ class OTEFPlaceNavigationCommandTests(TestCase):
         self.table = Table.objects.create(name="otef")
 
     @patch("channels.layers.get_channel_layer")
+    def test_cancel_focus_broadcasts_even_without_person_selection(self, get_channel_layer):
+        layer = get_channel_layer.return_value
+        layer.group_send = AsyncMock()
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(
+                "/api/otef_viewport/by-table/otef/command/",
+                {"action": "cancel_navigation_focus", "sourceId": "remote-a", "timestamp": 123},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(response.json()["command"]["cancelFocus"], True)
+        self.assertTrue(layer.group_send.called)
+
+    @patch("channels.layers.get_channel_layer")
     def test_navigate_to_place_broadcasts_command_without_overwriting_viewport(
         self, get_channel_layer
     ):
