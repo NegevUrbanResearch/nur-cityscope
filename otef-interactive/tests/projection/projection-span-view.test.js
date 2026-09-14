@@ -151,8 +151,8 @@ describe("parseProjectionSpanId", () => {
 });
 
 test("getProjectionSpanRect maps ids to crop windows", () => {
-  expect(getProjectionSpanRect("left")).toEqual({ x0: 0, x1: 0.6 });
-  expect(getProjectionSpanRect("right")).toEqual({ x0: 0.4, x1: 1 });
+  expect(getProjectionSpanRect("left")).toEqual({ x0: 0, x1: 0.6, y0: 0, y1: 1 });
+  expect(getProjectionSpanRect("right")).toEqual({ x0: 0.4, x1: 1, y0: 0, y1: 1 });
   expect(getProjectionSpanRect(null)).toBe(null);
 });
 
@@ -179,26 +179,24 @@ test("spanViewportUvToT3Uv inverts the applied post-fill camera", () => {
   const postScale = MapProjectionConfig.PROJECTION_SPAN.POST_SCALE;
   const halfVisibleExtent = 0.5 / postScale;
 
-  expect(spanViewportUvToT3Uv({ u: 0, v: 0 }, right)).toEqual({
-    u: visibleCenter.x - halfVisibleExtent,
-    v: visibleCenter.y - halfVisibleExtent,
-  });
-  expect(spanViewportUvToT3Uv({ u: 0.5, v: 0.5 }, right)).toEqual({
-    u: visibleCenter.x,
-    v: visibleCenter.y,
-  });
-  expect(spanViewportUvToT3Uv({ u: 1, v: 1 }, right)).toEqual({
-    u: visibleCenter.x + halfVisibleExtent,
-    v: visibleCenter.y + halfVisibleExtent,
-  });
+  expect(spanViewportUvToT3Uv({ u: 0, v: 0 }, right, undefined, "right").u).toBeCloseTo(visibleCenter.x - halfVisibleExtent, 10);
+  expect(spanViewportUvToT3Uv({ u: 0, v: 0 }, right, undefined, "right").v).toBeCloseTo(visibleCenter.y - halfVisibleExtent, 10);
+  expect(spanViewportUvToT3Uv({ u: 0.5, v: 0.5 }, right, undefined, "right")).toEqual(expect.objectContaining({ u: expect.closeTo(visibleCenter.x), v: expect.closeTo(visibleCenter.y) }));
+  expect(spanViewportUvToT3Uv({ u: 1, v: 1 }, right, undefined, "right").u).toBeCloseTo(visibleCenter.x + halfVisibleExtent, 10);
+  expect(spanViewportUvToT3Uv({ u: 1, v: 1 }, right, undefined, "right").v).toBeCloseTo(visibleCenter.y + halfVisibleExtent, 10);
+});
+
+test("spanViewportUvToT3Uv requires explicit branch identity", () => {
+  const right = getProjectionSpanRect("right");
+  expect(spanViewportUvToT3Uv({ u: 0.5, v: 0.5 }, right)).toBe(null);
 });
 
 test("spanViewportUvToT3Uv rejects project results outside the live viewport", () => {
   const right = getProjectionSpanRect("right");
-  expect(spanViewportUvToT3Uv({ u: -0.001, v: 0.5 }, right)).toBe(null);
-  expect(spanViewportUvToT3Uv({ u: 1.001, v: 0.5 }, right)).toBe(null);
-  expect(spanViewportUvToT3Uv({ u: 0.5, v: -0.001 }, right)).toBe(null);
-  expect(spanViewportUvToT3Uv({ u: 0.5, v: 1.001 }, right)).toBe(null);
+  expect(spanViewportUvToT3Uv({ u: -0.001, v: 0.5 }, right, undefined, "right")).toBe(null);
+  expect(spanViewportUvToT3Uv({ u: 1.001, v: 0.5 }, right, undefined, "right")).toBe(null);
+  expect(spanViewportUvToT3Uv({ u: 0.5, v: -0.001 }, right, undefined, "right")).toBe(null);
+  expect(spanViewportUvToT3Uv({ u: 0.5, v: 1.001 }, right, undefined, "right")).toBe(null);
 });
 
 test("spanHorizontalScale is inverse width fraction", () => {
@@ -304,7 +302,7 @@ test("applyProjectionSpanView jumpTos T3 then transform1 fill and does not wrap 
       animate: false,
     }),
   );
-  expect(containerEl.style.overflow).toBe("hidden");
+  expect(containerEl.style.overflow || "").toBe("");
   expect(containerEl.querySelector("#projectionSpanFitBest")).toBe(null);
   expect(containerEl.querySelector("#projectionSpanCropFit")).toBe(null);
   expect(containerEl.querySelector("#projectionSpanPreT3")).toBe(null);

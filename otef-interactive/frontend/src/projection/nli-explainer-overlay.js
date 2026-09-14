@@ -5,6 +5,8 @@
 
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
 import { parseProjectionSpanId } from "./projection-span-view.js";
+import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
+import { t3ToOutput, visibleT3Rect } from "../shared/projection-config-geometry.js";
 
 export const NLI_EXPLAINER_LAYOUT_STORAGE_KEY = "otef.nliExplainerLayout.v2";
 export const NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY = "otef.nliGisClockLayout.v2";
@@ -46,7 +48,7 @@ export function shouldIgnoreExplainerLayoutStore(search) {
   return searchParams(search).get("nliExplainerLayout") === "committed";
 }
 
-export function nliExplainerOverlapPageRect(spanKey, span = MapProjectionConfig.PROJECTION_SPAN) {
+function legacyExplainerOverlapPageRect(spanKey, span) {
   if (spanKey !== "left" && spanKey !== "right") return null;
   const overlap0 = span.RIGHT_X0;
   const overlap1 = span.LEFT_X1;
@@ -63,6 +65,42 @@ export function nliExplainerOverlapPageRect(spanKey, span = MapProjectionConfig.
     leftPct: 0,
     widthPct: (100 * overlapW) / rightW,
   };
+}
+
+function configExplainerOverlapPageRect(spanKey, config) {
+  if (spanKey !== "left" && spanKey !== "right") return null;
+  const left = visibleT3Rect(config?.outputs?.left);
+  const right = visibleT3Rect(config?.outputs?.right);
+  if (!left || !right) return null;
+  const intersection = {
+    x0: Math.max(left.x0, right.x0),
+    x1: Math.min(left.x1, right.x1),
+    y0: Math.max(left.y0, right.y0),
+    y1: Math.min(left.y1, right.y1),
+  };
+  if (intersection.x1 <= intersection.x0 || intersection.y1 <= intersection.y0) return null;
+  const branch = config.outputs[spanKey];
+  const outputCorners = [
+    [intersection.x0, intersection.y0],
+    [intersection.x1, intersection.y0],
+    [intersection.x1, intersection.y1],
+    [intersection.x0, intersection.y1],
+  ].map(([u, v]) => t3ToOutput({ u, v }, branch));
+  const x0 = Math.max(0, Math.min(...outputCorners.map(({ u }) => u)));
+  const x1 = Math.min(1, Math.max(...outputCorners.map(({ u }) => u)));
+  const y0 = Math.max(0, Math.min(...outputCorners.map(({ v }) => v)));
+  const y1 = Math.min(1, Math.max(...outputCorners.map(({ v }) => v)));
+  return x1 > x0 && y1 > y0
+    ? { leftPct: x0 * 100, topPct: y0 * 100, widthPct: (x1 - x0) * 100, heightPct: (y1 - y0) * 100 }
+    : null;
+}
+
+/** Return the visible overlap in output coordinates for an effective config. */
+export function nliExplainerOverlapPageRect(spanKey, config) {
+  // Keep the no-argument helper compatible with the parked legacy diagnostic.
+  return config === undefined
+    ? legacyExplainerOverlapPageRect(spanKey, MapProjectionConfig.PROJECTION_SPAN)
+    : configExplainerOverlapPageRect(spanKey, config || DEFAULT_PROJECTION_CONFIG);
 }
 
 export function nliExplainerRotatedPageAabb(layout) {
@@ -111,15 +149,22 @@ function xRangesOverlap(a0, a1, b0, b1) {
   return a0 < b1 && a1 > b0;
 }
 
-export function nliExplainerBoxHitsOverlap(layout, spanKey) {
-  const overlap = nliExplainerOverlapPageRect(spanKey);
+export function nliExplainerBoxHitsOverlap(layout, spanKey, config) {
+  const overlap = nliExplainerOverlapPageRect(spanKey, config);
   if (!overlap) return false;
   const aabb = nliExplainerRotatedPageAabb(layout);
-  return xRangesOverlap(
+  const xHit = xRangesOverlap(
     aabb.leftPct,
     aabb.leftPct + aabb.widthPct,
     overlap.leftPct,
     overlap.leftPct + overlap.widthPct,
+  );
+  if (config === undefined || overlap.topPct === undefined) return xHit;
+  return xHit && xRangesOverlap(
+    aabb.topPct,
+    aabb.topPct + aabb.heightPct,
+    overlap.topPct,
+    overlap.topPct + overlap.heightPct,
   );
 }
 

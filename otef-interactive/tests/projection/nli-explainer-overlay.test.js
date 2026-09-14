@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import MapProjectionConfig from "../../frontend/src/shared/map-projection-config.js";
+import { DEFAULT_PROJECTION_CONFIG as DEFAULT_PROJECTION_CONFIG_DOCUMENT } from "../../frontend/src/shared/projection-config-schema.js";
 import {
   applyNliExplainerLayout,
   applyNliExplainerHostPresence,
@@ -221,6 +222,27 @@ describe("nli explainer layout", () => {
         "right",
       ),
     ).toBe(true);
+  });
+
+  it("recomputes output overlap from effective crop and post transforms", () => {
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG_DOCUMENT);
+    const before = nliExplainerOverlapPageRect("left", config);
+    config.outputs.left.post.tx = 0.1;
+    const after = nliExplainerOverlapPageRect("left", config);
+    expect(after.leftPct).not.toBe(before.leftPct);
+    expect(after.widthPct).toBeGreaterThan(0);
+    expect(nliExplainerOverlapPageRect("right", config).widthPct).toBeGreaterThan(0);
+  });
+
+  it("reports vertical overlap and uses both axes for dynamic collision checks", () => {
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG_DOCUMENT);
+    config.outputs.left.post.ty = 0.5;
+    const overlap = nliExplainerOverlapPageRect("left", config);
+    expect(overlap.topPct).toBeGreaterThan(50);
+    expect(overlap.heightPct).toBeGreaterThan(0);
+    const box = { leftPct: 80, topPct: 0, widthPct: 20, heightPct: 10, fontPx: 22, rotateDeg: 0 };
+    expect(nliExplainerBoxHitsOverlap(box, "left", config)).toBe(false);
+    expect(nliExplainerBoxHitsOverlap({ ...box, topPct: 60 }, "left", config)).toBe(true);
   });
 
   it("rotated AABB is larger than the unrotated box", () => {

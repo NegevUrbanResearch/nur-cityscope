@@ -113,6 +113,8 @@ test("bounds and rotation editor modules are callback-based (no Leaflet/canvas m
 
   expect(bounds).toMatch(/getDisplayedImageBounds/);
   expect(bounds).toMatch(/itmToDisplayPixels/);
+  expect(bounds).toMatch(/displayPixelsToItm/);
+  expect(bounds).toMatch(/displayPixelsToItmCallback/);
   expect(rotation).toMatch(/getDisplayedImageBounds/);
 });
 
@@ -125,6 +127,9 @@ test("projection entry loads editors, injects MapLibre-safe callbacks, and wires
   expect(src).toContain("ProjectionBoundsEditor.configure");
   expect(src).toContain("getDisplayedImageBounds");
   expect(src).toContain("itmToDisplayPixels");
+  expect(src).toContain("displayPixelsToItm");
+  expect(src).toContain('map.unproject([');
+  expect(src).toContain('proj4("EPSG:4326", "EPSG:2039"');
   expect(src).toContain("ProjectionRotationEditor.configure");
   expect(src).toContain("getModelBounds: () => itmBounds");
   expect(src).toContain("viewer_angle_deg: modelBoundsData.viewer_angle_deg");

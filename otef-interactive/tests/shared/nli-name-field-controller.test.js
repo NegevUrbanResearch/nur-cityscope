@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
+import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from "../../frontend/src/shared/projection-config-schema.js";
 
 vi.mock("../../frontend/src/shared/nli-name-field-data.js", () => ({
   loadNliNameField: vi.fn(),
@@ -339,6 +340,30 @@ describe("createNliNameFieldController", () => {
     d.emit("personSelection", { personId: null, datasetVersion: "v1" });
     expect(d.map.getLayer("nli-name-field-labels").filter).toEqual(span);
     expect(d.map.getLayer("nli-name-field-selected").filter).toEqual(["all", span, ["==", ["get", "pid"], "__none__"]]);
+  });
+
+  it("recomputes projection ownership without repacking or mutating prepared layout", async () => {
+    const data = field();
+    data.geojson.features[0].properties.visible_spans = ["right"];
+    data.labelRectangles = new Map([
+      ["p-1", { x: 0.56, y: 0.5, width: 0.04, height: 0.02 }],
+      ["p-2", { x: 0.78, y: 0.5, width: 0.04, height: 0.02 }],
+    ]);
+    const prepared = structuredClone(data.geojson);
+    loadNliNameField.mockResolvedValueOnce(data);
+    const d = setup({ projectionSpan: "left" });
+    enable(d);
+    await flush();
+    expect(d.controller.setProjectionConfig(DEFAULTS, 5)).toBe(true);
+    const source = d.map.getSource("nli-name-field");
+    expect(source.data.features[0].properties.projection_visible_spans).toEqual(["right"]);
+    expect(source.data.features[1].properties.projection_visible_spans).toEqual(["right"]);
+    expect(data.geojson).toEqual(prepared);
+    expect(loadNliNameField).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(d.map._dataset.nliNameField)).toMatchObject({ projectionRevision: 5, projectionClipped: 0, projectionOwners: 2 });
+    expect(d.controller.setProjectionConfig({ ...DEFAULTS, pre: { ...DEFAULTS.pre, tx: 0.2 } }, 4)).toBe(false);
+    expect(JSON.parse(d.map._dataset.nliNameField).projectionRevision).toBe(5);
+    d.controller.dispose();
   });
 
   it("publishes local diagnostics and reloads without adding listeners", async () => {

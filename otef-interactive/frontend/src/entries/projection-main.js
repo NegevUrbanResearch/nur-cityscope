@@ -43,8 +43,13 @@ import {
   applyProjectionSpanView,
   clearProjectionSpanBase,
   parseProjectionSpanId,
+  restoreProjectionSpanBase,
   runWhenMapIdle,
 } from "../projection/projection-span-view.js";
+import {
+  DEFAULT_PROJECTION_CONFIG,
+  validateProjectionConfig,
+} from "../shared/projection-config-schema.js";
 import {
   dispatchProjectionDisplayHotkey,
   readProjectionDisplayHotkey,
@@ -224,6 +229,13 @@ async function bootstrapProjectionRuntime() {
 
   const sw = proj4("EPSG:2039", "EPSG:4326", [itmBounds.west, itmBounds.south]);
   const ne = proj4("EPSG:2039", "EPSG:4326", [itmBounds.east, itmBounds.north]);
+  const imageItmCorners = [
+    [itmBounds.west, itmBounds.north],
+    [itmBounds.east, itmBounds.north],
+    [itmBounds.east, itmBounds.south],
+    [itmBounds.west, itmBounds.south],
+  ];
+  const imageGeoCorners = imageItmCorners.map((point) => proj4("EPSG:2039", "EPSG:4326", point));
   const modelBounds = {
     bounds: [sw, ne],
     center: [(sw[0] + ne[0]) / 2, (sw[1] + ne[1]) / 2],
@@ -237,6 +249,13 @@ async function bootstrapProjectionRuntime() {
   const modelImgEl = document.getElementById("displayedImage");
   if (modelImgEl && modelImageUrl) {
     modelImgEl.src = modelImageUrl;
+    modelImgEl.__otefProjectionImage = {
+      bounds: modelBounds.bounds,
+      corners: imageGeoCorners,
+      itmCorners: imageItmCorners,
+      width: modelBoundsData.image_width,
+      height: modelBoundsData.image_height,
+    };
     updateModelBaseImageVisibility(getEffectiveProjectionLayerGroups(), modelImgEl);
   }
 
@@ -251,6 +270,8 @@ async function bootstrapProjectionRuntime() {
   const projectionSpanId = parseProjectionSpanId(
     typeof window !== "undefined" ? window.location.search : "",
   );
+  let effectiveProjectionConfig = DEFAULT_PROJECTION_CONFIG;
+  const getEffectiveProjectionConfig = () => effectiveProjectionConfig;
   const displayContainerEl = document.getElementById("displayContainer");
   if (projectionSpanId) {
     applyProjectionSpanView({
@@ -258,6 +279,7 @@ async function bootstrapProjectionRuntime() {
       imageEl: modelImgEl,
       containerEl: displayContainerEl,
       spanId: projectionSpanId,
+      config: effectiveProjectionConfig,
     });
   }
   const urlOrConfigPixelRatio = resolveProjectionMapPixelRatio();
@@ -267,14 +289,44 @@ async function bootstrapProjectionRuntime() {
   if (typeof window !== "undefined") {
     window._maplibreMap = map;
   }
-  const applySpanCamera = () => {
+  map._otefProjectionImage = {
+    bounds: modelBounds.bounds,
+    corners: imageGeoCorners,
+    itmCorners: imageItmCorners,
+    width: modelBoundsData.image_width,
+    height: modelBoundsData.image_height,
+  };
+  const applySpanCamera = (revision) => {
     applyProjectionSpanView({
       map,
       imageEl: modelImgEl,
       containerEl: document.getElementById("displayContainer"),
       spanId: projectionSpanId,
+      config: effectiveProjectionConfig,
+      revision,
     });
   };
+  const projectionConfigBridge = {
+    getEffectiveConfig: getEffectiveProjectionConfig,
+    setEffectiveConfig: (nextConfig, revision) => {
+      if (!nextConfig?.pre || !nextConfig?.outputs?.left || !nextConfig?.outputs?.right) {
+        return false;
+      }
+      if (Object.keys(validateProjectionConfig(nextConfig)).length > 0) return false;
+      if (
+        Number.isFinite(revision) &&
+        Number.isFinite(map._otefProjectionSpanRevision) &&
+        revision < map._otefProjectionSpanRevision
+      ) {
+        return false;
+      }
+      effectiveProjectionConfig = nextConfig;
+      return applySpanCamera(revision);
+    },
+  };
+  map._otefProjectionConfigBridge = projectionConfigBridge;
+  map.getEffectiveProjectionConfig = getEffectiveProjectionConfig;
+  map.setEffectiveProjectionConfig = projectionConfigBridge.setEffectiveConfig;
   let lastViewport = null;
   /** @type {ReturnType<import("../shared/slideshow-pack-runtime.js").createSlideshowPackRuntime> | null} */
   let slideshowRuntime = null;
@@ -857,13 +909,61 @@ async function bootstrapProjectionRuntime() {
 
   const itmToDisplayPixels = (x, y) => {
     const bounds = getDisplayedImageBounds();
-    if (!bounds) return null;
-    const pctX = (x - itmBounds.west) / (itmBounds.east - itmBounds.west);
-    const pctY = (itmBounds.north - y) / (itmBounds.north - itmBounds.south);
+    if (!bounds || typeof map.project !== "function") return null;
+    let lngLat;
+    try {
+      const projected = proj4("EPSG:2039", "EPSG:4326", [x, y]);
+      if (!Array.isArray(projected) || !projected.every(Number.isFinite)) return null;
+      lngLat = projected;
+    } catch {
+      return null;
+    }
+    let point;
+    try {
+      point = map.project(lngLat);
+    } catch {
+      return null;
+    }
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+    const mapRect = map.getContainer?.().getBoundingClientRect?.();
+    const displayRect = document.getElementById("displayContainer")?.getBoundingClientRect?.();
+    const offsetX = mapRect && displayRect ? mapRect.left - displayRect.left : 0;
+    const offsetY = mapRect && displayRect ? mapRect.top - displayRect.top : 0;
     return {
-      x: bounds.offsetX + pctX * bounds.width,
-      y: bounds.offsetY + pctY * bounds.height,
+      x: bounds.offsetX + offsetX + point.x,
+      y: bounds.offsetY + offsetY + point.y,
     };
+  };
+
+  const displayPixelsToItm = (x, y) => {
+    if (typeof map.unproject !== "function") return null;
+    const bounds = getDisplayedImageBounds();
+    if (!bounds) return null;
+    const mapRect = map.getContainer?.().getBoundingClientRect?.();
+    const displayRect = document.getElementById("displayContainer")?.getBoundingClientRect?.();
+    const offsetX = mapRect && displayRect ? mapRect.left - displayRect.left : 0;
+    const offsetY = mapRect && displayRect ? mapRect.top - displayRect.top : 0;
+    let lngLat;
+    try {
+      lngLat = map.unproject([
+        x - bounds.offsetX - offsetX,
+        y - bounds.offsetY - offsetY,
+      ]);
+    } catch {
+      return null;
+    }
+    const lng = Number(lngLat?.lng ?? lngLat?.[0]);
+    const lat = Number(lngLat?.lat ?? lngLat?.[1]);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+    let itm;
+    try {
+      itm = proj4("EPSG:4326", "EPSG:2039", [lng, lat]);
+    } catch {
+      return null;
+    }
+    return Array.isArray(itm) && itm.every(Number.isFinite)
+      ? { x: itm[0], y: itm[1] }
+      : null;
   };
 
   if (window.ProjectionBoundsEditor) {
@@ -871,6 +971,7 @@ async function bootstrapProjectionRuntime() {
       getModelBounds: () => itmBounds,
       getDisplayedImageBounds,
       itmToDisplayPixels,
+      displayPixelsToItm,
     });
   }
 
@@ -893,6 +994,7 @@ async function bootstrapProjectionRuntime() {
     resizeTimer = window.setTimeout(() => {
       resizeTimer = null;
       if (typeof map.resize === "function") {
+        restoreProjectionSpanBase(map);
         map.resize();
         if (modelBounds && modelBounds.bounds) {
           map.fitBounds(modelBounds.bounds, { animate: false, padding: 0 });
