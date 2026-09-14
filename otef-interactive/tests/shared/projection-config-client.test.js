@@ -78,6 +78,47 @@ test('hydrates revision zero from a full snapshot', async () => {
   expect(h.client.getState().draft).toEqual(DEFAULTS);
 });
 
+test('failed initial GET keeps writes blocked until an explicit fresh retry succeeds', async () => {
+  const h = harness();
+  const started = h.client.start();
+  h.rejectNext(new Error('temporary network failure'));
+  await started;
+  h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000b', state: h.stateFor(1) });
+  expect(h.client.getState().hydrationError).toMatch(/temporary network failure/);
+  await expect(h.client.apply()).rejects.toThrow(/hydrating/);
+  const retry = h.client.retryHydration();
+  expect(h.client.getState().hydrationError).toBeNull();
+  h.resolveNext(h.stateFor(2));
+  await retry;
+  expect(h.client.getState()).toMatchObject({ hydrating: false, hydrationError: null });
+  const applied = h.client.apply();
+  h.resolveNext(h.stateFor(3));
+  await applied;
+});
+
+test('reconnect retry ignores stale GET responses and preserves a local draft without replay', async () => {
+  const h = harness();
+  const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;
+  h.client.setLive(false);
+  const draft = { ...clone(DEFAULTS), pre: { ...DEFAULTS.pre, tx: 0.4 } };
+  h.client.setDraft(draft);
+  h.disconnect(); h.reconnect();
+  h.rejectNext(new Error('GET unavailable'));
+  await h.flushPromises();
+  expect(h.client.getState()).toMatchObject({ hydrating: true, hydrationError: 'GET unavailable', live: false });
+  await expect(h.client.apply()).rejects.toThrow(/hydrating/);
+  const oldRetry = h.client.retryHydration();
+  const currentRetry = h.client.retryHydration();
+  h.resolveAt(1, h.stateFor(4));
+  await currentRetry;
+  h.resolveAt(0, h.stateFor(3));
+  await oldRetry;
+  expect(h.client.getState().snapshot.revision).toBe(4);
+  expect(h.client.getState().draft).toEqual(draft);
+  expect(h.client.getState().live).toBe(false);
+  expect(h.fetchImpl.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
+});
+
 test('GET revision six cannot replace a websocket revision seven', async () => {
   const h = harness({ revision: 6 });
   const started = h.client.start();
@@ -259,6 +300,7 @@ test('failed preview rejects and cancels a Save waiting behind it', async () => 
   await expect(saving).rejects.toThrow(/uncertain|connection/i);
   await h.flushPromises();
   expect(h.pendingRequests()).toHaveLength(0);
+  expect(h.client.getState().previewError).toMatch(/uncertain/);
 });
 
 test('late Load response cannot overwrite a draft preserved by a foreign update', async () => {

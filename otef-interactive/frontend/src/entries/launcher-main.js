@@ -56,9 +56,7 @@ export function initLauncher({
   }
   setLink(document, "remote", null);
 
-  const remoteOpen = document.getElementById("remoteOpen");
   const remoteCopy = document.getElementById("remoteCopy");
-  const remoteUrl = document.getElementById("remoteUrl");
   const shareStatus = document.getElementById("shareStatus");
   const qrHost = document.getElementById("remoteQr");
   let disposed = false;
@@ -82,8 +80,6 @@ export function initLauncher({
       return;
     }
     setLink(document, "remote", href);
-    if (remoteOpen) remoteOpen.href = href;
-    if (remoteCopy) remoteCopy.dataset.url = href;
     if (shareStatus) shareStatus.textContent = "Ready to connect.";
     if (qrHost) renderQr(qrHost, href, { size: 256 });
   };

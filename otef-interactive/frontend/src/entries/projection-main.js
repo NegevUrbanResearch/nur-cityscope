@@ -29,6 +29,7 @@ import { resolveMotionMode } from "../shared/reduced-motion.js";
 import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
 import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
+import { installProjectionPreviewBridge } from "../projection/projection-preview-bridge.js";
 import { createProjectionNarrativeController } from "../projection/projection-narrative-controller.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
@@ -189,6 +190,8 @@ function toggleProjectionFullscreen() {
 }
 
 async function bootstrapProjectionRuntime() {
+  const previewMode = new URLSearchParams(window.location.search).get("preview") === "1";
+  if (previewMode) document.body.classList.add("projection-preview");
   const modules = [
     "../shared/logger.js",
     "../shared/map-projection-config.js",
@@ -579,7 +582,11 @@ async function bootstrapProjectionRuntime() {
       syncContextInvestigation();
     };
 
-    if (projectionSpanId && OTEFDataContext._wsClient) {
+    if (previewMode) registerDisposer(installProjectionPreviewBridge({
+      win: window, output: projectionSpanId, map, nameFieldController, syncContextInvestigation,
+    }));
+
+    if (projectionSpanId && !previewMode && OTEFDataContext._wsClient) {
       const projectionConfigClient = createProjectionConfigClient({
         table: "otef",
         sourceId: createUuid(),
@@ -941,6 +948,7 @@ async function bootstrapProjectionRuntime() {
     }
   });
 
+  if (previewMode) return;
   await import("../projection/projection-bounds-editor.js");
   await import("../projection/projection-rotation-editor.js");
 
@@ -1162,7 +1170,8 @@ function initializeTableSwitcher() {
 }
 
 async function boot() {
-  const shouldContinue = initializeTableSwitcher();
+  const previewMode = new URLSearchParams(window.location.search).get("preview") === "1";
+  const shouldContinue = previewMode || initializeTableSwitcher();
   if (!shouldContinue) return;
   await bootstrapProjectionRuntime();
 }

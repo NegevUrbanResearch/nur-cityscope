@@ -68,14 +68,16 @@ function realSpanAndNames() {
   const map = createFakeMapLibreMap();
   let camera = { center: { lng: 34.5, lat: 31.5 }, zoom: 10, bearing: 7, pitch: 0, padding: 0 };
   map.getContainer = () => container;
-  map.getCanvas = () => ({ style: {} });
+  const canvas = { style: {} };
+  map.getCanvas = () => canvas;
   map.getCenter = () => camera.center;
   map.getZoom = () => camera.zoom;
+  map.getMaxZoom = () => 22;
   map.getBearing = () => camera.bearing;
   map.getPitch = () => camera.pitch;
   map.getPadding = () => camera.padding;
   map.unproject = ([x, y]) => ({ lng: camera.center.lng + (x - 800) / 1000, lat: camera.center.lat + (y - 450) / 1000 });
-  map.jumpTo = (next) => { camera = { ...camera, ...next }; };
+  map.jumpTo = (next) => { camera = { ...camera, ...next, zoom: Math.min(22, next.zoom ?? camera.zoom) }; };
   const controller = createNliNameFieldController({ map, context: { subscribe: () => () => {} }, projectionSpan: "left" });
   let effective = DEFAULT_PROJECTION_CONFIG;
   map.getEffectiveProjectionConfig = () => effective;
@@ -84,10 +86,43 @@ function realSpanAndNames() {
     effective = config;
     return applyProjectionSpanView({ map, imageEl: image, containerEl: display, spanId: "left", config, revision });
   };
-  return { map, controller, getEffective: () => effective };
+  return { map, controller, image, container, canvas, getCamera: () => ({ ...camera }), getEffective: () => effective };
 }
 
 describe("projection config runtime", () => {
+  test("zoom-clamped revision rolls camera, mask, and image back and reports failure before recovery", async () => {
+    const { map, controller, image, container, canvas, getCamera, getEffective } = realSpanAndNames();
+    let listener;
+    const queued = [];
+    const sent = [];
+    const client = { subscribe(fn) { listener = fn; fn({ snapshot: null }); return () => {}; }, start: () => Promise.resolve() };
+    const socket = { on() {}, off() {}, send: (message) => sent.push(message) };
+    const applyConfig = (config, revision) => {
+      if (map.setEffectiveProjectionConfig(config, revision) === false) throw new Error("camera rejected");
+      if (!controller.setProjectionConfig(config, revision)) throw new Error("names rejected");
+    };
+    const runtime = createProjectionConfigRuntime({ map, spanId: "left", client, socket, applyConfig, instanceId: "11111111-1111-4111-8111-111111111111", requestFrame: (fn) => queued.push(fn), cancelFrame() {} });
+    await runtime.start();
+    listener({ snapshot: { revision: 1, config: DEFAULT_PROJECTION_CONFIG } }); queued.shift()(); map.emit("render");
+    const lastGood = { camera: getCamera(), mask: container.style.clipPath, canvasMask: canvas.style.clipPath, imageClip: image.style.clipPath, imageTransform: image.style.transform };
+    const extreme = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    extreme.pre.scale = 8;
+    extreme.outputs.left.crop = { x0: 0, x1: 0.01, y0: 0, y1: 0.01 };
+    extreme.outputs.left.post.scale = 8;
+    listener({ snapshot: { revision: 2, config: extreme } }); queued.shift()();
+    expect(getEffective()).toEqual(DEFAULT_PROJECTION_CONFIG);
+    expect(getCamera()).toEqual(lastGood.camera);
+    expect(container.style.clipPath).toBe(lastGood.mask);
+    expect(canvas.style.clipPath).toBe(lastGood.canvasMask);
+    expect(image.style.clipPath).toBe(lastGood.imageClip);
+    expect(image.style.transform).toBe(lastGood.imageTransform);
+    expect(sent).toContainEqual(expect.objectContaining({ revision: 2, success: false, error: expect.stringMatching(/camera zoom limit/i) }));
+    const ordinary = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    ordinary.pre.tx = 0.02;
+    listener({ snapshot: { revision: 3, config: ordinary } }); queued.shift()(); map.emit("render");
+    expect(sent).toContainEqual(expect.objectContaining({ revision: 3, success: true }));
+    runtime.stop(); controller.dispose();
+  });
   test("coalesces revisions before a frame and acknowledges only after render", async () => {
     const h = makeHarness();
     await h.runtime.start();

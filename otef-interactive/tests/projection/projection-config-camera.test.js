@@ -40,7 +40,7 @@ function node(id, width = 1600, height = 900) {
   };
 }
 
-function fixture() {
+function fixture({ maxZoom = Infinity } = {}) {
   const display = node("displayContainer");
   const image = node("displayedImage");
   const mapContainer = node("projectionMap");
@@ -56,7 +56,7 @@ function fixture() {
   const jumpTo = vi.fn((next) => {
     if (next.center) camera.center = { ...next.center };
     for (const key of ["zoom", "bearing", "pitch", "padding"]) {
-      if (next[key] !== undefined) camera[key] = typeof next[key] === "object" ? { ...next[key] } : next[key];
+      if (next[key] !== undefined) camera[key] = key === "zoom" ? Math.min(maxZoom, next[key]) : typeof next[key] === "object" ? { ...next[key] } : next[key];
     }
   });
   const cameraScale = () => 1000 * 2 ** (camera.zoom - 10);
@@ -82,6 +82,7 @@ function fixture() {
     }),
     getCenter: () => ({ ...camera.center }),
     getZoom: () => camera.zoom,
+    getMaxZoom: () => maxZoom,
     getBearing: () => camera.bearing,
     getPitch: () => camera.pitch,
     getPadding: () => ({ ...camera.padding }),
@@ -105,6 +106,16 @@ function configWith(change) {
 }
 
 describe("projection config camera integration", () => {
+  test("rejects a crop and scale combination that MapLibre clamps", () => {
+    const { display, image, map } = fixture({ maxZoom: 22 });
+    const extreme = configWith({ pre: { scale: 8 }, left: { crop: { x0: 0, x1: 0.01, y0: 0, y1: 0.01 }, post: { scale: 8 } } });
+    expect(() => applyProjectionSpanView({ map, imageEl: image, containerEl: display, spanId: "left", config: extreme, revision: 1 })).toThrow(/camera zoom limit/i);
+    const withoutLimitGetter = fixture({ maxZoom: 22 });
+    delete withoutLimitGetter.map.getMaxZoom;
+    expect(() => applyProjectionSpanView({ map: withoutLimitGetter.map, imageEl: withoutLimitGetter.image, containerEl: withoutLimitGetter.display, spanId: "left", config: extreme, revision: 1 })).toThrow(/camera zoom limit/i);
+    expect(applyProjectionSpanView({ map, imageEl: image, containerEl: display, spanId: "left", config: DEFAULTS, revision: 2 })).toBe(true);
+    expect(map.getZoom()).toBeLessThan(22);
+  });
   test("captures and restores the complete uncalibrated camera for full output", () => {
     const { display, image, map } = fixture();
     const original = map.camera();

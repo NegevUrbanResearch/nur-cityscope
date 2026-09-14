@@ -79,6 +79,8 @@ export function createProjectionConfigClient({
   let hydrationGeneration = 0;
   let hydrationPromise = null;
   let hydrating = false;
+  let hydrationError = null;
+  let previewError = null;
   let conflictGeneration = 0;
   const subscribers = new Set();
   const handlers = [];
@@ -95,6 +97,9 @@ export function createProjectionConfigClient({
       connected,
       pending: Boolean(inFlight || timer || intent),
       hasLocalDraft,
+      hydrating,
+      hydrationError,
+      previewError,
     };
   }
 
@@ -168,6 +173,8 @@ export function createProjectionConfigClient({
   async function hydrate() {
     const generation = ++hydrationGeneration;
     hydrating = true;
+    hydrationError = null;
+    notify();
     let body;
     try {
       const response = await fetchImpl(`${API_URL}?table=${encodeURIComponent(table)}`, { method: 'GET' });
@@ -176,10 +183,16 @@ export function createProjectionConfigClient({
       if (!ok) throw new Error(`projection config hydration failed (${status})`);
       body = await responseBody(response);
     } catch (error) {
-      if (generation === hydrationGeneration) notify();
+      if (generation === hydrationGeneration) {
+        hydrationError = error?.message || 'projection config hydration failed';
+        notify();
+      }
       return null;
     }
-    if (generation !== hydrationGeneration || !validSnapshot(body)) {
+    if (generation !== hydrationGeneration) return null;
+    if (!validSnapshot(body)) {
+      hydrationError = 'invalid projection config response';
+      notify();
       return null;
     }
     receiveSnapshot(body, { fromHydrate: true });
@@ -195,7 +208,7 @@ export function createProjectionConfigClient({
 
   function schedulePreview() {
     if (!started || stopped || !connected || hydrating || !live || !draft || !snapshot || intent) return;
-    queuedPreview = { config: clone(draft), version: draftVersion };
+    queuedPreview = { config: clone(draft) };
     scheduleDrain();
   }
 
@@ -268,6 +281,7 @@ export function createProjectionConfigClient({
         throw error;
       }
       if (!validSnapshot(bodyResponse)) throw new Error('invalid projection config response');
+      previewError = null;
       const adopted = receiveSnapshot(bodyResponse, { origin: sourceId });
       if (request.action === 'load' || request.action === 'revert') {
         const responseIsCurrent = equal(snapshot, bodyResponse);
@@ -282,6 +296,7 @@ export function createProjectionConfigClient({
     }).catch((error) => {
       if (request.retired) return;
       request.failed = true;
+      if (request.action === 'preview' && !request.dynamicDraft) previewError = error?.message || 'automatic preview failed';
       cancelQueuedPreviews();
       live = false;
       if (intent) {
@@ -321,7 +336,7 @@ export function createProjectionConfigClient({
     } else if (queuedPreview && live) {
       const queued = queuedPreview;
       queuedPreview = null;
-      postMutation({ action: 'preview', config: queued.config, version: queued.version, resolve: () => {}, reject: () => {} });
+      postMutation({ action: 'preview', config: queued.config, resolve: () => {}, reject: () => {} });
     }
   }
 
@@ -378,12 +393,17 @@ export function createProjectionConfigClient({
     setConnected(false);
   }
 
+  function retryHydration() {
+    if (!started || stopped || !connected) return Promise.reject(new Error('projection config is disconnected'));
+    return hydrate();
+  }
+
   function start() {
     if (started && !stopped) return Promise.resolve(getState());
     started = true;
     stopped = false;
     if (socket?.on) {
-      for (const [event, handler] of [['connect', onConnect], ['disconnect', onDisconnect], ['otef_projection_config_changed', socketMessage], ['message', socketMessage]]) {
+      for (const [event, handler] of [['connect', onConnect], ['disconnect', onDisconnect], ['otef_projection_config_changed', socketMessage]]) {
         socket.on(event, handler); handlers.push([event, handler]);
       }
     }
@@ -423,7 +443,7 @@ export function createProjectionConfigClient({
     return () => subscribers.delete(listener);
   }
 
-  return { start, stop, setDraft, setLive, apply, save, load, revert, getState, subscribe };
+  return { start, stop, retryHydration, setDraft, setLive, apply, save, load, revert, getState, subscribe };
 }
 
 export { validSnapshot as validateProjectionConfigSnapshot };

@@ -157,12 +157,7 @@ export function createProjectionConfigRuntime({
       }
       if (typeof map?.triggerRepaint === "function") map.triggerRepaint();
     } catch (error) {
-      removeRenderWait();
-      // Both bridges accept a rollback when it uses the failed revision.
-      try { applyConfig(appliedConfig || initialConfig, item.revision); } catch { /* report failure without claiming restoration */ }
-      failedRevision = item.revision;
-      failedError = String(error?.message || error).slice(0, 240);
-      acknowledge(item.revision, false, error?.message || error);
+      handleRenderFailure(item.revision, error);
     }
   }
 

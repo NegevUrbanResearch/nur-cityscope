@@ -451,6 +451,18 @@ function applyGeographicImagePlacement(map, imageEl, dimensions) {
   return true;
 }
 
+function jumpToCheckedZoom(map, camera) {
+  const zoom = camera.zoom;
+  const min = map.getMinZoom?.();
+  const max = map.getMaxZoom?.();
+  if (!Number.isFinite(zoom) || (Number.isFinite(min) && zoom < min - 1e-6) || (Number.isFinite(max) && zoom > max + 1e-6)) {
+    throw new Error("scale/crop exceeds camera zoom limit");
+  }
+  map.jumpTo(camera);
+  const achieved = map.getZoom();
+  if (!Number.isFinite(achieved) || Math.abs(achieved - zoom) > 1e-5) throw new Error("scale/crop exceeds camera zoom limit");
+}
+
 function applyModernCamera(map, snapshot, branch, config) {
   if (!validSnapshot(snapshot) || typeof map?.jumpTo !== "function" || typeof map?.unproject !== "function") return;
   restoreCamera(map, snapshot);
@@ -462,15 +474,15 @@ function applyModernCamera(map, snapshot, branch, config) {
     unproject: (point) => map.unproject(point),
     config,
   });
-  map.jumpTo(pre);
+  jumpToCheckedZoom(map, pre);
   const center = outputToT3({ u: 0.5, v: 0.5 }, branch);
   const gain = branch.post.scale * Math.min(
     1 / (branch.crop.x1 - branch.crop.x0),
     1 / (branch.crop.y1 - branch.crop.y0),
   );
-  map.jumpTo({
+  jumpToCheckedZoom(map, {
     center: map.unproject([center.u * snapshot.width, center.v * snapshot.height]),
-    zoom: map.getZoom() + Math.log2(gain),
+    zoom: pre.zoom + Math.log2(gain),
     bearing: map.getBearing(),
     pitch: snapshot.pitch,
     animate: false,
