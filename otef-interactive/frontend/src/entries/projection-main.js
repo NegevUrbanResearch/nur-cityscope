@@ -73,6 +73,10 @@ import {
   NLI_LABEL_HEADING_STORAGE_KEY,
   readNliLabelHeading,
 } from "../shared/nli-label-heading.js";
+import { createProjectionConfigClient } from "../shared/projection-config-client.js";
+import { createUuid } from "../shared/uuid.js";
+import { createProjectionConfigRuntime } from "../projection/projection-config-runtime.js";
+import { createProjectionPattern } from "../projection/projection-pattern.js";
 
 function getEffectiveProjectionLayerGroups() {
   if (
@@ -327,6 +331,7 @@ async function bootstrapProjectionRuntime() {
   map._otefProjectionConfigBridge = projectionConfigBridge;
   map.getEffectiveProjectionConfig = getEffectiveProjectionConfig;
   map.setEffectiveProjectionConfig = projectionConfigBridge.setEffectiveConfig;
+  let projectionRuntime = null;
   let lastViewport = null;
   /** @type {ReturnType<import("../shared/slideshow-pack-runtime.js").createSlideshowPackRuntime> | null} */
   let slideshowRuntime = null;
@@ -555,6 +560,7 @@ async function bootstrapProjectionRuntime() {
           explainerDebugVisible = visible === true;
           syncContextInvestigation();
         },
+        getProjectionConfig: getEffectiveProjectionConfig,
       });
       if (typeof window !== "undefined" && nliExplainerDebugApi) {
         window.NliExplainerDebug = nliExplainerDebugApi;
@@ -572,6 +578,51 @@ async function bootstrapProjectionRuntime() {
       syncContextRouteProgress();
       syncContextInvestigation();
     };
+
+    if (projectionSpanId && OTEFDataContext._wsClient) {
+      const projectionConfigClient = createProjectionConfigClient({
+        table: "otef",
+        sourceId: createUuid(),
+        socket: OTEFDataContext._wsClient,
+      });
+      const projectionPattern = createProjectionPattern({
+        host: document.getElementById("projectionMap") || displayContainer,
+        spanId: projectionSpanId,
+      });
+      const patternHandler = (message) => projectionPattern.receive(message);
+      const disconnectPattern = () => projectionPattern.clear();
+      OTEFDataContext._wsClient.on("otef_projection_pattern", patternHandler);
+      OTEFDataContext._wsClient.on("disconnect", disconnectPattern);
+      const applyEffectiveProjectionConfig = (config, revision) => {
+        if (map.setEffectiveProjectionConfig(config, revision) === false) {
+          throw new Error("projection camera rejected calibration");
+        }
+        if (typeof nameFieldController.setProjectionConfig === "function" && !nameFieldController.setProjectionConfig(config, revision)) {
+          throw new Error("projection names rejected calibration");
+        }
+        projectionPattern.setConfig(config);
+        syncContextInvestigation();
+        return true;
+      };
+      projectionRuntime = createProjectionConfigRuntime({
+        map,
+        spanId: projectionSpanId,
+        client: projectionConfigClient,
+        socket: OTEFDataContext._wsClient,
+        instanceId: createUuid(),
+        applyConfig: applyEffectiveProjectionConfig,
+      });
+      registerDisposer(() => {
+        projectionRuntime.stop();
+        projectionConfigClient.stop?.();
+        projectionPattern.dispose();
+        OTEFDataContext._wsClient.off?.("otef_projection_pattern", patternHandler);
+        OTEFDataContext._wsClient.off?.("disconnect", disconnectPattern);
+      });
+      void projectionRuntime.start().catch((error) => {
+        console.warn("[projection-main] projection config runtime failed", error);
+      });
+    }
     projectionNarrativeController = createProjectionNarrativeController({
       map,
       syncTimeline: syncContextInvestigation,
@@ -988,6 +1039,7 @@ async function bootstrapProjectionRuntime() {
   let resizeTimer = null;
   let pendingResizeIdleHandler = null;
   const onResize = () => {
+    projectionRuntime?.invalidate();
     if (resizeTimer) {
       window.clearTimeout(resizeTimer);
     }
@@ -1004,6 +1056,8 @@ async function bootstrapProjectionRuntime() {
         pendingResizeIdleHandler = null;
         clearProjectionSpanBase(map);
         applySpanCamera();
+        projectionRuntime?.resume();
+        projectionRuntime?.requestStatus();
         syncProjectionHighlight(lastViewport);
       };
       if (pendingResizeIdleHandler && typeof map.off === "function") {
