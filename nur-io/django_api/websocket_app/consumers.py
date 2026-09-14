@@ -119,6 +119,10 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                 }
             )
 
+        elif message_type == 'otef_projection_config_changed':
+            # Projection changes are emitted by the transactional service only.
+            return
+
         else:
             # State changes are server-originated; reject unknown OTEF inputs.
             return
