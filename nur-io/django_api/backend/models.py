@@ -660,3 +660,36 @@ class LayerState(models.Model):
 
     def __str__(self):
         return f"{self.table.name}/{self.layer_id}"
+
+
+def projection_config_defaults():
+    return {
+        "schemaVersion": 1,
+        "pre": {"scale": 1.41, "rotateDeg": -50, "tx": 0.01, "ty": 0},
+        "outputs": {
+            "left": {"crop": {"x0": 0, "x1": 0.6, "y0": 0, "y1": 1}, "post": {"scale": 2, "tx": 0, "ty": -0.049}},
+            "right": {"crop": {"x0": 0.4, "x1": 1, "y0": 0, "y1": 1}, "post": {"scale": 2, "tx": 0, "ty": -0.049}},
+        },
+    }
+
+
+def projection_presets_defaults():
+    return [{
+        "id": "original",
+        "name": "Original calibration",
+        "config": projection_config_defaults(),
+        "readOnly": True,
+    }]
+
+
+class OTEFProjectionCalibration(models.Model):
+    table = models.OneToOneField(Table, on_delete=models.CASCADE, related_name="projection_calibration")
+    working_config = models.JSONField(default=projection_config_defaults)
+    revision = models.PositiveBigIntegerField(default=0)
+    presets = models.JSONField(default=projection_presets_defaults)
+    selected_preset_id = models.CharField(max_length=64, default="original")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Projection calibration for {self.table.name}"

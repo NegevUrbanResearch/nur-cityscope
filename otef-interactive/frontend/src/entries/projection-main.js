@@ -29,6 +29,7 @@ import { resolveMotionMode } from "../shared/reduced-motion.js";
 import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
 import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
+import { installProjectionPreviewBridge } from "../projection/projection-preview-bridge.js";
 import { createProjectionNarrativeController } from "../projection/projection-narrative-controller.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
@@ -43,8 +44,13 @@ import {
   applyProjectionSpanView,
   clearProjectionSpanBase,
   parseProjectionSpanId,
+  restoreProjectionSpanBase,
   runWhenMapIdle,
 } from "../projection/projection-span-view.js";
+import {
+  DEFAULT_PROJECTION_CONFIG,
+  validateProjectionConfig,
+} from "../shared/projection-config-schema.js";
 import {
   dispatchProjectionDisplayHotkey,
   readProjectionDisplayHotkey,
@@ -68,6 +74,10 @@ import {
   NLI_LABEL_HEADING_STORAGE_KEY,
   readNliLabelHeading,
 } from "../shared/nli-label-heading.js";
+import { createProjectionConfigClient } from "../shared/projection-config-client.js";
+import { createUuid } from "../shared/uuid.js";
+import { createProjectionConfigRuntime } from "../projection/projection-config-runtime.js";
+import { createProjectionPattern } from "../projection/projection-pattern.js";
 
 function getEffectiveProjectionLayerGroups() {
   if (
@@ -180,6 +190,8 @@ function toggleProjectionFullscreen() {
 }
 
 async function bootstrapProjectionRuntime() {
+  const previewMode = new URLSearchParams(window.location.search).get("preview") === "1";
+  if (previewMode) document.body.classList.add("projection-preview");
   const modules = [
     "../shared/logger.js",
     "../shared/map-projection-config.js",
@@ -224,6 +236,13 @@ async function bootstrapProjectionRuntime() {
 
   const sw = proj4("EPSG:2039", "EPSG:4326", [itmBounds.west, itmBounds.south]);
   const ne = proj4("EPSG:2039", "EPSG:4326", [itmBounds.east, itmBounds.north]);
+  const imageItmCorners = [
+    [itmBounds.west, itmBounds.north],
+    [itmBounds.east, itmBounds.north],
+    [itmBounds.east, itmBounds.south],
+    [itmBounds.west, itmBounds.south],
+  ];
+  const imageGeoCorners = imageItmCorners.map((point) => proj4("EPSG:2039", "EPSG:4326", point));
   const modelBounds = {
     bounds: [sw, ne],
     center: [(sw[0] + ne[0]) / 2, (sw[1] + ne[1]) / 2],
@@ -237,6 +256,13 @@ async function bootstrapProjectionRuntime() {
   const modelImgEl = document.getElementById("displayedImage");
   if (modelImgEl && modelImageUrl) {
     modelImgEl.src = modelImageUrl;
+    modelImgEl.__otefProjectionImage = {
+      bounds: modelBounds.bounds,
+      corners: imageGeoCorners,
+      itmCorners: imageItmCorners,
+      width: modelBoundsData.image_width,
+      height: modelBoundsData.image_height,
+    };
     updateModelBaseImageVisibility(getEffectiveProjectionLayerGroups(), modelImgEl);
   }
 
@@ -251,6 +277,8 @@ async function bootstrapProjectionRuntime() {
   const projectionSpanId = parseProjectionSpanId(
     typeof window !== "undefined" ? window.location.search : "",
   );
+  let effectiveProjectionConfig = DEFAULT_PROJECTION_CONFIG;
+  const getEffectiveProjectionConfig = () => effectiveProjectionConfig;
   const displayContainerEl = document.getElementById("displayContainer");
   if (projectionSpanId) {
     applyProjectionSpanView({
@@ -258,6 +286,7 @@ async function bootstrapProjectionRuntime() {
       imageEl: modelImgEl,
       containerEl: displayContainerEl,
       spanId: projectionSpanId,
+      config: effectiveProjectionConfig,
     });
   }
   const urlOrConfigPixelRatio = resolveProjectionMapPixelRatio();
@@ -267,14 +296,45 @@ async function bootstrapProjectionRuntime() {
   if (typeof window !== "undefined") {
     window._maplibreMap = map;
   }
-  const applySpanCamera = () => {
+  map._otefProjectionImage = {
+    bounds: modelBounds.bounds,
+    corners: imageGeoCorners,
+    itmCorners: imageItmCorners,
+    width: modelBoundsData.image_width,
+    height: modelBoundsData.image_height,
+  };
+  const applySpanCamera = (revision) => {
     applyProjectionSpanView({
       map,
       imageEl: modelImgEl,
       containerEl: document.getElementById("displayContainer"),
       spanId: projectionSpanId,
+      config: effectiveProjectionConfig,
+      revision,
     });
   };
+  const projectionConfigBridge = {
+    getEffectiveConfig: getEffectiveProjectionConfig,
+    setEffectiveConfig: (nextConfig, revision) => {
+      if (!nextConfig?.pre || !nextConfig?.outputs?.left || !nextConfig?.outputs?.right) {
+        return false;
+      }
+      if (Object.keys(validateProjectionConfig(nextConfig)).length > 0) return false;
+      if (
+        Number.isFinite(revision) &&
+        Number.isFinite(map._otefProjectionSpanRevision) &&
+        revision < map._otefProjectionSpanRevision
+      ) {
+        return false;
+      }
+      effectiveProjectionConfig = nextConfig;
+      return applySpanCamera(revision);
+    },
+  };
+  map._otefProjectionConfigBridge = projectionConfigBridge;
+  map.getEffectiveProjectionConfig = getEffectiveProjectionConfig;
+  map.setEffectiveProjectionConfig = projectionConfigBridge.setEffectiveConfig;
+  let projectionRuntime = null;
   let lastViewport = null;
   /** @type {ReturnType<import("../shared/slideshow-pack-runtime.js").createSlideshowPackRuntime> | null} */
   let slideshowRuntime = null;
@@ -503,6 +563,7 @@ async function bootstrapProjectionRuntime() {
           explainerDebugVisible = visible === true;
           syncContextInvestigation();
         },
+        getProjectionConfig: getEffectiveProjectionConfig,
       });
       if (typeof window !== "undefined" && nliExplainerDebugApi) {
         window.NliExplainerDebug = nliExplainerDebugApi;
@@ -520,6 +581,55 @@ async function bootstrapProjectionRuntime() {
       syncContextRouteProgress();
       syncContextInvestigation();
     };
+
+    if (previewMode) registerDisposer(installProjectionPreviewBridge({
+      win: window, output: projectionSpanId, map, nameFieldController, syncContextInvestigation,
+    }));
+
+    if (projectionSpanId && !previewMode && OTEFDataContext._wsClient) {
+      const projectionConfigClient = createProjectionConfigClient({
+        table: "otef",
+        sourceId: createUuid(),
+        socket: OTEFDataContext._wsClient,
+      });
+      const projectionPattern = createProjectionPattern({
+        host: document.getElementById("projectionMap") || displayContainer,
+        spanId: projectionSpanId,
+      });
+      const patternHandler = (message) => projectionPattern.receive(message);
+      const disconnectPattern = () => projectionPattern.clear();
+      OTEFDataContext._wsClient.on("otef_projection_pattern", patternHandler);
+      OTEFDataContext._wsClient.on("disconnect", disconnectPattern);
+      const applyEffectiveProjectionConfig = (config, revision) => {
+        if (map.setEffectiveProjectionConfig(config, revision) === false) {
+          throw new Error("projection camera rejected calibration");
+        }
+        if (typeof nameFieldController.setProjectionConfig === "function" && !nameFieldController.setProjectionConfig(config, revision)) {
+          throw new Error("projection names rejected calibration");
+        }
+        projectionPattern.setConfig(config);
+        syncContextInvestigation();
+        return true;
+      };
+      projectionRuntime = createProjectionConfigRuntime({
+        map,
+        spanId: projectionSpanId,
+        client: projectionConfigClient,
+        socket: OTEFDataContext._wsClient,
+        instanceId: createUuid(),
+        applyConfig: applyEffectiveProjectionConfig,
+      });
+      registerDisposer(() => {
+        projectionRuntime.stop();
+        projectionConfigClient.stop?.();
+        projectionPattern.dispose();
+        OTEFDataContext._wsClient.off?.("otef_projection_pattern", patternHandler);
+        OTEFDataContext._wsClient.off?.("disconnect", disconnectPattern);
+      });
+      void projectionRuntime.start().catch((error) => {
+        console.warn("[projection-main] projection config runtime failed", error);
+      });
+    }
     projectionNarrativeController = createProjectionNarrativeController({
       map,
       syncTimeline: syncContextInvestigation,
@@ -838,6 +948,7 @@ async function bootstrapProjectionRuntime() {
     }
   });
 
+  if (previewMode) return;
   await import("../projection/projection-bounds-editor.js");
   await import("../projection/projection-rotation-editor.js");
 
@@ -857,13 +968,61 @@ async function bootstrapProjectionRuntime() {
 
   const itmToDisplayPixels = (x, y) => {
     const bounds = getDisplayedImageBounds();
-    if (!bounds) return null;
-    const pctX = (x - itmBounds.west) / (itmBounds.east - itmBounds.west);
-    const pctY = (itmBounds.north - y) / (itmBounds.north - itmBounds.south);
+    if (!bounds || typeof map.project !== "function") return null;
+    let lngLat;
+    try {
+      const projected = proj4("EPSG:2039", "EPSG:4326", [x, y]);
+      if (!Array.isArray(projected) || !projected.every(Number.isFinite)) return null;
+      lngLat = projected;
+    } catch {
+      return null;
+    }
+    let point;
+    try {
+      point = map.project(lngLat);
+    } catch {
+      return null;
+    }
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+    const mapRect = map.getContainer?.().getBoundingClientRect?.();
+    const displayRect = document.getElementById("displayContainer")?.getBoundingClientRect?.();
+    const offsetX = mapRect && displayRect ? mapRect.left - displayRect.left : 0;
+    const offsetY = mapRect && displayRect ? mapRect.top - displayRect.top : 0;
     return {
-      x: bounds.offsetX + pctX * bounds.width,
-      y: bounds.offsetY + pctY * bounds.height,
+      x: bounds.offsetX + offsetX + point.x,
+      y: bounds.offsetY + offsetY + point.y,
     };
+  };
+
+  const displayPixelsToItm = (x, y) => {
+    if (typeof map.unproject !== "function") return null;
+    const bounds = getDisplayedImageBounds();
+    if (!bounds) return null;
+    const mapRect = map.getContainer?.().getBoundingClientRect?.();
+    const displayRect = document.getElementById("displayContainer")?.getBoundingClientRect?.();
+    const offsetX = mapRect && displayRect ? mapRect.left - displayRect.left : 0;
+    const offsetY = mapRect && displayRect ? mapRect.top - displayRect.top : 0;
+    let lngLat;
+    try {
+      lngLat = map.unproject([
+        x - bounds.offsetX - offsetX,
+        y - bounds.offsetY - offsetY,
+      ]);
+    } catch {
+      return null;
+    }
+    const lng = Number(lngLat?.lng ?? lngLat?.[0]);
+    const lat = Number(lngLat?.lat ?? lngLat?.[1]);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+    let itm;
+    try {
+      itm = proj4("EPSG:4326", "EPSG:2039", [lng, lat]);
+    } catch {
+      return null;
+    }
+    return Array.isArray(itm) && itm.every(Number.isFinite)
+      ? { x: itm[0], y: itm[1] }
+      : null;
   };
 
   if (window.ProjectionBoundsEditor) {
@@ -871,6 +1030,7 @@ async function bootstrapProjectionRuntime() {
       getModelBounds: () => itmBounds,
       getDisplayedImageBounds,
       itmToDisplayPixels,
+      displayPixelsToItm,
     });
   }
 
@@ -887,12 +1047,14 @@ async function bootstrapProjectionRuntime() {
   let resizeTimer = null;
   let pendingResizeIdleHandler = null;
   const onResize = () => {
+    projectionRuntime?.invalidate();
     if (resizeTimer) {
       window.clearTimeout(resizeTimer);
     }
     resizeTimer = window.setTimeout(() => {
       resizeTimer = null;
       if (typeof map.resize === "function") {
+        restoreProjectionSpanBase(map);
         map.resize();
         if (modelBounds && modelBounds.bounds) {
           map.fitBounds(modelBounds.bounds, { animate: false, padding: 0 });
@@ -902,6 +1064,8 @@ async function bootstrapProjectionRuntime() {
         pendingResizeIdleHandler = null;
         clearProjectionSpanBase(map);
         applySpanCamera();
+        projectionRuntime?.resume();
+        projectionRuntime?.requestStatus();
         syncProjectionHighlight(lastViewport);
       };
       if (pendingResizeIdleHandler && typeof map.off === "function") {
@@ -1006,7 +1170,8 @@ function initializeTableSwitcher() {
 }
 
 async function boot() {
-  const shouldContinue = initializeTableSwitcher();
+  const previewMode = new URLSearchParams(window.location.search).get("preview") === "1";
+  const shouldContinue = previewMode || initializeTableSwitcher();
   if (!shouldContinue) return;
   await bootstrapProjectionRuntime();
 }

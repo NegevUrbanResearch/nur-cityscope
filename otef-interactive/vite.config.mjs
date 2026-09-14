@@ -13,6 +13,9 @@ export default defineConfig({
       input: {
         map: path.resolve(rootDir, "frontend/index.html"),
         projection: path.resolve(rootDir, "frontend/projection.html"),
+        projectionConfig: path.resolve(rootDir, "frontend/projection-config.html"),
+        launcher: path.resolve(rootDir, "frontend/launcher.html"),
+        qr: path.resolve(rootDir, "frontend/qr.html"),
         remote: path.resolve(rootDir, "frontend/remote-controller.html"),
         curation: path.resolve(rootDir, "frontend/curation.html"),
       },

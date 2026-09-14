@@ -2,6 +2,7 @@ import { loadNliNameField as defaultLoadNliNameField } from "./nli-name-field-da
 import { createNameGroupOverlay } from "./nli-name-field-group-overlay.js";
 import { createNameFieldAnimation, withNameRevealDelays } from './nli-name-field-animation.js';
 import { createNliNameFocusPresentation, getNameFocusOpacity, getRelevantPlaceGroup } from './nli-name-focus-presentation.js';
+import { computeProjectionNameOwnership } from './nli-name-field-geometry.js';
 
 const ORIGINAL_LABEL_ID = "nli__people_names__labels";
 const SOURCE_ID = "nli-name-field";
@@ -18,12 +19,19 @@ const overviewTextSize = (field) => {
 };
 
 const featureCollection = (features = []) => ({ type: "FeatureCollection", features });
-const geojsonAt = (field, useSource) => withNameRevealDelays(useSource
-  ? featureCollection(field.geojson.features.map((feature) => ({
-    ...feature,
-    geometry: { type: "Point", coordinates: field.byPid.get(String(feature.properties.pid)).sourceCoordinates },
-  })))
-  : field.geojson);
+const geojsonAt = (field, useSource, projectionOwners = null) => {
+  const features = field.geojson.features.map((feature) => {
+    const properties = projectionOwners
+      ? { ...feature.properties, projection_visible_spans: projectionOwners[String(feature.properties?.pid)] ? [projectionOwners[String(feature.properties.pid)]] : [] }
+      : feature.properties;
+    return {
+      ...feature,
+      properties,
+      ...(useSource ? { geometry: { type: "Point", coordinates: field.byPid.get(String(feature.properties.pid)).sourceCoordinates } } : {}),
+    };
+  });
+  return withNameRevealDelays(projectionOwners || useSource ? featureCollection(features) : field.geojson);
+};
 const hasPeopleNames = (groups) => (groups || []).some((group) => group?.id === "nli" &&
   (group.layers || []).some((layer) => layer?.id === "people_names" && layer.enabled === true));
 // Cleanup may run after a style has already removed these resources.
@@ -91,9 +99,18 @@ export function createNliNameFieldController({
   let overviewCamera = null;
   let useSourceGeometry = false;
   let loadGeneration = 0;
-  const spanFilter = displayProfile === "projection" && ["left", "right"].includes(projectionSpan)
-    ? ["in", projectionSpan, ["get", "visible_spans"]] : null;
-  const withSpan = (filter) => spanFilter ? (filter ? ["all", spanFilter, filter] : spanFilter) : filter;
+  let projectionConfig = null;
+  let projectionRevision = null;
+  let projectionOwnership = null;
+  let projectionClippedCount = 0;
+  const projectionOwnershipCache = new Map();
+  let projectionVisibilityGeneration = 0;
+  const projectionSpanFilter = () => displayProfile === "projection" && ["left", "right"].includes(projectionSpan)
+    ? ["in", projectionSpan, ["get", projectionOwnership ? "projection_visible_spans" : "visible_spans"]] : null;
+  const withSpan = (filter) => {
+    const activeSpanFilter = projectionSpanFilter();
+    return activeSpanFilter ? (filter ? ["all", activeSpanFilter, filter] : activeSpanFilter) : filter;
+  };
   const container = map.getContainer();
   const publishDiagnostics = () => {
     if (!container?.dataset) return;
@@ -110,6 +127,9 @@ export function createNliNameFieldController({
       unplaced: Array.isArray(unplaced) ? unplaced.length : Number(unplaced || 0),
       selectedPid,
       selectedGroup,
+      projectionRevision,
+      projectionClipped: projectionClippedCount,
+      projectionOwners: projectionOwnership ? Object.keys(projectionOwnership).length : null,
       fontSize: field.fontSize,
       referenceZoom: field.referenceZoom,
       zoom: map.getZoom(),
@@ -190,7 +210,7 @@ export function createNliNameFieldController({
     removeOwned();
     try {
       useSourceGeometry = displayProfile === "gis" && map.getZoom() >= field.referenceZoom + DETAIL_ZOOM_DELTA;
-      map.addSource(SOURCE_ID, { type: "geojson", data: geojsonAt(field, useSourceGeometry) });
+      map.addSource(SOURCE_ID, { type: "geojson", data: geojsonAt(field, useSourceGeometry, projectionOwnership) });
       map.addSource(CONNECTOR_SOURCE_ID, { type: "geojson", data: featureCollection() });
       const textSize = useSourceGeometry ? 14 : overviewTextSize(field);
       const baseLayer = textLayer(LABEL_ID, SOURCE_ID, field.heading, textSize);
@@ -224,6 +244,7 @@ export function createNliNameFieldController({
         },
       });
       animation.show();
+      applyProjectionVisibility();
       applySelection();
       publishDiagnostics();
     } catch (error) {
@@ -281,6 +302,10 @@ export function createNliNameFieldController({
     updateGroupHighlight();
     publishDiagnostics();
   };
+  const handleProjectionGeometryChange = () => {
+    if (disposed || !enabled || !ready || displayProfile !== "projection" || !projectionConfig) return;
+    applyProjectionVisibility();
+  };
   const rememberOverview = () => {
     if (displayProfile !== "gis" || selectedPid || selectedGroup || !field ||
       map.getZoom() >= field.referenceZoom + DETAIL_ZOOM_DELTA) return;
@@ -293,6 +318,38 @@ export function createNliNameFieldController({
         pitch: map.getPitch(),
       };
     }
+  };
+  const projectionCacheKey = () => JSON.stringify({
+    config: projectionConfig,
+    rectangles: field?.labelRectangles instanceof Map ? [...field.labelRectangles.entries()] : field?.labelRectangles,
+  });
+  const applyProjectionVisibility = () => {
+    if (displayProfile !== "projection" || !field || !projectionConfig) return false;
+    const hasRectangles = field.labelRectangles instanceof Map
+      ? field.labelRectangles.size > 0
+      : Array.isArray(field.labelRectangles)
+        ? field.labelRectangles.length > 0
+        : field.labelRectangles && typeof field.labelRectangles === "object"
+          ? Object.keys(field.labelRectangles).length > 0
+          : [...(field.byPid?.values?.() || [])].some((value) => value?.labelRectangle || value?.rectangle || value?.labelRect);
+    if (!hasRectangles) return false;
+    const generation = ++projectionVisibilityGeneration;
+    const key = projectionCacheKey();
+    let ownership = projectionOwnershipCache.get(key);
+    if (!ownership) {
+      ownership = computeProjectionNameOwnership({ field, config: projectionConfig });
+      if (projectionOwnershipCache.size >= 8) projectionOwnershipCache.clear();
+      projectionOwnershipCache.set(key, ownership);
+    }
+    if (generation !== projectionVisibilityGeneration) return false;
+    projectionOwnership = ownership.owners;
+    projectionClippedCount = ownership.clippedCount;
+    const source = map.getSource(SOURCE_ID);
+    if (source) source.setData(geojsonAt(field, useSourceGeometry, projectionOwnership));
+    if (map.getLayer(LABEL_ID)) map.setFilter(LABEL_ID, withSpan(selectedPid ? ["!=", ["get", "pid"], selectedPid] : null));
+    if (map.getLayer(SELECTED_LABEL_ID)) map.setFilter(SELECTED_LABEL_ID, withSpan(["==", ["get", "pid"], selectedPid || "__none__"]));
+    publishDiagnostics();
+    return true;
   };
   let updatingBackground = false;
   const refreshBackground = () => {
@@ -341,12 +398,31 @@ export function createNliNameFieldController({
   };
   map.on("style.load", handleStyleLoad);
   map.on("zoom", syncZoom);
+  map.on("zoom", handleProjectionGeometryChange);
+  map.on("move", handleProjectionGeometryChange);
+  map.on("resize", handleProjectionGeometryChange);
   map.on("idle", handleIdle);
   map.on("styledata", refreshBackground);
   const unsubscribe = context.subscribe("personSelection", onSelection);
   const unsubscribeNavigation = context.subscribe("navigationCommand", onNavigation);
 
-  return {
+  const api = {
+    setProjectionConfig(config, revision) {
+      if (!config?.pre || !config?.outputs?.left || !config?.outputs?.right) return false;
+      if (Number.isFinite(revision) && Number.isFinite(projectionRevision) && revision < projectionRevision) return false;
+      projectionConfig = config;
+      if (Number.isFinite(revision)) projectionRevision = revision;
+      if (ready && enabled) applyProjectionVisibility();
+      else publishDiagnostics();
+      return true;
+    },
+    getProjectionNameDiagnostics() {
+      return {
+        revision: projectionRevision,
+        clippedCount: projectionClippedCount,
+        owners: projectionOwnership ? { ...projectionOwnership } : {},
+      };
+    },
     sync(groups) {
       if (disposed) return;
       const nextEnabled = hasPeopleNames(groups);
@@ -394,6 +470,8 @@ export function createNliNameFieldController({
       hideLegacyLabels(map);
       field = null;
       ready = false;
+      projectionOwnership = null;
+      projectionClippedCount = 0;
       publishDiagnostics();
       loadPromise = null;
       if (enabled) handleLoad();
@@ -406,11 +484,18 @@ export function createNliNameFieldController({
       unsubscribeNavigation();
       map.off("style.load", handleStyleLoad);
       map.off("zoom", syncZoom);
+      map.off("zoom", handleProjectionGeometryChange);
+      map.off("move", handleProjectionGeometryChange);
+      map.off("resize", handleProjectionGeometryChange);
       map.off("idle", handleIdle);
       map.off("styledata", refreshBackground);
       removeOwned();
       hideLegacyLabels(map);
+      if (map._otefNliNameFieldController === api) delete map._otefNliNameFieldController;
       publishDiagnostics();
     },
   };
+  if (map) map._otefNliNameFieldController = api;
+
+  return api;
 }

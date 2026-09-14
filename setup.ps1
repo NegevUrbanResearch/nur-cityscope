@@ -173,48 +173,9 @@ Write-Host ""
 Write-Host "All services have been successfully configured and data has been loaded." -ForegroundColor Green
 Write-Host ""
 
-# Get local IP address
-$localIP = $null
-try {
-    $networkAdapters = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.IPAddress -notlike "127.*" -and
-            $_.IPAddress -notlike "169.254.*" -and
-            $_.InterfaceAlias -notlike "*Loopback*"
-        } |
-        Sort-Object InterfaceIndex |
-        Select-Object -First 1
-
-    if ($networkAdapters) {
-        $localIP = $networkAdapters.IPAddress
-    }
-} catch {
-    # Fallback method
-    $localIP = (Get-NetIPConfiguration -ErrorAction SilentlyContinue |
-        Where-Object { $_.IPv4Address.IPAddress -notlike "127.*" -and $_.IPv4Address.IPAddress -notlike "169.254.*" } |
-        Select-Object -First 1).IPv4Address.IPAddress
-}
-
-Write-Host "You can now access:" -ForegroundColor Green
-Write-Host ""
-Write-Host "Local access (localhost):" -ForegroundColor Yellow
-Write-Host "- Dashboard: http://localhost/dashboard/" -ForegroundColor Cyan
-Write-Host "- Projection: http://localhost/projection/" -ForegroundColor Cyan
-Write-Host "- Remote Controller: http://localhost/remote/" -ForegroundColor Cyan
-Write-Host "- OTEF Interactive: http://localhost/otef-interactive/" -ForegroundColor Cyan
-Write-Host "- OTEF Projection: http://localhost/otef-interactive/projection.html" -ForegroundColor Cyan
-Write-Host "- Admin Interface: http://localhost:9900/admin" -ForegroundColor Cyan
-
-if ($localIP) {
-    Write-Host ""
-    Write-Host "Network access (from other devices):" -ForegroundColor Yellow
-    Write-Host "- Dashboard: http://$localIP/dashboard/" -ForegroundColor Cyan
-    Write-Host "- Projection: http://$localIP/projection/" -ForegroundColor Cyan
-    Write-Host "- Remote Controller: http://$localIP/remote/" -ForegroundColor Cyan
-    Write-Host "- OTEF Interactive: http://$localIP/otef-interactive/" -ForegroundColor Cyan
-    Write-Host "- OTEF Projection: http://$localIP/otef-interactive/projection.html" -ForegroundColor Cyan
-    Write-Host "- Admin Interface: http://$localIP:9900/admin" -ForegroundColor Cyan
-} else {
-    Write-Host ""
-    Write-Host "Could not detect local IP address for network access" -ForegroundColor Yellow
-}
+# Hand setup off to the same readiness, host-discovery and launcher helper used
+# for normal starts. Containers are already running, so avoid a second Compose
+# startup here.
+Write-Host "Opening OTEF launcher after setup..." -ForegroundColor Cyan
+$startHelper = Join-Path $SCRIPT_DIR 'otef-interactive\scripts\start-otef.ps1'
+& $startHelper -AlreadyStarted -RepositoryRoot $SCRIPT_DIR

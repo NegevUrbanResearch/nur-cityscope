@@ -34,6 +34,12 @@
         overflow: hidden;
         background: #000;
       }
+      body.projection-preview #instructions,
+      body.projection-preview #boundsEditorOverlay,
+      body.projection-preview #boundsToolbar,
+      body.projection-preview #rotationToolbar,
+      body.projection-preview #rotationCursorPopup,
+      body.projection-preview #mapLegend { display: none !important; }
       #displayContainer {
         width: 100%;
         height: 100%;
@@ -46,6 +52,14 @@
         width: 100%;
         height: 100%;
         object-fit: fill;
+        z-index: 1;
+      }
+      /* The image is a geographic source. Keep its viewport mask on this source-only host
+         so the projected image transform does not rotate the mask with the pixels. */
+      #projectionImageClip {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
         z-index: 1;
       }
       #projectionMap {
@@ -158,7 +172,9 @@
   </head>
   <body>
     <div id="displayContainer">
-      <img id="displayedImage" src="" alt="OTEF Model" style="opacity: 0" />
+      <div id="projectionImageClip" data-projection-source="image">
+        <img id="displayedImage" src="" alt="OTEF Model" style="opacity: 0" />
+      </div>
       <!-- Viewport highlight is drawn inside MapLibre (GeoJSON/source), not a separate overlay div. -->
       <div id="projectionMap" style="position:absolute;top:0;left:0;width:100%;height:100%;z-index:5;"></div>
       <div id="shemotLabelBBoxLayer" aria-hidden="true"></div>

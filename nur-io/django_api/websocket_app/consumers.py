@@ -10,6 +10,59 @@ WebSocket is used for:
 from channels.generic.websocket import AsyncWebsocketConsumer
 from asgiref.sync import sync_to_async
 import json
+import uuid
+
+
+_PROJECTION_OUTPUTS = {"left", "right"}
+_PROJECTION_PATTERNS = {"off", "grid", "output_id"}
+
+
+def _valid_uuid(value):
+    if not isinstance(value, str) or len(value) > 64:
+        return False
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return str(parsed) == value.lower()
+
+
+def _valid_projection_transient(data):
+    if not isinstance(data, dict) or data.get("table") != "otef":
+        return None
+    message_type = data.get("type")
+    if message_type == "otef_projection_pattern":
+        if set(data) != {"type", "table", "output", "pattern", "sourceId"}:
+            return None
+        if not isinstance(data.get("output"), str) or data["output"] not in _PROJECTION_OUTPUTS:
+            return None
+        if not isinstance(data.get("pattern"), str) or data["pattern"] not in _PROJECTION_PATTERNS:
+            return None
+        if not _valid_uuid(data.get("sourceId")):
+            return None
+        return {key: data[key] for key in ("type", "table", "output", "pattern", "sourceId")}
+    if message_type == "otef_projection_status_request":
+        if set(data) != {"type", "table", "sourceId"} or not _valid_uuid(data.get("sourceId")):
+            return None
+        return {key: data[key] for key in ("type", "table", "sourceId")}
+    if message_type == "otef_projection_applied":
+        allowed = {"type", "table", "output", "revision", "instanceId", "success", "error"}
+        if set(data) - allowed or not {"type", "table", "output", "revision", "instanceId", "success"}.issubset(data):
+            return None
+        if not isinstance(data.get("output"), str) or data["output"] not in _PROJECTION_OUTPUTS:
+            return None
+        revision = data.get("revision")
+        if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0 or revision > 9007199254740991:
+            return None
+        if not _valid_uuid(data.get("instanceId")) or not isinstance(data.get("success"), bool):
+            return None
+        if "error" in data and (not isinstance(data["error"], str) or not 0 < len(data["error"]) <= 240):
+            return None
+        payload = {key: data[key] for key in ("type", "table", "output", "revision", "instanceId", "success")}
+        if "error" in data:
+            payload["error"] = data["error"]
+        return payload
+    return None
 
 
 class GeneralConsumer(AsyncWebsocketConsumer):
@@ -118,6 +171,24 @@ class GeneralConsumer(AsyncWebsocketConsumer):
                     }
                 }
             )
+
+        elif message_type == 'otef_projection_config_changed':
+            # Projection changes are emitted by the transactional service only.
+            return
+
+        elif message_type in {
+            'otef_projection_pattern',
+            'otef_projection_status_request',
+            'otef_projection_applied',
+        }:
+            # These are intentionally ephemeral. Validate at the socket boundary,
+            # relay in memory, and never involve the calibration or viewport rows.
+            payload = _valid_projection_transient(data)
+            if payload is not None:
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {'type': 'broadcast_message', 'message': payload},
+                )
 
         else:
             # State changes are server-originated; reject unknown OTEF inputs.

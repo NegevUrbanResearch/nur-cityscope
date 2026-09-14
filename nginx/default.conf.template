@@ -1,6 +1,9 @@
 # nginx/default.conf.template
 
 server {
+    location = / {
+        return 302 /otef-interactive/launcher.html;
+    }
     listen 80;
     server_name _;  # Replace with your actual domain
 
@@ -53,6 +56,11 @@ server {
     
     # OTEF Interactive - also accessible at /dashboard/?table=otef
     # Keep /otef-interactive/ for backward compatibility
+    location ^~ /otef-interactive/runtime/ {
+        alias /usr/share/nginx/html/otef-interactive/frontend/runtime/;
+        add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0";
+        expires -1;
+    }
     location /otef-interactive/ {
         alias /usr/share/nginx/html/otef-interactive/frontend/;
         index index.html;
@@ -199,7 +207,7 @@ server {
 
     # --- Reverse Proxy for Django API ---
     location /api/ {
-        proxy_pass http://nur-api:${API_PORT}/api/;
+        proxy_pass http://nur-api:9900/api/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -214,7 +222,7 @@ server {
 
     # --- WebSocket Proxy ---
     location /ws/ {
-        proxy_pass http://nur-api:${API_PORT}/ws/;
+        proxy_pass http://nur-api:9900/ws/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

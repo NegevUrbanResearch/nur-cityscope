@@ -139,6 +139,7 @@ calculations/export/*
 
 otef-interactive/frontend/data/*.mbtiles
 otef-interactive/playground
+otef-interactive/frontend/runtime/
 
 
 # OTEF source files (ignored, but folder structure preserved with .gitkeep)

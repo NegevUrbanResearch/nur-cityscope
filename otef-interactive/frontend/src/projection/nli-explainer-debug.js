@@ -171,6 +171,7 @@ export function installNliExplainerDebug({
   enableLayoutMapExport = true,
   mergeProjectionLayout = true,
   enableRotation = true,
+  getProjectionConfig,
 } = {}) {
   if (typeof document === "undefined" || !host) return null;
 
@@ -333,7 +334,7 @@ ${exportButtons}
       return;
     }
     const spanKey = nliExplainerSpanKey(searchString());
-    const rect = nliExplainerOverlapPageRect(spanKey);
+    const rect = nliExplainerOverlapPageRect(spanKey, typeof getProjectionConfig === "function" ? getProjectionConfig() : undefined);
     if (!visible || !rect || !nliExplainerShouldPaintOnSpan(spanKey)) {
       hatch.style.display = "none";
       return;
@@ -353,7 +354,7 @@ ${exportButtons}
     if (overflowEl) overflowEl.style.display = visible && overflows ? "block" : "none";
     if (enableSpanGuards) {
       const spanKey = nliExplainerSpanKey(searchString());
-      const hits = nliExplainerBoxHitsOverlap(liveLayout, spanKey);
+      const hits = nliExplainerBoxHitsOverlap(liveLayout, spanKey, typeof getProjectionConfig === "function" ? getProjectionConfig() : undefined);
       if (warnEl) warnEl.style.display = visible && hits ? "block" : "none";
       const defaults = MapProjectionConfig.NLI_EXPLAINER_LAYOUT;
       const committed = mergeNliExplainerLayout(spanKey, {}, defaults);

@@ -39,6 +39,7 @@ The application is fully containerized via `docker-compose.yml` - no local depen
 
 - Docker and Docker Compose
 ```
+
 # Start everything
 docker-compose up -d --build
 
@@ -46,6 +47,16 @@ docker-compose up -d --build
 docker-compose ps
 docker-compose logs -f nur-api
 ```
+
+### Normal OTEF launch
+
+Use the Windows helper to start the Compose stack, wait for nginx and the OTEF API, publish the current phone-share address, and open the launcher:
+
+```powershell
+.\otef-interactive\scripts\start-otef.ps1
+```
+
+Running `docker compose up` directly starts containers but does not run the host-side network discovery watcher. Use the helper when the launcher and phone QR address are needed.
 
 ### Environment Variables
 

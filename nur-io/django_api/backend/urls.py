@@ -33,6 +33,7 @@ from .views import (
     pink_line_geojson,
     OTEFBoundsApplyView,
 )
+from .projection_config_views import ProjectionConfigView
 
 from rest_framework import permissions
 from drf_yasg.views import get_schema_view
@@ -65,6 +66,7 @@ router.register(r"otef_viewport", OTEFViewportStateViewSet, basename="otef-viewp
 router.register(r"actions", CustomActionsViewSet, basename="actions")
 
 urlpatterns = [
+    path("otef/projection-config/", ProjectionConfigView.as_view(), name="otef_projection_config"),
     path("admin/", admin.site.urls),
     path("", include((router.urls, "api"))),
     # API Documentation endpoints

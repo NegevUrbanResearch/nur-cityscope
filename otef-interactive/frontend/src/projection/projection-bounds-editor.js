@@ -5,6 +5,7 @@
   let getModelBounds = null;
   let getDisplayedImageBounds = null;
   let itmToDisplayPixels = null;
+  let displayPixelsToItmCallback = null;
 
   let boundsEditMode = false;
   let boundsWorkingPolygon = null; // Array of { x, y } in ITM
@@ -14,6 +15,7 @@
     getModelBounds = deps?.getModelBounds || null;
     getDisplayedImageBounds = deps?.getDisplayedImageBounds || null;
     itmToDisplayPixels = deps?.itmToDisplayPixels || null;
+    displayPixelsToItmCallback = deps?.displayPixelsToItm || null;
   }
 
   function getModelBoundsSafe() {
@@ -27,6 +29,9 @@
   }
 
   function displayPixelsToItm(px, py) {
+    if (typeof displayPixelsToItmCallback === "function") {
+      return displayPixelsToItmCallback(px, py);
+    }
     const bounds = getDisplayBoundsSafe();
     const modelBounds = getModelBoundsSafe();
     if (!bounds || !modelBounds) return null;

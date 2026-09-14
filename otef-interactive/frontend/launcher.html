@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OTEF Control Center</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #0a0d12; color: #f4f5f7; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 80% 0%, #24314a 0, #0a0d12 48%); }
+      main { width: min(1120px, 100%); margin: 0 auto; padding: clamp(24px, 6vw, 72px) clamp(16px, 4vw, 48px); }
+      header { max-width: 680px; margin-bottom: 36px; }
+      h1 { margin: 0 0 10px; font-size: clamp(2rem, 5vw, 3.5rem); letter-spacing: -0.04em; }
+      .lede { margin: 0; color: #aeb9cb; font-size: 1.05rem; line-height: 1.6; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+      .card { min-height: 160px; padding: 22px; border: 1px solid #2a3548; border-radius: 18px; background: rgba(17, 23, 34, .88); box-shadow: 0 16px 40px rgba(0, 0, 0, .2); }
+      h2 { margin: 0 0 6px; font-size: 1.1rem; }
+      .card p { margin: 0 0 20px; color: #96a4b9; line-height: 1.45; }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+      a, button { min-height: 44px; border-radius: 10px; font: inherit; font-weight: 650; cursor: pointer; }
+      a { display: inline-flex; align-items: center; padding: 0 15px; background: #d5e5ff; color: #152238; text-decoration: none; }
+      a[aria-disabled="true"] { pointer-events: none; opacity: .45; }
+      button { padding: 0 14px; border: 1px solid #45536b; background: transparent; color: #dbe5f5; }
+      button:disabled { cursor: not-allowed; opacity: .45; }
+      a:focus-visible, button:focus-visible { outline: 3px solid #7fb1ff; outline-offset: 2px; }
+      .share-card { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: center; }
+      .card-url { margin: -10px 0 14px; color: #8290a6; overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: .72rem; user-select: text; }
+      .share-card .url { margin: 8px 0 12px; color: #f4f5f7; overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: .86rem; user-select: text; }
+      #remoteQr { width: 256px; min-width: 256px; min-height: 256px; display: grid; place-items: center; padding: 8px; border-radius: 14px; background: #fff; }
+      #remoteQr:empty { display: none; }
+      #remoteQr svg { display: block; width: 240px; height: 240px; }
+      .status { color: #aeb9cb; font-size: .9rem; }
+      @media (max-width: 767px) { .share-card { grid-template-columns: 1fr; } #remoteQr { justify-self: center; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>OTEF Control Center</h1>
+        <p class="lede">Open the map, remote, projection, or calibration settings.</p>
+      </header>
+      <section class="grid" aria-label="Exhibit surfaces">
+        <article class="card"><h2>GIS</h2><p>Explore the geographic view.</p><p class="card-url" id="gisUrl">—</p><div class="actions"><a id="gisOpen" target="_blank" rel="noopener">Open</a><button id="gisCopy" type="button">Copy URL</button></div></article>
+        <article class="card"><h2>Remote</h2><p>Control the exhibit.</p><p class="card-url" id="remoteCardUrl">—</p><div class="actions"><a id="remoteOpen" target="_blank" rel="noopener" aria-disabled="true">Open</a><button id="remoteCopy" type="button" disabled>Copy URL</button></div></article>
+        <article class="card"><h2>Projection</h2><p>Open the full projection reference output.</p><p class="card-url" id="projectionUrl">—</p><div class="actions"><a id="projectionOpen" target="_blank" rel="noopener">Open</a><button id="projectionCopy" type="button">Copy URL</button></div></article>
+        <article class="card"><h2>Projection left</h2><p>Open the left calibrated output.</p><p class="card-url" id="projectionLeftUrl">—</p><div class="actions"><a id="projectionLeftOpen" target="_blank" rel="noopener">Open</a><button id="projectionLeftCopy" type="button">Copy URL</button></div></article>
+        <article class="card"><h2>Projection right</h2><p>Open the right calibrated output.</p><p class="card-url" id="projectionRightUrl">—</p><div class="actions"><a id="projectionRightOpen" target="_blank" rel="noopener">Open</a><button id="projectionRightCopy" type="button">Copy URL</button></div></article>
+        <article class="card"><h2>Projection Config</h2><p>Adjust and save live calibration settings.</p><p class="card-url" id="configUrl">—</p><div class="actions"><a id="configOpen" target="_blank" rel="noopener">Open</a><button id="configCopy" type="button">Copy URL</button></div></article>
+        <article class="card"><h2>Tools</h2><p>Open the existing curation workshop.</p><p class="card-url" id="curationUrl">—</p><div class="actions"><a id="curationOpen" target="_blank" rel="noopener">Open</a><button id="curationCopy" type="button">Copy URL</button></div></article>
+        <article class="card share-card"><div><h2>Share the remote with your phone</h2><p>Connect your phone to the same network as this PC.</p><p class="url" id="remoteUrl" translate="no">—</p><p class="status" id="shareStatus" role="status">Network address unavailable.</p></div><div id="remoteQr" role="img" aria-label="QR code for the remote"></div></article>
+      </section>
+    </main>
+    <script type="module" src="./src/entries/launcher-main.js"></script>
+  </body>
+</html>
