@@ -205,8 +205,7 @@ export function deriveInvestigationFrame(
     beats,
     position,
   );
-  const rippleNeedsFrames =
-    alarmOnset != null && alarmOnset.elapsedMs < NLI_VISUAL_TOKENS.alarmRippleDurationMs;
+  const rippleNeedsFrames = alarmEnabled && motionMode === "full";
   const narrativeAdvances =
     (src.phase === "playing" && phase.phase !== "ended") ||
     (src.phase === "paused" && src.seekKind === "jump" && activeProgress < 1);

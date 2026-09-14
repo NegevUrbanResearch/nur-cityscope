@@ -134,12 +134,12 @@ describe("investigation alarm helpers", () => {
     expect(JSON.stringify(settled.color)).not.toMatch(/feature-state/);
     expect(JSON.stringify(settled.color)).toMatch(new RegExp(NLI_VISUAL_TOKENS.alarmYellow, "i"));
     expect(JSON.stringify(settled.color)).not.toMatch(/interpolate/i);
-    expect(JSON.stringify(settled.opacity)).toMatch(/0\.55/);
+    expect(JSON.stringify(settled.opacity)).toMatch(/0\.2/);
     const hiddenBranch = JSON.stringify(settled.radius);
     expect(hiddenBranch).toMatch(/"case"/);
     const flash = alarmCirclePaint(0, true);
     expect(JSON.stringify(flash.color)).toMatch(new RegExp(NLI_VISUAL_TOKENS.alarmYellow, "i"));
-    expect(JSON.stringify(flash.opacity)).toMatch(/0\.9/);
+    expect(JSON.stringify(flash.opacity)).toMatch(/0\.45/);
   });
 
   it("uses exact fixed radius stops for GIS and projection profiles", () => {
@@ -233,19 +233,20 @@ describe("investigation alarm helpers", () => {
     const data = {
       alarmFeatures: [{ id: "A", properties: { city: "A", alarm_minutes: [400] }, geometry: { type: "Point", coordinates: [1, 2] } }],
     };
-    const renderAt = (elapsedMs) => renderer.render({
+    const renderAt = (nowMs) => renderer.render({
       activeBeat: 400,
       completedBeats: [],
+      nowMs,
       alarmOnsetId: "cycle:400",
-      alarmOnset: { id: "cycle:400", beat: 400, elapsedMs },
+      alarmOnset: { id: "cycle:400", beat: 400, elapsedMs: 0 },
     }, data);
     renderAt(0);
-    renderAt(450);
-    renderAt(900);
+    renderAt(1000);
+    renderAt(2000);
     const radii = map.setPaintProperty.mock.calls
       .filter((call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-radius")
       .map((call) => call[2][2][2]);
-    expect(radii).toEqual([0, 4, 8]);
+    expect(radii).toEqual([0, 25, 0]);
     const fills = map.setPaintProperty.mock.calls
       .filter((call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-opacity")
       .map((call) => call[2]);
@@ -253,7 +254,7 @@ describe("investigation alarm helpers", () => {
     const strokes = map.setPaintProperty.mock.calls
       .filter((call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-stroke-opacity")
       .map((call) => call[2]);
-    expect(strokes).toEqual([1, 0.5, 0]);
+    expect(strokes).toEqual([0.3, 0.15, 0.3]);
     renderer.dispose();
   });
 
@@ -718,7 +719,7 @@ describe("syncInvestigationTimelineToMap alarms", () => {
         now: () => 0,
       },
     );
-    expect(raf).not.toHaveBeenCalled();
+    expect(raf).toHaveBeenCalled();
     expect(map.setFeatureState).not.toHaveBeenCalled();
     const overlayFc = map.getSource("nli-investigation-alarm-points").setData.mock.calls.at(-1)[0];
     expect(overlayFc.features[0].properties).toEqual(

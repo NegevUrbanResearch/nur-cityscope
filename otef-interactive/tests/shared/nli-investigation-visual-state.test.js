@@ -313,7 +313,12 @@ describe("deriveInvestigationFrame", () => {
   });
 
   it("is idle and does not request frames without narrative or ambient consumers", () => {
-    const frame = deriveInvestigationFrame(idleNliClock(), 99_000, enabled, {});
+    const frame = deriveInvestigationFrame(
+      idleNliClock(),
+      99_000,
+      [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID],
+      {},
+    );
     expect(frame.narrative).toMatchObject({
       phase: "idle",
       mode: "hold",
@@ -324,6 +329,17 @@ describe("deriveInvestigationFrame", () => {
     expect(frame.completedRouteFlow.active).toBe(false);
     expect(frame.narrativeAdvances).toBe(false);
     expect(frame.needsNextFrame).toBe(false);
+  });
+
+  it("idle with alarms requests ambient ripple frames", () => {
+    const frame = deriveInvestigationFrame(idleNliClock(), 99_000, [INVESTIGATION_ALARMS_FULL_ID], {});
+    expect(frame.rippleNeedsFrames).toBe(true);
+    expect(frame.needsNextFrame).toBe(true);
+    const reduced = deriveInvestigationFrame(idleNliClock(), 99_000, [INVESTIGATION_ALARMS_FULL_ID], {
+      motionMode: "reduced",
+    });
+    expect(reduced.rippleNeedsFrames).toBe(false);
+    expect(reduced.needsNextFrame).toBe(false);
   });
 
   it("returns to the idle visual state after an explicit stop", () => {
@@ -384,7 +400,7 @@ describe("deriveInvestigationFrame", () => {
     expect(active.alarmOnsetId).toBe("1000:0:0:400");
     expect(active.rippleNeedsFrames).toBe(true);
     const finished = deriveInvestigationFrame(clock, 1000 + 900, [INVESTIGATION_ALARMS_FULL_ID], {});
-    expect(finished.rippleNeedsFrames).toBe(false);
+    expect(finished.rippleNeedsFrames).toBe(true);
   });
 
   it("keeps a paused alarm ripple origin stable across ordinary clock patches", () => {
@@ -411,7 +427,7 @@ describe("deriveInvestigationFrame", () => {
     expect(first.alarmOnsetOriginMs).toBe(1000);
     expect(second.alarmOnsetOriginMs).toBe(1000);
     expect(second.alarmOnsetId).toBe(first.alarmOnsetId);
-    expect(second.rippleNeedsFrames).toBe(false);
+    expect(second.rippleNeedsFrames).toBe(true);
   });
 
   it("does not reactivate a completed alarm ripple after ordinary pause and resume", () => {
@@ -438,8 +454,8 @@ describe("deriveInvestigationFrame", () => {
     );
     expect(after.alarmOnsetOriginMs).toBe(before.alarmOnsetOriginMs);
     expect(after.alarmOnsetId).toBe(before.alarmOnsetId);
-    expect(before.rippleNeedsFrames).toBe(false);
-    expect(after.rippleNeedsFrames).toBe(false);
+    expect(before.rippleNeedsFrames).toBe(true);
+    expect(after.rippleNeedsFrames).toBe(true);
     expect(pausedAgain.alarmOnsetOriginMs).toBe(paused.alarmOnsetOriginMs);
     expect(pausedAgain).not.toHaveProperty("alarmOnsetBeat");
   });
@@ -486,7 +502,7 @@ describe("deriveInvestigationFrame", () => {
     expect(resumed.positionMs).toBe(jumped.positionMs);
     expect(after.alarmOnsetId).toBe(before.alarmOnsetId);
     expect(after.alarmOnsetOriginMs).toBe(jumpAt);
-    expect(after.rippleNeedsFrames).toBe(false);
+    expect(after.rippleNeedsFrames).toBe(true);
   });
 
   it("changes alarm identity and origin once per loop cycle", () => {
@@ -528,7 +544,7 @@ describe("deriveInvestigationFrame", () => {
     );
     expect(after.alarmOnsetOriginMs).toBe(before.alarmOnsetOriginMs);
     expect(after.alarmOnsetId).toBe(before.alarmOnsetId);
-    expect(after.rippleNeedsFrames).toBe(false);
+    expect(after.rippleNeedsFrames).toBe(true);
   });
 
   it("starts a fresh ripple identity after a resumed loop crosses its next wrap", () => {

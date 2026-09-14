@@ -470,14 +470,14 @@ describe("Task 8 investigation timeline coordinator", () => {
     now = 900;
     expect(map.driveAnimationFrame(900)).toBe(true);
     expect(onset()).toBe(false);
-    expect(ringOpacity()).toBe(0);
-    expect(map.pendingAnimationFrameCount()).toBe(0);
+    expect(ringOpacity()).toBeGreaterThan(0);
+    expect(map.pendingAnimationFrameCount()).toBe(1);
 
     now = 966;
-    expect(map.driveAnimationFrame(966)).toBe(false);
+    expect(map.driveAnimationFrame(966)).toBe(true);
     expect(onset()).toBe(false);
-    expect(ringOpacity()).toBe(0);
-    expect(map.pendingAnimationFrameCount()).toBe(0);
+    expect(ringOpacity()).toBeGreaterThan(0);
+    expect(map.pendingAnimationFrameCount()).toBe(1);
   });
 
   it("rehydrates an active alarm onset through style remount without a false edge", async () => {
@@ -533,10 +533,10 @@ describe("Task 8 investigation timeline coordinator", () => {
     expect(map.driveAnimationFrame(900)).toBe(true);
     expect(onset()).toBe(false);
     expect(remountOnsets()).toEqual([true, false]);
-    expect(map.pendingAnimationFrameCount()).toBe(0);
+    expect(map.pendingAnimationFrameCount()).toBe(1);
 
     now = 966;
-    expect(map.driveAnimationFrame(966)).toBe(false);
+    expect(map.driveAnimationFrame(966)).toBe(true);
     expect(onset()).toBe(false);
     expect(remountOnsets()).toEqual([true, false]);
   });

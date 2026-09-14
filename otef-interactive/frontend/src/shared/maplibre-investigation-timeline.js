@@ -778,6 +778,14 @@ function stopPlayback(map, { preserveBasePaints = false } = {}) {
   updateCaption(state, { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 });
 }
 
+function onsetWindowJustClosed(previousFrame, frame) {
+  const duration = NLI_VISUAL_TOKENS.alarmRippleDurationMs;
+  const previousElapsed = Number(previousFrame?.alarmOnset?.elapsedMs);
+  const elapsed = Number(frame?.alarmOnset?.elapsedMs);
+  return Number.isFinite(previousElapsed) && previousElapsed < duration
+    && Number.isFinite(elapsed) && elapsed >= duration;
+}
+
 function shouldRafClock(frame) {
   return !!frame?.needsNextFrame;
 }
@@ -795,9 +803,11 @@ function tick(map) {
     ? deriveIdleLineFrame(state, nowMs)
     : null;
   const rippleEnded = state.lastFrame?.rippleNeedsFrames === true && frame.rippleNeedsFrames === false;
+  const onsetEnded = onsetWindowJustClosed(state.lastFrame, frame);
   const renderDue = state.lastRenderNow == null ||
     nowMs - state.lastRenderNow >= NLI_VISUAL_TOKENS.completedFlowStepMs ||
-    rippleEnded;
+    rippleEnded ||
+    onsetEnded;
   const idleNeedsVisuals = clock.phase === "idle" && (
     frame.needsNextFrame === true ||
     lineFrame?.needsNextFrame === true ||
@@ -812,6 +822,7 @@ function tick(map) {
       frame.completedFlowNeedsFrames ||
       frame.rippleNeedsFrames ||
       rippleEnded ||
+      onsetEnded ||
       idleNeedsVisuals
     ) {
       applyPlayingVisuals(map, state, vis, frame, state.alarmMode);
@@ -998,6 +1009,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     /** @type {'off' | 'idle' | 'play'} */
     const idleAlarmMode = alarmsVisible ? "idle" : "off";
     if (alarmsVisible) {
+      state.effectiveIds.add(INVESTIGATION_ALARMS_FULL_ID);
       await ensureInvestigationLayerFeatures(state.data, deps, "alarmFeatures", INVESTIGATION_ALARMS_FULL_ID, {
         request: syncRequest,
         isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
