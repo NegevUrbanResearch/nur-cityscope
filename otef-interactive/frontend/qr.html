@@ -8,7 +8,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/remote-styles.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <style>
         :root {
             --qr-print-pad: 14px;
@@ -80,9 +79,15 @@
         }
 
         #qrcode img,
-        #qrcode canvas {
+        #qrcode canvas,
+        #qrcode svg {
             display: block;
             vertical-align: top;
+        }
+
+        #qrcode svg {
+            width: 256px;
+            height: 256px;
         }
 
         .net-note {
@@ -90,6 +95,12 @@
             font-weight: 500;
             line-height: 1.55;
             color: var(--text-secondary);
+        }
+
+        .share-status {
+            margin: 8px 0 0;
+            color: var(--text-muted);
+            font-size: 0.85rem;
         }
 
         .url-foot {
@@ -146,6 +157,10 @@
                 color: #333;
             }
 
+            .share-status {
+                color: #555;
+            }
+
             .url-foot {
                 color: #555;
             }
@@ -164,7 +179,8 @@
             }
 
             #qrcode img,
-            #qrcode canvas {
+            #qrcode canvas,
+            #qrcode svg {
                 width: 45mm !important;
                 height: 45mm !important;
             }
@@ -181,44 +197,13 @@
                 <div id="qrcode" role="img" aria-label="קוד QR לפתיחת השלט"></div>
             </div>
 
-            <p class="net-note">ודאו שאתם מחוברים <strong>ל־Wi‑Fi של המעבדה</strong>.</p>
+            <p class="net-note">Connect your phone to the same network as this PC.</p>
+            <p class="share-status" id="shareStatus" role="status">Loading network address…</p>
 
             <p class="url-foot" id="targetUrl" translate="no" dir="ltr">---</p>
         </div>
     </div>
 
-    <script>
-        (function () {
-            const urlParams = new URLSearchParams(window.location.search);
-            let ip = urlParams.get("ip");
-
-            if (!ip && window.location.hash) {
-                const hash = window.location.hash.substring(1);
-                if (hash.includes("ip=")) {
-                    const hashParams = new URLSearchParams(hash);
-                    ip = hashParams.get("ip");
-                } else {
-                    ip = hash;
-                }
-            }
-
-            if (!ip) {
-                ip = window.location.hostname || "localhost";
-            }
-
-            const targetUrl = `http://${ip}/otef-interactive/remote-controller.html`;
-            document.getElementById("targetUrl").textContent = targetUrl;
-
-            const qrSize = 256;
-            new QRCode(document.getElementById("qrcode"), {
-                text: targetUrl,
-                width: qrSize,
-                height: qrSize,
-                colorDark: "#000000",
-                colorLight: "#ffffff",
-                correctLevel: QRCode.CorrectLevel.H,
-            });
-        })();
-    </script>
+    <script type="module" src="./src/entries/qr-main.js"></script>
 </body>
 </html>
