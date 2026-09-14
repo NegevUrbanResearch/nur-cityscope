@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  GIS_GAZA_ROADS_LINE_OPACITY_SCALE,
   PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
 } from "../../frontend/src/shared/hatch-projection-presentation.js";
 import {
   irToMapLibreLayers,
 } from "../../frontend/src/shared/maplibre-style-bridge.js";
+import gazaStyles from "../../public/processed/layers/gaza/styles.json";
 import nliStyles from "../../public/processed/layers/nli/styles.json";
 
 function assertPaintHasNoNullish(paint) {
@@ -151,6 +153,70 @@ describe("irToMapLibreLayers", () => {
     expect(lineG.paint["line-width"]).toBe(2);
     expect(lineP.paint["line-width"]).toBe(2);
     expect(lineP.paint["line-width"]).not.toBeCloseTo(2 * PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE);
+  });
+
+  it("lowers Gaza Roads line opacity on GIS only", () => {
+    const layerConfig = {
+      geometryType: "line",
+      style: {
+        renderer: "uniqueValue",
+        uniqueValues: {
+          field: "Class",
+          classes: [
+            {
+              value: "Main Road",
+              symbol: {
+                symbolLayers: [{ type: "stroke", color: "#873e23", width: 2.6666666666666665, opacity: 1.0 }],
+              },
+            },
+            {
+              value: "Local Road",
+              symbol: {
+                symbolLayers: [{ type: "stroke", color: "#873e23", width: 1.3333333333333333, opacity: 1.0 }],
+              },
+            },
+          ],
+        },
+        defaultSymbol: {
+          symbolLayers: [{ type: "stroke", color: "#828282", width: 1.3333333333333333, opacity: 1.0 }],
+        },
+      },
+    };
+    const gis = irToMapLibreLayers("gaza.Gaza_Roads", "gaza__Gaza_Roads", layerConfig);
+    const proj = irToMapLibreLayers("gaza.Gaza_Roads", "gaza__Gaza_Roads", layerConfig, {
+      applyProjectionHatchPresentation: true,
+    });
+    const otherGis = irToMapLibreLayers("muniplicity_transport.כבישים", "muniplicity_transport__כבישים", layerConfig);
+    const lineG = gis.find((l) => l.type === "line");
+    const lineP = proj.find((l) => l.type === "line");
+    const otherLine = otherGis.find((l) => l.type === "line");
+    expect(lineP.paint["line-opacity"]).toBe(1);
+    expect(otherLine.paint["line-opacity"]).toBe(1);
+    expect(lineG.paint["line-opacity"]).toBe(GIS_GAZA_ROADS_LINE_OPACITY_SCALE);
+    expect(lineG.paint["line-opacity"]).toBeLessThan(lineP.paint["line-opacity"]);
+
+    const processed = { geometryType: "line", style: gazaStyles.Gaza_Roads };
+    const processedGis = irToMapLibreLayers("gaza.Gaza_Roads", "gaza__Gaza_Roads", processed);
+    const processedProj = irToMapLibreLayers("gaza.Gaza_Roads", "gaza__Gaza_Roads", processed, {
+      applyProjectionHatchPresentation: true,
+    });
+    expect(processedGis.find((l) => l.type === "line").paint["line-opacity"]).toBe(
+      GIS_GAZA_ROADS_LINE_OPACITY_SCALE,
+    );
+    expect(processedProj.find((l) => l.type === "line").paint["line-opacity"]).toBe(1);
+  });
+
+  it("paints processed Gaza Roads grey on GIS and projection", () => {
+    const processed = { geometryType: "line", style: gazaStyles.Gaza_Roads };
+    const gis = irToMapLibreLayers("gaza.Gaza_Roads", "gaza__Gaza_Roads", processed);
+    const proj = irToMapLibreLayers("gaza.Gaza_Roads", "gaza__Gaza_Roads", processed, {
+      applyProjectionHatchPresentation: true,
+    });
+    const gisColor = gis.find((l) => l.type === "line").paint["line-color"];
+    const projColor = proj.find((l) => l.type === "line").paint["line-color"];
+    expect(gisColor).toBe("#828282");
+    expect(projColor).toBe("#828282");
+    expect(gisColor).toBe(projColor);
   });
 
   it("converts a uniqueValue renderer with match expression", () => {

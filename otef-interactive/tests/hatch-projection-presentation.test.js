@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  GIS_GAZA_ROADS_LINE_OPACITY_SCALE,
   PROJECTION_HATCH_SEPARATION_MULTIPLIER,
   PROJECTION_HATCH_WIDTH_MULTIPLIER,
   PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
@@ -17,6 +18,7 @@ describe("hatch-projection-presentation (projection MapLibre only)", () => {
     expect(PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE).toBeGreaterThan(0);
     expect(PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE).toBeLessThanOrEqual(1);
     expect(PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE).toBe(0.5);
+    expect(GIS_GAZA_ROADS_LINE_OPACITY_SCALE).toBe(0.45);
   });
 
   it("rounds separation and width to whole pixels (avoids subpixel antialiased stripes)", () => {

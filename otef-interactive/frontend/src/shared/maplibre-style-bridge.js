@@ -3,6 +3,7 @@
  * into MapLibre style layer definitions.
  */
 import {
+  GIS_GAZA_ROADS_LINE_OPACITY_SCALE,
   projectionHatchRasterParams,
   PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
@@ -194,6 +195,27 @@ function scaleLineWidthPaintForProjection(lineWidth, hatchPresentation, fullLaye
     return ["*", scale, lineWidth];
   }
   return lineWidth;
+}
+
+/**
+ * @param {{ applyProjectionHatchPresentation?: boolean }} hatchPresentation
+ * @param {number|Array|undefined} opacity
+ * @param {string} [fullLayerId]
+ */
+function scaleLineOpacityPaintForGis(opacity, hatchPresentation, fullLayerId) {
+  if (String(fullLayerId) !== "gaza.Gaza_Roads") return opacity;
+  if (hatchPresentation?.applyProjectionHatchPresentation) return opacity;
+  const scale = Number(GIS_GAZA_ROADS_LINE_OPACITY_SCALE);
+  if (!Number.isFinite(scale) || scale < 0 || scale === 1) return opacity;
+  const clamped = Math.min(1, scale);
+  if (opacity == null) return clamped;
+  if (typeof opacity === "number" && Number.isFinite(opacity)) {
+    return Math.max(0, Math.min(1, opacity * clamped));
+  }
+  if (Array.isArray(opacity)) {
+    return ["*", clamped, opacity];
+  }
+  return opacity;
 }
 
 function fieldNameCaseVariants(field) {
@@ -741,7 +763,13 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation, fullLayerId) 
         fullLayerId,
       ),
     };
-    if (symbolLayer.opacity != null) paint["line-opacity"] = symbolLayer.opacity;
+    if (symbolLayer.opacity != null) {
+      paint["line-opacity"] = scaleLineOpacityPaintForGis(
+        symbolLayer.opacity,
+        hatchPresentation,
+        fullLayerId,
+      );
+    }
     if (Array.isArray(symbolLayer?.dash?.array)) paint["line-dasharray"] = symbolLayer.dash.array;
 
     const layout = {};
@@ -789,7 +817,13 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation, fullLayerId) 
         fullLayerId,
       ),
     };
-    if (symbolLayer.opacity != null) paint["line-opacity"] = symbolLayer.opacity;
+    if (symbolLayer.opacity != null) {
+      paint["line-opacity"] = scaleLineOpacityPaintForGis(
+        symbolLayer.opacity,
+        hatchPresentation,
+        fullLayerId,
+      );
+    }
     return { id, type: "line", paint, layout: {}, _markerLineFallback: true };
   }
 
@@ -1077,7 +1111,11 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
       hatchPresentation,
       fullLayerId,
     );
-    const lineOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
+    const lineOpacity = scaleLineOpacityPaintForGis(
+      buildMatchExpr(field, entries, defaultSymbolLayer, "opacity"),
+      hatchPresentation,
+      fullLayerId,
+    );
     if (lineOpacity !== undefined) paint["line-opacity"] = lineOpacity;
 
     const dash = buildMatchExpr(field, entries, defaultSymbolLayer, "dash.array");
@@ -1230,7 +1268,11 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
       fullLayerId,
     );
 
-    const lineOpacity = buildMatchExpr(field, entries, defaultSymbolLayer, "opacity");
+    const lineOpacity = scaleLineOpacityPaintForGis(
+      buildMatchExpr(field, entries, defaultSymbolLayer, "opacity"),
+      hatchPresentation,
+      fullLayerId,
+    );
     if (lineOpacity !== undefined) paint["line-opacity"] = lineOpacity;
 
     return { id, type: "line", paint, layout: {}, _markerLineFallback: true };

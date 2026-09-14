@@ -1,7 +1,7 @@
 /**
- * MapLibre hatch tuning for the projection display only.
- * Scales processed lyrx `separation` and `width` when building hatch raster tiles,
- * then snaps to the device pixel grid so strokes stay crisp (GIS / style source unchanged).
+ * MapLibre hatch and stroke presentation tokens.
+ * Projection hatch/width/point scales apply only when `applyProjectionHatchPresentation`
+ * is true. GIS-only paint tokens (Gaza Roads opacity) apply on the interactive map.
  */
 
 /**
@@ -29,6 +29,13 @@ export const PROJECTION_HATCH_PIXEL_RATIO = 2;
  * scale 1. Tune down if outlines read heavier on the fixed projection camera than on GIS.
  */
 export const PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE = 0.3;
+
+/**
+ * Multiplies `gaza.Gaza_Roads` `line-opacity` on the interactive GIS map only.
+ * Projection keeps processed lyrx opacity (roads already read lighter on the table
+ * via {@link PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE}). Tune if GIS roads still dominate.
+ */
+export const GIS_GAZA_ROADS_LINE_OPACITY_SCALE = 0.45;
 
 /**
  * Multiplies IR-derived **point** `circle-radius` (and square `icon-size`) on the projection
