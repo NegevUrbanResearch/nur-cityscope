@@ -78,6 +78,12 @@ export class FakeMapLibreMap {
     const copy = { ...layer };
     const index = beforeId == null ? this._layers.length : this._layers.findIndex((item) => item.id === beforeId);
     this._layers.splice(index < 0 ? this._layers.length : index, 0, copy);
+    if (copy.paint && typeof copy.paint === "object") {
+      this._paints.set(copy.id, { ...(this._paints.get(copy.id) || {}), ...copy.paint });
+    }
+    if (copy.layout && typeof copy.layout === "object") {
+      this._layouts.set(copy.id, { ...(this._layouts.get(copy.id) || {}), ...copy.layout });
+    }
     this._calls.push({ method: "addLayer", id: copy.id, beforeId });
   }
 
