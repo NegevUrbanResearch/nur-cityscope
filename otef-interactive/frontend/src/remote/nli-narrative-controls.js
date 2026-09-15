@@ -1,8 +1,9 @@
 import { escapeHtml } from "../shared/html-utils.js";
-import { normalizeNarrativeState } from "../shared/nli-narratives.js";
+import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narratives.js";
 import { t } from "./remote-locale.js";
 
 const DEFAULT_PRESENTATION_TIMEOUT_MS = 6000;
+const NARRATIVE_BUTTON_IDS = ["segev", "nova"];
 
 function escape(value) {
   return escapeHtml(String(value ?? ""));
@@ -12,14 +13,27 @@ function disabledAttribute(disabled) {
   return disabled ? " disabled" : "";
 }
 
-export function nliNarrativeControlsHtml(selectedPack, narrativeState, disabledReason) {
-  if (!selectedPack || selectedPack.id !== "nli") return "";
-  const acknowledged = normalizeNarrativeState(narrativeState);
-  const active = acknowledged.id === "segev";
+function hasPresentationUrl(id) {
+  const url = getNliNarrative(id)?.presentationUrl;
+  return typeof url === "string" && url.length > 0;
+}
+
+function narrativeCopyKeys(id) {
+  if (id === "nova") {
+    return { labelKey: "nliNarrativeNova", ariaKey: "nliNarrativeNovaAria" };
+  }
+  return { labelKey: "nliNarrativeSegev", ariaKey: "nliNarrativeSegevAria" };
+}
+
+function narrativeButtonHtml(id, acknowledged, narrativeDisabled) {
+  const active = acknowledged.id === id;
+  const { labelKey, ariaKey } = narrativeCopyKeys(id);
+  return `<button type="button" class="nli-narrative-button${active ? " is-active" : ""}" data-nli-narrative="${escape(id)}" aria-pressed="${active ? "true" : "false"}" aria-label="${escape(t(ariaKey))}"${disabledAttribute(narrativeDisabled)}>${escape(t(labelKey))}</button>`;
+}
+
+function presentationButtonHtml(narrativeState, disabledReason, transitionPending) {
   const phase = narrativeState?.presentationPhase || "closed";
-  const transitionPending = narrativeState?.transitionPending === true;
   const presentationPending = phase === "opening" || phase === "closing";
-  const narrativeDisabled = transitionPending || !!disabledReason;
   const presentationAction = phase === "open" || phase === "closing" ? "close" : "open";
   const presentationLabelKey = presentationAction === "close"
     ? "nliNarrativePresentationClose"
@@ -30,13 +44,28 @@ export function nliNarrativeControlsHtml(selectedPack, narrativeState, disabledR
   const pendingLabelKey = phase === "closing"
     ? "nliNarrativePresentationClosing"
     : "nliNarrativePresentationOpening";
+  return `<button type="button" class="nli-narrative-button nli-narrative-presentation" data-nli-narrative-presentation="${presentationAction}" data-nli-narrative-id="segev" aria-label="${escape(t(presentationAriaKey))}"${disabledAttribute(transitionPending || presentationPending || !!disabledReason)}>${escape(t(presentationPending ? pendingLabelKey : presentationLabelKey))}</button>`;
+}
+
+export function nliNarrativeControlsHtml(selectedPack, narrativeState, disabledReason) {
+  if (!selectedPack || selectedPack.id !== "nli") return "";
+  const acknowledged = normalizeNarrativeState(narrativeState);
+  const transitionPending = narrativeState?.transitionPending === true;
+  const narrativeDisabled = transitionPending || !!disabledReason;
   const feedback = disabledReason || narrativeState?.feedback || "";
+  const narrativeButtons = NARRATIVE_BUTTON_IDS
+    .map((id) => narrativeButtonHtml(id, acknowledged, narrativeDisabled))
+    .join(" ");
+  const showPresentation = acknowledged.id === "segev" && hasPresentationUrl("segev");
+  const presentationRow = showPresentation
+    ? `<div class="nli-narrative-actions-row">${presentationButtonHtml(narrativeState, disabledReason, transitionPending)}</div>`
+    : "";
 
   return `<section class="nli-narrative-sheet" aria-labelledby="nliNarrativesTitle">
     <span class="nli-narrative-title" id="nliNarrativesTitle">${escape(t("nliNarrativesTitle"))}</span>
     <div class="nli-narrative-actions">
-      <button type="button" class="nli-narrative-button${active ? " is-active" : ""}" data-nli-narrative="segev" aria-pressed="${active ? "true" : "false"}" aria-label="${escape(t("nliNarrativeSegevAria"))}"${disabledAttribute(narrativeDisabled)}>${escape(t("nliNarrativeSegev"))}</button>
-      ${active ? `<button type="button" class="nli-narrative-button nli-narrative-presentation" data-nli-narrative-presentation="${presentationAction}" data-nli-narrative-id="segev" aria-label="${escape(t(presentationAriaKey))}"${disabledAttribute(transitionPending || presentationPending || !!disabledReason)}>${escape(t(presentationPending ? pendingLabelKey : presentationLabelKey))}</button>` : ""}
+      <div class="nli-narrative-actions-row">${narrativeButtons}</div>
+      ${presentationRow}
     </div>
     ${feedback ? `<p class="nli-narrative-feedback" role="status">${escape(feedback)}</p>` : ""}
   </section>`;

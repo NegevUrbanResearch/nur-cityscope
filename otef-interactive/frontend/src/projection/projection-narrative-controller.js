@@ -2,7 +2,11 @@ import { createNarrativeFocusRenderer } from "../shared/maplibre-narrative-focus
 import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narratives.js";
 
 /** Render the durable narrative focus on projection without owning its camera. */
-export function createProjectionNarrativeController({ map, syncTimeline = () => {} } = {}) {
+export function createProjectionNarrativeController({
+  map,
+  syncTimeline = () => {},
+  onStyleLoadOverlay,
+} = {}) {
   const focus = createNarrativeFocusRenderer(map, { profile: "projection" });
   let definition = null;
   let disposed = false;
@@ -16,7 +20,7 @@ export function createProjectionNarrativeController({ map, syncTimeline = () => 
       if (disposed) return false;
       const normalized = normalizeNarrativeState(nextState);
       definition = getNliNarrative(normalized.id);
-      if (definition) focus.show(definition);
+      if (definition && definition.id !== "nova") focus.show(definition);
       else focus.clear();
       resync();
       return true;
@@ -25,6 +29,7 @@ export function createProjectionNarrativeController({ map, syncTimeline = () => 
       if (disposed) return;
       focus.onStyleLoad();
       resync();
+      onStyleLoadOverlay?.();
     },
     getDefinition: () => definition,
     dispose() {

@@ -12,8 +12,26 @@ const SEGEV_NARRATIVE = Object.freeze({
     "https://www.canva.com/design/DAHUaRcI6lI/Of1TuYlj0yaPV-r3UDQOKw/view?embed",
 });
 
+const NOVA_CENTER = Object.freeze([34.46975, 31.39851]);
+
+const NOVA_NARRATIVE = Object.freeze({
+  id: "nova",
+  label: "נובה",
+  center: NOVA_CENTER,
+  zoom: 15,
+  gisZoom: 15,
+  idleClockMinutes: 483,
+  playStartMinutes: 483,
+  basemap: "satellite_bw",
+  focusInvestigationPolygonObjectId: 100,
+  focusSettlement: "נובה",
+  focusSettlementOutlineId: 43,
+  hasEscapeOverlay: true,
+});
+
 export const NLI_NARRATIVES = Object.freeze({
   segev: SEGEV_NARRATIVE,
+  nova: NOVA_NARRATIVE,
 });
 
 export const NLI_NARRATIVE_EXIT_SCENE = Object.freeze({

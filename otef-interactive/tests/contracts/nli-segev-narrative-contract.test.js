@@ -99,6 +99,22 @@ describe("NLI Segev narrative cross-surface contract", () => {
     expect(stripComments(gisNarrativeController)).not.toMatch(/zoom:\s*19\b/);
   });
 
+  test("allows Nova in the registry without adding AcrossLine to the six-module HSV 60 graph", () => {
+    expect(getNliNarrative("nova")?.id).toBe("nova");
+    expect(Object.keys(narrativeModules)).toEqual([
+      "registry",
+      "gisNarrativeController",
+      "projectionNarrativeController",
+      "focusRenderer",
+      "presentation",
+      "narrativeControls",
+    ]);
+    for (const [name, source] of Object.entries(narrativeModules)) {
+      expect(source, name).not.toMatch(/maplibre-acrossline-ribbon/);
+      assertNarrativeModuleIsDependencyFree(name, source);
+    }
+  });
+
   test("renders the same Hebrew focus label from both live controllers without person/PID/archive dependencies", () => {
     expect(focusRenderer).toContain("properties: { label }");
     expect(stripComments(gisNarrativeController)).toMatch(/focus\.show\(definition\)/);

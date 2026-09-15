@@ -2,7 +2,9 @@ import { getNliNarrative } from "../shared/nli-narratives.js";
 
 function trustedDefinition(definition) {
   const registered = getNliNarrative(definition?.id);
-  if (!registered || definition?.presentationUrl !== registered.presentationUrl) return null;
+  const url = registered?.presentationUrl;
+  if (typeof url !== "string" || url.length === 0) return null;
+  if (definition?.presentationUrl !== url) return null;
   return registered;
 }
 
@@ -19,7 +21,7 @@ export function handleNarrativePresentationCommand({ command, definition, presen
 }
 
 /** Mount the trusted, local NLI presentation command surface above the GIS shell. */
-export function createNarrativePresentation(container, { onResult = () => {} } = {}) {
+export function createNarrativePresentation(container, { onResult = () => {}, onOpenChange } = {}) {
   let overlay = null;
   let command = null;
   let disposed = false;
@@ -33,11 +35,15 @@ export function createNarrativePresentation(container, { onResult = () => {} } =
       sourceId: command.sourceId || null,
     });
   };
+  const notifyOpenChange = (open) => {
+    if (typeof onOpenChange === "function") onOpenChange(open);
+  };
   const remove = () => {
     if (!overlay) return false;
     if (typeof overlay.remove === "function") overlay.remove();
     else overlay.parentNode?.removeChild?.(overlay);
     overlay = null;
+    notifyOpenChange(false);
     return true;
   };
   const onKeyDown = (event) => {
@@ -79,6 +85,7 @@ export function createNarrativePresentation(container, { onResult = () => {} } =
         requestId: nextCommand.requestId,
         sourceId: nextCommand.sourceId || null,
       } : null;
+      notifyOpenChange(true);
       if (command) emit("opened");
       return true;
     },
