@@ -1,6 +1,7 @@
 import { OTEF_API } from "../api-client.js";
 import { isGisBasemapId, normalizeGisBasemap } from "../gis-basemap.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
+import { normalizeEscapeOverlay } from "../nli-escape-overlay.js";
 import { normalizeNliClock } from "../nli-investigation-clock.js";
 import { getNliNarrative, normalizeNarrativeState } from "../nli-narratives.js";
 import { normalizePersonSelection } from "../person-selection.js";
@@ -72,6 +73,7 @@ function canonicalRestNarrativeScene(state) {
     basemap: state.basemap,
     investigationClock: state.investigation_clock,
     personSelection: state.person_selection,
+    escapeOverlay: normalizeEscapeOverlay(state.escape_overlay, narrativeState.id),
   };
 }
 
@@ -162,6 +164,9 @@ function applyStateFromApi(ctx, state, options = {}) {
     if (!hasNarrativeSnapshot && Object.prototype.hasOwnProperty.call(state, "person_selection")) {
       ctx._personSelection = normalizePersonSelection(state.person_selection);
     }
+  }
+  if (Object.prototype.hasOwnProperty.call(state, "nli_clock_layout") && typeof ctx._applyNliClockLayout === "function") {
+    ctx._applyNliClockLayout(state.nli_clock_layout);
   }
 }
 
@@ -403,6 +408,18 @@ function setupWebSocket(ctx) {
     if (msg.scene && typeof ctx._applyNarrativeScene === "function") {
       ctx._applyNarrativeScene(msg.scene);
     }
+  });
+
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.ESCAPE_OVERLAY_CHANGED, (msg = {}) => {
+    if (msg.table && msg.table !== ctx._tableName) return;
+    if (typeof ctx._applyEscapeOverlay !== "function") return;
+    ctx._applyEscapeOverlay(msg.escapeOverlay, ctx.getNarrativeState().id);
+  });
+
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.NLI_CLOCK_LAYOUT_CHANGED, (msg = {}) => {
+    if (msg.table && msg.table !== ctx._tableName) return;
+    if (typeof ctx._applyNliClockLayout !== "function") return;
+    ctx._applyNliClockLayout(msg.nliClockLayout);
   });
 
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_COMMAND, (msg = {}) => {

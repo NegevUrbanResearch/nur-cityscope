@@ -51,8 +51,14 @@ from .otef_person_selection import (
     parse_person_selection_command,
     transition_person_selection,
 )
+from .otef_escape_overlay import normalize_escape_overlay
+from .otef_nli_clock_layout import (
+    merge_nli_clock_layout_surface,
+    normalize_nli_clock_layout,
+)
 from .otef_narrative import (
     NARRATIVE_IDS,
+    NARRATIVE_PRESENTATION_IDS,
     StaleNarrativeRevision,
     normalize_narrative_state,
     transition_narrative_scene,
@@ -175,6 +181,7 @@ def _normalize_investigation_clock_patch(raw):
         "anchorMs",
         "seekKind",
         "alarmOnsetOriginMs",
+        "leadInMinutes",
         "revision",
         "serverNowMs",
     }
@@ -291,6 +298,18 @@ def _normalize_investigation_clock_patch(raw):
                 "investigation_clock.alarmOnsetOriginMs must be a finite number"
             )
         normalized["alarmOnsetOriginMs"] = origin
+    if "leadInMinutes" in raw:
+        lead = raw["leadInMinutes"]
+        if (
+            isinstance(lead, bool)
+            or not isinstance(lead, (int, float))
+            or not math.isfinite(lead)
+        ):
+            return None, _clock_patch_error(
+                "investigation_clock.leadInMinutes must be a finite number"
+            )
+        if phase != "idle":
+            normalized["leadInMinutes"] = lead
     return normalized, None
 
 def _finite_number(value):
@@ -705,7 +724,12 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_409_CONFLICT,
                 )
 
-            update_fields = ["narrative_state", "basemap", "updated_at"]
+            update_fields = [
+                "narrative_state",
+                "basemap",
+                "escape_overlay",
+                "updated_at",
+            ]
             if narrative_id is not None:
                 update_fields.extend(["investigation_clock", "person_selection"])
 
@@ -721,6 +745,122 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             )
         return Response({"status": "ok", "action": "set_narrative", "scene": scene})
 
+    def _broadcast_escape_overlay(self, table_name, overlay, metadata):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_escape_overlay_changed",
+                "table": table_name,
+                "escapeOverlay": overlay,
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+            },
+        })
+
+    def _set_escape_overlay_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        individual = payload.get("individual")
+        overlap = payload.get("overlap")
+        if not isinstance(individual, bool) or not isinstance(overlap, bool):
+            return Response(
+                {"error": "individual and overlap must be booleans"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            locked = OTEFViewportState.objects.select_for_update().get(table=table)
+            narrative_id = normalize_narrative_state(locked.narrative_state)["id"]
+            if narrative_id == "nova":
+                overlay = normalize_escape_overlay(
+                    {"individual": individual, "overlap": overlap},
+                    "nova",
+                )
+            else:
+                overlay = normalize_escape_overlay(None, narrative_id)
+            locked.escape_overlay = overlay
+            locked.save(update_fields=["escape_overlay", "updated_at"])
+            captured_overlay = dict(overlay)
+            captured_metadata = {
+                "sourceId": payload.get("sourceId"),
+                "timestamp": payload.get("timestamp"),
+            }
+            transaction.on_commit(
+                lambda: self._broadcast_escape_overlay(
+                    table.name, captured_overlay, captured_metadata
+                )
+            )
+        return Response(
+            {
+                "status": "ok",
+                "action": "set_escape_overlay",
+                "escapeOverlay": captured_overlay,
+            }
+        )
+
+    def _broadcast_nli_clock_layout(self, table_name, layout, metadata):
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_nli_clock_layout_changed",
+                "table": table_name,
+                "nliClockLayout": layout,
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+            },
+        })
+
+    def _set_nli_clock_layout_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        surface = payload.get("surface")
+        layout = payload.get("layout")
+        if surface not in ("gis", "projection") or not isinstance(layout, dict):
+            return Response(
+                {"error": "surface must be gis or projection and layout must be an object"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            locked = OTEFViewportState.objects.select_for_update().get(table=table)
+            merged = merge_nli_clock_layout_surface(locked.nli_clock_layout, surface, layout)
+            if merged is None:
+                return Response(
+                    {"error": "invalid nli clock layout"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            locked.nli_clock_layout = merged
+            locked.save(update_fields=["nli_clock_layout", "updated_at"])
+            captured = dict(merged)
+            captured_metadata = {
+                "sourceId": payload.get("sourceId"),
+                "timestamp": payload.get("timestamp"),
+            }
+            transaction.on_commit(
+                lambda: self._broadcast_nli_clock_layout(
+                    table.name, captured, captured_metadata
+                )
+            )
+        return Response(
+            {
+                "status": "ok",
+                "action": "set_nli_clock_layout",
+                "nliClockLayout": captured,
+            }
+        )
+
     def _narrative_presentation_command(self, table, request):
         payload = request.data if isinstance(request.data, dict) else {}
         presentation_action = payload.get("presentationAction")
@@ -735,6 +875,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         if not isinstance(narrative_id, str) or narrative_id not in NARRATIVE_IDS:
             return Response(
                 {"error": "unsupported narrativeId"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if narrative_id not in NARRATIVE_PRESENTATION_IDS:
+            return Response(
+                {"error": "narrative has no presentation"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if request_error or request_id is None or source_error:
@@ -1385,6 +1530,11 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             ),
             'person_selection': normalize_person_selection(state.person_selection),
             'narrative_state': normalize_narrative_state(state.narrative_state),
+            'escape_overlay': normalize_escape_overlay(
+                state.escape_overlay,
+                normalize_narrative_state(state.narrative_state)["id"],
+            ),
+            'nli_clock_layout': normalize_nli_clock_layout(state.nli_clock_layout),
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -2012,6 +2162,12 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
         if action == "set_narrative":
             return self._set_narrative_command(table, request)
+
+        if action == "set_escape_overlay":
+            return self._set_escape_overlay_command(table, request)
+
+        if action == "set_nli_clock_layout":
+            return self._set_nli_clock_layout_command(table, request)
 
         if action == "narrative_presentation":
             return self._narrative_presentation_command(table, request)

@@ -1,5 +1,7 @@
 import { OTEF_API } from "./api-client.js";
 import { normalizeGisBasemap } from "./gis-basemap.js";
+import { normalizeEscapeOverlay } from "./nli-escape-overlay.js";
+import { emptyNliClockLayout, normalizeNliClockLayout } from "../projection/nli-explainer-overlay.js";
 import { idleNliClock, normalizeNliClock } from "./nli-investigation-clock.js";
 import { normalizeNarrativeState } from "./nli-narratives.js";
 import { normalizePersonSelection } from "./person-selection.js";
@@ -120,6 +122,8 @@ class OTEFDataContextClass {
       narrativeState: new Set(),
       narrativePresentation: new Set(),
       narrativePresentationResult: new Set(),
+      escapeOverlay: new Set(),
+      nliClockLayout: new Set(),
     };
 
     this._wsClient = null;
@@ -146,6 +150,8 @@ class OTEFDataContextClass {
     this._investigationClock = idleNliClock();
     this._personSelection = normalizePersonSelection(null);
     this._narrativeState = normalizeNarrativeState(null);
+    this._escapeOverlay = normalizeEscapeOverlay(null, null);
+    this._nliClockLayout = emptyNliClockLayout();
     this._clockOffsetMs = 0;
     this._clockPatchQueue = null;
   }
@@ -438,6 +444,28 @@ class OTEFDataContextClass {
     return this._narrativeState;
   }
 
+  getEscapeOverlay() {
+    return this._escapeOverlay;
+  }
+
+  getNliClockLayout() {
+    return this._nliClockLayout;
+  }
+
+  _applyNliClockLayout(raw) {
+    const next = normalizeNliClockLayout(raw);
+    if (JSON.stringify(this._nliClockLayout) === JSON.stringify(next)) return;
+    this._nliClockLayout = next;
+    this._notify("nliClockLayout", this._nliClockLayout);
+  }
+
+  _applyEscapeOverlay(raw, narrativeId) {
+    const next = normalizeEscapeOverlay(raw, narrativeId ?? this.getNarrativeState().id);
+    if (JSON.stringify(this._escapeOverlay) === JSON.stringify(next)) return;
+    this._escapeOverlay = next;
+    this._notify("escapeOverlay", this._escapeOverlay);
+  }
+
   _captureNarrativeSceneBaseline() {
     return {
       independentBasemapGeneration: this._independentBasemapGeneration,
@@ -457,13 +485,14 @@ class OTEFDataContextClass {
     if (sceneRevision < localRevision || (isEqual && !options.allowSameRevision)) {
       return false;
     }
-    for (const key of ["basemap", "investigationClock", "personSelection"]) {
+    for (const key of ["basemap", "investigationClock", "personSelection", "escapeOverlay"]) {
       if (!Object.prototype.hasOwnProperty.call(scene, key)) return false;
     }
 
     const incomingBasemap = normalizeGisBasemap(scene.basemap);
     const incomingClock = normalizeNliClock(scene.investigationClock);
     const incomingPerson = normalizePersonSelection(scene.personSelection);
+    const incomingOverlay = normalizeEscapeOverlay(scene.escapeOverlay, incoming.id);
     const localClock = normalizeNliClock(this._investigationClock);
     const localPerson = normalizePersonSelection(this._personSelection);
     const hydrate = options.hydrate === true;
@@ -489,15 +518,18 @@ class OTEFDataContextClass {
     const nextPerson = canHydratePerson || incomingPerson.revision > localPerson.revision
       ? incomingPerson
       : this._personSelection;
+    const nextOverlay = incomingOverlay;
     const narrativeChanged = JSON.stringify(this._narrativeState) !== JSON.stringify(nextNarrative);
     const basemapChanged = this._basemap !== nextBasemap;
     const clockChanged = JSON.stringify(this._investigationClock) !== JSON.stringify(nextClock);
     const personChanged = JSON.stringify(this._personSelection) !== JSON.stringify(nextPerson);
+    const overlayChanged = JSON.stringify(this._escapeOverlay) !== JSON.stringify(nextOverlay);
 
     this._narrativeState = nextNarrative;
     this._basemap = nextBasemap;
     this._investigationClock = nextClock;
     this._personSelection = nextPerson;
+    this._escapeOverlay = nextOverlay;
     if ((canHydrateClock || clockChanged) && Number.isFinite(nextClock.serverNowMs)) {
       this._clockOffsetMs = nextClock.serverNowMs - Date.now();
     }
@@ -507,6 +539,7 @@ class OTEFDataContextClass {
       if (isAdvance || basemapChanged) this._notify("basemap", this._basemap);
       if (isAdvance || clockChanged) this._notify("investigationClock", this._investigationClock);
       if (isAdvance || personChanged) this._notify("personSelection", this._personSelection);
+      if (overlayChanged) this._notify("escapeOverlay", this._escapeOverlay);
     }
     return true;
   }
@@ -544,6 +577,20 @@ class OTEFDataContextClass {
     const helper = OTEFDataContextInternals.actions?.setNarrative;
     return typeof helper === "function"
       ? helper(this, id)
+      : Promise.resolve({ ok: false, reason: "missing_action" });
+  }
+
+  setEscapeOverlay(overlay) {
+    const helper = OTEFDataContextInternals.actions?.setEscapeOverlay;
+    return typeof helper === "function"
+      ? helper(this, overlay)
+      : Promise.resolve({ ok: false, reason: "missing_action" });
+  }
+
+  setNliClockLayout(patch) {
+    const helper = OTEFDataContextInternals.actions?.setNliClockLayout;
+    return typeof helper === "function"
+      ? helper(this, patch)
       : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 
@@ -827,6 +874,12 @@ class OTEFDataContextClass {
         break;
       case "narrativeState":
         current = this._narrativeState;
+        break;
+      case "escapeOverlay":
+        current = this._escapeOverlay;
+        break;
+      case "nliClockLayout":
+        current = this._nliClockLayout;
         break;
       case "navigationCommand":
         current = undefined;

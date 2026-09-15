@@ -14,6 +14,8 @@ from .models import (
     LayerGroup,
     LayerState,
 )
+from .otef_escape_overlay import normalize_escape_overlay
+from .otef_nli_clock_layout import normalize_nli_clock_layout
 from .otef_person_selection import normalize_person_selection
 from .otef_narrative import normalize_narrative_state
 
@@ -221,6 +223,8 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
     table_name = serializers.CharField(source="table.name", read_only=True)
     person_selection = serializers.SerializerMethodField()
     narrative_state = serializers.SerializerMethodField()
+    escape_overlay = serializers.SerializerMethodField()
+    nli_clock_layout = serializers.SerializerMethodField()
 
     class Meta:
         model = OTEFViewportState
@@ -236,6 +240,8 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "investigation_clock",
             "person_selection",
             "narrative_state",
+            "escape_overlay",
+            "nli_clock_layout",
             "workshop_auto_publish",
             "workshop_autopublish_started_at",
             "updated_at",
@@ -246,6 +252,8 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "table_name",
             "person_selection",
             "narrative_state",
+            "escape_overlay",
+            "nli_clock_layout",
             "workshop_autopublish_started_at",
         ]
 
@@ -254,6 +262,13 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
 
     def get_narrative_state(self, obj):
         return normalize_narrative_state(obj.narrative_state)
+
+    def get_escape_overlay(self, obj):
+        narrative_id = normalize_narrative_state(obj.narrative_state)["id"]
+        return normalize_escape_overlay(obj.escape_overlay, narrative_id)
+
+    def get_nli_clock_layout(self, obj):
+        return normalize_nli_clock_layout(obj.nli_clock_layout)
 
 
 class LayerStateSerializer(serializers.ModelSerializer):

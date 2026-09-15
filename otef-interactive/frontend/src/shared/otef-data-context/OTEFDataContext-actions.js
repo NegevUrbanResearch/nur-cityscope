@@ -851,6 +851,36 @@ async function setNarrative(ctx, id) {
   }
 }
 
+async function setEscapeOverlay(ctx, overlay) {
+  if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  const response = await OTEF_API.setEscapeOverlay(
+    ctx._tableName,
+    overlay,
+    { sourceId: ctx._clientId, timestamp: Date.now() },
+  );
+  if (response?.escapeOverlay) {
+    ctx._applyEscapeOverlay(response.escapeOverlay, ctx.getNarrativeState().id);
+  }
+  return response;
+}
+
+async function setNliClockLayout(ctx, patch = {}) {
+  if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  const surface = patch.surface === "gis" ? "gis" : patch.surface === "projection" ? "projection" : null;
+  const layout = patch.layout && typeof patch.layout === "object" ? patch.layout : null;
+  if (!surface || !layout) return { ok: false, reason: "invalid_nli_clock_layout" };
+  const response = await OTEF_API.setNliClockLayout(
+    ctx._tableName,
+    surface,
+    layout,
+    { sourceId: ctx._clientId, timestamp: Date.now() },
+  );
+  if (response?.nliClockLayout) {
+    ctx._applyNliClockLayout(response.nliClockLayout);
+  }
+  return response;
+}
+
 async function narrativePresentationCommand(ctx, action, id, requestId) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   if ((action !== "open" && action !== "close") || !getNliNarrative(id)) {
@@ -1008,6 +1038,8 @@ OTEFDataContextInternals.actions = {
   archiveWindowCommand,
   archiveWindowResult,
   setNarrative,
+  setEscapeOverlay,
+  setNliClockLayout,
   narrativePresentationCommand,
   narrativePresentationResult,
   computePanViewport,
@@ -1035,6 +1067,8 @@ export {
   archiveWindowCommand,
   archiveWindowResult,
   setNarrative,
+  setEscapeOverlay,
+  setNliClockLayout,
   narrativePresentationCommand,
   narrativePresentationResult,
   computePanViewport,

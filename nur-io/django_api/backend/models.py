@@ -400,6 +400,10 @@ class OTEFViewportState(models.Model):
 
     narrative_state = models.JSONField(default=dict, blank=True)
 
+    escape_overlay = models.JSONField(default=dict, blank=True)
+
+    nli_clock_layout = models.JSONField(default=dict, blank=True)
+
     basemap = models.CharField(max_length=16, default="osm")
 
     updated_at = models.DateTimeField(auto_now=True)
