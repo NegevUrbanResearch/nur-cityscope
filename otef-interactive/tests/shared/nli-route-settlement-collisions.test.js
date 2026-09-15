@@ -1,8 +1,27 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { buildInvestigationSettlementIndexes } from "../../frontend/src/shared/nli-investigation-timeline-data.js";
 import {
   buildRouteSettlementCollisionIndex,
   deriveAchievedSettlementOutlineIds,
 } from "../../frontend/src/shared/nli-route-settlement-collisions.js";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const SETTLEMENTS_PATH = path.resolve(
+  here,
+  "../../public/processed/layers/nli/investigation_settlements.geojson",
+);
+const POLYGONS_PATH = path.resolve(
+  here,
+  "../../public/processed/layers/nli/investigation_polygons.geojson",
+);
+
+function loadProcessedFeatures(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  return JSON.parse(fs.readFileSync(filePath, "utf8")).features || [];
+}
 
 const route = (objectId, coordinates, flowDirection = "forward") => ({
   type: "Feature",
@@ -112,5 +131,55 @@ describe("settlement outline achievement", () => {
     });
 
     expect([...achieved]).toEqual(["31"]);
+  });
+
+  it("Nova polygon beats light outline 100 not Reim 18", () => {
+    const sidecar = loadProcessedFeatures(SETTLEMENTS_PATH);
+    const reim = settlement(18, square(-2, -1));
+    reim.properties.locations = ["רעים"];
+    const novaSite = settlement(100, square(4, 6));
+    novaSite.properties.locations = ["נובה"];
+    const settlementsIncludingNova100 = sidecar.length
+      ? sidecar
+      : [reim, novaSite];
+    const indexes = buildInvestigationSettlementIndexes(settlementsIncludingNova100);
+    expect(indexes.locationToOutlineObjectId.get("נובה")).toBe(100);
+    expect(indexes.locationToOutlineObjectId.get("רעים")).toBe(18);
+    const ids = deriveAchievedSettlementOutlineIds({
+      achievedPolygonBeats: [500],
+      polygonFeatures: [{ properties: { timeline_minutes: 500, מיקום: "נובה" } }],
+      locationToOutlineObjectId: indexes.locationToOutlineObjectId,
+    });
+    expect(ids.has("100")).toBe(true);
+    expect(ids.has("18")).toBe(false);
+  });
+
+  it("an infiltration line that enters the Nova site polygon lights 100", () => {
+    const polygons = loadProcessedFeatures(POLYGONS_PATH);
+    const sidecar = loadProcessedFeatures(SETTLEMENTS_PATH);
+    const novaPolygon = polygons.find((feature) => Number(feature?.properties?.OBJECTID) === 100);
+    const novaSiteSettlement100 = novaPolygon
+      ? {
+        type: "Feature",
+        properties: { outlineObjectId: 100, locations: ["נובה"] },
+        geometry: novaPolygon.geometry,
+      }
+      : settlement(100, square(4, 6));
+    const ring = novaSiteSettlement100.geometry?.type === "Polygon"
+      ? novaSiteSettlement100.geometry.coordinates[0]
+      : square(4, 6).coordinates[0];
+    const minX = Math.min(...ring.map((point) => point[0]));
+    const maxX = Math.max(...ring.map((point) => point[0]));
+    const midY = (Math.min(...ring.map((point) => point[1])) + Math.max(...ring.map((point) => point[1]))) / 2;
+    const lineEnteringPolygon100 = route(50, [[minX - 1, midY], [maxX + 1, midY]]);
+    const index = buildRouteSettlementCollisionIndex(
+      [lineEnteringPolygon100],
+      sidecar.length ? sidecar : [novaSiteSettlement100],
+    );
+    const ids = deriveAchievedSettlementOutlineIds({
+      collisionIndex: index,
+      completedRouteFeatures: [lineEnteringPolygon100],
+    });
+    expect([...ids].map(String)).toContain("100");
   });
 });

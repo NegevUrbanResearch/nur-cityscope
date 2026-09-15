@@ -45,6 +45,10 @@ import {
   nliNarrativeControlsHtml,
 } from "./nli-narrative-controls.js";
 import {
+  consumeNliNovaEscapeClick,
+  nliNovaEscapeTogglesHtml,
+} from "./nli-nova-escape-toggles.js";
+import {
   ensureWorkshopSubmissionColorsLoaded,
   pickWorkshopRowSwatchCssColor,
 } from "./layer-sheet-workshop-swatches.js";
@@ -439,6 +443,7 @@ class LayerSheetController {
         );
         this.render();
       });
+      this._subscribeDataContext("escapeOverlay", () => this.render());
     }
 
     if (typeof window !== "undefined") {
@@ -536,6 +541,7 @@ class LayerSheetController {
       }
 
       if (consumeNliPackPaneClick(e, this)) return;
+      if (consumeNliNovaEscapeClick(e, this)) return;
       if (consumeNliNarrativeButtonClick(e, this)) return;
       if (consumeNliTimelineButtonClick(e, this)) return;
 
@@ -656,6 +662,21 @@ class LayerSheetController {
       this._nliNarrativeTransitionPending = false;
       this.render();
     }
+  }
+
+  async setEscapeOverlay(patch) {
+    if (
+      typeof OTEFDataContext === "undefined" ||
+      typeof OTEFDataContext.setEscapeOverlay !== "function"
+    ) return;
+    const current =
+      (typeof OTEFDataContext.getEscapeOverlay === "function" &&
+        OTEFDataContext.getEscapeOverlay()) ||
+      { individual: false, overlap: false };
+    await OTEFDataContext.setEscapeOverlay({
+      individual: patch?.individual ?? current.individual,
+      overlap: patch?.overlap ?? current.overlap,
+    });
   }
 
   runNarrativePresentation(action, id) {
@@ -957,8 +978,14 @@ class LayerSheetController {
       narrativeState,
       narrativeDisabledReason,
     );
+    const escapeToggles = nliNovaEscapeTogglesHtml(
+      this._readNarrativeState(),
+      (typeof OTEFDataContext !== "undefined" &&
+        OTEFDataContext.getEscapeOverlay?.()) ||
+        { individual: false, overlap: false },
+    );
     const extras = selected.id === "nli" && pane === "timeline"
-      ? `${narrativeSheet}${nliSheet}`
+      ? `${narrativeSheet}${escapeToggles}${nliSheet}`
       : "";
     const bulkAndTiles = !(selected.id === "nli" && pane === "timeline")
       ? `<div class="focused-pack-toolbar">

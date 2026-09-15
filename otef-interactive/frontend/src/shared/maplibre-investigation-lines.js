@@ -14,6 +14,11 @@ import {
   buildLineProgressGradient,
   pointAtLineProgress,
 } from "./maplibre-line-progress-primitives.js";
+import {
+  NOVA_PARALLEL_DIM_OPACITY,
+  NOVA_PARALLEL_IMPACT_KIND_LINE,
+  novaParallelImpactObjectIds,
+} from "./nli-nova-escape-impact.js";
 
 export const INVESTIGATION_LINE_SOURCE_IDS = Object.freeze({
   future: "nli-investigation-line-future",
@@ -134,8 +139,26 @@ function pointsFeatureCollection(points) {
   return {
     type: "FeatureCollection",
     features: (Array.isArray(points) ? points : [])
-      .filter(finiteCoordinate)
-      .map((coordinates, index) => ({ type: "Feature", id: `head-${index}`, properties: {}, geometry: { type: "Point", coordinates } })),
+      .map((item, index) => {
+        if (finiteCoordinate(item)) {
+          return {
+            type: "Feature",
+            id: `head-${index}`,
+            properties: {},
+            geometry: { type: "Point", coordinates: item },
+          };
+        }
+        const coordinates = item?.coordinates;
+        if (!finiteCoordinate(coordinates)) return null;
+        const objectId = item?.properties?.OBJECTID ?? item?.OBJECTID;
+        return {
+          type: "Feature",
+          id: `head-${index}`,
+          properties: objectId == null ? {} : { OBJECTID: objectId },
+          geometry: { type: "Point", coordinates },
+        };
+      })
+      .filter(Boolean),
   };
 }
 
@@ -260,7 +283,14 @@ function buildHeadPoints(features, progress, metricsByObjectId) {
       metricsByObjectId.set(id, metrics);
     }
     const point = pointAtLineProgress(path, metrics, progress);
-    if (point) points.push(point);
+    if (point) {
+      points.push({
+        coordinates: point,
+        properties: {
+          OBJECTID: feature?.properties?.OBJECTID ?? feature?.id,
+        },
+      });
+    }
   }
   return points;
 }
@@ -322,6 +352,7 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
   let lastFrame = null;
   let lastHeadSignature = null;
   let lastMotionMode = null;
+  let lastParallelDimKey = null;
   let paintInitialized = false;
   let overlaysSuppressed = false;
   let lastDataInvalidationKey;
@@ -437,11 +468,21 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     const motion = frame.completedRouteFlow || {};
     const motionMode = frame.motionMode || "full";
     const motionModeChanged = lastMotionMode !== motionMode;
+    const impactIds = novaParallelImpactObjectIds(
+      frame.parallelImpactIds,
+      NOVA_PARALLEL_IMPACT_KIND_LINE,
+    );
+    const projectionNovaDim = frame.projectionNovaDim === true;
+    const parallelDimKey = `${projectionNovaDim}|${impactIds.join(",")}`;
+    const parallelDimChanged = lastParallelDimKey !== parallelDimKey;
     const staticPaintChanged = !paintInitialized || changed.future || changed.completed || motionModeChanged;
     const flowPaintChanged = staticPaintChanged || (
       motionMode === "full" &&
       flowProgress(motion, motionMode) !== flowProgress(previousFrame?.completedRouteFlow, previousFrame?.motionMode || motionMode)
     );
+    const parallelOpacity = projectionNovaDim
+      ? ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", impactIds]], 1, NOVA_PARALLEL_DIM_OPACITY]
+      : null;
     try {
       if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.future) && typeof map.setPaintProperty === "function") {
         map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.future, "line-color", NLI_VISUAL_TOKENS.incidentRed);
@@ -467,17 +508,52 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
         map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.active, "line-color", NLI_VISUAL_TOKENS.incidentRed);
         map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.active, "line-gradient", buildLineProgressGradient(frame.activeProgress, NLI_VISUAL_TOKENS.incidentRed, "rgba(195,31,79,0)"));
       }
+      if ((staticPaintChanged || parallelDimChanged) && typeof map.setPaintProperty === "function") {
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedCarrier)) {
+          map.setPaintProperty(
+            INVESTIGATION_LINE_LAYER_IDS.completedCarrier,
+            "line-opacity",
+            parallelOpacity ?? COMPLETED_OPACITY,
+          );
+        }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedMotion)) {
+          map.setPaintProperty(
+            INVESTIGATION_LINE_LAYER_IDS.completedMotion,
+            "line-opacity",
+            parallelOpacity ?? 1,
+          );
+        }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.active)) {
+          map.setPaintProperty(
+            INVESTIGATION_LINE_LAYER_IDS.active,
+            "line-opacity",
+            parallelOpacity ?? ACTIVE_OPACITY,
+          );
+        }
+        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.head)) {
+          map.setPaintProperty(
+            INVESTIGATION_LINE_LAYER_IDS.head,
+            "circle-opacity",
+            parallelOpacity ?? 0.95,
+          );
+        }
+      }
     } catch (_) {
       // Style reload can invalidate an individual layer handle.
     }
     const headPoints = buildHeadPoints(normalized.active, frame.activeProgress, metricsByObjectId);
     const headData = pointsFeatureCollection(headPoints);
-    const headSignature = headPoints.map((point) => `${point[0]},${point[1]}`).join("|");
+    const headSignature = headPoints.map((point) => {
+      const coords = finiteCoordinate(point) ? point : point?.coordinates;
+      const objectId = point?.properties?.OBJECTID ?? "";
+      return `${coords?.[0]},${coords?.[1]}:${objectId}`;
+    }).join("|");
     if (headSignature !== lastHeadSignature) {
       sourceData(map, INVESTIGATION_LINE_SOURCE_IDS.head, headData);
       lastHeadSignature = headSignature;
     }
     lastMotionMode = motionMode;
+    lastParallelDimKey = parallelDimKey;
     paintInitialized = true;
   }
 
@@ -492,6 +568,7 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     normalizedFeatureCache = new WeakMap();
     lastHeadSignature = null;
     lastMotionMode = null;
+    lastParallelDimKey = null;
     paintInitialized = false;
     overlaysSuppressed = true;
     lastData = null;
