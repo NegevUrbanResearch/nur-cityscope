@@ -6,7 +6,7 @@ import { createProjectionNarrativeController } from "../../frontend/src/projecti
 import { syncInvestigationTimelineToMap } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { idleNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
 
-function setup() {
+function setup(options = {}) {
   const map = createFakeMapLibreMap({
     layers: [
       { id: "projector_base__יישובים__fill", type: "fill" },
@@ -18,7 +18,15 @@ function setup() {
   map.jumpTo = vi.fn();
   map.easeTo = vi.fn();
   const syncTimeline = vi.fn();
-  return { map, syncTimeline, controller: createProjectionNarrativeController({ map, syncTimeline }) };
+  return {
+    map,
+    syncTimeline,
+    controller: createProjectionNarrativeController({
+      map,
+      syncTimeline,
+      onStyleLoadOverlay: options.onStyleLoadOverlay,
+    }),
+  };
 }
 
 describe("projection Segev narrative focus", () => {
@@ -38,6 +46,20 @@ describe("projection Segev narrative focus", () => {
     expect(map.flyTo).not.toHaveBeenCalled();
     expect(map.jumpTo).not.toHaveBeenCalled();
     expect(map.easeTo).not.toHaveBeenCalled();
+  });
+
+  test("Nova uses the existing place name and does not mount the red registry marker", () => {
+    const { map, syncTimeline, controller } = setup();
+
+    controller.apply({ id: "nova", transition: "enter", revision: 1 });
+
+    expect(controller.getDefinition()).toBe(NLI_NARRATIVES.nova);
+    expect(NLI_NARRATIVES.nova.focusSettlement).toBe("נובה");
+    expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.halo)).toBeFalsy();
+    expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label)).toBeFalsy();
+    expect(map.getSource(NARRATIVE_FOCUS_RENDERER_IDS.source)).toBeFalsy();
+    expect(syncTimeline).toHaveBeenCalledTimes(1);
+    expect(map.flyTo).not.toHaveBeenCalled();
   });
 
   test("rebuilds its marker and resynchronizes settlement focus after the host layers are rebuilt", () => {
@@ -125,6 +147,24 @@ describe("projection Segev narrative focus", () => {
     await Promise.all(pendingSyncs);
     expect(map.getSource("nli-investigation-settlement-impact")).toBeNull();
     expect(map.getSource(NARRATIVE_FOCUS_RENDERER_IDS.source)).toBeNull();
+  });
+
+  test("projection onStyleLoad calls onStyleLoadOverlay", () => {
+    const onStyleLoadOverlay = vi.fn();
+    const { controller } = setup({ onStyleLoadOverlay });
+    controller.apply({ id: "nova", transition: "enter", revision: 1 });
+    onStyleLoadOverlay.mockClear();
+    controller.onStyleLoad();
+    expect(onStyleLoadOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  test("projection overlay remount does not pass styleLoss true", async () => {
+    const source = await import("node:fs/promises").then((fs) => fs.readFile(
+      new URL("../../frontend/src/entries/projection-main.js", import.meta.url),
+      "utf8",
+    ));
+    expect(source).toMatch(/onStyleLoadOverlay:\s*\(\)\s*=>\s*novaEscapeCoordinator\?\.onStyleLoad\?\.\(\)/);
+    expect(source).not.toMatch(/onStyleLoad\?\.\(\{\s*styleLoss:\s*true\s*\}\)/);
   });
 
   test("has no presentation or camera dependencies", async () => {

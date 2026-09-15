@@ -10,6 +10,11 @@ import {
 } from "./nli-investigation-beats.js";
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 import { buildDirectionalFlowGradient } from "./maplibre-investigation-lines.js";
+import {
+  NOVA_PARALLEL_DIM_OPACITY,
+  NOVA_PARALLEL_IMPACT_KIND_POLYGON,
+  novaParallelImpactObjectIds,
+} from "./nli-nova-escape-impact.js";
 
 const SETTLEMENT_SOURCE_ID = "nli-investigation-settlement-impact";
 const SETTLEMENT_LAYER_ID = "nli-investigation-settlement-impact-outline";
@@ -42,6 +47,7 @@ const CATEGORY_LAYER_IDS = Object.freeze([
   ...Object.values(CATEGORY_FILL_LAYER_IDS),
   ...Object.values(CATEGORY_LINE_LAYER_IDS),
 ]);
+const NOVA_SITE_OBJECT_ID = 100;
 
 function featureObjectId(feature) {
   return feature?.properties?.OBJECTID ?? feature?.id;
@@ -258,6 +264,9 @@ export function createInvestigationPolygonRenderer(
     categoryMounted: false,
     hostHidden: false,
     lastCategoryMotionMode: null,
+    lastCategoryNovaSiteExclusion: null,
+    lastCategoryParallelDim: null,
+    lastCategoryParallelImpactKey: null,
     warnedNotes: new Set(),
     inputRefs: {
       polygonFeatures: undefined,
@@ -490,6 +499,10 @@ export function createInvestigationPolygonRenderer(
       && layerPresent(map, CATEGORY_FILL_LAYER_IDS.battle);
   }
 
+  function novaNarrativeActive(frame, data) {
+    return (frame?.narrativeId ?? frame?.narrative?.id ?? data?.narrativeId) === "nova";
+  }
+
   function hideHostPack() {
     if (state.hostHidden || state.baseLayers.length === 0) return;
     for (const layer of state.baseLayers) {
@@ -521,23 +534,41 @@ export function createInvestigationPolygonRenderer(
     }
   }
 
-  function updateCategorySources(frame) {
+  function updateCategorySources(frame, data) {
     const achieved = achievedPolygonFeatures(state.polygonFeatures, frame);
     warnUnmatchedNotes(achieved);
+    const categoryFeatures = novaNarrativeActive(frame, data)
+      ? achieved.filter((feature) => Number(feature?.properties?.OBJECTID) !== NOVA_SITE_OBJECT_ID)
+      : achieved;
     const fillSource = map?.getSource?.(CATEGORY_SOURCE_ID);
     if (fillSource && typeof fillSource.setData === "function") {
-      fillSource.setData(featureCollection(achieved));
+      fillSource.setData(featureCollection(categoryFeatures));
     }
     const outlineSource = map?.getSource?.(CATEGORY_OUTLINE_SOURCE_ID);
     if (outlineSource && typeof outlineSource.setData === "function") {
-      outlineSource.setData(featureCollection(outlineFeaturesFromPolygons(achieved)));
+      outlineSource.setData(featureCollection(outlineFeaturesFromPolygons(categoryFeatures)));
     }
+  }
+
+  function parallelImpactIdList(frame, data) {
+    return novaParallelImpactObjectIds(
+      frame?.parallelImpactIds ?? data?.parallelImpactIds,
+      NOVA_PARALLEL_IMPACT_KIND_POLYGON,
+    );
+  }
+
+  function parallelImpactOpacityExpression(ids) {
+    return [
+      "case",
+      ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ids]],
+      1,
+      NOVA_PARALLEL_DIM_OPACITY,
+    ];
   }
 
   function applyCategoryMotion(frame, data) {
     if (!state.categoryMounted) return;
     const motionMode = frame?.motionMode === "full" ? "full" : "reduced";
-    if (motionMode !== "full" && state.lastCategoryMotionMode === motionMode) return;
     const nowMs = frameNowMs(frame, data);
     const widthMul = Number(displayProfile.lineWidthMultiplier || 1);
     const tokens = NLI_VISUAL_TOKENS.polygonCategories;
@@ -545,11 +576,32 @@ export function createInvestigationPolygonRenderer(
     const kidnap = tokens[NOTES_KIDNAP];
     const fire = tokens[NOTES_FIRE];
     const animate = motionMode === "full";
+    const projectionNovaDim = frame?.projectionNovaDim === true || data?.projectionNovaDim === true;
+    const impactIds = parallelImpactIdList(frame, data);
+    const impactKey = impactIds.join(",");
+    if (
+      motionMode !== "full"
+      && state.lastCategoryMotionMode === motionMode
+      && state.lastCategoryParallelDim === projectionNovaDim
+      && state.lastCategoryParallelImpactKey === impactKey
+    ) return;
+    const battleFill = animate
+      ? oscillate(nowMs, battle.periodMs, battle.fillOpacityMin, battle.fillOpacityMax)
+      : battle.fillOpacity;
+    const kidnapFill = animate
+      ? oscillate(nowMs, kidnap.periodMs, kidnap.fillOpacityMin, kidnap.fillOpacityMax)
+      : kidnap.fillOpacity;
+    const fireFill = animate
+      ? oscillate(nowMs, fire.periodMs, fire.fillOpacityMin, fire.fillOpacityMax)
+      : fire.fillOpacity;
+    const fillFor = (tokenFill) => (
+      projectionNovaDim ? parallelImpactOpacityExpression(impactIds) : tokenFill
+    );
     setPaint(
       map,
       CATEGORY_FILL_LAYER_IDS.battle,
       "fill-opacity",
-      animate ? oscillate(nowMs, battle.periodMs, battle.fillOpacityMin, battle.fillOpacityMax) : battle.fillOpacity,
+      fillFor(battleFill),
     );
     setPaint(
       map,
@@ -566,7 +618,7 @@ export function createInvestigationPolygonRenderer(
       map,
       CATEGORY_FILL_LAYER_IDS.kidnap,
       "fill-opacity",
-      animate ? oscillate(nowMs, kidnap.periodMs, kidnap.fillOpacityMin, kidnap.fillOpacityMax) : kidnap.fillOpacity,
+      fillFor(kidnapFill),
     );
     setPaint(
       map,
@@ -580,9 +632,29 @@ export function createInvestigationPolygonRenderer(
       map,
       CATEGORY_FILL_LAYER_IDS.fire,
       "fill-opacity",
-      animate ? oscillate(nowMs, fire.periodMs, fire.fillOpacityMin, fire.fillOpacityMax) : fire.fillOpacity,
+      fillFor(fireFill),
     );
+    setPaint(
+      map,
+      CATEGORY_FILL_LAYER_IDS.fallback,
+      "fill-opacity",
+      projectionNovaDim ? parallelImpactOpacityExpression(impactIds) : 0.55,
+    );
+    if (projectionNovaDim) {
+      const dimPaint = parallelImpactOpacityExpression(impactIds);
+      setPaint(map, CATEGORY_LINE_LAYER_IDS.battle, "line-opacity", dimPaint);
+      setPaint(map, CATEGORY_LINE_LAYER_IDS.kidnap, "line-opacity", dimPaint);
+      setPaint(map, CATEGORY_LINE_LAYER_IDS.fire, "line-opacity", dimPaint);
+      setPaint(map, CATEGORY_LINE_LAYER_IDS.fallback, "line-opacity", dimPaint);
+    } else if (state.lastCategoryParallelDim) {
+      setPaint(map, CATEGORY_LINE_LAYER_IDS.battle, "line-opacity", 0.95);
+      setPaint(map, CATEGORY_LINE_LAYER_IDS.kidnap, "line-opacity", 0.95);
+      setPaint(map, CATEGORY_LINE_LAYER_IDS.fire, "line-opacity", 0.95);
+      setPaint(map, CATEGORY_LINE_LAYER_IDS.fallback, "line-opacity", 0.95);
+    }
     state.lastCategoryMotionMode = motionMode;
+    state.lastCategoryParallelDim = projectionNovaDim;
+    state.lastCategoryParallelImpactKey = impactKey;
   }
 
   function hostBaseReady() {
@@ -635,7 +707,15 @@ export function createInvestigationPolygonRenderer(
     state.achievedMembershipKey = key;
     if (renderPolygons && state.categoryMounted) {
       hideHostPack();
-      if (membershipChanged || dataChanged) updateCategorySources(frame);
+      const novaSiteExclusion = novaNarrativeActive(frame, data);
+      if (
+        membershipChanged
+        || dataChanged
+        || state.lastCategoryNovaSiteExclusion !== novaSiteExclusion
+      ) {
+        updateCategorySources(frame, data);
+        state.lastCategoryNovaSiteExclusion = novaSiteExclusion;
+      }
       applyCategoryMotion(frame, data);
     }
     if (!membershipChanged && !dataChanged) return;
@@ -712,6 +792,9 @@ export function createInvestigationPolygonRenderer(
     state.overlayMounted = false;
     state.categoryMounted = false;
     state.lastCategoryMotionMode = null;
+    state.lastCategoryNovaSiteExclusion = null;
+    state.lastCategoryParallelDim = null;
+    state.lastCategoryParallelImpactKey = null;
     state.waitingForHostStyle = false;
     state.baseLayers = [];
     state.baseLayersCaptured = false;

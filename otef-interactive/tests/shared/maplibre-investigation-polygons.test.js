@@ -1,8 +1,19 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { createInvestigationPolygonRenderer } from "../../frontend/src/shared/maplibre-investigation-polygons.js";
 import { deriveInvestigationFrame } from "../../frontend/src/shared/nli-investigation-visual-state.js";
 import { idleNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
 import { INVESTIGATION_POLYGONS_FULL_ID } from "../../frontend/src/shared/nli-investigation-beats.js";
+import { NLI_DISPLAY_PROFILES } from "../../frontend/src/shared/nli-investigation-theme.js";
+import { buildInvestigationSettlementIndexes } from "../../frontend/src/shared/nli-investigation-timeline-data.js";
+
+
+const SETTLEMENTS_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../public/processed/layers/nli/investigation_settlements.geojson",
+);
 
 function makeMap() {
   const layers = [
@@ -228,6 +239,32 @@ describe("investigation polygon renderer", () => {
       .toHaveLength(1);
   });
 
+  it("lights Nova outline 100 in infiltration red without using Reim 18", () => {
+    const sidecar = fs.existsSync(SETTLEMENTS_PATH)
+      ? JSON.parse(fs.readFileSync(SETTLEMENTS_PATH, "utf8")).features || []
+      : [];
+    const novaSite = settlement(100, [[[34.468, 31.397], [34.471, 31.397], [34.471, 31.400], [34.468, 31.397]]]);
+    novaSite.properties.locations = ["נובה"];
+    const reim = settlement(18);
+    reim.properties.locations = ["רעים"];
+    const settlementFeatures = sidecar.length ? sidecar : [reim, novaSite];
+    const indexes = buildInvestigationSettlementIndexes(settlementFeatures);
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {}, {
+      locationToOutlineObjectId: indexes.locationToOutlineObjectId,
+      settlementFeatures,
+      settlementFeaturesByOutlineId: indexes.settlementFeaturesByOutlineId,
+    });
+    renderer.render(frame([500], { narrative: { phase: "idle" } }), {
+      polygonFeatures: [polygon(100, 500, "נובה")],
+    });
+    const outline = map.sources.get("nli-investigation-settlement-impact").setData.mock.calls.at(-1)[0];
+    const ids = outline.features.map((feature) => String(feature.properties.outlineObjectId));
+    expect(ids).toContain("100");
+    expect(ids).not.toContain("18");
+    expect(map.getLayer("nli-investigation-settlement-impact-outline").paint["line-color"]).toBe("#c31f4f");
+  });
+
   it("does not register duplicate handles when mount and render are repeated", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
@@ -237,6 +274,150 @@ describe("investigation polygon renderer", () => {
     renderer.render(frame([400]), { polygonFeatures: [polygon(1, 400)] });
     expect(map.addSource.mock.calls.filter(([id]) => id === "nli-investigation-settlement-impact")).toHaveLength(1);
     expect(map.addLayer.mock.calls.filter(([layer]) => layer.id === "nli-investigation-settlement-impact-outline")).toHaveLength(1);
+  });
+
+  it("idle nova GIS does not clone battle polygon 100 as a white site outline", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, NLI_DISPLAY_PROFILES.gis, { surface: "gis" });
+    const site = polygon(100, 500, "נובה", "מרחב לחימה - קרב");
+    renderer.mount();
+    renderer.render(frame([], { narrativeId: "nova", motionMode: "reduced" }), {
+      polygonFeatures: [site],
+    });
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    const fills = map.sources.get("nli-investigation-polygon-category").setData.mock.calls.at(-1)[0].features;
+    expect(fills).toEqual([]);
+    expect(map.getLayer("nli-investigation-polygon-category-line-battle-nova-site")).toBeFalsy();
+  });
+
+  it("idle nova projection also leaves battle polygon 100 uncloned", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(
+      map,
+      NLI_DISPLAY_PROFILES.projection,
+      { surface: "projection" },
+    );
+    const site = polygon(100, 500, "נובה", "מרחב לחימה - קרב");
+    renderer.mount();
+    renderer.render(frame([], { narrativeId: "nova", motionMode: "reduced" }), {
+      polygonFeatures: [site],
+    });
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    expect(map.getLayer("nli-investigation-polygon-category-line-battle-nova-site")).toBeFalsy();
+  });
+
+  it("GIS nova play at minute 500 keeps 100 off category fill and outline", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, NLI_DISPLAY_PROFILES.gis, { surface: "gis" });
+    const site = polygon(100, 500, "נובה", "מרחב לחימה - קרב");
+    const west = polygon(107, 480, "שדות ממערב לנובה", "מרחב לחימה - קרב");
+    renderer.mount();
+    renderer.render(frame([480, 500], { narrativeId: "nova", motionMode: "reduced" }), {
+      polygonFeatures: [site, west],
+    });
+    const fills = map.sources.get("nli-investigation-polygon-category")
+      .setData.mock.calls.at(-1)[0].features
+      .map((feature) => feature.properties.OBJECTID);
+    const outlines = map.sources.get("nli-investigation-polygon-category-outline")
+      .setData.mock.calls.at(-1)[0].features
+      .map((feature) => feature.properties.OBJECTID);
+    expect(fills).not.toContain(100);
+    expect(fills).toContain(107);
+    expect(outlines).not.toContain(100);
+    expect(outlines).toContain(107);
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0.55);
+  });
+
+  it("projection nova play at minute 500 keeps 100 off category fill without a white clone", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(
+      map,
+      NLI_DISPLAY_PROFILES.projection,
+      { surface: "projection" },
+    );
+    const site = polygon(100, 500, "נובה", "מרחב לחימה - קרב");
+    const west = polygon(107, 480, "שדות ממערב לנובה", "מרחב לחימה - קרב");
+    renderer.mount();
+    renderer.render(frame([480, 500], { narrativeId: "nova", motionMode: "reduced" }), {
+      polygonFeatures: [site, west],
+    });
+    const fills = map.sources.get("nli-investigation-polygon-category")
+      .setData.mock.calls.at(-1)[0].features
+      .map((feature) => feature.properties.OBJECTID);
+    const outlines = map.sources.get("nli-investigation-polygon-category-outline")
+      .setData.mock.calls.at(-1)[0].features
+      .map((feature) => feature.properties.OBJECTID);
+    expect(fills).not.toContain(100);
+    expect(fills).toContain(107);
+    expect(outlines).not.toContain(100);
+    expect(outlines).toContain(107);
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    renderer.render(frame([480, 500], {
+      narrativeId: "nova",
+      motionMode: "reduced",
+      projectionNovaDim: true,
+      parallelImpactIds: new Set(["polygon:100"]),
+    }), { polygonFeatures: [site, west] });
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+  });
+
+  it("non-nova play still fills polygon 100", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, NLI_DISPLAY_PROFILES.gis, { surface: "gis" });
+    const site = polygon(100, 500, "נובה", "מרחב לחימה - קרב");
+    renderer.mount();
+    renderer.render(frame([500], { motionMode: "reduced" }), {
+      polygonFeatures: [site],
+    });
+    const fills = map.sources.get("nli-investigation-polygon-category")
+      .setData.mock.calls.at(-1)[0].features
+      .map((feature) => feature.properties.OBJECTID);
+    expect(fills).toContain(100);
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+  });
+
+  it("nova play at minute 500 fills kidnapping polygon 104 at token opacity", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, NLI_DISPLAY_PROFILES.gis, { surface: "gis" });
+    const kidnapCallout = polygon(104, 500, "נובה", "מוקד חטיפה");
+    const kidnapOther = polygon(200, 500, "נובה", "מוקד חטיפה");
+    renderer.mount();
+    renderer.render(frame([500], { narrativeId: "nova", motionMode: "reduced" }), {
+      polygonFeatures: [kidnapCallout, kidnapOther],
+    });
+    const fills = map.sources.get("nli-investigation-polygon-category")
+      .setData.mock.calls.at(-1)[0].features
+      .map((feature) => feature.properties.OBJECTID);
+    expect(fills).toContain(104);
+    expect(fills).toContain(200);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-kidnap:fill-opacity")).toBe(0.55);
+  });
+
+  it("reduced-motion GIS category paint stays token opacity when nova narrative toggles", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, NLI_DISPLAY_PROFILES.gis, { surface: "gis" });
+    const battle = polygon(100, 500, "נובה", "מרחב לחימה - קרב");
+    const kidnap = polygon(104, 500, "נובה", "מוקד חטיפה");
+    const data = { polygonFeatures: [battle, kidnap] };
+    renderer.mount();
+    renderer.render(frame([500], { motionMode: "reduced" }), data);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0.55);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-kidnap:fill-opacity")).toBe(0.55);
+    renderer.render(frame([500], { narrativeId: "nova", motionMode: "reduced" }), data);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0.55);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-kidnap:fill-opacity")).toBe(0.55);
+    renderer.render(frame([500], { motionMode: "reduced" }), data);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0.55);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-kidnap:fill-opacity")).toBe(0.55);
+  });
+
+  it("non-nova battle fill stays a scalar oscillated opacity", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(100, 400, "נובה", "מרחב לחימה - קרב");
+    renderer.render(frame([400], { motionMode: "reduced" }), { polygonFeatures: [battle] });
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0.55);
   });
 
   it("does not register style reload listeners", () => {

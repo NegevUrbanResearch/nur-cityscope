@@ -2,6 +2,11 @@
 
 import copy
 
+from .otef_escape_overlay import (
+    EMPTY_ESCAPE_OVERLAY,
+    NOVA_ENTER_ESCAPE_OVERLAY,
+    normalize_escape_overlay,
+)
 from .otef_person_selection import (
     normalize_person_selection,
     transition_person_selection,
@@ -9,7 +14,8 @@ from .otef_person_selection import (
 from .otef_investigation_clock import idle_investigation_clock
 
 
-NARRATIVE_IDS = frozenset({"segev"})
+NARRATIVE_IDS = frozenset({"segev", "nova"})
+NARRATIVE_PRESENTATION_IDS = frozenset({"segev"})
 NARRATIVE_TRANSITIONS = frozenset({"initial", "enter", "replace", "exit"})
 
 
@@ -130,10 +136,16 @@ def transition_narrative_scene(locked, narrative_id, expected_revision):
     else:
         locked.basemap = "dark"
 
+    if narrative_id == "nova":
+        locked.escape_overlay = dict(NOVA_ENTER_ESCAPE_OVERLAY)
+    else:
+        locked.escape_overlay = dict(EMPTY_ESCAPE_OVERLAY)
+
     return {
         "sceneRevision": narrative["revision"],
         "narrativeState": dict(narrative),
         "basemap": locked.basemap,
         "investigationClock": copy.deepcopy(locked.investigation_clock),
         "personSelection": normalize_person_selection(locked.person_selection),
+        "escapeOverlay": normalize_escape_overlay(locked.escape_overlay, narrative_id),
     }

@@ -181,6 +181,31 @@ export function collectKnownCitynamesFromMap(map, sourceId = SHEMOT_SOURCE_ID) {
   return names;
 }
 
+/** Leaders share שמות `OBJECTID`, not yeshuv `outlineObjectId`. */
+export function collectShemotObjectIdsForCitynames(map, citynames, sourceId = SHEMOT_SOURCE_ID) {
+  const wanted = new Set(
+    (citynames instanceof Set ? [...citynames] : Array.isArray(citynames) ? citynames : [])
+      .map(String)
+      .filter(Boolean),
+  );
+  const ids = [];
+  const seen = new Set();
+  if (wanted.size === 0) return ids;
+  for (const feature of shemotSourceFeatures(map, sourceId || SHEMOT_SOURCE_ID)) {
+    const cityname = feature?.properties?.cityname;
+    if (cityname == null || !wanted.has(String(cityname))) continue;
+    const objectId = feature?.properties?.OBJECTID;
+    if (objectId == null) continue;
+    const numeric = Number(objectId);
+    const id = Number.isFinite(numeric) ? numeric : objectId;
+    const key = String(id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ids.push(id);
+  }
+  return ids;
+}
+
 /** Scan live IR-mangled orientation layer ids once per style (not per RAF). */
 export function collectOrientationTargets(map) {
   const layers = [];
@@ -241,14 +266,17 @@ export function applySettlementOrientationPaint(map, {
   focusCityname,
   focusOutlineObjectId,
   mode,
+  leaderObjectIds,
+  shemotSourceId,
+  keepFocusLabelWithAchieved,
 } = {}) {
   if (!map) return;
-  const narrativeFocus =
-    mode === "narrative" &&
-    typeof focusCityname === "string" &&
-    focusCityname.length > 0 &&
-    focusOutlineObjectId != null;
-  const dim = phase === "playing" || phase === "paused";
+  const hasFocusName = mode === "narrative"
+    && typeof focusCityname === "string"
+    && focusCityname.length > 0;
+  const narrativeFocus = hasFocusName && focusOutlineObjectId != null;
+  const dimAllYeshuvs = mode === "narrative" && !hasFocusName;
+  const dim = phase === "playing" || phase === "paused" || dimAllYeshuvs;
   const geomOpacity = dim ? PLAY_OPACITY : FULL_OPACITY;
   const citynames = [
     ...(achievedCitynames instanceof Set
@@ -257,12 +285,40 @@ export function applySettlementOrientationPaint(map, {
         ? achievedCitynames
         : []),
   ].map(String);
-  const textOpacity = narrativeFocus
+  const citynameCase = citynames.length > 0
+    ? ["case", ["in", ["get", "cityname"], ["literal", citynames]], FULL_OPACITY, DIM_TEXT_OPACITY]
+    : DIM_TEXT_OPACITY;
+  const unionFocusLabels = hasFocusName && (keepFocusLabelWithAchieved === true || !narrativeFocus);
+  const focusLabelNames = unionFocusLabels
+    ? [...new Set([focusCityname, ...citynames])]
+    : [];
+  const textOpacity = narrativeFocus && !unionFocusLabels
     ? ["case", ["==", ["get", "cityname"], focusCityname], FULL_OPACITY, DIM_TEXT_OPACITY]
+    : focusLabelNames.length > 0
+    ? ["case", ["in", ["get", "cityname"], ["literal", focusLabelNames]], FULL_OPACITY, DIM_TEXT_OPACITY]
+    : dimAllYeshuvs
+    ? citynameCase
     : dim
     ? ["case", ["in", ["get", "cityname"], ["literal", citynames]], FULL_OPACITY, DIM_TEXT_OPACITY]
     : FULL_OPACITY;
-  const targets = Array.isArray(layers) ? layers : collectOrientationTargets(map).layers;
+  const geomPaint = narrativeFocus
+    ? ["case", ["==", ["get", "OBJECTID"], focusOutlineObjectId], FULL_OPACITY, PLAY_OPACITY]
+    : hasFocusName
+    ? PLAY_OPACITY
+    : geomOpacity;
+  const collected = Array.isArray(layers) ? { layers, shemotSourceId } : collectOrientationTargets(map);
+  const targets = collected.layers;
+  const sourceId = shemotSourceId || collected.shemotSourceId || SHEMOT_SOURCE_ID;
+  const leaderIds = uniqueLeaderObjectIds(
+    Array.isArray(leaderObjectIds)
+      ? leaderObjectIds
+      : dimAllYeshuvs && citynames.length > 0
+        ? collectShemotObjectIdsForCitynames(map, citynames, sourceId)
+        : [],
+  );
+  const leaderOpacity = leaderIds.length
+    ? ["case", ["in", ["get", "OBJECTID"], ["literal", leaderIds]], FULL_OPACITY, DIM_TEXT_OPACITY]
+    : null;
 
   for (const target of targets) {
     if (!target?.id || !target.property) continue;
@@ -270,14 +326,35 @@ export function applySettlementOrientationPaint(map, {
       paintState(map).values.delete(target.id);
       continue;
     }
-    if (narrativeFocus && target.role === "location-line" && paintState(map).memorial === null) continue;
+    if (mode === "narrative" && target.role === "location-line" && paintState(map).memorial === null) {
+      if (!leaderOpacity && !dimAllYeshuvs) continue;
+      const entry = rememberTarget(map, target);
+      entry.value = leaderOpacity ?? DIM_TEXT_OPACITY;
+      paintTarget(map, target);
+      continue;
+    }
     const value = target.role === "label"
       ? textOpacity
-      : narrativeFocus
-        ? ["case", ["==", ["get", "OBJECTID"], focusOutlineObjectId], FULL_OPACITY, PLAY_OPACITY]
+      : target.role === "geom"
+        ? geomPaint
         : geomOpacity;
     const entry = rememberTarget(map, target);
     if (!(narrativeFocus && target.role === "location-line")) entry.value = value;
     paintTarget(map, target);
   }
+}
+
+function uniqueLeaderObjectIds(ids) {
+  const seen = new Set();
+  const out = [];
+  for (const value of Array.isArray(ids) ? ids : []) {
+    if (value == null || value === "") continue;
+    const numeric = Number(value);
+    const id = Number.isFinite(numeric) ? numeric : value;
+    const key = String(id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(id);
+  }
+  return out;
 }

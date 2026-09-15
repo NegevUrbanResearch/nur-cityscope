@@ -108,8 +108,62 @@ export function timelinePhaseAt(elapsedMs, beats) {
   };
 }
 
-export function clockStoryDurationMs(beats) {
-  const n = Array.isArray(beats) ? beats.length : 0;
-  if (n === 0) return 0;
-  return n * TIMELINE_BEAT_MS + TIMELINE_HOLD_MS;
+export function mapClockStoryPosition(beats, clock, positionMs) {
+  const list = Array.isArray(beats) ? beats : [];
+  const leadInMinutes = Number(clock?.leadInMinutes);
+  const hasLeadIn = Number.isFinite(leadInMinutes);
+  const leadInDurationMs = hasLeadIn ? TIMELINE_BEAT_MS : 0;
+  const found = hasLeadIn ? list.findIndex((m) => m >= leadInMinutes) : 0;
+  const playableStartIndex = found < 0 ? 0 : found;
+  const playableCount = hasLeadIn ? Math.max(0, list.length - playableStartIndex) : list.length;
+  const durationMs = list.length === 0
+    ? 0
+    : leadInDurationMs + playableCount * TIMELINE_BEAT_MS + TIMELINE_HOLD_MS;
+  let absolute = Math.max(0, Number(positionMs) || 0);
+  const cycleOrdinal = clock?.loop && durationMs
+    ? Math.floor(absolute / durationMs)
+    : 0;
+  const wrappedMs = clock?.loop && durationMs
+    ? absolute - cycleOrdinal * durationMs
+    : absolute;
+  if (list.length === 0) {
+    return {
+      durationMs: 0, leadInDurationMs, playableStartIndex, playableCount,
+      wrappedMs, leadIn: false, mode: "ended", index: -1, clock: null,
+      beatElapsedMs: 0, cycleOrdinal,
+    };
+  }
+  if (!clock?.loop && wrappedMs >= durationMs) {
+    return {
+      durationMs, leadInDurationMs, playableStartIndex, playableCount,
+      wrappedMs, leadIn: false, mode: "ended", index: -1, clock: null,
+      beatElapsedMs: 0, cycleOrdinal,
+    };
+  }
+  if (hasLeadIn && wrappedMs < leadInDurationMs) {
+    return {
+      durationMs, leadInDurationMs, playableStartIndex, playableCount,
+      wrappedMs, leadIn: true, mode: "leadIn", index: -1, clock: leadInMinutes,
+      beatElapsedMs: wrappedMs, cycleOrdinal,
+    };
+  }
+  const tPlay = wrappedMs - leadInDurationMs;
+  if (tPlay >= playableCount * TIMELINE_BEAT_MS) {
+    return {
+      durationMs, leadInDurationMs, playableStartIndex, playableCount,
+      wrappedMs, leadIn: false, mode: "hold", index: -1, clock: null,
+      beatElapsedMs: tPlay - playableCount * TIMELINE_BEAT_MS, cycleOrdinal,
+    };
+  }
+  const playableIndex = Math.floor(tPlay / TIMELINE_BEAT_MS);
+  const index = playableStartIndex + playableIndex;
+  return {
+    durationMs, leadInDurationMs, playableStartIndex, playableCount,
+    wrappedMs, leadIn: false, mode: "beat", index, clock: list[index],
+    beatElapsedMs: tPlay - playableIndex * TIMELINE_BEAT_MS, cycleOrdinal,
+  };
+}
+
+export function clockStoryDurationMs(beats, clock) {
+  return mapClockStoryPosition(beats, clock, 0).durationMs;
 }

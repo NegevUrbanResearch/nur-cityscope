@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import MapProjectionConfig from "../../frontend/src/shared/map-projection-config.js";
 import { DEFAULT_PROJECTION_CONFIG as DEFAULT_PROJECTION_CONFIG_DOCUMENT } from "../../frontend/src/shared/projection-config-schema.js";
 import {
@@ -9,6 +9,8 @@ import {
   applyNliExplainerHostPresence,
   clampNliExplainerLayout,
   ensureNliExplainerHost,
+  gisClockLayoutSlotId,
+  mergeGisClockLayout,
   mergeNliExplainerLayout,
   nliExplainerBoxHitsOverlap,
   nliExplainerOverlapPageRect,
@@ -17,8 +19,11 @@ import {
   nliExplainerSpanKey,
   nliExplainerContentOverflows,
   NLI_EXPLAINER_LAYOUT_STORAGE_KEY,
+  NLI_GIS_CLOCK_DEFAULT_LAYOUT,
   NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
+  readGisClockLayoutStore,
   readNliExplainerLayoutStore,
+  serializeGisClockLayoutMap,
   serializeNliExplainerLayoutMap,
   shouldIgnoreExplainerLayoutStore,
 } from "../../frontend/src/projection/nli-explainer-overlay.js";
@@ -103,6 +108,33 @@ describe("nli explainer layout", () => {
     expect(NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY).toBe("otef.nliGisClockLayout.v2");
   });
 
+  test("GIS clock slot ids follow narrative id with start fallback", () => {
+    expect(gisClockLayoutSlotId(null)).toBe("start");
+    expect(gisClockLayoutSlotId("segev")).toBe("segev");
+    expect(gisClockLayoutSlotId("nova")).toBe("nova");
+    expect(gisClockLayoutSlotId("unknown-future")).toBe("start");
+  });
+
+  test("flat v2 GIS clock blob migrates into start and preserves unknown keys", () => {
+    const migrated = readGisClockLayoutStore(JSON.stringify({
+      leftPct: 12, topPct: 80, widthPct: 30, heightPct: 10, fontPx: 20, rotateDeg: 5,
+    }));
+    expect(migrated.start.leftPct).toBe(12);
+    expect(migrated.start.topPct).toBe(80);
+    const keyed = readGisClockLayoutStore(JSON.stringify({
+      start: NLI_GIS_CLOCK_DEFAULT_LAYOUT,
+      nova: { ...NLI_GIS_CLOCK_DEFAULT_LAYOUT, topPct: 10 },
+      futureSlot: { ...NLI_GIS_CLOCK_DEFAULT_LAYOUT, leftPct: 1 },
+    }));
+    expect(keyed.nova.topPct).toBe(10);
+    expect(keyed.futureSlot.leftPct).toBe(1);
+    expect(mergeGisClockLayout("segev", keyed, NLI_GIS_CLOCK_DEFAULT_LAYOUT)).toEqual(
+      NLI_GIS_CLOCK_DEFAULT_LAYOUT,
+    );
+    const roundTrip = JSON.parse(serializeGisClockLayoutMap(keyed));
+    expect(roundTrip.futureSlot.leftPct).toBe(1);
+  });
+
   it("host is a sibling; uniform rotate is written; no skew or scale", () => {
     vi.stubGlobal("document", {
       createElement() {
@@ -153,8 +185,8 @@ describe("nli explainer layout", () => {
     expect(host.style.transformOrigin).toMatch(/center/i);
   });
 
-  it("committed URL ignores storage conceptually (flag helper)", () => {
-    expect(shouldIgnoreExplainerLayoutStore("?nliExplainerLayout=committed")).toBe(true);
+  it("committed URL does not skip the layout store", () => {
+    expect(shouldIgnoreExplainerLayoutStore("?nliExplainerLayout=committed")).toBe(false);
     expect(shouldIgnoreExplainerLayoutStore("")).toBe(false);
   });
 
@@ -167,7 +199,7 @@ describe("nli explainer layout", () => {
     expect(readNliExplainerLayoutStore('{"full":{"leftPct":9}}').full.leftPct).toBe(9);
   });
 
-  it("projection-main and debug read storage through readNliExplainerLayoutStore", () => {
+  it("projection-main hydrates clock parks from the table and debug still uses the store helpers", () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const main = fs.readFileSync(
       path.resolve(here, "../../frontend/src/entries/projection-main.js"),
@@ -177,7 +209,8 @@ describe("nli explainer layout", () => {
       path.resolve(here, "../../frontend/src/projection/nli-explainer-debug.js"),
       "utf8",
     );
-    expect(main).toMatch(/readNliExplainerLayoutStore\(/);
+    expect(main).toMatch(/getNliClockLayout/);
+    expect(main).toMatch(/setNliClockLayout/);
     expect(debug).toMatch(/readNliExplainerLayoutStore\(/);
     expect(main).toMatch(/applyNliExplainerHostPresence\(/);
     expect(debug).toMatch(/applyNliExplainerHostPresence\(/);
@@ -313,7 +346,11 @@ it("styles.css chips wrap narrative; host overflow visible", () => {
   expect(css).toMatch(/\.nli-tl-chips\s*\{[^}]*overflow-wrap:\s*normal/);
   expect(css).toMatch(/\.nli-tl-chip\s*\{[^}]*white-space:\s*pre-wrap/);
   expect(css).not.toMatch(/\.nli-tl-chip\s*\{[^}]*white-space:\s*nowrap/);
+  expect(css).toMatch(/#nliExplainerHost\s*\{[^}]*z-index:\s*12/);
   expect(css).toMatch(/#nliExplainerHost\s*\{[^}]*overflow:\s*visible/);
+  expect(css).toMatch(/#nliGisClockHost\s*\{[^}]*z-index:\s*20/);
+  expect(css).toMatch(/#nliExplainerHost \.nli-investigation-timeline-caption\s*\{[^}]*pointer-events:\s*auto/);
+  expect(css).toMatch(/#nliGisClockHost \.nli-investigation-timeline-caption\s*\{[^}]*pointer-events:\s*auto/);
   expect(css).toMatch(/#nliExplainerHost \.nli-investigation-timeline-caption\s*\{[^}]*overflow:\s*hidden/);
   expect(css).toMatch(/#nliExplainerHost \.nli-investigation-timeline-caption\s*\{[^}]*font-size:\s*inherit/);
   expect(css).toMatch(/#nliExplainerHost \.nli-investigation-timeline-caption\s*\{[^}]*text-align:\s*start/);

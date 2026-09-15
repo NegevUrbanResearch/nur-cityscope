@@ -12,6 +12,7 @@ import {
   clockStoryDurationMs,
   collectPlaybackTimelineBeats,
   isNliPlayableFullId,
+  mapClockStoryPosition,
   previousTimelineBeat,
 } from "./nli-investigation-beats.js";
 
@@ -91,14 +92,14 @@ export function clockPositionMs(clock, nowMs) {
 
 function absoluteBeatStart(clock, positionMs) {
   const beats = Array.isArray(clock?.beats) ? clock.beats : [];
-  const duration = clockStoryDurationMs(beats);
-  if (!duration || beats.length === 0) return null;
-  const absolute = nonnegativeNumber(positionMs);
-  const cycle = clock.loop ? Math.floor(absolute / duration) : 0;
-  const within = clock.loop ? absolute - cycle * duration : absolute;
-  const index = Math.min(beats.length - 1, Math.floor(within / TIMELINE_BEAT_MS));
-  if (index < 0 || within >= beats.length * TIMELINE_BEAT_MS) return null;
-  return cycle * duration + index * TIMELINE_BEAT_MS;
+  const mapping = mapClockStoryPosition(beats, clock, positionMs);
+  if (!mapping.durationMs || beats.length === 0 || mapping.leadIn || mapping.index < 0) {
+    return null;
+  }
+  const playableIndex = mapping.index - mapping.playableStartIndex;
+  return mapping.cycleOrdinal * mapping.durationMs
+    + mapping.leadInDurationMs
+    + playableIndex * TIMELINE_BEAT_MS;
 }
 
 function currentAlarmOrigin(clock, nowMs, positionMs) {
@@ -185,15 +186,18 @@ export function beatsForMembership(membership, featureBags = {}) {
  * @param {number} nowMs
  * @returns {NliInvestigationClock}
  */
-export function playNliClock(prev, membership, beats, nowMs) {
+export function playNliClock(prev, membership, beats, nowMs, options = {}) {
   const list = cloneBeats(beats);
   if (list.length === 0) return idleNliClock(prev);
-  return armedClock(prev, membership, list, {
+  const leadInMinutes = Number(options?.leadInMinutes);
+  const extras = {
     phase: "playing",
     positionMs: 0,
     anchorMs: finiteTimestamp(nowMs),
     seekKind: "none",
-  });
+  };
+  if (Number.isFinite(leadInMinutes)) extras.leadInMinutes = leadInMinutes;
+  return armedClock(prev, membership, list, extras);
 }
 
 /**
@@ -201,9 +205,11 @@ export function playNliClock(prev, membership, beats, nowMs) {
  * @param {number} nowMs
  * @returns {NliInvestigationClock}
  */
-export function replayNliClock(clock, nowMs) {
+export function replayNliClock(clock, nowMs, options = {}) {
   const src = clock && typeof clock === "object" ? clock : idleNliClock();
-  return playNliClock(src, src.membership, src.beats, nowMs);
+  return playNliClock(src, src.membership, src.beats, nowMs, {
+    leadInMinutes: options.leadInMinutes,
+  });
 }
 
 /**
@@ -282,7 +288,7 @@ export function seekNliClock(clock, beatIndex, nowMs, arm) {
   if (beats.length === 0) return idleNliClock(next);
   const raw = Number(beatIndex);
   const index = Number.isFinite(raw) ? Math.max(0, Math.min(beats.length - 1, Math.trunc(raw))) : 0;
-  return withAlarmOrigin({
+  const jumped = withAlarmOrigin({
     ...next,
     phase: "paused",
     beats,
@@ -290,6 +296,8 @@ export function seekNliClock(clock, beatIndex, nowMs, arm) {
     anchorMs: finiteTimestamp(nowMs),
     seekKind: "jump",
   }, nowMs);
+  delete jumped.leadInMinutes;
+  return jumped;
 }
 
 /**
@@ -316,13 +324,18 @@ export function stepNliClock(clock, delta, nowMs, arm) {
   if (n === 0) return idleNliClock(src);
   const positionMs = clockPositionMs(src, nowMs);
   const vis = evaluateClock(src, nowMs);
-  const current = vis.mode === "beat" && vis.index >= 0 ? vis.index : n - 1;
+  if (vis.leadIn) {
+    if (deltaN <= 0) return src;
+    return seekNliClock(src, mapClockStoryPosition(beats, src, 0).playableStartIndex, nowMs);
+  }
+  const mapping = mapClockStoryPosition(beats, src, positionMs);
+  const current = mapping.mode === "beat" && mapping.index >= 0 ? mapping.index : n - 1;
   const nextIndex = current + deltaN;
   if (nextIndex < 0) return src;
   if (nextIndex >= n) {
     if (!src.loop) return src.phase === "playing" ? pauseNliClock(src, nowMs) : src;
-    const duration = clockStoryDurationMs(beats);
-    const nextCycle = Math.floor(positionMs / duration) + 1;
+    const duration = clockStoryDurationMs(beats, src);
+    const nextCycle = mapping.cycleOrdinal + 1;
     return withAlarmOrigin({
       ...src,
       phase: "paused",
@@ -333,8 +346,8 @@ export function stepNliClock(clock, delta, nowMs, arm) {
     }, nowMs);
   }
   const duration = clockStoryDurationMs(beats);
-  const cycle = src.loop && duration ? Math.floor(positionMs / duration) : 0;
-  return withAlarmOrigin({
+  const cycle = src.loop && duration ? mapping.cycleOrdinal : 0;
+  const stepped = withAlarmOrigin({
     ...src,
     phase: "paused",
     beats,
@@ -342,6 +355,8 @@ export function stepNliClock(clock, delta, nowMs, arm) {
     anchorMs: finiteTimestamp(nowMs),
     seekKind: "jump",
   }, nowMs);
+  delete stepped.leadInMinutes;
+  return stepped;
 }
 
 /**
@@ -368,36 +383,34 @@ export function evaluateClock(clock, nowMs) {
   }
 
   const beats = Array.isArray(src.beats) ? src.beats : [];
-  const n = beats.length;
-  if (n === 0) {
-    return { phase: src.phase === "playing" ? "ended" : src.phase, mode: "hold", clock: null, index: -1, beatElapsedMs: 0 };
-  }
-
-  const beatSpan = n * TIMELINE_BEAT_MS;
-  const storyMs = clockStoryDurationMs(beats);
-  let t = clockPositionMs(src, nowMs);
-  if (src.loop) {
-    const wrap = storyMs || 1;
-    t = ((t % wrap) + wrap) % wrap;
-  } else if (t >= storyMs) {
-    return { phase: "ended", mode: "hold", clock: null, index: -1, beatElapsedMs: 0 };
-  }
-  if (t >= beatSpan) {
+  const mapping = mapClockStoryPosition(beats, src, clockPositionMs(src, nowMs));
+  if (beats.length === 0 || mapping.mode === "ended") {
     return {
-      phase: src.phase,
+      phase: src.phase === "playing" ? "ended" : src.phase,
       mode: "hold",
       clock: null,
       index: -1,
-      beatElapsedMs: t - beatSpan,
+      beatElapsedMs: 0,
+      leadIn: false,
     };
   }
-  const index = Math.floor(t / TIMELINE_BEAT_MS);
+  if (mapping.leadIn) {
+    return {
+      phase: src.phase,
+      mode: "beat",
+      clock: src.leadInMinutes,
+      index: -1,
+      beatElapsedMs: mapping.beatElapsedMs,
+      leadIn: true,
+    };
+  }
   return {
     phase: src.phase,
-    mode: "beat",
-    clock: beats[index],
-    index,
-    beatElapsedMs: t - index * TIMELINE_BEAT_MS,
+    mode: mapping.mode === "hold" ? "hold" : "beat",
+    clock: mapping.clock,
+    index: mapping.index,
+    beatElapsedMs: mapping.beatElapsedMs,
+    leadIn: false,
   };
 }
 
@@ -440,7 +453,7 @@ export function normalizeNliClock(raw) {
     positionMs = 0;
     anchorMs = finiteTimestamp(src.narrativeEpochMs ?? src.playEpochMs) ?? 0;
   } else if (phase === "ended") {
-    const duration = clockStoryDurationMs(beats);
+    const duration = clockStoryDurationMs(beats, src);
     const cycle = nonnegativeNumber(src.cycleIndex);
     const within = Number.isFinite(Number(src.narrativeElapsedMs))
       ? nonnegativeNumber(src.narrativeElapsedMs)
@@ -448,7 +461,7 @@ export function normalizeNliClock(raw) {
     positionMs = loop ? cycle * duration + within : within;
     anchorMs = null;
   } else {
-    const duration = clockStoryDurationMs(beats);
+    const duration = clockStoryDurationMs(beats, src);
     const cycle = Math.trunc(nonnegativeNumber(src.cycleIndex));
     const narrativeElapsed = Number(src.narrativeElapsedMs);
     if (Number.isFinite(narrativeElapsed)) {
@@ -483,6 +496,9 @@ export function normalizeNliClock(raw) {
     seekKind === "jump" &&
     anchorMs != null
   ) normalized.alarmOnsetOriginMs = anchorMs;
+  if (Number.isFinite(Number(src.leadInMinutes))) {
+    normalized.leadInMinutes = Number(src.leadInMinutes);
+  }
   return normalized;
 }
 
@@ -495,7 +511,7 @@ export function endNliClock(clock) {
   const ended = {
     ...src,
     phase: "ended",
-    positionMs: clockStoryDurationMs(src.beats),
+    positionMs: clockStoryDurationMs(src.beats, src),
     anchorMs: null,
     seekKind: "none",
   };

@@ -14,7 +14,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from otef_layer_processing.styles import find_lyrx_file
+from otef_layer_processing.styles import find_lyrx_file, parse_acrossline_from_lyrx
 
 DEFAULT_JITTER_SIZE_DEG = 0.005
 
@@ -833,10 +833,42 @@ ROUTE_232_LABEL_HEIGHT_SCALE = 1.0
 ROUTE_232_LABEL_FILL = (255, 224, 210)
 
 # Derived stems (not in the zip map) must survive obsolete-file cleanup.
+# investigation_settlements is an exhibit sidecar under processed/layers/nli,
+# never a source gis layer (orchestrator globs every *.geojson in gis/).
+INVESTIGATION_SETTLEMENTS_STEM = "investigation_settlements"
+NOVA_SITE_OUTLINE_OBJECT_ID = 100
+NOVA_SITE_LOCATION = "נובה"
+FLEEING_ROUTE_STEM = "fleeing_route"
+FLEEING_ROUTE_OVERLAPP_STEM = "fleeing_route_overlapp"
+FLEEING_ROUTE_URL = "/otef-interactive/public/processed/layers/nli/fleeing_route.geojson"
+FLEEING_ROUTE_OVERLAPP_URL = (
+    "/otef-interactive/public/processed/layers/nli/fleeing_route_overlapp.geojson"
+)
+FLEEING_GEOJSON_ZIP_SHA256 = (
+    "ce3d65f86675f3b12a0ac43762350d67f739639c14852f1785e0ce2460ef5cd0"
+)
+FLEEING_LYRX_ZIP_SHA256 = (
+    "50a1207705668552e0c02eeb98cb4fde458d9bf111aaf148aa1af6d1c6659106"
+)
+FLEEING_ROUTE_GEOJSON_MEMBER = "Fleeing_route.geojson"
+FLEEING_ROUTE_OVERLAPP_GEOJSON_MEMBER = "fleeing_route_overlapp.geojson"
+FLEEING_ROUTE_LYRX_MEMBER = "Fleeing_route.lyrx"
+FLEEING_ROUTE_OVERLAPP_LYRX_MEMBER = "fleeing_route_overlapp.lyrx"
+NOVA_FACILITY_WGS84 = (34.46975, 31.39851)
+NOVA_FLEEING_ENVELOPE = (34.36128, 31.23319, 34.60479, 31.52479)
+OVERLAP_CLASS_BREAKS = (
+    (13, 0.5),
+    (39, 1.375),
+    (100, 2.25),
+    (146, 3.125),
+    (235, 4.0),
+)
 NLI_KEEP_STEMS = set(ZIP_LAYER_MAP.values()) | {
     "people_names",
     "alarms",
     ROUTE_232_STEM,
+    FLEEING_ROUTE_STEM,
+    FLEEING_ROUTE_OVERLAPP_STEM,
 }
 
 PROJECTED_STEMS = {"investigation_polygons", "lines"}
@@ -1195,6 +1227,96 @@ def install_nli_route_232_overlay(
     }
 
 
+def _int_object_id(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _feature_object_id(feature: Dict[str, Any], *keys: str) -> Optional[int]:
+    props = feature.get("properties") or {}
+    for key in keys:
+        oid = _int_object_id(props.get(key))
+        if oid is not None:
+            return oid
+    return _int_object_id(feature.get("id"))
+
+
+def _load_feature_collection(path: Path) -> Dict[str, Any]:
+    if not path.is_file():
+        return {"type": "FeatureCollection", "features": []}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    features = payload.get("features") if isinstance(payload, dict) else None
+    return {"type": "FeatureCollection", "features": list(features or [])}
+
+
+def default_processed_nli_layers_dir(pack_dir: Path) -> Path:
+    """Exhibit sidecars live under public/processed/layers/nli, not source gis."""
+    return pack_dir.parent.parent.parent / "processed" / "layers" / "nli"
+
+
+def _investigation_settlements_seed_path(processed_layers_dir: Path) -> Optional[Path]:
+    seed = processed_layers_dir / f"{INVESTIGATION_SETTLEMENTS_STEM}.geojson"
+    if seed.is_file():
+        return seed
+    return None
+
+
+def install_nova_site_investigation_settlement(
+    gis_dir: Path,
+    processed_layers_dir: Path,
+) -> Optional[Dict[str, Any]]:
+    """Copy investigation polygon 100 into the processed settlement sidecar as Nova."""
+    polygons_path = gis_dir / "investigation_polygons.geojson"
+    if not polygons_path.is_file():
+        return None
+    polygons = json.loads(polygons_path.read_text(encoding="utf-8"))
+    site = next(
+        (
+            feature
+            for feature in polygons.get("features") or []
+            if _feature_object_id(feature, "OBJECTID") == NOVA_SITE_OUTLINE_OBJECT_ID
+            and feature.get("geometry")
+        ),
+        None,
+    )
+    if site is None:
+        return None
+    seed_path = _investigation_settlements_seed_path(processed_layers_dir)
+    if seed_path is None:
+        return None
+    settlements = _load_feature_collection(seed_path)
+    kept: List[Dict[str, Any]] = []
+    for feature in settlements.get("features") or []:
+        oid = _feature_object_id(feature, "outlineObjectId", "outlineObjectID", "OBJECTID")
+        if oid == NOVA_SITE_OUTLINE_OBJECT_ID:
+            continue
+        kept.append(feature)
+    kept.append(
+        {
+            "type": "Feature",
+            "id": f"nli-settlement-outline-{NOVA_SITE_OUTLINE_OBJECT_ID}",
+            "properties": {
+                "outlineObjectId": NOVA_SITE_OUTLINE_OBJECT_ID,
+                "locations": [NOVA_SITE_LOCATION],
+            },
+            "geometry": copy.deepcopy(site.get("geometry")),
+        }
+    )
+    settlements["features"] = kept
+    _write_json(
+        processed_layers_dir / f"{INVESTIGATION_SETTLEMENTS_STEM}.geojson",
+        settlements,
+    )
+    return {
+        "features": len(kept),
+        "nova_site_outline_object_id": NOVA_SITE_OUTLINE_OBJECT_ID,
+    }
+
+
 def merge_popup_config(popup_path: Path, nli_config: Dict[str, Any]) -> None:
     existing: Dict[str, Any] = {}
     if popup_path.is_file():
@@ -1219,6 +1341,301 @@ def _catalog_features_from_zip(by_name: Dict[str, Any], archive: zipfile.ZipFile
     return list(payload.get("features") or [])
 
 
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def haversine_m(a: Sequence[float], b: Sequence[float]) -> float:
+    radius_m = 6371000.0
+    lon1, lat1 = math.radians(float(a[0])), math.radians(float(a[1]))
+    lon2, lat2 = math.radians(float(b[0])), math.radians(float(b[1]))
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    chord = (
+        math.sin(dlat / 2.0) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2.0) ** 2
+    )
+    return 2.0 * radius_m * math.asin(math.sqrt(chord))
+
+
+def _require_sha256(path: Path, expected: Optional[str], label: str) -> None:
+    if expected is None:
+        return
+    actual = sha256_file(path)
+    wanted = expected.strip().lower()
+    if actual != wanted:
+        raise ValueError(f"{label} SHA-256 mismatch: expected {wanted}, got {actual}")
+
+
+def _zip_member_payload(zip_path: Path, member_name: str) -> Any:
+    with zipfile.ZipFile(zip_path) as archive:
+        by_base: Dict[str, zipfile.ZipInfo] = {}
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            name = zip_entry_name(info).replace("\\", "/")
+            by_base[Path(name).name] = info
+        if member_name not in by_base:
+            raise FileNotFoundError(f"{zip_path} is missing {member_name}")
+        payload = archive.read(by_base[member_name])
+    return json.loads(payload.decode("utf-8"))
+
+
+def _compensated_acrossline(
+    *,
+    from_color: str,
+    to_color: str,
+    width_pt: float,
+    opacity: float,
+    gradient_size: float,
+) -> Dict[str, Any]:
+    return {
+        "fromColor": from_color,
+        "toColor": to_color,
+        "widthPt": width_pt,
+        "opacity": opacity,
+        "taperFromWidthPt": width_pt,
+        "taperToWidthPt": 0,
+        "gradientSize": gradient_size,
+    }
+
+
+def _default_individual_acrossline() -> Dict[str, Any]:
+    return _compensated_acrossline(
+        from_color="#f5f500",
+        to_color="#f50000",
+        width_pt=1,
+        opacity=0.6,
+        gradient_size=0.75,
+    )
+
+
+def _normalized_class_breaks(
+    class_breaks: Optional[Sequence[Any]] = None,
+) -> Tuple[Tuple[float, float], ...]:
+    if not class_breaks:
+        return OVERLAP_CLASS_BREAKS
+    first = class_breaks[0]
+    if isinstance(first, dict):
+        return tuple(
+            (float(item["max"]), float(item["widthPt"])) for item in class_breaks
+        )
+    return tuple((float(max_count), float(width_pt)) for max_count, width_pt in class_breaks)
+
+
+def overlap_class_width_pt(
+    count: Any, class_breaks: Optional[Sequence[Any]] = None
+) -> float:
+    breaks = _normalized_class_breaks(class_breaks)
+    try:
+        value = float(count)
+    except (TypeError, ValueError):
+        value = 0.0
+    for max_count, width_pt in breaks:
+        if value <= max_count:
+            return float(width_pt)
+    return float(breaks[-1][1])
+
+
+def _reverse_line_geometry(geometry: Dict[str, Any]) -> None:
+    geom_type = geometry.get("type")
+    coords = geometry.get("coordinates")
+    if geom_type == "LineString" and isinstance(coords, list):
+        geometry["coordinates"] = list(reversed(coords))
+        return
+    if geom_type == "MultiLineString" and isinstance(coords, list):
+        geometry["coordinates"] = [
+            list(reversed(part)) if isinstance(part, list) else part for part in coords
+        ]
+
+
+def _line_endpoints(geometry: Dict[str, Any]) -> Optional[Tuple[Sequence[float], Sequence[float]]]:
+    coords = geometry.get("coordinates")
+    geom_type = geometry.get("type")
+    if geom_type == "LineString" and isinstance(coords, list) and coords:
+        return coords[0], coords[-1]
+    if (
+        geom_type == "MultiLineString"
+        and isinstance(coords, list)
+        and coords
+        and isinstance(coords[0], list)
+        and coords[0]
+        and isinstance(coords[-1], list)
+        and coords[-1]
+    ):
+        return coords[0][0], coords[-1][-1]
+    return None
+
+
+def _lonlat_from_vertex(vertex: Sequence[float], *, web_mercator: bool) -> List[float]:
+    x, y = float(vertex[0]), float(vertex[1])
+    if web_mercator:
+        return _mercator_xy_to_lonlat(x, y)
+    return [x, y]
+
+
+def _should_reverse_toward_nova(geometry: Dict[str, Any], *, web_mercator: bool) -> bool:
+    endpoints = _line_endpoints(geometry)
+    if endpoints is None:
+        return False
+    first = _lonlat_from_vertex(endpoints[0], web_mercator=web_mercator)
+    last = _lonlat_from_vertex(endpoints[1], web_mercator=web_mercator)
+    return haversine_m(last, NOVA_FACILITY_WGS84) < haversine_m(
+        first, NOVA_FACILITY_WGS84
+    )
+
+
+def _attach_acrossline(feature: Dict[str, Any], across_line: Dict[str, Any]) -> None:
+    props = feature.setdefault("properties", {})
+    props.pop("flow_direction", None)
+    props["acrossLine"] = copy.deepcopy(across_line)
+
+
+def reverse_fleeing_individuals(
+    collection: Dict[str, Any],
+    across_line: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    ribbon = across_line or _default_individual_acrossline()
+    for feature in collection.get("features") or []:
+        geometry = feature.get("geometry") or {}
+        _reverse_line_geometry(geometry)
+        _attach_acrossline(feature, ribbon)
+    return collection
+
+
+def reverse_fleeing_overlap(
+    collection: Dict[str, Any],
+    class_breaks: Optional[Sequence[Any]] = None,
+    across_line: Optional[Dict[str, Any]] = None,
+    *,
+    web_mercator: bool = True,
+) -> Dict[str, Any]:
+    template = across_line or _compensated_acrossline(
+        from_color="#f5f500",
+        to_color="#f50000",
+        width_pt=0.5,
+        opacity=1.0,
+        gradient_size=0.75,
+    )
+    breaks = _normalized_class_breaks(class_breaks)
+    for feature in collection.get("features") or []:
+        geometry = feature.get("geometry") or {}
+        if _should_reverse_toward_nova(geometry, web_mercator=web_mercator):
+            _reverse_line_geometry(geometry)
+        props = feature.setdefault("properties", {})
+        width_pt = overlap_class_width_pt(props.get("COUNT_"), breaks)
+        ribbon = dict(template)
+        ribbon["widthPt"] = width_pt
+        ribbon["taperFromWidthPt"] = width_pt
+        ribbon["taperToWidthPt"] = 0
+        _attach_acrossline(feature, ribbon)
+    return collection
+
+
+def _acrossline_from_lyrx(lyrx_payload: Any, *, default_opacity: float) -> Dict[str, Any]:
+    ir = parse_acrossline_from_lyrx(lyrx_payload)
+    opacity = ir.get("opacity")
+    if opacity is None:
+        opacity = default_opacity
+    return {
+        "fromColor": ir.get("fromColor") or "#f5f500",
+        "toColor": ir.get("toColor") or "#f50000",
+        "opacity": float(opacity),
+        "gradientSize": float(ir.get("gradientSize") or 0.75),
+        "classBreaks": ir.get("classBreaks"),
+    }
+
+
+def _collection_wgs84_bbox(
+    collection: Dict[str, Any],
+) -> Optional[Tuple[float, float, float, float]]:
+    lons: List[float] = []
+    lats: List[float] = []
+    for feature in collection.get("features") or []:
+        geometry = feature.get("geometry") or {}
+        coords = geometry.get("coordinates")
+        if geometry.get("type") == "LineString" and isinstance(coords, list):
+            points = coords
+        elif geometry.get("type") == "MultiLineString" and isinstance(coords, list):
+            points = [pt for part in coords if isinstance(part, list) for pt in part]
+        else:
+            continue
+        for point in points:
+            if isinstance(point, (list, tuple)) and len(point) >= 2:
+                lons.append(float(point[0]))
+                lats.append(float(point[1]))
+    if not lons or not lats:
+        return None
+    return (min(lons), min(lats), max(lons), max(lats))
+
+
+def install_nli_fleeing_overlays(
+    processed_dir: Path,
+    geojson_zip: Path,
+    lyrx_zip: Path,
+    expected_geojson_sha256: Optional[str] = None,
+    expected_lyrx_sha256: Optional[str] = None,
+) -> Dict[str, Any]:
+    _require_sha256(Path(geojson_zip), expected_geojson_sha256, "Fleeing geojson zip")
+    _require_sha256(Path(lyrx_zip), expected_lyrx_sha256, "Fleeing lyrx zip")
+    processed_dir = Path(processed_dir)
+    processed_dir.mkdir(parents=True, exist_ok=True)
+
+    individual_ir = _acrossline_from_lyrx(
+        _zip_member_payload(Path(lyrx_zip), FLEEING_ROUTE_LYRX_MEMBER),
+        default_opacity=0.6,
+    )
+    overlap_ir = _acrossline_from_lyrx(
+        _zip_member_payload(Path(lyrx_zip), FLEEING_ROUTE_OVERLAPP_LYRX_MEMBER),
+        default_opacity=1.0,
+    )
+    individual = reverse_fleeing_individuals(
+        _zip_member_payload(Path(geojson_zip), FLEEING_ROUTE_GEOJSON_MEMBER),
+        _compensated_acrossline(
+            from_color=individual_ir["fromColor"],
+            to_color=individual_ir["toColor"],
+            width_pt=1,
+            opacity=individual_ir["opacity"],
+            gradient_size=individual_ir["gradientSize"],
+        ),
+    )
+    reproject_web_mercator_collection_to_wgs84(individual)
+    overlap = reverse_fleeing_overlap(
+        _zip_member_payload(Path(geojson_zip), FLEEING_ROUTE_OVERLAPP_GEOJSON_MEMBER),
+        overlap_ir.get("classBreaks"),
+        _compensated_acrossline(
+            from_color=overlap_ir["fromColor"],
+            to_color=overlap_ir["toColor"],
+            width_pt=0.5,
+            opacity=overlap_ir["opacity"],
+            gradient_size=overlap_ir["gradientSize"],
+        ),
+    )
+    reproject_web_mercator_collection_to_wgs84(overlap)
+    individual_path = processed_dir / f"{FLEEING_ROUTE_STEM}.geojson"
+    overlap_path = processed_dir / f"{FLEEING_ROUTE_OVERLAPP_STEM}.geojson"
+    _write_json(individual_path, individual)
+    _write_json(overlap_path, overlap)
+    return {
+        "installed": True,
+        "individual": str(individual_path),
+        "overlap": str(overlap_path),
+        "features": {
+            FLEEING_ROUTE_STEM: len(individual.get("features") or []),
+            FLEEING_ROUTE_OVERLAPP_STEM: len(overlap.get("features") or []),
+        },
+        "bbox": _collection_wgs84_bbox(individual),
+        "urls": {
+            FLEEING_ROUTE_STEM: FLEEING_ROUTE_URL,
+            FLEEING_ROUTE_OVERLAPP_STEM: FLEEING_ROUTE_OVERLAPP_URL,
+        },
+    }
+
+
 def prepare_nli_pack(
     zip_path: Path,
     pack_dir: Path,
@@ -1228,6 +1645,11 @@ def prepare_nli_pack(
     pid_mms_path: Optional[Path] = None,
     overlay_source_root: Optional[Path] = None,
     people_overlay_path: Optional[Path] = None,
+    processed_layers_dir: Optional[Path] = None,
+    fleeing_geojson_zip: Optional[Path] = None,
+    fleeing_lyrx_zip: Optional[Path] = None,
+    fleeing_geojson_sha256: Optional[str] = None,
+    fleeing_lyrx_sha256: Optional[str] = None,
 ) -> Dict[str, Any]:
     gis_dir = pack_dir / "gis"
     styles_dir = pack_dir / "styles"
@@ -1276,6 +1698,14 @@ def prepare_nli_pack(
             if overlay_stats is not None:
                 layer_summary["overlay"] = overlay_stats
             summary["layers"][stem] = layer_summary
+    sidecar_dir = (
+        Path(processed_layers_dir)
+        if processed_layers_dir is not None
+        else default_processed_nli_layers_dir(pack_dir)
+    )
+    nova_sidecar = install_nova_site_investigation_settlement(gis_dir, sidecar_dir)
+    if nova_sidecar:
+        summary["layers"][INVESTIGATION_SETTLEMENTS_STEM] = nova_sidecar
     if alarms_path is not None and Path(alarms_path).is_file():
         alarms_collection = json.loads(Path(alarms_path).read_text(encoding="utf-8"))
         dropped = drop_null_geometries(alarms_collection)
@@ -1309,6 +1739,14 @@ def prepare_nli_pack(
                 removed.append(str(path.name))
     if removed:
         summary["removed_obsolete"] = removed
+    if fleeing_geojson_zip is not None and fleeing_lyrx_zip is not None:
+        summary["fleeing_overlays"] = install_nli_fleeing_overlays(
+            sidecar_dir,
+            Path(fleeing_geojson_zip),
+            Path(fleeing_lyrx_zip),
+            expected_geojson_sha256=fleeing_geojson_sha256,
+            expected_lyrx_sha256=fleeing_lyrx_sha256,
+        )
     written: List[str] = []
     for path in _as_popup_paths(popup_path):
         merge_popup_config(path, NLI_POPUP_CONFIG)
@@ -1322,6 +1760,7 @@ def main() -> None:
     repo = Path(__file__).resolve().parents[2]
     zip_path = default_nli_zip_path(repo)
     pack_dir = repo / "otef-interactive" / "public" / "source" / "layers" / "nli"
+    processed_layers_dir = repo / "otef-interactive" / "public" / "processed" / "layers" / "nli"
     popup_paths = [
         repo / "otef-interactive" / "public" / "source" / "popup-config.json",
         repo / "otef-interactive" / "public" / "source" / "layers" / "popup-config.json",
@@ -1329,6 +1768,8 @@ def main() -> None:
     alarms_path = Path.home() / "Downloads" / "oct7_alarms_2023-10-07.geojson"
     people_overlay = Path.home() / "Downloads" / "people_7_10_09092026.geojson"
     downloads_zip = Path.home() / "Downloads" / "drive-download-20260827T125810Z-1-001.zip"
+    fleeing_geojson_zip = Path.home() / "Downloads" / "fleeing_route_geojson.zip"
+    fleeing_lyrx_zip = Path.home() / "Downloads" / "Fleeing_route_lyrx.zip"
     if not zip_path.is_file() and downloads_zip.is_file():
         zip_path = downloads_zip
     summary = prepare_nli_pack(
@@ -1337,6 +1778,11 @@ def main() -> None:
         popup_paths,
         alarms_path=alarms_path,
         people_overlay_path=people_overlay if people_overlay.is_file() else None,
+        processed_layers_dir=processed_layers_dir,
+        fleeing_geojson_zip=fleeing_geojson_zip if fleeing_geojson_zip.is_file() else None,
+        fleeing_lyrx_zip=fleeing_lyrx_zip if fleeing_lyrx_zip.is_file() else None,
+        fleeing_geojson_sha256=FLEEING_GEOJSON_ZIP_SHA256,
+        fleeing_lyrx_sha256=FLEEING_LYRX_ZIP_SHA256,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

@@ -687,10 +687,11 @@ body {
   overflow: hidden;
   background: transparent;
   padding: 0;
+  pointer-events: auto;
 }
 #nliGisClockHost {
   position: absolute;
-  z-index: 12;
+  z-index: 20;
   box-sizing: border-box;
   pointer-events: none;
   overflow: visible;
@@ -718,5 +719,6 @@ body {
   overflow: hidden;
   background: transparent;
   padding: 0;
+  pointer-events: auto;
 }
 

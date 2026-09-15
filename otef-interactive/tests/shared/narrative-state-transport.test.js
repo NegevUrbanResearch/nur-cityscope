@@ -16,6 +16,7 @@ const ACTIVE_SCENE = {
     serverNowMs: 50_000,
   },
   personSelection: { personId: null, datasetVersion: null, revision: 3 },
+  escapeOverlay: { individual: false, overlap: false },
 };
 
 function installWebSocketMock() {
@@ -179,6 +180,7 @@ describe("narrative state transport", () => {
       basemap: ACTIVE_SCENE.basemap,
       investigation_clock: ACTIVE_SCENE.investigationClock,
       person_selection: ACTIVE_SCENE.personSelection,
+      escape_overlay: ACTIVE_SCENE.escapeOverlay,
     }, { notify: false });
 
     expect(context.getNarrativeState()).toEqual(ACTIVE_SCENE.narrativeState);
@@ -196,6 +198,7 @@ describe("narrative state transport", () => {
       basemap: ACTIVE_SCENE.basemap,
       investigation_clock: ACTIVE_SCENE.investigationClock,
       person_selection: ACTIVE_SCENE.personSelection,
+      escape_overlay: ACTIVE_SCENE.escapeOverlay,
       layerGroups: [{ id: "nli", name: "NLI", layers: [] }],
     });
     const listener = vi.fn();
@@ -301,6 +304,7 @@ describe("narrative state transport", () => {
       basemap: ACTIVE_SCENE.basemap,
       investigation_clock: ACTIVE_SCENE.investigationClock,
       person_selection: ACTIVE_SCENE.personSelection,
+      escape_overlay: ACTIVE_SCENE.escapeOverlay,
     });
     websocket.setupWebSocket(context);
 
@@ -353,6 +357,7 @@ describe("narrative state transport", () => {
       basemap: "osm",
       investigation_clock: ACTIVE_SCENE.investigationClock,
       person_selection: ACTIVE_SCENE.personSelection,
+      escape_overlay: ACTIVE_SCENE.escapeOverlay,
     });
     await reconnect;
 
@@ -400,6 +405,7 @@ describe("narrative state transport", () => {
       basemap: "dark",
       investigation_clock: { ...ACTIVE_SCENE.investigationClock, revision: 10 },
       person_selection: { personId: null, datasetVersion: null, revision: 4 },
+      escape_overlay: ACTIVE_SCENE.escapeOverlay,
     });
     await reconnect;
 
@@ -434,6 +440,7 @@ describe("narrative state transport", () => {
       basemap: inactiveScene.basemap,
       investigation_clock: inactiveScene.investigationClock,
       person_selection: inactiveScene.personSelection,
+      escape_overlay: inactiveScene.escapeOverlay,
     }, { notify: true, coupledBaseline: reconnectBaseline });
     resolveCommand({
       status: "ok",
@@ -768,6 +775,7 @@ describe("narrative state transport", () => {
       basemap: "dark",
       investigation_clock: { ...ACTIVE_SCENE.investigationClock, revision: 2 },
       person_selection: { personId: "p-1", datasetVersion: "v-1", revision: 1 },
+      escape_overlay: ACTIVE_SCENE.escapeOverlay,
     }, { notify: false });
 
     expect(context.getNarrativeState()).toEqual({ id: null, transition: "initial", revision: 0 });
@@ -792,6 +800,7 @@ describe("narrative state transport", () => {
     applyStateFromApi(context, {
       narrative_state: ACTIVE_SCENE.narrativeState,
       basemap: ACTIVE_SCENE.basemap,
+      escape_overlay: ACTIVE_SCENE.escapeOverlay,
     }, { notify: true });
 
     expect(context.getNarrativeState()).toEqual({ id: null, transition: "initial", revision: 0 });
@@ -816,6 +825,7 @@ describe("narrative state transport", () => {
       basemap: ACTIVE_SCENE.basemap,
       investigation_clock: ACTIVE_SCENE.investigationClock,
       person_selection: ACTIVE_SCENE.personSelection,
+      escape_overlay: ACTIVE_SCENE.escapeOverlay,
     });
     const observations = [];
     context.subscribe("narrativeState", () => {
@@ -869,6 +879,7 @@ describe("narrative state transport", () => {
       basemap: ACTIVE_SCENE.basemap,
       investigation_clock: ACTIVE_SCENE.investigationClock,
       person_selection: ACTIVE_SCENE.personSelection,
+      escape_overlay: ACTIVE_SCENE.escapeOverlay,
     });
 
     await expect(transition).rejects.toBe(conflict);

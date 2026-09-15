@@ -99,6 +99,60 @@ describe("remote NLI narrative controls", () => {
     expect(en).toContain('aria-label="Open Segev family presentation"');
   });
 
+  test("lists Segev then Nova and hides presentation while Nova is active", async () => {
+    const { nliNarrativeControlsHtml } = await import(
+      "../../frontend/src/remote/nli-narrative-controls.js"
+    );
+    const html = nliNarrativeControlsHtml(
+      { id: "nli" },
+      { id: "nova", transition: "enter", revision: 1 },
+      null,
+    );
+    expect(html.indexOf('data-nli-narrative="segev"'))
+      .toBeLessThan(html.indexOf('data-nli-narrative="nova"'));
+    expect(html).toContain('data-nli-narrative="nova"');
+    expect(html).toMatch(/data-nli-narrative="nova"[^>]*aria-pressed="true"/);
+    expect(html).toMatch(/data-nli-narrative="segev"[^>]*aria-pressed="false"/);
+    expect(html).not.toContain("data-nli-narrative-presentation");
+    expect(html).toContain("nli-narrative-actions-row");
+  });
+
+  test("places presentation on a second actions row when Segev is active", async () => {
+    const { nliNarrativeControlsHtml } = await import(
+      "../../frontend/src/remote/nli-narrative-controls.js"
+    );
+    const html = nliNarrativeControlsHtml(
+      { id: "nli" },
+      { id: "segev", transition: "enter", revision: 1, presentationPhase: "closed" },
+      null,
+    );
+    expect(html).toContain('data-nli-narrative="nova"');
+    expect(html).toContain('data-nli-narrative-presentation="open"');
+    const rows = [...html.matchAll(/<div class="nli-narrative-actions-row">([\s\S]*?)<\/div>/g)];
+    expect(rows).toHaveLength(2);
+    expect(rows[0][1]).toContain('data-nli-narrative="segev"');
+    expect(rows[0][1]).toContain('data-nli-narrative="nova"');
+    expect(rows[0][1]).not.toContain("data-nli-narrative-presentation");
+    expect(rows[1][1]).toContain("data-nli-narrative-presentation");
+  });
+
+  test("Nova labels are exact Hebrew and English fleeing copy", async () => {
+    const { setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    const { nliNarrativeControlsHtml } = await import(
+      "../../frontend/src/remote/nli-narrative-controls.js"
+    );
+    setLocale("he", { force: true });
+    const he = nliNarrativeControlsHtml({ id: "nli" }, { id: "nova", transition: "enter", revision: 1 }, null);
+    expect(he).toContain("נובה");
+    expect(he).toContain("הפעלה או סיום של נרטיב נובה");
+    expect(he).not.toMatch(/survived|escaped safely|arrived|rescued|safe corridor/i);
+    setLocale("en", { force: true });
+    const en = nliNarrativeControlsHtml({ id: "nli" }, { id: "nova", transition: "enter", revision: 1 }, null);
+    expect(en).toContain("Nova");
+    expect(en).toContain("Activate or end the Nova narrative");
+    expect(en).not.toContain("Escape");
+  });
+
   test("delegates narrative and presentation buttons to the host", async () => {
     const { consumeNliNarrativeButtonClick } = await import(
       "../../frontend/src/remote/nli-narrative-controls.js"

@@ -35,6 +35,7 @@ export function createGisNarrativeController({
   storage = typeof sessionStorage !== "undefined" ? sessionStorage : null,
   resolveExitCenter,
   syncTimeline = () => {},
+  onStyleLoadOverlay,
 } = {}) {
   const focus = createNarrativeFocusRenderer(map, { profile: "gis" });
   let disposed = false;
@@ -58,7 +59,7 @@ export function createGisNarrativeController({
     focus.show(definition);
     syncTimeline();
     map?.stop?.();
-    viewportSync?.beginCameraTravel?.("narrative-segev");
+    viewportSync?.beginCameraTravel?.(`narrative-${definition.id}`);
     map?.flyTo?.({ center: definition.center, zoom: definition.zoom, essential: true, duration: 1600 });
   };
   const exit = () => {
@@ -99,6 +100,7 @@ export function createGisNarrativeController({
       if (disposed) return;
       const generation = styleGeneration;
       if (activeDefinition && generation === styleGeneration) focus.onStyleLoad();
+      onStyleLoadOverlay?.();
     },
     isActive: () => !disposed && !!activeDefinition,
     getDefinition: () => activeDefinition,

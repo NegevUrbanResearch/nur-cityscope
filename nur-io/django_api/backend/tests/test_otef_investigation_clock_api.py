@@ -424,3 +424,13 @@ class OTEFInvestigationClockApiTests(TestCase):
         self.assertEqual(state.projection_slideshow["type"], "start")
         self.assertEqual(state.investigation_clock["phase"], "playing")
         self.assertIsNone(state.person_selection["personId"])
+
+    def test_patch_accepts_optional_lead_in_minutes(self):
+        payload = self.canonical_clock(leadInMinutes=483)
+        res = self.client.patch(
+            "/api/otef_viewport/by-table/otef/",
+            data=json.dumps({"investigation_clock": payload}),
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["investigation_clock"]["leadInMinutes"], 483)

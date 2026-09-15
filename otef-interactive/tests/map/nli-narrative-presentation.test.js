@@ -13,6 +13,14 @@ function createElement(tagName) {
     getAttribute(name) { return this.attributes[name] ?? null; },
     appendChild(child) { this.children.push(child); child.parentNode = this; return child; },
     remove() { this.parentNode?.removeChild?.(this); },
+    querySelector(selector) {
+      if (selector === this.tagName) return this;
+      for (const child of this.children) {
+        const match = child.querySelector?.(selector);
+        if (match) return match;
+      }
+      return null;
+    },
   };
 }
 
@@ -38,6 +46,13 @@ describe("NLI Canva narrative presentation", () => {
       children: [],
       appendChild(child) { this.children.push(child); child.parentNode = this; return child; },
       removeChild(child) { this.children = this.children.filter((item) => item !== child); child.parentNode = null; },
+      querySelector(selector) {
+        for (const child of this.children) {
+          const match = child.querySelector?.(selector);
+          if (match) return match;
+        }
+        return null;
+      },
     };
     listeners = installDom();
   });
@@ -120,5 +135,25 @@ describe("NLI Canva narrative presentation", () => {
       outcome: "closed", narrativeId: "segev", requestId: "close-reloaded", sourceId: "remote",
     }]);
     expect(presentation.open(NLI_NARRATIVES.segev, { requestId: "open-after-reload" })).toBe(true);
+  });
+
+  test("Nova open returns false and never assigns an empty iframe src", async () => {
+    const { createNarrativePresentation } = await import("../../frontend/src/map/nli-narrative-presentation.js");
+    const presentation = createNarrativePresentation(container);
+    expect(presentation.open(NLI_NARRATIVES.nova)).toBe(false);
+    expect(container.querySelector("iframe")).toBeNull();
+  });
+
+  test("close without emitResult still reports the overlay closed", async () => {
+    const { createNarrativePresentation } = await import("../../frontend/src/map/nli-narrative-presentation.js");
+    const onResult = vi.fn();
+    const onOpenChange = vi.fn();
+    const presentation = createNarrativePresentation(container, { onResult, onOpenChange });
+    expect(presentation.open(NLI_NARRATIVES.segev, { narrativeId: "segev", requestId: "open-1" })).toBe(true);
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+    expect(presentation.close()).toBe(true);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onResult).not.toHaveBeenCalledWith(expect.objectContaining({ outcome: "closed" }));
+    presentation.dispose();
   });
 });

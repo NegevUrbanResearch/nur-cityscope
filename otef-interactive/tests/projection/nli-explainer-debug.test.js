@@ -11,6 +11,8 @@ import {
   NLI_EXPLAINER_LAYOUT_STORAGE_KEY,
   NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
 } from "../../frontend/src/projection/nli-explainer-overlay.js";
+import { createNarrativePresentation } from "../../frontend/src/map/nli-narrative-presentation.js";
+import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
 import {
   disposeInvestigationTimelineForMap,
   syncInvestigationTimelineToMap,
@@ -28,6 +30,105 @@ const GIS_CLOCK_DEFAULT_LAYOUT = {
   fontPx: 22,
   rotateDeg: 0,
 };
+
+function collect(node) {
+  const out = [];
+  for (const c of node.children || []) {
+    out.push(c, ...collect(c));
+  }
+  return out;
+}
+
+function matchesSel(node, sel) {
+  const attr = /^\[data-([^\]]+)\]$/.exec(sel);
+  if (!attr) return false;
+  const camel = attr[1].replace(/-([a-z])/g, (_, ch) => ch.toUpperCase());
+  return Object.prototype.hasOwnProperty.call(node.dataset || {}, camel);
+}
+
+function fakeEl(init = {}) {
+  const el = {
+    id: "",
+    className: "",
+    style: {},
+    dataset: {},
+    children: [],
+    parentElement: null,
+    parentNode: null,
+    value: "",
+    _html: "",
+    _listeners: {},
+    clientWidth: 800,
+    clientHeight: 600,
+    addEventListener(type, fn) {
+      (this._listeners[type] ||= []).push(fn);
+    },
+    removeEventListener(type, fn) {
+      this._listeners[type] = (this._listeners[type] || []).filter((f) => f !== fn);
+    },
+    dispatchEvent(ev) {
+      for (const fn of this._listeners[ev.type] || []) fn(ev);
+      return true;
+    },
+    appendChild(child) {
+      this.children.push(child);
+      child.parentElement = this;
+      child.parentNode = this;
+      return child;
+    },
+    contains(node) {
+      if (node === this) return true;
+      return this.children.some((c) => c === node || c.contains?.(node));
+    },
+    querySelector(sel) {
+      return collect(this).find((n) => matchesSel(n, sel)) || null;
+    },
+    querySelectorAll(sel) {
+      return collect(this).filter((n) => matchesSel(n, sel));
+    },
+    getAttribute(name) {
+      if (name === "data-ned-field") return this.dataset.nedField ?? null;
+      return null;
+    },
+    setAttribute() {},
+    remove() {
+      const p = this.parentElement;
+      if (!p?.children) return;
+      p.children = p.children.filter((c) => c !== this);
+      this.parentElement = null;
+      this.parentNode = null;
+    },
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 200, height: 100 };
+    },
+    ...init,
+  };
+  Object.defineProperty(el, "innerHTML", {
+    get() {
+      return this._html;
+    },
+    set(html) {
+      this._html = String(html);
+      const kids = [];
+      for (const m of String(html).matchAll(/data-ned-field="([^"]+)"/g)) {
+        kids.push(fakeEl({ dataset: { nedField: m[1] }, value: "" }));
+      }
+      for (const key of ["chip", "warn", "overflow", "reset", "download", "copy"]) {
+        if (String(html).includes(`data-ned-${key}`)) {
+          const camel = `ned${key[0].toUpperCase()}${key.slice(1)}`;
+          kids.push(fakeEl({ dataset: { [camel]: "" } }));
+        }
+      }
+      this.children = kids;
+      for (const c of kids) {
+        c.parentElement = this;
+        c.parentNode = this;
+      }
+    },
+    configurable: true,
+  });
+  return el;
+}
 
 const overlayGuards = vi.hoisted(() => ({
   nliExplainerSpanKey: vi.fn(),
@@ -77,6 +178,8 @@ describe("nli explainer debug editor", () => {
     expect(gis).toMatch(/NliExplainerDebug/);
     expect(gis).toMatch(/key === "e"/);
     expect(gis).toMatch(/nliGisClockHost/);
+    expect(gis).toMatch(/raiseGisClockHost/);
+    expect(gis).toMatch(/style\.load.*raiseGisClockHost|raiseGisClockHost/);
     expect(gis).toMatch(/nliCaptionMode:\s*"clock-only"/);
     expect(gis).toMatch(/isNliExplainerDebugRequestedInUrl/);
     expect(gis).toMatch(/ned=1/);
@@ -94,6 +197,8 @@ describe("nli explainer debug editor", () => {
     expect(gis).toMatch(/enableRotation:\s*true/);
     expect(main).toMatch(/explainerDebugVisible/);
     expect(main).toMatch(/isVisible/);
+    expect(main).toMatch(/preventDefault/);
+    expect(gis).toMatch(/preventDefault/);
     expect(debugSrc).toMatch(/NLI_EXPLAINER_SAMPLE_MODEL/);
     expect(debugSrc).toMatch(/nliExplainerContentOverflows/);
     expect(debugSrc).toMatch(/nliExplainerBoxHitsOverlap/);
@@ -179,6 +284,10 @@ describe("nli explainer debug editor", () => {
     const css = fs.readFileSync(path.resolve(here, "../../frontend/css/styles.css"), "utf8");
     const main = fs.readFileSync(path.resolve(here, "../../frontend/src/entries/projection-main.js"), "utf8");
     void main;
+    expect(css).toMatch(/#nliExplainerHost\s*\{[^}]*z-index:\s*12/);
+    expect(css).toMatch(/#nliGisClockHost\s*\{[^}]*z-index:\s*20/);
+    expect(css).toMatch(/#nliExplainerHost \.nli-investigation-timeline-caption\s*\{[^}]*pointer-events:\s*auto/);
+    expect(css).toMatch(/#nliGisClockHost \.nli-investigation-timeline-caption\s*\{[^}]*pointer-events:\s*auto/);
     expect(css).toMatch(/#nliExplainerHost \.nli-tl-clock--clock-only/);
     expect(css).toMatch(/#nliGisClockHost \.nli-tl-clock--clock-only/);
     const explainerClock = css.slice(
@@ -657,7 +766,8 @@ describe("nli explainer debug editor", () => {
     const gisRaw = localStorage.getItem(NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY);
     expect(gisRaw).toBeTruthy();
     const gisParsed = JSON.parse(gisRaw);
-    expect(gisParsed).toEqual(expect.objectContaining({ leftPct: expect.any(Number) }));
+    expect(gisParsed.start).toEqual(expect.objectContaining({ leftPct: expect.any(Number) }));
+    expect(gisParsed).not.toHaveProperty("leftPct");
     expect(gisParsed).not.toHaveProperty("left");
     expect(gisParsed).not.toHaveProperty("right");
     expect(gisParsed).not.toHaveProperty("full");
@@ -665,6 +775,356 @@ describe("nli explainer debug editor", () => {
     expect(overlayGuards.nliExplainerBoxHitsOverlap).not.toHaveBeenCalled();
     expect(overlayGuards.mergeNliExplainerLayout).not.toHaveBeenCalled();
 
+    api.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("setGisClockLayoutSlot persists the previous slot and rebinds an open editor", () => {
+    const storage = {
+      data: {},
+      getItem(key) { return this.data[key] ?? null; },
+      setItem(key, value) { this.data[key] = String(value); },
+      removeItem(key) { delete this.data[key]; },
+    };
+    const body = fakeEl();
+    const display = fakeEl({ id: "map", clientWidth: 800, clientHeight: 600 });
+    const host = fakeEl({ id: "nliGisClockHost" });
+    const caption = fakeEl({ className: "nli-investigation-timeline-caption" });
+    display.appendChild(host);
+    host.appendChild(caption);
+    const win = {
+      location: { search: "" },
+      localStorage: storage,
+      addEventListener() {},
+      removeEventListener() {},
+      requestAnimationFrame(cb) { cb(); return 1; },
+    };
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("document", {
+      body,
+      createElement() { return fakeEl(); },
+      getElementById(id) { return id === "map" ? display : null; },
+    });
+    vi.stubGlobal("localStorage", storage);
+    const api = installNliExplainerDebug({
+      host,
+      captionEl: caption,
+      registerDisposer() {},
+      storage,
+      storageKey: NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
+      defaultLayout: GIS_CLOCK_DEFAULT_LAYOUT,
+      enableSpanGuards: false,
+      enableLayoutMapExport: false,
+      mergeProjectionLayout: false,
+      enableRotation: true,
+      initialVisible: true,
+    });
+    expect(typeof api.setGisClockLayoutSlot).toBe("function");
+    api.setGisClockLayoutSlot("nova");
+    const stored = JSON.parse(storage.getItem(NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY));
+    expect(stored.start).toEqual(expect.objectContaining({ leftPct: expect.any(Number) }));
+    expect(stored).not.toHaveProperty("nova");
+    expect(host.style.left).toBe(`${GIS_CLOCK_DEFAULT_LAYOUT.leftPct}%`);
+    expect(host.style.top).toBe(`${GIS_CLOCK_DEFAULT_LAYOUT.topPct}%`);
+    api.setGisClockLayoutSlot("segev");
+    const after = JSON.parse(storage.getItem(NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY));
+    expect(after.start).toEqual(stored.start);
+    expect(after.nova).toEqual(GIS_CLOCK_DEFAULT_LAYOUT);
+    expect(after).not.toHaveProperty("segev");
+    expect(host.style.left).toBe(`${GIS_CLOCK_DEFAULT_LAYOUT.leftPct}%`);
+    expect(api.isVisible()).toBe(true);
+    api.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("map-main calls setGisClockLayoutSlot on narrative enter replace and exit", () => {
+    const gis = fs.readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../frontend/src/entries/map-main.js"),
+      "utf8",
+    );
+    expect(gis).toMatch(/setGisClockLayoutSlot/);
+    expect(gis).toMatch(/nliCaptionMode:\s*"clock-only"/);
+  });
+
+  it("GIS clock E stays closed while Segev presentation is open", () => {
+    const host = fakeEl();
+    const caption = fakeEl();
+    const storage = {
+      getItem: () => null,
+      setItem: vi.fn(),
+    };
+    const body = fakeEl();
+    vi.stubGlobal("window", {
+      location: { search: "" },
+      localStorage: storage,
+      addEventListener() {},
+      removeEventListener() {},
+      requestAnimationFrame(cb) { cb(); return 1; },
+    });
+    vi.stubGlobal("document", {
+      body,
+      createElement() { return fakeEl(); },
+      getElementById() { return null; },
+    });
+    vi.stubGlobal("localStorage", storage);
+    const api = installNliExplainerDebug({
+      host,
+      captionEl: caption,
+      registerDisposer() {},
+      storage,
+      storageKey: NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
+      defaultLayout: GIS_CLOCK_DEFAULT_LAYOUT,
+      enableSpanGuards: false,
+      enableLayoutMapExport: false,
+      mergeProjectionLayout: false,
+      enableRotation: true,
+      initialVisible: false,
+    });
+    api.setVisible(true);
+    expect(api.isVisible()).toBe(true);
+    api.setGisClockHotkeyAllowed(false);
+    api.setVisible(true);
+    expect(api.isVisible()).toBe(false);
+    const event = { key: "e", defaultPrevented: false, repeat: false, target: { tagName: "BODY" } };
+    expect(api.handleGisClockHotkey(event)).toBe(false);
+    expect(api.isVisible()).toBe(false);
+    api.setGisClockHotkeyAllowed(true);
+    expect(api.handleGisClockHotkey(event)).toBe(true);
+    expect(api.isVisible()).toBe(true);
+    api.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("narrative transition close without emitResult re-enables GIS clock E", async () => {
+    const host = fakeEl();
+    const caption = fakeEl();
+    const storage = { getItem: () => null, setItem: vi.fn() };
+    const body = fakeEl();
+    const listeners = new Map();
+    const container = {
+      children: [],
+      appendChild(child) { this.children.push(child); child.parentNode = this; return child; },
+      removeChild(child) { this.children = this.children.filter((item) => item !== child); child.parentNode = null; },
+      querySelector(selector) {
+        for (const child of this.children) {
+          const match = child.querySelector?.(selector);
+          if (match) return match;
+        }
+        return null;
+      },
+    };
+    vi.stubGlobal("window", {
+      location: { search: "" },
+      localStorage: storage,
+      addEventListener() {},
+      removeEventListener() {},
+      requestAnimationFrame(cb) { cb(); return 1; },
+    });
+    vi.stubGlobal("document", {
+      body,
+      createElement(tagName) { return fakeEl({ tagName }); },
+      getElementById() { return null; },
+      addEventListener: vi.fn((type, handler) => listeners.set(type, handler)),
+      removeEventListener: vi.fn((type, handler) => {
+        if (listeners.get(type) === handler) listeners.delete(type);
+      }),
+    });
+    vi.stubGlobal("localStorage", storage);
+    try {
+      const api = installNliExplainerDebug({
+        host,
+        captionEl: caption,
+        registerDisposer() {},
+        storage,
+        storageKey: NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
+        defaultLayout: GIS_CLOCK_DEFAULT_LAYOUT,
+        enableSpanGuards: false,
+        enableLayoutMapExport: false,
+        mergeProjectionLayout: false,
+        enableRotation: true,
+        initialVisible: false,
+      });
+      const presentation = createNarrativePresentation(container, {
+        onOpenChange: (open) => {
+          api.setGisClockHotkeyAllowed(!open);
+          if (open) api.setVisible(false);
+        },
+      });
+      presentation.open(NLI_NARRATIVES.segev, { narrativeId: "segev", requestId: "open-1" });
+      const event = { key: "e", defaultPrevented: false, repeat: false, target: { tagName: "BODY" } };
+      expect(api.handleGisClockHotkey(event)).toBe(false);
+      expect(api.isVisible()).toBe(false);
+      presentation.close();
+      expect(api.handleGisClockHotkey(event)).toBe(true);
+      expect(api.isVisible()).toBe(true);
+      presentation.dispose();
+      api.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("click on host or caption toggles editor chrome; E preventDefault when handled", () => {
+    const storage = {
+      data: {},
+      getItem(key) { return this.data[key] ?? null; },
+      setItem(key, value) { this.data[key] = String(value); },
+      removeItem(key) { delete this.data[key]; },
+    };
+    const body = fakeEl();
+    const display = fakeEl({ id: "map", clientWidth: 800, clientHeight: 600 });
+    const host = fakeEl({ id: "nliGisClockHost" });
+    const caption = fakeEl({ className: "nli-investigation-timeline-caption" });
+    display.appendChild(host);
+    host.appendChild(caption);
+    vi.stubGlobal("window", {
+      location: { search: "" },
+      localStorage: storage,
+      addEventListener() {},
+      removeEventListener() {},
+      requestAnimationFrame(cb) { cb(); return 1; },
+    });
+    vi.stubGlobal("document", {
+      body,
+      createElement() { return fakeEl(); },
+      getElementById(id) { return id === "map" ? display : null; },
+    });
+    vi.stubGlobal("localStorage", storage);
+    const api = installNliExplainerDebug({
+      host,
+      captionEl: caption,
+      registerDisposer() {},
+      storage,
+      storageKey: NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
+      defaultLayout: GIS_CLOCK_DEFAULT_LAYOUT,
+      enableSpanGuards: false,
+      enableLayoutMapExport: false,
+      mergeProjectionLayout: false,
+      enableRotation: true,
+      initialVisible: false,
+    });
+    expect(api.isVisible()).toBe(false);
+    expect(typeof api.toggle).toBe("function");
+
+    caption.dispatchEvent({ type: "click", button: 0, target: caption, preventDefault() {} });
+    expect(api.isVisible()).toBe(true);
+    const handles = host.children.filter((c) => c.dataset?.nedHandle);
+    expect(handles.length).toBeGreaterThan(0);
+    expect(handles.every((c) => c.style.display === "block")).toBe(true);
+    const panel = body.children.find((child) => child.querySelector?.("[data-ned-reset]"));
+    expect(panel?.style.display).toBe("block");
+
+    host.dispatchEvent({ type: "click", button: 0, target: host, preventDefault() {} });
+    expect(api.isVisible()).toBe(false);
+    expect(handles.every((c) => c.style.display === "none")).toBe(true);
+
+    const event = {
+      key: "e",
+      defaultPrevented: false,
+      repeat: false,
+      target: { tagName: "BODY" },
+      preventDefault() { this.defaultPrevented = true; },
+    };
+    expect(api.handleGisClockHotkey(event)).toBe(true);
+    expect(event.defaultPrevented).toBe(true);
+    expect(api.isVisible()).toBe(true);
+    api.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("committed search still persists to localStorage and applyLive updates left/top", () => {
+    const mem = {};
+    const storage = {
+      getItem(key) {
+        return Object.prototype.hasOwnProperty.call(mem, key) ? mem[key] : null;
+      },
+      setItem(key, value) {
+        mem[key] = String(value);
+      },
+      removeItem(key) {
+        delete mem[key];
+      },
+    };
+    const storedLeft = {
+      leftPct: 12,
+      topPct: 14,
+      widthPct: 20,
+      heightPct: 20,
+      fontPx: 22,
+      rotateDeg: 0,
+    };
+    storage.setItem(NLI_EXPLAINER_LAYOUT_STORAGE_KEY, JSON.stringify({ left: storedLeft }));
+
+    const body = fakeEl();
+    const display = fakeEl({ id: "displayContainer", clientWidth: 800, clientHeight: 600 });
+    const host = fakeEl({ id: "nliExplainerHost" });
+    const caption = fakeEl({ className: "nli-investigation-timeline-caption" });
+    display.appendChild(host);
+    host.appendChild(caption);
+    const windowListeners = {};
+    const win = {
+      location: { search: "?span=left&nliExplainerLayout=committed" },
+      localStorage: storage,
+      addEventListener(type, fn) {
+        (windowListeners[type] ||= []).push(fn);
+      },
+      removeEventListener(type, fn) {
+        windowListeners[type] = (windowListeners[type] || []).filter((f) => f !== fn);
+      },
+      dispatchEvent(ev) {
+        for (const fn of windowListeners[ev.type] || []) fn(ev);
+        return true;
+      },
+      requestAnimationFrame(cb) {
+        cb();
+        return 1;
+      },
+    };
+    vi.stubGlobal("window", win);
+    vi.stubGlobal("document", {
+      body,
+      createElement() { return fakeEl(); },
+      getElementById(id) { return id === "displayContainer" ? display : null; },
+    });
+    vi.stubGlobal("localStorage", storage);
+
+    const api = installNliExplainerDebug({
+      host,
+      captionEl: caption,
+      registerDisposer() {},
+    });
+    api.setVisible(true);
+    expect(host.style.left).toBe("12%");
+    expect(host.style.top).toBe("14%");
+
+    function pointerEv(type, target, extra = {}) {
+      return {
+        type,
+        button: 0,
+        clientX: 20,
+        clientY: 20,
+        target,
+        preventDefault() {},
+        ...extra,
+      };
+    }
+    host.dispatchEvent(pointerEv("pointerdown", host));
+    win.dispatchEvent(pointerEv("pointermove", host, { clientX: 40, clientY: 36 }));
+    expect(host.style.left).not.toBe("12%");
+    expect(host.style.top).not.toBe("14%");
+    const liveLeft = host.style.left;
+    const liveTop = host.style.top;
+    win.dispatchEvent(pointerEv("pointerup", host));
+
+    const parsed = JSON.parse(storage.getItem(NLI_EXPLAINER_LAYOUT_STORAGE_KEY));
+    expect(parsed.left).toEqual(expect.objectContaining({
+      leftPct: expect.any(Number),
+      topPct: expect.any(Number),
+    }));
+    expect(parsed.left.leftPct).not.toBe(12);
+    expect(parsed.left.topPct).not.toBe(14);
+    expect(host.style.left).toBe(liveLeft);
+    expect(host.style.top).toBe(liveTop);
     api.dispose();
     vi.unstubAllGlobals();
   });

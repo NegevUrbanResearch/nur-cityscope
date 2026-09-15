@@ -2324,6 +2324,16 @@ body.otef-remote-shell {
   background: var(--color-surface-raised);
 }
 
+.nli-nova-escape-toggles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+}
+
 .nli-pack-panes {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2362,12 +2372,19 @@ body.otef-remote-shell {
 
 .nli-narrative-actions {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
+
+.nli-narrative-actions-row {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   min-width: 0;
 }
 
-.nli-narrative-actions > :only-child {
+.nli-narrative-actions-row > :only-child {
   grid-column: 1 / -1;
 }
 
@@ -2384,6 +2401,13 @@ body.otef-remote-shell {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.nli-nova-escape-toggle {
+  white-space: normal;
+  text-overflow: clip;
+  overflow: visible;
+  height: auto;
 }
 
 .nli-narrative-button.is-active {

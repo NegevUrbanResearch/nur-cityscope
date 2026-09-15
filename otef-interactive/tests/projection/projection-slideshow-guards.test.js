@@ -101,10 +101,10 @@ describe("projection-main slideshow overlay wiring", () => {
     expect(src).toMatch(/ensureNliExplainerHost\(displayContainer\)/);
     expect(src).toMatch(/captionEl:\s*nliExplainerCaptionEl/);
     expect(src).toMatch(/allowMapCaption:\s*false/);
-    expect(src).toMatch(/shouldIgnoreExplainerLayoutStore/);
+    expect(src).toMatch(/getNliClockLayout/);
+    expect(src).toMatch(/setNliClockLayout/);
+    expect(src).toMatch(/nliClockLayout/);
     expect(src).toMatch(/nli-explainer-overlay/);
-    expect(src).toMatch(/NLI_EXPLAINER_LAYOUT_STORAGE_KEY/);
-    expect(src).toMatch(/readNliExplainerLayoutStore/);
     const loadIdx = src.indexOf('map.on("load"');
     expect(loadIdx).toBeGreaterThan(-1);
     const afterLoad = src.slice(loadIdx);
@@ -136,6 +136,7 @@ describe("projection-main slideshow overlay wiring", () => {
     expect(src).not.toMatch(/nliExplainerCaptionEl/);
     expect(src).not.toMatch(/NLI_EXPLAINER_LAYOUT_STORAGE_KEY/);
     expect(src).toMatch(/nliGisClockHost/);
+    expect(src).toMatch(/raiseGisClockHost/);
     expect(src).toMatch(/allowMapCaption:\s*false/);
     expect(src).toMatch(/ensureNliExplainerHost/);
     expect(src).toMatch(/nliCaptionMode:\s*"clock-only"/);

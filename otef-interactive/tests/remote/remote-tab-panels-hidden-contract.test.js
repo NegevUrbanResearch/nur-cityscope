@@ -123,7 +123,8 @@ test("remote-styles: NLI pack panes do not use an absolute overlay dock", () => 
   expect(source).toMatch(/nliNarrativeControlsHtml\(/);
   expect(source).toMatch(/focusedGroupId === "nli"[\s\S]*_syncNliPlayheadTicker/);
   expect(source).not.toMatch(/_syncNliDockMeasurement/);
-  expect(source.indexOf("${narrativeSheet}")).toBeLessThan(source.indexOf("${nliSheet}"));
+  expect(source.indexOf("${narrativeSheet}")).toBeLessThan(source.indexOf("${escapeToggles}"));
+  expect(source.indexOf("${escapeToggles}")).toBeLessThan(source.indexOf("${nliSheet}"));
 });
 
 test("remote teardown destroys the LayerSheet-owned narrative lifecycle", () => {

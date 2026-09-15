@@ -74,6 +74,24 @@ class NarrativeStateNormalizationTests(SimpleTestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(normalize_narrative_state(raw), initial)
 
+    def test_nova_is_an_allowed_narrative_id(self):
+        from backend.otef_narrative import NARRATIVE_IDS
+
+        self.assertEqual(NARRATIVE_IDS, frozenset({"segev", "nova"}))
+
+    def test_normalize_still_strips_unknown_narrative_keys(self):
+        self.assertEqual(
+            normalize_narrative_state(
+                {
+                    "id": "nova",
+                    "transition": "enter",
+                    "revision": 2,
+                    "escapeOverlay": {"individual": True},
+                }
+            ),
+            {"id": "nova", "transition": "enter", "revision": 2},
+        )
+
     def test_revision_zero_always_normalizes_to_inactive_initial(self):
         self.assertEqual(
             normalize_narrative_state(

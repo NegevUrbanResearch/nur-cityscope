@@ -10,6 +10,7 @@ function setup(options = {}) {
     ],
   });
   map.flyTo = vi.fn();
+  map.fitBounds = vi.fn();
   map.stop = vi.fn();
   const presentation = { close: vi.fn(() => true) };
   const personVisual = { hide: vi.fn() };
@@ -22,6 +23,7 @@ function setup(options = {}) {
     controller: createGisNarrativeController({
       map, dataContext: { getBounds: () => options.bounds ?? null }, viewportSync, personVisual,
       presentation, closeArchive, storage: options.storage ?? { getItem: () => null, setItem: vi.fn() }, syncTimeline,
+      onStyleLoadOverlay: options.onStyleLoadOverlay,
     }),
   }));
 }
@@ -99,5 +101,47 @@ describe("GIS Segev narrative scene", () => {
     d.controller.apply({ id: null, transition: "exit", revision: 3 });
     expect(d.presentation.close).toHaveBeenCalledTimes(3);
     expect(d.closeArchive).toHaveBeenCalledTimes(3);
+  });
+
+  test("Nova flies to the site at zoom 15 and does not fitBounds", async () => {
+    const d = await setup();
+    d.map.fitBounds = vi.fn();
+    d.controller.apply({ id: "nova", transition: "enter", revision: 1 });
+    expect(d.viewportSync.beginCameraTravel).toHaveBeenCalledWith("narrative-nova");
+    expect(d.map.flyTo).toHaveBeenCalledWith({
+      center: NLI_NARRATIVES.nova.center,
+      zoom: 15,
+      essential: true,
+      duration: 1600,
+    });
+    expect(d.map.fitBounds).not.toHaveBeenCalled();
+  });
+
+  test("already handled Nova reconnect remounts focus without a second flyTo", async () => {
+    const d = await setup({ storage: { getItem: () => "4", setItem: vi.fn() } });
+    d.map.fitBounds = vi.fn();
+    d.controller.apply({ id: "nova", transition: "enter", revision: 4 });
+    expect(d.map.fitBounds).not.toHaveBeenCalled();
+    expect(d.map.flyTo).not.toHaveBeenCalled();
+  });
+
+  test("GIS onStyleLoad calls onStyleLoadOverlay", async () => {
+    const onStyleLoadOverlay = vi.fn();
+    const d = await setup({ onStyleLoadOverlay });
+    d.controller.apply({ id: "nova", transition: "enter", revision: 1 });
+    onStyleLoadOverlay.mockClear();
+    d.controller.onStyleLoad();
+    expect(onStyleLoadOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  test("GIS map-main overlay remount passes styleLoss true", async () => {
+    const fs = await import("node:fs/promises");
+    const source = await fs.readFile(
+      new URL("../../frontend/src/entries/map-main.js", import.meta.url),
+      "utf8",
+    );
+    expect(source).toMatch(
+      /onStyleLoadOverlay:\s*\(\)\s*=>\s*novaEscapeCoordinator\?\.onStyleLoad\?\.\(\{\s*styleLoss:\s*true\s*\}\)/,
+    );
   });
 });

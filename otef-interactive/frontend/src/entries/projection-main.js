@@ -31,6 +31,7 @@ import { bindProjectionPersonHalo } from "../projection/projection-person-halo.j
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
 import { installProjectionPreviewBridge } from "../projection/projection-preview-bridge.js";
 import { createProjectionNarrativeController } from "../projection/projection-narrative-controller.js";
+import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
   createSlideshowPackRuntime,
@@ -61,9 +62,6 @@ import {
   ensureNliExplainerHost,
   mergeNliExplainerLayout,
   nliExplainerSpanKey,
-  NLI_EXPLAINER_LAYOUT_STORAGE_KEY,
-  readNliExplainerLayoutStore,
-  shouldIgnoreExplainerLayoutStore,
 } from "../projection/nli-explainer-overlay.js";
 import {
   installNliExplainerDebug,
@@ -457,14 +455,8 @@ async function bootstrapProjectionRuntime() {
       ensureNliExplainerHost(displayContainer);
     const applyStoredExplainerLayout = () => {
       const search = typeof window !== "undefined" ? window.location.search : "";
-      let stored = {};
-      if (!shouldIgnoreExplainerLayoutStore(search)) {
-        try {
-          stored = readNliExplainerLayoutStore(localStorage.getItem(NLI_EXPLAINER_LAYOUT_STORAGE_KEY));
-        } catch {
-          stored = {};
-        }
-      }
+      const remote = OTEFDataContext.getNliClockLayout?.()?.projection;
+      const stored = remote && typeof remote === "object" ? remote : {};
       const spanKey = nliExplainerSpanKey(search);
       applyNliExplainerLayout(
         nliExplainerHost,
@@ -473,6 +465,10 @@ async function bootstrapProjectionRuntime() {
       applyNliExplainerHostPresence(nliExplainerHost, spanKey);
     };
     applyStoredExplainerLayout();
+    registerDisposer(OTEFDataContext.subscribe("nliClockLayout", () => {
+      if (window.NliExplainerDebug?.isVisible?.()) return;
+      applyStoredExplainerLayout();
+    }));
     try {
       const { updateMapLegend } = await import("../map/map-legend.js");
       registerDisposer(
@@ -528,6 +524,8 @@ async function bootstrapProjectionRuntime() {
     };
     let explainerDebugVisible = false;
     let projectionNarrativeController = null;
+    let novaEscapeCoordinator = null;
+    let parallelImpactIds = new Set();
     const syncContextInvestigation = () => {
       const { currentGroups, overlayGroups, presentationActive } = projectionOverlayContext();
       const clock =
@@ -549,6 +547,7 @@ async function bootstrapProjectionRuntime() {
             : Date.now(),
         getPersonSelection: () => OTEFDataContext.getPersonSelection(),
         narrativeFocus: projectionNarrativeController?.getDefinition(),
+        parallelImpactIds,
       });
     };
     try {
@@ -564,6 +563,11 @@ async function bootstrapProjectionRuntime() {
           syncContextInvestigation();
         },
         getProjectionConfig: getEffectiveProjectionConfig,
+        getRemoteLayoutMap: () => OTEFDataContext.getNliClockLayout?.()?.projection || {},
+        persistRemoteLayoutMap: (layout) => OTEFDataContext.setNliClockLayout({
+          surface: "projection",
+          layout,
+        }),
       });
       if (typeof window !== "undefined" && nliExplainerDebugApi) {
         window.NliExplainerDebug = nliExplainerDebugApi;
@@ -630,9 +634,21 @@ async function bootstrapProjectionRuntime() {
         console.warn("[projection-main] projection config runtime failed", error);
       });
     }
+    novaEscapeCoordinator = createNovaEscapeCoordinator({
+      map,
+      dataContext: OTEFDataContext,
+      profile: "projection",
+      surface: "projection",
+      onParallelImpactIdsChanged: (ids) => {
+        parallelImpactIds = ids instanceof Set ? ids : new Set(ids || []);
+        syncContextInvestigation();
+      },
+    });
+    registerDisposer(() => novaEscapeCoordinator?.dispose?.());
     projectionNarrativeController = createProjectionNarrativeController({
       map,
       syncTimeline: syncContextInvestigation,
+      onStyleLoadOverlay: () => novaEscapeCoordinator?.onStyleLoad?.(),
     });
     registerDisposer(() => projectionNarrativeController?.dispose());
     registerDisposer(
@@ -1114,7 +1130,7 @@ async function bootstrapProjectionRuntime() {
   const onKeyDown = (event) => {
     const action = readProjectionDisplayHotkey(event);
     if (!action) return;
-    dispatchProjectionDisplayHotkey(action, {
+    const handled = dispatchProjectionDisplayHotkey(action, {
       toggleHelp: () => {
         const instructions = document.getElementById("instructions");
         if (instructions) instructions.classList.toggle("hidden");
@@ -1136,6 +1152,7 @@ async function bootstrapProjectionRuntime() {
         if (window.NliExplainerDebug) window.NliExplainerDebug.toggle();
       },
     });
+    if (handled && action === "explainerDebug") event.preventDefault();
   };
   window.addEventListener("keydown", onKeyDown);
   registerDisposer(() => window.removeEventListener("keydown", onKeyDown));

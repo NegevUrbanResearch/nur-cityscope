@@ -180,6 +180,24 @@ export const OTEF_API = {
     });
   },
 
+  async setEscapeOverlay(tableName = this.defaultTable, overlay, meta = {}) {
+    return this.executeCommand(tableName, {
+      action: "set_escape_overlay",
+      individual: overlay.individual === true,
+      overlap: overlay.overlap === true,
+      ...meta,
+    });
+  },
+
+  async setNliClockLayout(tableName = this.defaultTable, surface, layout, meta = {}) {
+    return this.executeCommand(tableName, {
+      action: "set_nli_clock_layout",
+      surface,
+      layout,
+      ...meta,
+    });
+  },
+
   async narrativePresentationCommand(tableName = this.defaultTable, command) {
     return this.executeCommand(tableName, {
       action: "narrative_presentation",

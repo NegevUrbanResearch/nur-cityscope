@@ -33,6 +33,8 @@ import {
   stopNliClock,
 } from "../shared/nli-investigation-clock.js";
 import { completedInvestigationBeats } from "../shared/nli-investigation-visual-state.js";
+import { NLI_NARRATIVES } from "../shared/nli-narratives.js";
+import { novaVirtualMembership } from "../shared/nli-nova-virtual-membership.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
 
 const NLI_ICON_PLAY = `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>`;
@@ -52,6 +54,12 @@ function nliNowMs() {
     return OTEFDataContext.correctedNow();
   }
   return Date.now();
+}
+
+function nliNarrativeId() {
+  return typeof OTEFDataContext !== "undefined"
+    ? OTEFDataContext.getNarrativeState?.()?.id
+    : null;
 }
 
 function nliFiniteBeatMinutes(beats) {
@@ -531,7 +539,8 @@ export const nliTimelineHostMethods = {
   },
 
   _nliArmPayload() {
-    const visibleMembership = this._visibleNliPlayableIds();
+    const chips = this._visibleNliPlayableIds();
+    const visibleMembership = novaVirtualMembership(chips, nliNarrativeId(), { phase: "paused" });
     return {
       visibleMembership,
       beats: beatsForMembership(visibleMembership, nliFeatureBagsFromCache(this._nliFeatureCache)),
@@ -593,7 +602,7 @@ export const nliTimelineHostMethods = {
     }
     if (!clock || clock.loop || clock.phase !== "playing") return;
     const now = nliNowMs();
-    const dur = clockStoryDurationMs(clock.beats);
+    const dur = clockStoryDurationMs(clock.beats, clock);
     const delay = Math.max(0, dur - clockPositionMs(clock, now));
     const revision = clock.revision;
     this._nliEndTimer = setTimeout(() => {
@@ -652,8 +661,10 @@ export const nliTimelineHostMethods = {
     const clock = this._liveNliClock();
     const now = nliNowMs();
     const vis = evaluateClock(clock, now);
+    const narrativeId = nliNarrativeId();
+    const leadInMinutes = narrativeId === "nova" ? NLI_NARRATIVES.nova.playStartMinutes : undefined;
     if (clock.phase === "ended" || vis.phase === "ended") {
-      await this._patchNliClock(replayNliClock(clock, now));
+      await this._patchNliClock(replayNliClock(clock, now, { leadInMinutes }));
       return;
     }
     if (clock.phase === "playing") {
@@ -664,14 +675,15 @@ export const nliTimelineHostMethods = {
       await this._patchNliClock(resumeNliClock(clock, now));
       return;
     }
-    const membership = this._visibleNliPlayableIds();
+    const chips = this._visibleNliPlayableIds();
+    const membership = novaVirtualMembership(chips, narrativeId, { phase: "playing" });
     if (!this._nliCacheReady(membership)) {
       await this._ensureNliFeatureCache();
       if (!this._nliCacheReady(membership)) return;
     }
     const beats = beatsForMembership(membership, nliFeatureBagsFromCache(this._nliFeatureCache));
     if (!beats.length) return;
-    await this._patchNliClock(playNliClock(clock, membership, beats, now));
+    await this._patchNliClock(playNliClock(clock, membership, beats, now, { leadInMinutes }));
   },
 
   async handleNliTimelineStop() {
