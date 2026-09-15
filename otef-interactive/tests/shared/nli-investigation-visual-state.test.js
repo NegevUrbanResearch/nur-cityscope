@@ -368,6 +368,27 @@ describe("deriveInvestigationFrame", () => {
     expect(frame.needsNextFrame).toBe(true);
   });
 
+  it("idle nova does not apply complete-story storyBeats", () => {
+    const frame = deriveInvestigationFrame(idleNliClock(), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: [400, 420, 440],
+      polygonMotionActive: true,
+      narrativeId: "nova",
+    });
+    expect(frame.achievedPolygonBeats).toEqual([]);
+  });
+
+  it("idle non-nova with storyBeats still achieves every loaded polygon beat", () => {
+    const frame = deriveInvestigationFrame(idleNliClock(), 99_000, enabled, {
+      motionMode: "full",
+      storyBeats: [400, 420, 440],
+      polygonMotionActive: true,
+      narrativeId: null,
+    });
+    expect(frame.achievedPolygonBeats).toEqual([400, 420, 440]);
+  });
+
+
   it("idle without storyBeats does not invent beats", () => {
     const frame = deriveInvestigationFrame(stopNliClock(playNliClock(idleNliClock(), membership, beats, 0)), 99_000, enabled, {
       motionMode: "full",
@@ -579,4 +600,51 @@ describe("deriveInvestigationFrame", () => {
     expect(a.completedRouteFlow.phase).toBe(b.completedRouteFlow.phase);
     expect(a.narrative.completedBeats).toEqual(b.narrative.completedBeats);
   });
+
+  it("Nova lead-in achieves every polygon/line minute strictly less than 483", () => {
+    const clock = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID],
+      [400, 480, 492],
+      0,
+      { leadInMinutes: 483 },
+    );
+    const frame = deriveInvestigationFrame(clock, 100, [
+      INVESTIGATION_POLYGONS_FULL_ID,
+      INVESTIGATION_LINES_FULL_ID,
+    ], { narrativeId: "nova" });
+    expect(frame.achievedPolygonBeats).toEqual([400, 480]);
+    expect(frame.narrative.activeBeat).toBe(483);
+  });
+
+  it("lead-in pause/resume does not start alarms until the first beat >= 483", () => {
+    const clock = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_ALARMS_FULL_ID, INVESTIGATION_POLYGONS_FULL_ID],
+      [400, 480, 492, 500],
+      0,
+      { leadInMinutes: 483 },
+    );
+    const during = deriveInvestigationFrame(clock, 100, [
+      INVESTIGATION_ALARMS_FULL_ID,
+      INVESTIGATION_POLYGONS_FULL_ID,
+    ], { narrativeId: "nova" });
+    expect(during.alarmOnset).toBeFalsy();
+    const paused = pauseNliClock(clock, 800);
+    const pausedFrame = deriveInvestigationFrame(paused, 99_000, [
+      INVESTIGATION_ALARMS_FULL_ID,
+      INVESTIGATION_POLYGONS_FULL_ID,
+    ], { narrativeId: "nova" });
+    expect(pausedFrame.alarmOnset).toBeFalsy();
+    const resumed = resumeNliClock(paused, 5_000);
+    const afterLeadIn = deriveInvestigationFrame(
+      resumed,
+      5_000 + TIMELINE_BEAT_MS - 800,
+      [INVESTIGATION_ALARMS_FULL_ID, INVESTIGATION_POLYGONS_FULL_ID],
+      { narrativeId: "nova" },
+    );
+    expect(afterLeadIn.narrative.activeBeat).toBe(492);
+    expect(afterLeadIn.alarmOnset).toBeTruthy();
+  });
 });
+

@@ -7,11 +7,11 @@
  */
 
 import {
-  clockStoryDurationMs,
   INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
   TIMELINE_BEAT_MS,
+  mapClockStoryPosition,
 } from "./nli-investigation-beats.js";
 import { clockPositionMs, evaluateClock } from "./nli-investigation-clock.js";
 import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
@@ -57,17 +57,14 @@ function isIdleOrEndedVisualPhase(src, phase) {
 
 function positionInfo(clock, nowMs, beats) {
   const absoluteMs = clockPositionMs(clock, nowMs);
-  const durationMs = clockStoryDurationMs(beats);
-  const cycleOrdinal = clock?.loop && durationMs
-    ? Math.floor(absoluteMs / durationMs)
-    : 0;
-  const withinCycleMs = clock?.loop && durationMs
-    ? absoluteMs - cycleOrdinal * durationMs
-    : absoluteMs;
-  const beatIndex = withinCycleMs < beats.length * TIMELINE_BEAT_MS
-    ? Math.floor(withinCycleMs / TIMELINE_BEAT_MS)
-    : -1;
-  return { absoluteMs, durationMs, cycleOrdinal, withinCycleMs, beatIndex };
+  const mapping = mapClockStoryPosition(beats, clock, absoluteMs);
+  return {
+    absoluteMs,
+    durationMs: mapping.durationMs,
+    cycleOrdinal: mapping.cycleOrdinal,
+    withinCycleMs: mapping.wrappedMs,
+    beatIndex: mapping.leadIn ? -1 : mapping.index,
+  };
 }
 
 function sameAnchorBeat(clock, current, beats) {
@@ -80,6 +77,9 @@ function sameAnchorBeat(clock, current, beats) {
 export function completedInvestigationBeats(phase, clock, beats, activeProgress) {
   if (!Array.isArray(beats) || beats.length === 0) return [];
   if (phase.phase === "idle") return [];
+  if (phase.leadIn) {
+    return beats.filter((m) => m < Number(clock.leadInMinutes));
+  }
   if (phase.phase === "ended" || phase.mode === "hold") return beats.slice();
   const index = Number.isInteger(phase.index) ? phase.index : -1;
   const completed = beats.slice(0, Math.max(0, index));
@@ -111,13 +111,17 @@ function activeProgressFor(phase, clock, nowMs) {
 function alarmOnsetFor(clock, phase, nowMs, enabled, beats, position) {
   if (!enabled || !Array.isArray(beats) || beats.length === 0) return null;
   if (clock?.phase === "idle" || clock?.phase === "ended") return null;
-  const index = phase.mode === "beat" ? phase.index : beats.length - 1;
+  const mapping = mapClockStoryPosition(beats, clock, position.absoluteMs);
+  if (mapping.leadIn || (mapping.index < 0 && mapping.mode !== "hold")) return null;
+  const index = mapping.mode === "beat" ? mapping.index : beats.length - 1;
   if (!Number.isInteger(index) || index < 0 || index >= beats.length) return null;
   const beat = beats[index];
   const explicitOrigin = Number(clock?.alarmOnsetOriginMs);
   const anchor = Number(clock?.anchorMs);
-  const absoluteBeatStart = position.cycleOrdinal * position.durationMs +
-    index * TIMELINE_BEAT_MS;
+  const playableIndex = index - mapping.playableStartIndex;
+  const absoluteBeatStart = mapping.cycleOrdinal * mapping.durationMs
+    + mapping.leadInDurationMs
+    + playableIndex * TIMELINE_BEAT_MS;
   const derivedOrigin = Number.isFinite(anchor)
     ? anchor + absoluteBeatStart - finiteNumber(clock?.positionMs)
     : NaN;
@@ -164,13 +168,17 @@ export function deriveInvestigationFrame(
   const linesEnabled = enabled.has(INVESTIGATION_LINES_FULL_ID);
   const alarmEnabled = enabled.has(INVESTIGATION_ALARMS_FULL_ID);
   const storyBeats = uniqueFiniteStoryBeats(options?.storyBeats);
+  const suppressNovaIdleStory = options?.narrativeId === "nova" && src.phase === "idle";
   let achievedPolygonBeats = [];
-  if (polygonEnabled && isIdleOrEndedVisualPhase(src, phase)) {
+  if (polygonEnabled && suppressNovaIdleStory) {
+    achievedPolygonBeats = [];
+  } else if (polygonEnabled && isIdleOrEndedVisualPhase(src, phase)) {
     if (storyBeats.length > 0) achievedPolygonBeats = storyBeats;
     else if (phase.phase === "ended") achievedPolygonBeats = completedBeats.slice();
   } else if (polygonEnabled) {
     achievedPolygonBeats = completedBeats.slice();
     if (
+      !phase.leadIn &&
       phase.mode === "beat" &&
       phase.clock != null &&
       !achievedPolygonBeats.includes(phase.clock) &&
@@ -249,5 +257,6 @@ export function deriveInvestigationFrame(
       polygonMotionNeedsFrames ||
       personGlowNeedsFrames,
     enabledIds: [...enabled],
+    narrativeId: options?.narrativeId ?? null,
   };
 }

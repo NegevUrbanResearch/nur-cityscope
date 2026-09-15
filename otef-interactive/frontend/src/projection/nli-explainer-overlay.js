@@ -4,6 +4,7 @@
  */
 
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
+import { getNliNarrative } from "../shared/nli-narratives.js";
 import { parseProjectionSpanId } from "./projection-span-view.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
 import { t3ToOutput, visibleT3Rect } from "../shared/projection-config-geometry.js";
@@ -23,12 +24,6 @@ const SPAN_KEYS = ["full", "left", "right"];
 const HOST_FONT_FAMILY =
   '"Guttman Hatzvi", "Noto Sans Hebrew", "Noto Sans", Arial, sans-serif';
 
-function searchParams(search) {
-  const raw = typeof search === "string" ? search : "";
-  const q = !raw || raw === "?" ? "" : raw.startsWith("?") ? raw : `?${raw}`;
-  return new URLSearchParams(q);
-}
-
 export function nliExplainerSpanKey(search) {
   return parseProjectionSpanId(search) || "full";
 }
@@ -44,8 +39,8 @@ export function applyNliExplainerHostPresence(hostEl, spanKey) {
   hostEl.style.display = nliExplainerShouldPaintOnSpan(spanKey) ? "" : "none";
 }
 
-export function shouldIgnoreExplainerLayoutStore(search) {
-  return searchParams(search).get("nliExplainerLayout") === "committed";
+export function shouldIgnoreExplainerLayoutStore(_search) {
+  return false;
 }
 
 function legacyExplainerOverlapPageRect(spanKey, span) {
@@ -212,6 +207,71 @@ export function readNliExplainerLayoutStore(rawJson) {
   } catch {
     return {};
   }
+}
+
+function isFlatGisClockLayout(value) {
+  return value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Number.isFinite(Number(value.leftPct));
+}
+
+export function gisClockLayoutSlotId(narrativeId) {
+  if (narrativeId == null || narrativeId === "") return "start";
+  if (narrativeId === "segev" || narrativeId === "nova") return narrativeId;
+  return getNliNarrative(narrativeId) ? narrativeId : "start";
+}
+
+export function readGisClockLayoutStore(rawJson) {
+  const parsed = readNliExplainerLayoutStore(rawJson);
+  if (!parsed || typeof parsed !== "object") return {};
+  if (isFlatGisClockLayout(parsed)) {
+    return { start: clampNliExplainerLayout(parsed, NLI_GIS_CLOCK_DEFAULT_LAYOUT) };
+  }
+  const out = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    out[key] = clampNliExplainerLayout(value, NLI_GIS_CLOCK_DEFAULT_LAYOUT);
+  }
+  return out;
+}
+
+export function mergeGisClockLayout(slotId, storedMap, defaultLayout) {
+  const key = typeof slotId === "string" && slotId ? slotId : "start";
+  const stored = storedMap && typeof storedMap === "object" ? storedMap[key] : null;
+  return clampNliExplainerLayout(stored || defaultLayout, defaultLayout);
+}
+
+export function serializeGisClockLayoutMap(map) {
+  const src = map && typeof map === "object" ? map : {};
+  const out = {};
+  for (const [key, value] of Object.entries(src)) {
+    out[key] = clampNliExplainerLayout(value, NLI_GIS_CLOCK_DEFAULT_LAYOUT);
+  }
+  return JSON.stringify(out);
+}
+
+export function normalizeProjectionClockLayout(raw) {
+  const src = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const out = {};
+  for (const key of SPAN_KEYS) {
+    if (src[key] && typeof src[key] === "object" && !Array.isArray(src[key])) {
+      out[key] = clampNliExplainerLayout(src[key], src[key]);
+    }
+  }
+  return out;
+}
+
+export function emptyNliClockLayout() {
+  return { gis: {}, projection: {} };
+}
+
+export function normalizeNliClockLayout(raw) {
+  const src = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  return {
+    gis: readGisClockLayoutStore(src.gis),
+    projection: normalizeProjectionClockLayout(src.projection),
+  };
 }
 
 export function applyNliExplainerLayout(hostEl, layout) {

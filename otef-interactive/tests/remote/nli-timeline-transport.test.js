@@ -23,7 +23,13 @@ import {
   playNliClock,
   replayNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
-import { clockStoryDurationMs, TIMELINE_BEAT_MS } from "../../frontend/src/shared/nli-investigation-beats.js";
+import {
+  clockStoryDurationMs,
+  TIMELINE_BEAT_MS,
+  TIMELINE_HOLD_MS,
+  INVESTIGATION_POLYGONS_FULL_ID,
+} from "../../frontend/src/shared/nli-investigation-beats.js";
+import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LINES_ID = "nli.lines";
@@ -617,6 +623,28 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock.mock.calls[3][0].positionMs).toBe(0);
   });
 
+  test("nova idle play patches virtual membership and leadInMinutes 483", async () => {
+    const ctx = stubContext({
+      getNarrativeState: () => ({ id: "nova" }),
+      getLayerGroups: () => nliGroups(),
+    });
+    const c = makeController({
+      _nliFeatureCache: {
+        [LINES_ID]: lineFeatures(),
+        [INVESTIGATION_POLYGONS_FULL_ID]: [{ properties: { timeline_minutes: 400 } }],
+      },
+      getEffectiveGroupsForView: () => nliGroups(),
+    });
+    await c.handleNliTimelinePlay();
+    expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
+    const patched = ctx.patchInvestigationClock.mock.calls[0][0];
+    expect(patched.membership).toEqual(
+      expect.arrayContaining([INVESTIGATION_POLYGONS_FULL_ID, LINES_ID]),
+    );
+    expect(patched.leadInMinutes).toBe(NLI_NARRATIVES.nova.playStartMinutes);
+    expect(patched.leadInMinutes).toBe(483);
+  });
+
   test("play uses replay when evaluateClock already ended", async () => {
     const playing = playNliClock(idleNliClock(), [LINES_ID], [400], 0);
     const ctx = stubContext({
@@ -901,6 +929,34 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].phase).toBe("ended");
+  });
+
+  test("_syncNliEndedTimer with Nova lead-in includes lead-in duration", async () => {
+    vi.useFakeTimers();
+    const novaBeats = [400, 480, 492, 500];
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      novaBeats,
+      1000,
+      { leadInMinutes: 483 },
+    );
+    const now = 1000;
+    const ctx = stubContext({
+      getInvestigationClock: () => playing,
+      correctedNow: () => now,
+    });
+    const c = makeController();
+    c._syncNliEndedTimer(playing);
+    const withoutLeadIn = clockStoryDurationMs(novaBeats);
+    const withLeadIn = clockStoryDurationMs(novaBeats, playing);
+    expect(withLeadIn).toBe(TIMELINE_BEAT_MS + 2 * TIMELINE_BEAT_MS + TIMELINE_HOLD_MS);
+    expect(withLeadIn).toBeLessThan(withoutLeadIn);
+    const delay = Math.max(0, withLeadIn - clockPositionMs(playing, now));
+    await vi.advanceTimersByTimeAsync(delay - 1);
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     expect(ctx.patchInvestigationClock.mock.calls[0][0].phase).toBe("ended");
   });
 

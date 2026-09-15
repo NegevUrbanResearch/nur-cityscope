@@ -25,8 +25,11 @@ import {
   TIMELINE_BEAT_MS,
   timelinePhaseAt,
   wakeInvestigationTimelinePersonGlow,
+  setEscapeImpactOrientationIds,
 } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { PEOPLE_HALO_LAYER_ID } from "../../frontend/src/map/maplibre-person-selection.js";
+import { formatMinutesAsLocalClock } from "../../frontend/src/shared/nli-investigation-beats.js";
+import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
 import {
   idleNliClock,
   pauseNliClock,
@@ -1205,6 +1208,44 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
+  it("idle clock-only caption paints 06:29 when no Nova narrative is active", async () => {
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+    const map = makeMap();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), [{ id: "nli", layers: [] }], {
+      captionEl: injected,
+      allowMapCaption: false,
+      nliCaptionMode: "clock-only",
+      featuresById: {},
+      getLayerDataUrl: () => null,
+      now: () => 0,
+    });
+    expect(injected.hidden).toBe(false);
+    expect(injected.innerHTML).toContain("06:29");
+    expect(injected.innerHTML).not.toContain("nli-tl-row");
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("Nova idle clock-only caption paints 08:03", async () => {
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+    const map = makeMap();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), [{ id: "nli", layers: [] }], {
+      captionEl: injected,
+      allowMapCaption: false,
+      nliCaptionMode: "clock-only",
+      featuresById: {},
+      getLayerDataUrl: () => null,
+      narrativeFocus: { id: "nova" },
+      now: () => 0,
+    });
+    expect(injected.hidden).toBe(false);
+    expect(injected.innerHTML).toContain("08:03");
+    expect(injected.innerHTML).toContain(
+      formatMinutesAsLocalClock(NLI_NARRATIVES.nova.idleClockMinutes),
+    );
+    expect(injected.innerHTML).not.toContain("06:29");
+    disposeInvestigationTimelineForMap(map);
+  });
+
   it("jump flash is not re-fired after dispose remount at the same revision", async () => {
     const map = makeMap();
     let now = 0;
@@ -1831,7 +1872,553 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(dottedOrientationPaintCalls(map)).toEqual([]);
     disposeInvestigationTimelineForMap(map);
   });
+
+  it("unions escape-impact outline ids into dim-all orientation citynames", async () => {
+    const map = makeOrientationMap();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), {
+      ...orientationDeps(),
+      narrativeFocus: NLI_NARRATIVES.nova,
+      settlementFeatures: [{
+        type: "Feature",
+        properties: { outlineObjectId: 19, locations: ["עיר א"] },
+        geometry: STORY_SETTLEMENT.geometry,
+      }],
+    });
+    setEscapeImpactOrientationIds(map, ["19", "100"]);
+    expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.35]);
+    expect(JSON.stringify(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))).not.toMatch(/רעים/);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("Nova idle lights the existing נובה place name on projection", async () => {
+    const map = makeOrientationMap();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), {
+      ...orientationDeps(),
+      narrativeFocus: NLI_NARRATIVES.nova,
+      displayProfile: "projection",
+    });
+    expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה"]]], 1, 0.35]);
+    expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity"))
+      .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.28]);
+    expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity"))
+      .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.28]);
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("idle nova GIS has no fills, persistent nova-site battle line, and no complete-story lines", async () => {
+    const map = makeMap();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [{
+          type: "Feature",
+          properties: {
+            OBJECTID: 100,
+            timeline_minutes: 500,
+            Notes: "מרחב לחימה - קרב",
+            מיקום: "נובה",
+          },
+          geometry: STORY_POLYGON_A.geometry,
+        }],
+      },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "gis",
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    const fills = map.getSource("nli-investigation-polygon-category")?.setData?.mock?.calls?.at(-1)?.[0]?.features
+      ?? map.getSource("nli-investigation-polygon-category")?.data?.features
+      ?? [];
+    expect(fills).toEqual([]);
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("GIS polygons chip off plus nova still mounts overlay and outline 100 without enabling the chip", async () => {
+    const map = makeMap();
+    const groups = [{
+      id: "nli",
+      layers: [
+        { id: "investigation_polygons", enabled: false },
+        { id: "lines", enabled: false },
+      ],
+    }];
+    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [{
+          type: "Feature",
+          properties: {
+            OBJECTID: 100,
+            timeline_minutes: 500,
+            Notes: "מרחב לחימה - קרב",
+            מיקום: "נובה",
+          },
+          geometry: STORY_POLYGON_A.geometry,
+        }],
+      },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "gis",
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    expect(groups[0].layers[0].enabled).toBe(false);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("GIS nova idle chip off fetches polygon 100 without featuresById", async () => {
+    const map = makeMap();
+    const groups = [{
+      id: "nli",
+      layers: [
+        { id: "investigation_polygons", enabled: false },
+        { id: "lines", enabled: false },
+      ],
+    }];
+    const getLayerDataUrl = vi.fn((id) => (
+      id === INVESTIGATION_POLYGONS_FULL_ID
+        ? "https://example.test/investigation_polygons.geojson"
+        : null
+    ));
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          properties: {
+            OBJECTID: 100,
+            timeline_minutes: 500,
+            Notes: "מרחב לחימה - קרב",
+            מיקום: "נובה",
+          },
+          geometry: STORY_POLYGON_A.geometry,
+        }],
+      }),
+    })));
+    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, {
+      getLayerDataUrl,
+      narrativeFocus: { id: "nova" },
+      displayProfile: "gis",
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(getLayerDataUrl).toHaveBeenCalledWith(INVESTIGATION_POLYGONS_FULL_ID);
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    expect(groups[0].layers[0].enabled).toBe(false);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("projection nova play with both chips off still paints polygons and lines without enabling chips", async () => {
+    const map = makeMap();
+    const groups = [{
+      id: "nli",
+      layers: [
+        { id: "investigation_polygons", enabled: false },
+        { id: "lines", enabled: false },
+        { id: "alarms", enabled: false },
+      ],
+    }];
+    const playing = playNliClock(
+      idleNliClock(),
+      [],
+      [400, 492],
+      0,
+    );
+    const at492 = { ...playing, positionMs: TIMELINE_BEAT_MS, phase: "paused", seekKind: "none" };
+    await syncInvestigationTimelineToMap(map, at492, groups, {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [{
+          type: "Feature",
+          properties: {
+            OBJECTID: 99,
+            timeline_minutes: 492,
+            Notes: "מרחב לחימה - קרב",
+            מיקום: "נובה",
+          },
+          geometry: STORY_POLYGON_B.geometry,
+        }],
+        [INVESTIGATION_LINES_FULL_ID]: LINE_FEATURES,
+      },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getSource("nli-investigation-line-completed-carrier")?.setData?.mock?.calls?.length
+      ?? map.getSource("nli-investigation-line-completed-carrier")?.data?.features?.length
+      ?? 0).toBeGreaterThan(0);
+    expect(map.getLayer("nli-investigation-polygon-category-fill-battle")).toBeTruthy();
+    expect(groups[0].layers.map((layer) => layer.enabled)).toEqual([false, false, false]);
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("GIS and projection nova both light yeshuv 43 and skip callouts", async () => {
+    const site = {
+      type: "Feature",
+      properties: {
+        OBJECTID: 100,
+        timeline_minutes: 500,
+        Notes: "מרחב לחימה - קרב",
+        מיקום: "נובה",
+        Name: "שם 100",
+      },
+      geometry: STORY_POLYGON_A.geometry,
+    };
+    const playing = playClock([INVESTIGATION_POLYGONS_FULL_ID], [500]);
+    const deps = {
+      ...orientationDeps(),
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site] },
+      narrativeFocus: NLI_NARRATIVES.nova,
+      motionMode: "reduced",
+      now: () => 0,
+    };
+    for (const displayProfile of ["gis", "projection"]) {
+      const map = makeOrientationMap();
+      await syncInvestigationTimelineToMap(map, playing, polygonOnlyGroups(), {
+        ...deps,
+        displayProfile,
+      });
+      expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+      expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity"))
+        .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.28]);
+      expect(map.getLayer("nli-nova-gis-callout-leader")).toBeFalsy();
+      disposeInvestigationTimelineForMap(map);
+    }
+  });
+
+  it("projection nova idle lights yeshuv 43 instead of cloning polygon 100", async () => {
+    const map = makeOrientationMap();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), {
+      ...orientationDeps(),
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [{
+          type: "Feature",
+          properties: {
+            OBJECTID: 100,
+            timeline_minutes: 500,
+            Notes: "מרחב לחימה - קרב",
+            מיקום: "נובה",
+          },
+          geometry: STORY_POLYGON_A.geometry,
+        }],
+      },
+      narrativeFocus: NLI_NARRATIVES.nova,
+      displayProfile: "projection",
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity"))
+      .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.28]);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("projection nova stays faded until fleeing contact and re-dims when individual turns off", async () => {
+    const map = makeMap();
+    const site100 = {
+      type: "Feature",
+      properties: {
+        OBJECTID: 100,
+        timeline_minutes: 500,
+        Notes: "מרחב לחימה - קרב",
+        מיקום: "נובה",
+      },
+      geometry: STORY_POLYGON_A.geometry,
+    };
+    const neighbor99 = {
+      type: "Feature",
+      properties: {
+        OBJECTID: 99,
+        timeline_minutes: 492,
+        Notes: "מרחב לחימה - קרב",
+        מיקום: "נובה",
+      },
+      geometry: STORY_POLYGON_B.geometry,
+    };
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      [492, 500],
+      0,
+    );
+    const at500 = { ...playing, positionMs: TIMELINE_BEAT_MS, phase: "paused", seekKind: "none" };
+    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28]);
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(["polygon:99"]),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["99"]]], 1, 0.28]);
+    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(["polygon:100"]),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28]);
+    expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("GIS nova at500 keeps battle fill-opacity without projection dim", async () => {
+    const map = makeMap();
+    const site100 = {
+      type: "Feature",
+      properties: {
+        OBJECTID: 100,
+        timeline_minutes: 500,
+        Notes: "מרחב לחימה - קרב",
+        מיקום: "נובה",
+      },
+      geometry: STORY_POLYGON_A.geometry,
+    };
+    const neighbor99 = {
+      type: "Feature",
+      properties: {
+        OBJECTID: 99,
+        timeline_minutes: 492,
+        Notes: "מרחב לחימה - קרב",
+        מיקום: "נובה",
+      },
+      geometry: STORY_POLYGON_B.geometry,
+    };
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      [492, 500],
+      0,
+    );
+    const at500 = { ...playing, positionMs: TIMELINE_BEAT_MS, phase: "paused", seekKind: "none" };
+    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "gis",
+      parallelImpactIds: new Set(),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    const paint = map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity");
+    expect(JSON.stringify(paint)).not.toContain("0.28");
+    expect(paint === 0.55 || JSON.stringify(paint).includes("0.55")).toBe(true);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("projection nova fallback fill uses 0.28/1 while GIS does not dim it", async () => {
+    const unknown = {
+      type: "Feature",
+      properties: {
+        OBJECTID: 77,
+        timeline_minutes: 500,
+        Notes: "לא ידוע",
+        מיקום: "נובה",
+      },
+      geometry: STORY_POLYGON_A.geometry,
+    };
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      [500],
+      0,
+    );
+    const at500 = { ...playing, positionMs: 0, phase: "paused", seekKind: "none" };
+    const faded = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28];
+    const lit = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["77"]]], 1, 0.28];
+    const fallbackId = "nli-investigation-polygon-category-fill-fallback";
+    const projection = makeMap();
+    await syncInvestigationTimelineToMap(projection, at500, polygonOnlyGroups(), {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [unknown] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(projection.getPaintProperty(fallbackId, "fill-opacity")).toEqual(faded);
+    await syncInvestigationTimelineToMap(projection, at500, polygonOnlyGroups(), {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [unknown] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(["polygon:77"]),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(projection.getPaintProperty(fallbackId, "fill-opacity")).toEqual(lit);
+    await syncInvestigationTimelineToMap(projection, at500, polygonOnlyGroups(), {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [unknown] },
+      narrativeFocus: null,
+      displayProfile: "projection",
+      parallelImpactIds: new Set(["polygon:77"]),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(projection.getPaintProperty(fallbackId, "fill-opacity")).toBe(0.55);
+    disposeInvestigationTimelineForMap(projection);
+
+    const gis = makeMap();
+    await syncInvestigationTimelineToMap(gis, at500, polygonOnlyGroups(), {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [unknown] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "gis",
+      parallelImpactIds: new Set(),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    const gisPaint = gis.getPaintProperty(fallbackId, "fill-opacity");
+    expect(JSON.stringify(gisPaint)).not.toContain("0.28");
+    expect(gisPaint).toBe(0.55);
+    disposeInvestigationTimelineForMap(gis);
+  });
+
+  it("projection nova shared OBJECTID lights only the namespaced kind", async () => {
+    const map = makeMap();
+    const poly1 = {
+      type: "Feature",
+      properties: {
+        OBJECTID: 1,
+        timeline_minutes: 400,
+        Notes: "מרחב לחימה - קרב",
+        מיקום: "נובה",
+      },
+      geometry: STORY_POLYGON_A.geometry,
+    };
+    const line1 = {
+      type: "Feature",
+      properties: { OBJECTID: 1, Name: "כפר עזה - רחפנים", timeline_minutes: 400 },
+      geometry: { type: "LineString", coordinates: [[34.4, 31.4], [34.5, 31.5]] },
+    };
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID],
+      [400],
+      0,
+    );
+    const at400 = { ...playing, positionMs: 0, phase: "paused", seekKind: "none" };
+    await syncInvestigationTimelineToMap(map, at400, bothGroups(), {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [poly1],
+        [INVESTIGATION_LINES_FULL_ID]: [line1],
+      },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(["polygon:1"]),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["1"]]], 1, 0.28]);
+    expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity"))
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28]);
+    await syncInvestigationTimelineToMap(map, at400, bothGroups(), {
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [poly1],
+        [INVESTIGATION_LINES_FULL_ID]: [line1],
+      },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(["line:1"]),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28]);
+    expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity"))
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["1"]]], 1, 0.28]);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("projection nova infiltration lines dim then light from parallelImpactIds including off→on→off", async () => {
+    const map = makeMap();
+    const line9 = {
+      type: "Feature",
+      properties: { OBJECTID: 9, Name: "כפר עזה - רחפנים", timeline_minutes: 400 },
+      geometry: { type: "LineString", coordinates: [[34.4, 31.4], [34.5, 31.5]] },
+    };
+    const playing = playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [400], 0);
+    const at400 = { ...playing, positionMs: 0, phase: "paused", seekKind: "none" };
+    const lineGroups = [{
+      id: "nli",
+      layers: [{ id: "lines", enabled: true }],
+    }];
+    const faded = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28];
+    const lit = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["9"]]], 1, 0.28];
+    await syncInvestigationTimelineToMap(map, at400, lineGroups, {
+      featuresById: { [INVESTIGATION_LINES_FULL_ID]: [line9] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity")).toEqual(faded);
+    expect(map.getPaintProperty("nli-investigation-line-completed-motion-line", "line-opacity")).toEqual(faded);
+    expect(map.getPaintProperty("nli-investigation-line-active-line", "line-opacity")).toEqual(faded);
+    expect(map.getPaintProperty("nli-investigation-line-head-circle", "circle-opacity")).toEqual(faded);
+    await syncInvestigationTimelineToMap(map, at400, lineGroups, {
+      featuresById: { [INVESTIGATION_LINES_FULL_ID]: [line9] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(["line:9"]),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity")).toEqual(lit);
+    expect(map.getPaintProperty("nli-investigation-line-active-line", "line-opacity")).toEqual(lit);
+    expect(map.getPaintProperty("nli-investigation-line-head-circle", "circle-opacity")).toEqual(lit);
+    await syncInvestigationTimelineToMap(map, playing, lineGroups, {
+      featuresById: { [INVESTIGATION_LINES_FULL_ID]: [line9] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(["line:9"]),
+      motionMode: "reduced",
+      now: () => 800,
+    });
+    const heads = map.getSource("nli-investigation-line-head")?.setData?.mock?.calls?.at(-1)?.[0]?.features
+      ?? map.getSource("nli-investigation-line-head")?.data?.features
+      ?? [];
+    expect(heads.some((feature) => String(feature.properties?.OBJECTID) === "9")).toBe(true);
+    await syncInvestigationTimelineToMap(map, at400, lineGroups, {
+      featuresById: { [INVESTIGATION_LINES_FULL_ID]: [line9] },
+      narrativeFocus: { id: "nova" },
+      displayProfile: "projection",
+      parallelImpactIds: new Set(),
+      motionMode: "reduced",
+      now: () => 0,
+    });
+    expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity")).toEqual(faded);
+    disposeInvestigationTimelineForMap(map);
+  });
 });
+
 
 function subscribeCallbackName(src, topic) {
   const match = src.match(new RegExp(`subscribe\\("${topic}",\\s*(\\w+)\\)`));

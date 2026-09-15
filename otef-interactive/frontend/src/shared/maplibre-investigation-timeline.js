@@ -48,14 +48,17 @@ import {
 import { createInvestigationLineRenderer } from "./maplibre-investigation-lines.js";
 import { createInvestigationPolygonRenderer } from "./maplibre-investigation-polygons.js";
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
+import { NLI_NARRATIVES } from "./nli-narratives.js";
 import { record as recordPerfSample } from "../map/perf-telemetry.js";
 import { deriveInvestigationFrame } from "./nli-investigation-visual-state.js";
+import { novaVirtualMembership } from "./nli-nova-virtual-membership.js";
 import {
   achievedSettlementCitynames,
   applySettlementOrientationPaint,
   collectKnownCitynamesFromMap,
   collectOrientationTargets,
 } from "./nli-settlement-orientation.js";
+import { shouldIncludeNarrativeSettlementOutline } from "./nli-nova-escape-impact.js";
 import { syncPersonHaloPaint } from "../map/maplibre-person-selection.js";
 
 export {
@@ -129,14 +132,34 @@ function displayProfileFromDeps(deps = {}, fallback = NLI_DISPLAY_PROFILES.gis) 
   return profile;
 }
 
-function effectiveMembership(clock, layerGroups) {
+function isProjectionDisplayProfile(deps) {
+  return deps?.displayProfile === "projection" || deps?.displayProfile === NLI_DISPLAY_PROFILES.projection;
+}
+
+function isNovaNarrative(state) {
+  return state?.narrativeFocus?.id === "nova";
+}
+
+function isNovaIdle(state) {
+  return isNovaNarrative(state) && (state?.clockPhase === "idle" || state?.clock?.phase === "idle");
+}
+
+function effectiveMembership(clock, layerGroups, narrativeId) {
+  const chips = nliPlayableIdsFromGroups(layerGroups);
+  const visible = new Set(chips);
   const semantic = new Set(Array.isArray(clock?.membership) ? clock.membership.map(String) : []);
-  const visible = new Set(nliPlayableIdsFromGroups(layerGroups));
+  const virtual = novaVirtualMembership(chips, narrativeId, clock);
+  const virtualSet = new Set(virtual);
+  const novaPlayback = narrativeId === "nova" && (clock?.phase === "playing" || clock?.phase === "paused" || clock?.phase === "ended");
   return {
     visible,
-    ids: new Set([...semantic].filter((id) => visible.has(id))),
-    polygonOn: semantic.has(INVESTIGATION_POLYGONS_FULL_ID) && visible.has(INVESTIGATION_POLYGONS_FULL_ID),
-    lineOn: semantic.has(INVESTIGATION_LINES_FULL_ID) && visible.has(INVESTIGATION_LINES_FULL_ID),
+    ids: novaPlayback ? virtualSet : new Set([...semantic].filter((id) => visible.has(id))),
+    polygonOn: novaPlayback
+      ? virtualSet.has(INVESTIGATION_POLYGONS_FULL_ID)
+      : semantic.has(INVESTIGATION_POLYGONS_FULL_ID) && visible.has(INVESTIGATION_POLYGONS_FULL_ID),
+    lineOn: novaPlayback
+      ? virtualSet.has(INVESTIGATION_LINES_FULL_ID)
+      : semantic.has(INVESTIGATION_LINES_FULL_ID) && visible.has(INVESTIGATION_LINES_FULL_ID),
     alarmPlay: semantic.has(INVESTIGATION_ALARMS_FULL_ID) && visible.has(INVESTIGATION_ALARMS_FULL_ID),
     alarmVisible: visible.has(INVESTIGATION_ALARMS_FULL_ID),
   };
@@ -157,7 +180,11 @@ function rendererFactories(map, state) {
   const anchor = findLayerOrderAnchor(map, state.displayProfile);
   if (anchor) state.displayProfile.beforeId = anchor;
   state.lineRenderer = createInvestigationLineRenderer(map, state.displayProfile);
-  state.polygonRenderer = createInvestigationPolygonRenderer(map, state.displayProfile, state.rendererDeps);
+  state.polygonRenderer = createInvestigationPolygonRenderer(
+    map,
+    state.rendererDeps?.displayProfile ?? state.displayProfile,
+    state.rendererDeps,
+  );
   state.alarmRenderer = createInvestigationAlarmRenderer(map, state.displayProfile, {
     ...state.rendererDeps,
     onAlarmStructuralRowsBuild: (...args) => {
@@ -379,6 +406,19 @@ function updateCaption(state, phase, _previousClock) {
     });
     return;
   }
+  if (state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY) {
+    const model = buildNliExplainerModel({
+      clock: isNovaNarrative(state)
+        ? NLI_NARRATIVES.nova.idleClockMinutes
+        : 389,
+      nliCaptionMode: state.nliCaptionMode,
+    });
+    el.hidden = false;
+    el.innerHTML = nliExplainerInnerHtml(model, {
+      nliCaptionMode: state.nliCaptionMode,
+    });
+    return;
+  }
   el.hidden = true;
   el.innerHTML = "";
 }
@@ -431,6 +471,7 @@ function emptyLinePartition() {
 }
 
 function lineFrameForState(state, investigationFrame, nowMs) {
+  if (isNovaIdle(state)) return investigationFrame;
   if (state.clockPhase === "idle" && state.lineOn) return deriveIdleLineFrame(state, nowMs);
   return investigationFrame;
 }
@@ -476,6 +517,7 @@ function deriveTimelineFrame(state, nowMs, enabledIds = [...(state.effectiveIds 
     storyBeats: state.storyBeats,
     polygonMotionActive: state.polygonMotionActive,
     personGlowActive: state.personGlowActive === true,
+    narrativeId: state.narrativeFocus?.id ?? null,
   });
 }
 
@@ -493,18 +535,59 @@ function clearOrientationTargets(state) {
 
 function applyOrientationVisuals(map, state, outlineIds = []) {
   const focus = state.narrativeFocus;
+  state.lastOrientationOutlineIds = Array.isArray(outlineIds) ? outlineIds : [];
+  const impactIds = Array.isArray(state.escapeImpactOutlineIds) ? state.escapeImpactOutlineIds : [];
+  const merged = [...new Set(
+    [...state.lastOrientationOutlineIds, ...impactIds]
+      .map((id) => String(id))
+      .filter((id) => id && id !== "100"),
+  )];
+  const settlements = state.data?.settlementFeatures?.length
+    ? state.data.settlementFeatures
+    : state.escapeImpactSettlementFeatures || [];
   applySettlementOrientationPaint(map, {
     phase: state.clockPhase,
     achievedCitynames: achievedSettlementCitynames(
-      outlineIds,
-      state.data?.settlementFeatures,
+      merged,
+      settlements,
       collectKnownCitynamesFromMap(map, state.shemotSourceId),
     ),
     layers: state.orientationLayers,
+    shemotSourceId: state.shemotSourceId,
     mode: focus ? "narrative" : undefined,
     focusCityname: focus?.focusSettlement,
     focusOutlineObjectId: focus?.focusSettlementOutlineId,
+    keepFocusLabelWithAchieved: focus?.id === "nova",
   });
+}
+
+function normalizeEscapeImpactOutlineIds(outlineIds) {
+  return [...(outlineIds instanceof Set ? outlineIds : Array.isArray(outlineIds) ? outlineIds : [])]
+    .map((id) => String(id))
+    .filter((id) => id && id !== "100");
+}
+
+/** Union fleeing orange impact ids into orientation paint; call from impact RAF. */
+export function setEscapeImpactOrientationIds(map, outlineIds, settlementFeatures) {
+  const ids = normalizeEscapeImpactOutlineIds(outlineIds);
+  const state = stateByMap.get(map);
+  if (!state) {
+    applySettlementOrientationPaint(map, {
+      phase: "idle",
+      mode: "narrative",
+      achievedCitynames: achievedSettlementCitynames(
+        ids,
+        Array.isArray(settlementFeatures) ? settlementFeatures : [],
+        collectKnownCitynamesFromMap(map),
+      ),
+    });
+    return;
+  }
+  state.escapeImpactOutlineIds = ids;
+  if (Array.isArray(settlementFeatures) && settlementFeatures.length) {
+    state.escapeImpactSettlementFeatures = settlementFeatures;
+  }
+  applyOrientationVisuals(map, state, state.lastOrientationOutlineIds || []);
 }
 
 function narrativeSettlementOutlineId(state) {
@@ -513,6 +596,7 @@ function narrativeSettlementOutlineId(state) {
 }
 
 function includeNarrativeSettlementOutline(outlineIds, state) {
+  if (!shouldIncludeNarrativeSettlementOutline(state?.narrativeFocus)) return outlineIds;
   const focusOutlineId = narrativeSettlementOutlineId(state);
   if (focusOutlineId == null) return outlineIds;
   const merged = Array.isArray(outlineIds) ? [...outlineIds] : [];
@@ -554,7 +638,8 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
     dataVersion: state.data.dataVersion,
   });
   let achievedSettlementOutlineIds = [];
-  if (state.polygonOn || state.lineOn || narrativeSettlementOutlineId(state) != null) {
+  const novaSiteOverlay = isNovaNarrative(state);
+  if (state.polygonOn || state.lineOn || narrativeSettlementOutlineId(state) != null || novaSiteOverlay) {
     const lineData = state.lineOn && Array.isArray(state.data.lineFeatures)
       ? buildInvestigationLineFeaturesForFrame(state.data, lineFrame)
       : emptyLinePartition();
@@ -566,11 +651,17 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
       ),
     ];
     achievedSettlementOutlineIds = includeNarrativeSettlementOutline(achievedSettlementOutlineIds, state);
+    const projectionNovaDim = isNovaNarrative(state) && isProjectionDisplayProfile(state.rendererDeps);
+    const parallelImpactIds = state.rendererDeps?.parallelImpactIds;
     const polygonFrame = {
       ...resolvedFrame,
       achievedSettlementOutlineIds,
+      narrativeId: state.narrativeFocus?.id ?? null,
+      projectionNovaDim,
+      parallelImpactIds,
     };
-    const renderSettlement = state.polygonOn
+    const renderPolygons = state.polygonOn || novaSiteOverlay;
+    const renderSettlement = renderPolygons
       ? state.polygonRenderer?.render
       : state.polygonRenderer?.renderSettlement;
     renderSettlement?.call(state.polygonRenderer, polygonFrame, {
@@ -579,13 +670,20 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
       settlementFeatures: state.data.settlementFeatures,
       settlementFeaturesByOutlineId: state.data.settlementFeaturesByOutlineId,
       dataVersion: state.data.dataVersion,
+      projectionNovaDim,
+      parallelImpactIds,
     });
   } else {
     state.polygonRenderer?.reset({ preserveBasePaints: true, restoreHostVisibility: false });
   }
   if (state.lineOn) {
     state.lineRenderer?.render(
-      lineFrame,
+      {
+        ...lineFrame,
+        narrativeId: state.narrativeFocus?.id ?? null,
+        projectionNovaDim: isNovaNarrative(state) && isProjectionDisplayProfile(state.rendererDeps),
+        parallelImpactIds: state.rendererDeps?.parallelImpactIds,
+      },
       buildInvestigationLineFeaturesForFrame(state.data, lineFrame),
     );
   }
@@ -702,6 +800,9 @@ function createTimelineState(map, deps = {}) {
     orientationLayers: [],
     shemotSourceId: null,
     narrativeFocus: deps.narrativeFocus || null,
+    escapeImpactOutlineIds: [],
+    lastOrientationOutlineIds: [],
+    escapeImpactSettlementFeatures: [],
   };
   Object.defineProperties(state, {
     alarmFeatures: { enumerable: false, get: () => state.data.alarmFeatures },
@@ -799,9 +900,11 @@ function tick(map) {
   const started = state.monotonicNow();
   applyPersonGlow(state);
   const frame = deriveTimelineFrame(state, nowMs);
-  const lineFrame = clock.phase === "idle" && state.lineOn
-    ? deriveIdleLineFrame(state, nowMs)
-    : null;
+  const lineFrame = isNovaIdle(state)
+    ? null
+    : clock.phase === "idle" && state.lineOn
+      ? deriveIdleLineFrame(state, nowMs)
+      : null;
   const rippleEnded = state.lastFrame?.rippleNeedsFrames === true && frame.rippleNeedsFrames === false;
   const onsetEnded = onsetWindowJustClosed(state.lastFrame, frame);
   const renderDue = state.lastRenderNow == null ||
@@ -840,6 +943,8 @@ function applyStoryPlayback(map, state) {
   ensureRendererHandles(map, state);
   if (state.polygonOn) {
     if (!state.polygonPlaybackActive) enablePolygonPlayback(map, state);
+  } else if (isNovaNarrative(state)) {
+    enablePolygonPlayback(map, state);
   } else {
     disablePolygonPlayback(map, state, { restoreHostVisibility: false });
     if (!state.lineOn) {
@@ -959,9 +1064,11 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
 
   refreshInvestigationTimelineData(state.data, deps);
   refreshOrientationTargets(map, state);
-  const nextMembership = effectiveMembership(clock, visibilityGroups);
+  const narrativeId = state.narrativeFocus?.id ?? null;
+  const nextMembership = effectiveMembership(clock, visibilityGroups, narrativeId);
   const polygonsVisible = nextMembership.visible.has(INVESTIGATION_POLYGONS_FULL_ID);
   const linesVisible = nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID);
+  const novaSiteOverlay = isNovaNarrative(state);
   state.routeLayerVisible = linesVisible;
   // Visibility changes are applied before any optional network work so a
   // hidden renderer cannot remain visible while its sibling dataset loads.
@@ -979,14 +1086,14 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
       ...(linesVisible ? [INVESTIGATION_LINES_FULL_ID] : []),
     ]);
     state.lastCaption = null;
-    if (polygonsVisible) {
+    if (polygonsVisible || novaSiteOverlay) {
       await ensureInvestigationLayerFeatures(state.data, deps, "polygonFeatures", INVESTIGATION_POLYGONS_FULL_ID, {
         request: syncRequest,
         isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
       });
       if (isStaleTimelineSyncRequest(map, syncRequest)) return;
     }
-    if (polygonsVisible || linesVisible || narrativeSettlementOutlineId(state) != null) {
+    if (polygonsVisible || linesVisible || novaSiteOverlay || narrativeSettlementOutlineId(state) != null) {
       await ensureInvestigationSettlementFeatures(state.data, deps, {
         request: syncRequest,
         isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
@@ -1004,7 +1111,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
       applyRestingRoutePaints(map, false);
     }
     assignVisibleStoryBeats(state, polygonsVisible, linesVisible);
-    if (polygonsVisible) enablePolygonPlayback(map, state);
+    if (polygonsVisible || novaSiteOverlay) enablePolygonPlayback(map, state);
     const alarmsVisible = nextMembership.alarmVisible;
     /** @type {'off' | 'idle' | 'play'} */
     const idleAlarmMode = alarmsVisible ? "idle" : "off";
@@ -1019,7 +1126,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     const nowMs = nowFn();
     const vis = evaluateClock(clock, nowMs);
     const frame = deriveTimelineFrame(state, nowMs);
-    const lineFrame = linesVisible ? deriveIdleLineFrame(state, nowMs) : null;
+    const lineFrame = !isNovaIdle(state) && linesVisible ? deriveIdleLineFrame(state, nowMs) : null;
     applyPlayingVisuals(map, state, vis, frame, idleAlarmMode);
     state.lastFrame = frame;
     state.lastRenderNow = nowMs;
@@ -1036,7 +1143,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
       ? "idle"
       : "off";
 
-  if (nextMembership.polygonOn) {
+  if (nextMembership.polygonOn || novaSiteOverlay) {
     await ensureInvestigationLayerFeatures(state.data, deps, "polygonFeatures", INVESTIGATION_POLYGONS_FULL_ID, {
       request: syncRequest,
       isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
@@ -1108,9 +1215,11 @@ export function wakeInvestigationTimelinePersonGlow(map) {
   applyPersonGlow(state);
   const nowMs = Number(state.now?.() ?? 0);
   const frame = deriveTimelineFrame(state, nowMs);
-  const lineFrame = state.clock.phase === "idle" && state.lineOn
-    ? deriveIdleLineFrame(state, nowMs)
-    : null;
+  const lineFrame = isNovaIdle(state)
+    ? null
+    : state.clock.phase === "idle" && state.lineOn
+      ? deriveIdleLineFrame(state, nowMs)
+      : null;
   if (shouldRafClock(frame) || shouldRafClock(lineFrame)) scheduleFrame(map, state);
 }
 

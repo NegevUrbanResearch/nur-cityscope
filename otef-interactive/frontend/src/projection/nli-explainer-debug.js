@@ -10,6 +10,7 @@ import {
   applyNliExplainerLayout,
   applyNliExplainerHostPresence,
   clampNliExplainerLayout,
+  mergeGisClockLayout,
   mergeNliExplainerLayout,
   nliExplainerBoxHitsOverlap,
   nliExplainerContentOverflows,
@@ -18,9 +19,9 @@ import {
   nliExplainerSpanKey,
   NLI_EXPLAINER_LAYOUT_STORAGE_KEY,
   NLI_GIS_CLOCK_DEFAULT_LAYOUT,
+  readGisClockLayoutStore,
   readNliExplainerLayoutStore,
   serializeNliExplainerLayoutMap,
-  shouldIgnoreExplainerLayoutStore,
 } from "./nli-explainer-overlay.js";
 
 const HANDLE_IDS = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
@@ -156,7 +157,15 @@ export function rotateLayoutByDelta(layout, dDeg) {
  *   mergeProjectionLayout?: boolean;
  *   enableRotation?: boolean;
  * }} opts
- * @returns {{ dispose: () => void; setVisible: (v: boolean) => void; toggle: () => void; isVisible: () => boolean } | null}
+ * @returns {{
+ *   dispose: () => void;
+ *   setVisible: (v: boolean) => void;
+ *   toggle: () => void;
+ *   isVisible: () => boolean;
+ *   setGisClockLayoutSlot: (slotId: string) => void;
+ *   setGisClockHotkeyAllowed: (allowed: boolean) => void;
+ *   handleGisClockHotkey: (event: { key?: string }) => boolean;
+ * } | null}
  */
 export function installNliExplainerDebug({
   host,
@@ -172,16 +181,28 @@ export function installNliExplainerDebug({
   mergeProjectionLayout = true,
   enableRotation = true,
   getProjectionConfig,
+  getRemoteLayoutMap,
+  persistRemoteLayoutMap,
 } = {}) {
   if (typeof document === "undefined" || !host) return null;
 
   const register = typeof registerDisposer === "function" ? registerDisposer : () => {};
   let visible = false;
+  let gisSlotId = "start";
+  let gisHotkeyAllowed = true;
   const store = () => storageArg || localStorage;
 
   function readStoredMap() {
+    if (typeof getRemoteLayoutMap === "function") {
+      const remote = getRemoteLayoutMap();
+      if (!mergeProjectionLayout) return readGisClockLayoutStore(remote);
+      return remote && typeof remote === "object" && !Array.isArray(remote) ? { ...remote } : {};
+    }
     try {
-      return readNliExplainerLayoutStore(store().getItem(storageKey));
+      const raw = store().getItem(storageKey);
+      return mergeProjectionLayout
+        ? readNliExplainerLayoutStore(raw)
+        : readGisClockLayoutStore(raw);
     } catch {
       return {};
     }
@@ -189,14 +210,10 @@ export function installNliExplainerDebug({
 
   function layoutFromStore() {
     if (!mergeProjectionLayout) {
-      const stored = readStoredMap();
-      if (Number.isFinite(Number(stored?.leftPct))) {
-        return clampNliExplainerLayout(stored, defaultLayout);
-      }
-      return clampNliExplainerLayout(defaultLayout, defaultLayout);
+      return mergeGisClockLayout(gisSlotId, readStoredMap(), defaultLayout);
     }
     const search = searchString();
-    const stored = shouldIgnoreExplainerLayoutStore(search) ? {} : readStoredMap();
+    const stored = readStoredMap();
     return mergeNliExplainerLayout(
       nliExplainerSpanKey(search),
       stored,
@@ -206,6 +223,7 @@ export function installNliExplainerDebug({
 
   let liveLayout = layoutFromStore();
   let drag = null;
+  let pointerMoved = false;
 
   const handles = HANDLE_IDS.map((id) => {
     const el = document.createElement("div");
@@ -358,7 +376,7 @@ ${exportButtons}
       if (warnEl) warnEl.style.display = visible && hits ? "block" : "none";
       const defaults = MapProjectionConfig.NLI_EXPLAINER_LAYOUT;
       const committed = mergeNliExplainerLayout(spanKey, {}, defaults);
-      const stored = shouldIgnoreExplainerLayoutStore(searchString()) ? {} : readStoredMap();
+      const stored = readStoredMap();
       const storedBox = stored[spanKey];
       const overridden =
         !!storedBox &&
@@ -382,34 +400,37 @@ ${exportButtons}
   }
 
   function persist() {
-    if (mergeProjectionLayout && shouldIgnoreExplainerLayoutStore(searchString())) {
-      refreshChromeSignals();
-      return;
-    }
-    let payload;
+    let nextMap;
     if (!mergeProjectionLayout) {
-      payload = JSON.stringify(clampNliExplainerLayout(liveLayout, liveLayout));
+      nextMap = {
+        ...readStoredMap(),
+        [gisSlotId]: clampNliExplainerLayout(liveLayout, liveLayout),
+      };
     } else {
       const spanKey = nliExplainerSpanKey(searchString());
-      const stored = readStoredMap();
-      stored[spanKey] = clampNliExplainerLayout(liveLayout, liveLayout);
-      payload = JSON.stringify(stored);
+      nextMap = { ...readStoredMap() };
+      nextMap[spanKey] = clampNliExplainerLayout(liveLayout, liveLayout);
     }
-    try {
-      if (storageArg) {
-        storageArg.setItem(storageKey, payload);
-      } else {
-        localStorage.setItem(storageKey, payload);
+    if (typeof persistRemoteLayoutMap === "function") {
+      void persistRemoteLayoutMap(nextMap);
+    } else {
+      const payload = JSON.stringify(nextMap);
+      try {
+        if (storageArg) {
+          storageArg.setItem(storageKey, payload);
+        } else {
+          localStorage.setItem(storageKey, payload);
+        }
+      } catch {
+        /* storage disabled or quota */
       }
-    } catch {
-      /* storage disabled or quota */
     }
     refreshChromeSignals();
   }
 
   function currentFullMap() {
     const search = searchString();
-    const stored = shouldIgnoreExplainerLayoutStore(search) ? {} : readStoredMap();
+    const stored = readStoredMap();
     const defaults = MapProjectionConfig.NLI_EXPLAINER_LAYOUT;
     const spanKey = nliExplainerSpanKey(search);
     return {
@@ -438,7 +459,8 @@ ${exportButtons}
   }
 
   function applyChrome() {
-    host.style.pointerEvents = visible ? "auto" : "none";
+    host.style.pointerEvents = visible ? "auto" : "";
+    if (captionEl?.style) captionEl.style.pointerEvents = "auto";
     const handleDisplay = visible ? "block" : "none";
     for (const el of handles) el.style.display = handleDisplay;
     if (rotateHandle) rotateHandle.style.display = handleDisplay;
@@ -451,13 +473,23 @@ ${exportButtons}
   }
 
   function setVisible(v) {
-    visible = !!v;
+    visible = gisHotkeyAllowed ? !!v : false;
     applyChrome();
     if (typeof onVisibleChange === "function") onVisibleChange(visible);
     window.requestAnimationFrame(() => refreshChromeSignals());
   }
 
+  function onClockFaceClick(ev) {
+    if (ev.button != null && ev.button !== 0) return;
+    if (ev.target?.dataset?.nedHandle) return;
+    if (panel.contains(ev.target)) return;
+    if (pointerMoved) return;
+    ev.stopPropagation?.();
+    setVisible(!visible);
+  }
+
   function onHostPointerDown(ev) {
+    pointerMoved = false;
     if (!visible) return;
     if (ev.button != null && ev.button !== 0) return;
     const handle = ev.target?.dataset?.nedHandle;
@@ -496,6 +528,7 @@ ${exportButtons}
 
   function onPointerMove(ev) {
     if (!drag) return;
+    pointerMoved = true;
     const dxPx = ev.clientX - drag.startX;
     const dyPx = ev.clientY - drag.startY;
     if (drag.mode === "move") {
@@ -531,6 +564,8 @@ ${exportButtons}
   }
 
   host.addEventListener("pointerdown", onHostPointerDown);
+  host.addEventListener("click", onClockFaceClick);
+  captionEl?.addEventListener("click", onClockFaceClick);
   window.addEventListener("pointermove", onPointerMove);
   window.addEventListener("pointerup", onPointerUp);
   const onWindowResize = () => {
@@ -550,14 +585,18 @@ ${exportButtons}
 
   panel.querySelector("[data-ned-reset]").addEventListener("click", () => {
     if (!mergeProjectionLayout) {
-      try {
-        if (storageArg) {
-          storageArg.removeItem(storageKey);
-        } else {
-          localStorage.setItem(storageKey, JSON.stringify({}));
+      if (typeof persistRemoteLayoutMap === "function") {
+        void persistRemoteLayoutMap({});
+      } else {
+        try {
+          if (storageArg) {
+            storageArg.removeItem(storageKey);
+          } else {
+            localStorage.setItem(storageKey, JSON.stringify({}));
+          }
+        } catch {
+          /* storage disabled or quota */
         }
-      } catch {
-        /* storage disabled or quota */
       }
       liveLayout = clampNliExplainerLayout(defaultLayout, defaultLayout);
     } else {
@@ -565,7 +604,9 @@ ${exportButtons}
       const spanKey = nliExplainerSpanKey(search);
       const stored = readStoredMap();
       delete stored[spanKey];
-      if (!shouldIgnoreExplainerLayoutStore(search)) {
+      if (typeof persistRemoteLayoutMap === "function") {
+        void persistRemoteLayoutMap(stored);
+      } else {
         try {
           localStorage.setItem(NLI_EXPLAINER_LAYOUT_STORAGE_KEY, JSON.stringify(stored));
         } catch {
@@ -595,6 +636,8 @@ ${exportButtons}
 
   register(() => {
     host.removeEventListener("pointerdown", onHostPointerDown);
+    host.removeEventListener("click", onClockFaceClick);
+    captionEl?.removeEventListener("click", onClockFaceClick);
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", onPointerUp);
     window.removeEventListener("resize", onWindowResize);
@@ -603,7 +646,7 @@ ${exportButtons}
     rotateHandle?.remove();
     hatch.remove();
     panel.remove();
-    host.style.pointerEvents = "none";
+    host.style.pointerEvents = "";
     host.style.outline = "";
   });
 
@@ -621,6 +664,34 @@ ${exportButtons}
     },
     isVisible() {
       return visible;
+    },
+    setGisClockLayoutSlot(slotId) {
+      const next = typeof slotId === "string" && slotId ? slotId : "start";
+      persist();
+      gisSlotId = next;
+      liveLayout = mergeGisClockLayout(
+        gisSlotId,
+        readGisClockLayoutStore(store().getItem(storageKey)),
+        defaultLayout,
+      );
+      applyLive();
+      refreshPanelFields();
+      refreshChromeSignals();
+    },
+    setGisClockHotkeyAllowed(allowed) {
+      gisHotkeyAllowed = allowed !== false;
+      if (!gisHotkeyAllowed) setVisible(false);
+    },
+    handleGisClockHotkey(event) {
+      if (!gisHotkeyAllowed) {
+        setVisible(false);
+        return false;
+      }
+      const key = String(event?.key || "").toLowerCase();
+      if (key !== "e") return false;
+      event?.preventDefault?.();
+      setVisible(!visible);
+      return true;
     },
   };
 }
