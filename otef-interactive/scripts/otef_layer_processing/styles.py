@@ -110,6 +110,68 @@ def normalize_opacity(value: object) -> float:
     return max(0.0, min(1.0, opacity / 100.0))
 
 
+def hsv_to_srgb_hex(h, s, v) -> str:
+    # h in [0,360], s,v in [0,100] as ArcGIS HSV
+    hue = float(h)
+    sat = float(s) / 100.0
+    val = float(v) / 100.0
+    chroma = val * sat
+    x = chroma * (1.0 - abs((hue / 60.0) % 2.0 - 1.0))
+    m = val - chroma
+    sector = int(hue / 60.0) % 6
+    if sector == 0:
+        r, g, b = chroma, x, 0.0
+    elif sector == 1:
+        r, g, b = x, chroma, 0.0
+    elif sector == 2:
+        r, g, b = 0.0, chroma, x
+    elif sector == 3:
+        r, g, b = 0.0, x, chroma
+    elif sector == 4:
+        r, g, b = x, 0.0, chroma
+    else:
+        r, g, b = chroma, 0.0, x
+    ri = max(0, min(255, int(round((r + m) * 255.0))))
+    gi = max(0, min(255, int(round((g + m) * 255.0))))
+    bi = max(0, min(255, int(round((b + m) * 255.0))))
+    return f"#{ri:02x}{gi:02x}{bi:02x}"
+
+
+def _is_hsv_color(color: Dict) -> bool:
+    color_type = str(color.get("type") or "")
+    if color_type == "CIMHSVColor":
+        return True
+    space = color.get("colorSpace")
+    if space == "HSV":
+        return True
+    if isinstance(space, str) and space.upper() == "HSV":
+        return True
+    return False
+
+
+def cim_color_to_hex(color: object, default: str = "#000000") -> str:
+    if not isinstance(color, dict):
+        return default
+    values = color.get("values") or []
+    if len(values) < 3:
+        return default
+    if _is_hsv_color(color):
+        return hsv_to_srgb_hex(values[0], values[1], values[2])
+    r = normalize_color_channel(values[0])
+    g = normalize_color_channel(values[1])
+    b = normalize_color_channel(values[2])
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def cim_color_opacity(color: object, default: float = 1.0) -> float:
+    if not isinstance(color, dict):
+        return default
+    values = color.get("values") or []
+    if len(values) > 3:
+        return normalize_opacity(values[3])
+    return default
+
+
 def extract_symbol_layers_recursive(symbol_obj: Dict, depth: int = 0) -> List[Dict]:
     if depth > 10:
         return []
@@ -135,6 +197,178 @@ def extract_symbol_layers_recursive(symbol_obj: Dict, depth: int = 0) -> List[Di
     return layers
 
 
+def _unwrap_cim_symbol(symbol_ref: object) -> Dict:
+    if not isinstance(symbol_ref, dict):
+        return {}
+    nested = symbol_ref.get("symbol")
+    if isinstance(nested, dict) and nested.get("symbolLayers") is not None:
+        return nested
+    return symbol_ref
+
+
+def _symbol_layers_from_ref(symbol_ref: object) -> List[Dict]:
+    symbol = _unwrap_cim_symbol(symbol_ref)
+    if not symbol:
+        return []
+    layers = extract_symbol_layers_recursive(symbol)
+    if layers:
+        return layers
+    nested_layers = symbol.get("symbolLayers") or []
+    return [layer for layer in nested_layers if isinstance(layer, dict)]
+
+
+def _line_join_cap(value: object, default: str = "round") -> str:
+    if not value:
+        return default
+    return str(value).lower()
+
+
+def _taper_from_effects(effects: object) -> Dict[str, float]:
+    from_width = 0.0
+    to_width = 1.0
+    if not isinstance(effects, list):
+        return {"fromWidthPt": from_width, "toWidthPt": to_width}
+    for effect in effects:
+        if not isinstance(effect, dict):
+            continue
+        if effect.get("type") != "CIMGeometricEffectTaperedPolygon":
+            continue
+        if "fromWidth" in effect:
+            try:
+                from_width = float(effect["fromWidth"])
+            except (TypeError, ValueError):
+                from_width = 0.0
+        else:
+            from_width = 0.0
+        try:
+            to_width = float(effect.get("toWidth", 1.0))
+        except (TypeError, ValueError):
+            to_width = 1.0
+        break
+    return {"fromWidthPt": from_width, "toWidthPt": to_width}
+
+
+def _gradient_size_fraction(stroke: Dict) -> float:
+    try:
+        size = float(stroke.get("gradientSize", 75))
+    except (TypeError, ValueError):
+        size = 75.0
+    units = str(stroke.get("gradientSizeUnits") or "Relative")
+    if units.lower() == "relative" or size > 1.0:
+        return size / 100.0
+    return size
+
+
+def _acrossline_ir_from_gradient_stroke(
+    stroke: Dict, opacity: float = 1.0
+) -> Dict[str, Any]:
+    ramp = stroke.get("colorRamp") or {}
+    if not isinstance(ramp, dict):
+        ramp = {}
+    return {
+        "type": "acrossLine",
+        "gradientMethod": stroke.get("gradientMethod") or "AcrossLine",
+        "fromColor": cim_color_to_hex(ramp.get("fromColor") or {}, default="#f5f500"),
+        "toColor": cim_color_to_hex(ramp.get("toColor") or {}, default="#f50000"),
+        "widthPt": float(stroke.get("width", 1.0)),
+        "opacity": opacity,
+        "gradientSize": _gradient_size_fraction(stroke),
+        "cap": _line_join_cap(stroke.get("capStyle")),
+        "join": _line_join_cap(stroke.get("joinStyle")),
+        "taper": _taper_from_effects(stroke.get("effects") or []),
+        "classBreaks": None,
+    }
+
+
+def _iter_renderer_gradient_strokes(renderer: Dict) -> List[Dict]:
+    strokes: List[Dict] = []
+    seen = set()
+
+    def add_from_ref(symbol_ref: object) -> None:
+        for layer in _symbol_layers_from_ref(symbol_ref):
+            if layer.get("type") != "CIMGradientStroke":
+                continue
+            marker = id(layer)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            strokes.append(layer)
+
+    add_from_ref(renderer.get("symbol") or {})
+    authoring = renderer.get("authoringInfo") or {}
+    if isinstance(authoring, dict):
+        add_from_ref(authoring.get("templateSymbol") or {})
+    for brk in renderer.get("breaks") or []:
+        if isinstance(brk, dict):
+            add_from_ref(brk.get("symbol") or {})
+    return strokes
+
+
+def _first_gradient_stroke(renderer: Dict) -> Optional[Dict]:
+    strokes = _iter_renderer_gradient_strokes(renderer)
+    return strokes[0] if strokes else None
+
+
+def _class_breaks_from_renderer(renderer: Dict) -> Optional[List[Dict[str, Any]]]:
+    if renderer.get("type") != "CIMClassBreaksRenderer":
+        return None
+    breaks: List[Dict[str, Any]] = []
+    for brk in renderer.get("breaks") or []:
+        if not isinstance(brk, dict):
+            continue
+        upper = brk.get("upperBound")
+        width_pt = None
+        for layer in _symbol_layers_from_ref(brk.get("symbol") or {}):
+            if layer.get("type") == "CIMGradientStroke":
+                try:
+                    width_pt = float(layer.get("width", 0))
+                except (TypeError, ValueError):
+                    width_pt = None
+                break
+        if upper is None or width_pt is None:
+            continue
+        breaks.append({"max": upper, "widthPt": width_pt})
+    return breaks or None
+
+
+def _layer_opacity_from_transparency(layer_def: Dict) -> float:
+    transparency = layer_def.get("transparency")
+    if transparency is None:
+        return 1.0
+    try:
+        return max(0.0, min(1.0, (100.0 - float(transparency)) / 100.0))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _load_lyrx_document(source) -> Dict:
+    if isinstance(source, dict):
+        return source
+    path = Path(source)
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def parse_acrossline_from_lyrx(source) -> Dict[str, Any]:
+    """Parse CIMGradientStroke AcrossLine lyrx into ribbon IR (no MapLibre line-gradient)."""
+    data = _load_lyrx_document(source)
+    layer_defs = data.get("layerDefinitions") or []
+    if not layer_defs or not isinstance(layer_defs[0], dict):
+        raise ValueError("lyrx has no layerDefinitions")
+    layer_def = layer_defs[0]
+    renderer = layer_def.get("renderer") or {}
+    if not isinstance(renderer, dict):
+        renderer = {}
+    stroke = _first_gradient_stroke(renderer)
+    if stroke is None:
+        raise ValueError("no CIMGradientStroke AcrossLine in lyrx")
+    ir = _acrossline_ir_from_gradient_stroke(
+        stroke, opacity=_layer_opacity_from_transparency(layer_def)
+    )
+    ir["classBreaks"] = _class_breaks_from_renderer(renderer)
+    return ir
+
+
 def extract_simplified_style(symbol_layers: List[Dict]) -> Dict:
     fill_color = None
     fill_opacity = 1.0
@@ -158,29 +392,29 @@ def extract_simplified_style(symbol_layers: List[Dict]) -> Dict:
 
         # Priority 1: Solid Fill and Stroke
         if layer_type == "CIMSolidFill" and fill_color is None:
-            color = layer.get("color", {}).get("values", [0, 0, 0, 100])
-            if len(color) >= 3:
-                r = normalize_color_channel(color[0])
-                g = normalize_color_channel(color[1])
-                b = normalize_color_channel(color[2])
-                fill_color = f"#{r:02x}{g:02x}{b:02x}"
-                fill_opacity = normalize_opacity(color[3]) if len(color) > 3 else 1.0
+            color_obj = layer.get("color", {})
+            fill_color = cim_color_to_hex(color_obj)
+            fill_opacity = cim_color_opacity(color_obj)
 
         if layer_type == "CIMSolidStroke" and stroke_color is None:
-            color = layer.get("color", {}).get("values", [0, 0, 0, 100])
-            if len(color) >= 3:
-                r = normalize_color_channel(color[0])
-                g = normalize_color_channel(color[1])
-                b = normalize_color_channel(color[2])
-                stroke_color = f"#{r:02x}{g:02x}{b:02x}"
-                stroke_width = layer.get("width", 1.0) * PT_TO_PX  # Scale line width
+            color_obj = layer.get("color", {})
+            stroke_color = cim_color_to_hex(color_obj)
+            stroke_width = layer.get("width", 1.0) * PT_TO_PX  # Scale line width
 
-            # Check for dashed effects
+            # Check for dashed effects. Missing dashTemplate is omitted, not [].
             effects = layer.get("effects", [])
             for effect in effects:
                 if effect.get("type") == "CIMGeometricEffectDashes":
-                    style["dashArray"] = effect.get("dashTemplate", [])
+                    template = effect.get("dashTemplate")
+                    if template:
+                        style["dashArray"] = template
                     break
+
+        if layer_type == "CIMGradientStroke" and stroke_color is None:
+            ramp = layer.get("colorRamp") or {}
+            if isinstance(ramp, dict):
+                stroke_color = cim_color_to_hex(ramp.get("fromColor") or {})
+            stroke_width = layer.get("width", 1.0) * PT_TO_PX
 
         # Priority 2: Hatch Fill (capture it always, but only set fill_color fallback if still None)
         if layer_type == "CIMHatchFill" and "hatch" not in style:
@@ -189,21 +423,16 @@ def extract_simplified_style(symbol_layers: List[Dict]) -> Dict:
                 line_layers = extract_symbol_layers_recursive(line_symbol)
                 for l_layer in line_layers:
                     if l_layer.get("type") == "CIMSolidStroke":
-                        color = l_layer.get("color", {}).get("values", [0, 0, 0, 100])
-                        if len(color) >= 3:
-                            r = normalize_color_channel(color[0])
-                            g = normalize_color_channel(color[1])
-                            b = normalize_color_channel(color[2])
-                            h_color = f"#{r:02x}{g:02x}{b:02x}"
-                            style["hatch"] = {
-                                "color": h_color,
-                                "rotation": layer.get("rotation", 0),
-                                "separation": layer.get("separation", 5),
-                                "width": l_layer.get("width", 1)
-                                * PT_TO_PX,  # Scale hatch line width
-                            }
-                            # Only set fallback if no solid fill found YET
-                            break
+                        h_color = cim_color_to_hex(l_layer.get("color", {}))
+                        style["hatch"] = {
+                            "color": h_color,
+                            "rotation": layer.get("rotation", 0),
+                            "separation": layer.get("separation", 5),
+                            "width": l_layer.get("width", 1)
+                            * PT_TO_PX,  # Scale hatch line width
+                        }
+                        # Only set fallback if no solid fill found YET
+                        break
 
     style.update(
         {
@@ -239,7 +468,13 @@ def _analyze_cim_complexity(symbol_layers: List[Dict]) -> Dict[str, Any]:
         L.get("type") == "CIMVectorMarker" and L.get("markerPlacement")
         for L in symbol_layers
     )
-    supported = {"CIMSolidFill", "CIMSolidStroke", "CIMHatchFill", "CIMVectorMarker"}
+    supported = {
+        "CIMSolidFill",
+        "CIMSolidStroke",
+        "CIMHatchFill",
+        "CIMVectorMarker",
+        "CIMGradientStroke",
+    }
     unsupported = [
         L.get("type")
         for L in symbol_layers
@@ -281,21 +516,17 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
         ltype = layer.get("type", "")
 
         if ltype == "CIMSolidFill":
-            color = layer.get("color", {}).get("values", [0, 0, 0, 100])
-            if len(color) >= 3:
-                r = normalize_color_channel(color[0])
-                g = normalize_color_channel(color[1])
-                b = normalize_color_channel(color[2])
-                fill_color = f"#{r:02x}{g:02x}{b:02x}"
-                opacity = normalize_opacity(color[3]) if len(color) > 3 else 1.0
-                symbol_layers_ir.append(
-                    {
-                        "type": "fill",
-                        "fillType": "solid",
-                        "color": fill_color,
-                        "opacity": opacity,
-                    }
-                )
+            color_obj = layer.get("color", {})
+            fill_color = cim_color_to_hex(color_obj)
+            opacity = cim_color_opacity(color_obj)
+            symbol_layers_ir.append(
+                {
+                    "type": "fill",
+                    "fillType": "solid",
+                    "color": fill_color,
+                    "opacity": opacity,
+                }
+            )
 
         elif ltype == "CIMHatchFill":
             # Represent hatch as a fill layer with hatch sub-structure
@@ -309,14 +540,10 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
                 nested = extract_symbol_layers_recursive(line_symbol)
                 for n in nested:
                     if n.get("type") == "CIMSolidStroke":
-                        color = n.get("color", {}).get("values", [0, 0, 0, 100])
-                        if len(color) >= 3:
-                            r = normalize_color_channel(color[0])
-                            g = normalize_color_channel(color[1])
-                            b = normalize_color_channel(color[2])
-                            hatch_color = f"#{r:02x}{g:02x}{b:02x}"
-                            line_width = n.get("width", 1) * PT_TO_PX
-                            break
+                        color_obj = n.get("color", {})
+                        hatch_color = cim_color_to_hex(color_obj)
+                        line_width = n.get("width", 1) * PT_TO_PX
+                        break
 
             symbol_layers_ir.append(
                 {
@@ -335,31 +562,33 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
             )
 
         elif ltype == "CIMSolidStroke":
-            color = layer.get("color", {}).get("values", [0, 0, 0, 100])
-            if len(color) >= 3:
-                r = normalize_color_channel(color[0])
-                g = normalize_color_channel(color[1])
-                b = normalize_color_channel(color[2])
-                stroke_color = f"#{r:02x}{g:02x}{b:02x}"
-                opacity = normalize_opacity(color[3]) if len(color) > 3 else 1.0
-                width = layer.get("width", 1.0) * PT_TO_PX
+            color_obj = layer.get("color", {})
+            stroke_color = cim_color_to_hex(color_obj)
+            opacity = cim_color_opacity(color_obj)
+            width = layer.get("width", 1.0) * PT_TO_PX
 
-                dash_array = None
-                effects = layer.get("effects", [])
-                for effect in effects:
-                    if effect.get("type") == "CIMGeometricEffectDashes":
-                        dash_array = effect.get("dashTemplate", [])
-                        break
+            dash_array = None
+            effects = layer.get("effects", [])
+            for effect in effects:
+                if effect.get("type") == "CIMGeometricEffectDashes":
+                    template = effect.get("dashTemplate")
+                    if template:
+                        dash_array = template
+                    break
 
-                symbol_layers_ir.append(
-                    {
-                        "type": "stroke",
-                        "color": stroke_color,
-                        "width": width,
-                        "opacity": opacity,
-                        "dash": {"array": dash_array} if dash_array else None,
-                    }
-                )
+            symbol_layers_ir.append(
+                {
+                    "type": "stroke",
+                    "color": stroke_color,
+                    "width": width,
+                    "opacity": opacity,
+                    "dash": {"array": dash_array} if dash_array else None,
+                }
+            )
+
+        elif ltype == "CIMGradientStroke":
+            # AcrossLine ribbon IR. Do not emit MapLibre line-gradient or empty dash arrays.
+            symbol_layers_ir.append(_acrossline_ir_from_gradient_stroke(layer))
 
         elif ltype == "CIMVectorMarker":
             size = layer.get("size", 6) * PT_TO_PX
@@ -394,33 +623,13 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
                 for nlayer in nested_layers:
                     ntype = nlayer.get("type", "")
                     if ntype == "CIMSolidFill" and marker_fill is None:
-                        color_vals = nlayer.get("color", {}).get(
-                            "values", [0, 0, 0, 100]
-                        )
-                        if len(color_vals) >= 3:
-                            r = normalize_color_channel(color_vals[0])
-                            g = normalize_color_channel(color_vals[1])
-                            b = normalize_color_channel(color_vals[2])
-                            marker_fill = f"#{r:02x}{g:02x}{b:02x}"
-                            marker_fill_opacity = (
-                                normalize_opacity(color_vals[3])
-                                if len(color_vals) > 3
-                                else 1.0
-                            )
+                        color_obj = nlayer.get("color", {})
+                        marker_fill = cim_color_to_hex(color_obj)
+                        marker_fill_opacity = cim_color_opacity(color_obj)
                     elif ntype == "CIMSolidStroke" and marker_stroke is None:
-                        color_vals = nlayer.get("color", {}).get(
-                            "values", [0, 0, 0, 100]
-                        )
-                        if len(color_vals) >= 3:
-                            r = normalize_color_channel(color_vals[0])
-                            g = normalize_color_channel(color_vals[1])
-                            b = normalize_color_channel(color_vals[2])
-                            marker_stroke = f"#{r:02x}{g:02x}{b:02x}"
-                            marker_stroke_opacity = (
-                                normalize_opacity(color_vals[3])
-                                if len(color_vals) > 3
-                                else 1.0
-                            )
+                        color_obj = nlayer.get("color", {})
+                        marker_stroke = cim_color_to_hex(color_obj)
+                        marker_stroke_opacity = cim_color_opacity(color_obj)
                         marker_stroke_width = nlayer.get("width", 1.0) * PT_TO_PX
 
             marker_entry: Dict[str, Any] = {
@@ -679,6 +888,14 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
 
     geometry_type = None
     symbol_ref = renderer.get("symbol", {})
+    if not symbol_ref and renderer_type == "CIMClassBreaksRenderer":
+        breaks = renderer.get("breaks") or []
+        if breaks and isinstance(breaks[0], dict):
+            symbol_ref = breaks[0].get("symbol", {}) or {}
+        if not symbol_ref:
+            authoring = renderer.get("authoringInfo") or {}
+            if isinstance(authoring, dict):
+                symbol_ref = authoring.get("templateSymbol") or {}
     if symbol_ref:
         actual_symbol = symbol_ref.get("symbol", {})
         symbol_type = actual_symbol.get("type", "")
@@ -833,6 +1050,33 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
         style.full_symbol_layers = all_layers
         style.default_style = extract_simplified_style(all_layers)
         style.advanced_symbol = _build_advanced_symbol_from_layers(all_layers) or None
+    elif renderer_type == "CIMClassBreaksRenderer":
+        style.renderer = "classBreaks"
+        all_layers = _iter_renderer_gradient_strokes(renderer)
+        if not all_layers:
+            breaks = renderer.get("breaks") or []
+            if breaks and isinstance(breaks[0], dict):
+                break_ref = breaks[0].get("symbol", {}) or {}
+                actual_symbol = break_ref.get("symbol", {}) if break_ref else {}
+                all_layers = extract_symbol_layers_recursive(actual_symbol)
+        style.full_symbol_layers = all_layers
+        style.default_style = extract_simplified_style(all_layers)
+        style.advanced_symbol = _build_advanced_symbol_from_layers(all_layers) or None
+
+    if _first_gradient_stroke(renderer if isinstance(renderer, dict) else {}):
+        across = parse_acrossline_from_lyrx(lyrx_data)
+        style.advanced_symbol = {"symbolLayers": [across]}
+        gradient_layers = _iter_renderer_gradient_strokes(renderer)
+        if gradient_layers:
+            style.full_symbol_layers = gradient_layers
+        style.default_style = {
+            "fillColor": across["fromColor"],
+            "fillOpacity": across["opacity"],
+            "strokeColor": across["fromColor"],
+            "strokeWidth": across["widthPt"] * PT_TO_PX,
+        }
+        if renderer_type == "CIMClassBreaksRenderer":
+            style.renderer = "classBreaks"
 
     # For polygon layers, align advanced_symbol strokes with the simplified
     # default_style when CIM-only information would otherwise drop the outline.
@@ -860,8 +1104,16 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
             or comp["markerAlongLine"]
             or comp["unsupportedTypes"]
             or any(L.get("type") == "CIMHatchFill" for L in default_layers)
+            or any(L.get("type") == "CIMGradientStroke" for L in default_layers)
         ):
             complexity = "advanced"
+
+    advanced = style.advanced_symbol if isinstance(style.advanced_symbol, dict) else {}
+    if any(
+        isinstance(layer, dict) and layer.get("type") == "acrossLine"
+        for layer in (advanced.get("symbolLayers") or [])
+    ):
+        complexity = "advanced"
 
     # For unique value renderers, if any class has hatch/dash or complex symbol stack,
     # escalate to advanced.

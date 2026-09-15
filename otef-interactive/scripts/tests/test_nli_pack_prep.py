@@ -8,7 +8,13 @@ from pathlib import Path
 
 from nli_pack_prep import (
     ASHKELON_NORTH_FALLBACK_LAT,
+    FLEEING_GEOJSON_ZIP_SHA256,
+    FLEEING_LYRX_ZIP_SHA256,
+    FLEEING_ROUTE_OVERLAPP_URL,
+    FLEEING_ROUTE_URL,
     MITZPE_RAMON_LAT,
+    NOVA_FACILITY_WGS84,
+    NOVA_FLEEING_ENVELOPE,
     OCT7_STATUS_CLASSES,
     NLI_CATEGORY_CLASSES,
     NLI_CATALOG_MARKER_SIZE,
@@ -22,7 +28,11 @@ from nli_pack_prep import (
     ROUTE_232_STROKE_WIDTH_PT,
     ZIP_LAYER_MAP,
     emphasize_copied_line_lyrx,
+    install_nli_fleeing_overlays,
     install_nli_route_232_overlay,
+    reverse_fleeing_individuals,
+    reverse_fleeing_overlap,
+    sha256_file,
     apply_alarm_timeline_minutes,
     apply_people_name_offsets,
     apply_people_source_overlay,
@@ -66,6 +76,196 @@ def _point(lon, lat, **props):
         "properties": props,
         "geometry": {"type": "Point", "coordinates": [lon, lat]},
     }
+
+
+def haversine_m(a, b):
+    radius_m = 6371000.0
+    lon1, lat1 = math.radians(a[0]), math.radians(a[1])
+    lon2, lat2 = math.radians(b[0]), math.radians(b[1])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    chord = (
+        math.sin(dlat / 2.0) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2.0) ** 2
+    )
+    return 2.0 * radius_m * math.asin(math.sqrt(chord))
+
+
+def _lonlat_to_mercator(lon, lat):
+    earth_a = 6378137.0
+    x = lon * (math.pi / 180.0) * earth_a
+    phi = lat * (math.pi / 180.0)
+    y = math.log(math.tan(math.pi / 4.0 + phi / 2.0)) * earth_a
+    return [x, y]
+
+
+def _hsv_color(h, s, v, a=100):
+    return {"type": "CIMHSVColor", "colorSpace": "HSV", "values": [h, s, v, a]}
+
+
+def _gradient_stroke(width, *, dashes_without_template=False):
+    effects = []
+    if dashes_without_template:
+        effects.append(
+            {
+                "type": "CIMGeometricEffectDashes",
+                "lineDashEnding": "NoConstraint",
+                "controlPointEnding": "NoConstraint",
+            }
+        )
+    effects.append({"type": "CIMGeometricEffectTaperedPolygon", "toWidth": 1})
+    return {
+        "type": "CIMGradientStroke",
+        "effects": effects,
+        "enable": True,
+        "capStyle": "Round",
+        "joinStyle": "Round",
+        "width": width,
+        "colorRamp": {
+            "type": "CIMPolarContinuousColorRamp",
+            "fromColor": _hsv_color(60, 100, 96, 100),
+            "toColor": _hsv_color(0, 100, 96, 100),
+            "interpolationSpace": "HSV",
+        },
+        "gradientMethod": "AcrossLine",
+        "gradientSize": 75,
+        "gradientSizeUnits": "Relative",
+        "gradientType": "Continuous",
+    }
+
+
+def _line_symbol_ref(stroke):
+    return {
+        "type": "CIMSymbolReference",
+        "symbol": {
+            "type": "CIMLineSymbol",
+            "symbolLayers": [stroke],
+        },
+    }
+
+
+def _class_break(upper_bound, width):
+    return {
+        "type": "CIMClassBreak",
+        "upperBound": upper_bound,
+        "symbol": _line_symbol_ref(
+            _gradient_stroke(width, dashes_without_template=True)
+        ),
+    }
+
+
+def _fleeing_individual_lyrx():
+    return {
+        "layerDefinitions": [
+            {
+                "name": "Fleeing_route",
+                "transparency": 40,
+                "renderer": {
+                    "type": "CIMSimpleRenderer",
+                    "symbol": _line_symbol_ref(_gradient_stroke(1)),
+                },
+            }
+        ]
+    }
+
+
+def _fleeing_overlap_lyrx():
+    return {
+        "layerDefinitions": [
+            {
+                "name": "fleeing_route_overlapp",
+                "renderer": {
+                    "type": "CIMClassBreaksRenderer",
+                    "classBreakType": "GraduatedSymbol",
+                    "field": "COUNT_",
+                    "authoringInfo": {
+                        "type": "CIMClassBreaksRendererAuthoringInfo",
+                        "templateSymbol": _line_symbol_ref(_gradient_stroke(2.25)),
+                    },
+                    "breaks": [
+                        _class_break(13, 0.5),
+                        _class_break(39, 1.375),
+                        _class_break(100, 2.25),
+                        _class_break(146, 3.125),
+                        _class_break(235, 4),
+                    ],
+                },
+            }
+        ]
+    }
+
+
+def load_fixture_3857():
+    nova_merc = _lonlat_to_mercator(*NOVA_FACILITY_WGS84)
+    far_merc = _lonlat_to_mercator(34.51622737688783, 31.450087893615223)
+    return {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"OBJECTID": 1, "Name": "Ada - מוקד לחימה 4 - מתחם הנובה"},
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [far_merc, nova_merc],
+                },
+            }
+        ],
+    }
+
+
+def load_overlap_fixture():
+    nova_merc = _lonlat_to_mercator(*NOVA_FACILITY_WGS84)
+    far_merc = _lonlat_to_mercator(34.4765945958846, 31.4247984299415)
+    return {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"OBJECTID": 10, "COUNT_": 235},
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [far_merc, list(nova_merc)],
+                },
+            },
+            {
+                "type": "Feature",
+                "properties": {"OBJECTID": 11, "COUNT_": 1},
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [far_merc, list(nova_merc)],
+                },
+            },
+        ],
+    }
+
+
+def _write_fleeing_fixture_zips(tmp):
+    geojson_zip = tmp / "fleeing_route_geojson.zip"
+    lyrx_zip = tmp / "Fleeing_route_lyrx.zip"
+    with zipfile.ZipFile(geojson_zip, "w") as archive:
+        archive.writestr("Fleeing_route.geojson", json.dumps(load_fixture_3857()))
+        archive.writestr(
+            "fleeing_route_overlapp.geojson", json.dumps(load_overlap_fixture())
+        )
+    with zipfile.ZipFile(lyrx_zip, "w") as archive:
+        archive.writestr("Fleeing_route.lyrx", json.dumps(_fleeing_individual_lyrx()))
+        archive.writestr(
+            "fleeing_route_overlapp.lyrx", json.dumps(_fleeing_overlap_lyrx())
+        )
+    return geojson_zip, lyrx_zip
+
+
+def _collection_bbox(collection):
+    lons = []
+    lats = []
+    for feat in collection.get("features") or []:
+        coords = (feat.get("geometry") or {}).get("coordinates") or []
+        for point in coords:
+            lons.append(float(point[0]))
+            lats.append(float(point[1]))
+    return (min(lons), min(lats), max(lons), max(lats))
 
 
 class ZipEntryNameTests(unittest.TestCase):
@@ -627,6 +827,10 @@ class PreparePackTests(unittest.TestCase):
     def test_keep_stems_include_route_232_overlay(self):
         self.assertIn(ROUTE_232_STEM, NLI_KEEP_STEMS)
         self.assertNotIn(ROUTE_232_STEM, ZIP_LAYER_MAP.values())
+
+    def test_keep_stems_exclude_investigation_settlements_sidecar(self):
+        self.assertNotIn("investigation_settlements", NLI_KEEP_STEMS)
+        self.assertNotIn("investigation_settlements", ZIP_LAYER_MAP.values())
 
     def test_prepare_copies_jittered_people_to_people_names(self):
         tmp = Path(tempfile.mkdtemp())
@@ -1205,6 +1409,348 @@ class PeopleSourceOverlayTests(unittest.TestCase):
         expression = lyrx["layerDefinitions"][0]["labelClasses"][0]["expression"]
         self.assertIn("hebrew_name", expression)
         self.assertEqual(summary["layers"]["people"]["overlay"]["hebrew_name"], 1)
+
+
+NOVA_SITE_POLYGON = {
+    "type": "Polygon",
+    "coordinates": [[
+        [34.46865421797836, 31.39786792616594],
+        [34.47042663746633, 31.39746452642137],
+        [34.47068868562143, 31.398194820700727],
+        [34.470195830580955, 31.398634093987706],
+        [34.47069554966174, 31.399682468196676],
+        [34.469303307614744, 31.39939757929375],
+        [34.46865421797836, 31.39786792616594],
+    ]],
+}
+
+
+def _nli_zip_with_polygons(tmp, polygons):
+    zip_path = tmp / "nli.zip"
+    people = {
+        "type": "FeatureCollection",
+        "features": [_point(34.47, 31.40, name="Ada", oct7_pid=1)],
+    }
+    empty = {"type": "FeatureCollection", "features": []}
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("geojson/people_7_10.json", json.dumps(people))
+        archive.writestr("geojson/polygons_7_10.geojson", json.dumps(polygons))
+        archive.writestr("geojson/lines_7_10.geojson", json.dumps(empty))
+    return zip_path
+
+
+def _reim_settlement_feature():
+    return {
+        "type": "Feature",
+        "id": "nli-settlement-outline-18",
+        "properties": {"outlineObjectId": 18, "locations": ["רעים"]},
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[34.45, 31.38], [34.46, 31.38], [34.46, 31.39], [34.45, 31.38]]],
+        },
+    }
+
+
+def _polygon_100_collection():
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "id": 100,
+                "properties": {
+                    "OBJECTID": 100,
+                    "מיקום": "נובה",
+                    "Name": "מוקד לחימה 4 - מתחם הנובה",
+                    "timeline": "local 08:20",
+                },
+                "geometry": copy.deepcopy(NOVA_SITE_POLYGON),
+            }
+        ],
+    }
+
+
+class NovaSiteSettlementSidecarTests(unittest.TestCase):
+    def test_prepare_fails_closed_without_processed_seed_sidecar(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = _nli_zip_with_polygons(tmp, _polygon_100_collection())
+        pack_dir = tmp / "nli"
+        gis_dir = pack_dir / "gis"
+        gis_dir.mkdir(parents=True)
+        leftover = gis_dir / "investigation_settlements.geojson"
+        leftover.write_text(
+            json.dumps({"type": "FeatureCollection", "features": [_reim_settlement_feature()]}),
+            encoding="utf-8",
+        )
+        processed_layers_dir = tmp / "processed"
+        summary = prepare_nli_pack(
+            zip_path,
+            pack_dir,
+            authorities_path=tmp / "missing.json",
+            processed_layers_dir=processed_layers_dir,
+        )
+        self.assertFalse(leftover.exists())
+        self.assertFalse((gis_dir / "investigation_settlements.geojson").exists())
+        self.assertFalse((processed_layers_dir / "investigation_settlements.geojson").exists())
+        self.assertNotIn("investigation_settlements", summary["layers"])
+
+    def test_prepare_copies_polygon_100_into_processed_investigation_settlements(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = _nli_zip_with_polygons(tmp, _polygon_100_collection())
+        pack_dir = tmp / "nli"
+        processed_layers_dir = tmp / "processed"
+        processed_layers_dir.mkdir()
+        (processed_layers_dir / "investigation_settlements.geojson").write_text(
+            json.dumps({"type": "FeatureCollection", "features": [_reim_settlement_feature()]}),
+            encoding="utf-8",
+        )
+        summary = prepare_nli_pack(
+            zip_path,
+            pack_dir,
+            authorities_path=tmp / "missing.json",
+            processed_layers_dir=processed_layers_dir,
+        )
+        gis_sidecar = pack_dir / "gis" / "investigation_settlements.geojson"
+        self.assertFalse(gis_sidecar.exists())
+        settlements_path = processed_layers_dir / "investigation_settlements.geojson"
+        self.assertTrue(settlements_path.is_file())
+        settlements = json.loads(settlements_path.read_text(encoding="utf-8"))
+        nova = next(
+            (
+                feat
+                for feat in settlements.get("features") or []
+                if (feat.get("properties") or {}).get("outlineObjectId") == 100
+            ),
+            None,
+        )
+        self.assertIsNotNone(nova)
+        self.assertEqual(nova["properties"]["locations"], ["נובה"])
+        polygons_out = json.loads(
+            (pack_dir / "gis" / "investigation_polygons.geojson").read_text(encoding="utf-8")
+        )
+        site = next(
+            feat
+            for feat in polygons_out["features"]
+            if feat["properties"]["OBJECTID"] == 100
+        )
+        self.assertEqual(nova["geometry"], site["geometry"])
+        self.assertEqual(summary["layers"]["investigation_settlements"]["features"], 2)
+        self.assertNotIn("investigation_settlements", NLI_POPUP_CONFIG["nli"]["layers"])
+
+    def test_prepare_keeps_reim_18_and_does_not_alias_nova_onto_it(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = _nli_zip_with_polygons(tmp, _polygon_100_collection())
+        pack_dir = tmp / "nli"
+        gis_dir = pack_dir / "gis"
+        gis_dir.mkdir(parents=True)
+        leftover_gis = gis_dir / "investigation_settlements.geojson"
+        leftover_gis.write_text(
+            json.dumps({"type": "FeatureCollection", "features": [_reim_settlement_feature()]}),
+            encoding="utf-8",
+        )
+        processed_layers_dir = tmp / "processed"
+        processed_layers_dir.mkdir()
+        (processed_layers_dir / "investigation_settlements.geojson").write_text(
+            json.dumps({"type": "FeatureCollection", "features": [_reim_settlement_feature()]}),
+            encoding="utf-8",
+        )
+        prepare_nli_pack(
+            zip_path,
+            pack_dir,
+            authorities_path=tmp / "missing.json",
+            processed_layers_dir=processed_layers_dir,
+        )
+        self.assertFalse(leftover_gis.exists())
+        settlements = json.loads(
+            (processed_layers_dir / "investigation_settlements.geojson").read_text(encoding="utf-8")
+        )
+        by_id = {
+            feat["properties"]["outlineObjectId"]: feat["properties"]
+            for feat in settlements["features"]
+        }
+        self.assertEqual(by_id[18]["locations"], ["רעים"])
+        self.assertNotIn("נובה", by_id[18]["locations"])
+        self.assertEqual(by_id[100]["locations"], ["נובה"])
+        self.assertEqual({feat["properties"]["outlineObjectId"] for feat in settlements["features"]}, {18, 100})
+
+
+class KeepStemsFleeingTests(unittest.TestCase):
+    def test_keep_stems_include_fleeing_and_not_popup_or_zip_map(self):
+        self.assertIn("fleeing_route", NLI_KEEP_STEMS)
+        self.assertIn("fleeing_route_overlapp", NLI_KEEP_STEMS)
+        self.assertNotIn("fleeing_route", ZIP_LAYER_MAP.values())
+        self.assertNotIn("fleeing_route_overlapp", ZIP_LAYER_MAP.values())
+        self.assertNotIn("fleeing_route", NLI_POPUP_CONFIG["nli"]["layers"])
+        self.assertNotIn("fleeing_route_overlapp", NLI_POPUP_CONFIG["nli"]["layers"])
+
+    def test_fleeing_overlay_urls_use_exhibit_public_prefix(self):
+        self.assertEqual(
+            FLEEING_ROUTE_URL,
+            "/otef-interactive/public/processed/layers/nli/fleeing_route.geojson",
+        )
+        self.assertEqual(
+            FLEEING_ROUTE_OVERLAPP_URL,
+            "/otef-interactive/public/processed/layers/nli/fleeing_route_overlapp.geojson",
+        )
+        self.assertNotEqual(
+            FLEEING_ROUTE_URL, "/processed/layers/nli/fleeing_route.geojson"
+        )
+        self.assertNotEqual(
+            FLEEING_ROUTE_OVERLAPP_URL,
+            "/processed/layers/nli/fleeing_route_overlapp.geojson",
+        )
+
+    def test_reverse_puts_vertex0_at_nova_and_swaps_taper(self):
+        collection = reverse_fleeing_individuals(load_fixture_3857())
+        reproject_web_mercator_collection_to_wgs84(collection)
+        nova = (34.46975, 31.39851)
+        self.assertEqual(tuple(NOVA_FACILITY_WGS84), nova)
+        for feat in collection["features"]:
+            lon, lat = feat["geometry"]["coordinates"][0]
+            self.assertLess(haversine_m((lon, lat), nova), 25)
+            self.assertNotEqual(feat["properties"].get("flow_direction"), "reverse")
+            self.assertNotIn("flow_direction", feat["properties"])
+            self.assertIn("OBJECTID", feat["properties"])
+            taper = feat["properties"]["acrossLine"]
+            self.assertGreater(taper["taperFromWidthPt"], taper["taperToWidthPt"])
+            self.assertEqual(taper["fromColor"], "#f5f500")
+            self.assertEqual(taper["toColor"], "#f50000")
+            self.assertEqual(taper["gradientSize"], 0.75)
+            self.assertEqual(taper["widthPt"], 1)
+            self.assertEqual(taper["opacity"], 0.6)
+        west, south, east, north = _collection_bbox(collection)
+        self.assertLessEqual(west, nova[0])
+        self.assertLessEqual(south, nova[1])
+        self.assertGreaterEqual(east, nova[0])
+        self.assertGreaterEqual(north, nova[1])
+        self.assertEqual(NOVA_FLEEING_ENVELOPE, (34.36128, 31.23319, 34.60479, 31.52479))
+
+    def test_overlap_count_is_class_width_not_1pt(self):
+        collection = reverse_fleeing_overlap(load_overlap_fixture())
+        feat235 = next(f for f in collection["features"] if f["properties"]["COUNT_"] == 235)
+        ir = feat235["properties"]["acrossLine"]
+        self.assertEqual(ir["widthPt"], 4)
+        self.assertEqual(ir["taperFromWidthPt"], 4)
+        self.assertEqual(ir["taperToWidthPt"], 0)
+        self.assertNotEqual(ir["widthPt"], 2.25)
+        self.assertNotEqual(ir["widthPt"], 1)
+        self.assertEqual(ir["fromColor"], "#f5f500")
+        self.assertEqual(ir["toColor"], "#f50000")
+        feat1 = next(f for f in collection["features"] if f["properties"]["COUNT_"] == 1)
+        self.assertEqual(feat1["properties"]["acrossLine"]["widthPt"], 0.5)
+        self.assertEqual(feat1["properties"]["acrossLine"]["taperFromWidthPt"], 0.5)
+        self.assertEqual(feat1["properties"]["acrossLine"]["taperToWidthPt"], 0)
+        self.assertEqual(feat1["properties"]["COUNT_"], 1)
+        self.assertNotEqual(feat1["properties"].get("flow_direction"), "reverse")
+
+    def test_install_rejects_sha256_mismatch(self):
+        tmp = Path(tempfile.mkdtemp())
+        geojson_zip, lyrx_zip = _write_fleeing_fixture_zips(tmp)
+        with self.assertRaises(ValueError):
+            install_nli_fleeing_overlays(
+                tmp / "processed",
+                geojson_zip,
+                lyrx_zip,
+                expected_geojson_sha256="0" * 64,
+                expected_lyrx_sha256=sha256_file(lyrx_zip),
+            )
+
+    def test_fleeing_stems_are_not_written_to_gis_dir_or_styles_dir(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = tmp / "nli.zip"
+        people = {
+            "type": "FeatureCollection",
+            "features": [_point(34.47, 31.40, name="Ada", hebrew_name="עדה", status="Murdered", oct7_pid=1)],
+        }
+        empty = {"type": "FeatureCollection", "features": []}
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("geojson/people_7_10.json", json.dumps(people))
+            archive.writestr("geojson/polygons_7_10.geojson", json.dumps(empty))
+            archive.writestr("geojson/lines_7_10.geojson", json.dumps(empty))
+        pack_dir = tmp / "nli"
+        processed_dir = tmp / "processed" / "layers" / "nli"
+        geojson_zip, lyrx_zip = _write_fleeing_fixture_zips(tmp)
+        prepare_nli_pack(
+            zip_path,
+            pack_dir,
+            authorities_path=tmp / "missing.json",
+            processed_layers_dir=processed_dir,
+            fleeing_geojson_zip=geojson_zip,
+            fleeing_lyrx_zip=lyrx_zip,
+        )
+        gis_dir = pack_dir / "gis"
+        styles_dir = pack_dir / "styles"
+        stems = ("fleeing_route", "fleeing_route_overlapp")
+        for stem in stems:
+            self.assertFalse(any(path.stem == stem for path in gis_dir.iterdir()))
+            self.assertFalse(any(path.stem == stem for path in styles_dir.iterdir()))
+        self.assertTrue((processed_dir / "fleeing_route.geojson").is_file())
+        self.assertTrue((processed_dir / "fleeing_route_overlapp.geojson").is_file())
+        individual = json.loads(
+            (processed_dir / "fleeing_route.geojson").read_text(encoding="utf-8")
+        )
+        lon, lat = individual["features"][0]["geometry"]["coordinates"][0]
+        self.assertLess(haversine_m((lon, lat), tuple(NOVA_FACILITY_WGS84)), 25)
+        overlap = json.loads(
+            (processed_dir / "fleeing_route_overlapp.geojson").read_text(encoding="utf-8")
+        )
+        feat235 = next(
+            feat
+            for feat in overlap["features"]
+            if feat["properties"]["COUNT_"] == 235
+        )
+        self.assertEqual(feat235["properties"]["acrossLine"]["widthPt"], 4)
+        self.assertEqual(feat235["properties"]["acrossLine"]["taperFromWidthPt"], 4)
+        self.assertEqual(FLEEING_GEOJSON_ZIP_SHA256, FLEEING_GEOJSON_ZIP_SHA256.lower())
+        self.assertEqual(len(FLEEING_GEOJSON_ZIP_SHA256), 64)
+        self.assertEqual(len(FLEEING_LYRX_ZIP_SHA256), 64)
+
+    def test_owner_zips_reverse_to_spec_envelope(self):
+        geojson_zip = Path.home() / "Downloads" / "fleeing_route_geojson.zip"
+        lyrx_zip = Path.home() / "Downloads" / "Fleeing_route_lyrx.zip"
+        if not geojson_zip.is_file() or not lyrx_zip.is_file():
+            self.skipTest("owner fleeing zips are not in Downloads")
+        self.assertEqual(sha256_file(geojson_zip), FLEEING_GEOJSON_ZIP_SHA256)
+        self.assertEqual(sha256_file(lyrx_zip), FLEEING_LYRX_ZIP_SHA256)
+        tmp = Path(tempfile.mkdtemp())
+        processed_dir = tmp / "processed" / "layers" / "nli"
+        install_nli_fleeing_overlays(
+            processed_dir,
+            geojson_zip,
+            lyrx_zip,
+            expected_geojson_sha256=FLEEING_GEOJSON_ZIP_SHA256,
+            expected_lyrx_sha256=FLEEING_LYRX_ZIP_SHA256,
+        )
+        individual = json.loads(
+            (processed_dir / "fleeing_route.geojson").read_text(encoding="utf-8")
+        )
+        nova = tuple(NOVA_FACILITY_WGS84)
+        self.assertEqual(len(individual["features"]), 416)
+        for feat in individual["features"]:
+            lon, lat = feat["geometry"]["coordinates"][0]
+            self.assertLess(haversine_m((lon, lat), nova), 25)
+            self.assertNotIn("flow_direction", feat["properties"])
+            taper = feat["properties"]["acrossLine"]
+            self.assertGreater(taper["taperFromWidthPt"], taper["taperToWidthPt"])
+            self.assertEqual(taper["fromColor"], "#f5f500")
+            self.assertEqual(taper["toColor"], "#f50000")
+        west, south, east, north = _collection_bbox(individual)
+        spec_w, spec_s, spec_e, spec_n = NOVA_FLEEING_ENVELOPE
+        self.assertAlmostEqual(west, spec_w, places=5)
+        self.assertAlmostEqual(south, spec_s, places=5)
+        self.assertAlmostEqual(east, spec_e, places=5)
+        self.assertAlmostEqual(north, spec_n, places=5)
+        overlap = json.loads(
+            (processed_dir / "fleeing_route_overlapp.geojson").read_text(encoding="utf-8")
+        )
+        feat235 = next(
+            feat
+            for feat in overlap["features"]
+            if feat["properties"]["COUNT_"] == 235
+        )
+        self.assertEqual(feat235["properties"]["acrossLine"]["widthPt"], 4)
+        self.assertEqual(feat235["properties"]["acrossLine"]["taperFromWidthPt"], 4)
+        self.assertNotEqual(feat235["properties"]["acrossLine"]["widthPt"], 2.25)
 
 
 if __name__ == "__main__":
