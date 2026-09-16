@@ -7,6 +7,20 @@ const bounds = [[34.1,31.1],[34.9,31.8]];
 const mercator = ([lon, lat]) => [(lon + 180) / 360, (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 180 / 2)) / Math.PI) / 2];
 const geometry = () => createNameFieldGeometry({bounds,heading:41});
 const feature = (pid,lon=34.5,lat=31.4) => ({type:'Feature',geometry:{type:'Point',coordinates:[lon+.001,lat+.001]},properties:{pid,hebrew_name:`שם ${pid}`,status:'Murdered',source_lon:lon,source_lat:lat,location:'בארי'}});
+const fullHeightGeometry = () => {
+  const polygon = [[0, 0], [80, 0], [80, 80], [0, 80]];
+  return {
+    project: () => [0, 0],
+    unproject: ([x, y]) => [x, y],
+    polygons: [polygon],
+    spanPolygons: { left: polygon },
+    visibleSpansForRectangle: rect =>
+      nameRectangleFits(rect, [polygon]) ? ['left'] : [],
+    heading: 41,
+    referenceZoom: 10,
+    overviewBounds: [[0, 0], [1, 1]],
+  };
+};
 
 describe('canonical name field geometry',()=>{
   it('round trips WGS84 through the common label-aligned plane',()=>{
@@ -113,6 +127,38 @@ describe('name field data',()=>{
     expect(field.byPid.get('1').sourceCoordinates).toEqual([34.5,31.4]);
     expect(JSON.stringify(data)).toBe(before);
     expect(field.diagnostics.unplaced).toEqual([]);
+  });
+  it('distributes coincident names across the full height while preserving the build result',()=>{
+    const data = {
+      features: Array.from({length: 6},(_,i)=>feature(i+1)),
+    };
+    const before = JSON.stringify(data);
+    const field = buildNliNameField(data, fullHeightGeometry(), {
+      measureText: () => 12,
+      fontSizes: [10],
+    });
+    const ys = field.geojson.features.map(f => f.geometry.coordinates[1]);
+
+    expect(Math.max(...ys)).toBeGreaterThan(60);
+    expect(field.geojson.features).toHaveLength(data.features.length);
+    expect(new Set(field.geojson.features.map(f => f.properties.pid)).size)
+      .toBe(data.features.length);
+    expect(field.geojson.features.every(f => f.properties.visible_spans.length === 1))
+      .toBe(true);
+    expect(JSON.stringify(data)).toBe(before);
+  });
+  it('falls back through font sizes until all names fit the full-height field',()=>{
+    const data = {
+      features: Array.from({length: 6},(_,i)=>feature(i+1)),
+    };
+    const fallback = buildNliNameField(data, fullHeightGeometry(), {
+      measureText: (_text, size) => size > 8 ? 1000 : 12,
+      fontSizes: [12, 10, 8],
+    });
+
+    expect(fallback.fontSize).toBe(8);
+    expect(fallback.geojson.features).toHaveLength(data.features.length);
+    expect(fallback.diagnostics.unplaced).toEqual([]);
   });
   it('reports insufficient capacity instead of serving a partial replacement',()=>{
     const g={...geometry(),polygons:[[[0,0],[1,0],[1,1],[0,1]]]};

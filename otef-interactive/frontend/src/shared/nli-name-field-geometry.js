@@ -156,6 +156,7 @@ export function buildNliNameField(data, geometry, { measureText = (text, size) =
     result = placeNameField(rows.map((row, index) => ({
       ...items[index], orderKey: row.orderKey,
     })), { polygons: geometry.polygons, gap: 2, step: 4, orderBy: 'orderKey', readingOrder: 'rtl',
+      verticalDistribution: 'full-height',
       candidateFits: rect => geometry.visibleSpansForRectangle(rect).length > 0,
     });
     if (!result.unplaced.length) break;

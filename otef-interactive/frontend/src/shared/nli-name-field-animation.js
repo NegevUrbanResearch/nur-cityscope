@@ -1,6 +1,6 @@
 export const NAME_FIELD_MOTION = Object.freeze({
-  spreadMs: 2200,
-  revealMs: 400,
+  spreadMs: 3600,
+  revealMs: 800,
   hideMs: 600,
   focusMs: 350,
   frameMs: 33,

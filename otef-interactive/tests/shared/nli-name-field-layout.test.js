@@ -2,6 +2,154 @@ import { describe, expect, it } from "vitest";
 import { nameRectangleFits, placeNameField } from "../../frontend/src/shared/nli-name-field-layout.js";
 
 describe("placeNameField", () => {
+  it("keeps compact placement as the default", () => {
+    const items = Array.from({ length: 6 }, (_, index) => ({
+      id: "p-" + index, orderKey: String(index), x: 0, y: 0, width: 8, height: 4,
+    }));
+    const polygons = [[[0, 0], [40, 0], [40, 40], [0, 40]]];
+    expect(placeNameField(items, { polygons, gap: 2, step: 2 }))
+      .toEqual(placeNameField(items, {
+        polygons, gap: 2, step: 2, verticalDistribution: "compact",
+      }));
+  });
+
+  it("rejects an unknown vertical distribution", () => {
+    expect(() => placeNameField([], {
+      polygons: [], verticalDistribution: "stretched",
+    })).toThrow(/verticalDistribution/);
+  });
+
+  it("spreads occupied rows to the southern usable scanline", () => {
+    const items = Array.from({ length: 6 }, (_, index) => ({
+      id: "p-" + index, orderKey: String(index), x: 0, y: 0, width: 8, height: 4,
+    }));
+    const polygons = [[[0, 0], [40, 0], [40, 40], [0, 40]]];
+    const compact = placeNameField(items, {
+      polygons, gap: 2, step: 2, readingOrder: "rtl",
+    });
+    const spread = placeNameField(items, {
+      polygons, gap: 2, step: 2, readingOrder: "rtl",
+      verticalDistribution: "full-height",
+    });
+
+    expect(Math.max(...spread.placements.map(({ y }) => y))).toBe(38);
+    expect(Math.max(...compact.placements.map(({ y }) => y))).toBeLessThan(38);
+    expect(spread.placements.map(({ id, x, width, height }) => ({ id, x, width, height })))
+      .toEqual(compact.placements.map(({ id, x, width, height }) => ({ id, x, width, height })));
+    expect(spread.placements.every(rect => nameRectangleFits(rect, polygons))).toBe(true);
+    expectPairwiseGap(spread.placements, 2);
+  });
+
+  it("returns the compact baseline when only one row is occupied", () => {
+    const items = [{ id: "a", x: 0, y: 0, width: 8, height: 4 }];
+    const polygons = [[[0, 0], [40, 0], [40, 40], [0, 40]]];
+    expect(placeNameField(items, {
+      polygons, verticalDistribution: "full-height",
+    })).toEqual(placeNameField(items, { polygons }));
+  });
+
+  it("selects the greatest tested lower scale when the target is blocked", () => {
+    const items = Array.from({ length: 7 }, (_, index) => ({
+      id: "p-" + index, orderKey: String(index), x: 0, y: 0, width: 8, height: 4,
+    }));
+    const polygons = [[[0, 0], [40, 0], [40, 40], [0, 40]]];
+    const options = {
+      polygons, gap: 2, step: 2, readingOrder: "rtl",
+      verticalDistribution: "full-height",
+      candidateFits: rect => rect.x >= 20 || rect.y <= 30,
+    };
+    const compact = placeNameField(items, { ...options, verticalDistribution: "compact" });
+    const spread = placeNameField(items, options);
+    const reversed = placeNameField([...items].reverse(), options);
+    const compactMax = Math.max(...compact.placements.map(({ y }) => y));
+    const spreadMax = Math.max(...spread.placements.map(({ y }) => y));
+    const greatestValidScale = 6 - ((6 - 1) * 9) / (32 - 1);
+
+    expect(spreadMax).toBeGreaterThan(compactMax);
+    expect(spreadMax).toBeLessThan(38);
+    expect(spreadMax).toBeLessThanOrEqual(30);
+    expect(greatestValidScale).toBe(141 / 31);
+    expect(spreadMax).toBeCloseTo(2 + (8 - 2) * greatestValidScale, 10);
+    expect(new Map(reversed.placements.map(p => [p.id, p])))
+      .toEqual(new Map(spread.placements.map(p => [p.id, p])));
+    expect(spread.placements.every(rect => nameRectangleFits(rect, polygons))).toBe(true);
+    expect(spread.placements.every(options.candidateFits)).toBe(true);
+    expectPairwiseGap(spread.placements, 2);
+  });
+
+  it("returns the unchanged baseline when every stretch is blocked", () => {
+    const items = Array.from({ length: 7 }, (_, index) => ({
+      id: "p-" + index, orderKey: String(index), x: 0, y: 0, width: 8, height: 4,
+    }));
+    const polygons = [[[0, 0], [40, 0], [40, 40], [0, 40]]];
+    const candidateFits = rect => rect.y <= 8 || rect.id === "p-0";
+    const compact = placeNameField(items, {
+      polygons, gap: 2, step: 2, readingOrder: "rtl", candidateFits,
+    });
+    const spread = placeNameField(items, {
+      polygons, gap: 2, step: 2, readingOrder: "rtl", candidateFits,
+      verticalDistribution: "full-height",
+    });
+    expect(spread).toEqual(compact);
+    expectPairwiseGap(spread.placements, 2);
+  });
+
+  function expectPairwiseGap(placements, gap) {
+    for (let i = 0; i < placements.length; i += 1) {
+      for (let j = i + 1; j < placements.length; j += 1) {
+        const a = placements[i]; const b = placements[j];
+        const xGap = Math.abs(a.x - b.x) - (a.width + b.width) / 2;
+        const yGap = Math.abs(a.y - b.y) - (a.height + b.height) / 2;
+        expect(xGap >= gap || yGap >= gap).toBe(true);
+      }
+    }
+  }
+
+  it("bounds full-height candidate validation", () => {
+    const items = Array.from({ length: 6 }, (_, index) => ({
+      id: "p-" + index, orderKey: String(index), x: 0, y: 0, width: 8, height: 4,
+    }));
+    const polygons = [[[0, 0], [40, 0], [40, 40], [0, 40]]];
+    const makeCounter = () => {
+      let calls = 0;
+      return { fit: () => { calls += 1; return true; }, calls: () => calls };
+    };
+    const compactCounter = makeCounter();
+    const fullCounter = makeCounter();
+    const compact = placeNameField(items, {
+      polygons, gap: 2, step: 2, readingOrder: "rtl", candidateFits: compactCounter.fit,
+    });
+    const spread = placeNameField(items, {
+      polygons, gap: 2, step: 2, readingOrder: "rtl",
+      candidateFits: fullCounter.fit, verticalDistribution: "full-height",
+    });
+    const finiteShelfProbeAllowance = 40 * Math.ceil(40 / 6);
+    expect(fullCounter.calls() - compactCounter.calls())
+      .toBeLessThanOrEqual(finiteShelfProbeAllowance + 32 * spread.placements.length);
+    expect(fullCounter.calls() - compactCounter.calls())
+      .toBe(spread.placements.length + 1);
+    expect(spread.unplaced).toEqual(compact.unplaced);
+
+    const candidateFits = rect => rect.y <= 8 || rect.id === "p-0";
+    const fallbackCompactCounter = makeCounter();
+    const fallbackFullCounter = makeCounter();
+    const fallbackItems = items.concat({
+      id: "p-6", orderKey: "6", x: 0, y: 0, width: 8, height: 4,
+    });
+    const fallbackCompact = placeNameField(fallbackItems, {
+      polygons, gap: 2, step: 2, readingOrder: "rtl",
+      candidateFits: rect => { fallbackCompactCounter.fit(); return candidateFits(rect); },
+    });
+    const fallbackSpread = placeNameField(fallbackItems, {
+      polygons, gap: 2, step: 2, readingOrder: "rtl",
+      candidateFits: rect => { fallbackFullCounter.fit(); return candidateFits(rect); },
+      verticalDistribution: "full-height",
+    });
+    expect(fallbackFullCounter.calls() - fallbackCompactCounter.calls())
+      .toBeLessThanOrEqual(finiteShelfProbeAllowance + 32 * fallbackSpread.placements.length);
+    expect(fallbackSpread.unplaced).toEqual(fallbackCompact.unplaced);
+  });
+
   it("uses a narrow safe interval when a complete label fits", () => {
     const polygons = [
       [[0, 0], [12, 0], [12, 4], [0, 4]],
@@ -129,10 +277,13 @@ describe("placeNameField", () => {
 
   it("accounts for a realistic 1400 item dataset", () => {
     const items = Array.from({ length: 1400 }, (_, i) => ({ id: `person-${i}`, x: (i % 70) * 12 + 5, y: Math.floor(i / 70) * 8 + 5, width: 8, height: 3 }));
+    const polygons = [[[-5, -5], [850, -5], [850, 170], [-5, 170]]];
     const started = performance.now();
-    const result = placeNameField(items, { polygons: [[[-5, -5], [850, -5], [850, 170], [-5, 170]]], gap: 1, step: 3 });
+    const result = placeNameField(items, { polygons, gap: 1, step: 3 });
+    const fullHeight = placeNameField(items, { polygons, gap: 1, step: 3, verticalDistribution: "full-height" });
     expect(performance.now() - started).toBeLessThan(7000);
     expect(result.placements.length + result.unplaced.length).toBe(1400);
+    expect(fullHeight.placements.length + fullHeight.unplaced.length).toBe(1400);
   });
 
   it("handles a large shared-anchor cluster with neighboring clusters", () => {
@@ -142,8 +293,11 @@ describe("placeNameField", () => {
       for (let i = 0; i < count; i += 1) items.push({ id: `${prefix}-${i}`, x, y: 500, width: 50 + (i % 10), height: 20 });
     }
     const started = performance.now();
-    const result = placeNameField(items, { polygons: [[[0, 0], [1000, 0], [1000, 1000], [0, 1000]]], gap: 2, step: 4 });
+    const polygons = [[[0, 0], [1000, 0], [1000, 1000], [0, 1000]]];
+    const result = placeNameField(items, { polygons, gap: 2, step: 4 });
+    const fullHeight = placeNameField(items, { polygons, gap: 2, step: 4, verticalDistribution: "full-height" });
     expect(performance.now() - started).toBeLessThan(7000);
     expect(result.placements.length + result.unplaced.length).toBe(items.length);
+    expect(fullHeight.placements.length + fullHeight.unplaced.length).toBe(items.length);
   }, 10000);
 });

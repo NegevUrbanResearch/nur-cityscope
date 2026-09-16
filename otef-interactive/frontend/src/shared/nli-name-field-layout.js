@@ -1,5 +1,7 @@
 const DEFAULT_GAP = 2;
 const DEFAULT_STEP = 4;
+const VALID_VERTICAL_DISTRIBUTIONS = new Set(["compact", "full-height"]);
+const MAX_DISTRIBUTION_PASSES = 32;
 
 function finite(value, label) {
   if (!Number.isFinite(value)) throw new TypeError(`${label} must be finite`);
@@ -99,7 +101,14 @@ function rowIntervals(polygons, y) {
 
 /** Pack whole labels on stable reading rows inside individual projector domains. */
 function placeScanline(items, polygons, { gap, step, orderBy, readingOrder, candidateFits }) {
-  if (!items.length || !polygons.length) return { placements: [], unplaced: items.map(item => item.id) };
+  const rtl = readingOrder !== "ltr";
+  if (!items.length || !polygons.length) {
+    return {
+      placements: [],
+      unplaced: items.map(item => item.id),
+      layout: { shelves: [], polygonBounds: [], rowPitch: null, rtl },
+    };
+  }
   const bounds = polygons.map(polygon => polygon.reduce((b, [x, y]) => ({
     minX: Math.min(b.minX, x), maxX: Math.max(b.maxX, x),
     minY: Math.min(b.minY, y), maxY: Math.max(b.maxY, y),
@@ -108,7 +117,6 @@ function placeScanline(items, polygons, { gap, step, orderBy, readingOrder, cand
   const maxY = Math.max(...bounds.map(b => b.maxY));
   const height = Math.max(...items.map(item => item.height));
   const rowPitch = Math.ceil((height + gap) / step) * step;
-  const rtl = readingOrder !== "ltr";
   const shelves = [];
   for (let y = minY + height / 2; y <= maxY - height / 2 + 1e-8; y += rowPitch) {
     const intervals = polygons.flatMap(polygon => {
@@ -149,12 +157,86 @@ function placeScanline(items, polygons, { gap, step, orderBy, readingOrder, cand
     }
     if (found) placements.push(found); else unplaced.push(item.id);
   }
+  return { placements, unplaced, layout: { shelves, polygonBounds: bounds, rowPitch, rtl } };
+}
+
+function placementsKeepGap(placements, gap) {
+  for (let i = 0; i < placements.length; i += 1) {
+    for (let j = i + 1; j < placements.length; j += 1) {
+      const a = placements[i]; const b = placements[j];
+      const xGap = Math.abs(a.x - b.x) - (a.width + b.width) / 2;
+      const yGap = Math.abs(a.y - b.y) - (a.height + b.height) / 2;
+      if (xGap < gap && yGap < gap) return false;
+    }
+  }
+  return true;
+}
+
+function distributeFullHeight(baseline, items, polygons, { gap, candidateFits }) {
+  const { placements, unplaced, layout } = baseline;
+  if (unplaced.length || new Set(placements.map(({ y }) => y)).size < 2) {
+    return { placements, unplaced };
+  }
+
+  const firstRowY = Math.min(...placements.map(({ y }) => y));
+  const lastRowY = Math.max(...placements.map(({ y }) => y));
+  const narrowest = items.slice().sort((a, b) => a.width - b.width || a.id.localeCompare(b.id))[0];
+  const { shelves, polygonBounds, rtl } = layout;
+  let southernY = null;
+  for (let shelfIndex = shelves.length - 1; shelfIndex >= 0 && southernY === null; shelfIndex -= 1) {
+    const shelf = shelves[shelfIndex];
+    const start = rtl ? shelf.right - narrowest.width / 2 : shelf.left + narrowest.width / 2;
+    const end = rtl ? shelf.left + narrowest.width / 2 : shelf.right - narrowest.width / 2;
+    for (let x = start; rtl ? x >= end - 1e-8 : x <= end + 1e-8; x += rtl ? -1 : 1) {
+      const candidate = { id: narrowest.id, x, y: shelf.y, width: narrowest.width, height: narrowest.height };
+      if (!insideAllowed(candidate, polygons, polygonBounds)) continue;
+      if (candidateFits && !candidateFits(candidate)) continue;
+      southernY = shelf.y;
+      break;
+    }
+  }
+  if (southernY === null) return { placements, unplaced };
+
+  const target = Math.max(1, (southernY - firstRowY) / (lastRowY - firstRowY));
+  for (const scale of scaleCandidates(target)) {
+    if (scale === 1) return { placements, unplaced };
+    const transformed = placements.map(({ id, x, y, width, height }) => ({
+      id, x, y: firstRowY + (y - firstRowY) * scale, width, height,
+    }));
+    if (!transformed.every((rect) => insideAllowed(rect, polygons, polygonBounds))) continue;
+    if (candidateFits && !transformed.every(candidateFits)) continue;
+    if (!placementsKeepGap(transformed, gap)) continue;
+    return { placements: transformed, unplaced };
+  }
   return { placements, unplaced };
 }
 
 export function placeNameField(items, options = {}) {
-  const { polygons, gap = DEFAULT_GAP, step = DEFAULT_STEP, candidateFits } = options;
+  const {
+    polygons,
+    gap = DEFAULT_GAP,
+    step = DEFAULT_STEP,
+    candidateFits,
+    verticalDistribution = "compact",
+  } = options;
   validate(items, polygons, gap, step);
   if (candidateFits !== undefined && typeof candidateFits !== "function") throw new TypeError("candidateFits must be a function");
-  return placeScanline(items, polygons, { gap, step, candidateFits, orderBy: options.orderBy, readingOrder: options.readingOrder });
+  if (!VALID_VERTICAL_DISTRIBUTIONS.has(verticalDistribution)) {
+    throw new RangeError("verticalDistribution must be compact or full-height");
+  }
+  const baseline = placeScanline(items, polygons, {
+    gap, step, candidateFits, orderBy: options.orderBy, readingOrder: options.readingOrder,
+  });
+  if (verticalDistribution === "compact") {
+    return { placements: baseline.placements, unplaced: baseline.unplaced };
+  }
+  return distributeFullHeight(baseline, items, polygons, { gap, candidateFits });
+}
+
+function scaleCandidates(target) {
+  if (!(target > 1)) return [1];
+  return Array.from({ length: MAX_DISTRIBUTION_PASSES }, (_, index) =>
+    index === MAX_DISTRIBUTION_PASSES - 1
+      ? 1
+      : target - ((target - 1) * index) / (MAX_DISTRIBUTION_PASSES - 1));
 }
