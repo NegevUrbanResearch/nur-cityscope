@@ -25,6 +25,54 @@ def download_file(url, target_path):
             size = f.write(chunk)
             bar.update(size)
 
+DEFAULT_SOURCE_URL = "https://github.com/NegevUrbanResearch/nur-cityscope/releases/download/layers/source.zip"
+DEFAULT_PROCESSED_URL = "https://github.com/NegevUrbanResearch/nur-cityscope/releases/download/layers/processed.zip"
+
+
+def pack_has_data(pack_dir):
+    for path in pack_dir.rglob("*"):
+        if path.is_file() and path.name != ".gitkeep":
+            return True
+    return False
+
+
+def data_exists(output_dir):
+    check_path = output_dir / "layers"
+    if not check_path.exists():
+        return False
+    for entry in check_path.iterdir():
+        if entry.is_dir() and entry.name != "example_layer_group" and pack_has_data(entry):
+            return True
+    return False
+
+
+def fetch_zip(url, output_dir, force=False):
+    if data_exists(output_dir) and not force:
+        print(f"Data already exists at {output_dir / 'layers'}. Skipping (use --force to overwrite).")
+        return
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    temp_zip = output_dir / "temp_data.zip"
+
+    try:
+        print(f"Fetching data from {url}...")
+        download_file(url, temp_zip)
+
+        print(f"Extracting to {output_dir}...")
+        extract_zip(temp_zip, output_dir)
+
+        print("Cleanup...")
+        if temp_zip.exists():
+            temp_zip.unlink()
+
+        print(f"Successfully updated {output_dir}")
+    except Exception as e:
+        print(f"Error fetching data: {e}")
+        if temp_zip.exists():
+            temp_zip.unlink()
+        raise
+
+
 def extract_zip(zip_path, extract_path):
     """Extract a zip file, flattening if it contains a single top-level directory matching the target."""
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
@@ -63,48 +111,18 @@ def extract_zip(zip_path, extract_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Fetch and extract OTEF layer data")
-    parser.add_argument("--url", default="https://github.com/NegevUrbanResearch/nur-cityscope/releases/download/layers/source_layers.zip", help="URL of the zip file to download")
+    parser.add_argument("--url", default=DEFAULT_SOURCE_URL, help="URL of the zip file to download")
     parser.add_argument("--output", required=True, help="Output directory for extraction")
     parser.add_argument("--force", action="store_true", help="Force download even if data exists")
 
     args = parser.parse_args()
-
     output_dir = Path(args.output).resolve()
-    # For source_layers.zip, we check for 'layers' folder inside the 'source' folder
-    # Output is typically .../public/source
-    check_path = output_dir / "layers"
-
-    # Improved check: if only 'example_layer_group' exists, we should still fetch.
-    data_exists = False
-    if check_path.exists():
-        # Check if there are any directories other than 'example_layer_group'
-        subdirs = [d for d in check_path.iterdir() if d.is_dir() and d.name != "example_layer_group"]
-        if subdirs:
-            data_exists = True
-
-    if data_exists and not args.force:
-        print(f"Data already exists at {check_path}. Skipping (use --force to overwrite).")
-        return
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    temp_zip = output_dir / "temp_data.zip"
 
     try:
-        print(f"Fetching data from {args.url}...")
-        download_file(args.url, temp_zip)
-
-        print(f"Extracting to {output_dir}...")
-        extract_zip(temp_zip, output_dir)
-
-        print("Cleanup...")
-        if temp_zip.exists():
-            temp_zip.unlink()
-
-        print(f"Successfully updated {output_dir}")
-    except Exception as e:
-        print(f"Error fetching data: {e}")
-        if temp_zip.exists():
-            temp_zip.unlink()
+        fetch_zip(args.url, output_dir, force=args.force)
+        if args.url == DEFAULT_SOURCE_URL and output_dir.name == "source":
+            fetch_zip(DEFAULT_PROCESSED_URL, output_dir.parent / "processed", force=args.force)
+    except Exception:
         sys.exit(1)
 
 if __name__ == "__main__":
