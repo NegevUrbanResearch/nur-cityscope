@@ -1,0 +1,1368 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#066ACF" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>הקרנה · הספרייה הלאומית</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --nli-ink: #1a1a1a;
+        --nli-ink-soft: #1c1b1f;
+        --nli-gray: #7c7272;
+        --nli-gray-2: #707070;
+        --nli-line: #d9d9d9;
+        --nli-paper: #fffaf8;
+        --nli-cream: #fffbeb;
+        --nli-yellow: #ffd600;
+        --nli-blue: #066acf;
+        --font: "Heebo", Arial, sans-serif;
+        --text-ui: clamp(16px, 1.15vh + 0.55vw, 19px);
+        --text-h2: clamp(20px, 1.7vh + 0.7vw, 28px);
+        --text-status: clamp(26px, 3.4vh + 0.4vw, 40px);
+        --text-meta: clamp(12px, 1vh + 0.25vw, 15px);
+        --text-kicker: clamp(11px, 0.9vh + 0.2vw, 13px);
+        --radius-badge: 10px;
+        --tap: clamp(44px, 6.4vh, 56px);
+        --pad: clamp(16px, 2.4vw, 32px);
+        --gap: clamp(6px, 1.1vh, 12px);
+        --space: clamp(8px, 1.5vh, 20px);
+      }
+
+      * { box-sizing: border-box; }
+      html, body {
+        height: 100%;
+        overflow: hidden;
+      }
+      body {
+        margin: 0;
+        background: #f3eee8;
+        color: var(--nli-ink);
+        font-family: var(--font);
+        font-size: var(--text-ui);
+        font-weight: 400;
+        line-height: 1.35;
+        display: flex;
+        justify-content: center;
+      }
+
+      button, input {
+        font: inherit;
+        color: inherit;
+      }
+      button {
+        background: none;
+        border: 0;
+        padding: 0;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+      h1, h2, h3 {
+        margin: 0;
+        font-weight: 300;
+      }
+
+      .app {
+        height: 100dvh;
+        width: 100%;
+        max-width: 1280px;
+        background: var(--nli-paper);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        overscroll-behavior: none;
+      }
+
+      @media (min-width: 480px) {
+        .app { box-shadow: 0 0 0 1px var(--nli-line); }
+      }
+
+      .icon {
+        width: 22px;
+        height: 22px;
+        display: block;
+        color: var(--nli-ink-soft);
+      }
+      [dir="rtl"] .icon--directional { transform: scaleX(-1); }
+
+      :focus-visible {
+        outline: 3px solid var(--nli-blue);
+        outline-offset: 2px;
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px var(--pad);
+        padding-top: max(8px, env(safe-area-inset-top));
+        border-bottom: 1px solid var(--nli-line);
+        background: var(--nli-paper);
+        flex-shrink: 0;
+      }
+      .header-side {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 44px;
+      }
+      .header-side--end { justify-content: flex-end; }
+      .header-title {
+        font-size: var(--text-kicker);
+        font-weight: 400;
+        color: var(--nli-gray-2);
+        letter-spacing: 0.04em;
+        text-align: center;
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .icon-btn {
+        width: 44px;
+        height: 44px;
+        display: grid;
+        place-items: center;
+        margin-inline-start: -10px;
+      }
+      .icon-btn[hidden] { display: none; }
+
+      .locale {
+        display: flex;
+        border: 1px solid var(--nli-line);
+      }
+      .locale button {
+        min-width: 40px;
+        min-height: 32px;
+        padding-inline: 10px;
+        font-size: var(--text-kicker);
+        font-weight: 600;
+        color: var(--nli-gray);
+      }
+      .locale button.is-active {
+        background: var(--nli-ink);
+        color: var(--nli-paper);
+      }
+
+      .main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      .screen {
+        display: none;
+        flex: 1;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+        padding: var(--space) var(--pad);
+        padding-bottom: max(var(--space), env(safe-area-inset-bottom));
+      }
+      .screen.is-active { display: flex; }
+      .screen[hidden] { display: none !important; }
+
+      .page-head { flex-shrink: 0; margin-bottom: var(--space); }
+      .kicker {
+        font-size: var(--text-kicker);
+        font-weight: 600;
+        color: var(--nli-gray-2);
+        letter-spacing: 0.06em;
+        margin: 0 0 2px;
+      }
+      .page-title {
+        font-size: var(--text-h2);
+        line-height: 1.15;
+      }
+      .lede {
+        color: var(--nli-gray-2);
+        margin: 4px 0 0;
+        font-size: var(--text-meta);
+        max-width: 42ch;
+      }
+
+      .nav-list {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 1fr;
+        grid-template-rows: repeat(6, minmax(0, 1fr));
+        gap: var(--gap);
+      }
+      .nav-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        min-height: 0;
+        height: 100%;
+        text-align: start;
+        padding: 0 clamp(12px, 2vw, 18px);
+        background: var(--nli-cream);
+        border: 1px solid transparent;
+        overflow: hidden;
+      }
+      .nav-card--quiet {
+        background: transparent;
+        border-color: var(--nli-line);
+      }
+      .nav-card-index {
+        font-size: var(--text-status);
+        font-weight: 300;
+        line-height: 1;
+        color: var(--nli-line);
+        width: 1.4em;
+        flex-shrink: 0;
+        text-align: end;
+      }
+      .nav-card-copy { flex: 1; min-width: 0; }
+      .nav-card-title,
+      .nav-card-meta,
+      .result-name,
+      .result-place {
+        display: block;
+      }
+      .nav-card-title {
+        font-size: var(--text-h2);
+        font-weight: 300;
+        line-height: 1.15;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .nav-card-meta {
+        margin-top: 2px;
+        font-size: var(--text-meta);
+        color: var(--nli-gray-2);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .player-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        padding: var(--space) var(--pad);
+      }
+      #player.screen { padding: 0; }
+      .player-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-shrink: 0;
+      }
+      .badge-live {
+        background: var(--nli-yellow);
+        color: var(--nli-ink);
+        border-radius: var(--radius-badge);
+        padding: 2px 8px;
+        font-size: var(--text-kicker);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+      }
+      .step-count {
+        font-size: var(--text-meta);
+        color: var(--nli-gray-2);
+      }
+      .ticks {
+        display: flex;
+        gap: 6px;
+        margin: 10px 0 var(--space);
+        flex-shrink: 0;
+      }
+      .ticks span {
+        flex: 1;
+        height: 2px;
+        background: var(--nli-line);
+      }
+      .ticks span.is-done,
+      .ticks span.is-current { background: var(--nli-ink); }
+      .ticks span.is-current { height: 3px; }
+
+      .clock {
+        font-size: var(--text-status);
+        font-weight: 300;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        margin-bottom: 4px;
+        flex-shrink: 0;
+      }
+      .clock:empty { display: none; }
+      .step-title {
+        font-size: var(--text-h2);
+        line-height: 1.15;
+        margin-bottom: 8px;
+        flex-shrink: 0;
+      }
+      .step-note {
+        margin: 0;
+        max-width: 46ch;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 3;
+        overflow: hidden;
+      }
+      .draft-note { color: var(--nli-gray-2); }
+
+      .screens {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0 20px;
+        margin-top: auto;
+        padding-top: var(--space);
+        border-top: 1px solid var(--nli-line);
+        flex-shrink: 0;
+      }
+      .screen-row { min-width: 0; }
+      .screen-row + .screen-row {
+        border-inline-start: 1px solid var(--nli-line);
+        padding-inline-start: 20px;
+      }
+      .screen-label {
+        display: block;
+        font-size: var(--text-kicker);
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        color: var(--nli-gray-2);
+        margin-bottom: 4px;
+      }
+      .screen-copy {
+        margin: 0;
+        font-size: var(--text-meta);
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 3;
+        overflow: hidden;
+      }
+
+      .dock {
+        flex-shrink: 0;
+        padding: 10px var(--pad);
+        padding-bottom: max(10px, env(safe-area-inset-bottom));
+        border-top: 1px solid var(--nli-line);
+        background: var(--nli-paper);
+        display: grid;
+        grid-template-columns: 1fr 1.6fr;
+        gap: 8px;
+      }
+      .btn {
+        min-height: var(--tap);
+        padding-inline: 20px;
+        font-weight: 600;
+        font-size: var(--text-ui);
+        border: 1px solid var(--nli-ink);
+        background: var(--nli-ink);
+        color: var(--nli-paper);
+      }
+      .btn--outline {
+        background: transparent;
+        color: var(--nli-ink);
+        border-color: var(--nli-gray);
+      }
+      .btn:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+
+      .search {
+        position: relative;
+        flex-shrink: 0;
+        margin-bottom: var(--gap);
+        z-index: 2;
+      }
+      .search-icon {
+        position: absolute;
+        inset-block-start: 50%;
+        inset-inline-start: 14px;
+        transform: translateY(-50%);
+        pointer-events: none;
+        color: var(--nli-gray);
+      }
+      .search input {
+        width: 100%;
+        height: var(--tap);
+        padding-inline: 44px 16px;
+        border: 1px solid var(--nli-line);
+        background: var(--nli-paper);
+        appearance: none;
+        border-radius: 0;
+      }
+      .search input::placeholder { color: var(--nli-gray); }
+      .results {
+        position: absolute;
+        inset-inline: 0;
+        top: calc(100% - 1px);
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        border: 1px solid var(--nli-line);
+        background: var(--nli-paper);
+        display: none;
+        max-height: min(28dvh, 220px);
+        overflow: auto;
+      }
+      .results.is-open { display: block; }
+      .results button {
+        width: 100%;
+        text-align: start;
+        min-height: 44px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--nli-line);
+      }
+      .results li:last-child button { border-bottom: 0; }
+      .result-place {
+        font-size: var(--text-meta);
+        color: var(--nli-gray-2);
+      }
+
+      .free-status {
+        min-height: 1.2em;
+        margin: 0 0 var(--gap);
+        font-size: var(--text-meta);
+        color: var(--nli-gray-2);
+        flex-shrink: 0;
+      }
+      .free-status.is-live {
+        color: var(--nli-ink);
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 8px;
+      }
+      .live-dot {
+        width: 8px;
+        height: 8px;
+        flex-shrink: 0;
+        background: var(--nli-yellow);
+        border-radius: 50%;
+      }
+
+      .scene-list {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 1fr;
+        grid-template-rows: repeat(3, minmax(0, 1fr));
+        gap: var(--gap);
+      }
+      .scene-btn {
+        width: 100%;
+        min-height: 0;
+        height: 100%;
+        padding: 0 16px;
+        text-align: start;
+        border: 1px solid var(--nli-line);
+        background: transparent;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      .scene-btn.is-active {
+        background: var(--nli-ink);
+        border-color: var(--nli-ink);
+        color: var(--nli-paper);
+      }
+      .scene-btn-title {
+        display: block;
+        font-size: clamp(18px, 2.2vh, 22px);
+        font-weight: 300;
+        line-height: 1.15;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .scene-btn-meta {
+        display: block;
+        margin-top: 2px;
+        font-size: var(--text-meta);
+        font-weight: 400;
+        color: var(--nli-gray-2);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .scene-btn.is-active .scene-btn-meta { color: #d9d0c8; }
+
+      .free-tools {
+        display: grid;
+        grid-template-columns: 1fr 1fr auto;
+        gap: var(--gap);
+        margin-top: var(--space);
+        flex-shrink: 0;
+        align-items: stretch;
+      }
+      .tool-chip {
+        min-height: var(--tap);
+        padding: 0 12px;
+        border: 1px solid var(--nli-line);
+        font-size: var(--text-meta);
+        text-align: center;
+      }
+      .tool-chip[aria-pressed="true"] {
+        background: var(--nli-ink);
+        border-color: var(--nli-ink);
+        color: var(--nli-paper);
+      }
+      .zoom-cluster {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        direction: ltr;
+      }
+      .zoom-cluster span {
+        font-size: var(--text-meta);
+        color: var(--nli-gray-2);
+      }
+      [dir="rtl"] .zoom-cluster span { direction: rtl; }
+      .zoom-cluster button {
+        width: var(--tap);
+        height: var(--tap);
+        border: 1px solid var(--nli-gray);
+        font-size: 22px;
+        font-weight: 300;
+        line-height: 1;
+      }
+      .reset-btn {
+        width: 100%;
+        margin-top: var(--gap);
+        flex-shrink: 0;
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      @media (min-width: 600px) {
+        .nav-list {
+          grid-template-columns: 1fr 1fr;
+          grid-template-rows: repeat(3, minmax(0, 1fr));
+        }
+        .scene-list {
+          grid-template-columns: repeat(3, 1fr);
+          grid-template-rows: minmax(120px, 1fr);
+        }
+        .free-tools { margin-top: auto; }
+        .step-note { -webkit-line-clamp: 5; }
+        .screen-copy { -webkit-line-clamp: 4; }
+      }
+
+      /* Galaxy Tab 11 portrait: ~800×1280 CSS px */
+      @media (min-width: 720px) and (min-height: 1000px) {
+        :root {
+          --text-ui: 19px;
+          --text-h2: 28px;
+          --text-status: 40px;
+          --text-meta: 15px;
+          --text-kicker: 13px;
+          --tap: 56px;
+          --pad: 32px;
+          --gap: 12px;
+          --space: 20px;
+        }
+        .header { padding-block: 10px; }
+        .locale button {
+          min-width: 48px;
+          min-height: 40px;
+        }
+        .nav-card { padding-inline: 24px; }
+        .step-note,
+        .screen-copy {
+          display: block;
+          -webkit-line-clamp: unset;
+          overflow: visible;
+        }
+      }
+
+      /* Galaxy Tab 11 landscape: ~1280×800 CSS px */
+      @media (min-width: 1000px) and (max-height: 900px) {
+        :root {
+          --text-ui: 18px;
+          --text-h2: 24px;
+          --text-status: 36px;
+          --text-meta: 14px;
+          --text-kicker: 12px;
+          --tap: 52px;
+          --pad: 28px;
+          --gap: 10px;
+          --space: 12px;
+        }
+        .kicker,
+        .lede,
+        .nav-card-meta,
+        .scene-btn-meta { display: block; }
+        .header { padding-block: 6px; }
+        .locale button {
+          min-width: 44px;
+          min-height: 36px;
+        }
+        .nav-list {
+          grid-template-columns: repeat(3, 1fr);
+          grid-template-rows: repeat(2, minmax(0, 1fr));
+        }
+        .nav-card { padding-inline: 20px; }
+        .lede { max-width: 52ch; }
+        .player-body {
+          display: grid;
+          grid-template-columns: 1.15fr 0.85fr;
+          grid-template-rows: auto auto auto auto 1fr;
+          column-gap: 36px;
+          align-content: start;
+        }
+        .player-top { grid-column: 1 / -1; }
+        .ticks { grid-column: 1 / -1; margin-bottom: 12px; }
+        .clock,
+        .step-title,
+        .step-note { grid-column: 1; }
+        .step-note {
+          max-width: none;
+          display: block;
+          -webkit-line-clamp: unset;
+          overflow: visible;
+        }
+        .screens {
+          grid-column: 2;
+          grid-row: 3 / 6;
+          grid-template-columns: 1fr;
+          gap: 16px;
+          margin-top: 0;
+          padding-top: 0;
+          border-top: 0;
+          border-inline-start: 1px solid var(--nli-line);
+          padding-inline-start: 32px;
+        }
+        .screen-row + .screen-row {
+          border-inline-start: 0;
+          padding-inline-start: 0;
+          border-top: 1px solid var(--nli-line);
+          padding-top: 16px;
+        }
+        .screen-copy {
+          display: block;
+          -webkit-line-clamp: unset;
+          overflow: visible;
+        }
+        .scene-list {
+          grid-template-rows: minmax(96px, 20vh);
+          flex: 0 1 auto;
+        }
+        .dock {
+          grid-template-columns: minmax(180px, 1fr) minmax(280px, 1.8fr);
+          gap: 12px;
+          padding-block: 12px;
+        }
+      }
+
+      @media (max-height: 700px) and (max-width: 500px) {
+        .kicker,
+        .lede { display: none; }
+        .nav-card-meta,
+        .scene-btn-meta { display: none; }
+        .step-note { -webkit-line-clamp: 2; }
+        .screen-copy { -webkit-line-clamp: 2; }
+      }
+
+      @media (max-width: 380px) {
+        .free-tools { grid-template-columns: 1fr 1fr; }
+        .zoom-cluster {
+          grid-column: 1 / -1;
+          justify-content: flex-end;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="header-side">
+          <button
+            type="button"
+            class="icon-btn"
+            id="backBtn"
+            hidden
+            data-i18n-aria="back"
+            aria-label="חזרה"
+          >
+            <svg class="icon icon--directional" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" stroke-linejoin="bevel" aria-hidden="true">
+              <path d="M15 6 9 12l6 6" />
+            </svg>
+          </button>
+        </div>
+        <div class="header-title" id="headerTitle">הספרייה הלאומית</div>
+        <div class="header-side header-side--end">
+          <div class="locale" role="group" aria-label="Language">
+            <button type="button" id="localeHe" data-locale="he" class="is-active" aria-pressed="true">עב</button>
+            <button type="button" id="localeEn" data-locale="en" aria-pressed="false">EN</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="main">
+        <section class="screen is-active" id="home" data-screen="home">
+          <div class="page-head">
+            <p class="kicker" data-i18n="homeKicker">הקרנת התערוכה</p>
+            <h1 class="page-title" data-i18n="homeTitle">בחירת נרטיב</h1>
+            <p class="lede" data-i18n="homeLede">לחיצה מעבירה את המסכים והמודל. אין צורך בשליטה ידנית.</p>
+          </div>
+          <div class="nav-list" id="narrativeList"></div>
+        </section>
+
+        <section class="screen" id="player" data-screen="player" hidden>
+          <div class="player-body">
+            <div class="player-top">
+              <span class="badge-live" data-i18n="live">שידור</span>
+              <span class="step-count" id="stepCount"></span>
+            </div>
+            <div class="ticks" id="ticks" aria-hidden="true"></div>
+            <div class="clock" id="stepClock"></div>
+            <h1 class="step-title" id="stepTitle"></h1>
+            <p class="step-note" id="stepNote"></p>
+            <div class="screens">
+              <div class="screen-row">
+                <span class="screen-label" data-i18n="gisLabel">מסך GIS</span>
+                <p class="screen-copy" id="stepGis"></p>
+              </div>
+              <div class="screen-row">
+                <span class="screen-label" data-i18n="modelLabel">הקרנה / מודל</span>
+                <p class="screen-copy" id="stepModel"></p>
+              </div>
+            </div>
+          </div>
+          <div class="dock">
+            <button type="button" class="btn btn--outline" id="prevBtn" data-i18n="prev">הקודם</button>
+            <button type="button" class="btn" id="nextBtn" data-i18n="next">הבא</button>
+          </div>
+        </section>
+
+        <section class="screen" id="free" data-screen="free" hidden>
+          <div class="page-head">
+            <p class="kicker" data-i18n="freeKicker">מחוץ לנרטיב</p>
+            <h1 class="page-title" data-i18n="freeTitle">שליטה חופשית</h1>
+            <p class="lede" data-i18n="freeLede">לחיפוש, לסצנות הכלליות של התערוכה, ולתיקון קטן באמצע הקרנה.</p>
+          </div>
+          <div class="search">
+            <svg class="search-icon icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"></circle>
+              <path d="m20 20-3.5-3.5"></path>
+            </svg>
+            <label class="visually-hidden" for="searchInput" data-i18n="searchLabel">חיפוש שם או מקום</label>
+            <input id="searchInput" type="search" autocomplete="off" data-i18n-placeholder="searchPlaceholder" placeholder="חיפוש שם או מקום" />
+            <ul class="results" id="searchResults"></ul>
+          </div>
+          <p class="free-status" id="freeStatus"></p>
+          <div class="scene-list" id="sceneList"></div>
+          <div class="free-tools">
+            <button type="button" class="tool-chip" id="toggleNames" aria-pressed="true">
+              <span data-i18n="toggleNames">שמות יישובים</span>
+            </button>
+            <button type="button" class="tool-chip" id="toggleRoad" aria-pressed="true">
+              <span data-i18n="toggleRoad">כביש 232</span>
+            </button>
+            <div class="zoom-cluster">
+              <span data-i18n="zoom">זום</span>
+              <button type="button" id="zoomOut" aria-label="Zoom out">−</button>
+              <button type="button" id="zoomIn" aria-label="Zoom in">+</button>
+            </div>
+          </div>
+          <button type="button" class="btn btn--outline reset-btn" id="resetBtn" data-i18n="reset">סיום ואיפוס</button>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const COPY = {
+        he: {
+          back: "חזרה",
+          library: "הקרנה",
+          homeKicker: "הקרנת התערוכה",
+          homeTitle: "בחירת נרטיב",
+          homeLede: "לחיצה מעבירה את המסכים והמודל. אין צורך בשליטה ידנית.",
+          live: "שידור",
+          prev: "הקודם",
+          next: "הבא",
+          done: "סיום",
+          of: "מתוך",
+          gisLabel: "מסך GIS",
+          modelLabel: "הקרנה / מודל",
+          freeKicker: "מחוץ לנרטיב",
+          freeTitle: "שליטה חופשית",
+          freeLede: "לחיפוש, לסצנות הכלליות של התערוכה, ולתיקון קטן באמצע הקרנה.",
+          searchLabel: "חיפוש שם או מקום",
+          searchPlaceholder: "חיפוש שם או מקום",
+          toggleNames: "שמות יישובים",
+          toggleRoad: "כביש 232",
+          zoom: "זום",
+          zoomOut: "התרחקות",
+          zoomIn: "התקרבות",
+          reset: "סיום ואיפוס",
+          nowShowing: "מוצג כעת",
+          resetDone: "התערוכה אופסה",
+          draft: "התוכן לשלב זה עדיין נכתב.",
+          steps: "שלבים",
+          freeMeta: "חיפוש, קיר שמות, איפוס",
+        },
+        en: {
+          back: "Back",
+          library: "Projection",
+          homeKicker: "Exhibition projection",
+          homeTitle: "Choose a narrative",
+          homeLede: "Each tap advances the screens and the model. No manual driving.",
+          live: "Live",
+          prev: "Previous",
+          next: "Next",
+          done: "Finish",
+          of: "of",
+          gisLabel: "GIS screen",
+          modelLabel: "Projection / model",
+          freeKicker: "Outside a narrative",
+          freeTitle: "Free control",
+          freeLede: "Search, exhibition-wide scenes, and a light correction mid-talk.",
+          searchLabel: "Search a name or place",
+          searchPlaceholder: "Search a name or place",
+          toggleNames: "Settlement names",
+          toggleRoad: "Road 232",
+          zoom: "Zoom",
+          zoomOut: "Zoom out",
+          zoomIn: "Zoom in",
+          reset: "End and reset",
+          nowShowing: "Now showing",
+          resetDone: "Exhibition reset",
+          draft: "This step is still being written.",
+          steps: "steps",
+          freeMeta: "Search, names wall, reset",
+        },
+      };
+
+      const PEOPLE = [
+        { id: "mor", name: { he: "מור לוי", en: "Mor Levy" }, place: { he: "נובה", en: "Nova" } },
+        { id: "haim", name: { he: "חיים פרי", en: "Haim Peri" }, place: { he: "ניר עוז", en: "Nir Oz" } },
+        { id: "segev", name: { he: "משפחת שגב", en: "Segev family" }, place: { he: "בארי", en: "Be'eri" } },
+      ];
+
+      const SCENES = [
+        {
+          id: "open",
+          title: { he: "פתיחה", en: "Opening" },
+          meta: { he: "רקע שחור, יישובים, כביש 232", en: "Black ground, settlements, Road 232" },
+        },
+        {
+          id: "hour",
+          title: { he: "השעה הראשונה", en: "The first hour" },
+          meta: { he: "6:29 · פוליגונים וצירי חדירה", en: "6:29 · polygons and infiltration axes" },
+        },
+        {
+          id: "wall",
+          title: { he: "קיר השמות", en: "Names wall" },
+          meta: { he: "כל השמות על המודל", en: "All names on the model" },
+        },
+      ];
+
+      function draftStep(n) {
+        return {
+          title: { he: `שלב ${n}`, en: `Step ${n}` },
+          note: { he: COPY.he.draft, en: COPY.en.draft },
+          gis: { he: "—", en: "—" },
+          model: { he: "—", en: "—" },
+          draft: true,
+        };
+      }
+
+      const NARRATIVES = [
+        {
+          id: "segev",
+          index: "01",
+          title: { he: "משפחת שגב", en: "Segev family" },
+          meta: { he: "בארי", en: "Be'eri" },
+          steps: [
+            {
+              clock: "x:xx",
+              title: { he: "הבית בבארי", en: "The house in Be'eri" },
+              note: {
+                he: "צריך לברר את שעת ההתחלה. המדריך פותח בבית המשפחה.",
+                en: "Confirm the start time. The guide opens at the family house.",
+              },
+              gis: {
+                he: "זום אין על הבית בתצ״א שחור־לבן. שעון x:xx.",
+                en: "Zoom to the house on black-and-white aerial. Clock x:xx.",
+              },
+              model: {
+                he: "פוקוס על בארי. יישובים אחרים מוחשכים, ריבוע אור סביב בארי.",
+                en: "Focus Be'eri. Other settlements dimmed, a light rectangle around it.",
+              },
+            },
+            draftStep(2),
+            draftStep(3),
+            draftStep(4),
+            draftStep(5),
+            draftStep(6),
+            draftStep(7),
+          ],
+        },
+        {
+          id: "nova",
+          index: "02",
+          title: { he: "נובה ומור לוי", en: "Nova and Mor Levy" },
+          meta: { he: "אתר הנובה", en: "Nova site" },
+          steps: [
+            {
+              clock: "08:03",
+              title: { he: "אתר הנובה", en: "The Nova site" },
+              note: {
+                he: "מתחילים בסיפור הקולקטיבי. בניגוד לסיפור שהתחולל כולו בממד, כאן הסיפור מרחבי — אנשים נסו על נפשם מהאתר.",
+                en: "Start with the collective story. Unlike the house-bound previous narrative, this one is spatial — people fleeing the site.",
+              },
+              gis: {
+                he: "זום אין על אתר הנובה ושמות המתחמים. שעון 08:03.",
+                en: "Zoom to the Nova site and compound names. Clock 08:03.",
+              },
+              model: {
+                he: "המודל מוחשך. פוקוס על אתר הנובה ושעון 08:03.",
+                en: "Model darkened. Focus on the Nova site and clock 08:03.",
+              },
+            },
+            {
+              clock: "08:03",
+              title: { he: "אתרי הטווח", en: "Range sites" },
+              note: {
+                he: "המפה מתחלפת למצגת — תמונת ארכיון של היער. אתרי הטווח עולים לפי סדר כרונולוגי.",
+                en: "The map yields to a presentation — an archive photo of the forest. Range sites appear in chronological order.",
+              },
+              gis: {
+                he: "מצגת. פוליגוני אתרי הטווח לפי הזמן; בשעון שעת ההתחלה.",
+                en: "Presentation. Range-site polygons by time; clock shows the start.",
+              },
+              model: {
+                he: "נשאר בפוקוס על הנובה בזמן שהמסך מספר.",
+                en: "Stays focused on Nova while the screen narrates.",
+              },
+            },
+            {
+              title: { he: "תנועה ופיזור", en: "Movement and scatter" },
+              note: {
+                he: "מהקולקטיב אל הסיפור האישי של מור לוי. נקודות ומסלולי בריחה — קו שונה בצבע ובסוג מהמחבלים.",
+                en: "From the collective to Mor Levy. People points and escape routes — a line distinct in color and type from the attackers.",
+              },
+              gis: {
+                he: "נקודות אנשים בנובה ומסלולי הבריחה.",
+                en: "People points at Nova and the escape routes.",
+              },
+              model: {
+                he: "אותה תנועה על המודל, בגרפיקה שקטה יותר.",
+                en: "The same movement on the model, in quieter graphic language.",
+              },
+            },
+            {
+              title: { he: "מור לוי", en: "Mor Levy" },
+              note: {
+                he: "המדריך מספר את הרקע והמסלול. אם יש תמונה מהארכיון — היא עולה כאן.",
+                en: "The guide tells her background and path. If an archive portrait exists, it appears here.",
+              },
+              gis: {
+                he: "השם ״מור לוי״, ותמונה אם אפשר.",
+                en: "The name “Mor Levy”, and a portrait if available.",
+              },
+              model: {
+                he: "המסלול: נובה → פרדס לימונים → אתר ההתארגנות של המידבּרן.",
+                en: "The path: Nova → lemon grove → the Midburn staging site.",
+              },
+            },
+            {
+              title: { he: "קטע וידאו", en: "Video" },
+              note: {
+                he: "אחרי הקטע מסיימים את הסיפור האישי.",
+                en: "After the clip, close the personal story.",
+              },
+              gis: {
+                he: "קטע הווידאו על המסך.",
+                en: "The video on the screen.",
+              },
+              model: {
+                he: "המודל מחזיק את נקודת הסיום של המסלול.",
+                en: "The model holds the end point of the path.",
+              },
+            },
+            {
+              title: { he: "שבים לקולקטיב", en: "Back to the collective" },
+              note: {
+                he: "טקסט בהקלדה: מספר האזרחים שנטבחו, שנחטפו ונרצחו, שנחטפו וחזרו בחיים.",
+                en: "Typed text: civilians murdered; kidnapped and murdered; kidnapped and returned alive.",
+              },
+              gis: {
+                he: "המספרים על המסך. נקודות — כולל מי שנרצח מחוץ למתחם הנובה.",
+                en: "The numbers on screen. Points — including those murdered outside the compound.",
+              },
+              model: {
+                he: "נקודות הנובה לפי החלוקה: נרצחו, נחטפו ונרצחו, נחטפו וחזרו.",
+                en: "Nova points by group: murdered, kidnapped and murdered, kidnapped and returned.",
+              },
+            },
+            {
+              title: { he: "הנצחה", en: "Memorial" },
+              note: {
+                he: "רצף תמונות ארכיון עם נקודות הנצחה, שמסתיים בתמונת היער ועמודי ההנצחה.",
+                en: "A run of archive photos with memorial markers, ending on the forest and the memorial pillars.",
+              },
+              gis: {
+                he: "מצגת תמונות שרצה לבד, בלי לחיצה לכל פריים.",
+                en: "A photo sequence that runs on its own, without a click per frame.",
+              },
+              model: {
+                he: "חוזר למבט רחב על האתר.",
+                en: "Returns to a wide view of the site.",
+              },
+            },
+          ],
+        },
+        {
+          id: "sderot",
+          index: "03",
+          title: { he: "שדרות", en: "Sderot" },
+          meta: { he: "העיר", en: "The city" },
+          steps: [1, 2, 3, 4, 5, 6, 7].map(draftStep),
+        },
+        {
+          id: "shura",
+          index: "04",
+          title: { he: "מחנה שורה", en: "Camp Shura" },
+          meta: { he: "הזיהוי", en: "Identification" },
+          steps: [1, 2, 3, 4, 5, 6, 7].map(draftStep),
+        },
+        {
+          id: "hostages",
+          index: "05",
+          title: { he: "חטופים", en: "Hostages" },
+          meta: { he: "חיים פרי, ניר עוז", en: "Haim Peri, Nir Oz" },
+          steps: [
+            {
+              title: { he: "חיים פרי", en: "Haim Peri" },
+              note: {
+                he: "נרטיב החטופים נפתח בחיים פרי מניר עוז.",
+                en: "The hostage narrative opens with Haim Peri of Nir Oz.",
+              },
+              gis: {
+                he: "פירוט הנרטיב בטבלה; השם כקישור.",
+                en: "Narrative detail in the table; the name is a link.",
+              },
+              model: {
+                he: "פוקוס על ניר עוז ועל השם.",
+                en: "Focus on Nir Oz and the name.",
+              },
+            },
+            draftStep(2),
+            draftStep(3),
+            draftStep(4),
+            draftStep(5),
+            draftStep(6),
+            draftStep(7),
+          ],
+        },
+      ];
+
+      const state = {
+        locale: "he",
+        screen: "home",
+        narrativeId: null,
+        step: 0,
+        scene: null,
+        status: { kind: null, id: null },
+        namesOn: true,
+        roadOn: true,
+      };
+
+      const $ = (id) => document.getElementById(id);
+      const txt = (key) => COPY[state.locale][key];
+      const loc = (value) => (value ? value[state.locale] : "");
+      const narrative = () => NARRATIVES.find((item) => item.id === state.narrativeId);
+
+      function setLocale(next) {
+        state.locale = next;
+        document.documentElement.lang = next === "he" ? "he" : "en";
+        document.documentElement.dir = next === "he" ? "rtl" : "ltr";
+        $("localeHe").classList.toggle("is-active", next === "he");
+        $("localeEn").classList.toggle("is-active", next === "en");
+        $("localeHe").setAttribute("aria-pressed", String(next === "he"));
+        $("localeEn").setAttribute("aria-pressed", String(next === "en"));
+        document.querySelectorAll("[data-i18n]").forEach((el) => {
+          el.textContent = txt(el.dataset.i18n);
+        });
+        document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
+          el.setAttribute("aria-label", txt(el.dataset.i18nAria));
+        });
+        document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+          el.setAttribute("placeholder", txt(el.dataset.i18nPlaceholder));
+        });
+        $("zoomOut").setAttribute("aria-label", txt("zoomOut"));
+        $("zoomIn").setAttribute("aria-label", txt("zoomIn"));
+        render();
+        renderResults($("searchInput").value);
+      }
+
+      function showScreen(name) {
+        state.screen = name;
+        document.querySelectorAll(".screen").forEach((el) => {
+          const on = el.dataset.screen === name;
+          el.classList.toggle("is-active", on);
+          el.hidden = !on;
+        });
+        $("backBtn").hidden = name === "home";
+        renderHeader();
+      }
+
+      function renderHeader() {
+        $("headerTitle").textContent = txt("library");
+      }
+
+      function renderHome() {
+        const list = $("narrativeList");
+        list.innerHTML = NARRATIVES.map(
+          (item) => `
+            <button type="button" class="nav-card" data-open="${item.id}">
+              <span class="nav-card-copy">
+                <span class="nav-card-title">${loc(item.title)}</span>
+                <span class="nav-card-meta">${loc(item.meta)} · ${item.steps.length} ${txt("steps")}</span>
+              </span>
+              <span class="nav-card-index">${item.index}</span>
+            </button>`
+        ).join("");
+        list.innerHTML += `
+          <button type="button" class="nav-card nav-card--quiet" data-open-free="1">
+            <span class="nav-card-copy">
+              <span class="nav-card-title">${txt("freeTitle")}</span>
+              <span class="nav-card-meta">${txt("freeMeta")}</span>
+            </span>
+          </button>`;
+      }
+
+      function renderPlayer() {
+        const item = narrative();
+        if (!item) return;
+        const step = item.steps[state.step];
+        const total = item.steps.length;
+        $("stepCount").textContent = `${state.step + 1} ${txt("of")} ${total}`;
+        $("ticks").innerHTML = item.steps
+          .map((_, index) => {
+            const cls = index < state.step ? "is-done" : index === state.step ? "is-current" : "";
+            return `<span class="${cls}"></span>`;
+          })
+          .join("");
+        $("stepClock").textContent = step.clock || "";
+        $("stepTitle").textContent = loc(step.title);
+        $("stepNote").textContent = loc(step.note);
+        $("stepNote").classList.toggle("draft-note", Boolean(step.draft));
+        $("stepGis").textContent = loc(step.gis);
+        $("stepModel").textContent = loc(step.model);
+        $("prevBtn").disabled = state.step === 0;
+        $("nextBtn").textContent = state.step === total - 1 ? txt("done") : txt("next");
+      }
+
+      function statusMessage() {
+        const { kind, id } = state.status;
+        if (kind === "scene") {
+          const scene = SCENES.find((item) => item.id === id);
+          return scene ? `${txt("nowShowing")}: ${loc(scene.title)}` : "";
+        }
+        if (kind === "person") {
+          const person = PEOPLE.find((item) => item.id === id);
+          return person ? `${txt("nowShowing")}: ${loc(person.name)} · ${loc(person.place)}` : "";
+        }
+        if (kind === "reset") return txt("resetDone");
+        return "";
+      }
+
+      function renderFree() {
+        $("sceneList").innerHTML = SCENES.map(
+          (scene) => `
+            <button type="button" class="scene-btn${state.scene === scene.id ? " is-active" : ""}" data-scene="${scene.id}">
+              <span class="scene-btn-title">${loc(scene.title)}</span>
+              <span class="scene-btn-meta">${loc(scene.meta)}</span>
+            </button>`
+        ).join("");
+        $("toggleNames").setAttribute("aria-pressed", String(state.namesOn));
+        $("toggleRoad").setAttribute("aria-pressed", String(state.roadOn));
+        if (state.status.kind === "person") {
+          const person = PEOPLE.find((item) => item.id === state.status.id);
+          if (person) $("searchInput").value = loc(person.name);
+        }
+        setStatus(statusMessage());
+      }
+
+      function renderResults(query) {
+        const q = query.trim().toLowerCase();
+        const box = $("searchResults");
+        if (!q) {
+          box.classList.remove("is-open");
+          box.innerHTML = "";
+          return;
+        }
+        const hits = PEOPLE.filter((person) =>
+          `${loc(person.name)} ${loc(person.place)}`.toLowerCase().includes(q)
+        );
+        box.classList.toggle("is-open", hits.length > 0);
+        box.innerHTML = hits
+          .map(
+            (person) => `
+              <li>
+                <button type="button" data-person="${person.id}">
+                  <span class="result-name">${loc(person.name)}</span>
+                  <span class="result-place">${loc(person.place)}</span>
+                </button>
+              </li>`
+          )
+          .join("");
+      }
+
+      function setStatus(message) {
+        const el = $("freeStatus");
+        el.replaceChildren();
+        if (message) {
+          const dot = document.createElement("span");
+          dot.className = "live-dot";
+          dot.setAttribute("aria-hidden", "true");
+          const text = document.createElement("span");
+          text.textContent = message;
+          el.append(dot, text);
+        }
+        el.classList.toggle("is-live", Boolean(message));
+      }
+
+      function render() {
+        renderHome();
+        renderPlayer();
+        renderFree();
+        renderHeader();
+      }
+
+      function openNarrative(id) {
+        state.narrativeId = id;
+        state.step = 0;
+        showScreen("player");
+        renderPlayer();
+      }
+
+      $("narrativeList").addEventListener("click", (event) => {
+        const free = event.target.closest("[data-open-free]");
+        if (free) {
+          showScreen("free");
+          return;
+        }
+        const card = event.target.closest("[data-open]");
+        if (card) openNarrative(card.dataset.open);
+      });
+
+      $("backBtn").addEventListener("click", () => {
+        state.narrativeId = null;
+        state.step = 0;
+        $("searchInput").value = "";
+        renderResults("");
+        showScreen("home");
+      });
+
+      $("prevBtn").addEventListener("click", () => {
+        if (state.step === 0) return;
+        state.step -= 1;
+        renderPlayer();
+      });
+
+      $("nextBtn").addEventListener("click", () => {
+        const item = narrative();
+        if (!item) return;
+        if (state.step >= item.steps.length - 1) {
+          state.narrativeId = null;
+          state.step = 0;
+          showScreen("home");
+          return;
+        }
+        state.step += 1;
+        renderPlayer();
+      });
+
+      $("localeHe").addEventListener("click", () => setLocale("he"));
+      $("localeEn").addEventListener("click", () => setLocale("en"));
+
+      $("sceneList").addEventListener("click", (event) => {
+        const btn = event.target.closest("[data-scene]");
+        if (!btn) return;
+        state.scene = btn.dataset.scene;
+        state.status = { kind: "scene", id: state.scene };
+        renderFree();
+      });
+
+      $("searchInput").addEventListener("input", (event) => {
+        renderResults(event.target.value);
+      });
+
+      $("searchResults").addEventListener("click", (event) => {
+        const btn = event.target.closest("[data-person]");
+        if (!btn) return;
+        const person = PEOPLE.find((item) => item.id === btn.dataset.person);
+        state.scene = null;
+        state.status = { kind: "person", id: person.id };
+        renderResults("");
+        renderFree();
+      });
+
+      $("toggleNames").addEventListener("click", () => {
+        state.namesOn = !state.namesOn;
+        renderFree();
+      });
+      $("toggleRoad").addEventListener("click", () => {
+        state.roadOn = !state.roadOn;
+        renderFree();
+      });
+      $("resetBtn").addEventListener("click", () => {
+        state.scene = null;
+        state.status = { kind: "reset", id: null };
+        state.namesOn = true;
+        state.roadOn = true;
+        $("searchInput").value = "";
+        renderResults("");
+        renderFree();
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (state.screen !== "player") return;
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === " ") {
+          const goingNext =
+            event.key === " " ||
+            (document.documentElement.dir === "rtl"
+              ? event.key === "ArrowLeft"
+              : event.key === "ArrowRight");
+          const goingPrev =
+            document.documentElement.dir === "rtl"
+              ? event.key === "ArrowRight"
+              : event.key === "ArrowLeft";
+          if (goingNext) $("nextBtn").click();
+          if (goingPrev) $("prevBtn").click();
+          event.preventDefault();
+        }
+      });
+
+      setLocale("he");
+    </script>
+  </body>
+</html>
