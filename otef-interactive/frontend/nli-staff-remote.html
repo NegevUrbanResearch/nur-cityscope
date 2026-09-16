@@ -121,10 +121,10 @@
       .header-side--start { min-width: 168px; }
       .header-side--end { justify-content: flex-end; }
       .header-title {
-        font-size: var(--text-kicker);
-        font-weight: 400;
-        color: var(--nli-gray-2);
-        letter-spacing: 0.04em;
+        font-size: var(--text-ui);
+        font-weight: 600;
+        color: var(--nli-ink);
+        letter-spacing: 0;
         text-align: center;
         flex: 1;
         white-space: nowrap;
@@ -138,10 +138,11 @@
         min-height: 64px;
         min-width: 148px;
         padding: 0 18px;
-        border: 1px solid var(--nli-ink);
-        background: var(--nli-cream);
-        font-size: 20px;
+        border: 1px solid var(--nli-line);
+        background: var(--nli-paper);
+        font-size: var(--text-ui);
         font-weight: 600;
+        color: var(--nli-ink);
         line-height: 1;
       }
       .back-btn .icon {
@@ -155,12 +156,12 @@
         border: 1px solid var(--nli-line);
       }
       .locale button {
-        min-width: 40px;
-        min-height: 32px;
+        min-width: 44px;
+        min-height: 40px;
         padding-inline: 10px;
-        font-size: var(--text-kicker);
+        font-size: var(--text-ui);
         font-weight: 600;
-        color: var(--nli-gray);
+        color: var(--nli-ink);
       }
       .locale button.is-active {
         background: var(--nli-ink);
@@ -362,11 +363,12 @@
         display: block;
       }
       .staff-connection {
-        font-size: var(--text-kicker);
-        color: var(--nli-gray-2);
+        font-size: var(--text-ui);
+        font-weight: 600;
+        color: var(--nli-ink);
         white-space: nowrap;
       }
-      .staff-connection.is-on { color: var(--nli-ink); }
+      .staff-connection:not(.is-on) { color: var(--nli-gray); }
       #table-switcher { display: none !important; }
 
       .nli-tl-sheet { padding: 0; }
@@ -432,7 +434,7 @@
         direction: ltr;
         unicode-bidi: isolate;
         align-items: center;
-        gap: 4px;
+        gap: 12px;
         position: relative;
         padding-top: 22px;
       }
@@ -834,7 +836,6 @@
         .back-btn {
           min-height: 72px;
           min-width: 176px;
-          font-size: 22px;
         }
         .back-btn .icon {
           width: 36px;
