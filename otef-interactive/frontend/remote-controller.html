@@ -80,8 +80,8 @@
         </section>
 
         <!--
-          Tab: Workshop (display) — data-remote-tab=curation for embed + routing contract
-          (Task 7: curation.html iframe, ?embed=1)
+          Tab: National Library staff remote — data-remote-tab=curation keeps the
+          embed panel contract; the tab itself launches nli-staff-remote.html.
         -->
         <section
           class="remote-tab-panel"
@@ -471,22 +471,22 @@
         role="tab"
         aria-selected="false"
         aria-controls="remote-panel-curation"
-        aria-disabled="true"
-        tabindex="-1"
+        tabindex="0"
         data-remote-tab="curation"
-        disabled
+        data-nli-remote-launch="true"
       >
         <span class="remote-bottom-nav__icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <path d="M3 9h18M9 21V9" />
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            <path d="M8 7h8M8 11h6" />
           </svg>
         </span>
         <span
           class="remote-bottom-nav__label"
-          data-curation-surface="workshop"
+          data-nli-surface="library"
           data-i18n="navCuration"
-        >סדנה</span>
+        >הספרייה</span>
       </button>
       <button
         type="button"

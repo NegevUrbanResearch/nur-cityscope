@@ -146,6 +146,8 @@ const LAYER_DISPLAY_LABELS = {
   },
   // --- projector_base ---
   "projector_base.sea": { he: "ים", en: "Sea" },
+  "projector_base.ישובים": { he: "יישובים", en: "Settlements" },
+  "projector_base.שמות_יישובים": { he: "שמות יישובים", en: "Settlement names" },
   "projector_base.רקע_שחור": { he: "רקע שחור", en: "Black background" },
   "projector_base.tkuma_area_line": {
     he: "קו אזור תקומה",

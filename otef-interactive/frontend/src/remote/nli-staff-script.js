@@ -1,0 +1,294 @@
+export const COPY = {
+  he: {
+    back: "חזרה",
+    library: "הקרנה",
+    homeKicker: "הקרנת התערוכה",
+    homeTitle: "בחירת נרטיב",
+    homeLede: "כל שלב נפתח בנקודה קבועה. בתוך השלב אפשר לשלוט בשעון, במצגת או בארכיון.",
+    live: "שידור",
+    prev: "הקודם",
+    next: "הבא",
+    done: "סיום",
+    of: "מתוך",
+    gisLabel: "מסך GIS",
+    modelLabel: "הקרנה / מודל",
+    kitIdle: "אין שליטה בשלב זה — המשך בנרטיב.",
+    kitReset: "שלב זה נפתח ב־{{clock}}. מעבר לשלב הבא מאפס.",
+    kitResetOpen: "שלב זה נפתח בנקודת הפתיחה. מעבר לשלב הבא מאפס.",
+    freeKicker: "מחוץ לנרטיב",
+    freeTitle: "שליטה חופשית",
+    freeLede: "לחיפוש, לסצנות הכלליות של התערוכה, ולתיקון קטן באמצע הקרנה.",
+    searchLabel: "חיפוש שם או מקום",
+    searchPlaceholder: "חיפוש שם או מקום",
+    reset: "סיום ואיפוס",
+    nowShowing: "מוצג כעת",
+    resetDone: "התערוכה אופסה",
+    draft: "התוכן לשלב זה עדיין נכתב.",
+    steps: "שלבים",
+    freeMeta: "סצנות, חיפוש, זום, שכבות ושעון",
+    disconnected: "אין חיבור למפה",
+    connected: "מחובר",
+    connecting: "מתחבר…",
+    zoom: "זום",
+    toggleNames: "שמות יישובים",
+    toggleRoad: "כביש 232",
+    archiveMissing: "לא נמצאה רשומת ארכיון לשם זה.",
+  },
+  en: {
+    back: "Back",
+    library: "Projection",
+    homeKicker: "Exhibition projection",
+    homeTitle: "Choose a narrative",
+    homeLede: "Each step opens at a fixed checkpoint. Inside the step you can drive the clock, presentation, or archive.",
+    live: "Live",
+    prev: "Previous",
+    next: "Next",
+    done: "Finish",
+    of: "of",
+    gisLabel: "GIS screen",
+    modelLabel: "Projection / model",
+    kitIdle: "No controls in this step — continue the narrative.",
+    kitReset: "This step opens at {{clock}}. Moving on resets.",
+    kitResetOpen: "This step opens at the start point. Moving on resets.",
+    freeKicker: "Outside a narrative",
+    freeTitle: "Free control",
+    freeLede: "Search, the exhibition scenes, and a small correction mid-talk.",
+    searchLabel: "Search a name or place",
+    searchPlaceholder: "Search a name or place",
+    reset: "End and reset",
+    nowShowing: "Now showing",
+    resetDone: "Exhibition reset",
+    draft: "This step is still being written.",
+    steps: "steps",
+    freeMeta: "Scenes, search, zoom, layers, and the clock",
+    disconnected: "Map is disconnected",
+    connected: "Connected",
+    connecting: "Connecting…",
+    zoom: "Zoom",
+    toggleNames: "Settlement names",
+    toggleRoad: "Highway 232",
+    archiveMissing: "No archive record found for this name.",
+  },
+};
+
+export const SCENES = [
+  {
+    id: "open",
+    title: { he: "פתיחה", en: "Opening" },
+    meta: { he: "רקע שחור, יישובים, כביש 232", en: "Black ground, settlements, Road 232" },
+  },
+  {
+    id: "hour",
+    title: { he: "השעה הראשונה", en: "The first hour" },
+    meta: { he: "6:29 · פוליגונים וצירי חדירה", en: "6:29 · polygons and infiltration axes" },
+  },
+  {
+    id: "wall",
+    title: { he: "קיר השמות", en: "Names wall" },
+    meta: { he: "כל השמות על המודל", en: "All names on the model" },
+  },
+];
+
+function draftStep(n, kit = ["timeline"]) {
+  return {
+    title: { he: `שלב ${n}`, en: `Step ${n}` },
+    note: { he: COPY.he.draft, en: COPY.en.draft },
+    gis: { he: "—", en: "—" },
+    model: { he: "—", en: "—" },
+    kit,
+    draft: true,
+  };
+}
+
+export const NARRATIVES = [
+  {
+    id: "segev",
+    index: "01",
+    title: { he: "משפחת שגב", en: "Segev family" },
+    meta: { he: "בארי", en: "Be'eri" },
+    steps: [
+      {
+        clock: "x:xx",
+        title: { he: "הבית בבארי", en: "The house in Be'eri" },
+        note: {
+          he: "צריך לברר את שעת ההתחלה. המדריך פותח בבית המשפחה.",
+          en: "Confirm the start time. The guide opens at the family house.",
+        },
+        gis: {
+          he: "זום אין על הבית בתצ״א שחור־לבן. שעון x:xx.",
+          en: "Zoom to the house on black-and-white aerial. Clock x:xx.",
+        },
+        model: {
+          he: "פוקוס על בארי. יישובים אחרים מוחשכים, ריבוע אור סביב בארי.",
+          en: "Focus Be'eri. Other settlements dimmed, a light rectangle around it.",
+        },
+        kit: ["timeline"],
+      },
+      draftStep(2),
+      draftStep(3, ["presentation"]),
+      draftStep(4),
+      draftStep(5),
+      draftStep(6),
+      draftStep(7),
+    ],
+  },
+  {
+    id: "nova",
+    index: "02",
+    title: { he: "נובה ומור לוי", en: "Nova and Mor Levy" },
+    meta: { he: "אתר הנובה", en: "Nova site" },
+    steps: [
+      {
+        clock: "08:03",
+        title: { he: "אתר הנובה", en: "The Nova site" },
+        note: {
+          he: "מתחילים בסיפור הקולקטיבי. בניגוד לסיפור שהתחולל כולו בממד, כאן הסיפור מרחבי — אנשים נסו על נפשם מהאתר.",
+          en: "Start with the collective story. Unlike the house-bound previous narrative, this one is spatial — people fleeing the site.",
+        },
+        gis: {
+          he: "זום אין על אתר הנובה ושמות המתחמים. שעון 08:03.",
+          en: "Zoom to the Nova site and compound names. Clock 08:03.",
+        },
+        model: {
+          he: "המודל מוחשך. פוקוס על אתר הנובה ושעון 08:03.",
+          en: "Model darkened. Focus on the Nova site and clock 08:03.",
+        },
+        kit: ["timeline"],
+      },
+      {
+        clock: "08:03",
+        title: { he: "אתרי הטווח", en: "Range sites" },
+        note: {
+          he: "המפה מתחלפת למצגת — תמונת ארכיון של היער. אתרי הטווח עולים לפי סדר כרונולוגי.",
+          en: "The map yields to a presentation — an archive photo of the forest. Range sites appear in chronological order.",
+        },
+        gis: {
+          he: "מצגת. פוליגוני אתרי הטווח לפי הזמן; בשעון שעת ההתחלה.",
+          en: "Presentation. Range-site polygons by time; clock shows the start.",
+        },
+        model: {
+          he: "נשאר בפוקוס על הנובה בזמן שהמסך מספר.",
+          en: "Stays focused on Nova while the screen narrates.",
+        },
+        kit: [],
+      },
+      {
+        title: { he: "תנועה ופיזור", en: "Movement and scatter" },
+        note: {
+          he: "מהקולקטיב אל הסיפור האישי של מור לוי. נקודות ומסלולי בריחה — קו שונה בצבע ובסוג מהמחבלים.",
+          en: "From the collective to Mor Levy. People points and escape routes — a line distinct in color and type from the attackers.",
+        },
+        gis: {
+          he: "נקודות אנשים בנובה ומסלולי הבריחה.",
+          en: "People points at Nova and the escape routes.",
+        },
+        model: {
+          he: "אותה תנועה על המודל, בגרפיקה שקטה יותר.",
+          en: "The same movement on the model, in quieter graphic language.",
+        },
+        kit: ["timeline"],
+      },
+      {
+        title: { he: "מור לוי", en: "Mor Levy" },
+        note: {
+          he: "המדריך מספר את הרקע והמסלול. ארכיון הספרייה נפתח לרשומה שלה.",
+          en: "The guide tells her background and path. The NLI archive opens on her record.",
+        },
+        gis: {
+          he: "השם ״מור לוי״ על המפה.",
+          en: "The name “Mor Levy” on the map.",
+        },
+        model: {
+          he: "המסלול: נובה → פרדס לימונים → אתר ההתארגנות של המידבּרן.",
+          en: "The path: Nova → lemon grove → the Midburn staging site.",
+        },
+        kit: ["archive"],
+        personQuery: "מור לוי",
+      },
+      {
+        title: { he: "קטע וידאו", en: "Video" },
+        note: {
+          he: "אחרי הקטע מסיימים את הסיפור האישי.",
+          en: "After the clip, close the personal story.",
+        },
+        gis: { he: "קטע הווידאו על המסך.", en: "The video on the screen." },
+        model: {
+          he: "המודל מחזיק את נקודת הסיום של המסלול.",
+          en: "The model holds the end point of the path.",
+        },
+        kit: [],
+      },
+      {
+        title: { he: "שבים לקולקטיב", en: "Back to the collective" },
+        note: {
+          he: "טקסט בהקלדה: מספר האזרחים שנטבחו, שנחטפו ונרצחו, שנחטפו וחזרו בחיים.",
+          en: "Typed text: civilians murdered; kidnapped and murdered; kidnapped and returned alive.",
+        },
+        gis: {
+          he: "המספרים על המסך. נקודות — כולל מי שנרצח מחוץ למתחם הנובה.",
+          en: "The numbers on screen. Points — including those murdered outside the compound.",
+        },
+        model: {
+          he: "נקודות הנובה לפי החלוקה: נרצחו, נחטפו ונרצחו, נחטפו וחזרו.",
+          en: "Nova points by group: murdered, kidnapped and murdered, kidnapped and returned.",
+        },
+        kit: [],
+      },
+      {
+        title: { he: "הנצחה", en: "Memorial" },
+        note: {
+          he: "רצף תמונות ארכיון עם נקודות הנצחה, שמסתיים בתמונת היער ועמודי ההנצחה.",
+          en: "A run of archive photos with memorial markers, ending on the forest and the memorial pillars.",
+        },
+        gis: {
+          he: "מצגת תמונות שרצה לבד, בלי לחיצה לכל פריים.",
+          en: "A photo sequence that runs on its own, without a click per frame.",
+        },
+        model: { he: "חוזר למבט רחב על האתר.", en: "Returns to a wide view of the site." },
+        kit: [],
+      },
+    ],
+  },
+  {
+    id: "sderot",
+    index: "03",
+    title: { he: "שדרות", en: "Sderot" },
+    meta: { he: "העיר", en: "The city" },
+    steps: [1, 2, 3, 4, 5, 6, 7].map((n) => draftStep(n)),
+  },
+  {
+    id: "shura",
+    index: "04",
+    title: { he: "מחנה שורה", en: "Camp Shura" },
+    meta: { he: "הזיהוי", en: "Identification" },
+    steps: [1, 2, 3, 4, 5, 6, 7].map((n) => draftStep(n)),
+  },
+  {
+    id: "hostages",
+    index: "05",
+    title: { he: "חטופים", en: "Hostages" },
+    meta: { he: "חיים פרי, ניר עוז", en: "Haim Peri, Nir Oz" },
+    steps: [
+      {
+        title: { he: "חיים פרי", en: "Haim Peri" },
+        note: {
+          he: "נרטיב החטופים נפתח בחיים פרי מניר עוז. ארכיון הספרייה נפתח לרשומה שלו.",
+          en: "The hostage narrative opens with Haim Peri of Nir Oz. The NLI archive opens on his record.",
+        },
+        gis: {
+          he: "פירוט הנרטיב בטבלה; השם כקישור.",
+          en: "Narrative detail in the table; the name is a link.",
+        },
+        model: { he: "פוקוס על ניר עוז ועל השם.", en: "Focus on Nir Oz and the name." },
+        kit: ["archive"],
+        personQuery: "חיים פרי",
+      },
+      draftStep(2),
+      draftStep(3),
+      draftStep(4),
+      draftStep(5),
+      draftStep(6),
+      draftStep(7),
+    ],
+  },
+];

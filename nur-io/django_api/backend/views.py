@@ -1052,16 +1052,6 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             locked = lock_person_selection_state(table.otef_viewport)
-            narrative = normalize_narrative_state(locked.narrative_state)
-            if narrative["id"] is not None:
-                return Response(
-                    {
-                        "error": "person selection is unavailable while a narrative is active",
-                        "reason": "narrative_active",
-                        "narrative_state": narrative,
-                    },
-                    status=status.HTTP_409_CONFLICT,
-                )
             snapshot, changed, error, reason = transition_person_selection(
                 locked,
                 command["target"],

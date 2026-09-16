@@ -1,5 +1,6 @@
 import TableSwitcher from "../shared/table-switcher.js";
 import { initLocale } from "../remote/remote-locale.js";
+import { initNliStaffRemote } from "../remote/nli-staff-remote.js";
 
 async function bootstrapRemoteRuntime() {
   const modules = [
@@ -14,25 +15,16 @@ async function bootstrapRemoteRuntime() {
     "../shared/otef-data-context/OTEFDataContext-bounds.js",
     "../shared/otef-data-context/OTEFDataContext-websocket.js",
     "../shared/OTEFDataContext.js",
-    "../shared/orientation-transform.js",
     "../shared/layer-registry.js",
     "../shared/layer-name-utils.js",
     "../shared/layer-state-helper.js",
-    "../remote/remote-controller.js",
-    "../remote/layer-sheet-controller.js",
-    "../remote/slideshow-tab-controller.js",
   ];
-
   for (const mod of modules) {
     await import(mod);
   }
 }
 
 function initializeTableSwitcher() {
-  if (typeof TableSwitcher !== "function") {
-    throw new Error("TableSwitcher constructor not available");
-  }
-
   const tableSwitcher = new TableSwitcher({
     defaultTable: "otef",
     onTableChange: (tableName) => {
@@ -41,34 +33,25 @@ function initializeTableSwitcher() {
       }
     },
   });
-
   if (tableSwitcher.getCurrentTable() !== "otef") {
     window.location.href = `/remote-controller/?table=${tableSwitcher.getCurrentTable()}`;
     return false;
   }
-
   tableSwitcher.createSwitcherUI();
   return true;
 }
 
 async function boot() {
   initLocale();
-  const shouldContinue = initializeTableSwitcher();
-  if (!shouldContinue) return;
+  if (!initializeTableSwitcher()) return;
   await bootstrapRemoteRuntime();
-  const [{ initRemotePlaceNavigation, placeIsWithinRemoteBounds }, { default: OTEFDataContext }] = await Promise.all(
-    [
-      import("../remote/remote-place-navigation.js"),
-      import("../shared/OTEFDataContext.js"),
-    ],
-  );
-
-  initRemotePlaceNavigation({
-    dataContext: OTEFDataContext,
-    isConnected: () => OTEFDataContext.isConnected?.() !== false,
-    narrativeActive: () => !!OTEFDataContext.getNarrativeState?.()?.id,
-    canNavigateToPlace: (place) => placeIsWithinRemoteBounds(place, OTEFDataContext),
-  });
+  const [{ default: layerRegistry }, { default: OTEFDataContext }] = await Promise.all([
+    import("../shared/layer-registry.js"),
+    import("../shared/OTEFDataContext.js"),
+  ]);
+  await layerRegistry.init();
+  await OTEFDataContext.init("otef");
+  initNliStaffRemote(OTEFDataContext);
 }
 
-boot().catch((error) => console.error("[frontend-b] remote bootstrap failed", error));
+boot().catch((error) => console.error("[nli-staff-remote] bootstrap failed", error));

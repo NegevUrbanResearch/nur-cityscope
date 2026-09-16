@@ -16,14 +16,15 @@ import {
   t,
 } from "./remote-locale.js";
 import { shouldReapplyDpadAfterFullControlRefresh } from "./remote-control-refresh-invariants.js";
-import { computeNextZoomFromLiveState } from "./remote-zoom-control-contract.js";
+import { DEFAULT_ZOOM } from "./remote-zoom-control-contract.js";
+import { createRemoteZoomController } from "./remote-zoom-controls.js";
 
 // Current UI state (synced from API)
 let currentState = {
   viewport: {
     bbox: null,
     corners: null,
-    zoom: 15,
+    zoom: DEFAULT_ZOOM,
   },
   isConnected: false,
   viewerAngleDeg: 0,
@@ -36,24 +37,15 @@ let activeControl = null; // null, 'dpad', or 'joystick'
 let joystickManager = null; // Nipple.js instance
 let joystickInterval = null; // For continuous pan updates
 let basemapControlController = null;
-
-// Throttle/debounce timers
-let zoomThrottleTimer = null;
-const ZOOM_THROTTLE_MS = 100;
-let zoomCommandInFlight = false;
-let pendingZoomTarget = null;
-let lastRequestedZoom = null;
-
-const MIN_ZOOM = 10;
-const MAX_ZOOM = 19;
-const DEFAULT_ZOOM = 15;
+let zoomController = null;
 
 // Table name for this controller
 const TABLE_NAME = "otef";
 
-/** Bottom shell tabs: LTR bar order (Workshop disabled | Presentation | Layers | Navigation); arrow key navigation. */
+/** Bottom shell tabs: LTR bar order (Library launcher | Presentation | Layers | Navigation). */
 const REMOTE_TAB_KEYS = ["curation", "slideshow", "layers", "navigation"];
-const DISABLED_REMOTE_TAB_KEYS = new Set(["curation"]);
+const LAUNCHER_REMOTE_TAB_KEYS = new Set(["curation"]);
+const NLI_STAFF_REMOTE_HREF = "nli-staff-remote.html";
 
 /*
  * Legacy `#toggleModel` wiring was removed: that checkbox is not part of the remote shell
@@ -67,12 +59,6 @@ let unsubscribeFunctions = [];
 
 /** Last connection cluster state for re-applying translated status after locale change */
 let lastConnectionUiStatus = "connecting";
-
-function normalizeZoomLevel(value, fallback = DEFAULT_ZOOM) {
-  const z = Number(value);
-  if (!Number.isFinite(z)) return fallback;
-  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(z)));
-}
 
 // Initialize on DOM ready
 if (typeof document !== "undefined") {
@@ -92,16 +78,26 @@ async function initialize() {
   // Initialize shared DataContext (single WS + API state)
   await OTEFDataContext.init(TABLE_NAME);
 
+  zoomController = createRemoteZoomController({
+    slider: document.getElementById("zoomSlider"),
+    zoomIn: document.getElementById("zoomIn"),
+    zoomOut: document.getElementById("zoomOut"),
+    zoomValue: document.getElementById("zoomValue"),
+    getViewport: () => OTEFDataContext.getViewport(),
+    zoom: (level) => OTEFDataContext.zoom(level),
+    isConnected: () => currentState.isConnected,
+    getStateViewport: () => currentState.viewport,
+    setStateViewport: (viewport) => {
+      currentState.viewport = viewport;
+    },
+  });
+
   // Wire DataContext subscriptions to local UI state
   unsubscribeFunctions.push(
     OTEFDataContext.subscribe("viewport", (viewport) => {
       if (!viewport) return;
-      const normalizedZoom = normalizeZoomLevel(viewport.zoom);
       currentState.viewport = viewport;
-      updateZoomUI(normalizedZoom);
-      if (!zoomCommandInFlight && pendingZoomTarget === null) {
-        lastRequestedZoom = normalizedZoom;
-      }
+      zoomController?.syncFromViewport(viewport);
       updateUI();
     }),
   );
@@ -158,7 +154,7 @@ async function initialize() {
   // Initialize UI controls
   initializePanControls();
   initializeBasemapControls();
-  initializeZoomControls();
+  zoomController.init();
   initializeJoystick();
   initRemoteShellTabs();
   initRemoteLocaleControls();
@@ -167,11 +163,15 @@ async function initialize() {
   updateUI();
 }
 
+function openNliStaffRemote() {
+  window.location.assign(NLI_STAFF_REMOTE_HREF);
+}
+
 /**
  * Tab shell: show one `data-remote-tab` panel, sync `role="tab"` (Task 4; locale in Task 5).
  */
 function setRemoteTab(activeKey) {
-  if (!REMOTE_TAB_KEYS.includes(activeKey) || DISABLED_REMOTE_TAB_KEYS.has(activeKey)) return;
+  if (!REMOTE_TAB_KEYS.includes(activeKey) || LAUNCHER_REMOTE_TAB_KEYS.has(activeKey)) return;
   const nav = document.getElementById("remoteBottomNav");
   const previousActiveKey =
     nav
@@ -192,7 +192,7 @@ function setRemoteTab(activeKey) {
     const isActive = key === activeKey;
     tab.setAttribute("aria-selected", isActive ? "true" : "false");
     tab.classList.toggle("is-active", isActive);
-    tab.tabIndex = isActive && !DISABLED_REMOTE_TAB_KEYS.has(key) ? 0 : -1;
+    tab.tabIndex = LAUNCHER_REMOTE_TAB_KEYS.has(key) || isActive ? 0 : -1;
   });
 
   if (
@@ -275,7 +275,11 @@ function initRemoteShellTabs() {
     const tab = e.target.closest('[role="tab"][data-remote-tab]');
     if (!tab || !nav.contains(tab)) return;
     const k = tab.getAttribute("data-remote-tab");
-    if (DISABLED_REMOTE_TAB_KEYS.has(k) || tab.getAttribute("aria-disabled") === "true") return;
+    if (LAUNCHER_REMOTE_TAB_KEYS.has(k) || tab.getAttribute("data-nli-remote-launch") === "true") {
+      openNliStaffRemote();
+      return;
+    }
+    if (tab.getAttribute("aria-disabled") === "true") return;
     if (k) setRemoteTab(k);
   });
 
@@ -288,7 +292,7 @@ function initRemoteShellTabs() {
     const i = REMOTE_TAB_KEYS.indexOf(key);
     if (i < 0) return;
     const delta = e.key === "ArrowRight" ? 1 : -1;
-    const enabledTabKeys = REMOTE_TAB_KEYS.filter((tabKey) => !DISABLED_REMOTE_TAB_KEYS.has(tabKey));
+    const enabledTabKeys = REMOTE_TAB_KEYS.filter((tabKey) => !LAUNCHER_REMOTE_TAB_KEYS.has(tabKey));
     const enabledIndex = enabledTabKeys.indexOf(key);
     if (enabledIndex < 0) return;
     const next = (enabledIndex + delta + enabledTabKeys.length) % enabledTabKeys.length;
@@ -393,70 +397,6 @@ function initializePanControls() {
     button.addEventListener("mousedown", startHandler);
     button.addEventListener("mouseup", endHandler);
     button.addEventListener("mouseleave", endHandler);
-  });
-}
-
-/**
- * Initialize zoom controls
- */
-function initializeZoomControls() {
-  const slider = document.getElementById("zoomSlider");
-  const zoomIn = document.getElementById("zoomIn");
-  const zoomOut = document.getElementById("zoomOut");
-  const zoomValue = document.getElementById("zoomValue");
-
-  if (!slider || !zoomIn || !zoomOut || !zoomValue) return;
-
-  slider.min = String(MIN_ZOOM);
-  slider.max = String(MAX_ZOOM);
-  slider.step = "1";
-
-  // Slider change
-  slider.addEventListener("input", (e) => {
-    const zoom = normalizeZoomLevel(e.target.value);
-    updateZoomUI(zoom);
-
-    // Throttle slider updates
-    clearTimeout(zoomThrottleTimer);
-    zoomThrottleTimer = setTimeout(() => {
-      queueZoomCommand(zoom);
-    }, ZOOM_THROTTLE_MS);
-  });
-
-  // Zoom in button
-  zoomIn.addEventListener("click", () => {
-    if (!currentState.isConnected) return;
-    const liveViewport =
-      typeof OTEFDataContext !== "undefined" &&
-      typeof OTEFDataContext.getViewport === "function"
-        ? OTEFDataContext.getViewport()
-        : null;
-    const newZoom = computeNextZoomFromLiveState({
-      sliderValue: slider.value,
-      liveViewportZoom: liveViewport?.zoom,
-      stateZoom: currentState.viewport?.zoom,
-      pendingZoom: lastRequestedZoom,
-      delta: 1,
-    });
-    queueZoomCommand(newZoom);
-  });
-
-  // Zoom out button
-  zoomOut.addEventListener("click", () => {
-    if (!currentState.isConnected) return;
-    const liveViewport =
-      typeof OTEFDataContext !== "undefined" &&
-      typeof OTEFDataContext.getViewport === "function"
-        ? OTEFDataContext.getViewport()
-        : null;
-    const newZoom = computeNextZoomFromLiveState({
-      sliderValue: slider.value,
-      liveViewportZoom: liveViewport?.zoom,
-      stateZoom: currentState.viewport?.zoom,
-      pendingZoom: lastRequestedZoom,
-      delta: -1,
-    });
-    queueZoomCommand(newZoom);
   });
 }
 
@@ -659,65 +599,6 @@ function getPanSpeedFactorForZoom(zoom) {
   return 0.32;
 }
 
-function queueZoomCommand(zoom) {
-  const clampedZoom = normalizeZoomLevel(zoom);
-  if (!Number.isFinite(clampedZoom)) return;
-
-  pendingZoomTarget = clampedZoom;
-  lastRequestedZoom = clampedZoom;
-  updateZoomUI(clampedZoom);
-  if (currentState.viewport) {
-    currentState.viewport = { ...currentState.viewport, zoom: clampedZoom };
-  }
-
-  if (!zoomCommandInFlight) {
-    void flushZoomQueue();
-  }
-}
-
-async function flushZoomQueue() {
-  if (zoomCommandInFlight) return;
-  zoomCommandInFlight = true;
-  try {
-    while (pendingZoomTarget !== null) {
-      const targetZoom = pendingZoomTarget;
-      pendingZoomTarget = null;
-      await sendZoomCommand(targetZoom);
-    }
-  } finally {
-    zoomCommandInFlight = false;
-    if (pendingZoomTarget === null && currentState.viewport) {
-      lastRequestedZoom = normalizeZoomLevel(currentState.viewport.zoom);
-    }
-  }
-}
-
-async function sendZoomCommand(zoom) {
-  if (!currentState.isConnected) return;
-
-  // Update UI optimistically; DataContext will sync real value via subscription
-  updateZoomUI(zoom);
-
-  try {
-    await OTEFDataContext.zoom(zoom);
-  } catch (error) {
-    console.error("[Remote] Zoom command failed:", error);
-  }
-}
-
-function updateZoomUI(zoom) {
-  const slider = document.getElementById("zoomSlider");
-  const zoomValue = document.getElementById("zoomValue");
-  const normalized = normalizeZoomLevel(zoom);
-
-  if (slider) {
-    slider.value = String(normalized);
-  }
-  if (zoomValue) {
-    zoomValue.textContent = String(normalized);
-  }
-}
-
 /**
  * Initialize joystick control
  */
@@ -832,8 +713,7 @@ function enableDPad() {
  * Update all UI elements based on current state
  */
 function updateUI() {
-  // Update zoom
-  updateZoomUI(currentState.viewport.zoom);
+  zoomController?.updateZoomUI(currentState.viewport.zoom);
 
   // Disable controls if not connected
   const controls = document.querySelectorAll(

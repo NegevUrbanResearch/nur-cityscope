@@ -36,11 +36,14 @@ import { completedInvestigationBeats } from "../shared/nli-investigation-visual-
 import { NLI_NARRATIVES } from "../shared/nli-narratives.js";
 import { novaVirtualMembership } from "../shared/nli-nova-virtual-membership.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
+import { materialIcon } from "./nli-staff-icons.js";
 
-const NLI_ICON_PLAY = `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>`;
-const NLI_ICON_PAUSE = `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>`;
-const NLI_ICON_STOP = `<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect fill="currentColor" x="6" y="6" width="12" height="12" rx="1"/></svg>`;
-const NLI_ICON_LOOP = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17 2l4 4-4 4"/><path d="M3 12a8 8 0 0 1 14-5.3L21 10"/><path d="M7 22l-4-4 4-4"/><path d="M21 12a8 8 0 0 1-14 5.3L3 14"/></svg>`;
+const NLI_ICON_PLAY = materialIcon("play", 20);
+const NLI_ICON_PAUSE = materialIcon("pause", 20);
+const NLI_ICON_STOP = materialIcon("stop", 18);
+const NLI_ICON_LOOP = materialIcon("repeat", 20);
+const NLI_ICON_BACK = materialIcon("chevronLeft", 22);
+const NLI_ICON_FWD = materialIcon("chevronRight", 22);
 
 function escapeHtmlSafe(value) {
   return escapeHtml(value);
@@ -366,7 +369,7 @@ export function renderNliTimelineTransport(clock, options = {}) {
     <button type="button" class="nli-tl-btn nli-tl-loop${loopOn ? " nli-tl-loop--on" : ""}" data-nli-tl-loop data-i18n-aria="ariaNliTimelineLoop" aria-label="${escapeHtmlSafe(t("ariaNliTimelineLoop"))}" aria-pressed="${loopOn ? "true" : "false"}"${disabledAttr(allOff)}>${NLI_ICON_LOOP}</button>
   </div>
   <div class="nli-tl-scrub-row">
-    <button type="button" class="nli-tl-step" data-nli-tl-step-back data-i18n-aria="ariaNliTimelineStepBack" aria-label="${escapeHtmlSafe(t("ariaNliTimelineStepBack"))}"${disabledAttr(stepOff)}>‹</button>
+    <button type="button" class="nli-tl-step" data-nli-tl-step-back data-i18n-aria="ariaNliTimelineStepBack" aria-label="${escapeHtmlSafe(t("ariaNliTimelineStepBack"))}"${disabledAttr(stepOff)}>${NLI_ICON_BACK}</button>
     <div class="nli-tl-track${src.phase === "idle" ? " nli-tl-track--idle" : ""}" data-nli-tl-scrub dir="ltr" data-i18n-aria="ariaNliTimelineScrub" aria-label="${escapeHtmlSafe(t("ariaNliTimelineScrub"))}" role="slider" aria-valuemin="0" aria-valuemax="${Math.max(0, beats.length - 1)}" aria-valuenow="${index}"${stepOff ? ' aria-disabled="true"' : ""}>
       ${showBubble ? `<div class="nli-tl-bubble" dir="ltr" style="left:${pct}%">${escapeHtmlSafe(story)}</div>` : ""}
       <div class="nli-tl-track-line"></div>
@@ -375,7 +378,7 @@ export function renderNliTimelineTransport(clock, options = {}) {
       <div class="nli-tl-hours">${hourHtml}</div>
       <div class="nli-tl-thumb" style="left:${pct}%"></div>
     </div>
-    <button type="button" class="nli-tl-step" data-nli-tl-step-forward data-i18n-aria="ariaNliTimelineStepForward" aria-label="${escapeHtmlSafe(t("ariaNliTimelineStepForward"))}"${disabledAttr(stepOff)}>›</button>
+    <button type="button" class="nli-tl-step" data-nli-tl-step-forward data-i18n-aria="ariaNliTimelineStepForward" aria-label="${escapeHtmlSafe(t("ariaNliTimelineStepForward"))}"${disabledAttr(stepOff)}>${NLI_ICON_FWD}</button>
   </div>
 </div>`;
 }
@@ -567,10 +570,8 @@ export const nliTimelineHostMethods = {
 
   _paintNliPlayhead(clock) {
     if (this._nliScrub) return;
-    const content =
-      this.sheet && typeof this.sheet.querySelector === "function"
-        ? this.sheet.querySelector(".sheet-content")
-        : null;
+    const sheet = this.sheet && typeof this.sheet.querySelector === "function" ? this.sheet : null;
+    const content = sheet?.querySelector(".sheet-content") || sheet;
     if (!content) return;
     const fallbackBeats = this._nliArmPayload().beats;
     paintNliTransportPlayhead(content, clock, fallbackBeats);
@@ -619,14 +620,16 @@ export const nliTimelineHostMethods = {
 
   async _ensureNliFeatureCache() {
     if (this.focusedGroupId !== "nli") return;
-    if (this._nliCacheFetchInflight) return;
+    if (this._nliCacheFetchInflight) {
+      await this._nliCacheFetchInflight;
+      return;
+    }
     const ids = NLI_PLAYABLE_IDS;
     if (!this._nliFeatureCache) this._nliFeatureCache = Object.create(null);
     const missing = ids.filter((id) => !Array.isArray(this._nliFeatureCache[id]));
     if (missing.length === 0) return;
-    this._nliCacheFetchInflight = true;
-    let loaded = false;
-    try {
+    const fetchPromise = (async () => {
+      let loaded = false;
       for (const id of missing) {
         try {
           const url =
@@ -650,10 +653,16 @@ export const nliTimelineHostMethods = {
           this._nliFeatureCache[id] = null;
         }
       }
+      if (loaded) this.render();
+    })();
+    this._nliCacheFetchInflight = fetchPromise;
+    try {
+      await fetchPromise;
     } finally {
-      this._nliCacheFetchInflight = false;
+      if (this._nliCacheFetchInflight === fetchPromise) {
+        this._nliCacheFetchInflight = null;
+      }
     }
-    if (loaded) this.render();
   },
 
   async handleNliTimelinePlay() {

@@ -232,6 +232,18 @@ function getEffectiveLayerGroups() {
             enabled: layerState ? !!layerState.enabled : defaultLayerEnabled(reg.id, layer.id),
           };
         });
+        if (Array.isArray(state.layers)) {
+          for (const layerState of state.layers) {
+            if (!layerState?.id) continue;
+            if (layers.some((layer) => layer.id === layerState.id)) continue;
+            layers.push({
+              id: layerState.id,
+              name: layerState.displayName ?? layerState.id,
+              enabled: !!layerState.enabled,
+              ...pickApiLayerOverlayFields(layerState),
+            });
+          }
+        }
         groups.push({
           id: reg.id,
           name: reg.name ?? reg.id,

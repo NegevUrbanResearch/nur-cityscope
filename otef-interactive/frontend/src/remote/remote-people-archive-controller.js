@@ -14,6 +14,49 @@ function samePerson(snapshot, person) {
   return !!person && snapshot?.personId === person.pid && snapshot?.datasetVersion === person.datasetVersion;
 }
 
+export async function waitForInvestigationClockIdle(dataContext, {
+  forceStop = false,
+  timeoutMs = 3000,
+  isCancelled = () => false,
+} = {}) {
+  const current = dataContext?.getInvestigationClock?.();
+  if (!forceStop && (!current || current.phase === "idle")) return;
+  if (typeof dataContext?.patchInvestigationClock !== "function") {
+    throw new Error("investigation clock action unavailable");
+  }
+  let resolveIdle;
+  const idle = new Promise((resolve) => { resolveIdle = resolve; });
+  let idleObserved = false;
+  const onClock = (next) => {
+    if (next?.phase !== "idle" || idleObserved || isCancelled()) return;
+    idleObserved = true;
+    resolveIdle(next);
+  };
+  const unsubscribe = dataContext?.subscribe?.("investigationClock", onClock);
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(Object.assign(new Error("timed out waiting for investigation clock to become idle"), { code: "PERSON_SELECTION_CLOCK_TIMEOUT" })),
+      timeoutMs,
+    );
+  });
+  try {
+    const stop = Promise.resolve().then(() => dataContext.patchInvestigationClock(stopNliClock(current)));
+    stop.catch(() => {});
+    const operation = (async () => {
+      const result = await stop;
+      if (isCancelled()) return;
+      onClock(result?.investigation_clock || result?.investigationClock);
+      onClock(dataContext?.getInvestigationClock?.());
+      if (!idleObserved) await idle;
+    })();
+    await Promise.race([operation, timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+    unsubscribe?.();
+  }
+}
+
 export function createRemotePeopleArchiveController(options = {}) {
   const {
     root,
@@ -34,6 +77,8 @@ export function createRemotePeopleArchiveController(options = {}) {
     onModeUiChange,
     onRefresh,
     isNarrativeActive = () => false,
+    isConnected = () => true,
+    onStateChange,
   } = options;
 
   const state = {
@@ -42,11 +87,13 @@ export function createRemotePeopleArchiveController(options = {}) {
     archive: { phase: "closed", person: null, requestId: null, lastRequestId: null, closedAppliedRequestId: null, generation: 0, timeoutId: null },
   };
 
-  const archiveButton = document.createElement("button");
-  archiveButton.type = "button";
-  archiveButton.className = "place-search-archive-button";
-  archiveButton.hidden = true;
-  root.append(archiveButton);
+  const archiveButton = options.archiveButton || document.createElement("button");
+  if (!options.archiveButton) {
+    archiveButton.type = "button";
+    archiveButton.className = "place-search-archive-button";
+    archiveButton.hidden = true;
+    root?.append?.(archiveButton);
+  }
 
   const missingDialog = document.createElement("dialog");
   missingDialog.className = "nli-record-dialog";
@@ -58,7 +105,7 @@ export function createRemotePeopleArchiveController(options = {}) {
   dialogClose.textContent = t("dialogClose");
   dialogClose.addEventListener("click", () => missingDialog.close?.());
   missingDialog.append(dialogClose);
-  root.append(missingDialog);
+  root?.append?.(missingDialog);
 
   const isAlive = (generation = null, kind = null) => {
     if (state.destroyed) return false;
@@ -71,7 +118,7 @@ export function createRemotePeopleArchiveController(options = {}) {
 
   function setArchiveOpen(open) {
     transition("archive", { phase: open ? "open" : "closed" });
-    navigationSection.classList?.toggle?.("is-archive-open", open);
+    navigationSection?.classList?.toggle?.("is-archive-open", open);
     syncArchiveButton();
     if (open) archiveButton.focus?.();
   }
@@ -84,9 +131,11 @@ export function createRemotePeopleArchiveController(options = {}) {
       phase === "closing" ? "nliArchiveClosing" : pending ? "nliArchiveOpening" : (open ? "backToMap" : "openNliRecord"),
     );
     const narrativeActive = isNarrativeActive();
+    const connected = isConnected() !== false;
     archiveButton.hidden = narrativeActive || (open || pending ? false : !(getMode() === "people" && state.person.acknowledged));
-    archiveButton.disabled = narrativeActive || pending;
+    archiveButton.disabled = narrativeActive || pending || !connected;
     void person;
+    onStateChange?.();
   }
 
   function clearArchiveTimeout() {
@@ -103,7 +152,7 @@ export function createRemotePeopleArchiveController(options = {}) {
       generation: state.archive.generation + 1,
     });
     if (!state.destroyed) {
-      navigationSection.classList?.toggle?.("is-archive-open", false);
+      navigationSection?.classList?.toggle?.("is-archive-open", false);
       syncArchiveButton();
     }
   }
@@ -169,15 +218,10 @@ export function createRemotePeopleArchiveController(options = {}) {
   archiveButton.addEventListener("click", () => {
     if (!isAlive() || isNarrativeActive() || state.archive.phase === "opening" || state.archive.phase === "closing") return;
     if (state.archive.phase === "open") {
-      void runArchiveCommand("close", state.archive.person || state.person.acknowledged);
+      void closeArchive();
       return;
     }
-    const person = state.person.acknowledged;
-    if (!person?.hasArchiveRecord) {
-      missingDialog.showModal?.();
-      return;
-    }
-    void runArchiveCommand("open", person);
+    void openArchive();
   });
 
   function handleArchiveResult(result = {}) {
@@ -196,7 +240,7 @@ export function createRemotePeopleArchiveController(options = {}) {
         generation: archive.generation + 1,
         closedAppliedRequestId: result.requestId,
       });
-      navigationSection.classList?.toggle?.("is-archive-open", false);
+      navigationSection?.classList?.toggle?.("is-archive-open", false);
       setStatus("");
       syncArchiveButton();
       return;
@@ -207,52 +251,26 @@ export function createRemotePeopleArchiveController(options = {}) {
     const generation = archive.generation;
     if (result.outcome === "navigation_attempted") {
       transition("archive", { phase: "open", person: state.person.acknowledged, requestId: null });
-      navigationSection.classList?.toggle?.("is-archive-open", true);
+      navigationSection?.classList?.toggle?.("is-archive-open", true);
       archiveButton.focus?.();
       setStatus("");
     } else {
       transition("archive", { phase: "closed", person: null, requestId: null, generation: generation + 1 });
-      navigationSection.classList?.toggle?.("is-archive-open", false);
+      navigationSection?.classList?.toggle?.("is-archive-open", false);
       setStatus(result.outcome === "closed" ? "" : t("nliArchiveUnavailable"));
     }
     syncArchiveButton();
   }
 
   async function waitForInvestigationIdle({ forceStop = false, generation } = {}) {
-    const current = dataContext?.getInvestigationClock?.();
-    if (!forceStop && (!current || current.phase === "idle")) return;
-    if (typeof dataContext?.patchInvestigationClock !== "function") throw new Error("investigation clock action unavailable");
-    let resolveIdle;
-    const idle = new Promise((resolve) => { resolveIdle = resolve; });
-    let idleObserved = false;
-    const onClock = (next) => {
-      if (next?.phase !== "idle" || idleObserved || !isAlive(generation, "person")) return;
-      idleObserved = true;
-      resolveIdle(next);
-    };
-    const unsubscribe = dataContext?.subscribe?.("investigationClock", onClock);
     const timeoutMs = Number.isFinite(Number(options.personSelectionClockTimeoutMs))
       ? Math.max(0, Number(options.personSelectionClockTimeoutMs))
       : 3000;
-    let timeoutId;
-    const timeout = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => reject(Object.assign(new Error("timed out waiting for investigation clock to become idle"), { code: "PERSON_SELECTION_CLOCK_TIMEOUT" })), timeoutMs);
+    await waitForInvestigationClockIdle(dataContext, {
+      forceStop,
+      timeoutMs,
+      isCancelled: () => !isAlive(generation, "person"),
     });
-    try {
-      const stop = Promise.resolve().then(() => dataContext.patchInvestigationClock(stopNliClock(current)));
-      stop.catch(() => {});
-      const operation = (async () => {
-        const result = await stop;
-        if (!isAlive(generation, "person")) return;
-        onClock(result?.investigation_clock || result?.investigationClock);
-        onClock(dataContext?.getInvestigationClock?.());
-        if (!idleObserved) await idle;
-      })();
-      await Promise.race([operation, timeout]);
-    } finally {
-      clearTimeout(timeoutId);
-      unsubscribe?.();
-    }
   }
 
   function isClockActiveConflict(error) {
@@ -266,7 +284,7 @@ export function createRemotePeopleArchiveController(options = {}) {
   async function selectPerson(person) {
     if (!isAlive() || isNarrativeActive()) {
       setStatus(t("peopleNarrativeDisabled"));
-      return;
+      return false;
     }
     const generation = state.person.generation + 1;
     const requestToken = state.person.requestToken + 1;
@@ -275,7 +293,7 @@ export function createRemotePeopleArchiveController(options = {}) {
       requestToken,
       pending: { generation, pid: person.pid, datasetVersion: person.datasetVersion },
     });
-    setRootClass("is-pending", true);
+    setRootClass?.("is-pending", true);
     let stopFailure = false;
     let clockRecoveryAttempted = false;
     const stopAndWaitForIdle = async (forceStop = false) => {
@@ -291,24 +309,24 @@ export function createRemotePeopleArchiveController(options = {}) {
       const clock = dataContext?.getInvestigationClock?.();
       if (clock && clock.phase !== "idle") await stopAndWaitForIdle();
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        if (!isAlive(generation)) return;
+        if (!isAlive(generation)) return false;
         setStatus(t("peopleSearchSelecting"));
         try {
           const result = await dataContext?.selectPerson?.(person.pid, person.datasetVersion);
-          if (!isAlive(generation)) return;
+          if (!isAlive(generation)) return false;
           const resultSnapshot = snapshotFrom(result);
           const currentSnapshot = snapshotFrom(dataContext?.getPersonSelection?.());
           const snapshot = [resultSnapshot, currentSnapshot]
             .filter((candidate) => revisionOf(candidate) >= 0)
             .reduce((newest, candidate) => !newest || revisionOf(candidate) > revisionOf(newest) ? candidate : newest, null);
           if (!snapshot || revisionOf(snapshot) <= state.person.revision) throw new Error("selection not acknowledged");
-          applySnapshot(snapshot);
-          return;
+          await applySnapshot(snapshot);
+          return true;
         } catch (error) {
-          if (state.destroyed || state.person.requestToken !== requestToken) return;
+          if (state.destroyed || state.person.requestToken !== requestToken) return false;
           if (!isAlive(generation)) {
             setStatus(t("peopleSearchSelectionFailed"));
-            return;
+            return false;
           }
           if (attempt === 0 && !clockRecoveryAttempted && isClockActiveConflict(error)) {
             clockRecoveryAttempted = true;
@@ -320,62 +338,67 @@ export function createRemotePeopleArchiveController(options = {}) {
       }
     } catch {
       if (isAlive(generation)) {
-        if (state.person.acknowledged) {
+        if (state.person.acknowledged && input) {
           input.value = state.person.acknowledged.name;
-          syncInputDirection(input);
+          syncInputDirection?.();
         }
         setStatus(t(stopFailure ? "peopleSearchStopFailed" : "peopleSearchSelectionFailed"));
       }
     } finally {
       if (isAlive(generation) && state.person.pending?.generation === generation) {
         transition("person", { pending: null });
-        setRootClass("is-pending", false);
+        setRootClass?.("is-pending", false);
       }
     }
+    return false;
   }
 
-  function applySnapshot(snapshot) {
+  async function applySnapshot(snapshot) {
     if (!isAlive() || revisionOf(snapshot) <= state.person.revision) return;
     const generation = state.person.generation + 1;
     const supersededPending = !!state.person.pending;
     transition("person", { revision: revisionOf(snapshot), generation, pending: null });
-    if (supersededPending) setRootClass("is-pending", false);
+    if (supersededPending) setRootClass?.("is-pending", false);
     if (!snapshot?.personId || !snapshot.datasetVersion) {
       transition("person", { acknowledged: null });
       cancelArchivePresentation();
       if (getMode() === "people") {
-        input.value = "";
-        syncInputDirection(input);
-        setHidden(clear, true);
-        renderSuggestions([]);
+        if (input) input.value = "";
+        syncInputDirection?.(input);
+        setHidden?.(clear, true);
+        renderSuggestions?.([]);
       }
       syncArchiveButton();
       return;
     }
-    void peopleRuntime.load().then(() => {
-      if (!isAlive(generation)) return;
-      const resolved = peopleRuntime.resolve(snapshot.personId, snapshot.datasetVersion, getLocale());
-      if (!resolved || resolved.pid !== snapshot.personId || resolved.datasetVersion !== snapshot.datasetVersion) {
-        if (supersededPending) setStatus(t("peopleSearchSelectionFailed"));
-        return;
-      }
-      transition("person", { acknowledged: resolved });
-      setRootClass("is-pending", false);
-      if (getMode() === "people") {
-        input.value = resolved.name;
-        syncInputDirection(input);
-        setHidden(clear, false);
-        renderSuggestions([]);
-      }
-      setStatus("");
-      syncArchiveButton();
-    }).catch(() => {});
+    try {
+      await peopleRuntime.load();
+    } catch {
+      if (supersededPending) setStatus(t("peopleSearchSelectionFailed"));
+      return;
+    }
+    if (!isAlive(generation)) return;
+    const resolved = peopleRuntime.resolve(snapshot.personId, snapshot.datasetVersion, getLocale());
+    if (!resolved || resolved.pid !== snapshot.personId || resolved.datasetVersion !== snapshot.datasetVersion) {
+      if (supersededPending) setStatus(t("peopleSearchSelectionFailed"));
+      return;
+    }
+    transition("person", { acknowledged: resolved });
+    setRootClass?.("is-pending", false);
+    if (getMode() === "people") {
+      if (input) input.value = resolved.name;
+      syncInputDirection?.(input);
+      setHidden?.(clear, false);
+      renderSuggestions?.([]);
+    }
+    setStatus("");
+    syncArchiveButton();
   }
 
   function handlePersonSnapshot(snapshot) {
     if (!isAlive() || revisionOf(snapshot) <= state.person.revision) return;
     if (state.archive.person && !samePerson(snapshot, state.archive.person)) cancelArchivePresentation();
-    applySnapshot(snapshot);
+    void applySnapshot(snapshot);
   }
 
   async function switchMode(nextMode) {
@@ -395,7 +418,7 @@ export function createRemotePeopleArchiveController(options = {}) {
         const result = await dataContext?.clearPerson?.();
         const snapshot = snapshotFrom(dataContext?.getPersonSelection?.() || result);
         if (!snapshot || snapshot.personId || revisionOf(snapshot) <= baselineRevision) throw new Error("clear not acknowledged");
-        applySnapshot(snapshot);
+        await applySnapshot(snapshot);
       } catch {
         if (isAlive(generation)) setStatus(t("peopleSearchClearFailed"));
         return;
@@ -404,22 +427,55 @@ export function createRemotePeopleArchiveController(options = {}) {
     if (!isAlive()) return;
     setMode(nextMode);
     onModeUiChange?.();
-    input.value = nextMode === "people" && state.person.acknowledged ? state.person.acknowledged.name : "";
-    syncInputDirection(input);
-    setHidden(clear, !input.value);
-    renderSuggestions([]);
+    if (input) input.value = nextMode === "people" && state.person.acknowledged ? state.person.acknowledged.name : "";
+    syncInputDirection?.(input);
+    setHidden?.(clear, !input?.value);
+    renderSuggestions?.([]);
     setStatus("");
-    if (input.value) onRefresh?.("input");
+    if (input?.value) onRefresh?.("input");
     syncArchiveButton();
   }
 
   function restoreAcknowledgedQuery() {
     if (!state.person.acknowledged || getMode() !== "people") return false;
-    input.value = state.person.acknowledged.name;
-    syncInputDirection(input);
-    setHidden(clear, false);
-    renderSuggestions([]);
+    if (input) input.value = state.person.acknowledged.name;
+    syncInputDirection?.(input);
+    setHidden?.(clear, false);
+    renderSuggestions?.([]);
     setStatus("");
+    return true;
+  }
+
+  async function openArchive(person = null) {
+    if (!isAlive() || isNarrativeActive()) {
+      if (isNarrativeActive()) setStatus(t("peopleNarrativeDisabled"));
+      return false;
+    }
+    if (state.archive.phase === "opening" || state.archive.phase === "closing") return false;
+    if (person && (
+      !state.person.acknowledged
+      || state.person.acknowledged.pid !== person.pid
+      || state.person.acknowledged.datasetVersion !== person.datasetVersion
+    )) {
+      const selected = await selectPerson(person);
+      if (!selected) return false;
+    }
+    const target = state.person.acknowledged;
+    if (!target) return false;
+    if (!target.hasArchiveRecord) {
+      missingDialog.showModal?.();
+      return false;
+    }
+    await runArchiveCommand("open", target);
+    return true;
+  }
+
+  async function closeArchive() {
+    if (!isAlive() || state.archive.phase === "opening" || state.archive.phase === "closing") return false;
+    if (state.archive.phase !== "open") return false;
+    const person = state.archive.person || state.person.acknowledged;
+    if (!person) return false;
+    await runArchiveCommand("close", person);
     return true;
   }
 
@@ -437,13 +493,18 @@ export function createRemotePeopleArchiveController(options = {}) {
   return {
     archiveButton,
     selectPerson,
+    openArchive,
+    closeArchive,
+    getArchivePhase: () => state.archive.phase,
+    getAcknowledgedPerson: () => state.person.acknowledged,
     switchMode,
     handlePersonSnapshot,
     handleArchiveResult,
     restoreAcknowledgedQuery,
+    syncArchiveButton,
     shouldSuppressFocus() {
       const person = state.person.acknowledged;
-      return getMode() === "people" && !!person && input.value.trim() === String(person.name || "").trim();
+      return getMode() === "people" && !!person && String(input?.value || "").trim() === String(person.name || "").trim();
     },
     handleLocaleChange() {
       missingMessage.textContent = t("nliRecordMissing");

@@ -422,7 +422,9 @@ class OTEFNarrativeApiTests(TestCase):
             {"id": None, "transition": "exit", "revision": 3},
         )
 
-    def test_active_narrative_rejects_person_selection(self):
+    @patch("channels.layers.get_channel_layer")
+    def test_active_narrative_allows_person_selection(self, get_layer):
+        get_layer.return_value.group_send = AsyncMock()
         self.state.narrative_state = {
             "id": "segev",
             "transition": "enter",
@@ -437,8 +439,8 @@ class OTEFNarrativeApiTests(TestCase):
             datasetVersion="v1",
             expectedRevision=2,
         )
-        self.assertEqual(selection.status_code, 409)
-        self.assertEqual(selection.json()["reason"], "narrative_active")
+        self.assertEqual(selection.status_code, 200)
+        self.assertEqual(selection.json()["person_selection"]["personId"], "12")
 
     def test_active_narrative_accepts_non_idle_clock_without_touching_scene(self):
         self.state.narrative_state = {
