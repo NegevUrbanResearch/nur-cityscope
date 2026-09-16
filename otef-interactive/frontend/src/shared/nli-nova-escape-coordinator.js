@@ -15,10 +15,10 @@ import { NLI_DISPLAY_PROFILES } from "./nli-investigation-theme.js";
 import {
   NOVA_ESCAPE_IMPACT_COLOR,
   NOVA_ESCAPE_IMPACT_LAYER_ID,
-  buildFleeingCrossingIndex,
   escapeImpactOutlineIds,
   novaParallelImpactFeatureIds,
 } from "./nli-nova-escape-impact.js";
+import { parseNovaEscapeIndex } from "./nli-nova-escape-index.js";
 import { setEscapeImpactOrientationIds } from "./maplibre-investigation-timeline.js";
 import { resolveMotionMode } from "./reduced-motion.js";
 
@@ -26,13 +26,13 @@ export const NOVA_FLEEING_INDIVIDUAL_URL =
   "/otef-interactive/public/processed/layers/nli/fleeing_route.geojson";
 export const NOVA_FLEEING_OVERLAP_URL =
   "/otef-interactive/public/processed/layers/nli/fleeing_route_overlapp.geojson";
+export const NOVA_FLEEING_IMPACT_INDEX_URL =
+  "/otef-interactive/public/processed/layers/nli/fleeing_route_impacts.json";
 
 export const NOVA_ESCAPE_INDIVIDUAL_LAYER_ID = "nli-nova-escape-individual";
 export const NOVA_ESCAPE_OVERLAP_LAYER_ID = "nli-nova-escape-overlap";
 export const NOVA_SITE_POLYGONS_URL =
   "/otef-interactive/public/processed/layers/nli/investigation_polygons.geojson";
-export const NOVA_INVESTIGATION_LINES_URL =
-  "/otef-interactive/public/processed/layers/nli/lines.geojson";
 
 const EMPTY_OVERLAY = Object.freeze({ individual: false, overlap: false });
 
@@ -65,7 +65,6 @@ export function createNovaEscapeCoordinator({
   let individualData = null;
   let overlapData = null;
   let investigationPolygonFeatures = null;
-  let investigationLineFeatures = null;
   let settlementsData = null;
   let settlementFeatures = [];
   let lastIndividualOn = false;
@@ -75,10 +74,12 @@ export function createNovaEscapeCoordinator({
   let impactRaf = null;
   let coalescedSync = null;
   let parallelImpactIds = new Set();
-  let crossingIndex = new Map();
-  let crossingIndexRoutes = null;
-  let crossingIndexPolygons = null;
-  let crossingIndexLines = null;
+  let impactIndexData = null;
+  let parsedImpactIndex = null;
+  let validatedImpactIndexData = null;
+  let validatedImpactIndexRoutes = null;
+  let impactIndexValidation = null;
+  let impactIndexWarned = false;
   const inflight = new Map();
 
   const lineWidth = () => 1.8 * Number(
@@ -118,10 +119,6 @@ export function createNovaEscapeCoordinator({
     impactRaf = null;
   };
 
-  const collectionFeatures = (collection) => (
-    Array.isArray(collection?.features) ? collection.features : []
-  );
-
   const sameImpactSet = (previous, next) => (
     previous.size === next.size && [...next].every((id) => previous.has(id))
   );
@@ -134,10 +131,7 @@ export function createNovaEscapeCoordinator({
   const clearParallelImpact = ({ disposeEmit = false } = {}) => {
     const hadIds = parallelImpactIds.size > 0;
     parallelImpactIds = new Set();
-    crossingIndex = new Map();
-    crossingIndexRoutes = null;
-    crossingIndexPolygons = null;
-    crossingIndexLines = null;
+    parsedImpactIndex = null;
     if (disposeEmit) {
       emitParallelImpact([], { asArray: true });
       return;
@@ -145,19 +139,36 @@ export function createNovaEscapeCoordinator({
     if (hadIds) emitParallelImpact(parallelImpactIds);
   };
 
-  const rebuildCrossingIndexIfNeeded = () => {
-    const routes = individualData?.features || [];
-    const polygons = collectionFeatures(investigationPolygonFeatures);
-    const lines = collectionFeatures(investigationLineFeatures);
-    if (
-      crossingIndexRoutes === routes &&
-      crossingIndexPolygons === polygons &&
-      crossingIndexLines === lines
-    ) return;
-    crossingIndex = buildFleeingCrossingIndex(routes, [...polygons, ...lines]);
-    crossingIndexRoutes = routes;
-    crossingIndexPolygons = polygons;
-    crossingIndexLines = lines;
+  const warnImpactIndexOnce = (reason) => {
+    if (impactIndexWarned) return;
+    impactIndexWarned = true;
+    console.warn(`[Nova fleeing routes] impact index unavailable or invalid: ${reason}`);
+  };
+
+  const clearImpactState = () => {
+    cancelImpactRaf();
+    clearParallelImpact();
+    setEscapeImpactIds([]);
+  };
+
+  const routeObjectIds = () => (individualData?.features || [])
+    .map((feature) => feature?.properties?.OBJECTID ?? feature?.id);
+
+  const maybeAdoptImpactIndex = (token) => {
+    if (disposed || token !== generation || !individualData || !impactIndexData) return;
+    const routes = individualData.features || [];
+    if (validatedImpactIndexData !== impactIndexData || validatedImpactIndexRoutes !== routes) {
+      validatedImpactIndexData = impactIndexData;
+      validatedImpactIndexRoutes = routes;
+      impactIndexValidation = parseNovaEscapeIndex(impactIndexData, routeObjectIds());
+    }
+    parsedImpactIndex = impactIndexValidation;
+    if (!parsedImpactIndex) {
+      clearImpactState();
+      warnImpactIndexOnce("schema or route IDs");
+      return;
+    }
+    if (narrative?.id === "nova" && overlay?.individual === true) scheduleImpactTick();
   };
 
   const absorbParallelImpactIds = (next) => {
@@ -200,11 +211,14 @@ export function createNovaEscapeCoordinator({
         featureProgress: (feature) => featureProgress(feature, options.stagger === true),
       }),
     });
-    map.addLayer(layer);
+    const beforeId = options.beforeId && map.getLayer?.(options.beforeId)
+      ? options.beforeId
+      : undefined;
+    map.addLayer(layer, beforeId);
     map.triggerRepaint?.();
   };
 
-  const addOwnedLineLayer = (id, paint, filter) => {
+  const addOwnedLineLayer = (id, paint, filter, beforeId) => {
     if (!map || typeof map.addLayer !== "function" || map.getLayer?.(id)) return;
     if (!map.getSource?.(id) && typeof map.addSource === "function") {
       map.addSource(id, { type: "geojson", data: emptyCollection() });
@@ -216,7 +230,7 @@ export function createNovaEscapeCoordinator({
       ...(filter ? { filter } : {}),
       layout: { "line-cap": "round", "line-join": "round" },
       paint,
-    });
+    }, beforeId && map.getLayer?.(beforeId) ? beforeId : undefined);
   };
 
   const mountImpactOutline = () => {
@@ -224,7 +238,7 @@ export function createNovaEscapeCoordinator({
       "line-color": NOVA_ESCAPE_IMPACT_COLOR,
       "line-opacity": 0.95,
       "line-width": lineWidth(),
-    });
+    }, undefined, NOVA_ESCAPE_OVERLAP_LAYER_ID);
   };
 
   const setEscapeImpactIds = (ids) => {
@@ -250,27 +264,34 @@ export function createNovaEscapeCoordinator({
 
   const refreshImpactFromProgress = () => {
     if (!individualData || overlay?.individual !== true) return;
+    if (!parsedImpactIndex) {
+      clearImpactState();
+      return;
+    }
+    const index = parsedImpactIndex;
     const progressByObjectId = {};
     for (const feature of individualData.features || []) {
       const id = feature?.properties?.OBJECTID ?? feature?.id;
       if (id == null) continue;
       progressByObjectId[String(id)] = featureProgress(feature, true);
     }
-    rebuildCrossingIndexIfNeeded();
     absorbParallelImpactIds(novaParallelImpactFeatureIds({
       progressByObjectId,
-      crossingIndex,
+      crossingIndex: index.crossingIndex,
     }));
     setEscapeImpactIds(escapeImpactOutlineIds({
-      routes: individualData.features,
-      settlements: settlementFeatures,
       progressByObjectId,
+      contacts: index.settlementContacts,
     }));
   };
 
   const runImpactTick = () => {
     impactRaf = null;
     if (disposed || narrative?.id !== "nova" || overlay?.individual !== true) return;
+    if (!parsedImpactIndex) {
+      clearImpactState();
+      return;
+    }
     refreshImpactFromProgress();
     const pending = (individualData?.features || []).some((feature) => featureProgress(feature, true) < 1);
     if (!pending) return;
@@ -283,6 +304,10 @@ export function createNovaEscapeCoordinator({
   const scheduleImpactTick = () => {
     cancelImpactRaf();
     if (disposed || narrative?.id !== "nova" || overlay?.individual !== true) return;
+    if (!parsedImpactIndex) {
+      clearImpactState();
+      return;
+    }
     const raf = scheduleRaf(runImpactTick);
     if (raf == null) {
       refreshImpactFromProgress();
@@ -316,12 +341,12 @@ export function createNovaEscapeCoordinator({
     const token = ++generation;
     cancelImpactRaf();
     removeRibbonLayers();
+    removeImpactLayer();
     if (disposed) return;
     const active = narrative?.id === "nova";
     const flags = overlay || EMPTY_OVERLAY;
     if (!active) {
       updateStagger(false);
-      removeImpactLayer();
       setEscapeImpactOrientationIds(map, []);
       clearParallelImpact();
       return;
@@ -334,8 +359,6 @@ export function createNovaEscapeCoordinator({
       );
       if (loadedSite) investigationPolygonFeatures = loadedSite;
       if (disposed || token !== generation) return;
-      removeRibbonLayers();
-      removeImpactLayer();
       if (!styleLoss) updateStagger(false);
       setEscapeImpactOrientationIds(map, []);
       return;
@@ -345,43 +368,73 @@ export function createNovaEscapeCoordinator({
       setEscapeImpactOrientationIds(map, []);
       clearParallelImpact();
     }
-    const [loadedSite, loadedIndividual, loadedSettlements, loadedOverlap, loadedLines] = await Promise.all([
-      loadCollection(NOVA_SITE_POLYGONS_URL, investigationPolygonFeatures, inflight),
-      loadCollection(NOVA_FLEEING_INDIVIDUAL_URL, individualData, inflight),
-      flags.individual
-        ? loadCollection(DEFAULT_INVESTIGATION_SETTLEMENTS_URL, settlementsData, inflight)
-        : null,
-      loadCollection(NOVA_FLEEING_OVERLAP_URL, overlapData, inflight),
-      loadCollection(NOVA_INVESTIGATION_LINES_URL, investigationLineFeatures, inflight),
-    ]);
-    if (loadedSite) investigationPolygonFeatures = loadedSite;
-    if (loadedIndividual) individualData = loadedIndividual;
-    if (loadedSettlements) {
-      settlementsData = loadedSettlements;
-      settlementFeatures = loadedSettlements.features || [];
-    }
-    if (loadedOverlap) overlapData = loadedOverlap;
-    if (loadedLines) investigationLineFeatures = loadedLines;
-    if (disposed || token !== generation) return;
-    removeRibbonLayers();
-    removeImpactLayer();
-    const preserveStagger = styleLoss && flags.individual === true && staggerOriginMs != null;
-    if (!flags.individual) {
-      updateStagger(false);
-    } else if (!preserveStagger && individualData) {
-      updateStagger(true);
-    }
-    if (flags.individual && individualData) {
-      addRibbon(NOVA_ESCAPE_INDIVIDUAL_LAYER_ID, individualData, { opacity: 0.6, stagger: true });
-      mountImpactOutline();
-      scheduleImpactTick();
-    } else {
-      setEscapeImpactOrientationIds(map, []);
-      clearParallelImpact();
-    }
-    if (flags.overlap && overlapData) {
-      addRibbon(NOVA_ESCAPE_OVERLAP_LAYER_ID, overlapData, { opacity: 1, stagger: false });
-    }
+
+    const individualRequest = loadCollection(
+      NOVA_FLEEING_INDIVIDUAL_URL,
+      individualData,
+      inflight,
+    ).then((loaded) => {
+      if (disposed || token !== generation) return loaded;
+      if (!loaded) return loaded;
+      individualData = loaded;
+      if (flags.individual) {
+        updateStagger(true);
+        addRibbon(NOVA_ESCAPE_INDIVIDUAL_LAYER_ID, individualData, {
+          opacity: 0.6,
+          stagger: true,
+          beforeId: NOVA_ESCAPE_OVERLAP_LAYER_ID,
+        });
+        mountImpactOutline();
+      }
+      maybeAdoptImpactIndex(token);
+      return loaded;
+    });
+
+    const overlapRequest = loadCollection(
+      NOVA_FLEEING_OVERLAP_URL,
+      overlapData,
+      inflight,
+    ).then((loaded) => {
+      if (disposed || token !== generation) return loaded;
+      if (!loaded) return loaded;
+      overlapData = loaded;
+      if (flags.overlap) {
+        addRibbon(NOVA_ESCAPE_OVERLAP_LAYER_ID, overlapData, { opacity: 1, stagger: false });
+      }
+      return loaded;
+    });
+
+    const settlementRequest = flags.individual
+      ? loadCollection(DEFAULT_INVESTIGATION_SETTLEMENTS_URL, settlementsData, inflight)
+        .then((loaded) => {
+          if (disposed || token !== generation) return loaded;
+          if (!loaded) return loaded;
+          settlementsData = loaded;
+          settlementFeatures = loaded.features || [];
+          if (parsedImpactIndex && overlay?.individual === true) scheduleImpactTick();
+          return loaded;
+        })
+      : null;
+
+    const impactIndexPromise = loadImpactIndex(
+      NOVA_FLEEING_IMPACT_INDEX_URL,
+      impactIndexData,
+      inflight,
+    );
+    void impactIndexPromise.then((loaded) => {
+      if (disposed || token !== generation) return;
+      if (!loaded) {
+        warnImpactIndexOnce("unavailable or invalid");
+        return;
+      }
+      impactIndexData = loaded;
+      maybeAdoptImpactIndex(token);
+    });
+
+    const required = [];
+    if (flags.individual) required.push(individualRequest);
+    else if (flags.overlap) required.push(overlapRequest);
+    await Promise.all(required.filter(Boolean));
   }
 
   function sync(nextNarrative, nextOverlay) {
@@ -463,19 +516,37 @@ async function loadCollection(url, cached, inflight) {
   if (cached) return cached;
   const pending = inflight.get(url);
   if (pending) return pending;
-  const request = fetchSuccessfulCollection(url).finally(() => {
+  const request = fetchSuccessfulJson(url)
+    .then((data) => (
+      data?.type === "FeatureCollection" && Array.isArray(data.features) ? data : null
+    ))
+    .finally(() => {
     inflight.delete(url);
   });
   inflight.set(url, request);
   return request;
 }
 
-async function fetchSuccessfulCollection(url) {
+async function loadImpactIndex(url, cached, inflight) {
+  if (cached) return cached;
+  const pending = inflight.get(url);
+  if (pending) return pending;
+  const request = fetchSuccessfulJson(url)
+    .then((data) => (
+      data && typeof data === "object" && !Array.isArray(data) ? data : null
+    ))
+    .finally(() => {
+      inflight.delete(url);
+    });
+  inflight.set(url, request);
+  return request;
+}
+
+async function fetchSuccessfulJson(url) {
   try {
     const response = await fetch(url);
     if (!response?.ok) return null;
-    const data = await response.json();
-    if (data?.type === "FeatureCollection" && Array.isArray(data.features)) return data;
+    return await response.json();
   } catch {
     /* exhibit fetch can fail; retry on the next remount instead of caching empty */
   }

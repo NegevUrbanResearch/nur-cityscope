@@ -9,6 +9,7 @@ import {
 } from "../projection/maplibre-projection.js";
 import { installProjectionRenderDebugOverlay } from "../projection/projection-render-debug-overlay.js";
 import { syncProjectionLayers } from "../projection/maplibre-projection-layers.js";
+import { applyNovaMarkerFilter } from "../map/nli-nova-marker-filter.js";
 import {
   loadCuratedLayerToMapLibre,
   removeCuratedHtmlMarkers,
@@ -37,6 +38,7 @@ import {
   createSlideshowPackRuntime,
   resolvePresentationOverlayVisibility,
   suppressInvestigationPlayback,
+  syncSlideshowPresentationPoll,
 } from "../shared/slideshow-pack-runtime.js";
 import { subscribeSlideshowProjection } from "../shared/slideshow-projection-channel.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
@@ -503,8 +505,8 @@ async function bootstrapProjectionRuntime() {
       const overlayGroups = resolvePresentationOverlayVisibility({
         presentationActive,
         incomingGroups:
-          typeof slideshowRuntime?.getLastIncomingGroups === "function"
-            ? slideshowRuntime.getLastIncomingGroups()
+          typeof slideshowRuntime?.getCommittedGroups === "function"
+            ? slideshowRuntime.getCommittedGroups()
             : null,
         liveGroups: rawAsArray,
         keepSettlementNames: MapProjectionConfig.PROJECTION_SLIDESHOW?.keepSettlementNames === true,
@@ -722,7 +724,7 @@ async function bootstrapProjectionRuntime() {
 
       updateModelBaseImageVisibility(rawGroups, modelImgEl);
 
-      syncProjectionLayers(map, currentGroups, layerStyleOptions);
+      syncProjectionLayersWithNarrative(map, currentGroups, layerStyleOptions);
       applyStoredNliLabelHeading(map);
       nameFieldController.sync(currentGroups);
       syncContextFlowAnimations();
@@ -839,8 +841,13 @@ async function bootstrapProjectionRuntime() {
       console.warn("[projection-main] Shemot label debug failed to load", e);
     }
 
+    function syncProjectionLayersWithNarrative(targetMap, groups, options) {
+      syncProjectionLayers(targetMap, groups, options);
+      applyNovaMarkerFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
+    }
+
     const syncProjectionLayersAndRaiseHighlight = (projectionMap, groups, options) => {
-      syncProjectionLayers(projectionMap, groups, options);
+      syncProjectionLayersWithNarrative(projectionMap, groups, options);
       nameFieldController.sync(groups);
       applyStoredNliLabelHeading(projectionMap);
       syncContextFlowAnimations();
@@ -863,27 +870,40 @@ async function bootstrapProjectionRuntime() {
       slideshowRuntime = null;
     });
 
+    const syncAfterStart = () => {
+      syncPresentationFlag();
+      syncSlideshowPresentationPoll(slideshowRuntime, {
+        start: startPresentationPoll,
+        clear: clearPresentationPoll,
+      });
+      syncContextFlowAnimations();
+      syncProjectionHighlight(lastViewport);
+    };
+
+    const syncAfterStop = syncAfterStart;
+    const syncAfterStopFailure = () => {
+      syncPresentationFlag();
+      syncSlideshowPresentationPoll(slideshowRuntime, {
+        start: startPresentationPoll,
+        clear: clearPresentationPoll,
+      });
+      syncProjectionHighlight(lastViewport);
+    };
+
     function handleSlideshowProjectionMessage(msg) {
       if (!slideshowRuntime || !msg?.type) return;
       if (msg.type === "start") {
-        slideshowRuntime.start(msg.payload || {});
-        syncProjectionHighlight(lastViewport);
-        syncPresentationFlag();
-        startPresentationPoll();
+        const startPromise = slideshowRuntime.start(msg.payload || {});
+        syncAfterStart();
+        void Promise.resolve(startPromise).then(syncAfterStart, syncAfterStart);
         return;
       }
       if (msg.type === "stop") {
         void slideshowRuntime
           .stop()
-          .then(() => {
-            syncPresentationFlag();
-            clearPresentationPoll();
-            return applyProjectionRefresh();
-          })
-          .then(() => {
-            syncProjectionHighlight(lastViewport);
-          })
+          .then(syncAfterStop)
           .catch((err) => {
+            syncAfterStopFailure();
             console.warn(
               "[projection-main] slideshow stop or projection refresh after stop failed",
               err,
@@ -940,7 +960,7 @@ async function bootstrapProjectionRuntime() {
               if (shouldSkipLiveProjectionRefresh()) {
                 return;
               }
-              syncProjectionLayers(
+              syncProjectionLayersWithNarrative(
                 map,
                 Array.isArray(groups) ? groups : Object.values(groups || {}),
               );

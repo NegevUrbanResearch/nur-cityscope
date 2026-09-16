@@ -1,10 +1,12 @@
 import { describe, expect, test, vi } from "vitest";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
+import { NOVA_MARKER_FILTER } from "../../frontend/src/map/nli-nova-marker-filter.js";
 
 function setup(options = {}) {
   const map = createFakeMapLibreMap({
     layers: [
+      { id: "nli-people", type: "circle", source: "nli.people" },
       { id: "projector_base__׳™׳©׳•׳‘׳™׳__fill", type: "fill" },
       { id: "projector_base__׳©׳׳•׳×_׳™׳™׳©׳•׳‘׳™׳__symbol", type: "symbol" },
     ],
@@ -12,6 +14,7 @@ function setup(options = {}) {
   map.flyTo = vi.fn();
   map.fitBounds = vi.fn();
   map.stop = vi.fn();
+  map.setFilter = vi.fn();
   const presentation = { close: vi.fn(() => true) };
   const personVisual = { hide: vi.fn() };
   const viewportSync = { beginCameraTravel: vi.fn() };
@@ -115,6 +118,20 @@ describe("GIS Segev narrative scene", () => {
       duration: 1600,
     });
     expect(d.map.fitBounds).not.toHaveBeenCalled();
+    expect(d.map.setFilter).toHaveBeenCalledWith("nli-people", NOVA_MARKER_FILTER);
+  });
+
+  test("Nova victim filter is reapplied after style reconstruction and cleared on exit", async () => {
+    const d = await setup();
+    d.controller.apply({ id: "nova", transition: "enter", revision: 1 });
+    d.map.setFilter.mockClear();
+    d.map.wipeStyle();
+    d.map.addLayer({ id: "nli-people", type: "circle", source: "nli.people" });
+    d.controller.onStyleLoad();
+    expect(d.map.setFilter).toHaveBeenCalledWith("nli-people", NOVA_MARKER_FILTER);
+
+    d.controller.apply({ id: null, transition: "exit", revision: 2 });
+    expect(d.map.setFilter).toHaveBeenLastCalledWith("nli-people", null);
   });
 
   test("already handled Nova reconnect remounts focus without a second flyTo", async () => {
@@ -122,6 +139,29 @@ describe("GIS Segev narrative scene", () => {
     d.map.fitBounds = vi.fn();
     d.controller.apply({ id: "nova", transition: "enter", revision: 4 });
     expect(d.map.fitBounds).not.toHaveBeenCalled();
+    expect(d.map.flyTo).not.toHaveBeenCalled();
+  });
+
+  test("already handled exit clears the definition and syncs without replaying side effects", async () => {
+    const d = await setup({ storage: { getItem: () => "4", setItem: vi.fn() } });
+    d.controller.apply({ id: null, transition: "exit", revision: 4 });
+    expect(d.controller.getDefinition()).toBeNull();
+    expect(d.syncTimeline).toHaveBeenCalledTimes(1);
+    expect(d.map.flyTo).not.toHaveBeenCalled();
+    expect(d.presentation.close).not.toHaveBeenCalled();
+    expect(d.closeArchive).not.toHaveBeenCalled();
+    expect(d.personVisual.hide).not.toHaveBeenCalled();
+  });
+
+  test("handled active and exit revisions restore timeline identity without camera flights", async () => {
+    const timelineIds = [];
+    const d = await setup({
+      storage: { getItem: () => "8", setItem: vi.fn() },
+      syncTimeline: vi.fn(() => timelineIds.push(d.controller.getDefinition()?.id ?? null)),
+    });
+    d.controller.apply({ id: "nova", transition: "enter", revision: 7 });
+    d.controller.apply({ id: null, transition: "exit", revision: 8 });
+    expect(timelineIds).toEqual(["nova", null]);
     expect(d.map.flyTo).not.toHaveBeenCalled();
   });
 

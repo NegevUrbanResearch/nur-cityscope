@@ -1,5 +1,6 @@
 import { createNarrativeFocusRenderer } from "../shared/maplibre-narrative-focus.js";
 import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narratives.js";
+import { applyNovaMarkerFilter } from "../map/nli-nova-marker-filter.js";
 
 /** Render the durable narrative focus on projection without owning its camera. */
 export function createProjectionNarrativeController({
@@ -20,6 +21,7 @@ export function createProjectionNarrativeController({
       if (disposed) return false;
       const normalized = normalizeNarrativeState(nextState);
       definition = getNliNarrative(normalized.id);
+      applyNovaMarkerFilter(map, definition?.id ?? null);
       if (definition && definition.id !== "nova") focus.show(definition);
       else focus.clear();
       resync();
@@ -28,6 +30,7 @@ export function createProjectionNarrativeController({
     onStyleLoad() {
       if (disposed) return;
       focus.onStyleLoad();
+      applyNovaMarkerFilter(map, definition?.id ?? null);
       resync();
       onStyleLoadOverlay?.();
     },

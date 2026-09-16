@@ -6,7 +6,7 @@ import { NLI_LEGEND_SHORT_LABELS } from "../../frontend/src/shared/nli-investiga
 function uniqueValuePointConfig({ legendLabel } = {}) {
   const config = {
     geometryType: "point",
-    name: "oct7_database",
+    name: "fixture_people",
     style: {
       renderer: "uniqueValue",
       uniqueValues: {
@@ -65,9 +65,9 @@ describe("legendLayerFromConfig uniqueValue", () => {
 
   it("lists each class color when ui.legendLabel is absent", () => {
     const layer = legendLayerFromConfig(uniqueValuePointConfig(), {
-      id: "oct7_database",
+      id: "fixture_people",
     });
-    expect(layer.name).toBe("oct7_database");
+    expect(layer.name).toBe("fixture_people");
     expect(layer.items).toHaveLength(2);
     expect(layer.items.map((item) => item.label)).toEqual([
       "Murdered",
@@ -84,7 +84,7 @@ describe("legendLayerFromConfig uniqueValue", () => {
     const layer = legendLayerFromConfig(
       {
         geometryType: "point",
-        name: "nli_catalog",
+        name: "fixture_catalog",
         style: {
           renderer: "uniqueValue",
           uniqueValues: {
@@ -111,7 +111,7 @@ describe("legendLayerFromConfig uniqueValue", () => {
           },
         },
       },
-      { id: "nli_catalog" },
+      { id: "fixture_catalog" },
     );
     expect(layer.items).toHaveLength(1);
     expect(layer.items[0].shape).toBe("square");

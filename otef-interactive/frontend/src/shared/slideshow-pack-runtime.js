@@ -262,6 +262,32 @@ export function suppressInvestigationPlayback(animState, shouldSuppress) {
 }
 
 /**
+ * Keep the projection-owned presentation poll aligned with slideshow lifecycle state.
+ *
+ * @param {{ isActive?: () => boolean, shouldSuppressProjectionHighlight?: () => boolean } | null} runtime
+ * @param {{ start?: () => unknown, clear?: () => unknown }} [handlers]
+ * @returns {boolean} whether the poll should remain running
+ */
+export function syncSlideshowPresentationPoll(runtime, { start, clear } = {}) {
+  const shouldPoll = !!(
+    runtime &&
+    ((typeof runtime.isActive === "function" && runtime.isActive()) ||
+      (typeof runtime.shouldSuppressProjectionHighlight === "function" &&
+        runtime.shouldSuppressProjectionHighlight()))
+  );
+  if (shouldPoll) {
+    if (typeof start === "function") {
+      start();
+    }
+    return true;
+  }
+  if (typeof clear === "function") {
+    clear();
+  }
+  return false;
+}
+
+/**
  * @param {object|null} map
  * @param {number} timeoutMs
  * @returns {Promise<void>}
@@ -329,16 +355,16 @@ function waitForMapIdleOrTimeout(map, timeoutMs) {
  *     affectedCuratedFullLayerIds?: string[],
  *     layerStyleOptions?: object,
  *   }) => unknown) | ((opts?: object) => Promise<unknown>),
- *   syncPresentationOverlays?: (groups: object[]) => unknown,
+ *   syncPresentationOverlays?: (groups: object[] | null) => unknown,
  *   map?: object | null,
  * }} deps
  * @returns {{
- *   start: (payload?: object) => void,
- *   stop: () => Promise<void>,
+ *   stop: () => Promise<boolean>,
  *   dispose: () => Promise<void>,
  *   isActive: () => boolean,
  *   shouldSuppressProjectionHighlight: () => boolean,
- *   getLastIncomingGroups: () => object[] | null,
+ *   getCommittedGroups: () => object[] | null,
+ *   start: (payload?: object) => Promise<void>,
  *   getSessionEpoch: () => number,
  * }}
  */
@@ -371,19 +397,30 @@ export function createSlideshowPackRuntime(deps) {
   let inFlight = false;
   /** @type {Promise<void> | null} */
   let runningPromise = null;
-  let startInProgress = false;
+  /** @type {Promise<void> | null} */
+  let visibleRefreshPromise = null;
+  /** @type {{ epoch: number } | null} */
+  let pendingStartToken = null;
+  /** @type {Promise<void> | null} */
+  let stopPromise = null;
+  /** @type {Promise<void> | null} */
+  let pendingStartPromise = null;
+  let hasQueuedStart = false;
+  let queuedStartPayload;
   /** @type {string | null} */
   let lastPresentationPackId = null;
   /** @type {object[] | null} */
-  let lastIncomingGroups = null;
+  let committedGroups = null;
 
   let merged = mergeSlideshowConfig(baseConfig, {});
 
-  function rememberIncomingGroups(groups) {
-    lastIncomingGroups = groups;
+  function publishCommittedGroups(groups) {
+    committedGroups = groups;
     if (typeof syncPresentationOverlays === "function") {
       try {
-        void Promise.resolve(syncPresentationOverlays(groups));
+        void Promise.resolve(syncPresentationOverlays(groups)).catch(() => {
+          // Overlay sync must not break pack rotation or lifecycle cleanup.
+        });
       } catch {
         // Overlay sync must not break pack rotation.
       }
@@ -422,11 +459,19 @@ export function createSlideshowPackRuntime(deps) {
    * @param {object[]} baseGroups
    * @returns {object[]}
    */
-  function buildIncomingGroups(packId, baseGroups) {
+  function buildIncomingGroups(packId, baseGroups, config = merged) {
     return buildSlideshowIncomingGroups(packId, baseGroups, {
-      excludedPresentationPackIds: merged.excludedPresentationPackIds,
-      keepSettlementNames: merged.keepSettlementNames === true,
+      excludedPresentationPackIds: config.excludedPresentationPackIds,
+      keepSettlementNames: config.keepSettlementNames === true,
     });
+  }
+
+  function isCurrentSession(epochAtStart) {
+    return !disposed && active && sessionEpoch === epochAtStart;
+  }
+
+  function isCurrentStart(token) {
+    return !disposed && !active && sessionEpoch === token.epoch && pendingStartToken === token;
   }
 
   /**
@@ -435,16 +480,20 @@ export function createSlideshowPackRuntime(deps) {
    * @param {number} epochAtStart
    */
   async function refreshVisiblePack(epochAtStart) {
-    if (!active || disposed || sessionEpoch !== epochAtStart || lastPresentationPackId == null) {
+    if (!isCurrentSession(epochAtStart) || lastPresentationPackId == null) {
       return;
     }
+    const packIdAtStart = lastPresentationPackId;
     const base = await Promise.resolve(getEffectiveLayerGroups());
-    if (!active || disposed || sessionEpoch !== epochAtStart || lastPresentationPackId == null) {
+    if (
+      !isCurrentSession(epochAtStart) ||
+      lastPresentationPackId == null ||
+      lastPresentationPackId !== packIdAtStart
+    ) {
       return;
     }
     const baseGroups = Array.isArray(base) ? base : [];
-    const incoming = buildIncomingGroups(lastPresentationPackId, baseGroups);
-    rememberIncomingGroups(incoming);
+    const incoming = buildIncomingGroups(packIdAtStart, baseGroups);
     if (typeof applyProjectionRefresh === "function") {
       await Promise.resolve(
         applyProjectionRefresh({
@@ -461,17 +510,45 @@ export function createSlideshowPackRuntime(deps) {
         syncProjectionLayers(map, incoming, effectiveRefreshLayerStyleOptions()),
       );
     }
+    if (
+      !isCurrentSession(epochAtStart) ||
+      lastPresentationPackId == null ||
+      lastPresentationPackId !== packIdAtStart
+    ) {
+      return;
+    }
+    publishCommittedGroups(incoming);
+  }
+
+  function startVisiblePackRefresh(epochAtStart) {
+    const previousPromise = visibleRefreshPromise;
+    const refreshPromise = previousPromise
+      ? previousPromise.then(() => refreshVisiblePack(epochAtStart))
+      : refreshVisiblePack(epochAtStart);
+    const promise = refreshPromise.catch((error) => {
+      console.warn("[slideshow-pack-runtime] visible pack refresh failed", error);
+    });
+    visibleRefreshPromise = promise;
+    void promise
+      .finally(() => {
+        if (visibleRefreshPromise === promise) {
+          visibleRefreshPromise = null;
+        }
+      })
+      .catch(() => {
+        // The refresh promise already absorbs its own failure above.
+      });
   }
 
   /**
    * @param {number} epochAtStart
    */
   async function runOneTick(epochAtStart) {
-    if (!active || disposed || sessionEpoch !== epochAtStart) {
+    if (!isCurrentSession(epochAtStart)) {
       return;
     }
     const base = await Promise.resolve(getEffectiveLayerGroups());
-    if (!active || disposed || sessionEpoch !== epochAtStart) {
+    if (!isCurrentSession(epochAtStart)) {
       return;
     }
     const baseGroups = Array.isArray(base) ? base : [];
@@ -483,8 +560,6 @@ export function createSlideshowPackRuntime(deps) {
     }
     const nextPackId = ordered[packIndex % ordered.length];
     const incoming = buildIncomingGroups(nextPackId, baseGroups);
-    rememberIncomingGroups(incoming);
-
     const warmup =
       typeof merged.warmupLeadMs === "number" && Number.isFinite(merged.warmupLeadMs)
         ? Math.max(0, merged.warmupLeadMs)
@@ -492,7 +567,7 @@ export function createSlideshowPackRuntime(deps) {
     // One lead phase per tick: idle-or-timeout before staging (not a second delay after).
     await waitForMapIdleOrTimeout(map, warmup);
 
-    if (!active || disposed || sessionEpoch !== epochAtStart) {
+    if (!isCurrentSession(epochAtStart)) {
       return;
     }
 
@@ -513,14 +588,14 @@ export function createSlideshowPackRuntime(deps) {
         crossfadeMs,
         effectiveRefreshLayerStyleOptions(),
       );
-      if (!active || disposed || sessionEpoch !== epochAtStart) {
+      if (!isCurrentSession(epochAtStart)) {
         return;
       }
     }
 
     const stageOpts = effectiveTransitionOptions();
     const staged = beginSlideshowStage(map, incoming, stageOpts);
-    if (!active || disposed || sessionEpoch !== epochAtStart) {
+    if (!isCurrentSession(epochAtStart)) {
       return;
     }
     // Refresh while staged layers are still hidden so reveal is the final visible step.
@@ -540,11 +615,15 @@ export function createSlideshowPackRuntime(deps) {
         syncProjectionLayers(map, incoming, effectiveRefreshLayerStyleOptions()),
       );
     }
-    if (!active || disposed || sessionEpoch !== epochAtStart) {
+    if (!isCurrentSession(epochAtStart)) {
       return;
     }
     commitSlideshowReveal(map, staged, crossfadeMs);
-    if (!active || disposed || sessionEpoch !== epochAtStart) {
+    if (!isCurrentSession(epochAtStart)) {
+      return;
+    }
+    publishCommittedGroups(incoming);
+    if (!isCurrentSession(epochAtStart)) {
       return;
     }
     if (ordered.length > 0) {
@@ -565,29 +644,182 @@ export function createSlideshowPackRuntime(deps) {
         await runOneTick(epoch);
       } finally {
         inFlight = false;
-        if (active && !disposed && queuedAfterCurrent) {
+        if (isCurrentSession(epoch) && queuedAfterCurrent) {
           queuedAfterCurrent = false;
           runTickOrQueue();
         }
       }
     })();
     runningPromise = p;
-    p.finally(() => {
+    void p.finally(() => {
       if (runningPromise === p) {
         runningPromise = null;
       }
+    }).catch(() => {
+      // The stop path observes the original promise and restores the live pack.
     });
   }
 
-  async function stopImpl() {
+  async function restoreLiveProjection() {
+    if (disposed) {
+      return false;
+    }
+    if (typeof applyProjectionRefresh === "function") {
+      // Live refresh deliberately receives no slideshow override. The projection
+      // caller reads the current effective live groups after suppression is off.
+      await Promise.resolve(applyProjectionRefresh());
+      return true;
+    }
+    // Projection supplies applyProjectionRefresh so its effective live state can
+    // be restored without another potentially unresolved groups read. Standalone
+    // runtimes have no owned live refresh path.
+    return false;
+  }
+
+  function requestStop() {
     sessionEpoch += 1;
     active = false;
-    lastPresentationPackId = null;
-    lastIncomingGroups = null;
+    pendingStartToken = null;
     clearTimer();
-    if (runningPromise) {
-      await runningPromise;
+    queuedAfterCurrent = false;
+
+    const promise = Promise.resolve().then(async () => {
+      const tickPromise = runningPromise;
+      if (tickPromise) {
+        try {
+          await tickPromise;
+        } catch {
+          // Continue to live restoration even if a canceled tick failed.
+        }
+      }
+      const refreshPromise = visibleRefreshPromise;
+      if (refreshPromise) {
+        try {
+          await refreshPromise;
+        } catch {
+          // A visible refresh is owned by Stop and must not prevent restoration.
+        }
+      }
+      let restoreError;
+      let restoreFailed = false;
+      let restored = false;
+      try {
+        restored = await restoreLiveProjection();
+      } catch (error) {
+        restoreFailed = true;
+        restoreError = error;
+      }
+      if (restoreFailed) throw restoreError;
+      lastPresentationPackId = null;
+      committedGroups = null;
+      if (restored && !disposed) {
+        publishCommittedGroups(null);
+      }
+      return restored && !disposed;
+    });
+    stopPromise = promise;
+    const finalizeStop = (restored) => {
+      if (stopPromise !== promise) {
+        return;
+      }
+      const shouldRestart = hasQueuedStart && !disposed;
+      const payload = queuedStartPayload;
+      hasQueuedStart = false;
+      queuedStartPayload = undefined;
+      // Clear the guard before starting a queued session. Consumers awaiting
+      // this promise therefore observe a fully finalized Stop first.
+      stopPromise = null;
+      if (restored && shouldRestart) {
+        start(payload);
+      }
+    };
+    void promise.then(
+      (restored) => finalizeStop(restored),
+      () => finalizeStop(false),
+    );
+    return promise;
+  }
+
+  function start(payload) {
+    if (disposed) {
+      return Promise.resolve();
     }
+    if (stopPromise) {
+      queuedStartPayload = payload;
+      hasQueuedStart = true;
+      return stopPromise
+        .catch(() => undefined)
+        .then(() => pendingStartPromise || undefined);
+    }
+    merged = mergeSlideshowConfig(baseConfig, payload);
+    if (active) {
+      if (!inFlight && lastPresentationPackId) {
+        const epoch = sessionEpoch;
+        startVisiblePackRefresh(epoch);
+      }
+      return Promise.resolve();
+    }
+    if (pendingStartToken) {
+      return pendingStartPromise || Promise.resolve();
+    }
+    const token = { epoch: sessionEpoch };
+    const startConfig = merged;
+    pendingStartToken = token;
+    const startPromise = (async () => {
+      try {
+        if (!isCurrentStart(token)) {
+          return;
+        }
+        const base = await Promise.resolve(getEffectiveLayerGroups());
+        if (!isCurrentStart(token)) {
+          return;
+        }
+        const baseGroups = Array.isArray(base) ? base : [];
+        if (
+          resolveOrderedPackIds(
+            baseGroups,
+            startConfig.packOrder,
+            startConfig.excludedPresentationPackIds,
+          ).length === 0
+        ) {
+          return;
+        }
+        const baseline = buildIncomingGroups("", baseGroups, startConfig);
+        if (!isCurrentStart(token)) {
+          return;
+        }
+        publishCommittedGroups(baseline);
+        if (!isCurrentStart(token)) {
+          return;
+        }
+        active = true;
+        packIndex = 0;
+        lastPresentationPackId = null;
+        const resolvedIntervalMs =
+          typeof startConfig.intervalMs === "number" && Number.isFinite(startConfig.intervalMs)
+            ? startConfig.intervalMs
+            : 10000;
+        const interval = Math.max(1, resolvedIntervalMs);
+        runTickOrQueue();
+        timerId = setInterval(() => {
+          runTickOrQueue();
+        }, interval);
+      } finally {
+        if (pendingStartToken === token) {
+          pendingStartToken = null;
+        }
+      }
+    })()
+      .catch((error) => {
+        console.warn("[slideshow-pack-runtime] slideshow start failed", error);
+      })
+      .finally(() => {
+        if (pendingStartPromise === startPromise) {
+          pendingStartPromise = null;
+        }
+      });
+    pendingStartPromise = startPromise;
+    return startPromise;
   }
 
   return {
@@ -600,78 +832,40 @@ export function createSlideshowPackRuntime(deps) {
     },
 
     shouldSuppressProjectionHighlight() {
-      return !disposed && (active || startInProgress);
+      return !disposed && (active || pendingStartToken !== null);
     },
 
-    getLastIncomingGroups() {
-      return lastIncomingGroups;
+    getCommittedGroups() {
+      return committedGroups;
     },
 
-    start(payload) {
+    start,
+
+    stop() {
+      if (stopPromise) {
+        // A repeated Stop is also the explicit cancellation of a queued restart.
+        hasQueuedStart = false;
+        queuedStartPayload = undefined;
+        return stopPromise;
+      }
       if (disposed) {
-        return;
+        return Promise.resolve();
       }
-      merged = mergeSlideshowConfig(baseConfig, payload);
-      if (active) {
-        if (!inFlight && lastPresentationPackId) {
-          const epoch = sessionEpoch;
-          void refreshVisiblePack(epoch);
-        }
-        return;
-      }
-      if (startInProgress) {
-        return;
-      }
-      startInProgress = true;
-      void (async () => {
-        try {
-          if (disposed) {
-            return;
-          }
-          const base = await Promise.resolve(getEffectiveLayerGroups());
-          if (disposed) {
-            return;
-          }
-          if (active) {
-            return;
-          }
-          const baseGroups = Array.isArray(base) ? base : [];
-          if (
-            resolveOrderedPackIds(
-              baseGroups,
-              merged.packOrder,
-              merged.excludedPresentationPackIds,
-            ).length === 0
-          ) {
-            return;
-          }
-          rememberIncomingGroups(buildIncomingGroups("", baseGroups));
-          active = true;
-          packIndex = 0;
-          lastPresentationPackId = null;
-          const resolvedIntervalMs =
-            typeof merged.intervalMs === "number" && Number.isFinite(merged.intervalMs)
-              ? merged.intervalMs
-              : 10000;
-          const interval = Math.max(1, resolvedIntervalMs);
-          runTickOrQueue();
-          timerId = setInterval(() => {
-            runTickOrQueue();
-          }, interval);
-        } finally {
-          startInProgress = false;
-        }
-      })();
+      return requestStop();
     },
-
-    stop: stopImpl,
 
     async dispose() {
       if (disposed) {
         return;
       }
       disposed = true;
-      await stopImpl();
+      hasQueuedStart = false;
+      queuedStartPayload = undefined;
+      if (stopPromise) {
+        await stopPromise.catch(() => {});
+        return;
+      }
+      await requestStop().catch(() => {});
     },
   };
 }

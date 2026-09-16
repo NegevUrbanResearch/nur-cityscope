@@ -5,9 +5,9 @@ import {
   resolveGisPopupHit,
 } from "../../frontend/src/map/maplibre-gis-popups.js";
 
-const nliCatalogConfig = {
-  id: "nli_catalog",
-  name: "nli_catalog",
+const catalogConfig = {
+  id: "fixture_catalog",
+  name: "fixture_catalog",
   ui: {
     legendLabel: "NLI catalog",
     popup: {
@@ -31,25 +31,25 @@ const octoberConfig = {
 };
 
 function getLayerConfig(fullId) {
-  if (fullId === "nli.nli_catalog") return nliCatalogConfig;
+  if (fullId === "fixture.catalog") return catalogConfig;
   if (fullId === "october_7th.אזור_הרס-נקודה") return octoberConfig;
   return null;
 }
 
 describe("resolveGisPopupHit", () => {
-  test("uses MapLibre source fullId (nli.stem), not style-layer id or stem", () => {
+  test("uses MapLibre source fullId (pack.stem), not style-layer id or stem", () => {
     const hit = resolveGisPopupHit(
       [
         {
-          source: "nli.nli_catalog",
-          layer: { id: "nli__nli_catalog" },
+          source: "fixture.catalog",
+          layer: { id: "fixture__catalog" },
           properties: { name_he: "אלמוני" },
         },
       ],
       getLayerConfig,
     );
     expect(hit).not.toBeNull();
-    expect(hit.fullId).toBe("nli.nli_catalog");
+    expect(hit.fullId).toBe("fixture.catalog");
     expect(hit.popupConfig.fields[0].key).toBe("name_he");
     expect(hit.layerName).toBe("NLI catalog");
   });
@@ -58,8 +58,8 @@ describe("resolveGisPopupHit", () => {
     const hit = resolveGisPopupHit(
       [
         {
-          source: "nli_catalog",
-          layer: { id: "nli_catalog" },
+          source: "catalog",
+          layer: { id: "catalog" },
           properties: { name_he: "אלמוני" },
         },
       ],
@@ -98,7 +98,7 @@ describe("resolveGisPopupHit", () => {
       (id) =>
         id === "nli.investigation_polygons"
           ? { id: "investigation_polygons", name: "investigation_polygons" }
-          : nliCatalogConfig,
+          : catalogConfig,
     );
     expect(hit).toBeNull();
   });
@@ -106,7 +106,7 @@ describe("resolveGisPopupHit", () => {
   test("blocks a people hit from falling through to an underlying generic popup", () => {
     const hit = resolveGisPopupHit(
       [
-        { source: "nli.nli_catalog", properties: { name_he: "underlying" } },
+        { source: "fixture.catalog", properties: { name_he: "underlying" } },
         { source: "nli.people", properties: { pid: "p-1" } },
       ],
       getLayerConfig,
@@ -131,7 +131,7 @@ describe("attachGisFeaturePopups", () => {
       off: vi.fn(),
       queryRenderedFeatures: vi.fn(() => [
         {
-          source: "nli.nli_catalog",
+          source: "fixture.catalog",
           properties: { name_he: "אלמוני" },
         },
       ]),

@@ -10,6 +10,7 @@ import { createGisPersonController } from "../map/maplibre-gis-person-controller
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
 import { createNarrativePresentation, handleNarrativePresentationCommand } from "../map/nli-narrative-presentation.js";
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
+import { applyNovaMarkerFilter } from "../map/nli-nova-marker-filter.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
@@ -361,7 +362,11 @@ async function bootstrapMapRuntime() {
       ? layerGroups
       : Object.values(layerGroups || {});
     const initialGroups = filterGroupsForGisMap(rawInitialLayerGroups);
-    applyLayerGroupsToMap(map, initialGroups);
+    const applyGisLayerGroups = (groups) => {
+      applyLayerGroupsToMap(map, groups);
+      applyNovaMarkerFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
+    };
+    applyGisLayerGroups(initialGroups);
     applyStoredNliLabelHeading(map);
     syncContextFlowAnimations();
     const personVisual = createGisPersonSelection({
@@ -497,7 +502,7 @@ async function bootstrapMapRuntime() {
 
       // Apply non-curated layer changes via registry path.
       if (!isCurrent()) return;
-      applyLayerGroupsToMap(map, currentGroups);
+      applyGisLayerGroups(currentGroups);
       applyStoredNliLabelHeading(map);
       nameFieldController.sync(currentGroups);
       personVisual.bringToFront?.();
@@ -615,8 +620,7 @@ async function bootstrapMapRuntime() {
             pullPayload: ev?.detail || {},
             reloadCuratedOnMap: refreshCuratedLayers,
             applyLayerGroupsState: (groups) => {
-              applyLayerGroupsToMap(
-                map,
+              applyGisLayerGroups(
                 filterGroupsForGisMap(
                   Array.isArray(groups) ? groups : Object.values(groups || {}),
                 ),

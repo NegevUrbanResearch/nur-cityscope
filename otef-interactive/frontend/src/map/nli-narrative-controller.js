@@ -1,5 +1,6 @@
 import { createNarrativeFocusRenderer } from "../shared/maplibre-narrative-focus.js";
 import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narratives.js";
+import { applyNovaMarkerFilter } from "./nli-nova-marker-filter.js";
 
 const EXIT_CENTER = Object.freeze([34.5, 31.4]);
 const SCENE_STORAGE_KEY = "otef.nliNarrativeSceneRevision";
@@ -80,13 +81,14 @@ export function createGisNarrativeController({
       const definition = getNliNarrative(normalized.id);
       state = normalized;
       activeDefinition = definition;
+      applyNovaMarkerFilter(map, activeDefinition?.id ?? null);
       if (normalized.revision === 0) return false;
       if (normalized.revision <= handledRevision) {
         if (definition) {
           clearPeopleAndArchive();
           focus.show(definition);
-          syncTimeline();
-        }
+        } else focus.clear();
+        syncTimeline();
         return false;
       }
       handledRevision = normalized.revision;
@@ -100,6 +102,7 @@ export function createGisNarrativeController({
       if (disposed) return;
       const generation = styleGeneration;
       if (activeDefinition && generation === styleGeneration) focus.onStyleLoad();
+      applyNovaMarkerFilter(map, activeDefinition?.id ?? null);
       onStyleLoadOverlay?.();
     },
     isActive: () => !disposed && !!activeDefinition,

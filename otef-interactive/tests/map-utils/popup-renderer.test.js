@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { renderPopupContent } from "../../frontend/src/map-utils/popup-renderer.js";
 
-const NLI_CATALOG_POPUP = {
+const PEOPLE_ENRICHMENT_POPUP = {
   titleField: "name_he",
   hideEmpty: true,
   fields: [
@@ -12,7 +12,7 @@ const NLI_CATALOG_POPUP = {
 };
 
 describe("renderPopupContent", () => {
-  test("renders nli catalog keys from processed geojson properties", () => {
+  test("renders enriched people keys from processed GeoJSON properties", () => {
     const html = renderPopupContent(
       {
         properties: {
@@ -21,11 +21,11 @@ describe("renderPopupContent", () => {
           categories: "Fallen soldiers",
         },
       },
-      NLI_CATALOG_POPUP,
-      "NLI catalog",
+      PEOPLE_ENRICHMENT_POPUP,
+      "People",
     );
     expect(html).toContain("popup-category");
-    expect(html).toContain("NLI catalog");
+    expect(html).toContain("People");
     expect(html).toContain("Hebrew name");
     expect(html).toContain("Pozdnykov, Alik");
     expect(html).toContain("Fallen soldiers");
@@ -55,7 +55,7 @@ describe("renderPopupContent", () => {
       },
       {
         hideEmpty: true,
-        fields: [{ label: "NLI catalog", key: "nli_url", type: "url", linkLabel: "Open record" }],
+        fields: [{ label: "NLI authority", key: "nli_url", type: "url", linkLabel: "Open record" }],
       },
     );
     expect(html).toContain('href="https://www.nli.org.il/he/authorities/987007591931905171"');

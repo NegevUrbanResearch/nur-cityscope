@@ -84,6 +84,7 @@ class Command(BaseCommand):
 
         # Seed layer groups from processed manifests
         self._seed_layer_groups(otef_table)
+        self._remove_retired_nli_layer_states(otef_table)
 
         self.stdout.write(
             self.style.SUCCESS('\n[SUCCESS] OTEF data import completed.')
@@ -189,4 +190,24 @@ class Command(BaseCommand):
         except Exception as e:
             self.stdout.write(
                 self.style.ERROR(f'[ERROR] Error seeding layer groups: {e}')
+            )
+
+    def _remove_retired_nli_layer_states(self, table):
+        """Clean up only the two retired NLI runtime layer states.
+
+        The preparation pipeline still reads these source-pack inputs when
+        enriching the current people layer, but neither layer is part of the
+        current runtime manifest. Keep this cleanup exact instead of
+        pruning arbitrary rows that may be user-managed.
+        """
+        retired_layer_ids = ('nli.nli_catalog', 'nli.oct7_database')
+        deleted, _ = LayerState.objects.filter(
+            table=table,
+            layer_id__in=retired_layer_ids,
+        ).delete()
+        if deleted:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f'[OK] Removed {deleted} retired NLI layer state(s)'
+                )
             )

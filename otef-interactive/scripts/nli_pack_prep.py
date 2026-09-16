@@ -8,6 +8,7 @@ import json
 import math
 import re
 import shutil
+import subprocess
 import struct
 import zipfile
 from collections import defaultdict
@@ -166,14 +167,6 @@ OCT7_STATUS_CLASSES = [
     ("Murdered in captivity", "Murdered in captivity", (122, 34, 34)),
 ]
 
-NLI_CATEGORY_CLASSES = [
-    ("Victims of terrorism", "Victims of terrorism", (217, 119, 6)),
-    ("Fallen soldiers", "Fallen soldiers", (109, 40, 217)),
-    ("Kidnapping victims", "Kidnapping victims", (8, 145, 178)),
-]
-NLI_CATALOG_MARKER_SIZE = 10.0
-NLI_CATALOG_STROKE = (15, 23, 42)
-NLI_CATALOG_STROKE_WIDTH = 0.6
 _LOCAL_HHMM = re.compile(r"^local\s+(\d{1,2}):(\d{2})$")
 ALARM_TIME_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$")
 
@@ -189,16 +182,6 @@ def rewrite_oct7_status(value: Any) -> Any:
     if value == MURDERED_THEN_KIDNAPPED_STATUS:
         return CANONICAL_MURDERED_STATUS
     return value
-
-
-def group_nli_category(raw: Any) -> Any:
-    if not isinstance(raw, str) or raw == "":
-        return raw
-    if "Kidnapping" in raw:
-        return "Kidnapping victims"
-    if "Fallen soldiers" in raw:
-        return "Fallen soldiers"
-    return "Victims of terrorism"
 
 
 NLI_AUTHORITY_URL = "https://www.nli.org.il/he/authorities/{mms_id}"
@@ -376,13 +359,10 @@ def attach_nli_catalog_links(
 
 
 def rewrite_nli_layer_properties(stem: str, collection: Dict[str, Any]) -> int:
-    changed = 0
-    if stem in ("oct7_database", "people"):
-        key, rewrite = "status", rewrite_oct7_status
-    elif stem == "nli_catalog":
-        key, rewrite = "categories", group_nli_category
-    else:
+    if stem != "people":
         return 0
+    changed = 0
+    key, rewrite = "status", rewrite_oct7_status
     for feature in collection.get("features") or []:
         props = dict(feature.get("properties") or {})
         old = props.get(key)
@@ -1636,6 +1616,45 @@ def install_nli_fleeing_overlays(
     }
 
 
+def generate_nova_escape_index(
+    routes_path: Path,
+    polygons_path: Path,
+    lines_path: Path,
+    settlements_path: Path,
+    output_path: Path,
+) -> bool:
+    inputs = [
+        Path(routes_path),
+        Path(polygons_path),
+        Path(lines_path),
+        Path(settlements_path),
+    ]
+    output = Path(output_path)
+    if not all(path.is_file() for path in inputs):
+        output.unlink(missing_ok=True)
+        return False
+    output.unlink(missing_ok=True)
+    node = shutil.which("node")
+    if not node:
+        raise RuntimeError("Node.js is required to generate the Nova fleeing-route impact index")
+    generator = Path(__file__).with_name("generate-nova-escape-index.mjs")
+    try:
+        subprocess.run(
+            [
+                node,
+                "--experimental-detect-module",
+                str(generator),
+                *(str(path) for path in inputs),
+                str(output),
+            ],
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        output.unlink(missing_ok=True)
+        raise
+    return True
+
+
 def prepare_nli_pack(
     zip_path: Path,
     pack_dir: Path,
@@ -1747,6 +1766,15 @@ def prepare_nli_pack(
             expected_geojson_sha256=fleeing_geojson_sha256,
             expected_lyrx_sha256=fleeing_lyrx_sha256,
         )
+    impact_index_path = sidecar_dir / "fleeing_route_impacts.json"
+    if generate_nova_escape_index(
+        sidecar_dir / f"{FLEEING_ROUTE_STEM}.geojson",
+        gis_dir / "investigation_polygons.geojson",
+        gis_dir / "lines.geojson",
+        sidecar_dir / f"{INVESTIGATION_SETTLEMENTS_STEM}.geojson",
+        impact_index_path,
+    ):
+        summary.setdefault("fleeing_overlays", {})["impact_index"] = str(impact_index_path)
     written: List[str] = []
     for path in _as_popup_paths(popup_path):
         merge_popup_config(path, NLI_POPUP_CONFIG)

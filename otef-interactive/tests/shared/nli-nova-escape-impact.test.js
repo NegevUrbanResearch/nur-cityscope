@@ -8,7 +8,10 @@ import {
   syncInvestigationTimelineToMap,
 } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
-import { createNovaEscapeCoordinator } from "../../frontend/src/shared/nli-nova-escape-coordinator.js";
+import {
+  createNovaEscapeCoordinator,
+  NOVA_FLEEING_IMPACT_INDEX_URL,
+} from "../../frontend/src/shared/nli-nova-escape-coordinator.js";
 import {
   NOVA_ESCAPE_IMPACT_LAYER_ID,
   escapeImpactOutlineIds,
@@ -95,6 +98,14 @@ describe("Nova escape-impact outlines", () => {
       const href = String(url);
       if (href === OVERLAP_URL) return jsonResponse({ type: "FeatureCollection", features: [] });
       if (href === INDIVIDUAL_URL) return jsonResponse(individualCollection);
+      if (href === NOVA_FLEEING_IMPACT_INDEX_URL) {
+        return jsonResponse({
+          schemaVersion: 1,
+          routeIds: ["1"],
+          parallelCrossings: [],
+          settlementCrossings: [],
+        });
+      }
       return jsonResponse({ type: "FeatureCollection", features: [] });
     }));
   });
@@ -106,12 +117,13 @@ describe("Nova escape-impact outlines", () => {
   });
 
   test("path that enters a non-origin yeshuv lights f57a00 not incident red", () => {
+    const collisionSpy = vi.spyOn(routeSettlementCollisions, "buildRouteSettlementCollisionIndex");
     const ids = escapeImpactOutlineIds({
-      routes: [pathEnteringBeeri19],
-      settlements: [reim18, beeri19],
+      contacts: [{ routeId: "1", outlineObjectId: "19", u: 0.4 }],
       progressByObjectId: { "1": 0.4 },
     });
     expect(ids.has("19")).toBe(true);
+    expect(collisionSpy).not.toHaveBeenCalled();
   });
 
   test("progress 0 does not treat Reim as origin just because the path starts at the Nova facility", () => {

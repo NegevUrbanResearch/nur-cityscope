@@ -130,6 +130,77 @@ function fakeEl(init = {}) {
   return el;
 }
 
+function mountGisRemoteDebug({ remoteMap, persistRemoteLayoutMap }) {
+  const storage = {
+    data: {},
+    getItem(key) { return this.data[key] ?? null; },
+    setItem(key, value) { this.data[key] = String(value); },
+    removeItem(key) { delete this.data[key]; },
+  };
+  const body = fakeEl();
+  const display = fakeEl({ id: "map", clientWidth: 800, clientHeight: 600 });
+  const host = fakeEl({ id: "nliGisClockHost" });
+  const caption = fakeEl({ className: "nli-investigation-timeline-caption" });
+  display.appendChild(host);
+  host.appendChild(caption);
+  const windowListeners = {};
+  const win = {
+    location: { search: "" },
+    localStorage: storage,
+    addEventListener(type, fn) { (windowListeners[type] ||= []).push(fn); },
+    removeEventListener(type, fn) {
+      windowListeners[type] = (windowListeners[type] || []).filter((item) => item !== fn);
+    },
+    dispatchEvent(ev) {
+      for (const fn of windowListeners[ev.type] || []) fn(ev);
+      return true;
+    },
+    requestAnimationFrame(cb) { cb(); return 1; },
+  };
+  vi.stubGlobal("window", win);
+  vi.stubGlobal("document", {
+    body,
+    createElement() { return fakeEl(); },
+    getElementById(id) { return id === "map" ? display : null; },
+  });
+  vi.stubGlobal("localStorage", storage);
+  const api = installNliExplainerDebug({
+    host,
+    captionEl: caption,
+    registerDisposer() {},
+    storage,
+    storageKey: NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
+    defaultLayout: GIS_CLOCK_DEFAULT_LAYOUT,
+    enableSpanGuards: false,
+    enableLayoutMapExport: false,
+    mergeProjectionLayout: false,
+    enableRotation: true,
+    initialVisible: true,
+    getRemoteLayoutMap: () => remoteMap,
+    persistRemoteLayoutMap,
+  });
+  return { api, host, win, storage };
+}
+
+function moveGisHost({ host, win, clientX = 40, clientY = 24 }) {
+  const pointer = (type, extra = {}) => ({
+    type,
+    button: 0,
+    clientX: 20,
+    clientY: 20,
+    target: host,
+    preventDefault() {},
+    ...extra,
+  });
+  host.dispatchEvent(pointer("pointerdown"));
+  win.dispatchEvent(pointer("pointermove", { clientX, clientY }));
+  win.dispatchEvent(pointer("pointerup"));
+}
+
+async function flushRemoteSave() {
+  for (let i = 0; i < 8; i += 1) await Promise.resolve();
+}
+
 const overlayGuards = vi.hoisted(() => ({
   nliExplainerSpanKey: vi.fn(),
   nliExplainerBoxHitsOverlap: vi.fn(),
@@ -833,6 +904,131 @@ describe("nli explainer debug editor", () => {
     expect(after).not.toHaveProperty("segev");
     expect(host.style.left).toBe(`${GIS_CLOCK_DEFAULT_LAYOUT.leftPct}%`);
     expect(api.isVisible()).toBe(true);
+    api.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("GIS remote slot binding reads custom start coordinates without a same-slot save", () => {
+    const remoteMap = {
+      start: { ...GIS_CLOCK_DEFAULT_LAYOUT, leftPct: 11, topPct: 22 },
+    };
+    const persist = vi.fn(() => Promise.resolve());
+    const { api, host } = mountGisRemoteDebug({ remoteMap, persistRemoteLayoutMap: persist });
+
+    api.setGisClockLayoutSlot("start");
+
+    expect(host.style.left).toBe("11%");
+    expect(host.style.top).toBe("22%");
+    expect(persist).not.toHaveBeenCalled();
+    api.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("GIS remote edits survive an acknowledged save and remount", async () => {
+    const remoteMap = {
+      start: { ...GIS_CLOCK_DEFAULT_LAYOUT, leftPct: 11, topPct: 22 },
+    };
+    const persist = vi.fn(async (payload) => {
+      Object.assign(remoteMap, payload);
+    });
+    const first = mountGisRemoteDebug({ remoteMap, persistRemoteLayoutMap: persist });
+    moveGisHost(first);
+    await flushRemoteSave();
+    const editedLeft = first.host.style.left;
+    expect(editedLeft).not.toBe("11%");
+    first.api.dispose();
+    vi.unstubAllGlobals();
+
+    const second = mountGisRemoteDebug({ remoteMap, persistRemoteLayoutMap: persist });
+    second.api.setGisClockLayoutSlot("start");
+    expect(second.host.style.left).toBe(editedLeft);
+    second.api.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("GIS remote rebinding during a deferred save keeps the working edit", async () => {
+    const remoteMap = {
+      start: { ...GIS_CLOCK_DEFAULT_LAYOUT, leftPct: 11, topPct: 22 },
+    };
+    let resolveSave;
+    const pending = new Promise((resolve) => { resolveSave = resolve; });
+    const persist = vi.fn(() => pending);
+    const { api, host, win } = mountGisRemoteDebug({ remoteMap, persistRemoteLayoutMap: persist });
+    moveGisHost({ host, win });
+    await flushRemoteSave();
+    const editedLeft = host.style.left;
+
+    api.setGisClockLayoutSlot("start");
+
+    expect(host.style.left).toBe(editedLeft);
+    expect(persist).toHaveBeenCalledTimes(1);
+    resolveSave();
+    api.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("GIS remote saves serialize slot changes and preserve both edited slots", async () => {
+    const remoteMap = {
+      start: { ...GIS_CLOCK_DEFAULT_LAYOUT, leftPct: 11 },
+      nova: { ...GIS_CLOCK_DEFAULT_LAYOUT, leftPct: 33 },
+    };
+    const resolvers = [];
+    const payloads = [];
+    const persist = vi.fn((payload) => {
+      payloads.push(payload);
+      return new Promise((resolve) => resolvers.push(resolve));
+    });
+    const first = mountGisRemoteDebug({ remoteMap, persistRemoteLayoutMap: persist });
+    moveGisHost(first);
+    first.api.setGisClockLayoutSlot("nova");
+    moveGisHost({ host: first.host, win: first.win, clientX: 60, clientY: 24 });
+    await flushRemoteSave();
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(resolvers).toHaveLength(1);
+
+    resolvers.shift()();
+    await flushRemoteSave();
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(resolvers).toHaveLength(1);
+    resolvers.shift()();
+    await flushRemoteSave();
+    expect(persist).toHaveBeenCalledTimes(3);
+    expect(resolvers).toHaveLength(1);
+    expect(payloads[2]).toHaveProperty("start");
+    expect(payloads[2]).toHaveProperty("nova");
+    Object.assign(remoteMap, payloads[2]);
+    resolvers.shift()();
+    await flushRemoteSave();
+
+    first.api.dispose();
+    vi.unstubAllGlobals();
+    const second = mountGisRemoteDebug({ remoteMap, persistRemoteLayoutMap: persist });
+    second.api.setGisClockLayoutSlot("start");
+    const startLeft = second.host.style.left;
+    second.api.setGisClockLayoutSlot("nova");
+    expect(second.host.style.left).toBe(`${remoteMap.nova.leftPct}%`);
+    expect(startLeft).toBe(`${remoteMap.start.leftPct}%`);
+    second.api.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("GIS remote save rejection is absorbed so a later edit still saves", async () => {
+    const remoteMap = { start: { ...GIS_CLOCK_DEFAULT_LAYOUT, leftPct: 11 } };
+    let rejectFirst;
+    let resolveSecond;
+    const persist = vi.fn()
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectFirst = reject; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+    const { api, host, win } = mountGisRemoteDebug({ remoteMap, persistRemoteLayoutMap: persist });
+    moveGisHost({ host, win });
+    await flushRemoteSave();
+    rejectFirst(new Error("save failed"));
+    await flushRemoteSave();
+    moveGisHost({ host, win, clientX: 60, clientY: 24 });
+    await flushRemoteSave();
+    expect(persist).toHaveBeenCalledTimes(2);
+    resolveSecond();
+    await flushRemoteSave();
     api.dispose();
     vi.unstubAllGlobals();
   });

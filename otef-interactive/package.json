@@ -10,7 +10,8 @@
     "build:frontend": "vite build",
     "dev:frontend": "vite",
     "generate:place-catalog": "node scripts/place-navigation/generate-place-catalog.mjs",
-    "check:place-catalog": "node scripts/place-navigation/generate-place-catalog.mjs --check"
+    "check:place-catalog": "node scripts/place-navigation/generate-place-catalog.mjs --check",
+    "generate:nova-escape-index": "node --experimental-detect-module scripts/generate-nova-escape-index.mjs public/processed/layers/nli/fleeing_route.geojson public/source/layers/nli/gis/investigation_polygons.geojson public/source/layers/nli/gis/lines.geojson public/processed/layers/nli/investigation_settlements.geojson public/processed/layers/nli/fleeing_route_impacts.json"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.0.18",

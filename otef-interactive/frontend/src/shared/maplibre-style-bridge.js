@@ -4,7 +4,9 @@
  */
 import {
   GIS_GAZA_ROADS_LINE_OPACITY_SCALE,
+  GIS_NLI_PEOPLE_POINT_RADIUS_SCALE,
   projectionHatchRasterParams,
+  PROJECTION_NLI_PEOPLE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
 } from "./hatch-projection-presentation.js";
@@ -174,6 +176,18 @@ function scalePointRadiusPaintForProjection(radius, hatchPresentation) {
   if (Array.isArray(radius)) {
     return ["*", scale, radius];
   }
+  return radius;
+}
+
+function scaleNliPeoplePointRadius(radius, hatchPresentation, fullLayerId) {
+  if (String(fullLayerId) !== "nli.people") return radius;
+  const scale = hatchPresentation?.applyProjectionHatchPresentation
+    ? Number(PROJECTION_NLI_PEOPLE_POINT_RADIUS_SCALE)
+    : Number(GIS_NLI_PEOPLE_POINT_RADIUS_SCALE);
+  if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return radius;
+  if (radius == null) return Math.max(0, scale);
+  if (typeof radius === "number" && Number.isFinite(radius)) return Math.max(0, radius * scale);
+  if (Array.isArray(radius)) return ["*", scale, radius];
   return radius;
 }
 
@@ -794,7 +808,11 @@ function symbolLayerToMapLibre(symbolLayer, id, hatchPresentation, fullLayerId) 
         ? 0
         : strokeWidthBase;
     const paint = {
-      "circle-radius": scalePointRadiusPaintForProjection(size / 2, hatchPresentation),
+      "circle-radius": scaleNliPeoplePointRadius(
+        scalePointRadiusPaintForProjection(size / 2, hatchPresentation),
+        hatchPresentation,
+        fullLayerId,
+      ),
       "circle-color": markerColorForMapLibre(
         fill != null && fill !== "" ? fill : "#808080",
         marker.fillOpacity,
@@ -1143,15 +1161,19 @@ function buildMatchLayer(id, mapLibreType, field, entries, defaultSymbolLayer, h
       uniqueValuePointColorFallback = true;
       paint["circle-color"] = "#808080";
     }
-    paint["circle-radius"] = scalePointRadiusPaintForProjection(
-      buildMatchExpr(
-        field,
-        entries,
-        defaultSymbolLayer,
-        "marker.size",
-        (size) => size / 2
-      ) ?? 4,
+    paint["circle-radius"] = scaleNliPeoplePointRadius(
+      scalePointRadiusPaintForProjection(
+        buildMatchExpr(
+          field,
+          entries,
+          defaultSymbolLayer,
+          "marker.size",
+          (size) => size / 2,
+        ) ?? 4,
+        hatchPresentation,
+      ),
       hatchPresentation,
+      fullLayerId,
     );
     paint["circle-stroke-color"] = buildMatchExpr(field, entries, defaultSymbolLayer, "marker.stroke")
       ?? buildMatchExpr(field, entries, defaultSymbolLayer, "marker.strokeColor")

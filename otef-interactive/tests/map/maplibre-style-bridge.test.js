@@ -399,8 +399,8 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const result = irToMapLibreLayers("nli.nli_catalog", "nli__nli_catalog", layerConfig);
-    const proj = irToMapLibreLayers("nli.nli_catalog", "nli__nli_catalog", layerConfig, {
+    const result = irToMapLibreLayers("fixture.catalog", "fixture__catalog", layerConfig);
+    const proj = irToMapLibreLayers("fixture.catalog", "fixture__catalog", layerConfig, {
       applyProjectionHatchPresentation: true,
     });
     const symbol = result.find((layer) => layer.type === "symbol");
@@ -450,7 +450,7 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const result = irToMapLibreLayers("nli.nli_catalog", "nli__nli_catalog", layerConfig);
+    const result = irToMapLibreLayers("fixture.catalog", "fixture__catalog", layerConfig);
     const symbol = result.find((layer) => layer.type === "symbol");
     expect(symbol).toBeDefined();
     expect(result.find((layer) => layer.type === "circle")).toBeUndefined();
@@ -517,7 +517,7 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const result = irToMapLibreLayers("nli.oct7_database", "nli__oct7_database", layerConfig);
+    const result = irToMapLibreLayers("fixture.people", "fixture__people", layerConfig);
     expect(result.find((layer) => layer.type === "circle")).toBeDefined();
     expect(result.find((layer) => layer.type === "symbol")).toBeUndefined();
   });
@@ -547,8 +547,8 @@ describe("irToMapLibreLayers", () => {
         },
       },
     };
-    const gis = irToMapLibreLayers("nli.oct7_database", "nli__oct7_database", layerConfig);
-    const proj = irToMapLibreLayers("nli.oct7_database", "nli__oct7_database", layerConfig, {
+    const gis = irToMapLibreLayers("fixture.people", "fixture__people", layerConfig);
+    const proj = irToMapLibreLayers("fixture.people", "fixture__people", layerConfig, {
       applyProjectionHatchPresentation: true,
     });
     const gisCircle = gis.find((layer) => layer.type === "circle");

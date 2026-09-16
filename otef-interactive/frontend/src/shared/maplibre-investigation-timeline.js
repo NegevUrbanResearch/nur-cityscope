@@ -48,7 +48,7 @@ import {
 import { createInvestigationLineRenderer } from "./maplibre-investigation-lines.js";
 import { createInvestigationPolygonRenderer } from "./maplibre-investigation-polygons.js";
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
-import { NLI_NARRATIVES } from "./nli-narratives.js";
+import { getNliNarrative } from "./nli-narratives.js";
 import { record as recordPerfSample } from "../map/perf-telemetry.js";
 import { deriveInvestigationFrame } from "./nli-investigation-visual-state.js";
 import { novaVirtualMembership } from "./nli-nova-virtual-membership.js";
@@ -83,6 +83,11 @@ export {
 } from "./nli-investigation-timeline-data.js";
 
 const LINE_LAYER_ID_PREFIX = INVESTIGATION_LINES_FULL_ID.replace(/\./g, "__");
+const CLOCK_ONLY_CAPTION_RELEVANT_IDS = new Set([
+  INVESTIGATION_ALARMS_FULL_ID,
+  INVESTIGATION_LINES_FULL_ID,
+  INVESTIGATION_POLYGONS_FULL_ID,
+]);
 
 /** @type {WeakMap<object, object>} */
 const stateByMap = new WeakMap();
@@ -329,6 +334,12 @@ function ensureCaptionEl(map) {
   return el;
 }
 
+function clearCaption(el) {
+  if (!el) return;
+  el.hidden = true;
+  el.innerHTML = "";
+}
+
 function applyCaptionDeps(state, map, deps = {}) {
   state.nliCaptionMode = deps.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY
     ? NLI_CAPTION_MODE_CLOCK_ONLY
@@ -356,6 +367,18 @@ function applyCaptionDeps(state, map, deps = {}) {
   setCaptionDirRtl(state.captionEl);
 }
 
+function publishClockOnlyCaptionRelevance(state, visibleIds) {
+  if (state.nliCaptionMode !== NLI_CAPTION_MODE_CLOCK_ONLY) return;
+  const visible = visibleIds instanceof Set ? visibleIds : new Set(visibleIds || []);
+  const recognizedNarrative = !!getNliNarrative(state.narrativeFocus?.id);
+  state.clockOnlyCaptionRelevant = state.explainerDebugVisible === true || recognizedNarrative ||
+    [...CLOCK_ONLY_CAPTION_RELEVANT_IDS].some((id) => visible.has(id));
+  if (!state.clockOnlyCaptionRelevant) {
+    state.lastCaption = null;
+    clearCaption(state.captionEl);
+  }
+}
+
 function explainerPreviousClock(state, clockMinutes) {
   const beats = Array.isArray(state.clock?.beats) ? state.clock.beats : [];
   return flashPreviousClock(beats, clockMinutes);
@@ -364,6 +387,10 @@ function explainerPreviousClock(state, clockMinutes) {
 function updateCaption(state, phase, _previousClock) {
   const el = state.captionEl;
   if (!el) return;
+  if (state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY && !state.clockOnlyCaptionRelevant) {
+    clearCaption(el);
+    return;
+  }
   setCaptionDirRtl(el);
   const playbackOn =
     state.clockPhase === "playing" || state.clockPhase === "paused" || state.clockPhase === "ended";
@@ -381,6 +408,22 @@ function updateCaption(state, phase, _previousClock) {
     ? state.lastCaption
     : playbackOn && phase.mode === "hold" && state.lastCaption
       ? state.lastCaption
+      : state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY && playbackOn && phase.mode === "hold"
+        ? (() => {
+            const beats = Array.isArray(state.clock?.beats) ? state.clock.beats : [];
+            for (let index = beats.length - 1; index >= 0; index -= 1) {
+              if (!Number.isFinite(Number(beats[index]))) continue;
+              const clock = Number(beats[index]);
+              return {
+                clock,
+                previousClock: explainerPreviousClock(state, clock),
+                polygonOn: state.polygonOn,
+                lineOn: state.lineOn,
+                alarmPlay: state.alarmMode === "play",
+              };
+            }
+            return null;
+          })()
       : null;
   if (snap) {
     const model = buildNliExplainerModel({
@@ -407,10 +450,10 @@ function updateCaption(state, phase, _previousClock) {
     return;
   }
   if (state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY) {
+    const narrative = getNliNarrative(state.narrativeFocus?.id);
+    const idleClock = Number(narrative?.idleClockMinutes);
     const model = buildNliExplainerModel({
-      clock: isNovaNarrative(state)
-        ? NLI_NARRATIVES.nova.idleClockMinutes
-        : 389,
+      clock: Number.isFinite(idleClock) ? idleClock : 389,
       nliCaptionMode: state.nliCaptionMode,
     });
     el.hidden = false;
@@ -777,6 +820,7 @@ function createTimelineState(map, deps = {}) {
     captionEl: null,
     captionOwned: false,
     explainerDebugVisible: false,
+    clockOnlyCaptionRelevant: false,
     nliCaptionMode: deps.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY
       ? NLI_CAPTION_MODE_CLOCK_ONLY
       : "full",
@@ -1047,6 +1091,9 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   if (typeof deps.getPersonSelection === "function") state.getPersonSelection = deps.getPersonSelection;
   applyPersonGlow(state);
   applyCaptionDeps(state, map, deps);
+  const narrativeId = state.narrativeFocus?.id ?? null;
+  const nextMembership = effectiveMembership(clock, visibilityGroups, narrativeId);
+  publishClockOnlyCaptionRelevance(state, nextMembership.visible);
 
   // A setStyle call can fire style.load before the host has re-synced its base
   // layers. The style listener marks the coordinator ready; this branch keeps
@@ -1064,8 +1111,6 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
 
   refreshInvestigationTimelineData(state.data, deps);
   refreshOrientationTargets(map, state);
-  const narrativeId = state.narrativeFocus?.id ?? null;
-  const nextMembership = effectiveMembership(clock, visibilityGroups, narrativeId);
   const polygonsVisible = nextMembership.visible.has(INVESTIGATION_POLYGONS_FULL_ID);
   const linesVisible = nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID);
   const novaSiteOverlay = isNovaNarrative(state);

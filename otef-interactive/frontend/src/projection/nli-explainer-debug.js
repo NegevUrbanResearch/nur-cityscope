@@ -191,8 +191,20 @@ export function installNliExplainerDebug({
   let gisSlotId = "start";
   let gisHotkeyAllowed = true;
   const store = () => storageArg || localStorage;
+  const remoteGisMode =
+    !mergeProjectionLayout &&
+    typeof getRemoteLayoutMap === "function" &&
+    typeof persistRemoteLayoutMap === "function";
+  let workingRemoteMap = remoteGisMode ? readGisClockLayoutStore(getRemoteLayoutMap()) : null;
+  let remoteSaveCount = 0;
+  let remoteSaveChain = Promise.resolve();
 
   function readStoredMap() {
+    if (remoteGisMode) {
+      if (remoteSaveCount > 0) return workingRemoteMap;
+      workingRemoteMap = readGisClockLayoutStore(getRemoteLayoutMap());
+      return workingRemoteMap;
+    }
     if (typeof getRemoteLayoutMap === "function") {
       const remote = getRemoteLayoutMap();
       if (!mergeProjectionLayout) return readGisClockLayoutStore(remote);
@@ -399,6 +411,19 @@ ${exportButtons}
     }
   }
 
+  function persistStoredMap(nextMap) {
+    workingRemoteMap = readGisClockLayoutStore(nextMap);
+    const snapshot = readGisClockLayoutStore(workingRemoteMap);
+    remoteSaveCount += 1;
+    remoteSaveChain = remoteSaveChain
+      .catch(() => {})
+      .then(() => persistRemoteLayoutMap(snapshot))
+      .catch(() => {})
+      .then(() => {
+        remoteSaveCount -= 1;
+      });
+  }
+
   function persist() {
     let nextMap;
     if (!mergeProjectionLayout) {
@@ -411,7 +436,9 @@ ${exportButtons}
       nextMap = { ...readStoredMap() };
       nextMap[spanKey] = clampNliExplainerLayout(liveLayout, liveLayout);
     }
-    if (typeof persistRemoteLayoutMap === "function") {
+    if (remoteGisMode) {
+      persistStoredMap(nextMap);
+    } else if (typeof persistRemoteLayoutMap === "function") {
       void persistRemoteLayoutMap(nextMap);
     } else {
       const payload = JSON.stringify(nextMap);
@@ -585,7 +612,9 @@ ${exportButtons}
 
   panel.querySelector("[data-ned-reset]").addEventListener("click", () => {
     if (!mergeProjectionLayout) {
-      if (typeof persistRemoteLayoutMap === "function") {
+      if (remoteGisMode) {
+        persistStoredMap({});
+      } else if (typeof persistRemoteLayoutMap === "function") {
         void persistRemoteLayoutMap({});
       } else {
         try {
@@ -667,11 +696,11 @@ ${exportButtons}
     },
     setGisClockLayoutSlot(slotId) {
       const next = typeof slotId === "string" && slotId ? slotId : "start";
-      persist();
+      if (next !== gisSlotId) persist();
       gisSlotId = next;
       liveLayout = mergeGisClockLayout(
         gisSlotId,
-        readGisClockLayoutStore(store().getItem(storageKey)),
+        readStoredMap(),
         defaultLayout,
       );
       applyLive();

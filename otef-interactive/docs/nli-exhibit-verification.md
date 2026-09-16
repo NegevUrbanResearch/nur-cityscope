@@ -61,13 +61,36 @@ browser, display arrangement, console result, and outcome in the result record.
 - [ ] In projection, confirm the NLI timeline caption shows only the readable
   `HH:MM` story clock. Confirm the remote **Presentation** tab, slideshow, and
   `presentationActive` behavior remain unchanged.
-- [ ] Confirm GIS and projection clock parks match the 2026-09-07 afternoon spec
-  JSON (`otef.nliExplainerLayout.v2` / `otef.nliGisClockLayout.v2`): transparent
+- [ ] Confirm GIS and projection clock parks match the committed 2026-09-07
+  owner lab clock park in the default layout and persisted JSON
+  (`otef.nliExplainerLayout.v2` / `otef.nliGisClockLayout.v2`): transparent
   caption, type sized from `fontPx`, GIS rotate handle works. Left span:
-  `47.16458333333333, 14.320176309187765, 13.572916666666666, 11.732162458836443, 15, 91.18739188335852`
+  `46.90416666666667, 22.113809679110926, 8.886423224258024, 8.323215088627478, 56, 91.18739188335852`
   for `leftPct, topPct, widthPct, heightPct, fontPx, rotateDeg`. Full/right
   unchanged. Full record: **2026-09-07 lab follow-up exhibit gates** Clock left
   park.
+
+## NLI clock relevance matrix (Task 6)
+
+Run every applicable row on both GIS and projection. Record the observed
+visibility and story clock; the expected result is the same unless a row is
+marked GIS-only.
+
+| Case | GIS | Projection | Expected result |
+|---|---|---|---|
+| No relevant layer/no narrative | [ ] | [ ] | Clock absent. |
+| `nli.alarms` only | [ ] | [ ] | Clock present; outside Nova, Stop is `06:29`. |
+| `nli.lines` (infiltration lines) only | [ ] | [ ] | Clock present; outside Nova, Stop is `06:29`. |
+| `nli.investigation_polygons` only | [ ] | [ ] | Clock present; outside Nova, Stop is `06:29`. |
+| Victims names / `nli.people_names` alone | [ ] | [ ] | Clock absent. |
+| Another unrelated NLI layer only | [ ] | [ ] | Clock absent. |
+| Segev or Nova with relevant chips off | [ ] | [ ] | Clock remains visible: Segev idle/Stop is `06:29`; Nova idle/Stop and play lead-in are `08:03`. |
+| Projection slideshow warmup/crossfade (projection only) | N/A | [ ] | Warmup/staging do not change relevance; visibility changes only at reveal. Right span is blank. |
+| GIS zoomed-out view, press `e`, edit/move the clock, then refresh | [ ] | N/A | Edit/move survives refresh; the `start` layout is used when zoomed out. |
+
+For slideshow rows, verify that projection consumes the committed revealed pack.
+For the GIS edit row, verify that the remote map is used for initial load,
+rebind, edits, and refresh restoration, with browser storage as fallback.
 
 ## Technician browser setup
 

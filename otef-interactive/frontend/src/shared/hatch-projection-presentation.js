@@ -44,6 +44,12 @@ export const GIS_GAZA_ROADS_LINE_OPACITY_SCALE = 0.45;
  */
 export const PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE = 0.5;
 
+/** Slightly reduce NLI people points on GIS so dense victim markers stay readable. */
+export const GIS_NLI_PEOPLE_POINT_RADIUS_SCALE = 0.8;
+
+/** Keep projection victim points slightly smaller while preserving projection's denser scale. */
+export const PROJECTION_NLI_PEOPLE_POINT_RADIUS_SCALE = 0.9;
+
 /**
  * @param {number} scaledSeparation - after density multiplier, before quantize
  * @returns {number} whole px, >= 1

@@ -693,7 +693,7 @@ describe("slideshow runtime nli rotation", () => {
     await flushStart(runtime);
     expect(enabledPackId(sync.mock.calls[0][1])).toBe("pack_b");
     expectNliFullyOff(sync.mock.calls[0][1]);
-    expectNliFullyOff(runtime.getLastIncomingGroups());
+    expectNliFullyOff(runtime.getCommittedGroups());
     await vi.advanceTimersByTimeAsync(100);
     await flushMicrotasks();
     expect(enabledPackId(sync.mock.calls[1][1])).toBe("pack_a");
@@ -706,7 +706,7 @@ describe("slideshow runtime nli rotation", () => {
     expect(packLayerEnabled(sync.mock.calls[2][1], "nli", "people_names")).toBe(false);
     expect(packLayerEnabled(sync.mock.calls[2][1], "pack_b", "b")).toBe(false);
     await runtime.stop();
-    expect(runtime.getLastIncomingGroups()).toBeNull();
+    expect(runtime.getCommittedGroups()).toBeNull();
   });
 
   it("syncs overlays with nli off before the first pack tick (warmup window)", async () => {
@@ -817,11 +817,552 @@ describe("slideshow runtime nli rotation", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     await flushMicrotasks();
     await flushMicrotasks();
-    expectNliFullyOff(runtime.getLastIncomingGroups());
+    expectNliFullyOff(runtime.getCommittedGroups());
     expect(map.setLayoutProperty).not.toHaveBeenCalledWith(fillId, "visibility", "visible");
     expect(map.setLayoutProperty).not.toHaveBeenCalledWith(lineId, "visibility", "visible");
 
     await runtime.stop();
     disposeInvestigationTimelineForMap(map);
+  });
+});
+
+function deferred() {
+  /** @type {((value?: unknown) => void) | undefined} */
+  let resolve;
+  const promise = new Promise((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve: (value) => resolve?.(value) };
+}
+
+describe("slideshow committed reveal lifecycle", () => {
+  it("publishes only the committed reveal and keeps the getter aligned with callbacks", async () => {
+    vi.useFakeTimers();
+    const sync = vi.fn();
+    const overlays = [];
+    const stagedRefresh = deferred();
+    const applyProjectionRefresh = vi.fn(() => stagedRefresh.promise);
+    const runtime = createSlideshowPackRuntime({
+      config: {
+        ...baseConfig(),
+        packOrder: ["nli"],
+        warmupLeadMs: 50,
+      },
+      getEffectiveLayerGroups: () => makeLiveGroupsWithNliOn(),
+      syncProjectionLayers: sync,
+      applyProjectionRefresh,
+      syncPresentationOverlays: (groups) => {
+        overlays.push({ groups, getter: runtime.getCommittedGroups?.() });
+      },
+      map: null,
+    });
+
+    runtime.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    expect(overlays).toHaveLength(1);
+    expect(overlays[0].getter).toBe(overlays[0].groups);
+    expectNliFullyOff(overlays[0].groups);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await flushMicrotasks();
+    expect(beginSlideshowStage).toHaveBeenCalledTimes(1);
+    expect(overlays).toHaveLength(1);
+    expect(runtime.getCommittedGroups?.()).toBe(overlays[0].groups);
+
+    stagedRefresh.resolve();
+    await flushMicrotasks();
+    expect(commitSlideshowReveal).toHaveBeenCalledTimes(1);
+    expect(overlays).toHaveLength(2);
+    expectNliSlideshowLayers(overlays[1].groups);
+    expect(overlays[1].getter).toBe(overlays[1].groups);
+    expect(runtime.getCommittedGroups?.()).toBe(overlays[1].groups);
+    await runtime.stop();
+  });
+
+  it("keeps the committed NLI pack through reverse warmup, fade, and staging", async () => {
+    vi.useFakeTimers();
+    const overlays = [];
+    const stagedRefresh = deferred();
+    const applyProjectionRefresh = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => stagedRefresh.promise)
+      .mockResolvedValue(undefined);
+    const runtime = createSlideshowPackRuntime({
+      config: {
+        ...baseConfig(),
+        packOrder: ["nli", "pack_b"],
+        intervalMs: 100,
+        warmupLeadMs: 50,
+        crossfadeMs: 40,
+      },
+      getEffectiveLayerGroups: () => makeLiveGroupsWithNliOn(),
+      syncProjectionLayers: vi.fn(),
+      applyProjectionRefresh,
+      syncPresentationOverlays: (groups) => overlays.push(groups),
+      map: null,
+    });
+
+    runtime.start();
+    await flushStart(runtime);
+    expect(overlays).toHaveLength(2);
+    expectNliSlideshowLayers(overlays[1]);
+
+    await vi.advanceTimersByTimeAsync(100);
+    await flushMicrotasks();
+    expect(overlays).toHaveLength(2);
+    expectNliSlideshowLayers(runtime.getCommittedGroups?.());
+    expect(beginSlideshowStage).toHaveBeenCalledTimes(2);
+
+    stagedRefresh.resolve();
+    await flushMicrotasks();
+    expect(overlays).toHaveLength(3);
+    expect(enabledPackId(overlays[2])).toBe("pack_b");
+    expectNliFullyOff(overlays[2]);
+    await runtime.stop();
+  });
+
+  it("does not publish an old visible-pack refresh after Stop", async () => {
+    vi.useFakeTimers();
+    const overlays = [];
+    const visibleRefresh = deferred();
+    let tickRefreshes = 0;
+    const applyProjectionRefresh = vi.fn((options) => {
+      if (!options || !Object.prototype.hasOwnProperty.call(options, "groupsOverride")) {
+        return Promise.resolve();
+      }
+      tickRefreshes += 1;
+      return tickRefreshes === 1 ? Promise.resolve() : visibleRefresh.promise;
+    });
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["pack_b"] },
+      getEffectiveLayerGroups: () => makeTwoPacks(),
+      syncProjectionLayers: vi.fn(),
+      applyProjectionRefresh,
+      syncPresentationOverlays: (groups) => overlays.push(groups),
+      map: null,
+    });
+
+    runtime.start();
+    await flushStart(runtime);
+    expect(overlays).toHaveLength(2);
+    runtime.start({ keepSettlementNames: true });
+    await flushMicrotasks();
+    expect(applyProjectionRefresh).toHaveBeenCalledTimes(2);
+
+    const stopPromise = runtime.stop();
+    await flushMicrotasks();
+    expect(overlays.at(-1)).not.toBeNull();
+    visibleRefresh.resolve();
+    await stopPromise;
+    expect(overlays.at(-1)).toBeNull();
+    const notificationCountAfterStop = overlays.length;
+    await flushMicrotasks();
+    expect(overlays).toHaveLength(notificationCountAfterStop);
+  });
+
+  it("waits for a visible-pack refresh rejection before finalizing Stop", async () => {
+    vi.useFakeTimers();
+    const overlays = [];
+    let rejectVisibleRefresh;
+    const visibleRefresh = new Promise((_resolve, reject) => {
+      rejectVisibleRefresh = reject;
+    });
+    let tickRefreshes = 0;
+    const applyProjectionRefresh = vi.fn((options) => {
+      if (!options || !Object.prototype.hasOwnProperty.call(options, "groupsOverride")) {
+        return Promise.resolve();
+      }
+      tickRefreshes += 1;
+      return tickRefreshes === 1 ? Promise.resolve() : visibleRefresh;
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["pack_b"] },
+      getEffectiveLayerGroups: () => makeTwoPacks(),
+      syncProjectionLayers: vi.fn(),
+      applyProjectionRefresh,
+      syncPresentationOverlays: (groups) => overlays.push(groups),
+      map: null,
+    });
+
+    runtime.start();
+    await flushStart(runtime);
+    runtime.start({ keepSettlementNames: true });
+    await flushMicrotasks();
+    expect(applyProjectionRefresh).toHaveBeenCalledTimes(2);
+
+    let stopSettled = false;
+    const stopPromise = runtime.stop().then(() => {
+      stopSettled = true;
+    });
+    await flushMicrotasks();
+    expect(stopSettled).toBe(false);
+
+    rejectVisibleRefresh(new Error("visible refresh failed"));
+    await stopPromise;
+    expect(overlays.at(-1)).toBeNull();
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("absorbs a rejected pending Start and clears suppression", async () => {
+    vi.useFakeTimers();
+    const failure = new Error("effective groups unavailable");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["pack_b"] },
+      getEffectiveLayerGroups: () => Promise.reject(failure),
+      syncProjectionLayers: vi.fn(),
+      syncPresentationOverlays: vi.fn(),
+      map: null,
+    });
+
+    runtime.start();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(runtime.isActive()).toBe(false);
+    expect(runtime.shouldSuppressProjectionHighlight()).toBe(false);
+    expect(runtime.getCommittedGroups?.()).toBeNull();
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("does not clear overlays or restart a queued Start when live restoration rejects", async () => {
+    vi.useFakeTimers();
+    const overlays = [];
+    const liveGroups = makeLiveGroupsWithNliOn();
+    let rejectStopRefresh;
+    const stopRefresh = new Promise((_resolve, reject) => {
+      rejectStopRefresh = reject;
+    });
+    let stopRefreshCalls = 0;
+    const applyProjectionRefresh = vi.fn((options) => {
+      if (!options || !Object.prototype.hasOwnProperty.call(options, "groupsOverride")) {
+        stopRefreshCalls += 1;
+        return stopRefreshCalls === 1 ? stopRefresh : Promise.resolve();
+      }
+      return Promise.resolve();
+    });
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["nli"] },
+      getEffectiveLayerGroups: () => liveGroups,
+      syncProjectionLayers: vi.fn(),
+      applyProjectionRefresh,
+      syncPresentationOverlays: (groups) => overlays.push(groups),
+      map: null,
+    });
+
+    runtime.start();
+    await flushStart(runtime);
+    const stopPromise = runtime.stop();
+    runtime.start({ packOrder: ["pack_b"] });
+    rejectStopRefresh(new Error("live restoration failed"));
+
+    await expect(stopPromise).rejects.toThrow("live restoration failed");
+    await flushMicrotasks();
+    expect(overlays.at(-1)).not.toBeNull();
+    expect(runtime.getCommittedGroups?.()).toBe(overlays.at(-1));
+    expect(runtime.isActive()).toBe(false);
+    expect(beginSlideshowStage).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not publish a null overlay when live restoration is unavailable", async () => {
+    vi.useFakeTimers();
+    const overlays = [];
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["pack_b"] },
+      getEffectiveLayerGroups: () => makeTwoPacks(),
+      syncProjectionLayers: vi.fn(),
+      syncPresentationOverlays: (groups) => overlays.push(groups),
+      map: null,
+    });
+
+    runtime.start();
+    await flushStart(runtime);
+    const notificationCount = overlays.length;
+    await runtime.stop();
+    expect(overlays).toHaveLength(notificationCount);
+    expect(overlays.at(-1)).not.toBeNull();
+    expect(runtime.getCommittedGroups?.()).toBeNull();
+  });
+
+  it("skips live restoration and overlay clearing during disposal", async () => {
+    vi.useFakeTimers();
+    const overlays = [];
+    const applyProjectionRefresh = vi.fn(() => Promise.resolve());
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["pack_b"] },
+      getEffectiveLayerGroups: () => makeTwoPacks(),
+      syncProjectionLayers: vi.fn(),
+      applyProjectionRefresh,
+      syncPresentationOverlays: (groups) => overlays.push(groups),
+      map: null,
+    });
+
+    runtime.start();
+    await flushStart(runtime);
+    const refreshCount = applyProjectionRefresh.mock.calls.length;
+    const notificationCount = overlays.length;
+    await runtime.dispose();
+    expect(applyProjectionRefresh).toHaveBeenCalledTimes(refreshCount);
+    expect(overlays).toHaveLength(notificationCount);
+    expect(overlays.at(-1)).not.toBeNull();
+  });
+
+  it("does not publish a late null overlay when disposal interrupts restoration", async () => {
+    vi.useFakeTimers();
+    const overlays = [];
+    const restore = deferred();
+    let refreshCalls = 0;
+    const applyProjectionRefresh = vi.fn(() => {
+      refreshCalls += 1;
+      return refreshCalls === 1 ? Promise.resolve() : restore.promise;
+    });
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["pack_b"] },
+      getEffectiveLayerGroups: () => makeTwoPacks(),
+      syncProjectionLayers: vi.fn(),
+      applyProjectionRefresh,
+      syncPresentationOverlays: (groups) => overlays.push(groups),
+      map: null,
+    });
+
+    runtime.start();
+    await flushStart(runtime);
+    const stopPromise = runtime.stop();
+    await flushMicrotasks();
+    const disposePromise = runtime.dispose();
+    restore.resolve();
+    await stopPromise.catch(() => {});
+    await disposePromise;
+    expect(overlays.at(-1)).not.toBeNull();
+  });
+
+  it("settles disposal when an explicit in-flight Stop rejects", async () => {
+    vi.useFakeTimers();
+    const restoreFailure = new Error("live restoration failed during disposal");
+    let rejectRestore;
+    const restore = new Promise((_resolve, reject) => {
+      rejectRestore = reject;
+    });
+    let refreshCalls = 0;
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["pack_b"] },
+      getEffectiveLayerGroups: () => makeTwoPacks(),
+      syncProjectionLayers: vi.fn(),
+      applyProjectionRefresh: vi.fn(() => {
+        refreshCalls += 1;
+        return refreshCalls === 1 ? Promise.resolve() : restore;
+      }),
+      syncPresentationOverlays: vi.fn(),
+      map: null,
+    });
+
+    runtime.start();
+    await flushStart(runtime);
+    const stopPromise = runtime.stop();
+    await flushMicrotasks();
+    const disposePromise = runtime.dispose();
+    rejectRestore(restoreFailure);
+
+    await expect(stopPromise).rejects.toBe(restoreFailure);
+    await expect(disposePromise).resolves.toBeUndefined();
+  });
+
+  it("clears pending-start suppression before live refresh and ignores a stale Start A", async () => {
+    vi.useFakeTimers();
+    const startGroups = deferred();
+    const liveGroups = makeLiveGroupsWithNliOn();
+    const overlays = [];
+    let refreshSawLiveState = false;
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["nli"] },
+      getEffectiveLayerGroups: () => startGroups.promise,
+      syncProjectionLayers: vi.fn(),
+      applyProjectionRefresh: vi.fn(() => {
+        refreshSawLiveState =
+          runtime.shouldSuppressProjectionHighlight() === false &&
+          packLayerEnabled(liveGroups, "nli", "lines") === true;
+        return Promise.resolve();
+      }),
+      syncPresentationOverlays: (groups) => overlays.push(groups),
+      map: null,
+    });
+
+    runtime.start({ packOrder: ["nli"] });
+    await flushMicrotasks();
+    expect(runtime.isActive()).toBe(false);
+    expect(runtime.shouldSuppressProjectionHighlight()).toBe(true);
+
+    const stopPromise = runtime.stop();
+    expect(runtime.shouldSuppressProjectionHighlight()).toBe(false);
+    await stopPromise;
+    expect(refreshSawLiveState).toBe(true);
+    expect(overlays).toEqual([null]);
+
+    startGroups.resolve(liveGroups);
+    await flushMicrotasks();
+    expect(runtime.isActive()).toBe(false);
+    expect(runtime.getCommittedGroups?.()).toBeNull();
+    expect(overlays).toEqual([null]);
+  });
+
+  it("queues Start B behind Stop and publishes B only after final null", async () => {
+    vi.useFakeTimers();
+    const startA = deferred();
+    const overlays = [];
+    const liveGroups = makeLiveGroupsWithNliOn();
+    let getGroupsCalls = 0;
+    const stopRefresh = deferred();
+    const getEffectiveLayerGroups = vi.fn(() => {
+      getGroupsCalls += 1;
+      if (getGroupsCalls === 1) return startA.promise;
+      return liveGroups;
+    });
+    const applyProjectionRefresh = vi.fn((options) => {
+      if (!options || !Object.prototype.hasOwnProperty.call(options, "groupsOverride")) {
+        return stopRefresh.promise;
+      }
+      return Promise.resolve();
+    });
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["nli"] },
+      getEffectiveLayerGroups,
+      syncProjectionLayers: vi.fn(),
+      applyProjectionRefresh,
+      syncPresentationOverlays: (groups) => overlays.push(groups),
+      map: null,
+    });
+
+    runtime.start({ packOrder: ["nli"] });
+    await flushMicrotasks();
+    const stopPromise = runtime.stop();
+    runtime.start({ packOrder: ["pack_b"] });
+    expect(overlays).toHaveLength(0);
+    startA.resolve(liveGroups);
+    await flushMicrotasks();
+    expect(overlays).toHaveLength(0);
+
+    stopRefresh.resolve();
+    await stopPromise;
+    await flushStart(runtime);
+    expect(overlays[0]).toBeNull();
+    expect(overlays.length).toBeGreaterThanOrEqual(2);
+    expectNliFullyOff(overlays[1]);
+    expect(enabledPackId(overlays.at(-1))).toBe("pack_b");
+    expect(overlays.indexOf(null)).toBeLessThan(overlays.length - 1);
+    await runtime.stop();
+  });
+
+  it("keeps queued Start B through blocked Stop and repeated Stop cancels it", async () => {
+    vi.useFakeTimers();
+    const overlays = [];
+    const stopRefresh = deferred();
+    const getEffectiveLayerGroups = vi.fn(() => makeLiveGroupsWithNliOn());
+    const applyProjectionRefresh = vi.fn((options) => {
+      if (!options || !Object.prototype.hasOwnProperty.call(options, "groupsOverride")) {
+        return stopRefresh.promise;
+      }
+      return Promise.resolve();
+    });
+    const runtime = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["nli"] },
+      getEffectiveLayerGroups,
+      syncProjectionLayers: vi.fn(),
+      applyProjectionRefresh,
+      syncPresentationOverlays: (groups) => overlays.push(groups),
+      map: null,
+    });
+
+    runtime.start();
+    await flushStart(runtime);
+    const callsBeforeStop = getEffectiveLayerGroups.mock.calls.length;
+    const stopPromise = runtime.stop();
+    runtime.start({ packOrder: ["pack_b"] });
+    const repeatedStop = runtime.stop();
+    expect(repeatedStop).toBe(stopPromise);
+    stopRefresh.resolve();
+    await stopPromise;
+    await flushMicrotasks();
+    expect(getEffectiveLayerGroups.mock.calls.length).toBe(callsBeforeStop);
+    expect(overlays.at(-1)).toBeNull();
+  });
+
+  it("polls active, pending, and queued-restart runtimes without clearing suppression", async () => {
+    vi.useFakeTimers();
+    const { syncSlideshowPresentationPoll } = await import(
+      "../../frontend/src/shared/slideshow-pack-runtime.js"
+    );
+    expect(typeof syncSlideshowPresentationPoll).toBe("function");
+    if (typeof syncSlideshowPresentationPoll !== "function") return;
+
+    const inactive = createSlideshowPackRuntime({
+      getEffectiveLayerGroups: () => makeTwoPacks(),
+      syncProjectionLayers: vi.fn(),
+      map: null,
+    });
+    const inactiveStart = vi.fn();
+    const inactiveClear = vi.fn();
+    expect(syncSlideshowPresentationPoll(inactive, { start: inactiveStart, clear: inactiveClear })).toBe(false);
+    expect(inactiveStart).not.toHaveBeenCalled();
+    expect(inactiveClear).toHaveBeenCalledTimes(1);
+
+    const pendingGroups = deferred();
+    const pending = createSlideshowPackRuntime({
+      config: baseConfig(),
+      getEffectiveLayerGroups: () => pendingGroups.promise,
+      syncProjectionLayers: vi.fn(),
+      map: null,
+    });
+    pending.start();
+    await flushMicrotasks();
+    const pendingStart = vi.fn();
+    const pendingClear = vi.fn();
+    expect(syncSlideshowPresentationPoll(pending, { start: pendingStart, clear: pendingClear })).toBe(true);
+    expect(pendingStart).toHaveBeenCalledTimes(1);
+    expect(pendingClear).not.toHaveBeenCalled();
+    pendingGroups.resolve(makeTwoPacks());
+    await flushMicrotasks();
+    await pending.stop();
+
+    const stopRefresh = deferred();
+    const queuedGroups = deferred();
+    let queuedCalls = 0;
+    const queued = createSlideshowPackRuntime({
+      config: { ...baseConfig(), packOrder: ["pack_b"] },
+      getEffectiveLayerGroups: () => {
+        queuedCalls += 1;
+        return queuedCalls <= 2 ? makeTwoPacks() : queuedGroups.promise;
+      },
+      syncProjectionLayers: vi.fn(),
+      applyProjectionRefresh: (options) => {
+        return options && Object.prototype.hasOwnProperty.call(options, "groupsOverride")
+          ? Promise.resolve()
+          : stopRefresh.promise;
+      },
+      map: null,
+    });
+    beginSlideshowStage.mockClear();
+    queued.start();
+    await flushStart(queued);
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 6; i += 1) await flushMicrotasks();
+    const queuedStop = queued.stop();
+    queued.start({ packOrder: ["pack_b"] });
+    stopRefresh.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    await queuedStop;
+    await flushMicrotasks();
+    const queuedStart = vi.fn();
+    const queuedClear = vi.fn();
+    expect(syncSlideshowPresentationPoll(queued, { start: queuedStart, clear: queuedClear })).toBe(true);
+    expect(queuedStart).toHaveBeenCalledTimes(1);
+    expect(queuedClear).not.toHaveBeenCalled();
+    queuedGroups.resolve(makeTwoPacks());
+    await flushStart(queued);
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    await queued.stop();
   });
 });

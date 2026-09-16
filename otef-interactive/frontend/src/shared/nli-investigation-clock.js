@@ -152,12 +152,13 @@ export function idleNliClock(prev) {
  */
 export function nliPlayableIdsFromGroups(layerGroups) {
   const groups = asGroupsArray(layerGroups);
-  const group = groups.find((g) => g && g.id === "nli");
-  if (!group || !Array.isArray(group.layers)) return [];
   const enabled = new Set();
-  for (const layer of group.layers) {
-    if (!layer || !layer.enabled) continue;
-    if (typeof layer.id === "string") enabled.add(`nli.${layer.id}`);
+  for (const group of groups) {
+    if (!group || group.id !== "nli" || !Array.isArray(group.layers)) continue;
+    for (const layer of group.layers) {
+      if (!layer || !layer.enabled) continue;
+      if (typeof layer.id === "string") enabled.add(`nli.${layer.id}`);
+    }
   }
   return NLI_PLAYABLE_IDS.filter((id) => enabled.has(id));
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   INVESTIGATION_ALARMS_FULL_ID,
+  INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
   TIMELINE_BEAT_MS,
   TIMELINE_HOLD_MS,
@@ -14,6 +15,7 @@ import {
   flashPreviousClock,
   idleNliClock,
   normalizeNliClock,
+  nliPlayableIdsFromGroups,
   pauseNliClock,
   playNliClock,
   replayNliClock,
@@ -27,6 +29,28 @@ import {
 const polygons = INVESTIGATION_POLYGONS_FULL_ID;
 const alarms = INVESTIGATION_ALARMS_FULL_ID;
 const beats = [400, 420, 440];
+
+describe("NLI playable layer membership", () => {
+  it("collects direct playable ids across duplicate nli groups and ignores aliases", () => {
+    expect(nliPlayableIdsFromGroups([
+      {
+        id: "nli",
+        layers: [
+          { id: "people", enabled: true, fullLayerIds: [INVESTIGATION_LINES_FULL_ID] },
+          { id: "alarms", enabled: true },
+        ],
+      },
+      {
+        id: "nli",
+        layers: [
+          { id: "lines", enabled: true },
+          { id: "investigation_polygons", enabled: false },
+        ],
+      },
+    ])).toEqual([INVESTIGATION_LINES_FULL_ID, INVESTIGATION_ALARMS_FULL_ID]);
+  });
+});
+
 const canonicalSemanticKeys = [
   "anchorMs", "beats", "loop", "membership", "phase", "positionMs", "seekKind",
 ];

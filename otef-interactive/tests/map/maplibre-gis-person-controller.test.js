@@ -99,7 +99,7 @@ describe("GIS person controller", () => {
 
   test("empty space and another feature hide immediately and clear the acknowledged state", () => {
     const d = setup({ snapshot: { personId: "p-1", datasetVersion: "v1", revision: 2 } });
-    d.map.queryRenderedFeatures.mockReturnValue([{ source: "nli.nli_catalog", properties: {} }]);
+    d.map.queryRenderedFeatures.mockReturnValue([{ source: "fixture.catalog", properties: {} }]);
     d.controller.handleMapClick({ point: { x: 1, y: 2 } });
     expect(d.visual.hide).toHaveBeenCalled();
     expect(d.context.clearPerson).toHaveBeenCalledTimes(1);
@@ -110,7 +110,7 @@ describe("GIS person controller", () => {
   test("a people hit outranks an overlapping non-person feature", async () => {
     const d = setup();
     d.map.queryRenderedFeatures.mockReturnValue([
-      { source: "nli.nli_catalog", properties: { pid: "wrong" } },
+      { source: "fixture.catalog", properties: { pid: "wrong" } },
       { source: "nli.people", properties: { pid: "p-3" } },
     ]);
     d.controller.handleMapClick({ point: { x: 1, y: 2 } }, d.map.queryRenderedFeatures());
@@ -197,7 +197,7 @@ describe("GIS person controller", () => {
     };
     d.map.queryRenderedFeatures
       .mockReturnValueOnce([{ source: "nli.people", properties: { pid: "p-4" } }])
-      .mockReturnValueOnce([{ source: "nli.nli_catalog", properties: { name_he: "ordinary" } }])
+      .mockReturnValueOnce([{ source: "fixture.catalog", properties: { name_he: "ordinary" } }])
       .mockReturnValueOnce([]);
     const dispose = attachGisFeaturePopups(d.map, { Popup: vi.fn(function Popup() { return popup; }) }, {
       onGisClick: d.controller.handleMapClick,

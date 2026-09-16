@@ -19,7 +19,9 @@ function cropFor(node, config) { return node.endsWith("-crop") ? config.outputs?
 /** Always-visible, draft-driven stage previews. TD keystone/grid warp is downstream. */
 export function createActiveOutputPreview({ document, nodeHosts, hosts, mobileHost, mobileQuery }) {
   const win = document?.defaultView;
-  if (!win?.location?.origin || !win.addEventListener) return { update() {}, show() {}, dispose() {} };
+  if (!win?.location?.origin || !win.addEventListener) {
+    return { update() {}, select() {}, show() {}, dispose() {} };
+  }
   const origin = win.location.origin; const previews = new Map(); let latest = null;
   const legacy = !nodeHosts && hosts;
   const send = (item) => {

@@ -20,6 +20,7 @@ import {
   lineProgressAt,
   objectIdsActiveAt,
   parseLocalTimelineToMinutes,
+  prepareInvestigationTimelineForStyleReload,
   previousTimelineBeat,
   syncInvestigationTimelineToMap,
   TIMELINE_BEAT_MS,
@@ -31,6 +32,7 @@ import { PEOPLE_HALO_LAYER_ID } from "../../frontend/src/map/maplibre-person-sel
 import { formatMinutesAsLocalClock } from "../../frontend/src/shared/nli-investigation-beats.js";
 import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
 import {
+  endNliClock,
   idleNliClock,
   pauseNliClock,
   playNliClock,
@@ -1208,7 +1210,27 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("idle clock-only caption paints 06:29 when no Nova narrative is active", async () => {
+  it("idle clock-only caption hides and clears stale HTML when no narrative is active", async () => {
+    const injected = { className: "", hidden: false, innerHTML: "stale caption", textContent: "", setAttribute() {} };
+    const map = makeMap();
+    const idleSync = syncInvestigationTimelineToMap(map, idleNliClock(), [{ id: "nli", layers: [] }], {
+      captionEl: injected,
+      allowMapCaption: false,
+      nliCaptionMode: "clock-only",
+      featuresById: {},
+      getLayerDataUrl: () => null,
+      now: () => 0,
+    });
+    expect(injected.hidden).toBe(true);
+    expect(injected.innerHTML).toBe("");
+    await idleSync;
+    expect(injected.hidden).toBe(true);
+    expect(injected.innerHTML).toBe("");
+    expect(injected.innerHTML).not.toContain("nli-tl-row");
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("Segev idle clock-only caption paints 06:29", async () => {
     const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
     const map = makeMap();
     await syncInvestigationTimelineToMap(map, idleNliClock(), [{ id: "nli", layers: [] }], {
@@ -1217,6 +1239,7 @@ describe("syncInvestigationTimelineToMap", () => {
       nliCaptionMode: "clock-only",
       featuresById: {},
       getLayerDataUrl: () => null,
+      narrativeFocus: { id: "segev" },
       now: () => 0,
     });
     expect(injected.hidden).toBe(false);
@@ -1244,6 +1267,392 @@ describe("syncInvestigationTimelineToMap", () => {
     );
     expect(injected.innerHTML).not.toContain("06:29");
     disposeInvestigationTimelineForMap(map);
+  });
+
+  it("clock-only relevance follows enabled direct playable IDs, not aliases or style presence", async () => {
+    const cases = [
+      { name: "alarms", layerId: "alarms", visible: true },
+      { name: "lines", layerId: "lines", visible: true },
+      { name: "investigation polygons", layerId: "investigation_polygons", visible: true },
+      { name: "people names", layerId: "people_names", visible: false },
+      { name: "people", layerId: "people", visible: false },
+      { name: "relevant disabled", layerId: "lines", enabled: false, visible: false },
+      {
+        name: "fullLayerIds alias alone",
+        layerId: "settlement_names",
+        fullLayerIds: [INVESTIGATION_LINES_FULL_ID],
+        visible: false,
+      },
+      { name: "physical style without effective enablement", layerId: null, visible: false },
+    ];
+
+    for (const testCase of cases) {
+      const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+      const map = makeMap();
+      const layers = testCase.layerId == null
+        ? []
+        : [{
+            id: testCase.layerId,
+            enabled: testCase.enabled !== false,
+            ...(testCase.fullLayerIds ? { fullLayerIds: testCase.fullLayerIds } : {}),
+          }];
+      await syncInvestigationTimelineToMap(map, idleNliClock(), [{ id: "nli", layers }], {
+        captionEl: injected,
+        allowMapCaption: false,
+        nliCaptionMode: "clock-only",
+        featuresById: {
+          [INVESTIGATION_POLYGONS_FULL_ID]: [],
+          [INVESTIGATION_LINES_FULL_ID]: [],
+          [INVESTIGATION_ALARMS_FULL_ID]: [],
+        },
+        settlementFeatures: [],
+        getLayerDataUrl: () => null,
+        now: () => 0,
+      });
+      expect(injected.hidden, testCase.name).toBe(!testCase.visible);
+      if (testCase.visible) expect(injected.innerHTML, testCase.name).toContain("nli-tl-clock");
+      else expect(injected.innerHTML, testCase.name).toBe("");
+      disposeInvestigationTimelineForMap(map);
+    }
+  });
+
+  it("clock-only relevance clears stale caption synchronously when effective groups turn unrelated", async () => {
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+    const map = makeMap();
+    const playing = playClock([INVESTIGATION_LINES_FULL_ID], [420], 0);
+    const deps = {
+      captionEl: injected,
+      allowMapCaption: false,
+      nliCaptionMode: "clock-only",
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 420 } }],
+        [INVESTIGATION_ALARMS_FULL_ID]: [],
+      },
+      settlementFeatures: [],
+      getLayerDataUrl: () => null,
+      now: () => 0,
+    };
+    await syncInvestigationTimelineToMap(
+      map,
+      playing,
+      [{ id: "nli", layers: [{ id: "lines", enabled: true }] }],
+      deps,
+    );
+    expect(injected.hidden).toBe(false);
+    expect(injected.innerHTML).toContain("07:00");
+
+    const unrelatedSync = syncInvestigationTimelineToMap(
+      map,
+      playing,
+      [{ id: "nli", layers: [{ id: "people_names", enabled: true }] }],
+      deps,
+    );
+    expect(injected.hidden).toBe(true);
+    expect(injected.innerHTML).toBe("");
+    await unrelatedSync;
+
+    await syncInvestigationTimelineToMap(
+      map,
+      playing,
+      [{ id: "nli", layers: [{ id: "lines", enabled: true }] }],
+      deps,
+    );
+    expect(injected.hidden).toBe(false);
+    expect(injected.innerHTML).toContain("07:00");
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("clock-only unrelated groups stay hidden across idle, playing, paused, and ended phases", async () => {
+    const seedClock = playClock([INVESTIGATION_LINES_FULL_ID], [420], 0);
+    const cases = [
+      { name: "idle", clock: idleNliClock() },
+      { name: "playing", clock: seedClock },
+      { name: "paused", clock: pauseNliClock(seedClock, 0) },
+      { name: "ended", clock: endNliClock(seedClock) },
+    ];
+    for (const testCase of cases) {
+      const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+      const map = makeMap();
+      const deps = {
+        captionEl: injected,
+        allowMapCaption: false,
+        nliCaptionMode: "clock-only",
+        featuresById: {
+          [INVESTIGATION_POLYGONS_FULL_ID]: [],
+          [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 420 } }],
+          [INVESTIGATION_ALARMS_FULL_ID]: [],
+        },
+        settlementFeatures: [],
+        getLayerDataUrl: () => null,
+        now: () => 0,
+      };
+      await syncInvestigationTimelineToMap(map, seedClock, [{ id: "nli", layers: [{ id: "lines", enabled: true }] }], deps);
+      expect(injected.hidden, `${testCase.name} seed`).toBe(false);
+      const staleSync = syncInvestigationTimelineToMap(
+        map,
+        testCase.clock,
+        [{ id: "nli", layers: [{ id: "people", enabled: true }] }],
+        deps,
+      );
+      expect(injected.hidden, testCase.name).toBe(true);
+      expect(injected.innerHTML, testCase.name).toBe("");
+      await staleSync;
+      expect(injected.hidden, `${testCase.name} settled`).toBe(true);
+      expect(injected.innerHTML, `${testCase.name} settled`).toBe("");
+      disposeInvestigationTimelineForMap(map);
+    }
+  });
+
+  it("cold ended clock-only caption reconstructs the final finite beat", async () => {
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+    const map = makeMap();
+    const ended = endNliClock(playNliClock(idleNliClock(), [INVESTIGATION_LINES_FULL_ID], [420, 440], 0));
+    await syncInvestigationTimelineToMap(map, ended, [{ id: "nli", layers: [{ id: "lines", enabled: true }] }], {
+      captionEl: injected,
+      allowMapCaption: false,
+      nliCaptionMode: "clock-only",
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [
+          { properties: { Name: "ציר ראשון", timeline_minutes: 420 } },
+          { properties: { Name: "ציר אחרון", timeline_minutes: 440 } },
+        ],
+        [INVESTIGATION_ALARMS_FULL_ID]: [],
+      },
+      settlementFeatures: [],
+      getLayerDataUrl: () => null,
+      now: () => 0,
+    });
+    expect(injected.hidden).toBe(false);
+    expect(injected.innerHTML).toContain("07:20");
+    expect(injected.innerHTML).not.toContain("06:29");
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("only recognized narratives or explicit debug make an empty-group clock-only caption relevant", async () => {
+    const cases = [
+      { name: "unknown", narrativeFocus: { id: "unknown" }, visible: false, clock: null },
+      { name: "Segev", narrativeFocus: { id: "segev" }, visible: true, clock: "06:29" },
+      { name: "Nova", narrativeFocus: { id: "nova" }, visible: true, clock: "08:03" },
+      { name: "debug", narrativeFocus: null, explainerDebugVisible: true, visible: true, clock: "07:00" },
+    ];
+    for (const testCase of cases) {
+      const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+      const map = makeMap();
+      await syncInvestigationTimelineToMap(map, idleNliClock(), [{ id: "nli", layers: [] }], {
+        captionEl: injected,
+        allowMapCaption: false,
+        nliCaptionMode: "clock-only",
+        featuresById: {},
+        getLayerDataUrl: () => null,
+        narrativeFocus: testCase.narrativeFocus,
+        explainerDebugVisible: testCase.explainerDebugVisible === true,
+        now: () => 0,
+      });
+      expect(injected.hidden, testCase.name).toBe(!testCase.visible);
+      if (testCase.clock) expect(injected.innerHTML, testCase.name).toContain(testCase.clock);
+      else expect(injected.innerHTML, testCase.name).toBe("");
+      disposeInvestigationTimelineForMap(map);
+    }
+  });
+
+  it("a stale deferred feature request cannot revive an irrelevant clock-only caption", async () => {
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+    const map = makeMap();
+    let rafCallback = null;
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      rafCallback = callback;
+      return 1;
+    });
+    const playing = playClock([INVESTIGATION_LINES_FULL_ID], [420], 0);
+    const baseDeps = {
+      captionEl: injected,
+      allowMapCaption: false,
+      nliCaptionMode: "clock-only",
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 420 } }],
+        [INVESTIGATION_ALARMS_FULL_ID]: [],
+      },
+      settlementFeatures: [],
+      getLayerDataUrl: () => null,
+      now: () => 0,
+    };
+    await syncInvestigationTimelineToMap(
+      map,
+      playing,
+      [{ id: "nli", layers: [{ id: "lines", enabled: true }] }],
+      baseDeps,
+    );
+    expect(injected.hidden).toBe(false);
+    expect(rafCallback).toEqual(expect.any(Function));
+
+    let resolveLines;
+    const deferredLines = new Promise((resolve) => { resolveLines = resolve; });
+    const lineUrl = "https://example.test/deferred-lines.geojson";
+    const oldSync = syncInvestigationTimelineToMap(
+      map,
+      { ...playing, revision: 2 },
+      [{ id: "nli", layers: [{ id: "lines", enabled: true }] }],
+      {
+        ...baseDeps,
+        dataVersion: "deferred-v2",
+        featuresById: {},
+        getLayerDataUrl: (id) => id === INVESTIGATION_LINES_FULL_ID ? lineUrl : null,
+        fetchJson: (url) => url === lineUrl ? deferredLines : Promise.resolve({ features: [] }),
+      },
+    );
+    await Promise.resolve();
+
+    const newerIrrelevantSync = syncInvestigationTimelineToMap(
+      map,
+      { ...playing, revision: 3 },
+      [{ id: "nli", layers: [{ id: "people_names", enabled: true }] }],
+      {
+        ...baseDeps,
+        dataVersion: "deferred-v2",
+        featuresById: {},
+        getLayerDataUrl: (id) => id === INVESTIGATION_LINES_FULL_ID ? lineUrl : null,
+        fetchJson: (url) => url === lineUrl ? deferredLines : Promise.resolve({ features: [] }),
+      },
+    );
+    expect(injected.hidden).toBe(true);
+    expect(injected.innerHTML).toBe("");
+
+    resolveLines({
+      type: "FeatureCollection",
+      features: [{ properties: { Name: "ציר", timeline_minutes: 420 } }],
+    });
+    await oldSync;
+    await newerIrrelevantSync;
+    rafCallback();
+    expect(injected.hidden).toBe(true);
+    expect(injected.innerHTML).toBe("");
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("style reload keeps an irrelevant clock-only caption hidden before and after remount", async () => {
+    const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+    const map = makeMap();
+    const listeners = new Map();
+    map.on = vi.fn((type, callback) => listeners.set(type, callback));
+    map.off = vi.fn((type, callback) => {
+      if (listeners.get(type) === callback) listeners.delete(type);
+    });
+    map.fire = (type) => listeners.get(type)?.();
+    const playing = playClock([INVESTIGATION_LINES_FULL_ID], [420], 0);
+    const deps = {
+      captionEl: injected,
+      allowMapCaption: false,
+      nliCaptionMode: "clock-only",
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [],
+        [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 420 } }],
+        [INVESTIGATION_ALARMS_FULL_ID]: [],
+      },
+      settlementFeatures: [],
+      getLayerDataUrl: () => null,
+      now: () => 0,
+    };
+    await syncInvestigationTimelineToMap(
+      map,
+      playing,
+      [{ id: "nli", layers: [{ id: "lines", enabled: true }] }],
+      deps,
+    );
+    expect(injected.hidden).toBe(false);
+    expect(listeners.get("style.load")).toEqual(expect.any(Function));
+
+    prepareInvestigationTimelineForStyleReload(map);
+    const beforeStyleLoad = syncInvestigationTimelineToMap(
+      map,
+      playing,
+      [{ id: "nli", layers: [{ id: "people_names", enabled: true }] }],
+      deps,
+    );
+    expect(injected.hidden).toBe(true);
+    expect(injected.innerHTML).toBe("");
+    await beforeStyleLoad;
+
+    map.fire("style.load");
+    await syncInvestigationTimelineToMap(
+      map,
+      playing,
+      [{ id: "nli", layers: [{ id: "people_names", enabled: true }] }],
+      deps,
+    );
+    expect(injected.hidden).toBe(true);
+    expect(injected.innerHTML).toBe("");
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("stop after deferred playback keeps the recognized idle clock immediately and after resolution", async () => {
+    const narratives = [
+      { name: "ordinary", narrativeFocus: null, expected: "06:29" },
+      { name: "Segev", narrativeFocus: { id: "segev" }, expected: "06:29" },
+      { name: "Nova", narrativeFocus: { id: "nova" }, expected: "08:03" },
+    ];
+    for (const narrative of narratives) {
+      const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
+      const map = makeMap();
+      const lineUrl = `https://example.test/${narrative.name}-deferred-lines.geojson`;
+      let resolveLines;
+      const deferredLines = new Promise((resolve) => { resolveLines = resolve; });
+      const baseDeps = {
+        captionEl: injected,
+        allowMapCaption: false,
+        nliCaptionMode: "clock-only",
+        featuresById: {
+          [INVESTIGATION_POLYGONS_FULL_ID]: [],
+          [INVESTIGATION_LINES_FULL_ID]: [{ properties: { Name: "ציר", timeline_minutes: 420 } }],
+          [INVESTIGATION_ALARMS_FULL_ID]: [],
+        },
+        settlementFeatures: [],
+        narrativeFocus: narrative.narrativeFocus,
+        now: () => 0,
+      };
+      const playing = playClock([INVESTIGATION_LINES_FULL_ID], [420], 0);
+      await syncInvestigationTimelineToMap(
+        map,
+        playing,
+        [{ id: "nli", layers: [{ id: "lines", enabled: true }] }],
+        baseDeps,
+      );
+      expect(injected.hidden, `${narrative.name} seed`).toBe(false);
+
+      const deferredDeps = {
+        ...baseDeps,
+        dataVersion: `${narrative.name}-deferred-v2`,
+        featuresById: {},
+        getLayerDataUrl: (id) => id === INVESTIGATION_LINES_FULL_ID ? lineUrl : null,
+        fetchJson: (url) => url === lineUrl ? deferredLines : Promise.resolve({ features: [] }),
+      };
+      const playingSync = syncInvestigationTimelineToMap(
+        map,
+        { ...playing, revision: 2 },
+        [{ id: "nli", layers: [{ id: "lines", enabled: true }] }],
+        deferredDeps,
+      );
+      await Promise.resolve();
+
+      const stopped = stopNliClock(playing);
+      const stopSync = syncInvestigationTimelineToMap(
+        map,
+        stopped,
+        [{ id: "nli", layers: [{ id: "lines", enabled: true }] }],
+        deferredDeps,
+      );
+      expect(injected.hidden, `${narrative.name} immediate`).toBe(false);
+      expect(injected.innerHTML, `${narrative.name} immediate`).toContain(narrative.expected);
+
+      resolveLines({ type: "FeatureCollection", features: [] });
+      await playingSync;
+      await stopSync;
+      expect(injected.hidden, `${narrative.name} resolved`).toBe(false);
+      expect(injected.innerHTML, `${narrative.name} resolved`).toContain(narrative.expected);
+      disposeInvestigationTimelineForMap(map);
+    }
   });
 
   it("jump flash is not re-fired after dispose remount at the same revision", async () => {

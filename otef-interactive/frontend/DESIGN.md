@@ -229,14 +229,29 @@ can change scale and contrast, but they do not change state meaning.
 - Settlement outlines use an inclusive OR: they activate when an associated
   investigation polygon turns red or when a revealing route reaches or crosses
   the settlement boundary.
-- Projection renders the named `nliCaptionMode: "clock-only"` caption as a
-  large `HH:MM` story clock during NLI playback. This mode is projection-only;
-  it does not alter the remote **Presentation** tab, slideshow behavior, or
+- GIS and projection render the named `nliCaptionMode: "clock-only"` caption as
+  a large `HH:MM` story clock during NLI playback. This caption mode does not
+  alter the remote **Presentation** tab, slideshow behavior, or
   `presentationActive` state.
-- The committed left projection calibration comes from the 2026-09-01 lab
-  clock park and is represented by `leftPct: 48.88333333333333`,
-  `topPct: 26.175280590197644`, `widthPct: 13.572916666666666`,
-  `heightPct: 11.732162458836443`, `fontPx: 15`, and `rotateDeg: 0` in
+- GIS and projection both use clock-only captions. The clock is visible only
+  when effective surface groups enable `nli.alarms`, `nli.lines`, or
+  `nli.investigation_polygons`, or when a recognized NLI narrative is active.
+  Explicit debug is an internal exception. `nli.people_names` or victim names
+  alone do not trigger the clock, and an unrelated NLI layer does not trigger
+  it.
+- Ordinary and Segev idle/Stop show `06:29`. Active Nova idle/Stop shows
+  `08:03`.
+- Projection slideshow visibility uses the committed revealed pack. Warmup and
+  staging do not change clock relevance; visibility changes at reveal only.
+  The right span remains suppressed.
+- In a zoomed-out GIS, the clock uses the `start` layout. The remote map is the
+  source for initial load, rebind, edits, and refresh restoration; browser
+  storage is the fallback.
+- The committed left projection calibration comes from the 2026-09-07 owner lab
+  clock park and is represented by `leftPct: 46.90416666666667`,
+  `topPct: 22.113809679110926`, `widthPct: 8.886423224258024`,
+  `heightPct: 8.323215088627478`, `fontPx: 56`, and
+  `rotateDeg: 91.18739188335852` in
   `NLI_EXPLAINER_LAYOUT.left`; `full` and `right` remain unchanged.
 
 ## Elevation & Depth

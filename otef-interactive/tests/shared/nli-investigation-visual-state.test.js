@@ -73,7 +73,7 @@ describe("nli-investigation-theme", () => {
           fillOpacityMax: 0.62,
         },
         "מוקד חטיפה": {
-          fill: "#e8a4b4",
+          fill: "#ffff73",
           outline: "#c47388",
           fillOpacity: 0.55,
           periodMs: 2800,

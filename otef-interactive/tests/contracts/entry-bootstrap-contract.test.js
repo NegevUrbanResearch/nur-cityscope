@@ -55,7 +55,7 @@ test("projection entry wires MapLibre curated pipeline (manual Supabase sync via
   expect(src.includes("otef-curated-geojson-refresh")).toBe(true);
   expect(src.includes("projectionCuratedRefreshChain")).toBe(true);
   expect(src.includes("layerStyleOptions")).toBe(true);
-  expect(src.includes("syncProjectionLayers(map, currentGroups, layerStyleOptions)")).toBe(true);
+  expect(src.includes("syncProjectionLayersWithNarrative(map, currentGroups, layerStyleOptions)")).toBe(true);
   expect(src.includes("removeCuratedLayersByPrefix(map, fullId, layerStyleOptions)")).toBe(true);
   expect(src.includes("hasMapLibreLayerWithPrefix(map, fullId)")).toBe(true);
   expect(src.includes("fromSlideshowTick,")).toBe(true);

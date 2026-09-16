@@ -191,11 +191,11 @@ revision 5. A second conflict remains visible to the presenter.
 - **F** - Fullscreen
 - **X** - Reset calibration
 
-The committed left projection calibration is stored in
+The committed 2026-09-07 owner-lab left projection calibration is stored in
 `NLI_EXPLAINER_LAYOUT.left` as
-`leftPct: 48.88333333333333`, `topPct: 26.175280590197644`,
-`widthPct: 13.572916666666666`, `heightPct: 11.732162458836443`,
-`fontPx: 15`, and `rotateDeg: 0`.
+`leftPct: 46.90416666666667`, `topPct: 22.113809679110926`,
+`widthPct: 8.886423224258024`, `heightPct: 8.323215088627478`,
+`fontPx: 56`, and `rotateDeg: 91.18739188335852`.
 The `full` and `right` layouts remain unchanged.
 
 ### Remote Controller

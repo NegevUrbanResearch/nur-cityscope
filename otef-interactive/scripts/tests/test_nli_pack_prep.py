@@ -1,10 +1,12 @@
 import copy
 import json
 import math
+import subprocess
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from nli_pack_prep import (
     ASHKELON_NORTH_FALLBACK_LAT,
@@ -16,10 +18,6 @@ from nli_pack_prep import (
     NOVA_FACILITY_WGS84,
     NOVA_FLEEING_ENVELOPE,
     OCT7_STATUS_CLASSES,
-    NLI_CATEGORY_CLASSES,
-    NLI_CATALOG_MARKER_SIZE,
-    NLI_CATALOG_STROKE,
-    NLI_CATALOG_STROKE_WIDTH,
     NLI_KEEP_STEMS,
     ROUTE_232_STEM,
     ROUTE_232_LABEL_FILL,
@@ -28,6 +26,7 @@ from nli_pack_prep import (
     ROUTE_232_STROKE_WIDTH_PT,
     ZIP_LAYER_MAP,
     emphasize_copied_line_lyrx,
+    generate_nova_escape_index,
     install_nli_fleeing_overlays,
     install_nli_route_232_overlay,
     reverse_fleeing_individuals,
@@ -43,7 +42,6 @@ from nli_pack_prep import (
     collapse_alarms_to_cities,
     collect_timeline_beats,
     default_nli_zip_path,
-    group_nli_category,
     jitter_coincident_points,
     labels_only_point_lyrx,
     merge_popup_config,
@@ -505,37 +503,6 @@ class LyrxBuilderTests(unittest.TestCase):
         self.assertEqual(murdered[0]["marker"]["strokeColor"], "#ffffff")
         self.assertEqual(murdered[0]["marker"]["shape"], "circle")
 
-    def test_nli_catalog_lyrx_uses_amber_fill_dark_stroke_and_smaller_size(self):
-        parsed = parse_lyrx_style(
-            _write_lyrx(
-                unique_value_point_lyrx(
-                    "categories",
-                    NLI_CATEGORY_CLASSES,
-                    size=NLI_CATALOG_MARKER_SIZE,
-                    stroke=NLI_CATALOG_STROKE,
-                    shape="square",
-                    stroke_width=NLI_CATALOG_STROKE_WIDTH,
-                )
-            )
-        )
-        self.assertIsNotNone(parsed)
-        data = parsed.to_dict()
-        classes = data["uniqueValues"]["classes"]
-        markers = [
-            layer
-            for layer in classes[0]["symbol"]["symbolLayers"]
-            if layer.get("type") == "markerPoint"
-        ]
-        self.assertTrue(markers)
-        self.assertEqual(markers[0]["marker"]["fillColor"], "#d97706")
-        self.assertNotEqual(markers[0]["marker"]["fillColor"], "#b42318")
-        self.assertEqual(markers[0]["marker"]["strokeColor"], "#0f172a")
-        self.assertAlmostEqual(markers[0]["marker"]["size"], 10.0 * (96 / 72))
-        self.assertAlmostEqual(markers[0]["marker"]["strokeWidth"], 0.6 * (96 / 72))
-        self.assertEqual(markers[0]["marker"]["shape"], "square")
-        self.assertEqual(NLI_CATALOG_MARKER_SIZE, 10.0)
-        self.assertEqual(NLI_CATALOG_STROKE_WIDTH, 0.6)
-
     def test_people_names_lyrx_is_labels_only_point_with_hebrew_name_and_force_visible(self):
         payload = labels_only_point_lyrx()
         parsed = parse_lyrx_style(_write_lyrx(payload, "people_names.lyrx"))
@@ -589,20 +556,6 @@ class LegendClassContractTests(unittest.TestCase):
         self.assertEqual(OCT7_STATUS_CLASSES[0][2], (180, 35, 24))
         self.assertEqual(OCT7_STATUS_CLASSES[3][2], (122, 34, 34))
 
-    def test_nli_category_classes_are_three_and_not_oct7_palette(self):
-        self.assertEqual(len(NLI_CATEGORY_CLASSES), 3)
-        self.assertEqual(
-            [row[0] for row in NLI_CATEGORY_CLASSES],
-            ["Victims of terrorism", "Fallen soldiers", "Kidnapping victims"],
-        )
-        self.assertEqual(NLI_CATEGORY_CLASSES[0][2], (217, 119, 6))
-        self.assertEqual(NLI_CATEGORY_CLASSES[1][2], (109, 40, 217))
-        self.assertEqual(NLI_CATEGORY_CLASSES[2][2], (8, 145, 178))
-        oct7_fills = {row[2] for row in OCT7_STATUS_CLASSES}
-        catalog_fills = {row[2] for row in NLI_CATEGORY_CLASSES}
-        self.assertFalse(catalog_fills & oct7_fills)
-
-
 class GroupingTests(unittest.TestCase):
     def test_bibas_status_rewrites_to_murdered_in_captivity(self):
         self.assertEqual(
@@ -613,39 +566,11 @@ class GroupingTests(unittest.TestCase):
         self.assertEqual(rewrite_oct7_status("Killed on duty"), "Killed on duty")
         self.assertEqual(rewrite_oct7_status("Murdered then kidnapped"), "Murdered")
 
-    def test_kidnapping_substring_wins_category_group(self):
-        self.assertEqual(
-            group_nli_category("Victims of terrorism; Kidnapping victims"),
-            "Kidnapping victims",
-        )
-        self.assertEqual(
-            group_nli_category("Fallen soldiers; Kidnapping victims"),
-            "Kidnapping victims",
-        )
-        self.assertEqual(group_nli_category("Kidnapping victims"), "Kidnapping victims")
-        self.assertEqual(group_nli_category("Fallen soldiers"), "Fallen soldiers")
-        self.assertEqual(
-            group_nli_category("Tourists; Victims of terrorism"),
-            "Victims of terrorism",
-        )
-        self.assertEqual(
-            group_nli_category("Victims of terrorism; People with disabilities"),
-            "Victims of terrorism",
-        )
-        self.assertEqual(group_nli_category(""), "")
-        self.assertIsNone(group_nli_category(None))
-
-    def test_rewrite_nli_layer_properties_mutates_status_and_categories(self):
+    def test_rewrite_nli_layer_properties_mutates_people_status(self):
         oct7 = {
             "features": [
                 _point(34.47, 31.40, status="Murdered in captivity (bibas)"),
                 _point(34.48, 31.41, status="Murdered"),
-            ]
-        }
-        catalog = {
-            "features": [
-                _point(34.47, 31.40, categories="Fallen soldiers; Kidnapping victims"),
-                _point(34.48, 31.41, categories="Victims of terrorism"),
             ]
         }
         self.assertEqual(rewrite_nli_layer_properties("people", oct7), 1)
@@ -654,15 +579,6 @@ class GroupingTests(unittest.TestCase):
             "Murdered in captivity",
         )
         self.assertEqual(oct7["features"][1]["properties"]["status"], "Murdered")
-        self.assertEqual(rewrite_nli_layer_properties("nli_catalog", catalog), 1)
-        self.assertEqual(
-            catalog["features"][0]["properties"]["categories"],
-            "Kidnapping victims",
-        )
-        self.assertEqual(
-            catalog["features"][1]["properties"]["categories"],
-            "Victims of terrorism",
-        )
 
 
 class CatalogLinkTests(unittest.TestCase):
@@ -1751,6 +1667,137 @@ class KeepStemsFleeingTests(unittest.TestCase):
         self.assertEqual(feat235["properties"]["acrossLine"]["widthPt"], 4)
         self.assertEqual(feat235["properties"]["acrossLine"]["taperFromWidthPt"], 4)
         self.assertNotEqual(feat235["properties"]["acrossLine"]["widthPt"], 2.25)
+
+    def test_generate_nova_escape_index_invokes_node_with_explicit_paths(self):
+        tmp = Path(tempfile.mkdtemp())
+        inputs = [tmp / name for name in ("routes.geojson", "polygons.geojson", "lines.geojson", "settlements.geojson")]
+        for path in inputs:
+            path.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+        output = tmp / "fleeing_route_impacts.json"
+        with patch("nli_pack_prep.shutil.which", return_value="node"), patch(
+            "nli_pack_prep.subprocess.run"
+        ) as run:
+            self.assertTrue(generate_nova_escape_index(*inputs, output))
+        generator = Path(__file__).resolve().parents[1] / "generate-nova-escape-index.mjs"
+        run.assert_called_once_with(
+            ["node", "--experimental-detect-module", str(generator), *(str(path) for path in inputs), str(output)],
+            check=True,
+        )
+
+    def test_missing_node_removes_stale_index_before_raising(self):
+        tmp = Path(tempfile.mkdtemp())
+        inputs = [tmp / name for name in ("routes.geojson", "polygons.geojson", "lines.geojson", "settlements.geojson")]
+        for path in inputs:
+            path.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+        output = tmp / "fleeing_route_impacts.json"
+        output.write_text("stale", encoding="utf-8")
+        with patch("nli_pack_prep.shutil.which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "Node.js is required"):
+                generate_nova_escape_index(*inputs, output)
+        self.assertFalse(output.exists())
+
+    def test_prepare_reports_impact_index_only_after_successful_helper(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = _nli_zip_with_polygons(tmp, _polygon_100_collection())
+        pack_dir = tmp / "nli"
+        processed_dir = tmp / "processed"
+        processed_dir.mkdir()
+        (processed_dir / "fleeing_route.geojson").write_text(
+            '{"type":"FeatureCollection","features":[]}', encoding="utf-8"
+        )
+        (processed_dir / "investigation_settlements.geojson").write_text(
+            json.dumps({"type": "FeatureCollection", "features": [_reim_settlement_feature()]}),
+            encoding="utf-8",
+        )
+        with patch("nli_pack_prep.generate_nova_escape_index", return_value=False):
+            failed = prepare_nli_pack(
+                zip_path,
+                pack_dir,
+                authorities_path=tmp / "missing.json",
+                processed_layers_dir=processed_dir,
+            )
+        self.assertNotIn("impact_index", failed.get("fleeing_overlays", {}))
+        with patch("nli_pack_prep.generate_nova_escape_index", return_value=True):
+            succeeded = prepare_nli_pack(
+                zip_path,
+                pack_dir,
+                authorities_path=tmp / "missing.json",
+                processed_layers_dir=processed_dir,
+            )
+        self.assertEqual(
+            succeeded["fleeing_overlays"]["impact_index"],
+            str(processed_dir / "fleeing_route_impacts.json"),
+        )
+
+    def test_missing_settlements_removes_stale_index_and_keeps_route_overlays(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = _nli_zip_with_polygons(tmp, _polygon_100_collection())
+        pack_dir = tmp / "nli"
+        processed_dir = tmp / "processed"
+        stale = processed_dir / "fleeing_route_impacts.json"
+        processed_dir.mkdir()
+        stale.write_text("stale", encoding="utf-8")
+        geojson_zip, lyrx_zip = _write_fleeing_fixture_zips(tmp)
+        summary = prepare_nli_pack(
+            zip_path,
+            pack_dir,
+            authorities_path=tmp / "missing.json",
+            processed_layers_dir=processed_dir,
+            fleeing_geojson_zip=geojson_zip,
+            fleeing_lyrx_zip=lyrx_zip,
+        )
+        self.assertFalse(stale.exists())
+        self.assertNotIn("impact_index", summary["fleeing_overlays"])
+        self.assertTrue((processed_dir / "fleeing_route.geojson").is_file())
+        self.assertTrue((processed_dir / "fleeing_route_overlapp.geojson").is_file())
+
+    def test_prepare_without_fleeing_archives_regenerates_existing_route_index(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = _nli_zip_with_polygons(tmp, _polygon_100_collection())
+        pack_dir = tmp / "nli"
+        processed_dir = tmp / "processed"
+        processed_dir.mkdir()
+        route_path = processed_dir / "fleeing_route.geojson"
+        route_path.write_text(
+            '{"type":"FeatureCollection","features":[]}', encoding="utf-8"
+        )
+        settlements_path = processed_dir / "investigation_settlements.geojson"
+        settlements_path.write_text(
+            json.dumps({"type": "FeatureCollection", "features": [_reim_settlement_feature()]}),
+            encoding="utf-8",
+        )
+        with patch("nli_pack_prep.generate_nova_escape_index", return_value=True) as generate:
+            summary = prepare_nli_pack(
+                zip_path,
+                pack_dir,
+                authorities_path=tmp / "missing.json",
+                processed_layers_dir=processed_dir,
+            )
+        polygon_path = pack_dir / "gis" / "investigation_polygons.geojson"
+        lines_path = pack_dir / "gis" / "lines.geojson"
+        output_path = processed_dir / "fleeing_route_impacts.json"
+        generate.assert_called_once_with(route_path, polygon_path, lines_path, settlements_path, output_path)
+        self.assertEqual(summary["fleeing_overlays"]["impact_index"], str(output_path))
+
+    def test_checked_generation_failure_propagates_without_preserving_stale_index(self):
+        tmp = Path(tempfile.mkdtemp())
+        inputs = [tmp / name for name in ("routes.geojson", "polygons.geojson", "lines.geojson", "settlements.geojson")]
+        for path in inputs:
+            path.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+        output = tmp / "fleeing_route_impacts.json"
+        failure = subprocess.CalledProcessError(1, ["node"])
+
+        def fail_after_writing_partial(command, *, check):
+            self.assertTrue(check)
+            Path(command[-1]).write_text("partial", encoding="utf-8")
+            raise failure
+
+        with patch("nli_pack_prep.shutil.which", return_value="node"), patch(
+            "nli_pack_prep.subprocess.run", side_effect=fail_after_writing_partial
+        ):
+            with self.assertRaises(subprocess.CalledProcessError):
+                generate_nova_escape_index(*inputs, output)
+        self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

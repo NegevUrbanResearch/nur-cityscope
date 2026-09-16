@@ -5,6 +5,17 @@ import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { installGisStyleReload } from "../../frontend/src/entries/map-main-style-lifecycle.js";
 
 describe("map-main GIS style reload lifecycle", () => {
+  test("wraps every GIS layer-group apply with a synchronous Nova victim filter", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../frontend/src/entries/map-main.js"),
+      "utf8",
+    );
+    expect(source).toMatch(
+      /const applyGisLayerGroups = \(groups\) => \{\s*applyLayerGroupsToMap\(map, groups\);\s*applyNovaMarkerFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*\};/,
+    );
+    expect(source.match(/applyLayerGroupsToMap\(/g)).toHaveLength(1);
+  });
+
   test("reapplies ordinary layers before bringing the selected overlay to front", async () => {
     const map = createFakeMapLibreMap({ layers: [{ id: "otef-person-selection-halo" }] });
     const selected = { bringToFront: vi.fn(() => map.moveLayer("otef-person-selection-halo")) };

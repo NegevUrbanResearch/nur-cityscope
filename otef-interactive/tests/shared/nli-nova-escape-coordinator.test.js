@@ -13,12 +13,16 @@ import {
   syncInvestigationTimelineToMap,
 } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { DEFAULT_INVESTIGATION_SETTLEMENTS_URL } from "../../frontend/src/shared/nli-investigation-timeline-data.js";
-import { createNovaEscapeCoordinator } from "../../frontend/src/shared/nli-nova-escape-coordinator.js";
+import {
+  createNovaEscapeCoordinator,
+  NOVA_FLEEING_IMPACT_INDEX_URL,
+} from "../../frontend/src/shared/nli-nova-escape-coordinator.js";
 import * as novaEscapeImpact from "../../frontend/src/shared/nli-nova-escape-impact.js";
 import { NOVA_ESCAPE_IMPACT_LAYER_ID } from "../../frontend/src/shared/nli-nova-escape-impact.js";
 
 const INDIVIDUAL_URL = "/otef-interactive/public/processed/layers/nli/fleeing_route.geojson";
 const OVERLAP_URL = "/otef-interactive/public/processed/layers/nli/fleeing_route_overlapp.geojson";
+const IMPACT_INDEX_URL = "/otef-interactive/public/processed/layers/nli/fleeing_route_impacts.json";
 
 const individualCollection = {
   type: "FeatureCollection",
@@ -52,6 +56,23 @@ function jsonResponse(data) {
     ok: true,
     json: async () => data,
   };
+}
+
+function impactIndex(routeIds = ["1"], parallelCrossings = [], settlementCrossings = []) {
+  return jsonResponse({
+    schemaVersion: 1,
+    routeIds,
+    parallelCrossings,
+    settlementCrossings,
+  });
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 function createFakeDataContext(initial = {}) {
@@ -119,6 +140,7 @@ describe("Nova escape overlay coordinator", () => {
       const href = String(url);
       if (href === OVERLAP_URL) return jsonResponse(overlapCollection);
       if (href === INDIVIDUAL_URL) return jsonResponse(individualCollection);
+      if (href === IMPACT_INDEX_URL) return impactIndex();
       return jsonResponse({ type: "FeatureCollection", features: [] });
     }));
   });
@@ -237,6 +259,7 @@ describe("Nova escape overlay coordinator", () => {
       const href = String(url);
       await gate;
       if (href === INDIVIDUAL_URL) return jsonResponse(individualCollection);
+      if (href === IMPACT_INDEX_URL) return impactIndex();
       return jsonResponse({ type: "FeatureCollection", features: [] });
     }));
     const dataContext = createFakeDataContext({
@@ -278,6 +301,7 @@ describe("Nova escape overlay coordinator", () => {
         await gate;
         return jsonResponse(individualCollection);
       }
+      if (href === IMPACT_INDEX_URL) return impactIndex();
       return jsonResponse({ type: "FeatureCollection", features: [] });
     }));
     const { coordinator } = setupCoordinator({
@@ -313,6 +337,114 @@ describe("Nova escape overlay coordinator", () => {
     const urls = fetch.mock.calls.map((call) => String(call[0]));
     expect(urls).toContain(INDIVIDUAL_URL);
     expect(urls).toContain(OVERLAP_URL);
+    expect(urls).toContain(IMPACT_INDEX_URL);
+    coordinator.dispose();
+  });
+
+  test("individual route completion does not wait for settlements", async () => {
+    let releaseSettlements;
+    const settlementsGate = new Promise((resolve) => {
+      releaseSettlements = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const href = String(url);
+      if (href === INDIVIDUAL_URL) return jsonResponse(individualCollection);
+      if (href === DEFAULT_INVESTIGATION_SETTLEMENTS_URL) {
+        await settlementsGate;
+        return jsonResponse({ type: "FeatureCollection", features: [] });
+      }
+      if (href === IMPACT_INDEX_URL) return impactIndex();
+      if (href === OVERLAP_URL) return jsonResponse(overlapCollection);
+      return jsonResponse({ type: "FeatureCollection", features: [] });
+    }));
+    const { map, coordinator } = setupCoordinator({ surface: "projection" });
+    const pending = coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
+    await vi.waitFor(() => {
+      expect(map.getLayer("nli-nova-escape-individual")?.type).toBe("custom");
+    });
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(true);
+    releaseSettlements();
+    await pending;
+    coordinator.dispose();
+  });
+
+  test("individual ribbon mounts while overlap, sidecar, and settlements remain pending", async () => {
+    const overlap = deferred();
+    const settlements = deferred();
+    const sidecar = deferred();
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const href = String(url);
+      if (href === INDIVIDUAL_URL) return jsonResponse(individualCollection);
+      if (href === OVERLAP_URL) {
+        await overlap.promise;
+        return jsonResponse(overlapCollection);
+      }
+      if (href === DEFAULT_INVESTIGATION_SETTLEMENTS_URL) {
+        await settlements.promise;
+        return jsonResponse({ type: "FeatureCollection", features: [] });
+      }
+      if (href === IMPACT_INDEX_URL) {
+        await sidecar.promise;
+        return impactIndex();
+      }
+      return jsonResponse({ type: "FeatureCollection", features: [] });
+    }));
+    const { map, coordinator } = setupCoordinator({ surface: "projection" });
+    const pending = coordinator.sync({ id: "nova" }, { individual: true, overlap: true });
+    await vi.waitFor(() => {
+      expect(map.getLayer("nli-nova-escape-individual")?.type).toBe("custom");
+    });
+    expect(map.getLayer("nli-nova-escape-overlap")).toBeFalsy();
+    expect(map.getLayer(NOVA_ESCAPE_IMPACT_LAYER_ID)).toBeTruthy();
+    const urls = fetch.mock.calls.map((call) => String(call[0]));
+    expect(urls).toContain(IMPACT_INDEX_URL);
+    expect(urls).toContain(DEFAULT_INVESTIGATION_SETTLEMENTS_URL);
+    expect(urls).toContain(OVERLAP_URL);
+    expect(urls).not.toContain("/otef-interactive/public/processed/layers/nli/investigation_polygons.geojson");
+    expect(urls).not.toContain("/otef-interactive/public/processed/layers/nli/lines.geojson");
+    overlap.resolve();
+    settlements.resolve();
+    sidecar.resolve();
+    await pending;
+    await vi.waitFor(() => {
+      expect(map.getLayer("nli-nova-escape-overlap")?.type).toBe("custom");
+    });
+    coordinator.dispose();
+  });
+
+  test("overlap mounts before an individual request resolves and final order is stable", async () => {
+    const individual = deferred();
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const href = String(url);
+      if (href === INDIVIDUAL_URL) {
+        await individual.promise;
+        return jsonResponse(individualCollection);
+      }
+      if (href === IMPACT_INDEX_URL) return impactIndex();
+      if (href === OVERLAP_URL) return jsonResponse(overlapCollection);
+      return jsonResponse({ type: "FeatureCollection", features: [] });
+    }));
+    const { map, coordinator } = setupCoordinator({ surface: "projection" });
+    const pending = coordinator.sync({ id: "nova" }, { individual: true, overlap: true });
+    await vi.waitFor(() => {
+      expect(map.getLayer("nli-nova-escape-overlap")?.type).toBe("custom");
+    });
+    individual.resolve();
+    await pending;
+    expect(map.getStyle().layers.slice(-3).map((layer) => layer.id)).toEqual([
+      "nli-nova-escape-individual",
+      NOVA_ESCAPE_IMPACT_LAYER_ID,
+      "nli-nova-escape-overlap",
+    ]);
+    await coordinator.onStyleLoad();
+    expect(map.getStyle().layers.slice(-3).map((layer) => layer.id)).toEqual([
+      "nli-nova-escape-individual",
+      NOVA_ESCAPE_IMPACT_LAYER_ID,
+      "nli-nova-escape-overlap",
+    ]);
     coordinator.dispose();
   });
 
@@ -397,6 +529,9 @@ describe("Nova escape overlay coordinator", () => {
           ],
         });
       }
+      if (href === IMPACT_INDEX_URL) {
+        return impactIndex(["1"], [], [["1", "18", 0.05], ["1", "19", 0.8]]);
+      }
       return jsonResponse({ type: "FeatureCollection", features: [] });
     }));
 
@@ -431,6 +566,247 @@ describe("Nova escape overlay coordinator", () => {
     expect(done).toBeGreaterThanOrEqual(2);
     coordinator.dispose();
   });
+
+  test("late sidecar adoption starts impact updates without remounting or restarting the ribbon", async () => {
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const sidecar = deferred();
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const href = String(url);
+      if (href === INDIVIDUAL_URL) return jsonResponse(individualCollection);
+      if (href === IMPACT_INDEX_URL) {
+        await sidecar.promise;
+        return impactIndex(["1"], [["1", "line", "232", 0.5]], []);
+      }
+      return jsonResponse({ type: "FeatureCollection", features: [] });
+    }));
+    const onParallelImpactIdsChanged = vi.fn();
+    const { map, coordinator } = setupCoordinator({
+      profile: "projection",
+      surface: "projection",
+      onParallelImpactIdsChanged,
+    });
+    await coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
+    coordinator.debugNoteRibbonDrawable();
+    now += 500;
+    const beforeProgress = coordinator.debugFeatureProgress(individualCollection.features[0]);
+    const addLayerCalls = () => map.calls.filter((call) => call.method === "addLayer");
+    const beforeAdds = addLayerCalls().length;
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+    sidecar.resolve();
+    await vi.waitFor(() => {
+      expect(map.pendingAnimationFrameCount()).toBeGreaterThan(0);
+    });
+    expect(addLayerCalls()).toHaveLength(beforeAdds);
+    expect(coordinator.debugFeatureProgress(individualCollection.features[0])).toBeCloseTo(beforeProgress);
+    coordinator.setRevealProgress(1);
+    map.driveAnimationFrame(now);
+    expect(coordinator.debugParallelImpactIds()).toEqual(new Set(["line:232"]));
+    coordinator.dispose();
+  });
+
+  test("late settlements update impact geometry without remounting ribbons", async () => {
+    const settlements = deferred();
+    const settlementFeature = {
+      type: "Feature",
+      properties: { OBJECTID: 18, outlineObjectId: 18 },
+      geometry: { type: "Polygon", coordinates: [] },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const href = String(url);
+      if (href === INDIVIDUAL_URL) return jsonResponse(individualCollection);
+      if (href === IMPACT_INDEX_URL) return impactIndex(["1"], [], [["1", "18", 0]]);
+      if (href === DEFAULT_INVESTIGATION_SETTLEMENTS_URL) {
+        await settlements.promise;
+        return jsonResponse({ type: "FeatureCollection", features: [settlementFeature] });
+      }
+      return jsonResponse({ type: "FeatureCollection", features: [] });
+    }));
+    const { map, coordinator } = setupCoordinator({ surface: "projection" });
+    await coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
+    coordinator.setRevealProgress(1);
+    const beforeAdds = map.calls.filter((call) => call.method === "addLayer").length;
+    settlements.resolve();
+    await vi.waitFor(() => {
+      map.driveAnimationFrame();
+      expect(map.getSource(NOVA_ESCAPE_IMPACT_LAYER_ID)?.data?.features?.[0]).toBe(settlementFeature);
+    });
+    expect(map.calls.filter((call) => call.method === "addLayer")).toHaveLength(beforeAdds);
+    expect(map.getSource(NOVA_ESCAPE_IMPACT_LAYER_ID).data.features[0]).toBe(settlementFeature);
+    coordinator.dispose();
+  });
+
+  test.each(["http", "json", "schema", "route IDs"])(
+    "sidecar %s failure keeps the ribbon running without an impact RAF or repeated warning",
+    async (failure) => {
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.stubGlobal("fetch", vi.fn(async (url) => {
+        const href = String(url);
+        if (href === INDIVIDUAL_URL) return jsonResponse(individualCollection);
+        if (href === IMPACT_INDEX_URL) {
+          if (failure === "http") return { ok: false, status: 503, json: async () => ({}) };
+          if (failure === "json") return { ok: true, json: async () => { throw new Error("bad JSON"); } };
+          if (failure === "schema") return impactIndex(["1"], [], []);
+          return impactIndex(["9"], [], []);
+        }
+        return jsonResponse({ type: "FeatureCollection", features: [] });
+      }));
+      if (failure === "schema") {
+        const original = fetch;
+        vi.stubGlobal("fetch", vi.fn(async (url) => {
+          const href = String(url);
+          if (href === IMPACT_INDEX_URL) {
+            return jsonResponse({
+              schemaVersion: 2,
+              routeIds: ["1"],
+              parallelCrossings: [],
+              settlementCrossings: [],
+            });
+          }
+          return original(url);
+        }));
+      }
+      const { map, coordinator } = setupCoordinator({ surface: "projection" });
+      await coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
+      await vi.waitFor(() => expect(warning).toHaveBeenCalledTimes(1));
+      expect(map.getLayer("nli-nova-escape-individual")?.type).toBe("custom");
+      expect(map.pendingAnimationFrameCount()).toBe(0);
+      coordinator.setRevealProgress(1);
+      map.flushAnimationFrames?.();
+      await coordinator.onStyleLoad();
+      expect(warning).toHaveBeenCalledTimes(1);
+      expect(map.pendingAnimationFrameCount()).toBe(0);
+      coordinator.dispose();
+    },
+  );
+
+  test.each([
+    ["missing", undefined, []],
+    ["boolean", true, ["true"]],
+    ["object", { route: 1 }, ["[object Object]"]],
+  ])(
+    "rejects %s raw route IDs before sidecar adoption",
+    async (_label, routeId, sidecarRouteIds) => {
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const route = {
+        ...individualCollection.features[0],
+        properties: routeId === undefined ? {} : { OBJECTID: routeId },
+      };
+      vi.stubGlobal("fetch", vi.fn(async (url) => {
+        const href = String(url);
+        if (href === INDIVIDUAL_URL) {
+          return jsonResponse({ ...individualCollection, features: [route] });
+        }
+        if (href === IMPACT_INDEX_URL) return impactIndex(sidecarRouteIds);
+        return jsonResponse({ type: "FeatureCollection", features: [] });
+      }));
+      const { map, coordinator } = setupCoordinator({ surface: "projection" });
+      await coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
+      await vi.waitFor(() => expect(warning).toHaveBeenCalledTimes(1));
+      expect(map.getLayer("nli-nova-escape-individual")?.type).toBe("custom");
+      expect(map.pendingAnimationFrameCount()).toBe(0);
+      expect(warning).toHaveBeenCalledTimes(1);
+      coordinator.dispose();
+    },
+  );
+
+  test("stale route and sidecar completions cannot remount after a newer generation", async () => {
+    const individual = deferred();
+    const sidecar = deferred();
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const href = String(url);
+      if (href === INDIVIDUAL_URL) {
+        await individual.promise;
+        return jsonResponse(individualCollection);
+      }
+      if (href === IMPACT_INDEX_URL) {
+        await sidecar.promise;
+        return impactIndex();
+      }
+      return jsonResponse({ type: "FeatureCollection", features: [] });
+    }));
+    const { map, coordinator } = setupCoordinator({ surface: "projection" });
+    const stale = coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
+    await vi.waitFor(() => {
+      expect(fetch.mock.calls.map((call) => String(call[0]))).toContain(INDIVIDUAL_URL);
+    });
+    await coordinator.sync({ id: "segev" }, { individual: true, overlap: true });
+    individual.resolve();
+    sidecar.resolve();
+    await stale;
+    await Promise.resolve();
+    expect(map.getLayer("nli-nova-escape-individual")).toBeFalsy();
+    expect(map.getLayer("nli-nova-escape-overlap")).toBeFalsy();
+    expect(map.getLayer(NOVA_ESCAPE_IMPACT_LAYER_ID)).toBeFalsy();
+    coordinator.dispose();
+  });
+
+  test("disposed route and sidecar completions are inert", async () => {
+    const individual = deferred();
+    const sidecar = deferred();
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      const href = String(url);
+      if (href === INDIVIDUAL_URL) {
+        await individual.promise;
+        return jsonResponse(individualCollection);
+      }
+      if (href === IMPACT_INDEX_URL) {
+        await sidecar.promise;
+        return impactIndex();
+      }
+      return jsonResponse({ type: "FeatureCollection", features: [] });
+    }));
+    const { map, coordinator } = setupCoordinator({ surface: "projection" });
+    const pending = coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
+    coordinator.dispose();
+    individual.resolve();
+    sidecar.resolve();
+    await pending;
+    await Promise.resolve();
+    expect(map.getLayer("nli-nova-escape-individual")).toBeFalsy();
+    expect(map.getLayer(NOVA_ESCAPE_IMPACT_LAYER_ID)).toBeFalsy();
+  });
+
+  test.each(["route-first", "sidecar-first"])(
+    "%s completion order adopts the same impact index",
+    async (order) => {
+      const individual = deferred();
+      const sidecar = deferred();
+      vi.stubGlobal("fetch", vi.fn(async (url) => {
+        const href = String(url);
+        if (href === INDIVIDUAL_URL) {
+          if (order === "sidecar-first") await individual.promise;
+          return jsonResponse(individualCollection);
+        }
+        if (href === IMPACT_INDEX_URL) {
+          if (order === "route-first") await sidecar.promise;
+          return impactIndex(["1"], [["1", "line", "232", 0]], []);
+        }
+        return jsonResponse({ type: "FeatureCollection", features: [] });
+      }));
+      const onParallelImpactIdsChanged = vi.fn();
+      const { map, coordinator } = setupCoordinator({
+        profile: "projection",
+        surface: "projection",
+        onParallelImpactIdsChanged,
+      });
+      const pending = coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
+      if (order === "route-first") {
+        await vi.waitFor(() => expect(map.getLayer("nli-nova-escape-individual")).toBeTruthy());
+        sidecar.resolve();
+      } else {
+        sidecar.resolve();
+        await vi.waitFor(() => expect(fetch.mock.calls.map((call) => String(call[0]))).toContain(INDIVIDUAL_URL));
+        individual.resolve();
+      }
+      await pending;
+      await vi.waitFor(() => expect(map.pendingAnimationFrameCount()).toBeGreaterThan(0));
+      coordinator.setRevealProgress(1);
+      map.driveAnimationFrame();
+      expect(onParallelImpactIdsChanged.mock.calls.at(-1)?.[0]).toEqual(new Set(["line:232"]));
+      coordinator.dispose();
+    },
+  );
 
   test("schedules pending impact ticks on global rAF when the map has no requestAnimationFrame", async () => {
     const map = createFakeMapLibreMap();
@@ -476,8 +852,11 @@ describe("Nova escape overlay coordinator", () => {
     const { map, coordinator } = setupCoordinator({ surface: "projection" });
     await coordinator.sync({ id: "nova" }, { individual: true, overlap: true });
     const ids = map.getStyle().layers.map((layer) => layer.id);
-    expect(ids.indexOf("nli-nova-escape-individual"))
-      .toBeLessThan(ids.indexOf("nli-nova-escape-overlap"));
+    expect(ids.slice(-3)).toEqual([
+      "nli-nova-escape-individual",
+      NOVA_ESCAPE_IMPACT_LAYER_ID,
+      "nli-nova-escape-overlap",
+    ]);
   });
 
   test("overlap COUNT_ 235 tessellates to 4pt at Nova, COUNT_ 1 to 0.5pt", async () => {
@@ -556,6 +935,7 @@ describe("Nova escape overlay coordinator", () => {
         return jsonResponse(overlapCollection);
       }
       if (href === INDIVIDUAL_URL) return jsonResponse(individualCollection);
+      if (href === IMPACT_INDEX_URL) return impactIndex();
       return jsonResponse({ type: "FeatureCollection", features: [] });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -586,6 +966,7 @@ describe("Nova escape overlay coordinator", () => {
           ],
         });
       }
+      if (href === IMPACT_INDEX_URL) return impactIndex();
       return jsonResponse({ type: "FeatureCollection", features: [] });
     }));
     const map = createFakeMapLibreMap({
@@ -636,6 +1017,7 @@ describe("Nova escape overlay coordinator", () => {
       await gate;
       if (href === OVERLAP_URL) return jsonResponse(overlapCollection);
       if (href === INDIVIDUAL_URL) return jsonResponse(individualCollection);
+      if (href === IMPACT_INDEX_URL) return impactIndex();
       return jsonResponse({ type: "FeatureCollection", features: [] });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -671,6 +1053,9 @@ describe("Nova escape overlay coordinator", () => {
         }
         if (href === "/otef-interactive/public/processed/layers/nli/lines.geojson") {
           return jsonResponse({ type: "FeatureCollection", features: [infiltration] });
+        }
+        if (href === IMPACT_INDEX_URL) {
+          return impactIndex(["1"], [["1", "line", "232", 0.5]], []);
         }
         return jsonResponse({ type: "FeatureCollection", features: [] });
       }));
@@ -745,6 +1130,9 @@ describe("Nova escape overlay coordinator", () => {
       if (href === "/otef-interactive/public/processed/layers/nli/lines.geojson") {
         return jsonResponse({ type: "FeatureCollection", features: [uncrossedLine] });
       }
+      if (href === IMPACT_INDEX_URL) {
+        return impactIndex(["24"], [["24", "polygon", "1", 0.8]], []);
+      }
       return jsonResponse({ type: "FeatureCollection", features: [] });
     }));
     let parallelImpactIds = new Set();
@@ -803,6 +1191,14 @@ describe("Nova escape overlay coordinator", () => {
       if (href === "/otef-interactive/public/processed/layers/nli/lines.geojson") {
         return jsonResponse({ type: "FeatureCollection", features: [infiltration] });
       }
+      if (href === NOVA_FLEEING_IMPACT_INDEX_URL) {
+        return jsonResponse({
+          schemaVersion: 1,
+          routeIds: ["1"],
+          parallelCrossings: [["1", "line", "232", 0.5]],
+          settlementCrossings: [],
+        });
+      }
       return jsonResponse({ type: "FeatureCollection", features: [] });
     }));
     let now = 0;
@@ -819,7 +1215,7 @@ describe("Nova escape overlay coordinator", () => {
     const flush = () => map.flushAnimationFrames?.();
     now = 50;
     flush();
-    expect(crossingSpy.mock.calls.length).toBeGreaterThan(0);
+    expect(crossingSpy).not.toHaveBeenCalled();
     now = 100;
     flush();
     const beforeCross = onParallelImpactIdsChanged.mock.calls.length;
@@ -868,6 +1264,9 @@ describe("Nova escape overlay coordinator", () => {
       }
       if (href === "/otef-interactive/public/processed/layers/nli/lines.geojson") {
         return jsonResponse({ type: "FeatureCollection", features: [infiltration] });
+      }
+      if (href === IMPACT_INDEX_URL) {
+        return impactIndex(["1"], [["1", "line", "232", 0.5]], []);
       }
       return jsonResponse({ type: "FeatureCollection", features: [] });
     }));

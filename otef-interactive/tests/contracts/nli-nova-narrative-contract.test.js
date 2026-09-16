@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from "vitest";
 import { applySettlementOrientationPaint } from "../../frontend/src/shared/nli-settlement-orientation.js";
 import { NLI_PLAYABLE_IDS } from "../../frontend/src/shared/nli-investigation-beats.js";
 import { isNliPlayableLayerLocked } from "../../frontend/src/remote/nli-timeline-transport.js";
+import { nliExplainerShouldPaintOnSpan } from "../../frontend/src/projection/nli-explainer-overlay.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const readSource = (relativePath) => fs.readFileSync(path.resolve(here, relativePath), "utf8");
@@ -117,6 +118,40 @@ describe("NLI Nova overlay remount contract", () => {
     const projectionEntry = readSource("../../frontend/src/entries/projection-main.js");
     expect(projectionEntry).toMatch(/onParallelImpactIdsChanged/);
     expect(mapEntry).not.toMatch(/onParallelImpactIdsChanged/);
+  });
+
+  test("coordinator consumes the precomputed Nova escape index", () => {
+    const coordinatorSource = readSource("../../frontend/src/shared/nli-nova-escape-coordinator.js");
+    expect(coordinatorSource).not.toMatch(/buildFleeingCrossingIndex/);
+    expect(coordinatorSource).toMatch(/crossingIndex:\s*index\.crossingIndex/);
+    expect(coordinatorSource).toMatch(/contacts:\s*index\.settlementContacts/);
+  });
+
+  test("GIS and projection keep clock-only captions and right-span suppression", () => {
+    const mapEntry = readSource("../../frontend/src/entries/map-main.js");
+    const projectionEntry = readSource("../../frontend/src/entries/projection-main.js");
+    expect(mapEntry).toMatch(/nliCaptionMode:\s*"clock-only"/);
+    expect(projectionEntry).toMatch(/nliCaptionMode:\s*"clock-only"/);
+    expect(nliExplainerShouldPaintOnSpan("right")).toBe(false);
+  });
+
+  test("projection consumes committed slideshow groups and the shared presentation poll", () => {
+    const projectionEntry = readSource("../../frontend/src/entries/projection-main.js");
+    expect(projectionEntry).toMatch(/syncSlideshowPresentationPoll/);
+    expect(projectionEntry).toMatch(/getCommittedGroups\(\)/);
+    expect(projectionEntry).toMatch(
+      /incomingGroups:\s*[\s\S]*?getCommittedGroups\(\)/,
+    );
+    expect(projectionEntry).toMatch(
+      /syncSlideshowPresentationPoll\(slideshowRuntime,[\s\S]*?start:\s*startPresentationPoll,[\s\S]*?clear:\s*clearPresentationPoll/,
+    );
+  });
+
+  test("Nova retains the approved idle and play-start clock", () => {
+    const narratives = readSource("../../frontend/src/shared/nli-narratives.js");
+    const nova = narratives.slice(narratives.indexOf('id: "nova"'));
+    expect(nova).toMatch(/idleClockMinutes:\s*483/);
+    expect(nova).toMatch(/playStartMinutes:\s*483/);
   });
 
   test("fleeing stems stay out of glossary, popup, playable lock, and six pack tiles", () => {

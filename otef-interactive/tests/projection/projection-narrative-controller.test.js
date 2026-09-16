@@ -9,6 +9,7 @@ import { idleNliClock } from "../../frontend/src/shared/nli-investigation-clock.
 function setup(options = {}) {
   const map = createFakeMapLibreMap({
     layers: [
+      { id: "nli-people", type: "circle", source: "nli.people" },
       { id: "projector_base__יישובים__fill", type: "fill" },
       { id: "projector_base__שמות_יישובים__symbol", type: "symbol" },
       { id: "projector_base__Locations_Lines__line", type: "line" },
@@ -17,6 +18,7 @@ function setup(options = {}) {
   map.flyTo = vi.fn();
   map.jumpTo = vi.fn();
   map.easeTo = vi.fn();
+  map.setFilter = vi.fn();
   const syncTimeline = vi.fn();
   return {
     map,
@@ -60,6 +62,28 @@ describe("projection Segev narrative focus", () => {
     expect(map.getSource(NARRATIVE_FOCUS_RENDERER_IDS.source)).toBeFalsy();
     expect(syncTimeline).toHaveBeenCalledTimes(1);
     expect(map.flyTo).not.toHaveBeenCalled();
+  });
+
+  test("Nova applies the victim filter immediately and clears it on exit", () => {
+    const { map, controller } = setup();
+
+    controller.apply({ id: "nova", transition: "enter", revision: 1 });
+    expect(map.setFilter).toHaveBeenCalledWith("nli-people", ["==", ["get", "location"], "Nova"]);
+
+    controller.apply({ id: null, transition: "exit", revision: 2 });
+    expect(map.setFilter).toHaveBeenLastCalledWith("nli-people", null);
+  });
+
+  test("Nova reapplies the victim filter after projection style reconstruction", () => {
+    const { map, controller } = setup();
+    controller.apply({ id: "nova", transition: "enter", revision: 1 });
+    map.setFilter.mockClear();
+    map.wipeStyle();
+    map.addLayer({ id: "nli-people", type: "circle", source: "nli.people" });
+
+    controller.onStyleLoad();
+
+    expect(map.setFilter).toHaveBeenCalledWith("nli-people", ["==", ["get", "location"], "Nova"]);
   });
 
   test("rebuilds its marker and resynchronizes settlement focus after the host layers are rebuilt", () => {
