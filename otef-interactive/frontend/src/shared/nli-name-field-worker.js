@@ -2,9 +2,9 @@ import { createNameFieldGeometry, buildNliNameField } from './nli-name-field-geo
 
 self.onmessage = ({data}) => {
   try {
-    const geometry = createNameFieldGeometry(data.geometry);
+    const fieldGeometry = createNameFieldGeometry(data.geometry);
     const widths = new Map(data.widths);
-    const field = buildNliNameField(data.collection, geometry, {
+    const field = buildNliNameField(data.collection, fieldGeometry, {
       fontSizes: [...widths.keys()],
       datasetVersion: data.datasetVersion,
       measureText: (name,size) => widths.get(size).get(name),

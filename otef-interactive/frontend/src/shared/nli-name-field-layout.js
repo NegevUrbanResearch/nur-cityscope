@@ -98,7 +98,7 @@ function rowIntervals(polygons, y) {
 }
 
 /** Pack whole labels on stable reading rows inside individual projector domains. */
-function placeScanline(items, polygons, { gap, step, orderBy, readingOrder, minRowWidth }) {
+function placeScanline(items, polygons, { gap, step, orderBy, readingOrder, candidateFits }) {
   if (!items.length || !polygons.length) return { placements: [], unplaced: items.map(item => item.id) };
   const bounds = polygons.map(polygon => polygon.reduce((b, [x, y]) => ({
     minX: Math.min(b.minX, x), maxX: Math.max(b.maxX, x),
@@ -115,7 +115,7 @@ function placeScanline(items, polygons, { gap, step, orderBy, readingOrder, minR
       const top = rowIntervals([polygon], y - height / 2 + 1e-8);
       const bottom = rowIntervals([polygon], y + height / 2 - 1e-8);
       return top.flatMap(([l, r]) => bottom.map(([a, b]) => [Math.max(l, a), Math.min(r, b)]))
-        .filter(([l, r]) => r - l >= minRowWidth);
+        .filter(([l, r]) => r - l > 0);
     }).sort((a, b) => a[0] - b[0]);
     // Overlapping domains share one reading row, but containment below still
     // requires each complete label to fit a single projector.
@@ -140,6 +140,7 @@ function placeScanline(items, polygons, { gap, step, orderBy, readingOrder, minR
       for (let x = start; rtl ? x >= end - 1e-8 : x <= end + 1e-8; x += rtl ? -1 : 1) {
         const candidate = { id: item.id, x, y: shelf.y, width: item.width, height: item.height };
         if (!insideAllowed(candidate, polygons, bounds)) continue;
+        if (candidateFits && !candidateFits(candidate)) continue;
         found = candidate;
         shelf.cursor = x + (rtl ? -1 : 1) * (item.width / 2 + gap);
         break;
@@ -152,9 +153,8 @@ function placeScanline(items, polygons, { gap, step, orderBy, readingOrder, minR
 }
 
 export function placeNameField(items, options = {}) {
-  const { polygons, gap = DEFAULT_GAP, step = DEFAULT_STEP, minRowWidth = 0 } = options;
+  const { polygons, gap = DEFAULT_GAP, step = DEFAULT_STEP, candidateFits } = options;
   validate(items, polygons, gap, step);
-  finite(minRowWidth, "minRowWidth");
-  if (minRowWidth < 0) throw new RangeError("minRowWidth must be nonnegative");
-  return placeScanline(items, polygons, { gap, step, minRowWidth, orderBy: options.orderBy, readingOrder: options.readingOrder });
+  if (candidateFits !== undefined && typeof candidateFits !== "function") throw new TypeError("candidateFits must be a function");
+  return placeScanline(items, polygons, { gap, step, candidateFits, orderBy: options.orderBy, readingOrder: options.readingOrder });
 }

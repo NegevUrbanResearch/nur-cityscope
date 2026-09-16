@@ -2,17 +2,27 @@ import { describe, expect, it } from "vitest";
 import { nameRectangleFits, placeNameField } from "../../frontend/src/shared/nli-name-field-layout.js";
 
 describe("placeNameField", () => {
-  it("skips disconnected narrow edge slivers without omitting their names", () => {
+  it("uses a narrow safe interval when a complete label fits", () => {
     const polygons = [
-      [[0, 0], [12, 0], [12, 20], [0, 20]],
-      [[100, 0], [180, 0], [180, 20], [100, 20]],
+      [[0, 0], [12, 0], [12, 4], [0, 4]],
+      [[100, 0], [118, 0], [118, 4], [100, 4]],
     ];
     const result = placeNameField(
-      ["a", "b", "c"].map(id => ({ id, x: 5, y: 5, width: 8, height: 4 })),
+      ["a", "b", "c"].map(id => ({ id, x: 5, y: 2, width: 8, height: 2 })),
       { polygons, minRowWidth: 24 },
     );
     expect(result.unplaced).toEqual([]);
-    expect(result.placements.every(label => label.x > 100)).toBe(true);
+    expect(result.placements.some(label => label.x < 12)).toBe(true);
+    expect(result.placements.every(label => nameRectangleFits(label, polygons))).toBe(true);
+  });
+
+  it("skips a contained candidate rejected by projector fit", () => {
+    const result = placeNameField([{ id: "x", x: 10, y: 5, width: 8, height: 4 }], {
+      polygons: [[[0, 0], [20, 0], [20, 10], [0, 10]]],
+      candidateFits: candidate => candidate.x < 8,
+    });
+    expect(result.unplaced).toEqual([]);
+    expect(result.placements[0].x).toBeLessThan(8);
   });
 
   it("fills a Hebrew reading row right-to-left in alphabetical order", () => {

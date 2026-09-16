@@ -309,6 +309,77 @@ describe("projection config runtime", () => {
     expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 2, success: false, error: "render failed" }));
   });
 
+  test("restores the name field through its internal rollback path at the failed revision", async () => {
+    const h = makeHarness("left", "11111111-1111-4111-8111-111111111111", {
+      applyConfig: (_config, revision) => { if (revision === 2) throw new Error("name controller rejected rollback"); },
+    });
+    const rollback = vi.fn();
+    h.map._otefNliNameFieldController = { _rollbackProjectionConfig: rollback };
+    await h.runtime.start();
+    h.state(1); h.frame(); h.render();
+    const next = { ...DEFAULT_PROJECTION_CONFIG, pre: { ...DEFAULT_PROJECTION_CONFIG.pre, tx: 0.2 } };
+    h.state(2, next); h.frame(); h.error({ error: new Error("render failed") });
+    expect(rollback).toHaveBeenCalledWith(DEFAULT_PROJECTION_CONFIG, 2);
+  });
+
+  test("rolls every projection consumer back through the production apply ordering", async () => {
+    const map = createFakeMapLibreMap();
+    const container = { dataset: {} };
+    map.getContainer = () => container;
+    map.getZoom = () => 10;
+    map.getBearing = () => 0;
+    map.getPitch = () => 0;
+    map.getCenter = () => ({ lng: 34.5, lat: 31.4 });
+    const context = { subscribe: () => () => {}, getPersonSelection: () => ({ personId: null, datasetVersion: null, revision: 0 }) };
+    const controller = createNliNameFieldController({ map, context, projectionSpan: "left" });
+    let cameraConfig = null;
+    let cameraRevision = -1;
+    map.setEffectiveProjectionConfig = (config, revision) => {
+      if (revision < cameraRevision) return false;
+      cameraConfig = structuredClone(config);
+      cameraRevision = revision;
+      return true;
+    };
+    const pattern = { config: null, setConfig(config) { this.config = structuredClone(config); } };
+    const syncContextInvestigation = vi.fn();
+    const applyConfig = (config, revision) => {
+      if (map.setEffectiveProjectionConfig(config, revision) === false) throw new Error("projection camera rejected calibration");
+      if (!controller.setProjectionConfig(config, revision)) throw new Error("projection names rejected calibration");
+      pattern.setConfig(config);
+      syncContextInvestigation();
+    };
+    let listener;
+    const queued = [];
+    const runtime = createProjectionConfigRuntime({
+      map,
+      spanId: "left",
+      client: { subscribe(fn) { listener = fn; fn({ snapshot: null }); return () => {}; }, start: () => Promise.resolve() },
+      socket: { on() {}, off() {}, send() {} },
+      instanceId: "11111111-1111-4111-8111-111111111111",
+      requestFrame: (fn) => { queued.push(fn); },
+      cancelFrame() {},
+      applyConfig,
+    });
+    await runtime.start();
+    listener({ snapshot: { revision: 1, config: DEFAULT_PROJECTION_CONFIG } });
+    queued.shift()();
+    [...map._listeners.get("render")].forEach((fn) => fn());
+    const lastGood = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    const changed = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    changed.pre.tx = 0.2;
+    listener({ snapshot: { revision: 2, config: changed } });
+    queued.shift()();
+    [...map._listeners.get("error")].forEach((fn) => fn({ error: new Error("render failed") }));
+    expect(cameraConfig).toEqual(lastGood);
+    expect(controller.getProjectionNameDiagnostics().revision).toBe(2);
+    expect(controller.setProjectionConfig(lastGood, 2)).toBe(true);
+    expect(controller.setProjectionConfig(changed, 2)).toBe(false);
+    expect(pattern.config).toEqual(lastGood);
+    expect(syncContextInvestigation).toHaveBeenCalledTimes(3);
+    controller.dispose();
+    runtime.stop();
+  });
+
   test("full reference ignores calibration and patterns", async () => {
     const h = makeHarness(null);
     await h.runtime.start();

@@ -1,11 +1,11 @@
 import { readNliLabelHeading } from './nli-label-heading.js';
 import { runNameFieldWorker } from './nli-name-field-worker-client.js';
+import { DEFAULT_PROJECTION_CONFIG } from './projection-config-schema.js';
 
-const fields = new Map();
-export function loadNliNameField() {
-  const heading = readNliLabelHeading(globalThis.localStorage);
-  if (fields.has(heading)) return fields.get(heading);
-  const promise = (async () => {
+let inputPromise;
+function loadInputs() {
+  if (inputPromise) return inputPromise;
+  inputPromise = (async () => {
     const json = async (url) => {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Name field HTTP ${response.status}: ${url}`);
@@ -29,16 +29,31 @@ export function loadNliNameField() {
       ctx.font = `${size}px 'Guttman Hatzvi', sans-serif`;
       return [size, new Map(texts.map((name) => [name, ctx.measureText(name).width]))];
     });
-    return runNameFieldWorker({
+    return {
       collection: data,
-      geometry: { bounds, footprint, heading },
+      bounds,
+      footprint,
       widths,
       datasetVersion: metadata.datasetVersion || metadata.release?.datasetVersion || metadata.version || '',
-    });
+    };
   })().catch((error) => {
-    fields.delete(heading);
+    inputPromise = undefined;
     throw error;
   });
-  fields.set(heading, promise);
-  return promise;
+  return inputPromise;
+}
+
+export async function loadNliNameField({ projectionConfig } = {}) {
+  const input = await loadInputs();
+  return runNameFieldWorker({
+    collection: input.collection,
+    geometry: {
+      bounds: input.bounds,
+      footprint: input.footprint,
+      heading: readNliLabelHeading(globalThis.localStorage),
+      projectionConfig: projectionConfig || DEFAULT_PROJECTION_CONFIG,
+    },
+    widths: input.widths,
+    datasetVersion: input.datasetVersion,
+  });
 }

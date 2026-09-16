@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createNameFieldGeometry, buildNliNameField } from '../../frontend/src/shared/nli-name-field-geometry.js';
 import { nameRectangleFits } from '../../frontend/src/shared/nli-name-field-layout.js';
+import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
 
 const bounds = [[34.1,31.1],[34.9,31.8]];
+const mercator = ([lon, lat]) => [(lon + 180) / 360, (1 - Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 180 / 2)) / Math.PI) / 2];
 const geometry = () => createNameFieldGeometry({bounds,heading:41});
 const feature = (pid,lon=34.5,lat=31.4) => ({type:'Feature',geometry:{type:'Point',coordinates:[lon+.001,lat+.001]},properties:{pid,hebrew_name:`שם ${pid}`,status:'Murdered',source_lon:lon,source_lat:lat,location:'בארי'}});
 
@@ -14,20 +16,62 @@ describe('canonical name field geometry',()=>{
     expect(g.polygons).toHaveLength(2); expect(g.referenceZoom).toBeGreaterThan(10);
   });
   it('uses identical geometry for both clients without per-view camera input',()=>{
-    expect(geometry().polygons).toEqual(geometry().polygons);
+    const first = createNameFieldGeometry({ bounds, heading: 41, projectionConfig: DEFAULT_PROJECTION_CONFIG });
+    const second = createNameFieldGeometry({ bounds, heading: 41, projectionConfig: DEFAULT_PROJECTION_CONFIG });
+    expect(second.spanPolygons).toEqual(first.spanPolygons);
+    expect(first.spanPolygons.left[0][0]).toBeCloseTo(-407.6831701507234, 8);
+    expect(first.spanPolygons.left[0][1]).toBeCloseTo(169.58286581383507, 8);
+
+    for (const mutate of [
+      c => { c.pre.scale = 1.6; }, c => { c.pre.rotateDeg = -43; },
+      c => { c.pre.tx = 0.08; }, c => { c.outputs.right.crop.x0 = 0.45; },
+      c => { c.outputs.right.post.scale = 1.7; }, c => { c.outputs.right.post.tx = 0.04; },
+    ]) {
+      const changed = structuredClone(DEFAULT_PROJECTION_CONFIG);
+      mutate(changed);
+      expect(createNameFieldGeometry({ bounds, heading: 41, projectionConfig: changed }).spanPolygons)
+        .not.toEqual(first.spanPolygons);
+    }
   });
   it('rejects degenerate model bounds',()=>{
     expect(()=>createNameFieldGeometry({bounds:[[34,31],[34,31]]})).toThrow();
   });
   it('limits placement to calibrated source areas and identifies fully visible spans',()=>{
-    const g=createNameFieldGeometry({bounds,heading:41,sourceUv:{left:[[.3,.3],[.7,.3],[.7,.7],[.3,.7]],right:[[.3,.3],[.7,.3],[.7,.7],[.3,.7]]}});
+    const projectionConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    projectionConfig.outputs.right.crop.x0 = 0;
+    projectionConfig.outputs.right.crop.x1 = 0.6;
+    const g=createNameFieldGeometry({bounds,heading:41,projectionConfig,sourceUv:{left:[[.3,.3],[.7,.3],[.7,.7],[.3,.7]],right:[[.3,.3],[.7,.3],[.7,.7],[.3,.7]]}});
     const field=buildNliNameField({features:Array.from({length:40},(_,i)=>feature(i+1))},g,{measureText:()=>60,fontSizes:[10]});
     for(const f of field.geojson.features){
       const [x,y]=g.project(f.geometry.coordinates);
       const spans=Object.entries(g.spanPolygons).filter(([,p])=>nameRectangleFits({x,y,width:Math.ceil(60*1.12+6)-.001,height:17-.001},[p])).map(([span])=>span);
       expect(spans.length).toBeGreaterThan(0);
-      expect(f.properties.visible_spans).toEqual(spans);
+      expect(f.properties.visible_spans).toEqual(['left']);
     }
+  });
+
+  it('uses the conservative common scale and only returns valid owners for unequal outputs', () => {
+    const projectionConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    projectionConfig.outputs.left.post.scale = 1.25;
+    projectionConfig.outputs.right.post.scale = 2.5;
+    projectionConfig.outputs.right.crop.x0 = 0.5;
+    const g = createNameFieldGeometry({ bounds, heading: 41, projectionConfig });
+    const baseScale = Math.min(1920 / ((mercator(bounds[1])[0] - mercator(bounds[0])[0])), 1080 / (mercator(bounds[0])[1] - mercator(bounds[1])[1]));
+    expect(g.referenceZoom).toBeCloseTo(Math.log2(baseScale * projectionConfig.pre.scale * 1.25 / 512), 10);
+    expect(g.visibleSpansForRectangle({x:0,y:0,width:70,height:17}).every(span => ['left','right'].includes(span))).toBe(true);
+  });
+
+  it('rejects a near-edge label after applying the unequal output gain', () => {
+    const projectionConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    projectionConfig.outputs.left.post.scale = 1.25;
+    projectionConfig.outputs.right.post.scale = 2.5;
+    projectionConfig.outputs.right.crop.x0 = 0.5;
+    const sourceUv = {
+      left: [[0.3, 0.3], [0.7, 0.3], [0.7, 0.7], [0.3, 0.7]],
+      right: [[0.3, 0.3], [0.7, 0.3], [0.7, 0.7], [0.3, 0.7]],
+    };
+    const g = createNameFieldGeometry({ bounds, heading: 41, projectionConfig, sourceUv });
+    expect(g.visibleSpansForRectangle({ x: 90, y: -580, width: 70, height: 17 })).toEqual([]);
   });
 });
 

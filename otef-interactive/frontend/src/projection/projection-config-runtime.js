@@ -60,7 +60,24 @@ export function createProjectionConfigRuntime({
   function handleRenderFailure(revision, error) {
     generation += 1;
     removeRenderWait();
-    try { applyConfig(appliedConfig || initialConfig, revision); } catch { /* report failure without claiming restoration */ }
+    const rollbackConfig = appliedConfig || initialConfig;
+    const previousRollbackFlag = map?._otefProjectionConfigRollback;
+    if (map) map._otefProjectionConfigRollback = true;
+    let restored = false;
+    try {
+      applyConfig(rollbackConfig, revision);
+      restored = true;
+    } catch { /* report failure without claiming restoration */ }
+    finally {
+      if (map) {
+        if (previousRollbackFlag === undefined) delete map._otefProjectionConfigRollback;
+        else map._otefProjectionConfigRollback = previousRollbackFlag;
+      }
+    }
+    const nameFieldController = map?._otefNliNameFieldController;
+    if (!restored && typeof nameFieldController?._rollbackProjectionConfig === "function") {
+      try { nameFieldController._rollbackProjectionConfig(rollbackConfig, revision); } catch { /* keep the render failure visible */ }
+    }
     failedRevision = revision;
     failedError = String(error?.message || error || "projection render failed").slice(0, 240);
     acknowledge(revision, false, failedError);

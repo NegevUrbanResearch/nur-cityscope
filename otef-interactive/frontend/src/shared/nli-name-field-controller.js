@@ -2,7 +2,8 @@ import { loadNliNameField as defaultLoadNliNameField } from "./nli-name-field-da
 import { createNameGroupOverlay } from "./nli-name-field-group-overlay.js";
 import { createNameFieldAnimation, withNameRevealDelays } from './nli-name-field-animation.js';
 import { createNliNameFocusPresentation, getNameFocusOpacity, getRelevantPlaceGroup } from './nli-name-focus-presentation.js';
-import { computeProjectionNameOwnership } from './nli-name-field-geometry.js';
+import { DEFAULT_PROJECTION_CONFIG, validateProjectionConfig } from "./projection-config-schema.js";
+import { equalProjectionConfig } from "./projection-config-client.js";
 
 const ORIGINAL_LABEL_ID = "nli__people_names__labels";
 const SOURCE_ID = "nli-name-field";
@@ -19,18 +20,14 @@ const overviewTextSize = (field) => {
 };
 
 const featureCollection = (features = []) => ({ type: "FeatureCollection", features });
-const geojsonAt = (field, useSource, projectionOwners = null) => {
+const geojsonAt = (field, useSource) => {
   const features = field.geojson.features.map((feature) => {
-    const properties = projectionOwners
-      ? { ...feature.properties, projection_visible_spans: projectionOwners[String(feature.properties?.pid)] ? [projectionOwners[String(feature.properties.pid)]] : [] }
-      : feature.properties;
     return {
       ...feature,
-      properties,
       ...(useSource ? { geometry: { type: "Point", coordinates: field.byPid.get(String(feature.properties.pid)).sourceCoordinates } } : {}),
     };
   });
-  return withNameRevealDelays(projectionOwners || useSource ? featureCollection(features) : field.geojson);
+  return withNameRevealDelays(useSource ? featureCollection(features) : field.geojson);
 };
 const hasPeopleNames = (groups) => (groups || []).some((group) => group?.id === "nli" &&
   (group.layers || []).some((layer) => layer?.id === "people_names" && layer.enabled === true));
@@ -77,6 +74,41 @@ function hideLegacyLabels(map) {
   }
 }
 
+function validateCandidateField(candidate) {
+  const features = candidate?.geojson?.features;
+  if (!Array.isArray(features) || !features.length || !(candidate?.byPid instanceof Map)) {
+    throw new Error("Invalid NLI name field data");
+  }
+  const total = candidate.diagnostics?.total;
+  const placed = candidate.diagnostics?.placed;
+  if (!Number.isFinite(total) || total !== features.length || !Number.isFinite(placed) || placed !== total || candidate.byPid.size !== features.length) {
+    throw new Error("Invalid NLI name field data");
+  }
+  const unplaced = candidate.diagnostics?.unplaced;
+  const unplacedCount = Array.isArray(unplaced) ? unplaced.length : unplaced;
+  if (!Number.isFinite(unplacedCount) || unplacedCount < 0) {
+    throw new Error("Invalid NLI name field data");
+  }
+  if (unplacedCount !== 0) {
+    throw new Error("NLI name field capacity exhausted");
+  }
+  const pids = new Set();
+  for (const feature of features) {
+    const pid = typeof feature?.properties?.pid === "string"
+      ? feature.properties.pid.trim()
+      : "";
+    if (!pid || pids.has(pid) || !candidate.byPid.has(pid)) {
+      throw new Error("Invalid NLI name field data");
+    }
+    pids.add(pid);
+    const owners = feature?.properties?.visible_spans;
+    if (!Array.isArray(owners) || owners.length !== 1 || !["left", "right"].includes(owners[0])) {
+      throw new Error("Invalid NLI name field ownership");
+    }
+  }
+  return candidate;
+}
+
 export function createNliNameFieldController({
   map,
   context,
@@ -89,7 +121,6 @@ export function createNliNameFieldController({
   let enabled = false;
   let ready = false;
   let field = null;
-  let loadPromise = null;
   let selectedPid = null;
   let selectedGroup = null;
   let pendingPlaceId = null;
@@ -98,15 +129,21 @@ export function createNliNameFieldController({
   let focusPresentation = null;
   let overviewCamera = null;
   let useSourceGeometry = false;
-  let loadGeneration = 0;
-  let projectionConfig = null;
-  let projectionRevision = null;
-  let projectionOwnership = null;
-  let projectionClippedCount = 0;
-  const projectionOwnershipCache = new Map();
-  let projectionVisibilityGeneration = 0;
+  let requestGeneration = 0;
+  let installedGeneration = null;
+  let requestedRevision = null;
+  let installedRevision = null;
+  let requestedConfig = displayProfile === "projection" ? null : DEFAULT_PROJECTION_CONFIG;
+  let buildInFlight = false;
+  let rebuildState = "idle";
+  let rebuildError = null;
+  let retryOnNextEnable = false;
   const projectionSpanFilter = () => displayProfile === "projection" && ["left", "right"].includes(projectionSpan)
-    ? ["in", projectionSpan, ["get", projectionOwnership ? "projection_visible_spans" : "visible_spans"]] : null;
+    ? ["in", projectionSpan, ["get", "visible_spans"]] : null;
+  const packedProjectionOwners = () => Object.fromEntries((field?.geojson?.features || [])
+    .map((feature) => [String(feature.properties?.pid || ""), feature.properties?.visible_spans?.[0]])
+    .filter(([pid, owner]) => pid && owner));
+  const installedOwnerCount = () => Object.keys(packedProjectionOwners()).length;
   const withSpan = (filter) => {
     const activeSpanFilter = projectionSpanFilter();
     return activeSpanFilter ? (filter ? ["all", activeSpanFilter, filter] : activeSpanFilter) : filter;
@@ -114,27 +151,37 @@ export function createNliNameFieldController({
   const container = map.getContainer();
   const publishDiagnostics = () => {
     if (!container?.dataset) return;
-    if (!enabled || !ready || !field) {
+    const hasProjectionLifecycle = displayProfile !== "projection" || requestedConfig || field;
+    const hasInstalledField = ready && field;
+    if (!enabled || (displayProfile === "gis" && !hasInstalledField) || !hasProjectionLifecycle) {
       delete container.dataset.nliNameField;
       return;
     }
-    const unplaced = field.diagnostics?.unplaced;
+    const diagnosticsField = ready && field ? field : null;
+    const unplaced = diagnosticsField?.diagnostics?.unplaced;
+    const owned = diagnosticsField ? installedOwnerCount() : 0;
     container.dataset.nliNameField = JSON.stringify({
-      mode: useSourceGeometry ? "detail" : "display",
-      placed: Number(field.diagnostics?.placed || 0),
-      total: Number(field.diagnostics?.total || 0),
-      groups: Number(field.diagnostics?.groups || 0),
+      mode: diagnosticsField && useSourceGeometry ? "detail" : "display",
+      placed: Number(diagnosticsField?.diagnostics?.placed || 0),
+      total: Number(diagnosticsField?.diagnostics?.total || 0),
+      groups: Number(diagnosticsField?.diagnostics?.groups || 0),
       unplaced: Array.isArray(unplaced) ? unplaced.length : Number(unplaced || 0),
       selectedPid,
       selectedGroup,
-      projectionRevision,
-      projectionClipped: projectionClippedCount,
-      projectionOwners: projectionOwnership ? Object.keys(projectionOwnership).length : null,
-      fontSize: field.fontSize,
-      referenceZoom: field.referenceZoom,
+      projectionRevision: requestedRevision,
+      projectionClipped: 0,
+      projectionOwners: diagnosticsField ? owned : null,
+      requestedRevision,
+      installedRevision,
+      rebuildState,
+      rebuildError,
+      owned,
+      ...(rebuildState === "idle" ? { unowned: 0 } : {}),
+      fontSize: diagnosticsField?.fontSize,
+      referenceZoom: diagnosticsField?.referenceZoom,
       zoom: map.getZoom(),
       bearing: map.getBearing(),
-      heading: field.heading,
+      heading: diagnosticsField?.heading,
     });
   };
 
@@ -156,13 +203,23 @@ export function createNliNameFieldController({
       if (map.getSource(id)) cleanup(map.removeSource.bind(map), id);
     }
   };
+  const hideProjectionField = () => {
+    removeOwned();
+    hideLegacyLabels(map);
+    field = null;
+    ready = false;
+    useSourceGeometry = false;
+  };
   const selectedFeature = () => field?.byPid?.get(String(selectedPid)) || null;
   const updateConnector = () => {
     const selected = selectedFeature();
     const source = map.getSource(CONNECTOR_SOURCE_ID);
     if (!source) return;
     const display = selected?.feature;
-    const coordinates = !useSourceGeometry && selected && display?.geometry?.coordinates && selected.sourceCoordinates
+    const owner = selected?.feature?.properties?.visible_spans?.[0];
+    const ownsSelection = displayProfile !== "projection" || owner === projectionSpan;
+    const coordinates = ownsSelection && !useSourceGeometry && selected && display?.geometry?.coordinates
+      && selected.sourceCoordinates
       ? [display.geometry.coordinates, selected.sourceCoordinates]
       : [];
     source.setData(featureCollection(coordinates.length ? [{
@@ -205,12 +262,12 @@ export function createNliNameFieldController({
     updateGroupHighlight();
     publishDiagnostics();
   };
-  const addOwned = () => {
+  const mountInstalledField = () => {
     if (disposed || !enabled || !ready || !field) return;
     removeOwned();
     try {
       useSourceGeometry = displayProfile === "gis" && map.getZoom() >= field.referenceZoom + DETAIL_ZOOM_DELTA;
-      map.addSource(SOURCE_ID, { type: "geojson", data: geojsonAt(field, useSourceGeometry, projectionOwnership) });
+      map.addSource(SOURCE_ID, { type: "geojson", data: geojsonAt(field, useSourceGeometry) });
       map.addSource(CONNECTOR_SOURCE_ID, { type: "geojson", data: featureCollection() });
       const textSize = useSourceGeometry ? 14 : overviewTextSize(field);
       const baseLayer = textLayer(LABEL_ID, SOURCE_ID, field.heading, textSize);
@@ -244,7 +301,6 @@ export function createNliNameFieldController({
         },
       });
       animation.show();
-      applyProjectionVisibility();
       applySelection();
       publishDiagnostics();
     } catch (error) {
@@ -253,31 +309,42 @@ export function createNliNameFieldController({
       console.error("NLI name field mount failed", error);
     }
   };
-  const handleLoad = () => {
-    if (disposed || !enabled || loadPromise) return;
-    const generation = loadGeneration;
-    loadPromise = Promise.resolve().then(() => loadField()).then((next) => {
-      if (disposed || generation !== loadGeneration) return;
-      if (!next?.geojson || !next?.byPid || !(next.byPid instanceof Map)) {
-        throw new Error("Invalid NLI name field data");
-      }
-      const unplaced = Array.isArray(next.diagnostics?.unplaced)
-        ? next.diagnostics.unplaced.length
-        : Number(next.diagnostics?.unplaced || 0);
-      if (unplaced > 0) throw new Error("NLI name field capacity exhausted");
-      field = next;
+  const startProjectionBuild = async () => {
+    if (!enabled || !requestedConfig || buildInFlight || disposed) return;
+    const generation = requestGeneration;
+    const revision = requestedRevision;
+    const projectionConfig = structuredClone(requestedConfig);
+    buildInFlight = true;
+    rebuildState = "building";
+    rebuildError = null;
+    publishDiagnostics();
+    try {
+      const candidate = validateCandidateField(await loadField({ projectionConfig }));
+      if (disposed || !enabled || generation !== requestGeneration) return;
+      field = candidate;
       ready = true;
-      if (enabled) addOwned();
-    }).catch((error) => {
-      if (generation !== loadGeneration) return;
-      ready = false;
-      loadPromise = null;
-      if (!disposed) {
-        removeOwned();
-        hideLegacyLabels(map);
+      installedGeneration = generation;
+      installedRevision = revision;
+      rebuildState = "idle";
+      retryOnNextEnable = false;
+      mountInstalledField();
+    } catch (error) {
+      if (!disposed && generation === requestGeneration) {
+        rebuildState = "error";
+        rebuildError = error instanceof Error ? error.message : String(error);
+        retryOnNextEnable = true;
+        hideProjectionField();
         console.error("NLI name field unavailable", error);
+      } else if (!disposed) {
+        rebuildState = "pending";
       }
-    });
+    } finally {
+      buildInFlight = false;
+      publishDiagnostics();
+      if (!disposed && enabled && requestGeneration !== installedGeneration && rebuildState !== "error") {
+        void startProjectionBuild();
+      }
+    }
   };
   const syncZoom = () => {
     if (disposed || !enabled || !ready || displayProfile !== "gis" || !field) return;
@@ -302,10 +369,6 @@ export function createNliNameFieldController({
     updateGroupHighlight();
     publishDiagnostics();
   };
-  const handleProjectionGeometryChange = () => {
-    if (disposed || !enabled || !ready || displayProfile !== "projection" || !projectionConfig) return;
-    applyProjectionVisibility();
-  };
   const rememberOverview = () => {
     if (displayProfile !== "gis" || selectedPid || selectedGroup || !field ||
       map.getZoom() >= field.referenceZoom + DETAIL_ZOOM_DELTA) return;
@@ -318,38 +381,6 @@ export function createNliNameFieldController({
         pitch: map.getPitch(),
       };
     }
-  };
-  const projectionCacheKey = () => JSON.stringify({
-    config: projectionConfig,
-    rectangles: field?.labelRectangles instanceof Map ? [...field.labelRectangles.entries()] : field?.labelRectangles,
-  });
-  const applyProjectionVisibility = () => {
-    if (displayProfile !== "projection" || !field || !projectionConfig) return false;
-    const hasRectangles = field.labelRectangles instanceof Map
-      ? field.labelRectangles.size > 0
-      : Array.isArray(field.labelRectangles)
-        ? field.labelRectangles.length > 0
-        : field.labelRectangles && typeof field.labelRectangles === "object"
-          ? Object.keys(field.labelRectangles).length > 0
-          : [...(field.byPid?.values?.() || [])].some((value) => value?.labelRectangle || value?.rectangle || value?.labelRect);
-    if (!hasRectangles) return false;
-    const generation = ++projectionVisibilityGeneration;
-    const key = projectionCacheKey();
-    let ownership = projectionOwnershipCache.get(key);
-    if (!ownership) {
-      ownership = computeProjectionNameOwnership({ field, config: projectionConfig });
-      if (projectionOwnershipCache.size >= 8) projectionOwnershipCache.clear();
-      projectionOwnershipCache.set(key, ownership);
-    }
-    if (generation !== projectionVisibilityGeneration) return false;
-    projectionOwnership = ownership.owners;
-    projectionClippedCount = ownership.clippedCount;
-    const source = map.getSource(SOURCE_ID);
-    if (source) source.setData(geojsonAt(field, useSourceGeometry, projectionOwnership));
-    if (map.getLayer(LABEL_ID)) map.setFilter(LABEL_ID, withSpan(selectedPid ? ["!=", ["get", "pid"], selectedPid] : null));
-    if (map.getLayer(SELECTED_LABEL_ID)) map.setFilter(SELECTED_LABEL_ID, withSpan(["==", ["get", "pid"], selectedPid || "__none__"]));
-    publishDiagnostics();
-    return true;
   };
   let updatingBackground = false;
   const refreshBackground = () => {
@@ -367,7 +398,10 @@ export function createNliNameFieldController({
     refreshBackground();
   };
   const handleStyleLoad = () => {
-    if (!disposed && enabled && ready) addOwned();
+    if (!disposed && enabled) hideLegacyLabels(map);
+    if (!disposed && enabled && ready && rebuildState === "idle" && installedGeneration === requestGeneration) {
+      mountInstalledField();
+    }
   };
   const onSelection = (snapshot) => {
     if (disposed) return;
@@ -398,29 +432,65 @@ export function createNliNameFieldController({
   };
   map.on("style.load", handleStyleLoad);
   map.on("zoom", syncZoom);
-  map.on("zoom", handleProjectionGeometryChange);
-  map.on("move", handleProjectionGeometryChange);
-  map.on("resize", handleProjectionGeometryChange);
   map.on("idle", handleIdle);
   map.on("styledata", refreshBackground);
   const unsubscribe = context.subscribe("personSelection", onSelection);
   const unsubscribeNavigation = context.subscribe("navigationCommand", onNavigation);
 
   const api = {
+    // Used by the projection runtime after the camera rolls back a failed
+    // render. This is deliberately separate from the public revision gate:
+    // the camera keeps the failed revision while names rebuild from its
+    // restored config.
+    _rollbackProjectionConfig(config, revision) {
+      if (Object.keys(validateProjectionConfig(config)).length || !Number.isSafeInteger(revision) || revision < 0) return false;
+      requestedConfig = structuredClone(config);
+      requestedRevision = revision;
+      requestGeneration += 1;
+      installedGeneration = null;
+      installedRevision = null;
+      rebuildState = "pending";
+      rebuildError = null;
+      retryOnNextEnable = false;
+      hideProjectionField();
+      publishDiagnostics();
+      void startProjectionBuild();
+      return true;
+    },
     setProjectionConfig(config, revision) {
-      if (!config?.pre || !config?.outputs?.left || !config?.outputs?.right) return false;
-      if (Number.isFinite(revision) && Number.isFinite(projectionRevision) && revision < projectionRevision) return false;
-      projectionConfig = config;
-      if (Number.isFinite(revision)) projectionRevision = revision;
-      if (ready && enabled) applyProjectionVisibility();
-      else publishDiagnostics();
+      if (map?._otefProjectionConfigRollback === true) return api._rollbackProjectionConfig(config, revision);
+      if (Object.keys(validateProjectionConfig(config)).length) return false;
+      const revisionless = revision === undefined || revision === null;
+      const nextRevision = revisionless ? null : revision;
+      if (!revisionless && (!Number.isSafeInteger(nextRevision) || nextRevision < 0)) return false;
+      if (!revisionless && Number.isFinite(requestedRevision)) {
+        if (nextRevision < requestedRevision) return false;
+        if (nextRevision === requestedRevision) {
+          return equalProjectionConfig(config, requestedConfig);
+        }
+      }
+      requestedConfig = structuredClone(config);
+      requestedRevision = nextRevision;
+      requestGeneration += 1;
+      installedGeneration = null;
+      installedRevision = null;
+      rebuildState = "pending";
+      rebuildError = null;
+      retryOnNextEnable = false;
+      hideProjectionField();
+      publishDiagnostics();
+      void startProjectionBuild();
       return true;
     },
     getProjectionNameDiagnostics() {
       return {
-        revision: projectionRevision,
-        clippedCount: projectionClippedCount,
-        owners: projectionOwnership ? { ...projectionOwnership } : {},
+        revision: requestedRevision,
+        requestedRevision,
+        installedRevision,
+        clippedCount: 0,
+        owners: packedProjectionOwners(),
+        state: rebuildState,
+        error: rebuildError,
       };
     },
     sync(groups) {
@@ -428,14 +498,14 @@ export function createNliNameFieldController({
       const nextEnabled = hasPeopleNames(groups);
       if (nextEnabled === enabled) {
         if (nextEnabled) {
-          if (ready && (!map.getSource(SOURCE_ID) || !map.getLayer(LABEL_ID))) {
-            addOwned();
-          } else {
-            handleLoad();
+          if (ready && field && rebuildState === "idle" && installedGeneration === requestGeneration &&
+            (!map.getSource(SOURCE_ID) || !map.getLayer(LABEL_ID))) {
+            mountInstalledField();
+          } else if (rebuildState !== "error" &&
+            !(ready && field && rebuildState === "idle" && installedGeneration === requestGeneration)) {
+            void startProjectionBuild();
           }
-          if (map.getLayer(ORIGINAL_LABEL_ID) && map.getLayer(LABEL_ID)) {
-            map.setLayoutProperty(ORIGINAL_LABEL_ID, "visibility", "none");
-          }
+          hideLegacyLabels(map);
         }
         return;
       }
@@ -454,39 +524,41 @@ export function createNliNameFieldController({
         return;
       }
       hideLegacyLabels(map);
-      if (ready && field && animation && map.getLayer(LABEL_ID)) {
+      const shouldRetry = retryOnNextEnable;
+      retryOnNextEnable = false;
+      if (ready && field && rebuildState === "idle" && installedGeneration === requestGeneration && animation && map.getLayer(LABEL_ID)) {
         animation.show({ restart: false });
         applySelection();
-      } else if (ready && field) {
-        addOwned();
-      } else {
-        handleLoad();
+      } else if (ready && field && rebuildState === "idle" && installedGeneration === requestGeneration) {
+        mountInstalledField();
+      } else if (shouldRetry || requestedConfig) {
+        void startProjectionBuild();
       }
     },
     reload() {
       if (disposed) return;
-      loadGeneration += 1;
+      requestGeneration += 1;
       removeOwned();
       hideLegacyLabels(map);
       field = null;
       ready = false;
-      projectionOwnership = null;
-      projectionClippedCount = 0;
+      installedGeneration = null;
+      installedRevision = null;
+      rebuildState = requestedConfig ? "pending" : "idle";
+      rebuildError = null;
+      retryOnNextEnable = false;
       publishDiagnostics();
-      loadPromise = null;
-      if (enabled) handleLoad();
+      if (enabled) void startProjectionBuild();
     },
     dispose() {
       if (disposed) return;
       disposed = true;
+      requestGeneration += 1;
       enabled = false;
       unsubscribe();
       unsubscribeNavigation();
       map.off("style.load", handleStyleLoad);
       map.off("zoom", syncZoom);
-      map.off("zoom", handleProjectionGeometryChange);
-      map.off("move", handleProjectionGeometryChange);
-      map.off("resize", handleProjectionGeometryChange);
       map.off("idle", handleIdle);
       map.off("styledata", refreshBackground);
       removeOwned();
