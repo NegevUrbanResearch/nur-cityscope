@@ -773,9 +773,8 @@
         unicode-bidi: isolate;
       }
       .zoom-cluster span {
-        min-width: 2ch;
+        min-width: 4ch;
         font-size: var(--text-ui);
-        font-variant-numeric: tabular-nums;
         color: var(--nli-ink);
         text-align: center;
       }
@@ -1064,7 +1063,7 @@
           <div class="free-tools">
             <div class="zoom-cluster">
               <button type="button" id="zoomOut" aria-label="Zoom out">−</button>
-              <span id="zoomValue">—</span>
+              <span data-i18n="zoom">זום</span>
               <button type="button" id="zoomIn" aria-label="Zoom in">+</button>
             </div>
             <button type="button" class="tool-chip" id="toggleNames" aria-pressed="false">

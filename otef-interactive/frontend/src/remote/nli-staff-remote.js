@@ -576,7 +576,6 @@ export function initNliStaffRemote(dataContext) {
   const zoomController = createRemoteZoomController({
     zoomIn: $("zoomIn"),
     zoomOut: $("zoomOut"),
-    zoomValue: $("zoomValue"),
     getViewport: () => dataContext?.getViewport?.(),
     zoom: (level) => dataContext?.zoom?.(level),
     isConnected: () => state.connected,

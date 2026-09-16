@@ -62,4 +62,23 @@ describe("remote zoom controller", () => {
     expect(zoom).toHaveBeenCalledTimes(2);
     expect(zoom).toHaveBeenLastCalledWith(14);
   });
+
+  test("binds +/- without a numeric readout", async () => {
+    const zoomIn = button("zoomIn");
+    const zoomOut = button("zoomOut");
+    const zoom = vi.fn().mockResolvedValue(undefined);
+    const controller = createRemoteZoomController({
+      zoomIn,
+      zoomOut,
+      getViewport: () => ({ zoom: 15 }),
+      zoom,
+      isConnected: () => true,
+    });
+
+    controller.init();
+    zoomIn.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(zoom).toHaveBeenCalledWith(16);
+  });
 });

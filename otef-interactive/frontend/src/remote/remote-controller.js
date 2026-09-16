@@ -164,7 +164,9 @@ async function initialize() {
 }
 
 function openNliStaffRemote() {
-  window.location.assign(NLI_STAFF_REMOTE_HREF);
+  const url = new URL(NLI_STAFF_REMOTE_HREF, window.location.href);
+  url.searchParams.set("from", "remote");
+  window.location.assign(`${url.pathname}${url.search}`);
 }
 
 /**

@@ -98,7 +98,7 @@ export function createRemoteZoomController({
   }
 
   function init() {
-    if (!zoomIn || !zoomOut || !zoomValue) return;
+    if (!zoomIn || !zoomOut) return;
 
     if (slider) {
       slider.min = String(MIN_ZOOM);
