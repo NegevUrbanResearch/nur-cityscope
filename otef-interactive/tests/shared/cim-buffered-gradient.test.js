@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  BUFFERED_GRADIENT_BAND_PROPERTY,
   buildBufferedGradientRenderPlan,
+  hasUsableBufferedGradient,
   isBufferedGradientStyle,
 } from "../../frontend/src/shared/cim-buffered-gradient.js";
 
@@ -107,6 +109,9 @@ describe("CIM buffered-gradient style adapter", () => {
     ["negative-infinite opacity", { interval: 1, colors: ["#111"], opacities: [Number.NEGATIVE_INFINITY] }],
     ["negative opacity", { interval: 1, colors: ["#111"], opacities: [-0.01] }],
     ["opacity above one", { interval: 1, colors: ["#111"], opacities: [1.01] }],
+    ["invalid short resolved color", { interval: 1, colors: ["#12345"], opacities: [0.5] }],
+    ["invalid non-hex resolved color", { interval: 1, colors: ["red"], opacities: [0.5] }],
+    ["invalid numeric resolved color", { interval: 1, colors: [123456], opacities: [0.5] }],
   ])("rejects %s", (_label, { interval, colors, opacities }) => {
     const malformedStyle = {
       ...style,
@@ -126,7 +131,100 @@ describe("CIM buffered-gradient style adapter", () => {
         }],
       },
     };
-    expect(() => buildBufferedGradientRenderPlan(malformedStyle)).toThrow(/resolvedOpacities/);
+    expect(() => buildBufferedGradientRenderPlan(malformedStyle)).toThrow();
+  });
+
+  it.each([
+    ["interval mismatch", { interval: 2, colors: ["#111111"], opacities: [0.5] }],
+    ["invalid opacity", { interval: 1, colors: ["#111111"], opacities: [1.1] }],
+    ["missing bands", { interval: 1, colors: [] }],
+  ])("reports malformed processed metadata as unusable: %s", (_label, { interval, colors, opacities }) => {
+    const malformedStyle = {
+      ...style,
+      uniqueValues: {
+        ...style.uniqueValues,
+        classes: [{
+          value: "מוקד חטיפה",
+          symbol: { symbolLayers: [{
+            type: "fill", fillType: "gradient", interval,
+            resolvedColors: colors, resolvedOpacities: opacities, opacity: 0.4, enable: true,
+          }] },
+        }],
+      },
+    };
+    expect(hasUsableBufferedGradient(malformedStyle, [
+      { properties: { Notes: "מוקד חטיפה" } },
+    ])).toBe(false);
+  });
+
+  it("rejects unusable sidecar rows and accepts a valid banded polygon", () => {
+    expect(hasUsableBufferedGradient(style, [
+      { properties: { Notes: "not-a-style-class" } },
+    ])).toBe(false);
+    expect(hasUsableBufferedGradient(style, [
+      {
+        properties: { Notes: "מוקד חטיפה", [BUFFERED_GRADIENT_BAND_PROPERTY]: 0 },
+        geometry: { type: "Polygon", coordinates: [[[34, 31], [34.01, 31], [34, 31.01], [34, 31]]] },
+      },
+    ])).toBe(true);
+  });
+
+  it.each([
+    ["missing band", { properties: { Notes: "מוקד חטיפה" } }],
+    ["negative band", { properties: { Notes: "מוקד חטיפה", [BUFFERED_GRADIENT_BAND_PROPERTY]: -1 } }],
+    ["out-of-range band", { properties: { Notes: "מוקד חטיפה", [BUFFERED_GRADIENT_BAND_PROPERTY]: 5 } }],
+    ["numeric-string band", { properties: { Notes: "מוקד חטיפה", [BUFFERED_GRADIENT_BAND_PROPERTY]: "0" } }],
+    ["null geometry", { geometry: null }],
+    ["non-polygon geometry", { geometry: { type: "LineString", coordinates: [[34, 31], [34.01, 31.01]] } }],
+    ["empty coordinates", { geometry: { type: "Polygon", coordinates: [] } }],
+    ["empty ring", { geometry: { type: "Polygon", coordinates: [[]] } }],
+    ["empty nested ring", { geometry: { type: "Polygon", coordinates: [[[]]] } }],
+    ["null position", { geometry: { type: "Polygon", coordinates: [null] } }],
+    ["invalid position", { geometry: { type: "Polygon", coordinates: [[[34, 31], [34], [34, 31], [34, 31]]] } }],
+    ["nonfinite position", { geometry: { type: "Polygon", coordinates: [[[34, 31], [34, Number.NaN], [34, 31], [34, 31]]] } }],
+  ])("rejects sidecar features with %s", (_label, overrides) => {
+    const feature = {
+      properties: { Notes: "מוקד חטיפה", [BUFFERED_GRADIENT_BAND_PROPERTY]: 0 },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.01, 31], [34, 31.01], [34, 31]]] },
+      ...overrides,
+    };
+    expect(hasUsableBufferedGradient(style, [feature])).toBe(false);
+  });
+
+  it.each([
+    ["Polygon", { type: "Polygon", coordinates: [[[34, 31], [34.01, 31], [34, 31.01], [34, 31]]] }],
+    ["MultiPolygon", { type: "MultiPolygon", coordinates: [[[[34, 31], [34.01, 31], [34, 31.01], [34, 31]]]] }],
+  ])("accepts a valid %s sidecar feature", (_label, geometry) => {
+    expect(hasUsableBufferedGradient(style, [{
+      properties: { Notes: "מוקד חטיפה", [BUFFERED_GRADIENT_BAND_PROPERTY]: 0 },
+      geometry,
+    }])).toBe(true);
+  });
+
+  it.each([
+    ["3D Polygon", { type: "Polygon", coordinates: [[[34, 31, 10], [34.01, 31, 10], [34, 31.01, 10], [34, 31, 10]]] }],
+    ["4D MultiPolygon", { type: "MultiPolygon", coordinates: [[[[34, 31, 10, 1], [34.01, 31, 10, 1], [34, 31.01, 10, 1], [34, 31, 10, 1]]]] }],
+  ])("accepts valid optional-dimension positions in a %s", (_label, geometry) => {
+    expect(hasUsableBufferedGradient(style, [{
+      properties: { Notes: "מוקד חטיפה", [BUFFERED_GRADIENT_BAND_PROPERTY]: 0 },
+      geometry,
+    }])).toBe(true);
+  });
+
+  it.each([
+    ["sparse position", (() => {
+      const position = [34];
+      position.length = 2;
+      return { type: "Polygon", coordinates: [[position, [34.01, 31], [34, 31.01], [34, 31]]] };
+    })()],
+    ["sparse ring", { type: "Polygon", coordinates: [new Array(4)] }],
+    ["sparse polygon", { type: "MultiPolygon", coordinates: [new Array(1)] }],
+    ["sparse polygons", { type: "MultiPolygon", coordinates: new Array(1) }],
+  ])("rejects %s geometry arrays", (_label, geometry) => {
+    expect(hasUsableBufferedGradient(style, [{
+      properties: { Notes: "מוקד חטיפה", [BUFFERED_GRADIENT_BAND_PROPERTY]: 0 },
+      geometry,
+    }])).toBe(false);
   });
 
   it("does not treat a style without a supported buffered fill as processed", () => {

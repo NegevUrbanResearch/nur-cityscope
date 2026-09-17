@@ -18,19 +18,32 @@ function symbolLayersFor(cls) {
 
 function gradientFor(cls) {
   return symbolLayersFor(cls).find((layer) =>
-    layer?.type === "fill" && layer?.fillType === "gradient" && layer?.enable !== false &&
-    Array.isArray(layer?.resolvedColors) && layer.resolvedColors.length > 0,
+    layer?.type === "fill" && layer?.fillType === "gradient" && layer?.enable !== false,
   ) || null;
 }
 
+function resolvedColorsFor(gradient) {
+  const colors = gradient?.resolvedColors;
+  if (!Array.isArray(colors) || colors.length === 0
+      || colors.some((color) => typeof color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(color))) {
+    throw new Error("Buffered gradient resolvedColors must contain exact #RRGGBB strings");
+  }
+  return colors;
+}
+
 function resolvedOpacitiesFor(gradient) {
-  const colors = gradient.resolvedColors;
+  const colors = resolvedColorsFor(gradient);
   const interval = gradient.interval;
   if (!Number.isInteger(interval) || interval <= 0 || colors.length !== interval) {
     throw new Error("Buffered gradient resolvedOpacities and resolvedColors must match interval");
   }
   if (gradient.resolvedOpacities == null) {
-    const opacity = Number.isFinite(Number(gradient.opacity)) ? Number(gradient.opacity) : 1;
+    if (gradient.opacity == null) return colors.map(() => 1);
+    if (typeof gradient.opacity !== "number" || !Number.isFinite(gradient.opacity)
+        || gradient.opacity < 0 || gradient.opacity > 1) {
+      throw new Error("Buffered gradient opacity must be a number from 0 to 1");
+    }
+    const opacity = gradient.opacity;
     return colors.map(() => opacity);
   }
   if (!Array.isArray(gradient.resolvedOpacities)
@@ -39,6 +52,39 @@ function resolvedOpacitiesFor(gradient) {
     throw new Error("Buffered gradient resolvedOpacities must match resolvedColors and contain values from 0 to 1");
   }
   return [...gradient.resolvedOpacities];
+}
+
+function everyPresent(array, predicate) {
+  if (!Array.isArray(array)) return false;
+  for (let index = 0; index < array.length; index += 1) {
+    if (!Object.prototype.hasOwnProperty.call(array, index) || !predicate(array[index])) return false;
+  }
+  return true;
+}
+
+function isFiniteNumeric2DPosition(position) {
+  return Array.isArray(position)
+    && position.length >= 2
+    && everyPresent(position, (value) => typeof value === "number" && Number.isFinite(value));
+}
+
+function isValidRing(ring) {
+  return Array.isArray(ring)
+    && ring.length >= 4
+    && everyPresent(ring, isFiniteNumeric2DPosition);
+}
+
+function hasRenderablePolygonCoordinates(coordinates) {
+  return Array.isArray(coordinates)
+    && coordinates.length > 0
+    && everyPresent(coordinates, isValidRing);
+}
+
+function hasRenderablePolygonGeometry(geometry) {
+  if (geometry?.type === "Polygon") return hasRenderablePolygonCoordinates(geometry.coordinates);
+  if (geometry?.type !== "MultiPolygon" || !Array.isArray(geometry.coordinates)
+      || geometry.coordinates.length === 0) return false;
+  return everyPresent(geometry.coordinates, hasRenderablePolygonCoordinates);
 }
 
 function outlineFor(cls) {
@@ -103,6 +149,31 @@ export function buildBufferedGradientRenderPlan(style) {
     classes,
     processed: isBufferedGradientStyle(style),
   };
+}
+
+/** Return true only when a valid banded class has matching sidecar geometry. */
+export function hasUsableBufferedGradient(style, features) {
+  try {
+    const plan = buildBufferedGradientRenderPlan(style);
+    const sidecarFeatures = Array.isArray(features)
+      ? features
+      : Array.isArray(features?.features) ? features.features : [];
+    return sidecarFeatures.some((feature) => {
+      const notes = feature?.properties?.Notes;
+      const bands = plan.classes[notes]?.bands;
+      const geometry = feature?.geometry;
+      const band = feature?.properties?.[BUFFERED_GRADIENT_BAND_PROPERTY];
+      return typeof notes === "string"
+        && Array.isArray(bands)
+        && bands.length > 0
+        && typeof band === "number"
+        && Number.isInteger(band)
+        && bands.some((entry) => entry.ordinal === band)
+        && hasRenderablePolygonGeometry(geometry);
+    });
+  } catch (_) {
+    return false;
+  }
 }
 
 export function bufferedGradientResource(styleConfig) {
