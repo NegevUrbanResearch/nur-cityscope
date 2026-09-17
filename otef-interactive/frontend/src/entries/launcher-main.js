@@ -5,12 +5,15 @@ import { renderQr } from "../shared/qr-code.js";
 const REFRESH_MS = 15_000;
 const LOCAL_LINKS = [
   ["gis", "/otef-interactive/index.html"],
+  ["remote", "/otef-interactive/remote-controller.html"],
+  ["staffRemote", "/otef-interactive/nli-staff-remote.html"],
   ["projection", "/otef-interactive/projection.html"],
   ["projectionLeft", "/otef-interactive/projection.html?span=left"],
   ["projectionRight", "/otef-interactive/projection.html?span=right"],
   ["config", "/otef-interactive/projection-config.html"],
   ["curation", "/otef-interactive/curation.html"],
 ];
+const SHARE_REMOTE_IDS = ["remote", "staffRemote"];
 
 function absoluteUrl(origin, pathname) {
   try {
@@ -35,10 +38,23 @@ function setLink(document, id, href) {
   if (copy) copy.disabled = !href;
   if (link) link.dataset.url = href || "";
   if (copy) copy.dataset.url = href || "";
-  const displayed = document.getElementById(`${id}Url`);
-  if (displayed) displayed.textContent = href || "—";
   const cardDisplayed = document.getElementById(`${id}CardUrl`);
   if (cardDisplayed) cardDisplayed.textContent = href || "—";
+  else {
+    const displayed = document.getElementById(`${id}Url`);
+    if (displayed) displayed.textContent = href || "—";
+  }
+}
+
+function linkFor(origin, id) {
+  const pathname = LOCAL_LINKS.find(([linkId]) => linkId === id)?.[1];
+  return pathname ? absoluteUrl(origin, pathname) : null;
+}
+
+export function allowsLoopbackRemoteFallback(navigatorLike = globalThis.navigator) {
+  const uaPlatform = String(navigatorLike?.userAgentData?.platform || "").toLowerCase();
+  if (uaPlatform === "macos") return true;
+  return /^mac/i.test(String(navigatorLike?.platform || ""));
 }
 
 export function initLauncher({
@@ -47,25 +63,35 @@ export function initLauncher({
   fetchImpl = globalThis.fetch,
   now,
   clock = globalThis,
+  navigator: navigatorLike = globalThis.navigator,
 } = {}) {
   if (!document || !location) return () => {};
   const localOrigin = location.origin && location.origin !== "null" ? location.origin : null;
+  const loopbackRemoteFallback = allowsLoopbackRemoteFallback(navigatorLike);
   for (const [id, pathname] of LOCAL_LINKS) {
-    const href = absoluteUrl(localOrigin, pathname);
-    setLink(document, id, href);
+    if (!loopbackRemoteFallback && SHARE_REMOTE_IDS.includes(id)) {
+      setLink(document, id, null);
+      continue;
+    }
+    setLink(document, id, absoluteUrl(localOrigin, pathname));
   }
-  setLink(document, "remote", null);
 
-  const remoteCopy = document.getElementById("remoteCopy");
   const shareStatus = document.getElementById("shareStatus");
+  const shareUrl = document.getElementById("remoteUrl");
   const qrHost = document.getElementById("remoteQr");
   let disposed = false;
   let refreshTimer = null;
   let refreshSerial = 0;
   const copyTimers = new Set();
 
+  const applyLocalRemoteLinks = () => {
+    for (const id of SHARE_REMOTE_IDS) setLink(document, id, linkFor(localOrigin, id));
+  };
+
   const setShareUnavailable = () => {
-    setLink(document, "remote", null);
+    if (loopbackRemoteFallback) applyLocalRemoteLinks();
+    else for (const id of SHARE_REMOTE_IDS) setLink(document, id, null);
+    if (shareUrl) shareUrl.textContent = "—";
     if (shareStatus) shareStatus.textContent = "Network address unavailable.";
     if (qrHost) qrHost.replaceChildren?.();
   };
@@ -74,12 +100,13 @@ export function initLauncher({
     const serial = ++refreshSerial;
     const origin = await loadShareOrigin({ location, fetchImpl, now });
     if (disposed || serial !== refreshSerial) return;
-    const href = origin ? absoluteUrl(origin, "/otef-interactive/remote-controller.html") : null;
+    const href = origin ? linkFor(origin, "remote") : null;
     if (!href) {
       setShareUnavailable();
       return;
     }
-    setLink(document, "remote", href);
+    for (const id of SHARE_REMOTE_IDS) setLink(document, id, linkFor(origin, id));
+    if (shareUrl) shareUrl.textContent = href;
     if (shareStatus) shareStatus.textContent = "Ready to connect.";
     if (qrHost) renderQr(qrHost, href, { size: 256 });
   };
@@ -97,11 +124,9 @@ export function initLauncher({
     }, 1800);
     if (timer != null) copyTimers.add(timer);
   };
-  for (const [, pathname] of LOCAL_LINKS) {
-    const id = LOCAL_LINKS.find(([, path]) => path === pathname)?.[0];
+  for (const [id] of LOCAL_LINKS) {
     document.getElementById(`${id}Copy`)?.addEventListener("click", onCopy);
   }
-  remoteCopy?.addEventListener("click", onCopy);
 
   const onFocus = () => { void refreshShare(); };
   const onVisibility = () => {
@@ -125,7 +150,6 @@ export function initLauncher({
     globalThis.removeEventListener?.("focus", onFocus);
     document.removeEventListener?.("visibilitychange", onVisibility);
     for (const [id] of LOCAL_LINKS) document.getElementById(`${id}Copy`)?.removeEventListener("click", onCopy);
-    remoteCopy?.removeEventListener("click", onCopy);
   };
 }
 

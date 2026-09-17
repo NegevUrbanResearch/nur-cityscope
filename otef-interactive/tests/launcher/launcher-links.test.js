@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { vi } from "vitest";
-import { initLauncher } from "../../frontend/src/entries/launcher-main.js";
+import { allowsLoopbackRemoteFallback, initLauncher } from "../../frontend/src/entries/launcher-main.js";
 
 const read = (file) => fs.readFileSync(path.resolve(__dirname, "../../frontend", file), "utf8");
 
@@ -12,6 +12,7 @@ test("launcher includes all local entries and the shared remote resolver entry",
   for (const pathname of [
     "index.html",
     "remote-controller.html",
+    "nli-staff-remote.html",
     "projection.html",
     "projection-config.html",
     "curation.html",
@@ -24,8 +25,12 @@ test("launcher includes all local entries and the shared remote resolver entry",
 
 test("launcher exposes remote open/copy/QR controls and required mobile copy", () => {
   const html = read("launcher.html");
-  expect(html).toMatch(/id=["']remoteOpen["'][^>]*target=["']_blank["'][^>]*rel=["']noopener["']/);
+  expect(html).toMatch(/id=["']remoteOpen["'][^>]*target=["']_blank["'][^>]*rel=["']noopener["'][^>]*aria-disabled=["']true["']/);
+  expect(html).toMatch(/id=["']staffRemoteOpen["'][^>]*target=["']_blank["'][^>]*rel=["']noopener["'][^>]*aria-disabled=["']true["']/);
   expect(html).toContain('id="remoteCopy"');
+  expect(html).toContain('id="staffRemoteOpen"');
+  expect(html).toContain('id="staffRemoteCopy"');
+  expect(html).toContain('id="staffRemoteUrl"');
   expect(html).toContain('id="remoteQr"');
   expect(html).toContain('id="remoteCardUrl"');
   expect(html).toContain("Connect your phone to the same network as this PC.");
@@ -62,7 +67,7 @@ function makeDocument() {
     addEventListener(type, callback) { this.listeners.set(type, callback); },
     removeEventListener(type) { this.listeners.delete(type); },
   };
-  const ids = ["gis", "remote", "projection", "projectionLeft", "projectionRight", "config", "curation"];
+  const ids = ["gis", "remote", "staffRemote", "projection", "projectionLeft", "projectionRight", "config", "curation"];
   const elements = new Map();
   for (const id of ids) {
     elements.set(`${id}Open`, makeElement(`${id}Open`, document));
@@ -92,19 +97,118 @@ function clockHarness() {
   };
 }
 
-test("launcher keeps Remote disabled until a fresh share resolves, then updates link, text and QR", async () => {
+test("loopback remote fallback is macOS-only", () => {
+  expect(allowsLoopbackRemoteFallback({ platform: "MacIntel" })).toBe(true);
+  expect(allowsLoopbackRemoteFallback({ platform: "MacARM" })).toBe(true);
+  expect(allowsLoopbackRemoteFallback({ userAgentData: { platform: "macOS" } })).toBe(true);
+  expect(allowsLoopbackRemoteFallback({ platform: "Win32" })).toBe(false);
+  expect(allowsLoopbackRemoteFallback({ platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" })).toBe(false);
+  expect(allowsLoopbackRemoteFallback({
+    platform: "iPhone",
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)",
+  })).toBe(false);
+  expect(allowsLoopbackRemoteFallback({ platform: "Linux x86_64" })).toBe(false);
+  expect(allowsLoopbackRemoteFallback({})).toBe(false);
+  expect(allowsLoopbackRemoteFallback(null)).toBe(false);
+});
+
+test("Mac loopback enables remotes locally, then upgrades them to a fresh share origin", async () => {
   const document = makeDocument();
   let resolveFetch;
   const fetchImpl = vi.fn(() => new Promise((resolve) => { resolveFetch = resolve; }));
   const clock = clockHarness();
-  const dispose = initLauncher({ document, location: new URL("http://localhost:8500/launcher.html"), fetchImpl, now: () => Date.parse("2026-09-13T10:00:00.000Z"), clock });
-  expect(document.getElementById("remoteOpen").attributes.href).toBeUndefined();
-  expect(document.getElementById("remoteCopy").disabled).toBe(true);
+  const dispose = initLauncher({
+    document,
+    location: new URL("http://localhost:8500/launcher.html"),
+    fetchImpl,
+    now: () => Date.parse("2026-09-13T10:00:00.000Z"),
+    clock,
+    navigator: { platform: "MacIntel" },
+  });
+  expect(document.getElementById("remoteOpen").href).toBe("http://localhost:8500/otef-interactive/remote-controller.html");
+  expect(document.getElementById("staffRemoteOpen").href).toBe("http://localhost:8500/otef-interactive/nli-staff-remote.html");
+  expect(document.getElementById("remoteCopy").disabled).toBe(false);
+  expect(document.getElementById("remoteUrl").textContent).toBe("");
   resolveFetch({ ok: true, json: () => Promise.resolve(runtime("http://192.0.2.10:8500")) });
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(document.getElementById("remoteOpen").href).toBe("http://192.0.2.10:8500/otef-interactive/remote-controller.html");
+  expect(document.getElementById("staffRemoteOpen").href).toBe("http://192.0.2.10:8500/otef-interactive/nli-staff-remote.html");
   expect(document.getElementById("remoteCardUrl").textContent).toContain("192.0.2.10");
+  expect(document.getElementById("staffRemoteUrl").textContent).toContain("192.0.2.10");
   expect(document.getElementById("remoteQr").children).toHaveLength(1);
+  dispose();
+});
+
+test("Windows loopback keeps remotes disabled until a fresh share origin resolves", async () => {
+  const document = makeDocument();
+  let resolveFetch;
+  const fetchImpl = vi.fn(() => new Promise((resolve) => { resolveFetch = resolve; }));
+  const clock = clockHarness();
+  const dispose = initLauncher({
+    document,
+    location: new URL("http://localhost:8500/launcher.html"),
+    fetchImpl,
+    now: () => Date.parse("2026-09-13T10:00:00.000Z"),
+    clock,
+    navigator: { platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+  });
+  expect(document.getElementById("remoteOpen").href).toBeUndefined();
+  expect(document.getElementById("staffRemoteOpen").href).toBeUndefined();
+  expect(document.getElementById("remoteOpen").attributes["aria-disabled"]).toBe("true");
+  expect(document.getElementById("staffRemoteOpen").attributes["aria-disabled"]).toBe("true");
+  expect(document.getElementById("remoteCopy").disabled).toBe(true);
+  expect(document.getElementById("staffRemoteCopy").disabled).toBe(true);
+  expect(document.getElementById("gisOpen").href).toBe("http://localhost:8500/otef-interactive/index.html");
+  resolveFetch({ ok: true, json: () => Promise.resolve(runtime("http://192.0.2.10:8500")) });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(document.getElementById("remoteOpen").href).toBe("http://192.0.2.10:8500/otef-interactive/remote-controller.html");
+  expect(document.getElementById("staffRemoteOpen").href).toBe("http://192.0.2.10:8500/otef-interactive/nli-staff-remote.html");
+  expect(document.getElementById("remoteCopy").disabled).toBe(false);
+  expect(document.getElementById("remoteQr").children).toHaveLength(1);
+  dispose();
+});
+
+test("Windows loopback does not fall back to localhost when share origin is missing", async () => {
+  const document = makeDocument();
+  const fetchImpl = vi.fn().mockResolvedValue({ ok: false });
+  const dispose = initLauncher({
+    document,
+    location: new URL("http://127.0.0.1:8500/otef-interactive/launcher.html"),
+    fetchImpl,
+    now: () => Date.parse("2026-09-13T10:00:00.000Z"),
+    clock: clockHarness(),
+    navigator: { platform: "Win32" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(document.getElementById("remoteOpen").href).toBeUndefined();
+  expect(document.getElementById("staffRemoteOpen").href).toBeUndefined();
+  expect(document.getElementById("remoteCopy").disabled).toBe(true);
+  expect(document.getElementById("remoteCardUrl").textContent).toBe("—");
+  expect(document.getElementById("staffRemoteUrl").textContent).toBe("—");
+  expect(document.getElementById("remoteUrl").textContent).toBe("—");
+  expect(document.getElementById("shareStatus").textContent).toBe("Network address unavailable.");
+  expect(document.getElementById("remoteQr").children).toHaveLength(0);
+  dispose();
+});
+
+test("Mac loopback keeps remotes on localhost when share origin is missing", async () => {
+  const document = makeDocument();
+  const fetchImpl = vi.fn().mockResolvedValue({ ok: false });
+  const dispose = initLauncher({
+    document,
+    location: new URL("http://127.0.0.1:8500/otef-interactive/launcher.html"),
+    fetchImpl,
+    now: () => Date.parse("2026-09-13T10:00:00.000Z"),
+    clock: clockHarness(),
+    navigator: { platform: "MacIntel" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(document.getElementById("remoteOpen").href).toBe("http://127.0.0.1:8500/otef-interactive/remote-controller.html");
+  expect(document.getElementById("staffRemoteOpen").href).toBe("http://127.0.0.1:8500/otef-interactive/nli-staff-remote.html");
+  expect(document.getElementById("remoteCopy").disabled).toBe(false);
+  expect(document.getElementById("remoteUrl").textContent).toBe("—");
+  expect(document.getElementById("shareStatus").textContent).toBe("Network address unavailable.");
+  expect(document.getElementById("remoteQr").children).toHaveLength(0);
   dispose();
 });
 
@@ -116,7 +220,14 @@ test("launcher ignores out-of-order refreshes and late completion after disposal
   const listeners = new Map();
   vi.stubGlobal("addEventListener", (type, callback) => listeners.set(type, callback));
   vi.stubGlobal("removeEventListener", (type) => listeners.delete(type));
-  const dispose = initLauncher({ document, location: new URL("http://localhost:8500/launcher.html"), fetchImpl, now: () => Date.parse("2026-09-13T10:00:00.000Z"), clock });
+  const dispose = initLauncher({
+    document,
+    location: new URL("http://localhost:8500/launcher.html"),
+    fetchImpl,
+    now: () => Date.parse("2026-09-13T10:00:00.000Z"),
+    clock,
+    navigator: { platform: "Win32" },
+  });
   await listeners.get("focus")();
   pending[1]({ ok: true, json: () => Promise.resolve(runtime("http://192.0.2.12:8500")) });
   await new Promise((resolve) => setTimeout(resolve, 0));
