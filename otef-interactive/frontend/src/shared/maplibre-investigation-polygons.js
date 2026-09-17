@@ -27,6 +27,7 @@ const CATEGORY_OUTLINE_SOURCE_ID = "nli-investigation-polygon-category-outline";
 const BUFFERED_GRADIENT_SOURCE_ID = "nli-investigation-polygon-buffered-gradient";
 const POLYGON_LAYER_PREFIX = INVESTIGATION_POLYGONS_FULL_ID.replace(/\./g, "__");
 const SETTLEMENT_OUTLINE = NLI_VISUAL_TOKENS.settlementImpactOutline;
+const NARRATIVE_SETTLEMENT_OUTLINE = NLI_VISUAL_TOKENS.narrativeSettlementOutline;
 const NOTES_BATTLE = "מרחב לחימה - קרב";
 const NOTES_KIDNAP = "מוקד חטיפה";
 const NOTES_FIRE = "שריפה";
@@ -201,6 +202,28 @@ function setPaint(map, id, property, value) {
   }
 }
 
+function narrativeSettlementOutlinePaint(focusOutlineId) {
+  if (focusOutlineId == null || String(focusOutlineId).trim() === "") return SETTLEMENT_OUTLINE;
+  const id = String(focusOutlineId);
+  return [
+    "case",
+    [
+      "any",
+      ["==", ["to-string", ["get", "outlineObjectId"]], id],
+      ["==", ["to-string", ["get", "OBJECTID"]], id],
+    ],
+    NARRATIVE_SETTLEMENT_OUTLINE,
+    SETTLEMENT_OUTLINE,
+  ];
+}
+
+function applyNarrativeSettlementOutlinePaint(map, state, frame) {
+  const paint = narrativeSettlementOutlinePaint(frame?.narrativeFocusOutlineId);
+  if (JSON.stringify(state.lastSettlementOutlinePaint) === JSON.stringify(paint)) return;
+  setPaint(map, SETTLEMENT_LAYER_ID, "line-color", paint);
+  state.lastSettlementOutlinePaint = paint;
+}
+
 function setLayout(map, id, property, value) {
   if (typeof map?.setLayoutProperty !== "function") return;
   try {
@@ -286,6 +309,7 @@ export function createInvestigationPolygonRenderer(
     lastCategoryNovaSiteExclusion: null,
     lastCategoryParallelDim: null,
     lastCategoryParallelImpactKey: null,
+    lastSettlementOutlinePaint: null,
     warnedNotes: new Set(),
     warnedBufferedGradientFailure: false,
     inputRefs: {
@@ -441,6 +465,7 @@ export function createInvestigationPolygonRenderer(
       map.addSource(SETTLEMENT_SOURCE_ID, { type: "geojson", data: featureCollection() });
     }
     if (!layerPresent(map, SETTLEMENT_LAYER_ID) && typeof map.addLayer === "function") {
+      state.lastSettlementOutlinePaint = null;
       const layer = {
         id: SETTLEMENT_LAYER_ID,
         type: "line",
@@ -896,6 +921,7 @@ export function createInvestigationPolygonRenderer(
     }
     state.currentFrame = frame;
     mount({ settlementOnly: !renderPolygons });
+    applyNarrativeSettlementOutlinePaint(map, state, frame);
     const achieved = asArray(frame.achievedPolygonBeats)
       .map(Number)
       .filter(Number.isFinite);
@@ -972,6 +998,7 @@ export function createInvestigationPolygonRenderer(
         try { map.removeSource(sourceId); } catch (_) { /* stale style */ }
       }
     }
+    state.lastSettlementOutlinePaint = null;
   }
 
   function reset({ preserveBasePaints = false } = {}) {
@@ -996,6 +1023,7 @@ export function createInvestigationPolygonRenderer(
     state.lastCategoryNovaSiteExclusion = null;
     state.lastCategoryParallelDim = null;
     state.lastCategoryParallelImpactKey = null;
+    state.lastSettlementOutlinePaint = null;
     state.waitingForHostStyle = false;
     state.baseLayers = [];
     state.baseLayersCaptured = false;

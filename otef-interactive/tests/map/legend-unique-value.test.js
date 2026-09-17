@@ -3,6 +3,40 @@ import { legendLayerFromConfig } from "../../frontend/src/map/legend-model-build
 import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
 import { NLI_LEGEND_SHORT_LABELS } from "../../frontend/src/shared/nli-investigation-legend.js";
 
+function peopleStatusClass(value, fillColor) {
+  return {
+    value,
+    label: value,
+    symbol: {
+      symbolLayers: [
+        {
+          type: "markerPoint",
+          marker: { fillColor, size: 16 },
+        },
+      ],
+    },
+  };
+}
+
+function peopleStatusConfig() {
+  return {
+    geometryType: "point",
+    name: "people",
+    style: {
+      renderer: "uniqueValue",
+      uniqueValues: {
+        field: "status",
+        classes: [
+          peopleStatusClass("Murdered", "#b42318"),
+          peopleStatusClass("Killed on duty", "#175cd3"),
+          peopleStatusClass("Kidnap survivor", "#079455"),
+          peopleStatusClass("Murdered in captivity", "#7a2222"),
+        ],
+      },
+    },
+  };
+}
+
 function uniqueValuePointConfig({ legendLabel } = {}) {
   const config = {
     geometryType: "point",
@@ -61,6 +95,47 @@ describe("legendLayerFromConfig uniqueValue", () => {
     expect(layer.items).toHaveLength(1);
     expect(layer.items[0].label).toBe("Roads");
     expect(layer.items[0].fill).toBe("#b42318");
+  });
+
+  it("omits kidnap survivors from the nli.people legend in general view", () => {
+    const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
+      fullId: "nli.people",
+      narrativeId: null,
+    });
+    expect(layer.items.map((item) => item.label)).toEqual([
+      "Murdered",
+      "Killed on duty",
+      "Murdered in captivity",
+    ]);
+  });
+
+  it("keeps only kidnap survivors on the nli.people legend during hostages", () => {
+    const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
+      fullId: "nli.people",
+      narrativeId: "hostages",
+    });
+    expect(layer.items.map((item) => item.label)).toEqual(["Kidnap survivor"]);
+  });
+
+  it("keeps every nli.people status class during nova", () => {
+    const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
+      fullId: "nli.people",
+      narrativeId: "nova",
+    });
+    expect(layer.items.map((item) => item.label)).toEqual([
+      "Murdered",
+      "Killed on duty",
+      "Kidnap survivor",
+      "Murdered in captivity",
+    ]);
+  });
+
+  it("does not filter uniqueValue classes for unrelated layers", () => {
+    const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
+      fullId: "nli.other_points",
+      narrativeId: "hostages",
+    });
+    expect(layer.items).toHaveLength(4);
   });
 
   it("lists each class color when ui.legendLabel is absent", () => {

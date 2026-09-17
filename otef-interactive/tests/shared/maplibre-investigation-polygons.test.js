@@ -464,6 +464,51 @@ describe("investigation polygon renderer", () => {
     fetchSpy.mockRestore();
   });
 
+  it("paints the narrative focus settlement outline white and leaves other impact outlines red", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    renderer.render({
+      achievedPolygonBeats: [],
+      achievedSettlementOutlineIds: [32, 20],
+      narrativeFocusOutlineId: 32,
+      narrative: { phase: "idle" },
+    }, {
+      settlementFeatures: [settlement(32), settlement(20)],
+      settlementFeaturesByOutlineId: { 32: settlement(32), 20: settlement(20) },
+    });
+    expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toEqual([
+      "case",
+      [
+        "any",
+        ["==", ["to-string", ["get", "outlineObjectId"]], "32"],
+        ["==", ["to-string", ["get", "OBJECTID"]], "32"],
+      ],
+      "#ffffff",
+      "#c31f4f",
+    ]);
+  });
+
+  it("restores red impact outlines when narrative focus outline is absent", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const data = {
+      settlementFeatures: [settlement(32), settlement(20)],
+      settlementFeaturesByOutlineId: { 32: settlement(32), 20: settlement(20) },
+    };
+    renderer.render({
+      achievedPolygonBeats: [],
+      achievedSettlementOutlineIds: [32, 20],
+      narrativeFocusOutlineId: 32,
+      narrative: { phase: "idle" },
+    }, data);
+    renderer.render({
+      achievedPolygonBeats: [],
+      achievedSettlementOutlineIds: [20],
+      narrative: { phase: "idle" },
+    }, data);
+    expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toBe("#c31f4f");
+  });
+
   it("renders settlement outlines from the inclusive OR of polygon and route triggers", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {}, {

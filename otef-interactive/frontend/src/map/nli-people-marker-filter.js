@@ -24,6 +24,13 @@ export function peopleFilterForNarrative(narrativeId) {
   return EXCLUDE_SURVIVOR_FILTER;
 }
 
+export function peopleLegendClassVisible(narrativeId, classValue) {
+  const value = String(classValue ?? "");
+  if (narrativeId === "hostages") return value === KIDNAP_SURVIVOR_STATUS;
+  if (narrativeId === "nova") return true;
+  return value !== KIDNAP_SURVIVOR_STATUS;
+}
+
 export function applyNarrativePeopleFilter(map, narrativeId) {
   if (!map || typeof map.getStyle !== "function" || typeof map.getLayer !== "function" ||
     typeof map.setFilter !== "function") return 0;

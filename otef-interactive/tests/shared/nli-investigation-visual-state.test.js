@@ -42,6 +42,7 @@ describe("nli-investigation-theme", () => {
       routeReveal: "#c31f4f",
       incidentRed: "#c31f4f",
       settlementImpactOutline: "#c31f4f",
+      narrativeSettlementOutline: "#ffffff",
       annotationHalo: "#000000",
       routeFlowColor: "#000000",
       alarmYellow: "#f5c542",

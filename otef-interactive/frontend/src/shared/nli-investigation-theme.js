@@ -20,6 +20,7 @@ export const NLI_VISUAL_TOKENS = Object.freeze({
   routeReveal: "#c31f4f",
   incidentRed: "#c31f4f",
   settlementImpactOutline: "#c31f4f",
+  narrativeSettlementOutline: "#ffffff",
   alarmYellow: "#f5c542",
   annotationInk: "#fff7ed",
   annotationHalo: "#000000",

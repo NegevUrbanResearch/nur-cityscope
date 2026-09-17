@@ -649,6 +649,11 @@ async function bootstrapMapRuntime() {
           updateMapLegend({ surface: "gis" });
         }),
       );
+      registerDisposer(
+        OTEFDataContext.subscribe("narrativeState", () => {
+          updateMapLegend({ surface: "gis" });
+        }),
+      );
       updateMapLegend({ surface: "gis" });
     } catch (e) {
       console.warn("[map-main] Legend module not available:", e);

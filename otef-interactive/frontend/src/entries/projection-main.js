@@ -478,6 +478,11 @@ async function bootstrapProjectionRuntime() {
           updateMapLegend({ surface: "projection" });
         }),
       );
+      registerDisposer(
+        OTEFDataContext.subscribe("narrativeState", () => {
+          updateMapLegend({ surface: "projection" });
+        }),
+      );
       updateMapLegend({ surface: "projection" });
     } catch (e) {
       console.warn("[projection-main] Legend module not available:", e);

@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   applyNarrativePeopleFilter,
   peopleFilterForNarrative,
+  peopleLegendClassVisible,
   KIDNAP_SURVIVOR_STATUS,
   EXCLUDE_SURVIVOR_FILTER,
   HOSTAGES_PEOPLE_FILTER,
@@ -73,6 +74,34 @@ describe("narrative people marker filter", () => {
     expect(applyNarrativePeopleFilter(map, "segev")).toBe(1);
     expect(map.setFilter).toHaveBeenCalledWith("nli-people", EXCLUDE_SURVIVOR_FILTER);
     expect(map.setFilter).not.toHaveBeenCalledWith("nli-people", null);
+  });
+
+  test("legend class visibility matches the narrative people filter", () => {
+    const statuses = [
+      "Murdered",
+      "Killed on duty",
+      "Kidnap survivor",
+      "Murdered in captivity",
+    ];
+    expect(statuses.filter((status) => peopleLegendClassVisible(null, status))).toEqual([
+      "Murdered",
+      "Killed on duty",
+      "Murdered in captivity",
+    ]);
+    expect(statuses.filter((status) => peopleLegendClassVisible("segev", status))).toEqual([
+      "Murdered",
+      "Killed on duty",
+      "Murdered in captivity",
+    ]);
+    expect(statuses.filter((status) => peopleLegendClassVisible("sderot", status))).toEqual([
+      "Murdered",
+      "Killed on duty",
+      "Murdered in captivity",
+    ]);
+    expect(statuses.filter((status) => peopleLegendClassVisible("hostages", status))).toEqual([
+      "Kidnap survivor",
+    ]);
+    expect(statuses.filter((status) => peopleLegendClassVisible("nova", status))).toEqual(statuses);
   });
 
   test("returns zero without setting a filter when the victim layer is absent", () => {

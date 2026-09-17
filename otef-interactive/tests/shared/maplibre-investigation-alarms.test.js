@@ -134,12 +134,19 @@ describe("investigation alarm helpers", () => {
     expect(JSON.stringify(settled.color)).not.toMatch(/feature-state/);
     expect(JSON.stringify(settled.color)).toMatch(new RegExp(NLI_VISUAL_TOKENS.alarmYellow, "i"));
     expect(JSON.stringify(settled.color)).not.toMatch(/interpolate/i);
-    expect(JSON.stringify(settled.opacity)).toMatch(/0\.2/);
+    expect(settled.opacity).toEqual(["case", ["<=", ["coalesce", ["get", "count"], 0], 0], 0, 0.3]);
     const hiddenBranch = JSON.stringify(settled.radius);
     expect(hiddenBranch).toMatch(/"case"/);
     const flash = alarmCirclePaint(0, true);
     expect(JSON.stringify(flash.color)).toMatch(new RegExp(NLI_VISUAL_TOKENS.alarmYellow, "i"));
-    expect(JSON.stringify(flash.opacity)).toMatch(/0\.45/);
+    expect(flash.opacity).toEqual([
+      "case",
+      ["<=", ["coalesce", ["get", "count"], 0], 0],
+      0,
+      ["boolean", ["get", "onset"], false],
+      0.55,
+      0.3,
+    ]);
   });
 
   it("uses exact fixed radius stops for GIS and projection profiles", () => {
@@ -254,7 +261,7 @@ describe("investigation alarm helpers", () => {
     const strokes = map.setPaintProperty.mock.calls
       .filter((call) => call[0] === "nli-investigation-alarm-ripple" && call[1] === "circle-stroke-opacity")
       .map((call) => call[2]);
-    expect(strokes).toEqual([0.3, 0.15, 0.3]);
+    expect(strokes).toEqual([0.4, 0.2, 0.4]);
     renderer.dispose();
   });
 

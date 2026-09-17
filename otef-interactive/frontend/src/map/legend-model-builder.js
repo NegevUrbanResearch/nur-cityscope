@@ -11,6 +11,7 @@ import { parseLayerNameWithGeometrySuffix } from "../shared/layer-name-utils.js"
 import { shouldShowLayerOnGisMap } from "../shared/gis-layer-filter.js";
 import { investigationPolygonLegendItems } from "../shared/nli-investigation-legend.js";
 import AdvancedStyleEngine from "../map-utils/advanced-style-engine.js";
+import { peopleLegendClassVisible } from "./nli-people-marker-filter.js";
 
 const DEFAULT_LAND_USE_SCHEME = { fill: "#E0E0E0", stroke: "#B0B0B0" };
 
@@ -279,12 +280,17 @@ function itemsFromSimple(config) {
   ];
 }
 
+function uniqueValueClassesForLegend(config, options = {}) {
+  const classes = config.style?.uniqueValues?.classes || [];
+  if (options.fullId !== "nli.people") return classes;
+  return classes.filter((entry) => peopleLegendClassVisible(options.narrativeId, entry?.value));
+}
+
 /**
  * Items from uniqueValue: each class resolved to symbol IR, then IR -> legend.
  */
-function itemsFromUniqueValue(config) {
-  const uv = config.style?.uniqueValues || {};
-  const classes = uv.classes || [];
+function itemsFromUniqueValue(config, options = {}) {
+  const classes = uniqueValueClassesForLegend(config, options);
   const defaultStyle = config.style?.defaultStyle || {};
   const layerDefaultSymbol =
     config.style?.defaultSymbol ||
@@ -471,7 +477,7 @@ function legendLayerFromConfig(config, layer, options = {}) {
   let singleRowMultiSymbol = false;
 
   if (renderer === "uniqueValue") {
-    items = itemsFromUniqueValue(config);
+    items = itemsFromUniqueValue(config, options);
     if (config.ui?.legendLabel && items.length > 0) {
       items = [{ ...items[0], label: config.ui.legendLabel }];
     }
@@ -605,7 +611,12 @@ async function buildLegendModel(options = {}) {
           rawStyle = null;
         }
       }
-      const built = legendLayerFromConfig(config, layer, { distinctLandUse, fullId, rawStyle });
+      const built = legendLayerFromConfig(config, layer, {
+        distinctLandUse,
+        fullId,
+        rawStyle,
+        narrativeId: ctx.getNarrativeState?.()?.id ?? null,
+      });
       if (!built || (built.items || []).length === 0) continue;
 
       packLayers.push(built);

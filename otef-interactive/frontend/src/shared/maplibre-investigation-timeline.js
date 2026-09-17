@@ -702,6 +702,9 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
       ...resolvedFrame,
       achievedSettlementOutlineIds,
       narrativeId: state.narrativeFocus?.id ?? null,
+      narrativeFocusOutlineId: shouldIncludeNarrativeSettlementOutline(state.narrativeFocus)
+        ? narrativeSettlementOutlineId(state)
+        : null,
       projectionNovaDim,
       parallelImpactIds,
     };

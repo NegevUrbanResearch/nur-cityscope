@@ -427,6 +427,52 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toBe(1);
   });
 
+  it("paints Segev, Sderot, and Hostages place outlines white during narrative focus", async () => {
+    const hidden = [{ id: "nli", layers: [
+      { id: "investigation_polygons", enabled: false },
+      { id: "lines", enabled: false },
+    ] }];
+    const whitePaint = (outlineId) => [
+      "case",
+      [
+        "any",
+        ["==", ["to-string", ["get", "outlineObjectId"]], String(outlineId)],
+        ["==", ["to-string", ["get", "OBJECTID"]], String(outlineId)],
+      ],
+      "#ffffff",
+      "#c31f4f",
+    ];
+    for (const { focus, city, outlineId } of [
+      { focus: NLI_NARRATIVES.segev, city: "בארי", outlineId: 19 },
+      { focus: NLI_NARRATIVES.sderot, city: "שדרות", outlineId: 32 },
+      { focus: NLI_NARRATIVES.hostages, city: "ניר עוז", outlineId: 14 },
+    ]) {
+      const map = makeOrientationMap();
+      const outline = {
+        type: "Feature",
+        properties: { outlineObjectId: outlineId, OBJECTID: outlineId, locations: [city] },
+        geometry: { type: "Polygon", coordinates: [[[34.45, 31.42], [34.46, 31.42], [34.46, 31.43], [34.45, 31.42]]] },
+      };
+      const labelsSourceId = map.getStyle().layers.find((layer) => layer.id === SHEMOT_LABEL_ID).source;
+      map.getSource(labelsSourceId).data = {
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          properties: { cityname: city },
+          geometry: { type: "Point", coordinates: [34.45, 31.42] },
+        }],
+      };
+      await syncInvestigationTimelineToMap(map, idleNliClock(), hidden, {
+        settlementFeatures: [outline],
+        narrativeFocus: focus,
+        now: () => 0,
+      });
+      expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toEqual(
+        whitePaint(outlineId),
+      );
+    }
+  });
+
   it("does not remount the polygon overlay when the polygons row is off after Stop", async () => {
     const map = makeMap();
     const visible = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];

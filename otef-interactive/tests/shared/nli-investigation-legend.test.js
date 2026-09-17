@@ -168,6 +168,16 @@ describe("nli investigation legend wiring", () => {
     expect(projectionHtml).toContain('id="mapLegend"');
   });
 
+  it("rebuilds GIS and projection legends when the narrative changes", () => {
+    const mapMain = readFileSync(path.resolve(here, "../../frontend/src/entries/map-main.js"), "utf8");
+    const projectionMain = readFileSync(path.resolve(here, "../../frontend/src/entries/projection-main.js"), "utf8");
+    const builder = readFileSync(path.resolve(here, "../../frontend/src/map/legend-model-builder.js"), "utf8");
+    expect(mapMain).toMatch(/subscribe\("narrativeState",\s*\(\)\s*=>\s*\{\s*updateMapLegend\(\{\s*surface:\s*"gis"\s*\}\)/s);
+    expect(projectionMain).toMatch(/subscribe\("narrativeState",\s*\(\)\s*=>\s*\{\s*updateMapLegend\(\{\s*surface:\s*"projection"\s*\}\)/s);
+    expect(builder).toMatch(/getNarrativeState/);
+    expect(builder).toMatch(/narrativeId/);
+  });
+
   it("does not style #nliInvestigationLegend as a second overlay HUD", () => {
     const css = readFileSync(path.resolve(here, "../../frontend/css/styles.css"), "utf8");
     expect(css).not.toMatch(/#nliInvestigationLegend\s*\{/);
