@@ -1,5 +1,7 @@
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import { prepareInvestigationTimelineForStyleReload } from "../shared/maplibre-investigation-timeline.js";
+import { applyDarkBasemapLabelPolicy } from "./dark-basemap-labels.js";
+import openFreeMapDarkStyle from "./basemaps/openfreemap-dark.js";
 
 const maplibregl =
   (typeof globalThis !== "undefined" && globalThis.maplibregl) ||
@@ -91,7 +93,7 @@ const BASEMAP_STYLES = {
   },
   satellite: createEsriRasterStyle(),
   satellite_bw: createEsriRasterStyle({ "raster-saturation": -1 }),
-  dark: "https://tiles.openfreemap.org/styles/dark",
+  dark: applyDarkBasemapLabelPolicy(openFreeMapDarkStyle),
 };
 
 export function setGISBasemap(map, basemap) {

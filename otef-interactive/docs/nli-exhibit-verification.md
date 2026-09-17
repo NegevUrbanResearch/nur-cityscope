@@ -35,8 +35,9 @@ browser, display arrangement, console result, and outcome in the result record.
 - [ ] Confirm `http://localhost/otef-interactive/`,
   `http://localhost/otef-interactive/projection.html`, and
   `http://localhost/otef-interactive/remote-controller.html` return `200`.
-- [ ] Confirm the GIS dark basemap uses the keyless OpenFreeMap Dark style and
-  Hebrew labels shape and remain legible. Record any console error.
+- [ ] Confirm the GIS dark basemap uses the local OpenFreeMap Dark style with
+  Hebrew-first white place and road names, and that labels shape and remain
+  legible. Record any console error.
 - [ ] With the timeline off, during playback, or after **Stop**, confirm every
   visible route remains red. Future and revealing routes use the solid red
   route family, and the active reveal follows its reviewed direction.
