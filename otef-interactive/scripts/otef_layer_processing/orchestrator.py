@@ -278,9 +278,8 @@ class ProcessingOrchestrator:
 
     def _begin_output_snapshot(self, pack_ids: List[str]):
         """Capture the files a processing run may publish for recoverable rollback."""
-        parent = self.output_dir.parent
-        parent.mkdir(parents=True, exist_ok=True)
-        snapshot_dir = Path(tempfile.mkdtemp(prefix=".layer-publish-", dir=parent))
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_dir = Path(tempfile.mkdtemp(prefix=".layer-publish-"))
         packs_dir = snapshot_dir / "packs"
         packs_dir.mkdir()
         existing_packs = []
