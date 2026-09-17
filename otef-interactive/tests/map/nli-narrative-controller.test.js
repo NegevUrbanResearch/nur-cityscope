@@ -40,6 +40,7 @@ describe("GIS Segev narrative scene", () => {
     expect(d.personVisual.hide).toHaveBeenCalled();
     expect(d.closeArchive).toHaveBeenCalled();
     expect(d.map.getLayer("nli-narrative-focus-halo")).toBeTruthy();
+    expect(d.map.getLayer("nli-narrative-focus-label").paint["text-halo-color"]).toBe("#000000");
     expect(d.syncTimeline).toHaveBeenCalled();
     expect(d.controller.isActive()).toBe(true);
   });

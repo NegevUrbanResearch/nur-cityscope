@@ -390,7 +390,7 @@ describe("investigation polygon renderer", () => {
       .toHaveLength(1);
   });
 
-  it("lights Nova outline 100 in infiltration red without using Reim 18", () => {
+  it("lights Nova outline 100 in incident red without using Reim 18", () => {
     const sidecar = fs.existsSync(SETTLEMENTS_PATH)
       ? JSON.parse(fs.readFileSync(SETTLEMENTS_PATH, "utf8")).features || []
       : [];

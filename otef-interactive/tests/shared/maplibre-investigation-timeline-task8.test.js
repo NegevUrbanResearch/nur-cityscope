@@ -160,7 +160,7 @@ describe("Task 8 investigation timeline coordinator", () => {
     const flowPaintWrites = () => map.calls.filter(
       (call) => call.method === "setPaintProperty" &&
         call.id === "nli-investigation-line-completed-motion-line" &&
-        call.key === "line-gradient",
+        call.key === "line-dasharray",
     ).length;
     const before = flowPaintWrites();
     now += 16;
@@ -224,7 +224,7 @@ describe("Task 8 investigation timeline coordinator", () => {
     const flowPaintWrites = () => map.calls.filter(
       (call) => call.method === "setPaintProperty" &&
         call.id === "nli-investigation-line-completed-motion-line" &&
-        call.key === "line-gradient",
+        call.key === "line-dasharray",
     ).length;
     expect(map.getLayer("nli-investigation-line-completed-motion-line")).toBeTruthy();
     expect(map.getSource("nli-investigation-line-completed-motion")).toBeTruthy();

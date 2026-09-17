@@ -26,7 +26,7 @@ const CATEGORY_SOURCE_ID = "nli-investigation-polygon-category";
 const CATEGORY_OUTLINE_SOURCE_ID = "nli-investigation-polygon-category-outline";
 const BUFFERED_GRADIENT_SOURCE_ID = "nli-investigation-polygon-buffered-gradient";
 const POLYGON_LAYER_PREFIX = INVESTIGATION_POLYGONS_FULL_ID.replace(/\./g, "__");
-const RED = NLI_VISUAL_TOKENS.incidentRed;
+const SETTLEMENT_OUTLINE = NLI_VISUAL_TOKENS.settlementImpactOutline;
 const NOTES_BATTLE = "מרחב לחימה - קרב";
 const NOTES_KIDNAP = "מוקד חטיפה";
 const NOTES_FIRE = "שריפה";
@@ -447,7 +447,7 @@ export function createInvestigationPolygonRenderer(
         type: "line",
         source: SETTLEMENT_SOURCE_ID,
         paint: {
-          "line-color": RED,
+          "line-color": SETTLEMENT_OUTLINE,
           "line-opacity": 0.95,
           "line-width": 1.8,
         },

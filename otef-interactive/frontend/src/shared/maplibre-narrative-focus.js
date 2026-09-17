@@ -116,7 +116,7 @@ export function createNarrativeFocusRenderer(map, { profile } = {}) {
         },
         paint: {
           "text-color": NLI_VISUAL_TOKENS.annotationInk,
-          "text-halo-color": NLI_VISUAL_TOKENS.incidentRed,
+          "text-halo-color": NLI_VISUAL_TOKENS.annotationHalo,
           "text-halo-width": displayProfile.narrativeFocus.textHaloWidth,
         },
       });

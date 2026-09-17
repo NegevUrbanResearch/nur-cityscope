@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { createExpression, latest } from "@maplibre/maplibre-gl-style-spec";
+import { maplibreLineDashFromLeafletPx } from "../../frontend/src/shared/maplibre-line-dash.js";
 import {
+  buildCompletedRouteFlowDasharray,
   createInvestigationLineRenderer,
   orientInvestigationLineFeature,
 } from "../../frontend/src/shared/maplibre-investigation-lines.js";
@@ -34,6 +35,49 @@ const line = (objectId, timelineMinutes, coordinates, flow_direction = "forward"
   geometry: { type: "LineString", coordinates },
 });
 
+describe("buildCompletedRouteFlowDasharray", () => {
+  const periodPx = 24;
+  const dashPx = 10.8;
+  const gapPx = 13.2;
+  const gisWidth = 1.35;
+  const projectionWidth = 1.35 * 1.2 * 1.15;
+
+  it("uses one pixel period for any caller and does not take geometry", () => {
+    expect(buildCompletedRouteFlowDasharray.length).toBe(3);
+    const gis = buildCompletedRouteFlowDasharray({ progress: 0 }, "full", gisWidth);
+    const projection = buildCompletedRouteFlowDasharray({ progress: 0 }, "full", projectionWidth);
+    expect(gis.reduce((sum, value) => sum + value, 0) * gisWidth).toBeCloseTo(periodPx, 10);
+    expect(projection.reduce((sum, value) => sum + value, 0) * projectionWidth).toBeCloseTo(periodPx, 10);
+    expect(gis).toEqual(maplibreLineDashFromLeafletPx(gisWidth, [dashPx, gapPx], 0));
+    expect(gis[0] * gisWidth).toBeCloseTo(dashPx, 10);
+  });
+
+  it("wraps progress 0 and 1 and phases with a negative offset", () => {
+    const at0 = buildCompletedRouteFlowDasharray({ progress: 0 }, "full", gisWidth);
+    const at1 = buildCompletedRouteFlowDasharray({ progress: 1 }, "full", gisWidth);
+    const atQuarter = buildCompletedRouteFlowDasharray({ progress: 0.25 }, "full", gisWidth);
+    const positive = maplibreLineDashFromLeafletPx(gisWidth, [dashPx, gapPx], 0.25 * periodPx);
+    expect(at0).toEqual(at1);
+    expect(atQuarter).toEqual(maplibreLineDashFromLeafletPx(gisWidth, [dashPx, gapPx], -0.25 * periodPx));
+    expect(atQuarter).not.toEqual(at0);
+    expect(atQuarter).not.toEqual(positive);
+  });
+
+  it("freezes reduced motion at offset 0", () => {
+    const reduced = buildCompletedRouteFlowDasharray({ progress: 0.8 }, "reduced", gisWidth);
+    expect(reduced).toEqual(maplibreLineDashFromLeafletPx(gisWidth, [dashPx, gapPx], 0));
+  });
+
+  it("reuses a bounded set of dasharrays so MapLibre LineAtlas cannot overflow", () => {
+    const keys = new Set();
+    for (let i = 0; i < 96; i += 1) {
+      keys.add(JSON.stringify(buildCompletedRouteFlowDasharray({ progress: i / 96 }, "full", gisWidth)));
+    }
+    expect(keys.size).toBeLessThanOrEqual(periodPx);
+    expect(keys.size).toBeGreaterThan(1);
+  });
+});
+
 describe("investigation line renderer", () => {
   it("mounts stable future, carrier, flowing line, active, and head overlays", () => {
     const map = makeMap();
@@ -51,10 +95,13 @@ describe("investigation line renderer", () => {
     const activeSource = map.addSource.mock.calls.find(([id]) => id === "nli-investigation-line-active");
     expect(activeSource[1].lineMetrics).toBe(true);
     const flowSource = map.addSource.mock.calls.find(([id]) => id === "nli-investigation-line-completed-motion");
-    expect(flowSource[1].lineMetrics).toBe(true);
+    expect(flowSource[1].lineMetrics).toBeUndefined();
     const flowLayer = map.addLayer.mock.calls.find(([layer]) => layer.id === "nli-investigation-line-completed-motion-line")[0];
     expect(flowLayer.type).toBe("line");
-    expect(flowLayer.paint["line-gradient"]).toEqual(expect.any(Array));
+    expect(flowLayer.paint["line-dasharray"]).toEqual(expect.any(Array));
+    expect(flowLayer.paint["line-dasharray-transition"]).toEqual({ duration: 0, delay: 0 });
+    expect(flowLayer.paint["line-gradient"]).toBeUndefined();
+    expect(flowLayer.layout?.["line-cap"]).toBeUndefined();
     const futureLayer = map.addLayer.mock.calls.find(([layer]) => layer.id === "nli-investigation-line-future-line")[0];
     expect(futureLayer.paint["line-color"]).toBe("#c31f4f");
     expect(map.addLayer.mock.calls.map(([layer]) => layer.id)).toEqual([
@@ -66,7 +113,7 @@ describe("investigation line renderer", () => {
     ]);
   });
 
-  it("emits a completed-motion gradient accepted by the installed MapLibre style spec", () => {
+  it("emits a completed-motion dasharray with a 24px period", () => {
     const map = makeMap();
     const renderer = createInvestigationLineRenderer(map, "gis");
 
@@ -74,18 +121,13 @@ describe("investigation line renderer", () => {
 
     const flowLayer = map.addLayer.mock.calls
       .find(([layer]) => layer.id === "nli-investigation-line-completed-motion-line")[0];
-    const parsed = createExpression(
-      flowLayer.paint["line-gradient"],
-      latest.paint_line["line-gradient"],
-    );
+    const dasharray = flowLayer.paint["line-dasharray"];
 
-    expect(parsed.result).toBe("success");
-    expect(flowLayer.paint["line-gradient"]).toEqual([
-      "case",
-      ["<", ["%", ["+", ["*", ["line-progress"], 8], ["-", 1, 0]], 1], 0.45],
-      "#000000",
-      "rgba(0, 0, 0, 0)",
-    ]);
+    expect(flowLayer.paint["line-gradient"]).toBeUndefined();
+    expect(Array.isArray(dasharray)).toBe(true);
+    expect(dasharray.every((value) => typeof value === "number" && Number.isFinite(value))).toBe(true);
+    expect(dasharray.length % 2).toBe(0);
+    expect(dasharray.reduce((sum, value) => sum + value, 0) * 1.35).toBeCloseTo(24, 10);
   });
 
   it("does not register a style reload listener", () => {
@@ -171,16 +213,16 @@ describe("investigation line renderer", () => {
       { activeProgress: 1, completedRouteFlow: { active: false, progress: 0 }, motionMode: "reduced" },
       { futureFeatures: [], completedFeatures: [reverse], activeFeatures: [] },
     );
-    const firstGradient = map.paints.get("nli-investigation-line-completed-motion-line:line-gradient");
+    const firstDash = map.paints.get("nli-investigation-line-completed-motion-line:line-dasharray");
     const first = map.sources.get("nli-investigation-line-completed-motion").setData.mock.calls.at(-1)[0];
     renderer.render(
       { activeProgress: 1, completedRouteFlow: { active: false, progress: 0.8 }, motionMode: "reduced" },
       { futureFeatures: [], completedFeatures: [reverse], activeFeatures: [] },
     );
-    const secondGradient = map.paints.get("nli-investigation-line-completed-motion-line:line-gradient");
+    const secondDash = map.paints.get("nli-investigation-line-completed-motion-line:line-dasharray");
     const second = map.sources.get("nli-investigation-line-completed-motion").setData.mock.calls.at(-1)[0];
     expect(second).toBe(first);
-    expect(secondGradient).toEqual(firstGradient);
+    expect(secondDash).toEqual(firstDash);
     expect(map.paints.get("nli-investigation-line-completed-carrier-line:line-color")).toBe("#c31f4f");
   });
 
@@ -311,7 +353,7 @@ describe("investigation line renderer", () => {
     expect(map.sources.get("nli-investigation-line-completed-carrier").setData).toHaveBeenCalledTimes(1);
     expect(map.sources.get("nli-investigation-line-completed-motion").setData).toHaveBeenCalledTimes(1);
     expect(map.setPaintProperty.mock.calls.slice(paintCallsBeforeAmbient).map((call) => call[1])).toEqual([
-      "line-gradient",
+      "line-dasharray",
     ]);
   });
 

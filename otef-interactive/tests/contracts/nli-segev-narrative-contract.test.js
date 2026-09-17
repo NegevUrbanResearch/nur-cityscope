@@ -115,12 +115,12 @@ describe("NLI Segev narrative cross-surface contract", () => {
     }
   });
 
-  test("renders the same Hebrew focus label from both live controllers without person/PID/archive dependencies", () => {
+  test("renders the Hebrew focus label on GIS only and keeps projection marker-free", () => {
     expect(focusRenderer).toContain("properties: { label }");
     expect(stripComments(gisNarrativeController)).toMatch(/focus\.show\(definition\)/);
-    expect(stripComments(projectionNarrativeController)).toMatch(/focus\.show\(definition\)/);
     expect(stripComments(gisNarrativeController)).toContain('profile: "gis"');
-    expect(stripComments(projectionNarrativeController)).toContain('profile: "projection"');
+    expect(stripComments(projectionNarrativeController)).not.toMatch(/focus\.show\(/);
+    expect(stripComments(projectionNarrativeController)).not.toContain("createNarrativeFocusRenderer");
     for (const [name, source] of Object.entries(narrativeModules)) {
       assertNarrativeModuleIsDependencyFree(name, source);
     }

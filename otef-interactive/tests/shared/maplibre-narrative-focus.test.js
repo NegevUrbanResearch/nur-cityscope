@@ -34,6 +34,7 @@ describe("MapLibre narrative focus renderer", () => {
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.halo).paint["circle-radius"]).toBe(haloRadius);
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.halo).paint["circle-stroke-width"]).toBe(haloStrokeWidth);
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label).layout["text-size"]).toBe(textSize);
+    expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label).paint["text-halo-color"]).toBe("#000000");
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label).paint["text-halo-width"]).toBe(textHaloWidth);
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.label).layout["text-allow-overlap"]).toBe(true);
   });

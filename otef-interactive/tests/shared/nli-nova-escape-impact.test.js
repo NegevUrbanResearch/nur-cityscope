@@ -227,7 +227,7 @@ describe("Nova escape-impact outlines", () => {
     expect(NOVA_ESCAPE_IMPACT_LAYER_ID).not.toBe("nli-investigation-settlement-impact-outline");
   });
 
-  test("infiltration red and fleeing orange stay two distinct strokes", async () => {
+  test("red infiltration outline and fleeing orange stay two distinct strokes", async () => {
     const map = createHostMap();
     maps.push(map);
     const coordinator = createNovaEscapeCoordinator({

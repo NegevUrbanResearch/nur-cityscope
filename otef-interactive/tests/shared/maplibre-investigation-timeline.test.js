@@ -300,7 +300,7 @@ describe("syncInvestigationTimelineToMap", () => {
       .toHaveLength(LINE_FEATURES.length);
     expect(map.setPaintProperty.mock.calls.some(
       ([id, key, value]) => id === "nli-investigation-line-completed-motion-line" &&
-        key === "line-gradient" && JSON.stringify(value).includes("line-progress"),
+        key === "line-dasharray" && Array.isArray(value) && value.length >= 2,
     )).toBe(true);
 
     const projectionMap = makeMap();
