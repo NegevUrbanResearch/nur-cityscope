@@ -1,12 +1,12 @@
-const MIN_ZOOM = 10;
-const MAX_ZOOM = 19;
-const DEFAULT_ZOOM = 15;
+export const MIN_ZOOM = 10;
+export const MAX_ZOOM = 19;
+export const DEFAULT_ZOOM = 15;
 
-function clampZoom(zoom) {
+export function clampZoom(zoom) {
   return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
 }
 
-function normalizeZoomLevel(value, fallback = DEFAULT_ZOOM) {
+export function normalizeZoomLevel(value, fallback = DEFAULT_ZOOM) {
   const z = Number(value);
   if (!Number.isFinite(z)) return fallback;
   return clampZoom(Math.round(z));

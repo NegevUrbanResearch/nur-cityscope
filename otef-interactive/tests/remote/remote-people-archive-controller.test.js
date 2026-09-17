@@ -421,4 +421,47 @@ describe("remote People and archive controller", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  test("openArchive selects the person then sends the shared archive command", async () => {
+    const { createRemotePeopleArchiveController } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    const person = { pid: "11", name: "Ada", hasArchiveRecord: true, datasetVersion: "v1" };
+    const peopleRuntime = {
+      load: vi.fn().mockResolvedValue(undefined),
+      resolve: vi.fn(() => person),
+    };
+    const dataContext = {
+      getInvestigationClock: () => ({ phase: "idle" }),
+      selectPerson: vi.fn().mockResolvedValue({
+        person_selection: { personId: "11", datasetVersion: "v1", revision: 1 },
+      }),
+      archiveWindowCommand: vi.fn().mockResolvedValue({ acknowledged: true }),
+    };
+    const root = document.getElementById("placeSearchGroup");
+    const controller = createRemotePeopleArchiveController({
+      root,
+      input: document.getElementById("placeSearchInput"),
+      clear: document.getElementById("placeSearchClear"),
+      list: document.getElementById("placeSuggestions"),
+      status: document.getElementById("placeSearchStatus"),
+      navigationSection: root,
+      dataContext,
+      peopleRuntime,
+      getMode: () => "people",
+      setMode: () => {},
+      renderSuggestions: () => {},
+      setStatus: () => {},
+      setRootClass: () => {},
+      setHidden: () => {},
+      syncInputDirection: () => {},
+    });
+
+    await controller.openArchive(person);
+
+    expect(dataContext.selectPerson).toHaveBeenCalledWith("11", "v1");
+    expect(dataContext.archiveWindowCommand).toHaveBeenCalledWith("open", "11", "v1", expect.any(String));
+    expect(controller.getAcknowledgedPerson()).toEqual(person);
+    expect(controller.getArchivePhase()).toBe("opening");
+  });
+
 });

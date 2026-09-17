@@ -2488,8 +2488,10 @@ body.otef-remote-shell {
   border-color: var(--color-primary);
 }
 
-.nli-tl-btn svg {
+.nli-tl-btn svg,
+.nli-tl-step svg {
   display: block;
+  fill: currentColor;
 }
 
 .nli-tl-scrub-row {

@@ -357,6 +357,35 @@ function getOrCreateMapState(map) {
   return state;
 }
 
+const PROJECTOR_BLACK_GROUND_FULL_ID = "projector_base.רקע_שחור";
+
+/**
+ * Black ground must sit under settlement outlines, name leaders, and Highway 232.
+ * Pack order currently adds `nli` before `projector_base`, and `רקע_שחור` after `ישובים`.
+ */
+export function orderMapFullLayerIdsForAdd(fullIds) {
+  const ids = [];
+  for (const id of fullIds || []) {
+    if (id != null && String(id).trim() !== "") ids.push(String(id).trim());
+  }
+  const background = ids.filter((id) => id === PROJECTOR_BLACK_GROUND_FULL_ID);
+  const rest = ids.filter((id) => id !== PROJECTOR_BLACK_GROUND_FULL_ID);
+  return [...background, ...rest];
+}
+
+function raiseLoadedFullId(map, fullId, state) {
+  if (!map || typeof map.moveLayer !== "function") return;
+  const mlLayerIds = state.loadedLayerIds.get(fullId) || [];
+  for (const layerId of mlLayerIds) {
+    if (typeof map.getLayer === "function" && !map.getLayer(layerId)) continue;
+    try {
+      map.moveLayer(layerId);
+    } catch {
+      // Style layer was already removed.
+    }
+  }
+}
+
 // Intentionally per-layer only: a full id is enabled if layer.enabled is truthy.
 // group.enabled is not applied here (unlike resolveLayerState / UI gating) so MapLibre
 // sync stays aligned with registry layers that may still be toggled individually.
@@ -768,7 +797,7 @@ function rollbackFullIdAdd(map, fullId, sourceId, state, addedLayerIds, register
  *   applyProjectionHatchPresentation?: boolean,
  *   renderMapLabelsFromStyle?: boolean,
  * }} [layerStyleOptions] - projection passes `{ applyProjectionHatchPresentation: true }` for
- *   denser hatch rasters. GIS and projection both emit `style.labels` for שמות_יישובים (Task 5).
+ *   denser hatch rasters. GIS does not emit `style.labels` for שמות_יישובים; projection does (Task 5).
  */
 function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
   const { loadedSources, loadedLayerIds } = state;
@@ -960,17 +989,20 @@ function syncLayerGroupsToMap(map, layerGroups, layerStyleOptions, stagedMeta) {
     enabledFullIds,
   );
 
-  for (const fullId of enabledFullIds) {
+  for (const fullId of orderMapFullLayerIdsForAdd(enabledFullIds)) {
     if (stagedMeta && state.retainedHiddenFullIds.has(fullId)) {
       if (stageRetainedFullId(map, fullId, state, stagedMeta)) {
         continue;
       }
     }
     if (restoreRetainedFullId(map, fullId, state)) {
+      raiseLoadedFullId(map, fullId, state);
       continue;
     }
     if (!loadedSources.has(fullId)) {
       addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta);
+    } else {
+      raiseLoadedFullId(map, fullId, state);
     }
   }
 }

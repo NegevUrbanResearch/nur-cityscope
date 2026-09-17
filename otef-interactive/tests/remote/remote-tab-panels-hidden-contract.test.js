@@ -28,13 +28,10 @@ test("remote-styles: hidden tab panels are display:none (out of layout)", () => 
   expect(css).toMatch(/\.remote-tab-panel\[hidden\]\s*\{[^}]*display:\s*none/s);
 });
 
-test("remote-styles: disabled workshop tab is faded and placed at the left edge", () => {
+test("remote-styles: National Library tab is placed at the left edge", () => {
   const css = readRemoteStyles();
   expect(css).toMatch(
     /\.remote-bottom-nav__tab\[data-remote-tab="curation"\]\s*\{[^}]*order:\s*-1/s,
-  );
-  expect(css).toMatch(
-    /\.remote-bottom-nav__tab--disabled,\s*\.remote-bottom-nav__tab:disabled\s*\{[^}]*opacity:\s*0\.42/s,
   );
 });
 
@@ -133,4 +130,14 @@ test("remote teardown destroys the LayerSheet-owned narrative lifecycle", () => 
     "utf8",
   );
   expect(source).toMatch(/beforeunload[\s\S]*layerSheetController[\s\S]*\.destroy/);
+});
+
+test("National Library tab launches the staff remote page", () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, "../../frontend/src/remote/remote-controller.js"),
+    "utf8",
+  );
+  expect(source).toMatch(/NLI_STAFF_REMOTE_HREF = "nli-staff-remote\.html"/);
+  expect(source).toMatch(/LAUNCHER_REMOTE_TAB_KEYS = new Set\(\["curation"\]\)/);
+  expect(source).toMatch(/searchParams\.set\("from", "remote"\)/);
 });

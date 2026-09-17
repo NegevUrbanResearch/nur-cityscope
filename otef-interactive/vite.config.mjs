@@ -17,6 +17,7 @@ export default defineConfig({
         launcher: path.resolve(rootDir, "frontend/launcher.html"),
         qr: path.resolve(rootDir, "frontend/qr.html"),
         remote: path.resolve(rootDir, "frontend/remote-controller.html"),
+        nliStaffRemote: path.resolve(rootDir, "frontend/nli-staff-remote.html"),
         curation: path.resolve(rootDir, "frontend/curation.html"),
       },
     },

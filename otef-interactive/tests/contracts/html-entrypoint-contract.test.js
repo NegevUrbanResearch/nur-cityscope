@@ -21,9 +21,25 @@ test("projection/remote/curation pages load single module entrypoints", () => {
     "utf8",
   );
 
+  const nliStaff = fs.readFileSync(
+    path.resolve(__dirname, "../../frontend/nli-staff-remote.html"),
+    "utf8",
+  );
+
   expect(projection.includes('src="./src/entries/projection-main.js"')).toBe(true);
   expect(remote.includes('src="./src/entries/remote-main.js"')).toBe(true);
   expect(curation.includes('src="./src/entries/curation-main.js"')).toBe(true);
+  expect(nliStaff.includes('src="./src/entries/nli-staff-remote-main.js"')).toBe(true);
+  expect(nliStaff).toMatch(/\bid="archiveBtn"/);
+  expect(nliStaff).toMatch(/\bid="freeArchiveBtn"/);
+  expect(nliStaff).toMatch(/\bid="joystickZone"/);
+  expect(nliStaff).toMatch(/\bid="panNorth"/);
+  expect(nliStaff).toMatch(/\bid="staffPackMenus"/);
+  expect(nliStaff).toMatch(/nipplejs@0\.10\.2/);
+  expect(nliStaff).not.toMatch(/\bid="toggleNames"/);
+  expect(nliStaff).not.toMatch(/\bid="toggleRoad"/);
+  expect(nliStaff).not.toMatch(/play_arrow/);
+  expect(nliStaff).not.toMatch(/Material\+Symbols/);
 
   expect(projection.includes('src="js/projection/projection-display.js"')).toBe(false);
   expect(remote.includes('src="js/remote/remote-controller.js"')).toBe(false);
@@ -62,8 +78,9 @@ test("remote-controller shell: Hebrew default, tab regions, and stable mount ids
   expect(remote).toMatch(/\bid="remote-tab-navigation"[^>]*\baria-controls="remote-panel-navigation"/i);
   expect(remote).toMatch(/\bid="remote-tab-layers"[^>]*\baria-controls="remote-panel-layers"/i);
   expect(remote).toMatch(/\bid="remote-tab-curation"[^>]*\baria-controls="remote-panel-curation"/i);
-  expect(remote).toMatch(
-    /\bid="remote-tab-curation"[^>]*\baria-disabled="true"[^>]*\bdisabled\b/i,
+  expect(remote).toMatch(/\bid="remote-tab-curation"[^>]*\bdata-nli-remote-launch="true"/i);
+  expect(remote).not.toMatch(
+    /\bid="remote-tab-curation"[^>]*\bdisabled\b/i,
   );
 
   expect(remote).toMatch(/\bid="remoteLayerHost"/);

@@ -3,7 +3,7 @@ import { LOCALE_EVENT, getLocale, t } from "./remote-locale.js";
 import { createPeopleSearchRuntime } from "./remote-people-search.js";
 import { createRemotePeopleArchiveController } from "./remote-people-archive-controller.js";
 
-function labelForPlace(place) {
+export function labelForPlace(place) {
   const locale = getLocale();
   return (
     (locale === "en" ? place?.name?.en : place?.name?.he) ||
@@ -27,6 +27,13 @@ function setHidden(element, hidden) {
 function syncInputDirection(input) {
   if (!input) return;
   input.dir = input.value.trim() ? "auto" : getLocale() === "he" ? "rtl" : "ltr";
+}
+
+export function placeIsWithinRemoteBounds(place, dataContext) {
+  const centerItm = place?.cameraHint?.centerItm;
+  const bounds = typeof dataContext?.getBounds === "function" ? dataContext.getBounds() : null;
+  if (!centerItm || !bounds) return true;
+  return dataContext._pointInPolygon?.(centerItm, bounds) !== false;
 }
 
 export function initRemotePlaceNavigation(options = {}) {

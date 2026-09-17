@@ -126,6 +126,12 @@ server {
         expires -1;
     }
 
+    location = /otef-interactive/nli-staff-remote.html {
+        alias /usr/share/nginx/html/otef-interactive/frontend/nli-staff-remote.html;
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+        expires -1;
+    }
+
     # Redirect /remote/ to /remote-controller/
     location = /remote {
         return 301 /remote-controller/;

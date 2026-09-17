@@ -11,6 +11,25 @@ describe("remote place navigation", () => {
     vi.unstubAllGlobals();
   });
 
+  test("placeIsWithinRemoteBounds uses the table polygon when a camera hint exists", async () => {
+    const { placeIsWithinRemoteBounds } = await import(
+      "../../frontend/src/remote/remote-place-navigation.js"
+    );
+    expect(placeIsWithinRemoteBounds({}, {})).toBe(true);
+    expect(
+      placeIsWithinRemoteBounds(places[0], {
+        getBounds: () => [[]],
+        _pointInPolygon: vi.fn(() => false),
+      }),
+    ).toBe(false);
+    expect(
+      placeIsWithinRemoteBounds(places[0], {
+        getBounds: () => [[]],
+        _pointInPolygon: vi.fn(() => true),
+      }),
+    ).toBe(true);
+  });
+
   test("focus shows starter suggestions and selection calls dataContext.navigateToPlace", async () => {
     const { initRemotePlaceNavigation } = await import(
       "../../frontend/src/remote/remote-place-navigation.js"

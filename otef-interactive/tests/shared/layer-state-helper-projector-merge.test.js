@@ -168,4 +168,36 @@ describe("getEffectiveLayerGroups: projector_base שמות + Locations_Lines row
     const loc = pb.layers.find((l) => l.id === "Locations_Lines");
     expect(loc?.fullLayerIds).toBeUndefined();
   });
+
+  test("keeps API-only projector_base layers that are missing from the registry", () => {
+    globalThis.layerRegistry = {
+      _initialized: true,
+      getGroups: () => [
+        {
+          id: "projector_base",
+          name: "Projector",
+          layers: [{ id: "שמות_יישובים", name: "שמות" }],
+        },
+      ],
+    };
+    globalThis.OTEFDataContext = {
+      getLayerGroups: () => [
+        {
+          id: "projector_base",
+          enabled: true,
+          layers: [
+            { id: "שמות_יישובים", enabled: true },
+            { id: "ישובים", enabled: true, displayName: "יישובים" },
+          ],
+        },
+      ],
+    };
+
+    const groups = getEffectiveLayerGroups();
+    const pb = groups.find((g) => g.id === "projector_base");
+    const yishuvim = pb.layers.find((l) => l.id === "ישובים");
+    expect(yishuvim).toBeDefined();
+    expect(yishuvim.enabled).toBe(true);
+    expect(yishuvim.name).toBe("יישובים");
+  });
 });

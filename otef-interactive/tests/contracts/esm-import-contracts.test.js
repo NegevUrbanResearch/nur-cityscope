@@ -6,8 +6,8 @@ function read(relPath) {
   return fs.readFileSync(abs, "utf8");
 }
 
-test("remote controller imports orientation transform helper explicitly", () => {
-  const source = read("frontend/src/remote/remote-controller.js");
+test("remote pan controls import orientation transform helper explicitly", () => {
+  const source = read("frontend/src/remote/remote-joystick-controls.js");
   expect(source).toMatch(
     /from\s+["']\.\.\/shared\/orientation-transform\.js["']/,
   );

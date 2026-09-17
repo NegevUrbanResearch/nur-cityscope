@@ -8,7 +8,7 @@ const read = (file) => readFileSync(resolve(root, file), "utf8");
 test("vite builds every OTEF entry and nginx preserves the application routes", () => {
   const vite = read("vite.config.mjs");
   const nginx = read("../nginx/default.conf.template");
-  for (const entry of ["index.html", "projection.html", "projection-config.html", "launcher.html", "qr.html", "remote-controller.html", "curation.html"]) {
+  for (const entry of ["index.html", "projection.html", "projection-config.html", "launcher.html", "qr.html", "remote-controller.html", "nli-staff-remote.html", "curation.html"]) {
     expect(vite).toContain(`frontend/${entry}`);
   }
   expect(vite).toContain('launcher: path.resolve(rootDir, "frontend/launcher.html")');
@@ -18,6 +18,7 @@ test("vite builds every OTEF entry and nginx preserves the application routes", 
   for (const route of [
     "location = /otef-interactive/projection.html",
     "location = /otef-interactive/remote-controller.html",
+    "location = /otef-interactive/nli-staff-remote.html",
     "location /otef-interactive/",
     "location /api/",
     "location /ws/",
