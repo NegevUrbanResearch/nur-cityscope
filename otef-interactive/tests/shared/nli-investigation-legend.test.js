@@ -9,16 +9,100 @@ import {
 } from "../../frontend/src/shared/nli-investigation-legend.js";
 
 describe("nli investigation legend", () => {
-  it("builds three short Hebrew polygon items from category fill tokens", () => {
+  it("builds the authoritative Hebrew labels in battle, fire, kidnapping order", () => {
     const items = investigationPolygonLegendItems();
     expect(items).toHaveLength(3);
-    expect(items.map((item) => item.label)).toEqual(["קרב", "חטיפה", "שריפה"]);
+    expect(items.map((item) => item.label)).toEqual([
+      "מוקד קרב/טבח",
+      "מוקד שריפה",
+      "מוקד חטיפה",
+    ]);
     expect(items.map((item) => item.fill)).toEqual([
       NLI_VISUAL_TOKENS.polygonCategories["מרחב לחימה - קרב"].fill,
-      NLI_VISUAL_TOKENS.polygonCategories["מוקד חטיפה"].fill,
       NLI_VISUAL_TOKENS.polygonCategories["שריפה"].fill,
+      "#ffff73",
     ]);
     expect(items.every((item) => item.shape === "polygon")).toBe(true);
+  });
+
+  it("uses processed class displayLabel and resolved gradient colors", () => {
+    const items = investigationPolygonLegendItems({
+      renderer: "uniqueValue",
+      uniqueValues: {
+        field: "Notes",
+        classes: [
+          {
+            value: "מוקד חטיפה",
+            displayLabel: "מוקד חטיפה",
+            symbol: { symbolLayers: [{ type: "fill", color: "#ffff73" }] },
+          },
+          {
+            value: "שריפה",
+            displayLabel: "מוקד שריפה",
+            symbol: {
+              symbolLayers: [
+                { type: "stroke", color: "#a33d12" },
+                { type: "fill", fillType: "gradient", resolvedColors: ["#7b5622", "#ffc400"] },
+              ],
+            },
+          },
+          {
+            value: "מרחב לחימה - קרב",
+            displayLabel: "תווית מעובדת לקרב",
+            symbol: {
+              symbolLayers: [
+                { type: "stroke", color: "#2a6b62" },
+                { type: "fill", fillType: "gradient", resolvedColors: ["#8e0912", "#fdd1be"] },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(items[0].label).toBe("תווית מעובדת לקרב");
+    expect(items.slice(1).map((item) => item.label)).toEqual(["מוקד שריפה", "מוקד חטיפה"]);
+    expect(items[0].fill).toContain("#8e0912");
+    expect(items[0].fill).toContain("#fdd1be");
+    expect(items[0].fill).toContain("no-repeat");
+    expect(items[0].stroke).toBe("#2a6b62");
+    expect(items[1].fill).toContain("#7b5622");
+    expect(items[1].fill).toContain("#ffc400");
+    expect(items[2].fill).toBe("#ffff73");
+  });
+
+  it("uses an explicit transparent stroke when a processed class has no enabled authored stroke", () => {
+    const items = investigationPolygonLegendItems({
+      renderer: "uniqueValue",
+      uniqueValues: {
+        field: "Notes",
+        classes: [
+          {
+            value: "מרחב לחימה - קרב",
+            displayLabel: "מוקד קרב/טבח",
+            symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", resolvedColors: ["#111111"] }] },
+          },
+          {
+            value: "שריפה",
+            displayLabel: "מוקד שריפה",
+            symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", resolvedColors: ["#222222"] }, { type: "stroke", enable: true, color: "#6e6e6e" }] },
+          },
+          {
+            value: "מוקד חטיפה",
+            displayLabel: "מוקד חטיפה",
+            symbol: { symbolLayers: [{ type: "fill", color: "#ffff73" }] },
+          },
+        ],
+      },
+    });
+    expect(items.map((item) => item.stroke)).toEqual(["transparent", "#6e6e6e", "transparent"]);
+  });
+
+  it("keeps the fallback category pairs in one explicit ordered array", () => {
+    const source = readFileSync(
+      path.resolve(here, "../../frontend/src/shared/nli-investigation-legend.js"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/NLI_LEGEND_SHORT_LABELS\s*=\s*Object\.freeze\(\{/);
   });
 
   it("enables when nli.investigation_polygons is on", () => {

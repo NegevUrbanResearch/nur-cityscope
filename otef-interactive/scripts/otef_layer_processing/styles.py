@@ -1,6 +1,7 @@
 import json
 import re
 import logging
+from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from .models import StyleConfig
@@ -10,6 +11,17 @@ logger = logging.getLogger(__name__)
 # Conversion factor from Points (ArcGIS) to CSS Pixels (Web)
 # 1pt = 1/72 inch, 1px = 1/96 inch -> 96/72 = 1.333
 PT_TO_PX = 96 / 72
+
+
+class UnsupportedCimGradientFillError(ValueError):
+    """The supplied parser subset does not support this enabled CIM gradient fill."""
+
+
+_POLYGON_DISPLAY_LABELS = {
+    "מרחב לחימה - קרב": "מוקד קרב/טבח",
+    "שריפה": "מוקד שריפה",
+    "מוקד חטיפה": "מוקד חטיפה",
+}
 
 
 def normalize_name(name: str) -> str:
@@ -170,6 +182,124 @@ def cim_color_opacity(color: object, default: float = 1.0) -> float:
     if len(values) > 3:
         return normalize_opacity(values[3])
     return default
+
+
+def _gradient_fill_error(message: str) -> UnsupportedCimGradientFillError:
+    return UnsupportedCimGradientFillError(f"UnsupportedCimGradientFillError: {message}")
+
+
+def _is_default_rgb_color_space(color_space: object) -> bool:
+    if not isinstance(color_space, dict) or color_space.get("type") != "CIMICCColorSpace":
+        return False
+    return color_space.get("url") == "Default RGB" or color_space.get("name") == "Default RGB"
+
+
+def _is_default_rgb_color(color: object) -> bool:
+    if not isinstance(color, dict) or color.get("type") != "CIMRGBColor":
+        return False
+    return _is_default_rgb_color_space(color.get("colorSpace"))
+
+
+def _gradient_fill_ir(layer: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert the supported Buffered/Discrete multipart CIM gradient fill to IR."""
+    if not isinstance(layer, dict) or layer.get("type") != "CIMGradientFill":
+        raise _gradient_fill_error("expected CIMGradientFill")
+    if not layer.get("enable", True):
+        return {}
+    if (
+        layer.get("gradientMethod") != "Buffered"
+        or layer.get("gradientType") != "Discrete"
+        or layer.get("gradientSize") != 75
+        or layer.get("gradientSizeUnits") != "Relative"
+    ):
+        raise _gradient_fill_error("only Buffered/Discrete/Relative 75 is supported")
+
+    ramp = layer.get("colorRamp")
+    if not isinstance(ramp, dict) or ramp.get("type") != "CIMMultipartColorRamp":
+        raise _gradient_fill_error("gradient fill requires a multipart color ramp")
+    if not _is_default_rgb_color_space(ramp.get("colorSpace")):
+        raise _gradient_fill_error("multipart ramp requires the Default RGB color space")
+    ramps = ramp.get("colorRamps")
+    weights = ramp.get("weights")
+    if not isinstance(ramps, list) or not ramps or not isinstance(weights, list):
+        raise _gradient_fill_error("multipart ramp is missing ramps or weights")
+    if len(ramps) != len(weights):
+        raise _gradient_fill_error("multipart ramp weights do not match ramps")
+    if any(
+        not isinstance(part, dict)
+        or part.get("type") != "CIMLinearContinuousColorRamp"
+        or not _is_default_rgb_color_space(part.get("colorSpace"))
+        or not _is_default_rgb_color(part.get("fromColor"))
+        or not _is_default_rgb_color(part.get("toColor"))
+        or len(part["fromColor"].get("values") or []) < 3
+        or len(part["toColor"].get("values") or []) < 3
+        for part in ramps
+    ):
+        raise _gradient_fill_error("multipart ramp contains an unsupported segment")
+    try:
+        interval = int(layer.get("interval"))
+    except (TypeError, ValueError):
+        interval = 0
+    if interval <= 0:
+        raise _gradient_fill_error("gradient interval must be positive")
+    try:
+        numeric_weights = [float(weight) for weight in weights]
+    except (TypeError, ValueError):
+        raise _gradient_fill_error("multipart ramp weights must be numeric")
+    if any(weight < 0 for weight in numeric_weights) or sum(numeric_weights) <= 0:
+        raise _gradient_fill_error("multipart ramp weights must be non-negative")
+
+    # ArcGIS's exact interpolation is not assumed here. This is the selected web
+    # approximation: interpolate each RGB channel at weighted interval midpoints.
+    total_weight = sum(numeric_weights)
+    cumulative = []
+    running = 0.0
+    for weight in numeric_weights:
+        running += weight / total_weight
+        cumulative.append(running)
+
+    def interpolate(t: float) -> str:
+        segment_index = next(
+            (index for index, end in enumerate(cumulative) if t <= end),
+            len(ramps) - 1,
+        )
+        start = 0.0 if segment_index == 0 else cumulative[segment_index - 1]
+        span = cumulative[segment_index] - start
+        local_t = 0.0 if span <= 0 else (t - start) / span
+        part = ramps[segment_index]
+        from_values = part["fromColor"]["values"]
+        to_values = part["toColor"]["values"]
+        channels = [
+            int(round(float(a) + (float(b) - float(a)) * local_t))
+            for a, b in zip(from_values[:3], to_values[:3])
+        ]
+        return f"#{channels[0]:02x}{channels[1]:02x}{channels[2]:02x}"
+
+    colors = [interpolate((index + 0.5) / interval) for index in range(interval)]
+    opacity = cim_color_opacity(ramps[0].get("fromColor"), 1.0)
+    # Preserve the authored CIM fields alongside the renderer-facing fields.
+    return {
+        "type": "fill",
+        "fillType": "gradient",
+        "enable": True,
+        "angle": layer.get("angle", 0),
+        "gradientMethod": layer["gradientMethod"],
+        "gradientSize": layer["gradientSize"],
+        "gradientSizeUnits": layer["gradientSizeUnits"],
+        "gradientType": layer["gradientType"],
+        "interval": interval,
+        "colorRamp": deepcopy(ramp),
+        "resolvedColors": colors,
+        "opacity": opacity,
+    }
+
+
+def _css_stroke_width(layer: Dict[str, Any], minimum_px: bool = False) -> float:
+    try:
+        width = float(layer.get("width", 1.0)) * PT_TO_PX
+    except (TypeError, ValueError):
+        width = PT_TO_PX
+    return max(1.0, width) if minimum_px and layer.get("enable", True) else width
 
 
 def extract_symbol_layers_recursive(symbol_obj: Dict, depth: int = 0) -> List[Dict]:
@@ -370,11 +500,27 @@ def parse_acrossline_from_lyrx(source) -> Dict[str, Any]:
 
 
 def extract_simplified_style(symbol_layers: List[Dict]) -> Dict:
+    # Validate every enabled gradient first, even when a preceding solid fill
+    # would otherwise prevent this layer from being inspected below.
+    for layer in symbol_layers:
+        if (
+            isinstance(layer, dict)
+            and layer.get("type") == "CIMGradientFill"
+            and layer.get("enable", True)
+        ):
+            _gradient_fill_ir(layer)
+
     fill_color = None
     fill_opacity = 1.0
     stroke_color = None
     stroke_width = 1.0
     style = {}
+    buffered_gradient = any(
+        isinstance(layer, dict)
+        and layer.get("type") == "CIMGradientFill"
+        and layer.get("enable", True)
+        for layer in symbol_layers
+    )
 
     for layer in symbol_layers:
         if not layer.get("enable", True):
@@ -399,7 +545,7 @@ def extract_simplified_style(symbol_layers: List[Dict]) -> Dict:
         if layer_type == "CIMSolidStroke" and stroke_color is None:
             color_obj = layer.get("color", {})
             stroke_color = cim_color_to_hex(color_obj)
-            stroke_width = layer.get("width", 1.0) * PT_TO_PX  # Scale line width
+            stroke_width = _css_stroke_width(layer, minimum_px=buffered_gradient)
 
             # Check for dashed effects. Missing dashTemplate is omitted, not [].
             effects = layer.get("effects", [])
@@ -409,6 +555,11 @@ def extract_simplified_style(symbol_layers: List[Dict]) -> Dict:
                     if template:
                         style["dashArray"] = template
                     break
+
+        if layer_type == "CIMGradientFill" and fill_color is None:
+            gradient = _gradient_fill_ir(layer)
+            fill_color = gradient["resolvedColors"][0]
+            fill_opacity = gradient["opacity"]
 
         if layer_type == "CIMGradientStroke" and stroke_color is None:
             ramp = layer.get("colorRamp") or {}
@@ -508,6 +659,12 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
         return {}
 
     symbol_layers_ir: List[Dict[str, Any]] = []
+    buffered_gradient = any(
+        isinstance(layer, dict)
+        and layer.get("type") == "CIMGradientFill"
+        and layer.get("enable", True)
+        for layer in symbol_layers
+    )
 
     for layer in symbol_layers:
         if not layer.get("enable", True):
@@ -565,7 +722,7 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
             color_obj = layer.get("color", {})
             stroke_color = cim_color_to_hex(color_obj)
             opacity = cim_color_opacity(color_obj)
-            width = layer.get("width", 1.0) * PT_TO_PX
+            width = _css_stroke_width(layer, minimum_px=buffered_gradient)
 
             dash_array = None
             effects = layer.get("effects", [])
@@ -582,9 +739,18 @@ def _build_advanced_symbol_from_layers(symbol_layers: List[Dict]) -> Dict[str, A
                     "color": stroke_color,
                     "width": width,
                     "opacity": opacity,
+                    "lineCap": _line_join_cap(layer.get("capStyle")),
+                    "lineJoin": _line_join_cap(layer.get("joinStyle")),
+                    "miterLimit": layer.get("miterLimit", 10),
+                    "enable": bool(layer.get("enable", True)),
                     "dash": {"array": dash_array} if dash_array else None,
                 }
             )
+
+        elif ltype == "CIMGradientFill":
+            # Validate and resolve the supported fill before the old simplifier can
+            # substitute its gray fallback for an unrecognized layer.
+            symbol_layers_ir.append(_gradient_fill_ir(layer))
 
         elif ltype == "CIMGradientStroke":
             # AcrossLine ribbon IR. Do not emit MapLibre line-gradient or empty dash arrays.
@@ -987,6 +1153,12 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
         renderer="simple",
         labels=label_config,
         scale_range=scale_range,
+        use_default_symbol=renderer.get("useDefaultSymbol")
+        if "useDefaultSymbol" in renderer
+        else None,
+        is_default_symbol_visible=renderer.get("isDefaultSymbolVisible")
+        if "isDefaultSymbolVisible" in renderer
+        else None,
     )
 
     if renderer_type == "CIMUniqueValueRenderer":
@@ -1022,14 +1194,16 @@ def parse_lyrx_style(lyrx_path: Path) -> Optional[StyleConfig]:
                         all_layers
                     )
 
-                    style.unique_values["classes"].append(
-                        {
-                            "value": value,
-                            "label": cls.get("label", ""),
-                            "style": class_style,
-                            "advancedSymbol": class_advanced_symbol or None,
-                        }
-                    )
+                    class_entry = {
+                        "value": value,
+                        "label": cls.get("label", ""),
+                        "style": class_style,
+                        "advancedSymbol": class_advanced_symbol or None,
+                    }
+                    display_label = _POLYGON_DISPLAY_LABELS.get(str(value))
+                    if display_label is not None:
+                        class_entry["displayLabel"] = display_label
+                    style.unique_values["classes"].append(class_entry)
 
             # If we didn't find any classes, default to simple renderer
             if not style.unique_values["classes"]:

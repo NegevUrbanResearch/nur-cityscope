@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import argparse
 import hashlib
 import json
 import math
@@ -1669,7 +1670,14 @@ def prepare_nli_pack(
     fleeing_lyrx_zip: Optional[Path] = None,
     fleeing_geojson_sha256: Optional[str] = None,
     fleeing_lyrx_sha256: Optional[str] = None,
+    investigation_polygons_lyrx: Optional[Path] = None,
 ) -> Dict[str, Any]:
+    authored_polygon_lyrx = Path(investigation_polygons_lyrx) if investigation_polygons_lyrx is not None else None
+    if authored_polygon_lyrx is not None and not authored_polygon_lyrx.is_file():
+        raise FileNotFoundError(
+            f"Investigation polygon .lyrx does not exist: {authored_polygon_lyrx}"
+        )
+
     gis_dir = pack_dir / "gis"
     styles_dir = pack_dir / "styles"
     gis_dir.mkdir(parents=True, exist_ok=True)
@@ -1738,7 +1746,10 @@ def prepare_nli_pack(
             "jittered": 0,
             "timeline_minutes_written": timed,
         }
-    _write_json(styles_dir / "investigation_polygons.lyrx", simple_polygon_lyrx())
+    if authored_polygon_lyrx is not None:
+        shutil.copyfile(authored_polygon_lyrx, styles_dir / "investigation_polygons.lyrx")
+    else:
+        _write_json(styles_dir / "investigation_polygons.lyrx", simple_polygon_lyrx())
     _write_json(styles_dir / "people.lyrx", unique_value_point_lyrx("status", OCT7_STATUS_CLASSES))
     _write_json(styles_dir / "lines.lyrx", simple_line_lyrx())
     _write_json(styles_dir / "people_names.lyrx", labels_only_point_lyrx())
@@ -1785,6 +1796,13 @@ def prepare_nli_pack(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--investigation-polygons-lyrx",
+        type=Path,
+        help="Copy an authored investigation polygon .lyrx into the NLI source pack.",
+    )
+    args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     zip_path = default_nli_zip_path(repo)
     pack_dir = repo / "otef-interactive" / "public" / "source" / "layers" / "nli"
@@ -1811,6 +1829,7 @@ def main() -> None:
         fleeing_lyrx_zip=fleeing_lyrx_zip if fleeing_lyrx_zip.is_file() else None,
         fleeing_geojson_sha256=FLEEING_GEOJSON_ZIP_SHA256,
         fleeing_lyrx_sha256=FLEEING_LYRX_ZIP_SHA256,
+        investigation_polygons_lyrx=args.investigation_polygons_lyrx,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

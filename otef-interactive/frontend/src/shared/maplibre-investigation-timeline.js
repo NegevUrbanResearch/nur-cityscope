@@ -37,6 +37,8 @@ import {
   buildInvestigationSettlementIndexes,
   createInvestigationTimelineData,
   ensureInvestigationLayerFeatures,
+  ensureInvestigationPolygonStyle,
+  ensureInvestigationBufferedGradient,
   ensureInvestigationSettlementFeatures,
   getInvestigationTimelineDataDiagnostics,
   investigationRouteBeats,
@@ -709,6 +711,9 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
       : state.polygonRenderer?.renderSettlement;
     renderSettlement?.call(state.polygonRenderer, polygonFrame, {
       polygonFeatures: state.data.polygonFeatures,
+      polygonStyle: state.data.polygonStyle,
+      bufferedGradientFeatures: state.data.bufferedGradientFeatures,
+      bufferedGradientSidecarStatus: state.data.bufferedGradientSidecarStatus,
       locationToOutlineObjectId: state.data.locationToOutlineObjectId,
       settlementFeatures: state.data.settlementFeatures,
       settlementFeaturesByOutlineId: state.data.settlementFeaturesByOutlineId,
@@ -1137,6 +1142,16 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
         isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
       });
       if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+      await ensureInvestigationPolygonStyle(state.data, deps, {
+        request: syncRequest,
+        isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+      });
+      if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+      await ensureInvestigationBufferedGradient(state.data, deps, {
+        request: syncRequest,
+        isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+      });
+      if (isStaleTimelineSyncRequest(map, syncRequest)) return;
     }
     if (polygonsVisible || linesVisible || novaSiteOverlay || narrativeSettlementOutlineId(state) != null) {
       await ensureInvestigationSettlementFeatures(state.data, deps, {
@@ -1190,6 +1205,16 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
 
   if (nextMembership.polygonOn || novaSiteOverlay) {
     await ensureInvestigationLayerFeatures(state.data, deps, "polygonFeatures", INVESTIGATION_POLYGONS_FULL_ID, {
+      request: syncRequest,
+      isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+    });
+    if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+    await ensureInvestigationPolygonStyle(state.data, deps, {
+      request: syncRequest,
+      isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+    });
+    if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+    await ensureInvestigationBufferedGradient(state.data, deps, {
       request: syncRequest,
       isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
     });

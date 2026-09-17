@@ -345,6 +345,32 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
   });
 
+  it("loads the processed polygon style and sidecar before rendering the timeline", async () => {
+    const map = makeMap();
+    const battle = { ...INVESTIGATION_FEATURES[0], properties: { ...INVESTIGATION_FEATURES[0].properties, Notes: "מרחב לחימה - קרב" }, geometry: { type: "Polygon", coordinates: [[[34, 31], [34.01, 31], [34.01, 31.01], [34, 31]]] } };
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [{ value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+        { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.4 },
+        { type: "stroke", color: "#654321", width: 2, opacity: 0.8 },
+      ] } }] },
+    };
+    const sidecar = { type: "FeatureCollection", features: [{ ...battle, properties: { ...battle.properties, __cim_gradient_band: 0 } }] };
+    await syncInvestigationTimelineToMap(map, idleNliClock(), [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }], {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [battle] },
+      getLayerStyle: () => style,
+      getLayerConfig: () => ({ groupId: "nli", resources: { bufferedGradient: { file: "gradient.geojson", format: "geojson" } } }),
+      fetchJson: async () => sidecar,
+      getLayerDataUrl: () => null,
+      now: () => 0,
+    });
+    expect(map.getSource("nli-investigation-polygon-buffered-gradient")).toBeTruthy();
+    expect(map.getSource("nli-investigation-polygon-buffered-gradient").setData.mock.calls.at(-1)[0].features).toHaveLength(1);
+    const fill = map.getLayer("nli-investigation-polygon-category-fill-battle");
+    expect(fill.paint["fill-color"]).toBe("#123456");
+    expect(map.getLayer("nli-investigation-polygon-category-line-battle").paint["line-color"]).toBe("#654321");
+  });
+
   it("keeps the authored Be'eri outline visible during narrative focus even when ordinary investigation layers are hidden", async () => {
     const map = makeOrientationMap();
     const hidden = [{ id: "nli", layers: [

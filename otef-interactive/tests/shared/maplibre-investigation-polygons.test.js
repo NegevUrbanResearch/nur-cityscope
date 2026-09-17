@@ -76,6 +76,144 @@ const frame = (achievedPolygonBeats, extra = {}) => ({
 });
 
 describe("investigation polygon renderer", () => {
+  it("renders processed buffered bands outside-to-inside and uses original fire outlines", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {}, { dataVersion: "v1" });
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const fire = polygon(2, 400, "עלומים", "שריפה");
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [
+        { value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+          { type: "fill", fillType: "gradient", interval: 2, resolvedColors: ["#111111", "#222222"], opacity: 0.5 },
+          { type: "stroke", color: "#333333", width: 2, opacity: 0.7 },
+        ] } },
+        { value: "שריפה", symbol: { symbolLayers: [
+          { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#444444"], opacity: 0.6 },
+          { type: "stroke", color: "#555555", width: 3, opacity: 0.8 },
+        ] } },
+      ] },
+    };
+    const band = { ...battle, properties: { ...battle.properties, __cim_gradient_band: 0 } };
+    renderer.render(frame([400], { motionMode: "full" }), {
+      polygonFeatures: [battle, fire],
+      bufferedGradientFeatures: [band],
+      polygonStyle: style,
+      bufferedGradientSidecarStatus: "ready",
+    });
+    const fills = map.addLayer.mock.calls
+      .map(([layer]) => layer)
+      .filter((layer) => layer.type === "fill" && layer.id.includes("battle"));
+    expect(fills[0].paint["fill-color"]).toBe("#111111");
+    expect(fills[0].filter).toEqual(["all", ["==", ["get", "Notes"], "מרחב לחימה - קרב"], ["==", ["get", "__cim_gradient_band"], 0]]);
+    const fireOutline = map.addLayer.mock.calls
+      .map(([layer]) => layer)
+      .find((layer) => layer.type === "line" && layer.id.includes("fire"));
+    expect(fireOutline.paint["line-color"]).toBe("#555555");
+    expect(fireOutline.source).toBe("nli-investigation-polygon-category-outline");
+    expect(fireOutline.paint["line-gradient"]).toBeUndefined();
+  });
+
+  it("keeps kidnapping solid when a declared buffered sidecar fails", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const kidnap = polygon(1, 400, "עלומים", "מוקד חטיפה");
+    renderer.render(frame([400]), {
+      polygonFeatures: [kidnap],
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [
+        { value: "מרחב לחימה - קרב", symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 2, resolvedColors: ["#111", "#222"], opacity: 0.5 }] } },
+        { value: "מוקד חטיפה", symbol: { symbolLayers: [{ type: "fill", fillType: "solid", color: "#ffff73", opacity: 0.55 }] } },
+      ] } },
+      bufferedGradientSidecarStatus: "failed",
+    });
+    const kidnapLayer = map.addLayer.mock.calls.map(([layer]) => layer)
+      .find((layer) => layer.id === "nli-investigation-polygon-category-fill-kidnap");
+    expect(kidnapLayer.paint["fill-color"]).toBe("#ffff73");
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0);
+  });
+
+  it("composes projection dimming with processed authored opacity", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    renderer.render(frame([400], { projectionNovaDim: true }), {
+      polygonFeatures: [battle],
+      bufferedGradientFeatures: [{ ...battle, properties: { ...battle.properties, __cim_gradient_band: 0 } }],
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב", symbol: { symbolLayers: [{
+          type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.5,
+        }] },
+      }] } },
+    });
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toEqual([
+      "case",
+      ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
+      0.5,
+      ["*", 0.5, 0.28],
+    ]);
+  });
+
+  it("keeps failed battle and fire fills transparent during projection dimming", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const fire = polygon(2, 400, "עלומים", "שריפה");
+    const classes = ["מרחב לחימה - קרב", "שריפה"].map((value) => ({
+      value,
+      symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.5 }] },
+    }));
+    renderer.render(frame([400], { projectionNovaDim: true }), {
+      polygonFeatures: [battle, fire],
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes } },
+      bufferedGradientSidecarStatus: "failed",
+    });
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-fire:fill-opacity")).toBe(0);
+  });
+
+  it("composes processed outline opacity with projection dimming", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    renderer.render(frame([400], { projectionNovaDim: true }), {
+      polygonFeatures: [battle],
+      bufferedGradientFeatures: [{ ...battle, properties: { ...battle.properties, __cim_gradient_band: 0 } }],
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+          { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.5 },
+          { type: "stroke", color: "#654321", width: 2, opacity: 0.6 },
+        ] },
+      }] } },
+    });
+    expect(map.paints.get("nli-investigation-polygon-category-line-battle:line-opacity")).toEqual([
+      "case",
+      ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
+      0.6,
+      ["*", 0.6, 0.28],
+    ]);
+  });
+
+  it("never routes a gradient kidnapping class through sidecar geometry", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const kidnap = polygon(1, 400, "עלומים", "מוקד חטיפה");
+    renderer.render(frame([400]), {
+      polygonFeatures: [kidnap],
+      bufferedGradientFeatures: [{ ...kidnap, properties: { ...kidnap.properties, __cim_gradient_band: 0 } }],
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מוקד חטיפה", symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#abcdef"], opacity: 0.5 }] },
+      }] } },
+    });
+    const kidnapLayer = map.addLayer.mock.calls.map(([layer]) => layer)
+      .find((layer) => layer.id === "nli-investigation-polygon-category-fill-kidnap");
+    expect(kidnapLayer.source).toBe("nli-investigation-polygon-category");
+    expect(kidnapLayer.paint["fill-color"]).toBe("#ffff73");
+    expect(map.addLayer.mock.calls.map(([layer]) => layer)
+      .filter((layer) => layer.type === "fill" && layer.source === "nli-investigation-polygon-buffered-gradient" && layer.id.includes("kidnap"))).toHaveLength(0);
+  });
   it("uses the same impact outline width on GIS and projection profiles", () => {
     const gisMap = makeMap();
     const projMap = makeMap();
@@ -166,6 +304,19 @@ describe("investigation polygon renderer", () => {
     expect(feats[0].geometry.type).toBe("LineString");
     const coords = feats[0].geometry.coordinates;
     expect(coords[0]).toEqual(coords[coords.length - 1]);
+  });
+
+  it("writes polygon hole rings to the authored outline source", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const fire = polygon(1, 400, "עלומים", "שריפה");
+    fire.geometry.coordinates.push([
+      [34.002, 31.002], [34.008, 31.002], [34.008, 31.008], [34.002, 31.008], [34.002, 31.002],
+    ]);
+    renderer.render(frame([400]), { polygonFeatures: [fire] });
+    const outline = map.sources.get("nli-investigation-polygon-category-outline");
+    const feats = outline.setData.mock.calls.at(-1)[0].features;
+    expect(feats).toHaveLength(2);
   });
 
   it("warns once per distinct unmatched Notes string", () => {

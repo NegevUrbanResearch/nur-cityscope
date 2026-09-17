@@ -658,6 +658,41 @@ class CatalogLinkTests(unittest.TestCase):
 
 
 class PreparePackTests(unittest.TestCase):
+    def test_prepare_explicit_investigation_lyrx_is_copied_byte_for_byte(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = _nli_zip_with_polygons(tmp, {"type": "FeatureCollection", "features": []})
+        pack_dir = tmp / "nli"
+        source_lyrx = tmp / "authored.lyrx"
+        source_bytes = b"{\n  \"authored\": true,\n  \"bytes\": \"\\xff\"\n}\n"
+        source_lyrx.write_bytes(source_bytes)
+
+        prepare_nli_pack(
+            zip_path,
+            pack_dir,
+            authorities_path=tmp / "missing.json",
+            investigation_polygons_lyrx=source_lyrx,
+        )
+
+        self.assertEqual(
+            (pack_dir / "styles" / "investigation_polygons.lyrx").read_bytes(),
+            source_bytes,
+        )
+
+    def test_prepare_missing_explicit_investigation_lyrx_fails_before_pack_writes(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = _nli_zip_with_polygons(tmp, {"type": "FeatureCollection", "features": []})
+        pack_dir = tmp / "nli"
+
+        with self.assertRaises(FileNotFoundError):
+            prepare_nli_pack(
+                zip_path,
+                pack_dir,
+                authorities_path=tmp / "missing.json",
+                investigation_polygons_lyrx=tmp / "missing.lyrx",
+            )
+
+        self.assertFalse(pack_dir.exists())
+
     def test_merge_popup_config_preserves_other_packs(self):
         tmp = Path(tempfile.mkdtemp())
         popup = tmp / "popup-config.json"

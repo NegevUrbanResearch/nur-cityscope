@@ -136,14 +136,57 @@ describe("legendLayerFromConfig uniqueValue", () => {
       fullId: "nli.investigation_polygons",
     });
     expect(layer.items).toHaveLength(3);
-    expect(layer.items.map((item) => item.label)).toEqual(["קרב", "חטיפה", "שריפה"]);
+    expect(layer.items.map((item) => item.label)).toEqual([
+      "מוקד קרב/טבח",
+      "מוקד שריפה",
+      "מוקד חטיפה",
+    ]);
     expect(layer.items.map((item) => item.fill)).toEqual([
       NLI_VISUAL_TOKENS.polygonCategories["מרחב לחימה - קרב"].fill,
-      NLI_VISUAL_TOKENS.polygonCategories["מוקד חטיפה"].fill,
       NLI_VISUAL_TOKENS.polygonCategories["שריפה"].fill,
+      "#ffff73",
     ]);
     expect(layer.items.every((item) => item.shape === "polygon")).toBe(true);
     expect(layer.items.map((item) => item.fill)).not.toContain("#f79009");
-    expect(NLI_LEGEND_SHORT_LABELS["מרחב לחימה - קרב"]).toBe("קרב");
+    expect(NLI_LEGEND_SHORT_LABELS["מרחב לחימה - קרב"]).toBe("מוקד קרב/טבח");
+  });
+
+  it("uses raw processed style classes for gradient swatches", () => {
+    const config = {
+      name: "investigation_polygons",
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        defaultStyle: { fillColor: "#808080" },
+      },
+    };
+    const rawStyle = {
+      renderer: "uniqueValue",
+      uniqueValues: {
+        field: "Notes",
+        classes: [
+          {
+            value: "מרחב לחימה - קרב",
+            displayLabel: "מוקד קרב/טבח",
+            symbol: {
+              symbolLayers: [
+                { type: "stroke", color: "#123456" },
+                { type: "fill", fillType: "gradient", resolvedColors: ["#111111", "#222222", "#333333"] },
+              ],
+            },
+          },
+          { value: "שריפה", displayLabel: "מוקד שריפה", symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", resolvedColors: ["#444444", "#555555"] }] } },
+          { value: "מוקד חטיפה", displayLabel: "מוקד חטיפה", symbol: { symbolLayers: [{ type: "fill", color: "#ffff73" }] } },
+        ],
+      },
+    };
+    const layer = legendLayerFromConfig(config, { id: "investigation_polygons" }, {
+      fullId: "nli.investigation_polygons",
+      rawStyle,
+    });
+    expect(layer.items[0].fill).toContain("#111111");
+    expect(layer.items[0].fill).toContain("#333333");
+    expect(layer.items[0].fill).not.toContain("#808080");
+    expect(layer.items[0].stroke).toBe("#123456");
   });
 });

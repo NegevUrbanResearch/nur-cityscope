@@ -454,11 +454,12 @@ function shouldIncludeLayerInLegend(groupId, layerId, surface = "gis") {
  */
 function legendLayerFromConfig(config, layer, options = {}) {
   if (options.fullId === "nli.investigation_polygons") {
+    const rawStyle = options.rawStyle || null;
     return {
       id: layer.id,
       name: config.ui?.legendLabel || config.name || layer.id,
       geometryType: config.geometryType || "polygon",
-      items: investigationPolygonLegendItems(),
+      items: investigationPolygonLegendItems(rawStyle),
       singleRowMultiSymbol: false,
     };
   }
@@ -596,7 +597,15 @@ async function buildLegendModel(options = {}) {
           : [];
       }
 
-      const built = legendLayerFromConfig(config, layer, { distinctLandUse, fullId });
+      let rawStyle = null;
+      if (fullId === "nli.investigation_polygons" && registry && typeof registry.getPackStyleJsonForLayer === "function") {
+        try {
+          rawStyle = registry.getPackStyleJsonForLayer(fullId);
+        } catch (_) {
+          rawStyle = null;
+        }
+      }
+      const built = legendLayerFromConfig(config, layer, { distinctLandUse, fullId, rawStyle });
       if (!built || (built.items || []).length === 0) continue;
 
       packLayers.push(built);

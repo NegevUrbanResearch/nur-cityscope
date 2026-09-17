@@ -131,6 +131,8 @@ class StyleConfig:
     complexity: str = "simple"  # "simple" | "advanced"
     advanced_symbol: Optional[Dict] = None
     animation: Optional[Dict[str, Any]] = None
+    use_default_symbol: Optional[bool] = None
+    is_default_symbol_visible: Optional[bool] = None
 
     def to_dict(self) -> Dict[str, Any]:
         # Single source of truth for drawing: defaultSymbol only (no defaultStyle/advancedSymbol).
@@ -142,6 +144,10 @@ class StyleConfig:
             "defaultSymbol": self.advanced_symbol
             or _simple_style_to_symbol_ir(self.default_style),
         }
+        if self.use_default_symbol is not None:
+            d["useDefaultSymbol"] = self.use_default_symbol
+        if self.is_default_symbol_visible is not None:
+            d["isDefaultSymbolVisible"] = self.is_default_symbol_visible
         if self.unique_values:
             classes = self.unique_values.get("classes", [])
             classes_out = []
@@ -154,6 +160,11 @@ class StyleConfig:
                     {
                         "value": cls.get("value"),
                         "label": cls.get("label", ""),
+                        **(
+                            {"displayLabel": cls["displayLabel"]}
+                            if "displayLabel" in cls
+                            else {}
+                        ),
                         "symbol": symbol,
                     }
                 )

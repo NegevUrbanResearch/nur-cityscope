@@ -11,6 +11,10 @@ import {
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 import { buildDirectionalFlowGradient } from "./maplibre-investigation-lines.js";
 import {
+  BUFFERED_GRADIENT_BAND_PROPERTY,
+  buildBufferedGradientRenderPlan,
+} from "./cim-buffered-gradient.js";
+import {
   NOVA_PARALLEL_DIM_OPACITY,
   NOVA_PARALLEL_IMPACT_KIND_POLYGON,
   novaParallelImpactObjectIds,
@@ -20,6 +24,7 @@ const SETTLEMENT_SOURCE_ID = "nli-investigation-settlement-impact";
 const SETTLEMENT_LAYER_ID = "nli-investigation-settlement-impact-outline";
 const CATEGORY_SOURCE_ID = "nli-investigation-polygon-category";
 const CATEGORY_OUTLINE_SOURCE_ID = "nli-investigation-polygon-category-outline";
+const BUFFERED_GRADIENT_SOURCE_ID = "nli-investigation-polygon-buffered-gradient";
 const POLYGON_LAYER_PREFIX = INVESTIGATION_POLYGONS_FULL_ID.replace(/\./g, "__");
 const RED = NLI_VISUAL_TOKENS.incidentRed;
 const NOTES_BATTLE = "מרחב לחימה - קרב";
@@ -48,6 +53,10 @@ const CATEGORY_LAYER_IDS = Object.freeze([
   ...Object.values(CATEGORY_LINE_LAYER_IDS),
 ]);
 const NOVA_SITE_OBJECT_ID = 100;
+
+function bandFilter(notes, ordinal) {
+  return ["all", notesEqualsFilter(notes), ["==", ["get", BUFFERED_GRADIENT_BAND_PROPERTY], ordinal]];
+}
 
 function featureObjectId(feature) {
   return feature?.properties?.OBJECTID ?? feature?.id;
@@ -142,11 +151,15 @@ function outlineFeaturesFromPolygons(features) {
   for (const feature of features) {
     const geom = feature?.geometry;
     const rings = [];
-    if (geom?.type === "Polygon" && Array.isArray(geom.coordinates?.[0])) {
-      rings.push(geom.coordinates[0]);
+    if (geom?.type === "Polygon") {
+      for (const ring of geom.coordinates || []) {
+        if (Array.isArray(ring)) rings.push(ring);
+      }
     } else if (geom?.type === "MultiPolygon") {
       for (const polygon of geom.coordinates || []) {
-        if (Array.isArray(polygon?.[0])) rings.push(polygon[0]);
+        for (const ring of polygon || []) {
+          if (Array.isArray(ring)) rings.push(ring);
+        }
       }
     }
     for (const ring of rings) {
@@ -245,6 +258,13 @@ export function createInvestigationPolygonRenderer(
     mounted: false,
     disposed: false,
     polygonFeatures: [],
+    bufferedGradientFeatures: [],
+    bufferedGradientSidecarStatus: "not-required",
+    polygonStyle: null,
+    processedPlan: { field: "Notes", classes: {}, processed: false },
+    processedStyleActive: false,
+    processedFillLayerIds: [],
+    appliedPolygonStyle: null,
     locationToOutlineObjectId: new Map(),
     settlementFeatures: [],
     settlementFeaturesByOutlineId: new Map(),
@@ -268,8 +288,13 @@ export function createInvestigationPolygonRenderer(
     lastCategoryParallelDim: null,
     lastCategoryParallelImpactKey: null,
     warnedNotes: new Set(),
+    warnedBufferedGradientFailure: false,
     inputRefs: {
       polygonFeatures: undefined,
+      bufferedGradientFeatures: undefined,
+      polygonStyle: undefined,
+      bufferedGradientSidecarStatus: undefined,
+      bufferedGradientStatus: undefined,
       locationToOutlineObjectId: undefined,
       settlementFeatures: undefined,
       settlementFeaturesByOutlineId: undefined,
@@ -285,6 +310,16 @@ export function createInvestigationPolygonRenderer(
     const versionChanged = previousVersion !== nextVersion;
     state.dataVersion = nextVersion;
     let registryChanged = versionChanged;
+    if (versionChanged) state.warnedBufferedGradientFailure = false;
+    if (versionChanged) {
+      state.polygonStyle = null;
+      state.processedPlan = { field: "Notes", classes: {}, processed: false };
+      state.processedStyleActive = false;
+      state.bufferedGradientFeatures = [];
+      state.bufferedGradientSidecarStatus = "not-required";
+      state.inputRefs.polygonStyle = undefined;
+      state.inputRefs.bufferedGradientFeatures = undefined;
+    }
 
     const hasPolygonFeatures = Object.prototype.hasOwnProperty.call(data, "polygonFeatures");
     const polygonFeatures = hasPolygonFeatures
@@ -296,6 +331,39 @@ export function createInvestigationPolygonRenderer(
       state.inputRefs.polygonFeatures = polygonFeatures;
       state.polygonFeatures = asArray(polygonFeatures);
       registryChanged = true;
+    }
+
+    const hasGradientFeatures = Object.prototype.hasOwnProperty.call(data, "bufferedGradientFeatures");
+    const gradientFeatures = hasGradientFeatures
+      ? data.bufferedGradientFeatures
+      : (force || versionChanged) ? state.inputRefs.bufferedGradientFeatures : undefined;
+    if (gradientFeatures !== undefined && (force || versionChanged || state.inputRefs.bufferedGradientFeatures !== gradientFeatures)) {
+      state.inputRefs.bufferedGradientFeatures = gradientFeatures;
+      state.bufferedGradientFeatures = asArray(gradientFeatures);
+      if (!Object.prototype.hasOwnProperty.call(data, "bufferedGradientSidecarStatus")
+        && !Object.prototype.hasOwnProperty.call(data, "bufferedGradientStatus")
+        && gradientFeatures != null) {
+        state.bufferedGradientSidecarStatus = "ready";
+      }
+      registryChanged = true;
+    }
+    const hasPolygonStyle = Object.prototype.hasOwnProperty.call(data, "polygonStyle");
+    const polygonStyle = hasPolygonStyle
+      ? data.polygonStyle
+      : (force || versionChanged) ? state.inputRefs.polygonStyle : undefined;
+    if (polygonStyle !== undefined && (force || versionChanged || state.inputRefs.polygonStyle !== polygonStyle)) {
+      state.inputRefs.polygonStyle = polygonStyle;
+      state.polygonStyle = polygonStyle;
+      state.processedPlan = buildBufferedGradientRenderPlan(polygonStyle);
+      state.processedStyleActive = state.processedPlan.processed;
+      registryChanged = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, "bufferedGradientSidecarStatus")) {
+      state.bufferedGradientSidecarStatus = data.bufferedGradientSidecarStatus || "not-required";
+    } else if (Object.prototype.hasOwnProperty.call(data, "bufferedGradientStatus")) {
+      state.bufferedGradientSidecarStatus = data.bufferedGradientStatus || "not-required";
+    } else if (Object.prototype.hasOwnProperty.call(data, "sidecarStatus")) {
+      state.bufferedGradientSidecarStatus = data.sidecarStatus || "not-required";
     }
 
     const hasLocationIndex = Object.prototype.hasOwnProperty.call(data, "locationToOutlineObjectId");
@@ -438,7 +506,15 @@ export function createInvestigationPolygonRenderer(
         data: featureCollection(),
       });
     }
+    if (state.processedStyleActive && !sourcePresent(map, BUFFERED_GRADIENT_SOURCE_ID) && typeof map.addSource === "function") {
+      map.addSource(BUFFERED_GRADIENT_SOURCE_ID, { type: "geojson", data: featureCollection() });
+    }
     if (typeof map.addLayer !== "function") {
+      state.categoryMounted = sourcePresent(map, CATEGORY_SOURCE_ID) && sourcePresent(map, CATEGORY_OUTLINE_SOURCE_ID);
+      return;
+    }
+    if (state.processedStyleActive) {
+      mountProcessedCategoryLayers();
       state.categoryMounted = sourcePresent(map, CATEGORY_SOURCE_ID) && sourcePresent(map, CATEGORY_OUTLINE_SOURCE_ID);
       return;
     }
@@ -499,6 +575,79 @@ export function createInvestigationPolygonRenderer(
       && layerPresent(map, CATEGORY_FILL_LAYER_IDS.battle);
   }
 
+  function processedLinePaint(classPlan) {
+    const outline = classPlan?.outline;
+    if (!outline) return { "line-color": "#000000", "line-opacity": 0 };
+    const paint = {
+      "line-color": outline.color || "#000000",
+      "line-opacity": outline.opacity,
+      "line-width": outline.width,
+    };
+    return paint;
+  }
+
+  function mountProcessedCategoryLayers() {
+    state.processedFillLayerIds = [];
+    for (const spec of CATEGORY_SPECS) {
+      const classPlan = state.processedPlan.classes[spec.notes];
+      const fillId = CATEGORY_FILL_LAYER_IDS[spec.suffix];
+      const lineId = CATEGORY_LINE_LAYER_IDS[spec.suffix];
+      const isGradient = (spec.suffix === "battle" || spec.suffix === "fire")
+        && Array.isArray(classPlan?.bands) && classPlan.bands.length > 0;
+      if (isGradient) {
+        for (const band of classPlan.bands) {
+          const id = band.ordinal === 0 ? fillId : `${fillId}-band-${band.ordinal}`;
+          state.processedFillLayerIds.push(id);
+          addOwnedLayer({
+            id,
+            type: "fill",
+            source: BUFFERED_GRADIENT_SOURCE_ID,
+            filter: bandFilter(spec.notes, band.ordinal),
+            paint: {
+              "fill-color": band.color,
+              "fill-opacity": state.bufferedGradientSidecarStatus === "ready" ? band.opacity : 0,
+            },
+          });
+        }
+      } else if (classPlan?.solid) {
+        addOwnedLayer({
+          id: fillId,
+          type: "fill",
+          source: CATEGORY_SOURCE_ID,
+          filter: notesEqualsFilter(spec.notes),
+          paint: {
+            "fill-color": classPlan.solid.color || "#ffff73",
+            "fill-opacity": classPlan.solid.opacity,
+          },
+        });
+      } else if (spec.suffix === "kidnap") {
+        addOwnedLayer({
+          id: fillId,
+          type: "fill",
+          source: CATEGORY_SOURCE_ID,
+          filter: notesEqualsFilter(spec.notes),
+          paint: { "fill-color": "#ffff73", "fill-opacity": 0.55 },
+        });
+      }
+      if (classPlan?.outline) {
+        addOwnedLayer({
+          id: lineId,
+          type: "line",
+          source: CATEGORY_OUTLINE_SOURCE_ID,
+          filter: notesEqualsFilter(spec.notes),
+          layout: {
+            "line-cap": classPlan.outline.lineCap || "round",
+            "line-join": classPlan.outline.lineJoin || "round",
+            ...(Number.isFinite(Number(classPlan.outline.miterLimit))
+              ? { "line-miter-limit": Number(classPlan.outline.miterLimit) }
+              : {}),
+          },
+          paint: processedLinePaint(classPlan),
+        });
+      }
+    }
+  }
+
   function novaNarrativeActive(frame, data) {
     return (frame?.narrativeId ?? frame?.narrative?.id ?? data?.narrativeId) === "nova";
   }
@@ -523,7 +672,9 @@ export function createInvestigationPolygonRenderer(
   }
 
   function warnUnmatchedNotes(features) {
-    const known = NLI_VISUAL_TOKENS.polygonCategories;
+    const known = state.processedStyleActive
+      ? state.processedPlan.classes
+      : NLI_VISUAL_TOKENS.polygonCategories;
     for (const feature of features) {
       const notes = feature?.properties?.Notes;
       if (typeof notes === "string" && known[notes]) continue;
@@ -548,6 +699,14 @@ export function createInvestigationPolygonRenderer(
     if (outlineSource && typeof outlineSource.setData === "function") {
       outlineSource.setData(featureCollection(outlineFeaturesFromPolygons(categoryFeatures)));
     }
+    if (state.processedStyleActive) {
+      const gradientSource = map?.getSource?.(BUFFERED_GRADIENT_SOURCE_ID);
+      const gradientAchieved = achievedPolygonFeatures(state.bufferedGradientFeatures, frame)
+        .filter((feature) => !novaNarrativeActive(frame, data) || Number(feature?.properties?.OBJECTID) !== NOVA_SITE_OBJECT_ID);
+      if (gradientSource && typeof gradientSource.setData === "function") {
+        gradientSource.setData(featureCollection(gradientAchieved));
+      }
+    }
   }
 
   function parallelImpactIdList(frame, data) {
@@ -557,12 +716,21 @@ export function createInvestigationPolygonRenderer(
     );
   }
 
-  function parallelImpactOpacityExpression(ids) {
+  function parallelImpactOpacityExpression(ids, authoredOpacity = null) {
+    if (authoredOpacity == null) {
+      return [
+        "case",
+        ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ids]],
+        1,
+        NOVA_PARALLEL_DIM_OPACITY,
+      ];
+    }
+    const authored = Number.isFinite(Number(authoredOpacity)) ? Number(authoredOpacity) : 1;
     return [
       "case",
       ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ids]],
-      1,
-      NOVA_PARALLEL_DIM_OPACITY,
+      authored,
+      ["*", authored, NOVA_PARALLEL_DIM_OPACITY],
     ];
   }
 
@@ -571,6 +739,39 @@ export function createInvestigationPolygonRenderer(
     const motionMode = frame?.motionMode === "full" ? "full" : "reduced";
     const nowMs = frameNowMs(frame, data);
     const widthMul = Number(displayProfile.lineWidthMultiplier || 1);
+    if (state.processedStyleActive) {
+      const projectionNovaDim = frame?.projectionNovaDim === true || data?.projectionNovaDim === true;
+      const impactIds = parallelImpactIdList(frame, data);
+      for (const spec of CATEGORY_SPECS) {
+        const classPlan = state.processedPlan.classes[spec.notes];
+        const gradientCategory = spec.suffix === "battle" || spec.suffix === "fire";
+        const authored = gradientCategory ? classPlan?.bands?.[0]?.opacity : classPlan?.solid?.opacity;
+        if (!Number.isFinite(Number(authored))) continue;
+        const ids = spec.suffix === "battle" || spec.suffix === "fire"
+          ? state.processedFillLayerIds.filter((id) => id.includes(`fill-${spec.suffix}`))
+          : [CATEGORY_FILL_LAYER_IDS[spec.suffix]];
+        for (const id of ids) {
+          const band = gradientCategory && classPlan?.bands?.find((entry) => id === CATEGORY_FILL_LAYER_IDS[spec.suffix]
+            ? entry.ordinal === 0
+            : id.endsWith(`-band-${entry.ordinal}`));
+          const opacity = band?.opacity ?? classPlan?.solid?.opacity ?? authored;
+          const sidecarReady = state.bufferedGradientSidecarStatus === "ready";
+          setPaint(map, id, "fill-opacity", projectionNovaDim && (sidecarReady || !gradientCategory)
+            ? parallelImpactOpacityExpression(impactIds, opacity)
+            : (sidecarReady || !gradientCategory ? opacity : 0));
+        }
+        const outlineOpacity = Number(classPlan?.outline?.opacity);
+        if (Number.isFinite(outlineOpacity)) {
+          setPaint(map, CATEGORY_LINE_LAYER_IDS[spec.suffix], "line-opacity", projectionNovaDim
+            ? parallelImpactOpacityExpression(impactIds, outlineOpacity)
+            : outlineOpacity);
+        }
+      }
+      state.lastCategoryMotionMode = motionMode;
+      state.lastCategoryParallelDim = projectionNovaDim;
+      state.lastCategoryParallelImpactKey = impactIds.join(",");
+      return;
+    }
     const tokens = NLI_VISUAL_TOKENS.polygonCategories;
     const battle = tokens[NOTES_BATTLE];
     const kidnap = tokens[NOTES_KIDNAP];
@@ -693,7 +894,18 @@ export function createInvestigationPolygonRenderer(
 
   function render(frame = {}, data = {}, { renderPolygons = true } = {}) {
     if (state.disposed) return;
+    const previousPolygonStyle = state.polygonStyle;
     absorbData(data);
+    if (previousPolygonStyle !== state.polygonStyle && state.categoryMounted) {
+      removeOverlay();
+      state.categoryMounted = false;
+      state.overlayMounted = false;
+      state.processedFillLayerIds = [];
+    }
+    if (state.processedStyleActive && state.bufferedGradientSidecarStatus === "failed" && !state.warnedBufferedGradientFailure) {
+      state.warnedBufferedGradientFailure = true;
+      console.warn("Investigation polygon buffered-gradient sidecar failed; battle and fire fills are hidden.");
+    }
     state.currentFrame = frame;
     mount({ settlementOnly: !renderPolygons });
     const achieved = asArray(frame.achievedPolygonBeats)
@@ -758,7 +970,8 @@ export function createInvestigationPolygonRenderer(
   }
 
   function removeOverlay() {
-    for (const id of CATEGORY_LAYER_IDS) {
+    const ownedLayerIds = [...new Set([...CATEGORY_LAYER_IDS, ...state.processedFillLayerIds])];
+    for (const id of ownedLayerIds) {
       if (layerPresent(map, id) && typeof map.removeLayer === "function") {
         try { map.removeLayer(id); } catch (_) { /* stale style */ }
       }
@@ -766,7 +979,7 @@ export function createInvestigationPolygonRenderer(
     if (layerPresent(map, SETTLEMENT_LAYER_ID) && typeof map.removeLayer === "function") {
       try { map.removeLayer(SETTLEMENT_LAYER_ID); } catch (_) { /* stale style */ }
     }
-    for (const sourceId of [CATEGORY_SOURCE_ID, CATEGORY_OUTLINE_SOURCE_ID, SETTLEMENT_SOURCE_ID]) {
+    for (const sourceId of [CATEGORY_SOURCE_ID, CATEGORY_OUTLINE_SOURCE_ID, BUFFERED_GRADIENT_SOURCE_ID, SETTLEMENT_SOURCE_ID]) {
       if (sourcePresent(map, sourceId) && typeof map.removeSource === "function") {
         try { map.removeSource(sourceId); } catch (_) { /* stale style */ }
       }
@@ -791,6 +1004,9 @@ export function createInvestigationPolygonRenderer(
     state.mounted = false;
     state.overlayMounted = false;
     state.categoryMounted = false;
+    state.processedFillLayerIds = [];
+    state.processedStyleActive = false;
+    state.processedPlan = { field: "Notes", classes: {}, processed: false };
     state.lastCategoryMotionMode = null;
     state.lastCategoryNovaSiteExclusion = null;
     state.lastCategoryParallelDim = null;

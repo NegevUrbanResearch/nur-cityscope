@@ -1,8 +1,10 @@
 import os
+import copy
 import hashlib
 import json
 import logging
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -11,6 +13,7 @@ from tqdm import tqdm
 from .models import LayerEntry, PackManifest
 from .geo import transform_to_wgs84, get_geometry_type
 from .styles import find_lyrx_file, parse_lyrx_style
+from .buffered_gradient import has_buffered_gradient, write_buffered_gradient_geojson
 from .tiling import generate_pmtiles_smart
 from .pmtiles_lifecycle import resolve_pmtiles_lifecycle
 
@@ -43,6 +46,87 @@ def setup_logging(level=logging.INFO):
 
 
 CACHE_FILE = ".layer-cache.json"
+BUFFERED_GRADIENT_SIDECAR = "investigation_polygons.buffered-gradient.geojson"
+
+
+def _replace_transaction_file(source: Path, destination: Path) -> None:
+    os.replace(source, destination)
+
+
+def _atomic_copy_file(source: Path, destination: Path) -> None:
+    """Copy a file through a sibling temporary path before publishing it."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(destination.name + ".tmp")
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, destination)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _commit_buffered_gradient_transaction(
+    staged_data: Path,
+    staged_sidecar: Path,
+    staged_pmtiles: Path,
+    final_data: Path,
+    final_sidecar: Path,
+    final_pmtiles: Path,
+    *,
+    remove_pmtiles: bool = False,
+) -> None:
+    """Publish staged gradient outputs with rollback across every final file."""
+    destinations = [final_data, final_sidecar, final_pmtiles]
+    backups: Dict[Path, Path] = {}
+    published = set()
+    transaction_dir = staged_data.parent
+    try:
+        for destination in destinations:
+            if destination.is_file():
+                backup = transaction_dir / (destination.name + ".rollback")
+                shutil.copy2(destination, backup)
+                backups[destination] = backup
+
+        _replace_transaction_file(staged_data, final_data)
+        published.add(final_data)
+        _replace_transaction_file(staged_sidecar, final_sidecar)
+        published.add(final_sidecar)
+        if staged_pmtiles.is_file():
+            _replace_transaction_file(staged_pmtiles, final_pmtiles)
+            published.add(final_pmtiles)
+        elif remove_pmtiles and final_pmtiles.exists():
+            final_pmtiles.unlink()
+            published.add(final_pmtiles)
+    except Exception:
+        for destination in reversed(destinations):
+            if destination not in published:
+                continue
+            backup = backups.get(destination)
+            try:
+                if backup is not None and backup.is_file():
+                    _replace_transaction_file(backup, destination)
+                elif destination.exists():
+                    destination.unlink()
+            except OSError:
+                logger.exception("Could not roll back buffered-gradient output %s", destination)
+        raise
+    finally:
+        for backup in backups.values():
+            backup.unlink(missing_ok=True)
+
+
+class _ResourceLayerEntry(LayerEntry):
+    """LayerEntry variant carrying optional generated resource declarations."""
+
+    def __init__(self, *args, resources: Optional[Dict[str, Any]] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.resources = resources
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = super().to_dict()
+        if self.resources:
+            result["resources"] = self.resources
+        return result
 
 # Stem of gis files matching this pattern are copied to processed for masking only (not added as layers).
 MASK_ASSET_STEM_SUFFIX = "_boundary"
@@ -184,9 +268,91 @@ class ProcessingOrchestrator:
         """
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.name + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, path)
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+
+    def _begin_output_snapshot(self, pack_ids: List[str]):
+        """Capture the files a processing run may publish for recoverable rollback."""
+        parent = self.output_dir.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        snapshot_dir = Path(tempfile.mkdtemp(prefix=".layer-publish-", dir=parent))
+        packs_dir = snapshot_dir / "packs"
+        packs_dir.mkdir()
+        existing_packs = []
+        for pack_id in pack_ids:
+            output_pack = self.output_dir / pack_id
+            if output_pack.is_dir():
+                self._snapshot_tree(output_pack, packs_dir / pack_id)
+                existing_packs.append(pack_id)
+        root_files = []
+        for name in (CACHE_FILE, "layers-manifest.json"):
+            path = self.output_dir / name
+            if path.is_file():
+                shutil.copy2(path, snapshot_dir / name)
+                root_files.append(name)
+        return {
+            "dir": snapshot_dir,
+            "pack_ids": list(pack_ids),
+            "existing_packs": existing_packs,
+            "root_files": root_files,
+            "cache": copy.deepcopy(self.cache),
+        }
+
+    @staticmethod
+    def _snapshot_tree(source: Path, destination: Path) -> None:
+        """Snapshot a tree with same-volume hardlinks, falling back to copies."""
+        destination.mkdir(parents=True, exist_ok=True)
+        for path in source.rglob("*"):
+            relative = path.relative_to(source)
+            target = destination / relative
+            if path.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.link(path, target)
+            except OSError:
+                shutil.copy2(path, target)
+
+    def _restore_output_snapshot(self, snapshot, pack_ids: Optional[List[str]] = None) -> None:
+        """Restore only the named output packs and run-level metadata."""
+        if not snapshot:
+            return
+        target_ids = list(pack_ids if pack_ids is not None else snapshot["pack_ids"])
+        packs_dir = snapshot["dir"] / "packs"
+        for pack_id in target_ids:
+            output_pack = self.output_dir / pack_id
+            if output_pack.exists():
+                shutil.rmtree(output_pack)
+            saved_pack = packs_dir / pack_id
+            if saved_pack.is_dir():
+                shutil.copytree(saved_pack, output_pack)
+        if pack_ids is not None:
+            failed_prefixes = tuple(f"{pack_id}/" for pack_id in target_ids)
+            for key in list(self.cache):
+                if key.startswith(failed_prefixes):
+                    del self.cache[key]
+            for key, value in snapshot["cache"].items():
+                if key.startswith(failed_prefixes):
+                    self.cache[key] = copy.deepcopy(value)
+        if pack_ids is None:
+            self.cache = copy.deepcopy(snapshot["cache"])
+            for name in (CACHE_FILE, "layers-manifest.json"):
+                path = self.output_dir / name
+                saved = snapshot["dir"] / name
+                if saved.is_file():
+                    shutil.copy2(saved, path)
+                elif path.exists():
+                    path.unlink()
+
+    def _finish_output_snapshot(self, snapshot) -> None:
+        if snapshot:
+            shutil.rmtree(snapshot["dir"], ignore_errors=True)
 
     def _load_popup_config(self) -> Dict:
         # source_dir is typically ".../public/source/layers" or just ".../public/source"
@@ -236,6 +402,17 @@ class ProcessingOrchestrator:
         return sorted(packs)
 
     def process_all(self, stuck_timeout: Optional[int] = None):
+        packs = self.scan_packs()
+        snapshot = self._begin_output_snapshot([pack.name for pack in packs])
+        try:
+            self._process_all_impl(stuck_timeout=stuck_timeout, _snapshot=snapshot)
+        except Exception:
+            self._restore_output_snapshot(snapshot)
+            raise
+        finally:
+            self._finish_output_snapshot(snapshot)
+
+    def _process_all_impl(self, stuck_timeout: Optional[int] = None, _snapshot=None):
         packs = self.scan_packs()
         if not packs:
             logger.warning("No layer packs found to process.")
@@ -324,6 +501,7 @@ class ProcessingOrchestrator:
 
         # 2. Process all layers in a global pool
         processed_layers = []
+        failed_pack_ids = set()
 
         with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
             # Pass log level to workers
@@ -373,9 +551,12 @@ class ProcessingOrchestrator:
                                             styles_map[pack_id][
                                                 layer_entry.id
                                             ] = style_entry
+                                else:
+                                    failed_pack_ids.add(task["pack_id"])
                             except Exception as e:
                                 logger.warning("Failed: %s — %s", task_id, e)
                                 tqdm.write(f"Task failed: {e}")
+                                failed_pack_ids.add(task["pack_id"])
 
                             del pending[future]
                             pbar.update(1)
@@ -391,8 +572,15 @@ class ProcessingOrchestrator:
                             )
                         # continue while to keep waiting
 
+        # Workers publish their own files for compatibility with single-layer mode.
+        # A sibling failure must not leave those successful publications visible.
+        if failed_pack_ids and _snapshot is not None:
+            self._restore_output_snapshot(_snapshot, sorted(failed_pack_ids))
+
         # Copy boundary assets (transform to WGS84, write to processed; not added as layers)
         for pack_id, geo_file, pack_output in boundary_assets:
+            if pack_id in failed_pack_ids:
+                continue
             out_path = pack_output / f"{geo_file.stem}.geojson"
             try:
                 if transform_to_wgs84(geo_file, out_path):
@@ -408,6 +596,11 @@ class ProcessingOrchestrator:
         processed_pack_ids = []
         for pack_id, manifest_data in pack_manifests.items():
             pack_output = self.output_dir / pack_id
+            if pack_id in failed_pack_ids:
+                # A partial worker result must not replace a previously good pack.
+                if (pack_output / "manifest.json").is_file():
+                    processed_pack_ids.append(pack_id)
+                continue
             pack_dir = source_layers / pack_id
             gis_dir = pack_dir / "gis" if (pack_dir / "gis").exists() else pack_dir
 
@@ -448,11 +641,8 @@ class ProcessingOrchestrator:
                 "name": manifest_data["name"],
                 "layers": layers_list,
             }
-            with open(pack_output / "manifest.json", "w", encoding="utf-8") as f:
-                json.dump(manifest_dict, f, indent=2, ensure_ascii=False)
-
-            with open(pack_output / "styles.json", "w", encoding="utf-8") as f:
-                json.dump(styles_map[pack_id], f, indent=2, ensure_ascii=False)
+            self._atomic_write_json(pack_output / "manifest.json", manifest_dict)
+            self._atomic_write_json(pack_output / "styles.json", styles_map[pack_id])
 
         self.generate_root_manifest(processed_pack_ids)
         self.save_cache()
@@ -472,6 +662,7 @@ class ProcessingOrchestrator:
         geo_file = task["geo_file"]
         styles_dir = task["styles_dir"]
         pack_output = task["pack_output"]
+        pack_output.mkdir(parents=True, exist_ok=True)
 
         logger.info("Processing: %s/%s", pack_id, geo_file.name)
         layer_id = geo_file.stem
@@ -479,30 +670,38 @@ class ProcessingOrchestrator:
         fingerprint, geo_hash, lyrx_hash = _geo_style_cache_fingerprint(
             geo_file, styles_dir
         )
-
-        needed = self.no_cache or self.cache.get(cache_key, {}).get("hash") != fingerprint
-
         wgs84_file = pack_output / f"{layer_id}.geojson"
         pmtiles_file = pack_output / f"{layer_id}.pmtiles"
+        sidecar_file = pack_output / BUFFERED_GRADIENT_SIDECAR
+        cached = self.cache.get(cache_key, {})
+        cached_style = cached.get("style")
+        cached_resources = cached.get("resources")
+        if not isinstance(cached_resources, dict):
+            cached_resources = {}
+        requires_sidecar = (
+            pack_id == "nli"
+            and layer_id == "investigation_polygons"
+            and (
+                has_buffered_gradient(cached_style or {})
+                or bool(cached_resources.get("bufferedGradient"))
+            )
+        )
+        declared_sidecar_missing = requires_sidecar and not sidecar_file.is_file()
+        needed = (
+            self.no_cache
+            or cached.get("hash") != fingerprint
+            or declared_sidecar_missing
+        )
 
         style_config = None
         geom_type = "unknown"
         pmtiles_lifecycle = None
+        resources: Optional[Dict[str, Any]] = None
+        is_buffered_gradient_layer = False
 
         if needed:
-            # logger.info(f"Processing {layer_id}...")
             try:
-                # 1. Transform GeoJSON to WGS84
-                if not transform_to_wgs84(geo_file, wgs84_file):
-                    logger.error(f"Transformation failed for {layer_id}, skipping.")
-                    return None
-
-                if layer_id == "שמות_יישובים":
-                    from .shemot_label_overrides import merge_shemot_label_overrides_into_geojson
-
-                    merge_shemot_label_overrides_into_geojson(wgs84_file, styles_dir)
-
-                # 2. Parse Style (same path as update_metadata_only for consistent advanced styles)
+                # Resolve the style before replacing any existing processed data.
                 style_config, geom_type = self._resolve_style_for_geo_file(
                     geo_file, styles_dir
                 )
@@ -510,24 +709,94 @@ class ProcessingOrchestrator:
                     pack_id, layer_id, style_config
                 )
 
-                if geom_type == "unknown":
-                    geom_type = get_geometry_type(wgs84_file)
-
-                # 3. Tiling policy and artifact lifecycle
-                pmtiles_lifecycle = resolve_pmtiles_lifecycle(
-                    pack_id,
-                    layer_id,
-                    geom_type,
-                    style_config,
-                    wgs84_file,
-                    pmtiles_file,
-                    generate_pmtiles=lambda input_geojson, output_pmtiles, preset: generate_pmtiles_smart(
-                        input_geojson,
-                        output_pmtiles,
-                        preset=preset,
-                    ),
-                    regenerate_existing=True,
+                is_buffered_gradient_layer = (
+                    pack_id == "nli"
+                    and layer_id == "investigation_polygons"
+                    and has_buffered_gradient(style_config or {})
                 )
+
+                if is_buffered_gradient_layer:
+                    # Keep data, sidecar, and PMTiles isolated until all work succeeds.
+                    with tempfile.TemporaryDirectory(
+                        dir=pack_output, prefix=".investigation-polygons-"
+                    ) as transaction_dir:
+                        transaction = Path(transaction_dir)
+                        staged_wgs84 = transaction / wgs84_file.name
+                        staged_sidecar = transaction / BUFFERED_GRADIENT_SIDECAR
+                        staged_pmtiles = transaction / pmtiles_file.name
+                        if not transform_to_wgs84(geo_file, staged_wgs84):
+                            logger.error(f"Transformation failed for {layer_id}, skipping.")
+                            return None
+                        if geom_type == "unknown":
+                            geom_type = get_geometry_type(staged_wgs84)
+                        if not write_buffered_gradient_geojson(
+                            staged_wgs84, style_config, staged_sidecar
+                        ):
+                            raise RuntimeError(
+                                f"Buffered gradient sidecar was not generated for {layer_id}"
+                            )
+                        pmtiles_lifecycle = resolve_pmtiles_lifecycle(
+                            pack_id,
+                            layer_id,
+                            geom_type,
+                            style_config,
+                            staged_wgs84,
+                            staged_pmtiles,
+                            generate_pmtiles=lambda input_geojson, output_pmtiles, preset: generate_pmtiles_smart(
+                                input_geojson,
+                                output_pmtiles,
+                                preset=preset,
+                            ),
+                            regenerate_existing=True,
+                        )
+                        _commit_buffered_gradient_transaction(
+                            staged_wgs84,
+                            staged_sidecar,
+                            staged_pmtiles,
+                            wgs84_file,
+                            sidecar_file,
+                            pmtiles_file,
+                            remove_pmtiles=(
+                                pmtiles_file.is_file()
+                                and not pmtiles_lifecycle.pmtiles_file
+                            ),
+                        )
+                else:
+                    # 1. Transform GeoJSON to WGS84
+                    if not transform_to_wgs84(geo_file, wgs84_file):
+                        logger.error(f"Transformation failed for {layer_id}, skipping.")
+                        return None
+
+                    if layer_id == "שמות_יישובים":
+                        from .shemot_label_overrides import merge_shemot_label_overrides_into_geojson
+
+                        merge_shemot_label_overrides_into_geojson(wgs84_file, styles_dir)
+
+                    if geom_type == "unknown":
+                        geom_type = get_geometry_type(wgs84_file)
+
+                    pmtiles_lifecycle = resolve_pmtiles_lifecycle(
+                        pack_id,
+                        layer_id,
+                        geom_type,
+                        style_config,
+                        wgs84_file,
+                        pmtiles_file,
+                        generate_pmtiles=lambda input_geojson, output_pmtiles, preset: generate_pmtiles_smart(
+                            input_geojson,
+                            output_pmtiles,
+                            preset=preset,
+                        ),
+                        regenerate_existing=True,
+                    )
+
+                if is_buffered_gradient_layer and sidecar_file.is_file():
+                    resources = {
+                        "bufferedGradient": {
+                            "file": BUFFERED_GRADIENT_SIDECAR,
+                            "format": "geojson",
+                        }
+                    }
 
             except Exception as e:
                 logger.error(f"Error processing {layer_id}: {e}")
@@ -556,6 +825,20 @@ class ProcessingOrchestrator:
                 ),
                 regenerate_existing=True,
             )
+            resources = cached.get("resources")
+            if (
+                not resources
+                and pack_id == "nli"
+                and layer_id == "investigation_polygons"
+                and has_buffered_gradient(style_config or {})
+                and sidecar_file.is_file()
+            ):
+                resources = {
+                    "bufferedGradient": {
+                        "file": BUFFERED_GRADIENT_SIDECAR,
+                        "format": "geojson",
+                    }
+                }
 
         popup_cfg = self._get_popup_config_for_layer(pack_id, layer_id)
         ui_popup = (
@@ -567,17 +850,21 @@ class ProcessingOrchestrator:
             ui_popup = None
         ui_legend_label = (popup_cfg or {}).get("legendLabel")
 
-        entry = LayerEntry(
-            id=layer_id,
-            name=geo_file.stem,
-            file=f"{layer_id}.geojson",
-            geometry_type=geom_type,
-            pmtiles_file=pmtiles_lifecycle.pmtiles_file if pmtiles_lifecycle else None,
-            tiling_preset=pmtiles_lifecycle.tiling_preset if pmtiles_lifecycle else None,
-            processing=pmtiles_lifecycle.metadata if pmtiles_lifecycle else None,
-            ui_popup=ui_popup,
-            ui_legend_label=ui_legend_label,
-        )
+        entry_kwargs = {
+            "id": layer_id,
+            "name": geo_file.stem,
+            "file": f"{layer_id}.geojson",
+            "geometry_type": geom_type,
+            "pmtiles_file": pmtiles_lifecycle.pmtiles_file if pmtiles_lifecycle else None,
+            "tiling_preset": pmtiles_lifecycle.tiling_preset if pmtiles_lifecycle else None,
+            "processing": pmtiles_lifecycle.metadata if pmtiles_lifecycle else None,
+            "ui_popup": ui_popup,
+            "ui_legend_label": ui_legend_label,
+        }
+        if resources:
+            entry = _ResourceLayerEntry(**entry_kwargs, resources=resources)
+        else:
+            entry = LayerEntry(**entry_kwargs)
 
         return (
             entry,
@@ -589,6 +876,7 @@ class ProcessingOrchestrator:
                 "lyrx_hash": lyrx_hash,
                 "geometry_type": geom_type,
                 "style": style_config,
+                "resources": resources,
             },
         )
 
@@ -662,6 +950,18 @@ class ProcessingOrchestrator:
                 logger.warning("Could not load WMTS %s: %s", wmts_path, e)
 
     def process_single_layer_merged(
+        self, pack_id: str, layer_stem: str, stuck_timeout: Optional[int] = None
+    ) -> None:
+        snapshot = self._begin_output_snapshot([pack_id])
+        try:
+            self._process_single_layer_merged_impl(pack_id, layer_stem, stuck_timeout)
+        except Exception:
+            self._restore_output_snapshot(snapshot)
+            raise
+        finally:
+            self._finish_output_snapshot(snapshot)
+
+    def _process_single_layer_merged_impl(
         self, pack_id: str, layer_stem: str, stuck_timeout: Optional[int] = None
     ) -> None:
         """
@@ -795,8 +1095,9 @@ class ProcessingOrchestrator:
 
         if needed:
             try:
-                # Simply copy the image file to the output directory
-                shutil.copy2(image_file, output_file)
+                # Publish through a sibling temporary path so pack snapshots
+                # remain independent of image updates during later rollback.
+                _atomic_copy_file(image_file, output_file)
                 logger.info(f"Copied image: {layer_id} -> {output_file}")
             except Exception as e:
                 logger.error(f"Error copying image {layer_id}: {e}")
@@ -945,6 +1246,25 @@ class ProcessingOrchestrator:
                     pmtiles_path,
                 )
 
+                resources = None
+                if pack_id == "nli" and layer_id == "investigation_polygons":
+                    sidecar_path = pack_output / BUFFERED_GRADIENT_SIDECAR
+                    prior_resources = (existing_layers.get(layer_id) or {}).get(
+                        "resources"
+                    )
+                    if sidecar_path.is_file():
+                        if isinstance(prior_resources, dict) and prior_resources.get(
+                            "bufferedGradient"
+                        ):
+                            resources = prior_resources
+                        elif has_buffered_gradient(style_config or {}):
+                            resources = {
+                                "bufferedGradient": {
+                                    "file": BUFFERED_GRADIENT_SIDECAR,
+                                    "format": "geojson",
+                                }
+                            }
+
                 # Popup and legend overrides
                 layer_popup_cfg = self._get_popup_config_for_layer(pack_id, layer_id)
                 if not layer_popup_cfg and layer_id in existing_layers:
@@ -961,17 +1281,21 @@ class ProcessingOrchestrator:
                     layer_popup = None
                 ui_legend_label = (layer_popup_cfg or {}).get("legendLabel")
 
-                entry = LayerEntry(
-                    id=layer_id,
-                    name=layer_id,  # Or format it nicely
-                    file=f"{layer_id}.geojson",
-                    geometry_type=geom_type,
-                    pmtiles_file=pmtiles_lifecycle.pmtiles_file,
-                    tiling_preset=pmtiles_lifecycle.tiling_preset,
-                    processing=pmtiles_lifecycle.metadata,
-                    ui_popup=layer_popup,
-                    ui_legend_label=ui_legend_label,
-                )
+                entry_kwargs = {
+                    "id": layer_id,
+                    "name": layer_id,
+                    "file": f"{layer_id}.geojson",
+                    "geometry_type": geom_type,
+                    "pmtiles_file": pmtiles_lifecycle.pmtiles_file,
+                    "tiling_preset": pmtiles_lifecycle.tiling_preset,
+                    "processing": pmtiles_lifecycle.metadata,
+                    "ui_popup": layer_popup,
+                    "ui_legend_label": ui_legend_label,
+                }
+                if resources:
+                    entry = _ResourceLayerEntry(**entry_kwargs, resources=resources)
+                else:
+                    entry = LayerEntry(**entry_kwargs)
                 new_layers.append(entry)
                 if style_config:
                     new_styles[layer_id] = style_config
@@ -1046,8 +1370,7 @@ class ProcessingOrchestrator:
                 )
                 manifest_dict = manifest.to_dict()
 
-                with open(pack_output / "manifest.json", "w", encoding="utf-8") as f:
-                    json.dump(manifest_dict, f, indent=2, ensure_ascii=False)
+                self._atomic_write_json(pack_output / "manifest.json", manifest_dict)
 
                 # Merge styles with existing
                 styles_path = pack_output / "styles.json"
@@ -1061,8 +1384,7 @@ class ProcessingOrchestrator:
 
                 current_styles.update(new_styles)
 
-                with open(styles_path, "w", encoding="utf-8") as f:
-                    json.dump(current_styles, f, indent=2, ensure_ascii=False)
+                self._atomic_write_json(styles_path, current_styles)
 
         self.generate_root_manifest(processed_pack_ids)
         logger.info("Metadata update complete.")

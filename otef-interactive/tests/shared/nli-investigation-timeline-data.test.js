@@ -5,6 +5,8 @@ import {
   buildInvestigationSettlementOutlineIdsForFrame,
   createInvestigationTimelineData,
   ensureInvestigationLayerFeatures,
+  ensureInvestigationPolygonStyle,
+  ensureInvestigationBufferedGradient,
   getInvestigationTimelineDataDiagnostics,
   refreshInvestigationTimelineData,
 } from "../../frontend/src/shared/nli-investigation-timeline-data.js";
@@ -46,6 +48,67 @@ describe("investigation timeline data store", () => {
     refreshInvestigationTimelineData(data, { dataVersion: "v2" });
     expect(data.dataVersion).toBe("v2");
     expect(data.lineFeatures).toBeNull();
+  });
+
+  it("loads the processed polygon style and declared sidecar through registry data", async () => {
+    const style = { renderer: "uniqueValue", uniqueValues: { classes: [{ value: "שריפה", symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", resolvedColors: ["#f00"], interval: 1, opacity: 1 }] } }] } };
+    const sidecar = { type: "FeatureCollection", features: [{ properties: { __cim_gradient_band: 0 } }] };
+    const data = createInvestigationTimelineData({ dataVersion: "v1" });
+    const fetchJson = async (url) => url.endsWith(".geojson") ? sidecar : null;
+    await ensureInvestigationPolygonStyle(data, {
+      getLayerStyle: () => style,
+      getLayerConfig: () => ({ resources: { bufferedGradient: { file: "gradient.geojson", format: "geojson" } }, groupId: "nli" }),
+      fetchJson,
+    }, { request: { generation: 1 } });
+    await ensureInvestigationBufferedGradient(data, {
+      getLayerConfig: () => ({ resources: { bufferedGradient: { file: "gradient.geojson", format: "geojson" } }, groupId: "nli" }),
+      fetchJson,
+    }, { request: { generation: 1 } });
+    expect(data.polygonStyle).toBe(style);
+    expect(data.bufferedGradientSidecarStatus).toBe("ready");
+    expect(data.bufferedGradientFeatures).toEqual(sidecar.features);
+  });
+
+  it("resets style and sidecar state and ignores stale sidecar completion", async () => {
+    let resolveSidecar;
+    const pending = new Promise((resolve) => { resolveSidecar = resolve; });
+    const data = createInvestigationTimelineData({ dataVersion: "v1", polygonStyle: { renderer: "uniqueValue" } });
+    const promise = ensureInvestigationBufferedGradient(data, {
+      getLayerConfig: () => ({ resources: { bufferedGradient: { file: "gradient.geojson", format: "geojson" } }, groupId: "nli" }),
+      fetchJson: () => pending,
+    }, { request: { generation: 1 }, isCurrent: () => true });
+    refreshInvestigationTimelineData(data, { dataVersion: "v2" });
+    resolveSidecar({ features: [{ properties: { OBJECTID: 1 } }] });
+    await promise;
+    expect(data.polygonStyle).toBeNull();
+    expect(data.bufferedGradientFeatures).toBeNull();
+    expect(data.bufferedGradientSidecarStatus).toBe("not-required");
+  });
+
+  it("treats failed sidecar state as terminal until the data version changes", async () => {
+    const style = { renderer: "uniqueValue", uniqueValues: { classes: [{ value: "שריפה", symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", resolvedColors: ["#f00"], interval: 1 }] } }] } };
+    const data = createInvestigationTimelineData({ polygonStyle: style, dataVersion: "v1" });
+    let calls = 0;
+    const deps = {
+      getLayerConfig: () => ({ resources: { bufferedGradient: { file: "gradient.geojson" } }, groupId: "nli" }),
+      fetchJson: async () => { calls += 1; return null; },
+    };
+    await ensureInvestigationBufferedGradient(data, deps);
+    await ensureInvestigationBufferedGradient(data, deps);
+    expect(calls).toBe(1);
+    expect(data.bufferedGradientSidecarStatus).toBe("failed");
+  });
+
+  it("accepts explicit status-only sidecar injections and rejects malformed GeoJSON", async () => {
+    const style = { renderer: "uniqueValue", uniqueValues: { classes: [{ value: "שריפה", symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", resolvedColors: ["#f00"], interval: 1 }] } }] } };
+    const data = createInvestigationTimelineData({ polygonStyle: style });
+    refreshInvestigationTimelineData(data, { bufferedGradientSidecarStatus: "loading" });
+    expect(data.bufferedGradientStatus).toBe("loading");
+    await ensureInvestigationBufferedGradient(data, {
+      getLayerConfig: () => ({ resources: { bufferedGradient: { file: "gradient.geojson" } }, groupId: "nli" }),
+      fetchJson: async () => ({}),
+    });
+    expect(data.bufferedGradientSidecarStatus).toBe("failed");
   });
 
   it("reuses one line partition and frame cache across ambient reads", () => {
