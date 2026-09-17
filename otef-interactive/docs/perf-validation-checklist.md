@@ -31,14 +31,45 @@
 
 ## NLI investigation scheduler
 
-- Run the densest completed NLI timeline state on both GIS and projection after
-  warm-up.
-- Capture at least 1,000 `nliSchedulerMs` samples per display.
-- Require a 95th-percentile scheduler callback of 8 ms or less.
-- Confirm one scheduler per map and no orphaned animation frame or timer after
-  **Stop**, layer disable, style disposal, or page disposal.
-- Confirm steady completed-route flow does not call full-source `setData()`,
-  scan the full style, or repeatedly call `moveLayer()`.
-- Confirm reduced motion keeps a stationary directional pattern and does not
-  schedule continuous completed-route flow.
-- Record GIS and projection results in `nli-exhibit-verification.md`.
+Serve the normal exhibit through nginx at `http://localhost:80`; do not use a
+Vite-only page or a direct filesystem URL for this gate. Run the following
+procedure separately for GIS and projection:
+
+1. Open the densest completed general view and wait for warm-up.
+2. In the browser console run `MapPerfTelemetry.reset()`.
+3. Hold that view until at least 1,000 `nliSchedulerMs` samples have been
+   recorded.
+4. Record `MapPerfTelemetry.summary().nliSchedulerMs` and require p95 `<=8
+   ms` on GIS and projection.
+5. Capture effective FPS from the same Chrome DevTools Performance trace used
+   for the scheduler samples. Do not combine an FPS result from another run.
+6. In the automated fake-map tick, clear `setPaintProperty`, advance one due
+   66 ms tick, and require no more than `2 * processedFillLayerIds.length`
+   writes without a Nova transition. Every write must target a processed fill
+   color or opacity property.
+
+The acceptance record must show zero steady-state `GeoJSONSource.setData`,
+source/layer/filter/geometry rebuild, orphaned frame, phase drift,
+viewport-regression, or slideshow-regression events. A general **Stop** /
+`idle` state may retain exactly one existing shared per-map RAF only while a
+visible full-motion approved ambient consumer exists: completed polygon
+conveyor, completed route flow, idle alarm, or existing person glow where
+applicable. Reduced motion, layer disable, no eligible feature or data,
+style/page disposal, and teardown must leave no frame attributable to polygon
+motion and no orphaned RAF.
+
+Test 33 ms cadence only if the 66 ms footage visibly steps and all limits
+above already pass. Record both cadence and effective FPS in the polygon
+gradient lab evidence table in `nli-exhibit-verification.md`.
+
+Confirm steady completed-route flow does not call full-source `setData()`, scan
+the full style, or repeatedly call `moveLayer()`. Confirm reduced motion keeps
+a stationary directional pattern and does not schedule continuous completed-
+route flow. Keep browser-console MapLibre expression errors at zero, and
+confirm GIS and projection use the same clock, phase, and entry values; only
+the existing profile scale and Nova dimming may differ.
+
+Record GIS and projection results in `nli-exhibit-verification.md`. Physical
+lab acceptance is not implied by this checklist: hardware colleague review
+and the 1,000-sample measurement are pending until they are recorded on the
+actual displays.
