@@ -2,7 +2,6 @@
 // Mobile-friendly remote control for OTEF interactive GIS map
 // Uses centralized OTEFDataContext for shared state (viewport, layers, animations, connection)
 
-import { rotateViewerVectorToItm } from "../shared/orientation-transform.js";
 import {
   isGisBasemapId,
   isSatelliteBasemap,
@@ -18,6 +17,10 @@ import {
 import { shouldReapplyDpadAfterFullControlRefresh } from "./remote-control-refresh-invariants.js";
 import { DEFAULT_ZOOM } from "./remote-zoom-control-contract.js";
 import { createRemoteZoomController } from "./remote-zoom-controls.js";
+import {
+  createRemoteDpadController,
+  createRemoteJoystickController,
+} from "./remote-joystick-controls.js";
 
 // Current UI state (synced from API)
 let currentState = {
@@ -34,8 +37,8 @@ let currentState = {
 
 // Control state management (prevent simultaneous use)
 let activeControl = null; // null, 'dpad', or 'joystick'
-let joystickManager = null; // Nipple.js instance
-let joystickInterval = null; // For continuous pan updates
+let joystickController = null;
+let dpadController = null;
 let basemapControlController = null;
 let zoomController = null;
 
@@ -152,10 +155,34 @@ async function initialize() {
   }
 
   // Initialize UI controls
-  initializePanControls();
+  dpadController = createRemoteDpadController({
+    isConnected: () => currentState.isConnected,
+    getViewport: getLiveViewport,
+    getViewerAngleDeg: () => currentState.viewerAngleDeg || 0,
+    sendVelocity: (dx, dy) => OTEFDataContext.sendVelocity(dx, dy),
+    isBlocked: () => activeControl === "joystick",
+  });
+  dpadController.init();
   initializeBasemapControls();
   zoomController.init();
-  initializeJoystick();
+  joystickController = createRemoteJoystickController({
+    zone: document.getElementById("joystickZone"),
+    nipplejs: typeof globalThis.nipplejs !== "undefined" ? globalThis.nipplejs : null,
+    isConnected: () => currentState.isConnected,
+    getViewport: getLiveViewport,
+    getViewerAngleDeg: () => currentState.viewerAngleDeg || 0,
+    sendVelocity: (dx, dy) => OTEFDataContext.sendVelocity(dx, dy),
+    onStart: () => {
+      activeControl = "joystick";
+      dpadController?.setEnabled(false);
+    },
+    onEnd: () => {
+      activeControl = null;
+      dpadController?.setEnabled(true);
+    },
+    color: "#00d4ff",
+  });
+  joystickController.init();
   initRemoteShellTabs();
   initRemoteLocaleControls();
 
@@ -349,59 +376,6 @@ function updateConnectionStatus(status) {
   updateUI();
 }
 
-/**
- * Initialize pan controls (directional pad)
- */
-function initializePanControls() {
-  const directions = {
-    panNorth: { vx: 0, vy: 1 },
-    panSouth: { vx: 0, vy: -1 },
-    panEast: { vx: 1, vy: 0 },
-    panWest: { vx: -1, vy: 0 },
-  };
-
-  Object.entries(directions).forEach(([id, vector]) => {
-    const button = document.getElementById(id);
-    if (!button) return;
-
-    const startHandler = (e) => {
-      e.preventDefault();
-      if (!currentState.isConnected || activeControl === "joystick") return;
-      activeControl = "dpad";
-      button.classList.add("active");
-
-      const viewport = getLiveViewport();
-      if (!viewport || !viewport.bbox) return;
-      const width = viewport.bbox[2] - viewport.bbox[0];
-      const height = viewport.bbox[3] - viewport.bbox[1];
-      const speed = getPanSpeedFactorForZoom(Number(viewport.zoom));
-      const viewerVec = {
-        dx: vector.vx * width * speed,
-        dy: vector.vy * height * speed,
-      };
-      const angle = currentState.viewerAngleDeg || 0;
-      const rotated = rotateViewerVectorToItm(viewerVec, -angle);
-
-      OTEFDataContext.sendVelocity(rotated.dx, rotated.dy);
-      if (navigator.vibrate) navigator.vibrate(20);
-    };
-
-    const endHandler = (e) => {
-      if (activeControl === "dpad") {
-        activeControl = null;
-        button.classList.remove("active");
-        OTEFDataContext.sendVelocity(0, 0);
-      }
-    };
-
-    button.addEventListener("touchstart", startHandler, { passive: false });
-    button.addEventListener("touchend", endHandler, { passive: false });
-    button.addEventListener("mousedown", startHandler);
-    button.addEventListener("mouseup", endHandler);
-    button.addEventListener("mouseleave", endHandler);
-  });
-}
-
 function initializeBasemapControls() {
   const control = document.getElementById("basemapControl");
   if (!control) return;
@@ -592,123 +566,12 @@ function getLiveViewport() {
   return currentState.viewport;
 }
 
-function getPanSpeedFactorForZoom(zoom) {
-  if (!Number.isFinite(zoom)) return 0.32;
-  if (zoom >= 18) return 0.16;
-  if (zoom >= 17) return 0.2;
-  if (zoom >= 16) return 0.24;
-  if (zoom >= 15) return 0.28;
-  return 0.32;
-}
-
-/**
- * Initialize joystick control
- */
-function initializeJoystick() {
-  const zone = document.getElementById("joystickZone");
-  if (!zone) return;
-
-  // Create joystick instance with configuration
-  joystickManager = nipplejs.create({
-    zone: zone,
-    mode: "static",
-    position: { left: "50%", top: "50%" },
-    color: "#00d4ff",
-    size: 100,
-    threshold: 0.15,
-    fadeTime: 200,
-    restOpacity: 0.6,
-  });
-
-  // Event handlers
-  joystickManager.on("start", handleJoystickStart);
-  joystickManager.on("move", handleJoystickMove);
-  joystickManager.on("end", handleJoystickEnd);
-}
-
-function handleJoystickStart(evt, data) {
-  if (!currentState.isConnected) return;
-
-  activeControl = "joystick";
-  disableDPad();
-
-  const zone = document.getElementById("joystickZone");
-  if (zone) zone.classList.add("active");
-
-  if (navigator.vibrate) {
-    navigator.vibrate(20);
-  }
-}
-
-function handleJoystickMove(evt, data) {
-  if (!currentState.isConnected || activeControl !== "joystick") return;
-
-  const force = Math.min(data.force, 1.5);
-  if (force < 0.15) {
-    OTEFDataContext.sendVelocity(0, 0);
-    return;
-  }
-
-  const angleRad = data.angle.radian;
-  const viewport = getLiveViewport();
-  if (!viewport || !viewport.bbox) return;
-
-  const width = viewport.bbox[2] - viewport.bbox[0];
-  const height = viewport.bbox[3] - viewport.bbox[1];
-
-  // Max speed factor: move fraction of viewport per second
-  // We use 0.4 (40%) to keep it smooth but responsive
-  const maxSpeedFactor = getPanSpeedFactorForZoom(Number(viewport.zoom));
-  const viewerVec = {
-    dx: Math.cos(angleRad) * force * width * maxSpeedFactor,
-    dy: Math.sin(angleRad) * force * height * maxSpeedFactor,
-  };
-  const angle = currentState.viewerAngleDeg || 0;
-  const rotated = rotateViewerVectorToItm(viewerVec, -angle);
-
-  // Reduced frequency for network messages (DataContext manages local 60fps loop)
-  if (!joystickInterval) {
-    OTEFDataContext.sendVelocity(rotated.dx, rotated.dy);
-    joystickInterval = setTimeout(() => {
-      joystickInterval = null;
-    }, 100);
-  }
-}
-
-function handleJoystickEnd(evt, data) {
-  activeControl = null;
-  enableDPad();
-
-  const zone = document.getElementById("joystickZone");
-  if (zone) zone.classList.remove("active");
-
-  if (navigator.vibrate) {
-    navigator.vibrate(15);
-  }
-
-  if (joystickInterval) {
-    clearTimeout(joystickInterval);
-    joystickInterval = null;
-  }
-
-  // Send explicit stop command
-  OTEFDataContext.sendVelocity(0, 0);
-}
-
 function disableDPad() {
-  const buttons = document.querySelectorAll(".dpad-button");
-  buttons.forEach((btn) => {
-    btn.style.opacity = "0.3";
-    btn.style.pointerEvents = "none";
-  });
+  dpadController?.setEnabled(false);
 }
 
 function enableDPad() {
-  const buttons = document.querySelectorAll(".dpad-button");
-  buttons.forEach((btn) => {
-    btn.style.opacity = "";
-    btn.style.pointerEvents = "";
-  });
+  dpadController?.setEnabled(true);
 }
 
 /**
@@ -754,8 +617,9 @@ if (typeof window !== "undefined") {
     basemapControlController?.destroy?.();
     basemapControlController = null;
 
-    if (joystickManager) {
-      joystickManager.destroy();
-    }
+    joystickController?.destroy?.();
+    joystickController = null;
+    dpadController?.destroy?.();
+    dpadController = null;
   });
 }

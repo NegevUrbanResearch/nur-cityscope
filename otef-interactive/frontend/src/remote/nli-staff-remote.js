@@ -16,6 +16,11 @@ import {
   waitForInvestigationClockIdle,
 } from "./remote-people-archive-controller.js";
 import { createRemoteZoomController } from "./remote-zoom-controls.js";
+import {
+  createRemoteDpadController,
+  createRemoteJoystickController,
+} from "./remote-joystick-controls.js";
+import { createStaffPackMenus } from "./nli-staff-pack-menus.js";
 import { labelForPlace, placeIsWithinRemoteBounds } from "./remote-place-navigation.js";
 import { getLocale, setLocale, t, LOCALE_EVENT } from "./remote-locale.js";
 import { COPY, NARRATIVES, SCENES } from "./nli-staff-script.js";
@@ -53,6 +58,10 @@ export function initNliStaffRemote(dataContext) {
   let lastPlaces = [];
   let archiveUiReady = false;
   let peopleArchive = null;
+  let viewerAngleDeg = 0;
+  let packMenus = null;
+  let joystickController = null;
+  let joystickMountFrame = 0;
 
   const presentation = createNliNarrativePresentationController({
     dataContext,
@@ -107,30 +116,6 @@ export function initNliStaffRemote(dataContext) {
   const currentStep = () => narrative()?.steps[state.step] || null;
   const stepKits = (step) => (Array.isArray(step?.kit) ? step.kit : []);
 
-  function layerEnabled(fullId) {
-    for (const group of timelineHost.getEffectiveGroupsForView()) {
-      for (const layer of group?.layers || []) {
-        const ids = Array.isArray(layer?.fullLayerIds) && layer.fullLayerIds.length
-          ? layer.fullLayerIds
-          : [`${group.id}.${layer.id}`];
-        if (ids.includes(fullId) || `${group.id}.${layer.id}` === fullId) {
-          return !!layer.enabled;
-        }
-      }
-    }
-    return false;
-  }
-
-  function anyLayerEnabled(ids) {
-    return ids.some((id) => layerEnabled(id));
-  }
-
-  function setChip(id, pressed) {
-    const el = $(id);
-    if (!el) return;
-    el.setAttribute("aria-pressed", String(!!pressed));
-  }
-
   async function setLayerSet(ids, enabled) {
     if (typeof dataContext?.setLayersEnabled !== "function" || !ids.length) return;
     try {
@@ -138,11 +123,6 @@ export function initNliStaffRemote(dataContext) {
     } catch {
       // Keep the staff chrome even if the layer patch is rejected.
     }
-  }
-
-  async function toggleLayers(ids) {
-    await setLayerSet(ids, !anyLayerEnabled(ids));
-    renderFree();
   }
 
   async function waitForNliCache(timeoutMs = 4000) {
@@ -264,7 +244,6 @@ export function initNliStaffRemote(dataContext) {
     document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
       el.setAttribute("placeholder", txt(el.dataset.i18nPlaceholder));
     });
-    $("headerTitle").textContent = txt("library");
     document.title = getLocale() === "he" ? "הקרנה · הספרייה הלאומית" : "Projection · National Library";
     renderConnection();
   }
@@ -276,6 +255,24 @@ export function initNliStaffRemote(dataContext) {
     el.classList.toggle("is-on", state.connected);
   }
 
+  function liveViewport() {
+    const viewport = dataContext?.getViewport?.();
+    return viewport?.bbox ? viewport : null;
+  }
+
+  function mountJoystick() {
+    if (joystickMountFrame) cancelAnimationFrame(joystickMountFrame);
+    let attempts = 0;
+    const tryInit = () => {
+      joystickMountFrame = 0;
+      if (joystickController?.init()) return;
+      if (attempts >= 12) return;
+      attempts += 1;
+      joystickMountFrame = requestAnimationFrame(tryInit);
+    };
+    tryInit();
+  }
+
   function showScreen(name) {
     state.screen = name;
     document.querySelectorAll(".screen").forEach((el) => {
@@ -283,8 +280,11 @@ export function initNliStaffRemote(dataContext) {
       el.classList.toggle("is-active", on);
       el.hidden = !on;
     });
-    $("backBtn").hidden = name === "home";
+    $("homeBtn").hidden = name === "home";
+    if (name !== "free") packMenus?.close();
     if (name !== "player") paintTimelineMounts();
+    if (name === "free") mountJoystick();
+    else joystickController?.destroy();
   }
 
   function renderHome() {
@@ -448,7 +448,7 @@ export function initNliStaffRemote(dataContext) {
               <li>
                 <button type="button" data-kind="place" data-place-id="${place.id}">
                   <span class="result-name">${name}</span>
-                  <span class="result-place">${place.type === "settlement" ? txt("toggleNames") : ""}</span>
+                  <span class="result-place">${place.type === "settlement" ? txt("placeTypeSettlement") : ""}</span>
                 </button>
               </li>`;
       },
@@ -484,8 +484,7 @@ export function initNliStaffRemote(dataContext) {
             </button>`,
       ).join("");
     }
-    setChip("toggleNames", anyLayerEnabled(SETTLEMENT_LAYER_IDS));
-    setChip("toggleRoad", anyLayerEnabled(ROAD_LAYER_IDS));
+    packMenus?.render();
     const archivePerson = peopleArchive?.getAcknowledgedPerson?.();
     if (state.freeError) {
       paintFreeStatus(state.freeError, false);
@@ -574,13 +573,53 @@ export function initNliStaffRemote(dataContext) {
   }
 
   const zoomController = createRemoteZoomController({
+    slider: $("zoomSlider"),
     zoomIn: $("zoomIn"),
     zoomOut: $("zoomOut"),
-    getViewport: () => dataContext?.getViewport?.(),
+    zoomValue: $("zoomValue"),
+    getViewport: liveViewport,
     zoom: (level) => dataContext?.zoom?.(level),
     isConnected: () => state.connected,
   });
   zoomController.init();
+
+  if (typeof dataContext?.getViewerAngleDeg === "function") {
+    const angle = dataContext.getViewerAngleDeg();
+    if (typeof angle === "number" && !Number.isNaN(angle)) viewerAngleDeg = angle;
+  }
+
+  const dpadController = createRemoteDpadController({
+    root: $("free") || document,
+    isConnected: () => state.connected,
+    getViewport: liveViewport,
+    getViewerAngleDeg: () => viewerAngleDeg,
+    sendVelocity: (dx, dy) => dataContext?.sendVelocity?.(dx, dy),
+  });
+  dpadController.init();
+
+  joystickController = createRemoteJoystickController({
+    zone: $("joystickZone"),
+    nipplejs: typeof globalThis.nipplejs !== "undefined" ? globalThis.nipplejs : null,
+    isConnected: () => state.connected,
+    getViewport: liveViewport,
+    getViewerAngleDeg: () => viewerAngleDeg,
+    sendVelocity: (dx, dy) => dataContext?.sendVelocity?.(dx, dy),
+    onStart: () => dpadController.setEnabled(false),
+    onEnd: () => dpadController.setEnabled(true),
+    size: 100,
+    color: "#1a1a1a",
+    restOpacity: 0.6,
+  });
+
+  packMenus = createStaffPackMenus({
+    root: $("staffPackMenus"),
+    getGroups: () => timelineHost.getEffectiveGroupsForView(),
+    getClock: () => dataContext?.getInvestigationClock?.() || null,
+    setLayersEnabled: (ids, enabled) => setLayerSet(ids, enabled),
+    isConnected: () => state.connected,
+    titleForPack: (id) => (id === "nli" ? txt("packLibrary") : txt("packBase")),
+    emptyLabel: () => txt("packEmpty"),
+  });
 
   peopleArchive = createRemotePeopleArchiveController({
     root: $("free"),
@@ -622,7 +661,7 @@ export function initNliStaffRemote(dataContext) {
     if (card) void enterNarrative(card.dataset.open);
   });
 
-  $("backBtn").addEventListener("click", () => {
+  $("homeBtn").addEventListener("click", () => {
     $("searchInput").value = "";
     renderResults("");
     void exitNarrative();
@@ -718,13 +757,6 @@ export function initNliStaffRemote(dataContext) {
     void applyScene("open", { force: true });
   });
 
-  $("toggleNames")?.addEventListener("click", () => {
-    void toggleLayers(SETTLEMENT_LAYER_IDS);
-  });
-  $("toggleRoad")?.addEventListener("click", () => {
-    void toggleLayers(ROAD_LAYER_IDS);
-  });
-
   $("localeHe").addEventListener("click", () => setLocale("he"));
   $("localeEn").addEventListener("click", () => setLocale("en"));
   window.addEventListener(LOCALE_EVENT, () => {
@@ -751,12 +783,16 @@ export function initNliStaffRemote(dataContext) {
   });
   dataContext?.subscribe?.("investigationClock", () => {
     paintTimelineMounts();
+    if (state.screen === "free") packMenus?.render();
   });
   dataContext?.subscribe?.("narrativeState", () => {
     renderKit();
   });
   dataContext?.subscribe?.("layerGroups", () => {
     if (state.screen === "free") renderFree();
+  });
+  dataContext?.subscribe?.("orientation", (angle) => {
+    if (typeof angle === "number" && !Number.isNaN(angle)) viewerAngleDeg = angle;
   });
   dataContext?.subscribe?.("viewport", (viewport) => {
     zoomController.syncFromViewport(viewport);

@@ -32,6 +32,12 @@ test("projection/remote/curation pages load single module entrypoints", () => {
   expect(nliStaff.includes('src="./src/entries/nli-staff-remote-main.js"')).toBe(true);
   expect(nliStaff).toMatch(/\bid="archiveBtn"/);
   expect(nliStaff).toMatch(/\bid="freeArchiveBtn"/);
+  expect(nliStaff).toMatch(/\bid="joystickZone"/);
+  expect(nliStaff).toMatch(/\bid="panNorth"/);
+  expect(nliStaff).toMatch(/\bid="staffPackMenus"/);
+  expect(nliStaff).toMatch(/nipplejs@0\.10\.2/);
+  expect(nliStaff).not.toMatch(/\bid="toggleNames"/);
+  expect(nliStaff).not.toMatch(/\bid="toggleRoad"/);
   expect(nliStaff).not.toMatch(/play_arrow/);
   expect(nliStaff).not.toMatch(/Material\+Symbols/);
 
