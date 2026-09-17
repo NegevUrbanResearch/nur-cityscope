@@ -53,6 +53,7 @@ import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-the
 import { getNliNarrative } from "./nli-narratives.js";
 import { record as recordPerfSample } from "../map/perf-telemetry.js";
 import { deriveInvestigationFrame } from "./nli-investigation-visual-state.js";
+import { hasUsableBufferedGradient } from "./cim-buffered-gradient.js";
 import { novaVirtualMembership } from "./nli-nova-virtual-membership.js";
 import {
   achievedSettlementCitynames,
@@ -526,7 +527,28 @@ function assignVisibleStoryBeats(state, polygonsVisible, linesVisible) {
     polygonsVisible ? state.data.polygonFeatures : null,
     linesVisible ? state.data.lineFeatures : null,
   );
-  state.polygonMotionActive = polygonsVisible === true;
+}
+
+function sharedFrameNeedsRaf(state, nowMs) {
+  const frame = state.clock ? deriveTimelineFrame(state, nowMs) : null;
+  const lineFrame = state.clock && !isNovaIdle(state) && state.clock.phase === "idle" && state.lineOn
+    ? deriveIdleLineFrame(state, nowMs)
+    : null;
+  return shouldRafClock(frame) || shouldRafClock(lineFrame);
+}
+
+function updatePolygonMotionReadiness(state, polygonsVisible, { allowEnable = true } = {}) {
+  const eligible = polygonsVisible === true &&
+    state.data.bufferedGradientSidecarStatus === "ready" &&
+    hasUsableBufferedGradient(state.data.polygonStyle, state.data.bufferedGradientFeatures);
+  const next = allowEnable ? eligible : state.polygonMotionActive && eligible;
+  if (!next && state.polygonMotionActive) {
+    state.polygonMotionActive = false;
+    const nowMs = Number(state.now?.());
+    if (!sharedFrameNeedsRaf(state, Number.isFinite(nowMs) ? nowMs : 0)) cancelScheduledFrame(state);
+    return;
+  }
+  state.polygonMotionActive = next;
 }
 
 function readPersonGlowActive(state) {
@@ -885,7 +907,9 @@ function getOrCreateState(map, deps = {}) {
 function attachTimelineStyleListeners(map, state) {
   if (state.styleListener || typeof map?.on !== "function") return;
   const handleStyleReload = () => {
+    invalidateTimelineSyncRequests(map);
     cancelScheduledFrame(state);
+    state.polygonMotionActive = false;
     if (state.alarmRenderer || state.lineRenderer || state.polygonRenderer) {
       discardRendererHandles(state, { preserveBasePaints: true });
     }
@@ -975,6 +999,7 @@ function tick(map) {
       clock.phase === "ended" ||
       (clock.phase === "paused" && clock.seekKind === "jump") ||
       frame.completedFlowNeedsFrames ||
+      frame.polygonMotionNeedsFrames ||
       frame.rippleNeedsFrames ||
       rippleEnded ||
       onsetEnded ||
@@ -1038,6 +1063,7 @@ export function prepareInvestigationTimelineForStyleReload(map) {
   if (!state) return;
   invalidateTimelineSyncRequests(map);
   cancelScheduledFrame(state);
+  state.polygonMotionActive = false;
   state.styleReady = false;
   state.awaitingStyleRemount = true;
   clearOrientationTargets(state);
@@ -1122,6 +1148,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   const linesVisible = nextMembership.visible.has(INVESTIGATION_LINES_FULL_ID);
   const novaSiteOverlay = isNovaNarrative(state);
   state.routeLayerVisible = linesVisible;
+  updatePolygonMotionReadiness(state, polygonsVisible, { allowEnable: false });
   // Visibility changes are applied before any optional network work so a
   // hidden renderer cannot remain visible while its sibling dataset loads.
   resetEffectiveRenderers(map, state, nextMembership, { preservePolygonBasePaints: true });
@@ -1154,6 +1181,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
         isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
       });
       if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+      updatePolygonMotionReadiness(state, polygonsVisible);
     }
     if (polygonsVisible || linesVisible || novaSiteOverlay || narrativeSettlementOutlineId(state) != null) {
       await ensureInvestigationSettlementFeatures(state.data, deps, {
@@ -1222,6 +1250,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
     });
     if (isStaleTimelineSyncRequest(map, syncRequest)) return;
   }
+  updatePolygonMotionReadiness(state, polygonsVisible);
   if (nextMembership.lineOn || nextMembership.polygonOn || narrativeSettlementOutlineId(state) != null) {
     await ensureInvestigationSettlementFeatures(state.data, deps, {
       request: syncRequest,

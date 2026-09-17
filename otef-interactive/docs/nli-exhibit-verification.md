@@ -8,14 +8,66 @@ programmatic check can claim that the cross-origin NLI document loaded.
 Automated checks establish local handle acquisition and navigation assignment.
 They do not replace the runtime and exhibit gates below.
 
+## Polygon-gradient lab evidence (Task 6)
+
+Complete one row for every category and display after observing the normal
+exhibit on the actual display. Do not infer a pass from a unit test, a local
+browser window, or a screenshot rendered without the exhibit hardware. The
+table is intentionally unfilled until a hardware colleague records the
+observation.
+
+| Display (`GIS`, `projection-left`, `projection-right`) | Category | Polygon shape/size | Cycle duration | Band count | Step duration | Cadence | Effective FPS | Sample count | Scheduler p95 | Observer wording | Pass/fail | Explicit adjustments |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|
+| GIS | battle |  |  |  |  |  |  |  |  |  | pending |  |
+| GIS | fire |  |  |  |  |  |  |  |  |  | pending |  |
+| GIS | hostage |  |  |  |  |  |  |  |  |  | pending |  |
+| projection-left | battle |  |  |  |  |  |  |  |  |  | pending |  |
+| projection-left | fire |  |  |  |  |  |  |  |  |  | pending |  |
+| projection-left | hostage |  |  |  |  |  |  |  |  |  | pending |  |
+| projection-right | battle |  |  |  |  |  |  |  |  |  | pending |  |
+| projection-right | fire |  |  |  |  |  |  |  |  |  | pending |  |
+| projection-right | hostage |  |  |  |  |  |  |  |  |  | pending |  |
+
+Record the authored values and the observed values separately when they
+differ. Explicit adjustments must name the changed token or deployment
+setting; never write a guessed value into this record.
+
+## Polygon motion and browser acceptance checklist (Task 6)
+
+Run the checklist with battle, fire, and hostage polygons together. Exercise
+small, large, concave, multipart, and holed polygon examples. Exercise
+**Play**, **Pause**, **End**, replay, seek, **Stop at 06:29**, and reduced
+motion. Check labels, terrain, story clock, alarms, and routes at the same
+time. Reject any interpretation that looks like breathing, flashing,
+targeting, shrinking, or an outward spread; the approved motion is continuous
+inward translation: each authored band becomes the next inner geometry, and
+the sequence wraps seamlessly.
+
+- [ ] GIS and projection show the same clock, polygon phase, and entry values;
+  only the existing profile scale and Nova dimming may differ.
+- [ ] The browser console is free of MapLibre expression errors on both
+  surfaces.
+- [ ] All five polygon shape/size cases remain stable through Play, Pause,
+  End, replay, seek, Stop at 06:29, and reduced motion.
+- [ ] Battle, fire, and hostage colors, outlines, labels, terrain, clock,
+  alarms, and routes remain legible together.
+- [ ] The motion does not read as breathing, flashing, targeting, shrinking,
+  or an outward spread.
+
+No physical lab acceptance is claimed by this document. Hardware colleague
+review and the 1,000-sample measurement remain **pending** unless the result
+record names the actual display, operator, date, browser, and trace.
+
 ## Recorded automated evidence
 
 The following results are automated evidence. The R4 report records the fresh
 commands and outcomes:
 
 - Promoted NLI release validation passed.
-- Root's final focused and full frontend test counts, build result, and Django
-  result are pending. Record them only after the final verification run.
+- Frontend verification covered 196 files and 1,928 tests; the production
+  build succeeded.
+- The Django clean-database run still prompts for confirmation and ends at
+  EOF in the non-interactive check. The `--keepdb` run passed 216 tests.
 - The running nginx deployment returned `200` for the GIS, projection, remote,
   and six NLI runtime artifact endpoints.
 - Local tests cover People search, selection recovery, on-demand named-window
@@ -218,10 +270,16 @@ These checks complete acceptance after the integration and window checks:
 - Review route direction, red carrier and dash contrast, settlement outlines,
   alarm scaling/ripple, bubble legibility, halo visibility, clock placement,
   and reduced motion on the exhibit hardware.
-- Capture at least 1,000 dense-state scheduler samples and confirm the 95th
-  percentile is at or below 8 ms.
-- Confirm **Stop** and disposal leave no animation frame, timer, duplicate
-  source, or duplicate layer.
+- Capture at least 1,000 dense-state scheduler samples on each actual display
+  and confirm the 95th percentile is at or below 8 ms. This remains pending
+  until a hardware colleague records it.
+- **Stop** / `idle` may retain exactly one existing shared per-map RAF while a
+  visible full-motion approved ambient consumer exists: a completed polygon
+  conveyor, completed route flow, idle alarm, or existing person glow where
+  applicable. Reduced motion, layer disable, no eligible feature or data,
+  style/page disposal, and teardown must leave no frame attributable to
+  polygon motion and no orphaned RAF. Confirm that no duplicate source or
+  duplicate layer is created.
 
 ## Zikim / sea crop UV record (Task 12)
 

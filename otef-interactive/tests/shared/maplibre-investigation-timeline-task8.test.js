@@ -4,11 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildInvestigationSettlementIndexes,
+  disposeInvestigationTimelineForMap,
   getInvestigationTimelineDiagnostics,
   prepareInvestigationTimelineForStyleReload,
   syncInvestigationTimelineToMap,
 } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
-import { playNliClock, idleNliClock, stopNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
+import { endNliClock, playNliClock, idleNliClock, stopNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
 import {
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
@@ -275,7 +276,7 @@ describe("Task 8 investigation timeline coordinator", () => {
     expect(map.getSource("nli-investigation-settlement-impact")?.data?.features).toEqual([settlement]);
   });
 
-  it("schedules idle category motion when polygons are on and lines are off", async () => {
+  it("does not schedule polygon frames for unprocessed fallback category paints", async () => {
     const map = mapWithHostLayers();
     let now = 0;
     const polygonGroups = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
@@ -292,13 +293,290 @@ describe("Task 8 investigation timeline coordinator", () => {
     };
     await syncInvestigationTimelineToMap(map, clock, polygonGroups, deps);
     await syncInvestigationTimelineToMap(map, stopNliClock(clock), polygonGroups, deps);
-    expect(map.pendingAnimationFrameCount()).toBe(1);
+    expect(map.pendingAnimationFrameCount()).toBe(0);
     const opacity0 = map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity");
-    const gradient0 = map.getPaintProperty("nli-investigation-polygon-category-line-battle", "line-gradient");
     now = 66;
+    expect(map.driveAnimationFrame(66)).toBe(false);
+    expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity")).toBe(opacity0);
+    expect(map.getPaintProperty("nli-investigation-polygon-category-line-battle", "line-gradient")).toBeUndefined();
+  });
+
+  it("does not schedule polygon ambient frames when the processed sidecar has no matching style class", async () => {
+    const map = mapWithHostLayers();
+    const polygonGroups = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
+    const polygon = {
+      properties: { OBJECTID: 1, timeline_minutes: 400, Notes: "מרחב לחימה - קרב" },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+    };
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [{ value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+        { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.4 },
+      ] } }] },
+    };
+    await syncInvestigationTimelineToMap(map, stopNliClock(playNliClock(
+      idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], [400], 0,
+    )), polygonGroups, {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [polygon] },
+      polygonStyle: style,
+      bufferedGradientFeatures: [{ ...polygon, properties: { ...polygon.properties, Notes: "not-a-style-class" } }],
+      bufferedGradientSidecarStatus: "ready",
+      settlementFeatures: [],
+      now: () => 0,
+      motionMode: "full",
+    });
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+  });
+
+  it("repaints a paused eligible polygon conveyor only at the 66 ms cadence", async () => {
+    const map = mapWithHostLayers();
+    let now = TIMELINE_BEAT_MS;
+    const polygonGroups = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
+    const polygon = {
+      properties: { OBJECTID: 1, timeline_minutes: 400, Notes: "מרחב לחימה - קרב" },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+    };
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [{ value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+        { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.4 },
+      ] } }] },
+    };
+    const sidecar = [{ ...polygon, properties: { ...polygon.properties, __cim_gradient_band: 0 } }];
+    await syncInvestigationTimelineToMap(map, {
+      phase: "paused",
+      membership: [INVESTIGATION_POLYGONS_FULL_ID],
+      beats: [400, 420],
+      loop: false,
+      positionMs: TIMELINE_BEAT_MS,
+      anchorMs: TIMELINE_BEAT_MS,
+      seekKind: "none",
+      revision: 1,
+    }, polygonGroups, {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [polygon] },
+      polygonStyle: style,
+      bufferedGradientFeatures: sidecar,
+      bufferedGradientSidecarStatus: "ready",
+      settlementFeatures: [],
+      now: () => now,
+      motionMode: "full",
+    });
+    const writes = () => map.calls.filter((call) =>
+      call.method === "setPaintProperty" &&
+      call.id === "nli-investigation-polygon-category-fill-battle" &&
+      call.key === "fill-opacity").length;
+    const before = writes();
+    expect(map.pendingAnimationFrameCount()).toBe(1);
+    now += 65;
+    expect(map.driveAnimationFrame(65)).toBe(true);
+    expect(writes()).toBe(before);
+    now += 1;
     expect(map.driveAnimationFrame(66)).toBe(true);
-    expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity")).not.toEqual(opacity0);
-    expect(map.getPaintProperty("nli-investigation-polygon-category-line-battle", "line-gradient")).not.toEqual(gradient0);
+    expect(writes()).toBeGreaterThan(before);
+  });
+
+  it("does not let a stale buffered-gradient load re-enable polygon demand after disable", async () => {
+    const map = mapWithHostLayers();
+    let releaseSidecar;
+    const sidecarGate = new Promise((resolve) => { releaseSidecar = resolve; });
+    const polygon = {
+      properties: { OBJECTID: 1, timeline_minutes: 400, Notes: "מרחב לחימה - קרב" },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+    };
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [{ value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+        { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.4 },
+      ] } }] },
+    };
+    const deps = {
+      dataVersion: "task5-race",
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [polygon] },
+      polygonStyle: style,
+      getLayerConfig: () => ({ resources: { bufferedGradient: { file: "gradient.geojson", format: "geojson" } } }),
+      fetchJson: () => sidecarGate,
+      settlementFeatures: [],
+      now: () => 0,
+      motionMode: "full",
+    };
+    const playSync = syncInvestigationTimelineToMap(map, playNliClock(
+      idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], [400], 0,
+    ), [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }], deps);
+    await Promise.resolve();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), [
+      { id: "nli", layers: [{ id: "investigation_polygons", enabled: false }] },
+    ], deps);
+    releaseSidecar({ type: "FeatureCollection", features: [{ ...polygon, properties: { ...polygon.properties, __cim_gradient_band: 0 } }] });
+    await playSync;
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+  });
+
+  it("keeps completed route flow scheduled while a deferred polygon reload becomes ineligible", async () => {
+    const map = mapWithHostLayers();
+    let now = TIMELINE_BEAT_MS;
+    let releaseSidecar;
+    const sidecarGate = new Promise((resolve) => { releaseSidecar = resolve; });
+    const polygon = {
+      properties: { OBJECTID: 1, timeline_minutes: 400, Notes: "מרחב לחימה - קרב" },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+    };
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [{ value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+        { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.4 },
+      ] } }] },
+    };
+    const clock = {
+      phase: "paused",
+      membership: [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID],
+      beats: [400],
+      loop: false,
+      positionMs: TIMELINE_BEAT_MS,
+      anchorMs: TIMELINE_BEAT_MS,
+      seekKind: "none",
+      revision: 1,
+    };
+    const readyDeps = {
+      dataVersion: "task5-route-v1",
+      featuresById: { ...features, [INVESTIGATION_POLYGONS_FULL_ID]: [polygon] },
+      polygonStyle: style,
+      bufferedGradientFeatures: [{ ...polygon, properties: { ...polygon.properties, __cim_gradient_band: 0 } }],
+      bufferedGradientSidecarStatus: "ready",
+      settlementFeatures: [],
+      now: () => now,
+      motionMode: "full",
+    };
+    const allGroups = [{ id: "nli", layers: [
+      { id: "investigation_polygons", enabled: true },
+      { id: "lines", enabled: true },
+    ] }];
+    await syncInvestigationTimelineToMap(map, clock, allGroups, readyDeps);
+    expect(map.pendingAnimationFrameCount()).toBe(1);
+
+    const reload = syncInvestigationTimelineToMap(map, { ...clock, revision: 2 }, allGroups, {
+      ...readyDeps,
+      dataVersion: "task5-route-v2",
+      bufferedGradientFeatures: undefined,
+      bufferedGradientSidecarStatus: undefined,
+      getLayerConfig: () => ({ resources: { bufferedGradient: { file: "gradient.geojson", format: "geojson" } } }),
+      fetchJson: () => sidecarGate,
+    });
+    await Promise.resolve();
+    expect(map.pendingAnimationFrameCount()).toBe(1);
+    releaseSidecar({ type: "FeatureCollection", features: [{ ...polygon, properties: { ...polygon.properties, __cim_gradient_band: 0 } }] });
+    await reload;
+    expect(map.pendingAnimationFrameCount()).toBe(1);
+  });
+
+  it("invalidates a deferred pre-style sync and allows only the replacement generation to re-enable polygons", async () => {
+    const map = mapWithHostLayers();
+    let releaseSidecar;
+    const sidecarGate = new Promise((resolve) => { releaseSidecar = resolve; });
+    const polygon = {
+      properties: { OBJECTID: 1, timeline_minutes: 400, Notes: "מרחב לחימה - קרב" },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+    };
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [{ value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+        { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.4 },
+      ] } }] },
+    };
+    const groups = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
+    const clock = {
+      phase: "paused",
+      membership: [INVESTIGATION_POLYGONS_FULL_ID],
+      beats: [400, 420],
+      loop: false,
+      positionMs: TIMELINE_BEAT_MS,
+      anchorMs: TIMELINE_BEAT_MS,
+      seekKind: "none",
+      revision: 1,
+    };
+    const deferredDeps = {
+      dataVersion: "task5-style-v1",
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [polygon] },
+      polygonStyle: style,
+      getLayerConfig: () => ({ resources: { bufferedGradient: { file: "gradient.geojson", format: "geojson" } } }),
+      fetchJson: () => sidecarGate,
+      settlementFeatures: [],
+      now: () => TIMELINE_BEAT_MS,
+      motionMode: "full",
+    };
+    const preStyleSync = syncInvestigationTimelineToMap(map, clock, groups, deferredDeps);
+    await Promise.resolve();
+    map.emit("style.load");
+    releaseSidecar({ type: "FeatureCollection", features: [{ ...polygon, properties: { ...polygon.properties, __cim_gradient_band: 0 } }] });
+    await preStyleSync;
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+
+    await syncInvestigationTimelineToMap(map, { ...clock, revision: 2 }, groups, {
+      ...deferredDeps,
+      dataVersion: "task5-style-v2",
+      bufferedGradientFeatures: [{ ...polygon, properties: { ...polygon.properties, __cim_gradient_band: 0 } }],
+      bufferedGradientSidecarStatus: "ready",
+    });
+    expect(map.pendingAnimationFrameCount()).toBe(1);
+  });
+
+  it.each([
+    ["loading", { bufferedGradientSidecarStatus: "loading", bufferedGradientFeatures: null }],
+    ["failed", { bufferedGradientSidecarStatus: "failed", bufferedGradientFeatures: null }],
+    ["malformed style", { polygonStyle: { renderer: "uniqueValue", uniqueValues: { classes: [{ value: "מרחב לחימה - קרב", symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 0, resolvedColors: ["bad"] }] } }] } }, bufferedGradientFeatures: [{ properties: { Notes: "מרחב לחימה - קרב" } }], bufferedGradientSidecarStatus: "ready" }],
+  ])("does not schedule a polygon RAF for %s processed data", async (_label, override) => {
+    const map = mapWithHostLayers();
+    const polygon = {
+      properties: { OBJECTID: 1, timeline_minutes: 400, Notes: "מרחב לחימה - קרב" },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+    };
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [{ value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+        { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.4 },
+      ] } }] },
+    };
+    await syncInvestigationTimelineToMap(map, {
+      phase: "paused", membership: [INVESTIGATION_POLYGONS_FULL_ID], beats: [400, 420],
+      loop: false, positionMs: TIMELINE_BEAT_MS, anchorMs: TIMELINE_BEAT_MS, seekKind: "none", revision: 1,
+    }, [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }], {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [polygon] },
+      polygonStyle: style,
+      bufferedGradientFeatures: [{ ...polygon, properties: { ...polygon.properties, __cim_gradient_band: 0 } }],
+      bufferedGradientSidecarStatus: "ready",
+      settlementFeatures: [],
+      now: () => TIMELINE_BEAT_MS,
+      motionMode: "full",
+      ...override,
+    });
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+  });
+
+  it("leaves no eligible polygon RAF in reduced motion or after disposal", async () => {
+    const map = mapWithHostLayers();
+    const polygon = {
+      properties: { OBJECTID: 1, timeline_minutes: 400, Notes: "מרחב לחימה - קרב" },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.1, 31], [34.1, 31.1], [34, 31]]] },
+    };
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [{ value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+        { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.4 },
+      ] } }] },
+    };
+    const deps = {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [polygon] }, polygonStyle: style,
+      bufferedGradientFeatures: [{ ...polygon, properties: { ...polygon.properties, __cim_gradient_band: 0 } }],
+      bufferedGradientSidecarStatus: "ready", settlementFeatures: [], now: () => TIMELINE_BEAT_MS,
+      motionMode: "reduced",
+    };
+    await syncInvestigationTimelineToMap(map, { phase: "paused", membership: [INVESTIGATION_POLYGONS_FULL_ID], beats: [400, 420], loop: false, positionMs: TIMELINE_BEAT_MS, anchorMs: TIMELINE_BEAT_MS, seekKind: "none", revision: 1 }, [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }], deps);
+    expect(map.pendingAnimationFrameCount()).toBe(0);
+    await syncInvestigationTimelineToMap(map, endNliClock(playNliClock(
+      idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], [400], 0,
+    )), [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }], { ...deps, motionMode: "full" });
+    expect(map.pendingAnimationFrameCount()).toBe(1);
+    disposeInvestigationTimelineForMap(map);
+    expect(map.pendingAnimationFrameCount()).toBe(0);
   });
 
   it("keeps every idle route after Stop when polygons and lines are both on", async () => {

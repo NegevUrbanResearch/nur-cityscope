@@ -11,6 +11,7 @@ import {
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
   TIMELINE_BEAT_MS,
+  TIMELINE_HOLD_MS,
   clockStoryDurationMs,
 } from "../../frontend/src/shared/nli-investigation-beats.js";
 import {
@@ -19,6 +20,7 @@ import {
   pauseNliClock,
   playNliClock,
   replayNliClock,
+  normalizeNliClock,
   resumeNliClock,
   seekNliClock,
   setNliLoop,
@@ -72,27 +74,16 @@ describe("nli-investigation-theme", () => {
           fill: "#3d9a8c",
           outline: "#2a6b62",
           fillOpacity: 0.55,
-          periodMs: 4000,
-          fillOpacityMin: 0.45,
-          fillOpacityMax: 0.62,
         },
         "מוקד חטיפה": {
           fill: "#ffff73",
           outline: "#c47388",
           fillOpacity: 0.55,
-          periodMs: 2800,
-          lineWidthMin: 1.4,
-          lineWidthMax: 2.2,
-          fillOpacityMin: 0.5,
-          fillOpacityMax: 0.62,
         },
         "שריפה": {
           fill: "#d85a1f",
           outline: "#a33d12",
           fillOpacity: 0.55,
-          periodMs: 1800,
-          fillOpacityMin: 0.42,
-          fillOpacityMax: 0.7,
         },
       },
     });
@@ -114,6 +105,234 @@ describe("nli-investigation-theme", () => {
 });
 
 describe("deriveInvestigationFrame", () => {
+  it("derives a polygon-only current entry from beat elapsed time", () => {
+    const clock = playNliClock(idleNliClock(), membership, [400], 0);
+    const frame = deriveInvestigationFrame(clock, 1600, enabled, {
+      routeBeats: [420],
+    });
+    for (const token of Object.values(NLI_VISUAL_TOKENS.polygonCategories)) {
+      expect(token).not.toHaveProperty("periodMs");
+      expect(token).not.toHaveProperty("fillOpacityMin");
+      expect(token).not.toHaveProperty("fillOpacityMax");
+      expect(token).not.toHaveProperty("lineWidthMin");
+      expect(token).not.toHaveProperty("lineWidthMax");
+    }
+
+    expect(frame.polygonEntries).toEqual([{ beat: 400, progress: 0.5 }]);
+  });
+
+  it("does not enter a route-sharing current beat before route completion", () => {
+    const clock = playNliClock(idleNliClock(), membership, [400, 420], 0);
+    const frame = deriveInvestigationFrame(clock, 3199, enabled, {
+      routeBeats: [400, 420],
+    });
+
+    expect(frame.polygonEntries).toEqual([]);
+    expect(frame.achievedPolygonBeats).toEqual([]);
+  });
+
+  it("enters the completed route beat on the next beat using new elapsed time", () => {
+    const clock = playNliClock(idleNliClock(), membership, [400, 420], 0);
+    const frame = deriveInvestigationFrame(clock, TIMELINE_BEAT_MS, enabled, {
+      routeBeats: [400, 420],
+    });
+
+    expect(frame.polygonEntries).toEqual([{ beat: 400, progress: 0 }]);
+    expect(frame.achievedPolygonBeats).toEqual([400]);
+  });
+
+  it("allows simultaneous previous route and current polygon entries", () => {
+    const clock = playNliClock(idleNliClock(), membership, [400, 420], 0);
+    const frame = deriveInvestigationFrame(clock, TIMELINE_BEAT_MS + 1600, enabled, {
+      routeBeats: [400],
+    });
+
+    expect(frame.polygonEntries).toEqual([
+      { beat: 420, progress: 0.5 },
+      { beat: 400, progress: 0.5 },
+    ]);
+  });
+
+  it("compresses the final route entry to the existing hold duration", () => {
+    const clock = playNliClock(idleNliClock(), membership, [400], 0);
+    const frame = deriveInvestigationFrame(
+      clock,
+      TIMELINE_BEAT_MS + TIMELINE_HOLD_MS - 1,
+      enabled,
+      { routeBeats: [400] },
+    );
+
+    expect(frame.narrative.mode).toBe("hold");
+    expect(frame.polygonEntries).toEqual([
+      { beat: 400, progress: (TIMELINE_HOLD_MS - 1) / TIMELINE_HOLD_MS },
+    ]);
+  });
+
+  it("freezes ordinary paused polygon entries across corrected wall timestamps", () => {
+    const playing = playNliClock(idleNliClock(), membership, [400], 0);
+    const paused = pauseNliClock(playing, 1600);
+    const first = deriveInvestigationFrame(paused, 1600, enabled, {
+      routeBeats: [420],
+    });
+    const later = deriveInvestigationFrame(paused, 90_000, enabled, {
+      routeBeats: [420],
+    });
+
+    expect(first.polygonEntries).toEqual([{ beat: 400, progress: 0.5 }]);
+    expect(later.polygonEntries).toEqual(first.polygonEntries);
+  });
+
+  it("freezes a paused jump polygon entry and does not add a previous route entry", () => {
+    const jumped = seekNliClock(idleNliClock(), 1, 10_000, {
+      visibleMembership: membership,
+      beats: [400, 420],
+    });
+    const first = deriveInvestigationFrame(jumped, 10_000, enabled, {
+      routeBeats: [400],
+    });
+    const later = deriveInvestigationFrame(jumped, 90_000, enabled, {
+      routeBeats: [400],
+    });
+
+    expect(first.polygonEntries).toEqual([{ beat: 420, progress: 0 }]);
+    expect(later.polygonEntries).toEqual(first.polygonEntries);
+  });
+
+  it("does not start a second polygon reveal after a route-sharing jump", () => {
+    const jumped = seekNliClock(idleNliClock(), 1, 10_000, {
+      visibleMembership: membership,
+      beats: [400, 420],
+    });
+    const before = deriveInvestigationFrame(jumped, 10_000 + 100, enabled, {
+      routeBeats: [420],
+    });
+    const after = deriveInvestigationFrame(
+      jumped,
+      10_000 + NLI_VISUAL_TOKENS.revealDurationMs,
+      enabled,
+      { routeBeats: [420] },
+    );
+
+    expect(before.polygonEntries).toEqual([]);
+    expect(after.achievedPolygonBeats).toEqual([400, 420]);
+    expect(after.polygonEntries).toEqual([]);
+  });
+
+  it("reconstructs a normalized mid-beat seek from clock position", () => {
+    const clock = normalizeNliClock({
+      phase: "paused",
+      membership,
+      beats: [400, 420],
+      beatIndex: 1,
+      beatElapsedMs: 1600,
+      seekKind: "none",
+    });
+    const frame = deriveInvestigationFrame(clock, 90_000, enabled, {
+      routeBeats: [400],
+    });
+
+    expect(frame.polygonEntries).toEqual([
+      { beat: 420, progress: 0.5 },
+      { beat: 400, progress: 0.5 },
+    ]);
+  });
+
+  it("returns no unfinished polygon entries during lead-in, idle, or ended phases", () => {
+    const leadInClock = playNliClock(idleNliClock(), membership, [400, 492], 0, {
+      leadInMinutes: 483,
+    });
+    const leadIn = deriveInvestigationFrame(leadInClock, 100, enabled, {
+      narrativeId: "nova",
+      routeBeats: [400, 492],
+    });
+    const idle = deriveInvestigationFrame(idleNliClock(), 100, enabled, {
+      routeBeats: [400],
+    });
+    const ended = deriveInvestigationFrame(
+      endNliClock(playNliClock(idleNliClock(), membership, [400], 0)),
+      100,
+      enabled,
+      { routeBeats: [400] },
+    );
+
+    expect(leadIn.polygonEntries).toEqual([]);
+    expect(idle.polygonEntries).toEqual([]);
+    expect(ended.polygonEntries).toEqual([]);
+  });
+
+  it("requests polygon ambient frames only for completed eligible polygons", () => {
+    const paused = pauseNliClock(
+      playNliClock(idleNliClock(), membership, [400, 420], 0),
+      TIMELINE_BEAT_MS,
+    );
+    const completed = deriveInvestigationFrame(paused, 90_000, enabled, {
+      motionMode: "full",
+      polygonMotionActive: true,
+      routeBeats: [420],
+    });
+    const soleEntry = deriveInvestigationFrame(
+      pauseNliClock(playNliClock(idleNliClock(), membership, [400], 0), 800),
+      90_000,
+      enabled,
+      { motionMode: "full", polygonMotionActive: true, routeBeats: [420] },
+    );
+    const none = deriveInvestigationFrame(idleNliClock(), 90_000, enabled, {
+      motionMode: "full",
+      polygonMotionActive: true,
+    });
+    const reduced = deriveInvestigationFrame(paused, 90_000, enabled, {
+      motionMode: "reduced",
+      polygonMotionActive: true,
+      routeBeats: [420],
+    });
+    const ended = deriveInvestigationFrame(
+      endNliClock(playNliClock(idleNliClock(), membership, [400], 0)),
+      90_000,
+      enabled,
+      { motionMode: "full", polygonMotionActive: true, routeBeats: [400] },
+    );
+
+    expect(completed.completedPolygonAmbientActive).toBe(true);
+    expect(completed.polygonMotionNeedsFrames).toBe(true);
+    expect(soleEntry.completedPolygonAmbientActive).toBe(false);
+    expect(soleEntry.polygonMotionNeedsFrames).toBe(false);
+    expect(none.completedPolygonAmbientActive).toBe(false);
+    expect(reduced.completedPolygonAmbientActive).toBe(false);
+    expect(reduced.polygonMotionNeedsFrames).toBe(false);
+    expect(ended.completedPolygonAmbientActive).toBe(true);
+    expect(ended.polygonMotionNeedsFrames).toBe(true);
+  });
+
+  it("requests ambient frames for idle story achievements but not Nova idle", () => {
+    const idle = deriveInvestigationFrame(idleNliClock(), 90_000, enabled, {
+      motionMode: "full",
+      polygonMotionActive: true,
+      storyBeats: [400, 420],
+    });
+    const nova = deriveInvestigationFrame(idleNliClock(), 90_000, enabled, {
+      motionMode: "full",
+      polygonMotionActive: true,
+      storyBeats: [400, 420],
+      narrativeId: "nova",
+    });
+
+    expect(idle.completedPolygonAmbientActive).toBe(true);
+    expect(nova.completedPolygonAmbientActive).toBe(false);
+    expect(nova.polygonMotionNeedsFrames).toBe(false);
+  });
+
+  it.each([
+    [null, false],
+    [undefined, false],
+    [NaN, false],
+    [Infinity, false],
+    [-1, false],
+    [0, true],
+  ])("preserves correctedNowValid for %s", (correctedNowMs, expected) => {
+    const frame = deriveInvestigationFrame(idleNliClock(), correctedNowMs, [], {});
+    expect(frame.correctedNowValid).toBe(expected);
+  });
+
   it("activates a polygon-only beat immediately", () => {
     const clock = playNliClock(idleNliClock(), membership, beats, 0);
     const frame = deriveInvestigationFrame(clock, 0, enabled, {
