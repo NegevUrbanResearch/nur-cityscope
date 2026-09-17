@@ -26,16 +26,20 @@ import { getLocale, setLocale, t, LOCALE_EVENT } from "./remote-locale.js";
 import { COPY, NARRATIVES, SCENES } from "./nli-staff-script.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
 
-const SETTLEMENT_LAYER_IDS = [
+export const SETTLEMENT_LAYER_IDS = [
   "projector_base.שמות_יישובים",
   "projector_base.Locations_Lines",
   "projector_base.ישובים",
 ];
 const ROAD_LAYER_IDS = ["nli.ציר_232"];
-const PEOPLE_NAMES_LAYER_IDS = ["nli.people_names"];
-const OPENING_LAYER_IDS = [
+export const PEOPLE_NAMES_LAYER_IDS = ["nli.people_names"];
+export const OPENING_LAYER_IDS = [
   ...SETTLEMENT_LAYER_IDS,
   ...ROAD_LAYER_IDS,
+  "projector_base.רקע_שחור",
+];
+export const WALL_LAYER_IDS = [
+  ...PEOPLE_NAMES_LAYER_IDS,
   "projector_base.רקע_שחור",
 ];
 
@@ -213,7 +217,22 @@ export function initNliStaffRemote(dataContext) {
           if (state.scene !== target) return;
           await timelineHost.handleNliTimelinePlay?.();
         } else if (target === "wall") {
-          await commitSceneLayers(PEOPLE_NAMES_LAYER_IDS);
+          if (typeof dataContext?.setNarrative === "function") {
+            try {
+              await dataContext.setNarrative(null);
+            } catch {
+              // Names still apply if the camera scene cannot be cleared.
+            }
+          }
+          if (typeof dataContext?.clearPerson === "function") {
+            try {
+              await dataContext.clearPerson();
+            } catch {
+              // Keep the wall even if a leftover person selection cannot be cleared.
+            }
+          }
+          if (state.scene !== target) return;
+          await commitSceneLayers(WALL_LAYER_IDS);
         }
       } catch {
         if (state.scene === target) state.freeError = txt("disconnected");

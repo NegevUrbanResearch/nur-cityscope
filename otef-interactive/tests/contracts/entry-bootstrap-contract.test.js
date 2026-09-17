@@ -56,6 +56,8 @@ test("projection entry wires MapLibre curated pipeline (manual Supabase sync via
   expect(src.includes("projectionCuratedRefreshChain")).toBe(true);
   expect(src.includes("layerStyleOptions")).toBe(true);
   expect(src.includes("syncProjectionLayersWithNarrative(map, currentGroups, layerStyleOptions)")).toBe(true);
+  expect(src).toMatch(/nameFieldController\.setProjectionConfig\(\s*DEFAULT_PROJECTION_CONFIG\s*\)/);
+  expect(src).toMatch(/if \(map\.loaded\(\) \|\| map\._loaded\) map\.fire\("load"\)/);
   expect(src.includes("removeCuratedLayersByPrefix(map, fullId, layerStyleOptions)")).toBe(true);
   expect(src.includes("hasMapLibreLayerWithPrefix(map, fullId)")).toBe(true);
   expect(src.includes("fromSlideshowTick,")).toBe(true);

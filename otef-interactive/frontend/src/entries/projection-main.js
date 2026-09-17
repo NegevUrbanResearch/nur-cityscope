@@ -440,9 +440,13 @@ async function bootstrapProjectionRuntime() {
     });
   }
 
+  let projectionMapBooted = false;
   map.on("load", async () => {
+    if (projectionMapBooted) return;
+    projectionMapBooted = true;
     const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "projection", projectionSpan: projectionSpanId, motionMode: resolveMotionMode() });
     registerDisposer(() => nameFieldController.dispose());
+    nameFieldController.setProjectionConfig(DEFAULT_PROJECTION_CONFIG);
     if (modelBounds && modelBounds.bounds && typeof map.fitBounds === "function") {
       map.fitBounds(modelBounds.bounds, { animate: false, padding: 0 });
     }
@@ -988,6 +992,7 @@ async function bootstrapProjectionRuntime() {
       console.warn("[projection-main] Curated layer modules not available:", e);
     }
   });
+  if (map.loaded() || map._loaded) map.fire("load");
 
   if (previewMode) return;
   await import("../projection/projection-bounds-editor.js");
