@@ -41,6 +41,10 @@
         --pad: clamp(16px, 2.4vw, 32px);
         --gap: clamp(6px, 1.1vh, 12px);
         --space: clamp(8px, 1.5vh, 20px);
+        --map-scale: 1.25;
+        --dpad-size: calc(200px * var(--map-scale));
+        --map-control-pad: calc(12px * var(--map-scale));
+        --zoom-btn: calc(44px * var(--map-scale));
       }
 
       * { box-sizing: border-box; }
@@ -175,6 +179,9 @@
       }
       .screen.is-active { display: flex; }
       .screen[hidden] { display: none !important; }
+      #free.screen {
+        padding-bottom: max(clamp(32px, 5vh, 64px), env(safe-area-inset-bottom));
+      }
 
       .kicker {
         font-size: var(--text-kicker);
@@ -546,11 +553,9 @@
         border-top-color: var(--nli-yellow);
       }
       .free-bottom {
-        margin-top: auto;
         display: flex;
         flex-direction: column;
         gap: var(--space);
-        padding-top: clamp(16px, 3vh, 28px);
         flex-shrink: 0;
       }
 
@@ -689,13 +694,12 @@
       }
 
       .scene-list {
-        flex: 1 1 auto;
+        flex: 0 1 auto;
         min-height: 112px;
         display: grid;
         grid-template-columns: repeat(2, 1fr);
         grid-template-rows: repeat(2, minmax(0, 1fr));
         gap: var(--gap);
-        margin-bottom: var(--space);
       }
       @media (min-width: 720px) {
         .scene-list {
@@ -738,23 +742,31 @@
       .scene-btn.is-active .scene-btn-meta { color: #d9d0c8; }
 
       .free-deck {
-        flex-shrink: 0;
+        flex: 1 1 auto;
+        min-height: 0;
         display: flex;
         flex-direction: column;
-        gap: var(--gap);
+        justify-content: center;
+        align-items: center;
         position: relative;
         z-index: 2;
       }
       .free-navigate {
         display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 6px;
-        max-width: 28rem;
+        justify-content: center;
         width: 100%;
-        margin-inline: auto;
         direction: ltr;
         unicode-bidi: isolate;
+      }
+      .map-controls {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: calc(10px * var(--map-scale));
+        width: calc(var(--dpad-size) + (var(--map-control-pad) * 2));
+        padding: var(--map-control-pad);
+        border: calc(1px * var(--map-scale)) solid var(--nli-line);
+        background: var(--nli-paper);
       }
       .dpad-container {
         display: flex;
@@ -764,24 +776,26 @@
       }
       .dpad {
         position: relative;
-        width: 200px;
-        height: 200px;
+        width: var(--dpad-size);
+        height: var(--dpad-size);
         display: grid;
         grid-template-columns: repeat(3, 1fr);
         grid-template-rows: repeat(3, 1fr);
-        gap: 4px;
+        gap: calc(4px * var(--map-scale));
         direction: ltr;
         unicode-bidi: isolate;
       }
       .dpad-button {
+        width: var(--zoom-btn);
+        height: var(--zoom-btn);
+        min-width: var(--zoom-btn);
+        min-height: var(--zoom-btn);
         background: var(--nli-cream);
-        border: 2px solid var(--nli-line);
+        border: calc(2px * var(--map-scale)) solid var(--nli-line);
         color: var(--nli-ink);
         display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 44px;
-        min-width: 44px;
         padding: 0;
         touch-action: none;
         user-select: none;
@@ -793,23 +807,23 @@
         color: var(--nli-paper);
       }
       .dpad-button svg {
-        width: 24px;
-        height: 24px;
-        stroke-width: 2.5;
+        width: calc(24px * var(--map-scale));
+        height: calc(24px * var(--map-scale));
+        stroke-width: calc(2.5 * var(--map-scale));
       }
-      .dpad-up { grid-column: 2; grid-row: 1; }
-      .dpad-left { grid-column: 1; grid-row: 2; }
-      .dpad-right { grid-column: 3; grid-row: 2; }
-      .dpad-down { grid-column: 2; grid-row: 3; }
+      .dpad-up { grid-column: 2; grid-row: 1; align-self: start; justify-self: center; }
+      .dpad-left { grid-column: 1; grid-row: 2; align-self: center; justify-self: start; }
+      .dpad-right { grid-column: 3; grid-row: 2; align-self: center; justify-self: end; }
+      .dpad-down { grid-column: 2; grid-row: 3; align-self: end; justify-self: center; }
       .joystick-container,
       .joystick-zone {
         grid-column: 2;
         grid-row: 2;
         position: relative;
-        width: 100px;
-        height: 100px;
-        min-width: 100px;
-        min-height: 100px;
+        width: calc(var(--dpad-size) * 0.5);
+        height: calc(var(--dpad-size) * 0.5);
+        min-width: calc(var(--dpad-size) * 0.5);
+        min-height: calc(var(--dpad-size) * 0.5);
         justify-self: center;
         align-self: center;
         z-index: 2;
@@ -825,9 +839,9 @@
         right: auto !important;
       }
       .joystick-base {
-        width: 50px;
-        height: 50px;
-        border: 2px solid var(--nli-line);
+        width: calc(50px * var(--map-scale));
+        height: calc(50px * var(--map-scale));
+        border: calc(2px * var(--map-scale)) solid var(--nli-line);
         border-radius: 50%;
         pointer-events: none;
         opacity: 0.6;
@@ -838,11 +852,11 @@
       }
       #joystickZone .back {
         background: var(--nli-cream) !important;
-        border: 2px solid var(--nli-line) !important;
+        border: calc(2px * var(--map-scale)) solid var(--nli-line) !important;
       }
       #joystickZone .front {
         background: var(--nli-ink) !important;
-        border: 1px solid rgba(26, 26, 26, 0.35) !important;
+        border: calc(1px * var(--map-scale)) solid rgba(26, 26, 26, 0.35) !important;
       }
       #joystickZone.active .back {
         border-color: var(--nli-ink) !important;
@@ -850,14 +864,18 @@
       .zoom-controls {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: calc(6px * var(--map-scale));
+        padding-top: calc(10px * var(--map-scale));
+        border-top: calc(1px * var(--map-scale)) solid var(--nli-line);
       }
       .zoom-display {
         display: flex;
         justify-content: space-between;
-        align-items: center;
-        font-size: var(--text-meta);
+        align-items: baseline;
+        font-size: calc(var(--text-meta) * var(--map-scale));
       }
+      html[dir="rtl"] .zoom-display { direction: rtl; }
+      html[dir="ltr"] .zoom-display { direction: ltr; }
       .zoom-label { color: var(--nli-gray-2); }
       .zoom-value {
         color: var(--nli-ink);
@@ -869,15 +887,16 @@
       .zoom-slider-container {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: calc(6px * var(--map-scale));
         direction: ltr;
         unicode-bidi: isolate;
       }
       .zoom-slider {
         flex: 1;
-        height: 48px;
+        min-width: 0;
+        height: var(--zoom-btn);
         margin: 0;
-        background: transparent;
+        background: linear-gradient(var(--nli-line), var(--nli-line)) no-repeat center / 100% calc(6px * var(--map-scale));
         outline: none;
         -webkit-appearance: none;
         appearance: none;
@@ -885,45 +904,41 @@
         direction: ltr;
       }
       .zoom-slider::-webkit-slider-runnable-track {
-        height: 6px;
+        height: calc(6px * var(--map-scale));
         background: var(--nli-line);
       }
       .zoom-slider::-moz-range-track {
-        height: 6px;
+        height: calc(6px * var(--map-scale));
         background: var(--nli-line);
         border: 0;
       }
       .zoom-slider::-webkit-slider-thumb {
         -webkit-appearance: none;
         appearance: none;
-        width: 20px;
-        height: 20px;
-        margin-top: -7px;
+        width: calc(18px * var(--map-scale));
+        height: calc(18px * var(--map-scale));
+        margin-top: calc(-6px * var(--map-scale));
         background: var(--nli-ink);
-        border: 1px solid var(--nli-ink);
+        border: calc(1px * var(--map-scale)) solid var(--nli-ink);
         border-radius: 50%;
         cursor: pointer;
       }
       .zoom-slider::-moz-range-thumb {
-        width: 20px;
-        height: 20px;
+        width: calc(18px * var(--map-scale));
+        height: calc(18px * var(--map-scale));
         background: var(--nli-ink);
-        border: 1px solid var(--nli-ink);
+        border: calc(1px * var(--map-scale)) solid var(--nli-ink);
         border-radius: 50%;
         cursor: pointer;
       }
-      .zoom-buttons {
-        display: flex;
-        gap: 6px;
-        flex-shrink: 0;
-      }
       .zoom-button {
-        width: 48px;
-        height: 48px;
-        border: 2px solid var(--nli-line);
+        width: var(--zoom-btn);
+        height: var(--zoom-btn);
+        flex-shrink: 0;
+        border: calc(2px * var(--map-scale)) solid var(--nli-line);
         background: var(--nli-cream);
         color: var(--nli-ink);
-        font-size: 24px;
+        font-size: calc(22px * var(--map-scale));
         font-weight: 300;
         line-height: 1;
         display: flex;
@@ -935,14 +950,8 @@
         border-color: var(--nli-ink);
         color: var(--nli-paper);
       }
-      .reset-btn {
-        width: 100%;
-        margin-top: var(--gap);
-        flex-shrink: 0;
-      }
       #freeTimeline {
         flex-shrink: 0;
-        margin-top: var(--space);
       }
 
       .layer-sheet {
@@ -1125,6 +1134,8 @@
           --pad: 32px;
           --gap: 12px;
           --space: 20px;
+          --dpad-size: calc(200px * var(--map-scale));
+          --zoom-btn: calc(48px * var(--map-scale));
         }
         .locale button {
           min-width: 48px;
@@ -1132,7 +1143,6 @@
         .nav-card { padding-inline: 24px; }
         .scene-list { min-height: 220px; }
         .scene-btn { min-height: 220px; padding: 22px 18px; }
-        .dpad { width: 200px; height: 200px; }
         .step-note,
         .screen-copy {
           display: block;
@@ -1155,6 +1165,9 @@
           --pad: 28px;
           --gap: 10px;
           --space: 12px;
+          --dpad-size: calc(152px * var(--map-scale));
+          --map-control-pad: calc(10px * var(--map-scale));
+          --zoom-btn: calc(44px * var(--map-scale));
         }
         .kicker,
         .lede,
@@ -1175,7 +1188,6 @@
           grid-template-rows: minmax(0, 1fr);
         }
         .scene-btn { min-height: 96px; padding: 14px 16px; }
-        .dpad { width: 152px; height: 152px; }
         .player-body {
           display: grid;
           grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
@@ -1331,58 +1343,58 @@
           <div class="scene-list" id="sceneList"></div>
           <div class="free-deck">
             <div class="free-navigate" dir="ltr">
-              <div class="dpad-container" dir="ltr">
-                <div class="dpad" dir="ltr">
-                  <button type="button" class="dpad-button dpad-up" id="panNorth" data-i18n-aria="panNorth" aria-label="הזזה צפונה">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <polyline points="18 15 12 9 6 15"></polyline>
-                    </svg>
-                  </button>
-                  <button type="button" class="dpad-button dpad-left" id="panWest" data-i18n-aria="panWest" aria-label="הזזה מערבה">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <polyline points="15 18 9 12 15 6"></polyline>
-                    </svg>
-                  </button>
-                  <button type="button" class="dpad-button dpad-right" id="panEast" data-i18n-aria="panEast" aria-label="הזזה מזרחה">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <polyline points="9 18 15 12 9 6"></polyline>
-                    </svg>
-                  </button>
-                  <button type="button" class="dpad-button dpad-down" id="panSouth" data-i18n-aria="panSouth" aria-label="הזזה דרומה">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                      <polyline points="6 9 12 15 18 9"></polyline>
-                    </svg>
-                  </button>
-                  <div
-                    class="joystick-container joystick-zone"
-                    id="joystickZone"
-                    dir="ltr"
-                    data-i18n-aria="joystickAria"
-                    aria-label="מוט כיוון לגרירת המפה"
-                  >
-                    <div class="joystick-base" aria-hidden="true"></div>
+              <div class="map-controls">
+                <div class="dpad-container" dir="ltr">
+                  <div class="dpad" dir="ltr">
+                    <button type="button" class="dpad-button dpad-up" id="panNorth" data-i18n-aria="panNorth" aria-label="הזזה צפונה">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <polyline points="18 15 12 9 6 15"></polyline>
+                      </svg>
+                    </button>
+                    <button type="button" class="dpad-button dpad-left" id="panWest" data-i18n-aria="panWest" aria-label="הזזה מערבה">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                      </svg>
+                    </button>
+                    <button type="button" class="dpad-button dpad-right" id="panEast" data-i18n-aria="panEast" aria-label="הזזה מזרחה">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <polyline points="9 18 15 12 9 6"></polyline>
+                      </svg>
+                    </button>
+                    <button type="button" class="dpad-button dpad-down" id="panSouth" data-i18n-aria="panSouth" aria-label="הזזה דרומה">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </button>
+                    <div
+                      class="joystick-container joystick-zone"
+                      id="joystickZone"
+                      dir="ltr"
+                      data-i18n-aria="joystickAria"
+                      aria-label="מוט כיוון לגרירת המפה"
+                    >
+                      <div class="joystick-base" aria-hidden="true"></div>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div class="zoom-controls">
-                <div class="zoom-display">
-                  <span class="zoom-label" data-i18n="zoomLabel">זום:</span>
-                  <span class="zoom-value" id="zoomValue">—</span>
-                </div>
-                <div class="zoom-slider-container">
-                  <input
-                    type="range"
-                    id="zoomSlider"
-                    class="zoom-slider"
-                    min="10"
-                    max="19"
-                    value="15"
-                    step="1"
-                    data-i18n-aria="zoomLevelAria"
-                    aria-label="רמת מיקוד"
-                  />
-                  <div class="zoom-buttons">
+                <div class="zoom-controls">
+                  <div class="zoom-display">
+                    <span class="zoom-label" data-i18n="zoomLabel">זום:</span>
+                    <span class="zoom-value" id="zoomValue">—</span>
+                  </div>
+                  <div class="zoom-slider-container">
                     <button type="button" class="zoom-button zoom-out" id="zoomOut" data-i18n-aria="zoomOutAria" aria-label="התרחקות">−</button>
+                    <input
+                      type="range"
+                      id="zoomSlider"
+                      class="zoom-slider"
+                      min="10"
+                      max="19"
+                      value="15"
+                      step="1"
+                      data-i18n-aria="zoomLevelAria"
+                      aria-label="רמת מיקוד"
+                    />
                     <button type="button" class="zoom-button zoom-in" id="zoomIn" data-i18n-aria="zoomInAria" aria-label="התקרבות">+</button>
                   </div>
                 </div>
@@ -1392,7 +1404,6 @@
           <div class="free-bottom">
             <button type="button" class="btn" id="freeArchiveBtn" hidden>פתיחת ארכיון הספרייה</button>
             <div id="freeTimeline"></div>
-            <button type="button" class="btn btn--outline reset-btn" id="resetBtn" data-i18n="reset">סיום ואיפוס</button>
           </div>
         </section>
       </main>

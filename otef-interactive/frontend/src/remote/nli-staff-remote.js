@@ -760,17 +760,6 @@ export function initNliStaffRemote(dataContext) {
     if (btn?.dataset.scene) void applyScene(btn.dataset.scene);
   });
 
-  $("resetBtn").addEventListener("click", () => {
-    $("searchInput").value = "";
-    renderResults("");
-    if (peopleArchive.getArchivePhase() === "open") {
-      void peopleArchive.closeArchive();
-    }
-    state.placeName = null;
-    state.freeError = null;
-    void applyScene("open", { force: true });
-  });
-
   $("localeHe").addEventListener("click", () => setLocale("he"));
   $("localeEn").addEventListener("click", () => setLocale("en"));
   window.addEventListener(LOCALE_EVENT, () => {
