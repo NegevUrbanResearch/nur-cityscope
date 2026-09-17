@@ -9,6 +9,7 @@
 
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 import { TIMELINE_BEAT_MS } from "./nli-investigation-beats.js";
+import { maplibreLineDashFromLeafletPx } from "./maplibre-line-dash.js";
 import {
   buildLinePathMetrics,
   buildLineProgressGradient,
@@ -311,6 +312,23 @@ function flowProgress(flow, motionMode) {
   return Number.isFinite(phase) && steps > 0 ? ((phase / steps) % 1 + 1) % 1 : 0;
 }
 
+export function buildCompletedRouteFlowDasharray(flow, motionMode, lineWidthPx) {
+  const periodPx = NLI_VISUAL_TOKENS.routeFlowPeriodPx;
+  const dutyCycle = Math.min(
+    0.99,
+    Math.max(0.01, NLI_VISUAL_TOKENS.routeFlowDutyCycle),
+  );
+  const dashPx = periodPx * dutyCycle;
+  const gapPx = periodPx - dashPx;
+  const progress = flowProgress(flow, motionMode);
+  // Integer pixel offsets only. MapLibre LineAtlas stores one row per unique
+  // dasharray and never evicts; a new float pattern every tick overflows it.
+  const pixelStep = motionMode === "reduced"
+    ? 0
+    : ((Math.round(progress * periodPx) % periodPx) + periodPx) % periodPx;
+  return maplibreLineDashFromLeafletPx(lineWidthPx, [dashPx, gapPx], -pixelStep);
+}
+
 export function buildDirectionalFlowGradient(
   flow,
   motionMode,
@@ -360,6 +378,7 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
   const width = profileValue(resolvedProfile, "lineWidthMultiplier", 1);
   const routeScale = profileValue(resolvedProfile, "routeScale", 1);
   const carrierWidth = profileValue(resolvedProfile, "routeCarrierWidth", NLI_VISUAL_TOKENS.routeCarrierWidth);
+  const motionWidth = NLI_VISUAL_TOKENS.routeFlowWidth * width * routeScale;
   const beforeId = resolvedProfile.beforeId || resolvedProfile.beforeLayerId;
 
   function mount() {
@@ -389,10 +408,11 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       paint: {
         "line-color": NLI_VISUAL_TOKENS.routeFlowColor,
         "line-opacity": 1,
-        "line-width": NLI_VISUAL_TOKENS.routeFlowWidth * width * routeScale,
-        "line-gradient": buildDirectionalFlowGradient({}, "full", resolvedProfile),
+        "line-width": motionWidth,
+        "line-dasharray": buildCompletedRouteFlowDasharray({}, "full", motionWidth),
+        "line-dasharray-transition": { duration: 0, delay: 0 },
       },
-    }, { type: "geojson", lineMetrics: true, data: featureCollection([]) }, beforeId);
+    }, { type: "geojson", data: featureCollection([]) }, beforeId);
     addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.active, {
       id: INVESTIGATION_LINE_LAYER_IDS.active,
       type: "line",
@@ -494,13 +514,13 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.completedMotion) && typeof map.setPaintProperty === "function") {
         if (staticPaintChanged) {
           map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.completedMotion, "line-color", NLI_VISUAL_TOKENS.routeFlowColor);
-          map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.completedMotion, "line-width", NLI_VISUAL_TOKENS.routeFlowWidth * width * routeScale);
+          map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.completedMotion, "line-width", motionWidth);
         }
         if (flowPaintChanged) {
           map.setPaintProperty(
             INVESTIGATION_LINE_LAYER_IDS.completedMotion,
-            "line-gradient",
-            buildDirectionalFlowGradient(motion, motionMode, resolvedProfile),
+            "line-dasharray",
+            buildCompletedRouteFlowDasharray(motion, motionMode, motionWidth),
           );
         }
       }

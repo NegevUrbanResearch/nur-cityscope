@@ -201,10 +201,10 @@ describe("syncInvestigationTimelineToMap", () => {
       },
     };
     const layers = [
-      { id: fillId, type: "fill", source: "nli__investigation_polygons" },
-      { id: lineId, type: "line", source: "nli__investigation_polygons" },
-      { id: routeId, type: "line", source: "nli__lines" },
-      { id: alarmId, type: "circle", source: "nli__alarms" },
+      { id: fillId, type: "fill", source: "nli__investigation_polygons", layout: { visibility: "visible" } },
+      { id: lineId, type: "line", source: "nli__investigation_polygons", layout: { visibility: "visible" } },
+      { id: routeId, type: "line", source: "nli__lines", layout: { visibility: "visible" } },
+      { id: alarmId, type: "circle", source: "nli__alarms", layout: { visibility: "visible" } },
     ];
     const sources = {};
     return {
@@ -231,7 +231,15 @@ describe("syncInvestigationTimelineToMap", () => {
         if (!paints[id]) paints[id] = {};
         paints[id][key] = value;
       }),
-      setLayoutProperty: vi.fn(),
+      getLayoutProperty: vi.fn((id, key) => {
+        const layer = layers.find((entry) => entry.id === id);
+        if (!layer) return undefined;
+        return layer.layout?.[key] ?? (key === "visibility" ? "visible" : undefined);
+      }),
+      setLayoutProperty: vi.fn((id, key, value) => {
+        const layer = layers.find((entry) => entry.id === id);
+        if (layer) layer.layout = { ...layer.layout, [key]: value };
+      }),
       getContainer: vi.fn(() => {
         const el = { querySelector: () => null, appendChild: vi.fn() };
         return el;
@@ -300,7 +308,7 @@ describe("syncInvestigationTimelineToMap", () => {
       .toHaveLength(LINE_FEATURES.length);
     expect(map.setPaintProperty.mock.calls.some(
       ([id, key, value]) => id === "nli-investigation-line-completed-motion-line" &&
-        key === "line-gradient" && JSON.stringify(value).includes("line-progress"),
+        key === "line-dasharray" && Array.isArray(value) && value.length >= 2,
     )).toBe(true);
 
     const projectionMap = makeMap();
@@ -343,6 +351,32 @@ describe("syncInvestigationTimelineToMap", () => {
     await syncInvestigationTimelineToMap(map, idleNliClock(), groups, deps);
     expect(map.addSource.mock.calls.filter(([id]) => id === "nli-investigation-settlement-impact")).toEqual([]);
     expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
+  });
+
+  it("loads the processed polygon style and sidecar before rendering the timeline", async () => {
+    const map = makeMap();
+    const battle = { ...INVESTIGATION_FEATURES[0], properties: { ...INVESTIGATION_FEATURES[0].properties, Notes: "מרחב לחימה - קרב" }, geometry: { type: "Polygon", coordinates: [[[34, 31], [34.01, 31], [34.01, 31.01], [34, 31]]] } };
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [{ value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+        { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.4 },
+        { type: "stroke", color: "#654321", width: 2, opacity: 0.8 },
+      ] } }] },
+    };
+    const sidecar = { type: "FeatureCollection", features: [{ ...battle, properties: { ...battle.properties, __cim_gradient_band: 0 } }] };
+    await syncInvestigationTimelineToMap(map, idleNliClock(), [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }], {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [battle] },
+      getLayerStyle: () => style,
+      getLayerConfig: () => ({ groupId: "nli", resources: { bufferedGradient: { file: "gradient.geojson", format: "geojson" } } }),
+      fetchJson: async () => sidecar,
+      getLayerDataUrl: () => null,
+      now: () => 0,
+    });
+    expect(map.getSource("nli-investigation-polygon-buffered-gradient")).toBeTruthy();
+    expect(map.getSource("nli-investigation-polygon-buffered-gradient").setData.mock.calls.at(-1)[0].features).toHaveLength(1);
+    const fill = map.getLayer("nli-investigation-polygon-category-fill-battle");
+    expect(fill.paint["fill-color"]).toBe("#123456");
+    expect(map.getLayer("nli-investigation-polygon-category-line-battle").paint["line-color"]).toBe("#654321");
   });
 
   it("keeps the authored Be'eri outline visible during narrative focus even when ordinary investigation layers are hidden", async () => {
@@ -391,6 +425,52 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
     expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity")).toBe(1);
     expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toBe(1);
+  });
+
+  it("paints Segev, Sderot, and Hostages place outlines white during narrative focus", async () => {
+    const hidden = [{ id: "nli", layers: [
+      { id: "investigation_polygons", enabled: false },
+      { id: "lines", enabled: false },
+    ] }];
+    const whitePaint = (outlineId) => [
+      "case",
+      [
+        "any",
+        ["==", ["to-string", ["get", "outlineObjectId"]], String(outlineId)],
+        ["==", ["to-string", ["get", "OBJECTID"]], String(outlineId)],
+      ],
+      "#ffffff",
+      "#c31f4f",
+    ];
+    for (const { focus, city, outlineId } of [
+      { focus: NLI_NARRATIVES.segev, city: "בארי", outlineId: 19 },
+      { focus: NLI_NARRATIVES.sderot, city: "שדרות", outlineId: 32 },
+      { focus: NLI_NARRATIVES.hostages, city: "ניר עוז", outlineId: 14 },
+    ]) {
+      const map = makeOrientationMap();
+      const outline = {
+        type: "Feature",
+        properties: { outlineObjectId: outlineId, OBJECTID: outlineId, locations: [city] },
+        geometry: { type: "Polygon", coordinates: [[[34.45, 31.42], [34.46, 31.42], [34.46, 31.43], [34.45, 31.42]]] },
+      };
+      const labelsSourceId = map.getStyle().layers.find((layer) => layer.id === SHEMOT_LABEL_ID).source;
+      map.getSource(labelsSourceId).data = {
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          properties: { cityname: city },
+          geometry: { type: "Point", coordinates: [34.45, 31.42] },
+        }],
+      };
+      await syncInvestigationTimelineToMap(map, idleNliClock(), hidden, {
+        settlementFeatures: [outline],
+        narrativeFocus: focus,
+        now: () => 0,
+      });
+      expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toEqual(
+        whitePaint(outlineId),
+      );
+    }
   });
 
   it("does not remount the polygon overlay when the polygons row is off after Stop", async () => {
@@ -472,6 +552,52 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.setPaintProperty.mock.calls.some(
       ([id, , value]) => String(id).startsWith("nli__investigation_polygons") && value === "#f79009",
     )).toBe(false);
+  });
+
+  it("reasserts raw polygon suppression across Nova, general, and disabled transitions", async () => {
+    const map = makeMap();
+    const fillId = "nli__investigation_polygons__fill__0";
+    const lineId = "nli__investigation_polygons__line__1";
+    const playingNova = playClock([INVESTIGATION_POLYGONS_FULL_ID], [400]);
+    const polygonsOffGroups = [{
+      id: "nli",
+      layers: [{ id: "investigation_polygons", enabled: false }],
+    }];
+    const baseDeps = {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      now: () => 0,
+    };
+    const novaDeps = { ...baseDeps, narrativeFocus: { id: "nova" } };
+    const generalDeps = { ...baseDeps, narrativeFocus: null };
+
+    await syncInvestigationTimelineToMap(map, playingNova, polygonOnlyGroups(), novaDeps);
+    map.setLayoutProperty(fillId, "visibility", "visible");
+    map.setLayoutProperty(lineId, "visibility", "visible");
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), generalDeps);
+    const lastVisibilityWrite = (id) => [...map.setLayoutProperty.mock.calls]
+      .reverse()
+      .find(([layerId, property]) => layerId === id && property === "visibility");
+    expect(lastVisibilityWrite(fillId)).toEqual([fillId, "visibility", "none"]);
+    expect(lastVisibilityWrite(lineId)).toEqual([lineId, "visibility", "none"]);
+    expect(map.getLayoutProperty(fillId, "visibility")).toBe("none");
+    expect(map.getLayoutProperty(lineId, "visibility")).toBe("none");
+    expect(map.getLayer("nli-investigation-polygon-category-fill-battle")).toBeTruthy();
+    expect(map.getLayer("nli-investigation-polygon-category-line-battle")).toBeTruthy();
+    expect(map.getLayoutProperty("nli-investigation-polygon-category-fill-battle", "visibility")).toBe("visible");
+    expect(map.getLayoutProperty("nli-investigation-polygon-category-line-battle", "visibility")).toBe("visible");
+
+    map.setLayoutProperty(fillId, "visibility", "visible");
+    map.setLayoutProperty(lineId, "visibility", "visible");
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonsOffGroups, generalDeps);
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), generalDeps);
+    expect(lastVisibilityWrite(fillId)).toEqual([fillId, "visibility", "none"]);
+    expect(lastVisibilityWrite(lineId)).toEqual([lineId, "visibility", "none"]);
+    expect(map.getLayoutProperty(fillId, "visibility")).toBe("none");
+    expect(map.getLayoutProperty(lineId, "visibility")).toBe("none");
+    expect(map.getLayer("nli-investigation-polygon-category-fill-battle")).toBeTruthy();
+    expect(map.getLayer("nli-investigation-polygon-category-line-battle")).toBeTruthy();
+    expect(map.getLayoutProperty("nli-investigation-polygon-category-fill-battle", "visibility")).toBe("visible");
+    expect(map.getLayoutProperty("nli-investigation-polygon-category-line-battle", "visibility")).toBe("visible");
   });
 
   it("idle storyBeats unions polygon and line timeline minutes", async () => {
@@ -2298,6 +2424,47 @@ describe("syncInvestigationTimelineToMap", () => {
       .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.35]);
     expect(JSON.stringify(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))).not.toMatch(/רעים/);
     disposeInvestigationTimelineForMap(map);
+  });
+
+  it("keepFocusLabelWithAchieved is taken from narrativeFocus.keepFocusLabelWithAchieved", async () => {
+    const impactSettlement = {
+      type: "Feature",
+      properties: { outlineObjectId: 19, locations: ["עיר א"] },
+      geometry: STORY_SETTLEMENT.geometry,
+    };
+
+    const nova = makeOrientationMap();
+    await syncInvestigationTimelineToMap(nova, idleNliClock(), polygonOnlyGroups(), {
+      ...orientationDeps(),
+      narrativeFocus: NLI_NARRATIVES.nova,
+      settlementFeatures: [impactSettlement],
+    });
+    setEscapeImpactOrientationIds(nova, ["19"]);
+    expect(nova.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.35]);
+    disposeInvestigationTimelineForMap(nova);
+
+    const sderot = makeOrientationMap();
+    await syncInvestigationTimelineToMap(sderot, idleNliClock(), polygonOnlyGroups(), {
+      ...orientationDeps(),
+      narrativeFocus: NLI_NARRATIVES.sderot,
+      settlementFeatures: [impactSettlement],
+    });
+    setEscapeImpactOrientationIds(sderot, ["19"]);
+    expect(sderot.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
+      .toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.35]);
+    disposeInvestigationTimelineForMap(sderot);
+
+    const flagged = makeOrientationMap();
+    await syncInvestigationTimelineToMap(flagged, idleNliClock(), polygonOnlyGroups(), {
+      ...orientationDeps(),
+      narrativeFocus: { ...NLI_NARRATIVES.sderot, keepFocusLabelWithAchieved: true },
+      settlementFeatures: [impactSettlement],
+    });
+    setEscapeImpactOrientationIds(flagged, ["19"]);
+    expect(flagged.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["שדרות", "עיר א"]]], 1, 0.35]);
+    disposeInvestigationTimelineForMap(flagged);
   });
 
   it("Nova idle lights the existing נובה place name on projection", async () => {

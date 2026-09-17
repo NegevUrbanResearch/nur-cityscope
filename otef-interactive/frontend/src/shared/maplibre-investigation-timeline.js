@@ -37,6 +37,8 @@ import {
   buildInvestigationSettlementIndexes,
   createInvestigationTimelineData,
   ensureInvestigationLayerFeatures,
+  ensureInvestigationPolygonStyle,
+  ensureInvestigationBufferedGradient,
   ensureInvestigationSettlementFeatures,
   getInvestigationTimelineDataDiagnostics,
   investigationRouteBeats,
@@ -600,7 +602,7 @@ function applyOrientationVisuals(map, state, outlineIds = []) {
     mode: focus ? "narrative" : undefined,
     focusCityname: focus?.focusSettlement,
     focusOutlineObjectId: focus?.focusSettlementOutlineId,
-    keepFocusLabelWithAchieved: focus?.id === "nova",
+    keepFocusLabelWithAchieved: focus?.keepFocusLabelWithAchieved === true,
   });
 }
 
@@ -700,6 +702,9 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
       ...resolvedFrame,
       achievedSettlementOutlineIds,
       narrativeId: state.narrativeFocus?.id ?? null,
+      narrativeFocusOutlineId: shouldIncludeNarrativeSettlementOutline(state.narrativeFocus)
+        ? narrativeSettlementOutlineId(state)
+        : null,
       projectionNovaDim,
       parallelImpactIds,
     };
@@ -709,6 +714,9 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
       : state.polygonRenderer?.renderSettlement;
     renderSettlement?.call(state.polygonRenderer, polygonFrame, {
       polygonFeatures: state.data.polygonFeatures,
+      polygonStyle: state.data.polygonStyle,
+      bufferedGradientFeatures: state.data.bufferedGradientFeatures,
+      bufferedGradientSidecarStatus: state.data.bufferedGradientSidecarStatus,
       locationToOutlineObjectId: state.data.locationToOutlineObjectId,
       settlementFeatures: state.data.settlementFeatures,
       settlementFeaturesByOutlineId: state.data.settlementFeaturesByOutlineId,
@@ -717,7 +725,7 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
       parallelImpactIds,
     });
   } else {
-    state.polygonRenderer?.reset({ preserveBasePaints: true, restoreHostVisibility: false });
+    state.polygonRenderer?.reset({ preserveBasePaints: true });
   }
   if (state.lineOn) {
     state.lineRenderer?.render(
@@ -742,9 +750,9 @@ function enablePolygonPlayback(map, state) {
   state.polygonPlaybackActive = true;
 }
 
-function disablePolygonPlayback(map, state, { preserveBasePaints = false, restoreHostVisibility = true } = {}) {
+function disablePolygonPlayback(map, state, { preserveBasePaints = false } = {}) {
   if (!state.polygonPlaybackActive) return;
-  state.polygonRenderer?.reset({ preserveBasePaints, restoreHostVisibility });
+  state.polygonRenderer?.reset({ preserveBasePaints });
   state.polygonPlaybackActive = false;
 }
 
@@ -914,9 +922,9 @@ function stopPlayback(map, { preserveBasePaints = false } = {}) {
   state.lastRenderNow = null;
   applyOrientationVisuals(map, state, []);
   const polygonWasPlaying = state.polygonPlaybackActive;
-  disablePolygonPlayback(map, state, { preserveBasePaints, restoreHostVisibility: false });
+  disablePolygonPlayback(map, state, { preserveBasePaints });
   if (!polygonWasPlaying) {
-    state.polygonRenderer?.reset({ preserveBasePaints, restoreHostVisibility: false });
+    state.polygonRenderer?.reset({ preserveBasePaints });
   }
   disableLinePlayback(map, state, { preserveBasePaints });
   state.alarmRenderer?.reset({ preserveBasePaints });
@@ -990,9 +998,9 @@ function applyStoryPlayback(map, state) {
   } else if (isNovaNarrative(state)) {
     enablePolygonPlayback(map, state);
   } else {
-    disablePolygonPlayback(map, state, { restoreHostVisibility: false });
+    disablePolygonPlayback(map, state);
     if (!state.lineOn) {
-      state.polygonRenderer?.reset({ preserveBasePaints: true, restoreHostVisibility: false });
+      state.polygonRenderer?.reset({ preserveBasePaints: true });
     }
   }
   if (state.lineOn) enableLinePlayback(map, state);
@@ -1010,7 +1018,6 @@ function resetEffectiveRenderers(map, state, nextMembership, { preservePolygonBa
   if (state.polygonOn && !nextMembership.visible.has(INVESTIGATION_POLYGONS_FULL_ID)) {
     disablePolygonPlayback(map, state, {
       preserveBasePaints: preservePolygonBasePaints,
-      restoreHostVisibility: false,
     });
   }
   if (state.alarmMode !== "off" && !nextMembership.alarmVisible) applyAlarmMode(map, state, "off");
@@ -1137,6 +1144,16 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
         isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
       });
       if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+      await ensureInvestigationPolygonStyle(state.data, deps, {
+        request: syncRequest,
+        isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+      });
+      if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+      await ensureInvestigationBufferedGradient(state.data, deps, {
+        request: syncRequest,
+        isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+      });
+      if (isStaleTimelineSyncRequest(map, syncRequest)) return;
     }
     if (polygonsVisible || linesVisible || novaSiteOverlay || narrativeSettlementOutlineId(state) != null) {
       await ensureInvestigationSettlementFeatures(state.data, deps, {
@@ -1194,6 +1211,16 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
       isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
     });
     if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+    await ensureInvestigationPolygonStyle(state.data, deps, {
+      request: syncRequest,
+      isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+    });
+    if (isStaleTimelineSyncRequest(map, syncRequest)) return;
+    await ensureInvestigationBufferedGradient(state.data, deps, {
+      request: syncRequest,
+      isCurrent: () => !isStaleTimelineSyncRequest(map, syncRequest),
+    });
+    if (isStaleTimelineSyncRequest(map, syncRequest)) return;
   }
   if (nextMembership.lineOn || nextMembership.polygonOn || narrativeSettlementOutlineId(state) != null) {
     await ensureInvestigationSettlementFeatures(state.data, deps, {
@@ -1246,7 +1273,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
       settlementFeaturesByOutlineId: state.data.settlementFeaturesByOutlineId,
       dataVersion: state.data.dataVersion,
     });
-    state.polygonRenderer?.reset({ preserveBasePaints: true, restoreHostVisibility: false });
+    state.polygonRenderer?.reset({ preserveBasePaints: true });
   }
 
   if (shouldRafClock(frame)) scheduleFrame(map, state);

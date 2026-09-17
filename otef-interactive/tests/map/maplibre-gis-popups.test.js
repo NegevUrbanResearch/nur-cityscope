@@ -30,9 +30,22 @@ const octoberConfig = {
   },
 };
 
+const investigationConfig = {
+  id: "investigation_polygons",
+  name: "investigation_polygons",
+  ui: {
+    popup: {
+      titleField: "Name",
+      hideEmpty: true,
+      fields: [{ label: "Notes", key: "Notes" }],
+    },
+  },
+};
+
 function getLayerConfig(fullId) {
   if (fullId === "fixture.catalog") return catalogConfig;
   if (fullId === "october_7th.אזור_הרס-נקודה") return octoberConfig;
+  if (fullId === "nli.investigation_polygons") return investigationConfig;
   return null;
 }
 
@@ -112,6 +125,28 @@ describe("resolveGisPopupHit", () => {
       getLayerConfig,
     );
     expect(hit).toBeNull();
+  });
+
+  test("maps investigation polygon Notes to the authoritative display label", () => {
+    const handlers = {};
+    const popup = {
+      setLngLat: vi.fn().mockReturnThis(),
+      setHTML: vi.fn().mockReturnThis(),
+      addTo: vi.fn().mockReturnThis(),
+      remove: vi.fn(),
+    };
+    const map = {
+      on: vi.fn((ev, fn) => { handlers[ev] = fn; }),
+      queryRenderedFeatures: vi.fn(() => [{
+        source: "nli.investigation_polygons",
+        properties: { Notes: "מרחב לחימה - קרב" },
+      }]),
+    };
+    const maplibregl = { Popup: vi.fn(function Popup() { return popup; }) };
+    attachGisFeaturePopups(map, maplibregl, { getLayerConfig });
+    handlers.click({ point: { x: 1, y: 2 }, lngLat: { lng: 34, lat: 31 } });
+    expect(String(popup.setHTML.mock.calls[0][0])).toContain("מוקד קרב/טבח");
+    expect(String(popup.setHTML.mock.calls[0][0])).not.toContain("מרחב לחימה - קרב");
   });
 });
 

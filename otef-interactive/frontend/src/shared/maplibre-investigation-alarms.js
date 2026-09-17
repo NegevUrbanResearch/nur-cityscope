@@ -19,9 +19,9 @@ const ALARM_RIPPLE_LOOP_MS = 2000;
 const ALARM_RADIUS_HIDDEN = 1;
 const ALARM_FLASH_PULSE_PX = 3;
 const ALARM_RIPPLE_EXPANSION_PX = 50;
-const ALARM_OPACITY_SETTLED = 0.2;
-const ALARM_OPACITY_ACTIVE = 0.45;
-const ALARM_RIPPLE_OPACITY = 0.3;
+const ALARM_OPACITY_SETTLED = 0.3;
+const ALARM_OPACITY_ACTIVE = 0.55;
+const ALARM_RIPPLE_OPACITY = 0.4;
 const ALARM_PAINT_KEYS = ["circle-radius", "circle-color", "circle-opacity", "circle-stroke-width"];
 
 function isFiniteMinute(value) {

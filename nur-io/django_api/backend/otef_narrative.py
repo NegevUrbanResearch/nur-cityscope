@@ -14,7 +14,7 @@ from .otef_person_selection import (
 from .otef_investigation_clock import idle_investigation_clock
 
 
-NARRATIVE_IDS = frozenset({"segev", "nova"})
+NARRATIVE_IDS = frozenset({"segev", "nova", "sderot", "hostages"})
 NARRATIVE_PRESENTATION_IDS = frozenset({"segev"})
 NARRATIVE_TRANSITIONS = frozenset({"initial", "enter", "replace", "exit"})
 

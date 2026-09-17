@@ -17,8 +17,8 @@ const SETTLEMENTS_PATH = path.resolve(
 
 function makeMap() {
   const layers = [
-    { id: "nli__investigation_polygons__fill__0", type: "fill", source: "nli__investigation_polygons" },
-    { id: "nli__investigation_polygons__line__1", type: "line", source: "nli__investigation_polygons" },
+    { id: "nli__investigation_polygons__fill__0", type: "fill", source: "nli__investigation_polygons", layout: { visibility: "visible" } },
+    { id: "nli__investigation_polygons__line__1", type: "line", source: "nli__investigation_polygons", layout: { visibility: "visible" } },
   ];
   const sources = new Map();
   const paints = new Map();
@@ -46,7 +46,15 @@ function makeMap() {
     }),
     getPaintProperty: vi.fn((id, key) => paints.get(`${id}:${key}`)),
     setPaintProperty: vi.fn((id, key, value) => paints.set(`${id}:${key}`, value)),
-    setLayoutProperty: vi.fn(),
+    getLayoutProperty: vi.fn((id, key) => {
+      const layer = layers.find((entry) => entry.id === id);
+      if (!layer) return undefined;
+      return layer.layout?.[key] ?? (key === "visibility" ? "visible" : undefined);
+    }),
+    setLayoutProperty: vi.fn((id, key, value) => {
+      const layer = layers.find((entry) => entry.id === id);
+      if (layer) layer.layout = { ...layer.layout, [key]: value };
+    }),
     on: vi.fn(),
   };
 }
@@ -76,6 +84,240 @@ const frame = (achievedPolygonBeats, extra = {}) => ({
 });
 
 describe("investigation polygon renderer", () => {
+  it("renders processed buffered bands outside-to-inside and uses original fire outlines", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {}, { dataVersion: "v1" });
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const fire = polygon(2, 400, "עלומים", "שריפה");
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [
+        { value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+          { type: "fill", fillType: "gradient", interval: 2, resolvedColors: ["#111111", "#222222"], opacity: 0.5 },
+          { type: "stroke", color: "#333333", width: 2, opacity: 0.7 },
+        ] } },
+        { value: "שריפה", symbol: { symbolLayers: [
+          { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#444444"], opacity: 0.6 },
+          { type: "stroke", color: "#555555", width: 3, opacity: 0.8 },
+        ] } },
+      ] },
+    };
+    const band = { ...battle, properties: { ...battle.properties, __cim_gradient_band: 0 } };
+    renderer.render(frame([400], { motionMode: "full" }), {
+      polygonFeatures: [battle, fire],
+      bufferedGradientFeatures: [band],
+      polygonStyle: style,
+      bufferedGradientSidecarStatus: "ready",
+    });
+    const fills = map.addLayer.mock.calls
+      .map(([layer]) => layer)
+      .filter((layer) => layer.type === "fill" && layer.id.includes("battle"));
+    expect(fills[0].paint["fill-color"]).toBe("#111111");
+    expect(fills[0].filter).toEqual(["all", ["==", ["get", "Notes"], "מרחב לחימה - קרב"], ["==", ["get", "__cim_gradient_band"], 0]]);
+    const fireOutline = map.addLayer.mock.calls
+      .map(([layer]) => layer)
+      .find((layer) => layer.type === "line" && layer.id.includes("fire"));
+    expect(fireOutline.paint["line-color"]).toBe("#555555");
+    expect(fireOutline.source).toBe("nli-investigation-polygon-category-outline");
+    expect(fireOutline.paint["line-gradient"]).toBeUndefined();
+  });
+
+  it("keeps kidnapping solid when a declared buffered sidecar fails", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const kidnap = polygon(1, 400, "עלומים", "מוקד חטיפה");
+    renderer.render(frame([400]), {
+      polygonFeatures: [kidnap],
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [
+        { value: "מרחב לחימה - קרב", symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 2, resolvedColors: ["#111", "#222"], opacity: 0.5 }] } },
+        { value: "מוקד חטיפה", symbol: { symbolLayers: [{ type: "fill", fillType: "solid", color: "#ffff73", opacity: 0.55 }] } },
+      ] } },
+      bufferedGradientSidecarStatus: "failed",
+    });
+    const kidnapLayer = map.addLayer.mock.calls.map(([layer]) => layer)
+      .find((layer) => layer.id === "nli-investigation-polygon-category-fill-kidnap");
+    expect(kidnapLayer.paint["fill-color"]).toBe("#ffff73");
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0);
+  });
+
+  it("composes projection dimming with processed authored opacity", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    renderer.render(frame([400], { projectionNovaDim: true }), {
+      polygonFeatures: [battle],
+      bufferedGradientFeatures: [{ ...battle, properties: { ...battle.properties, __cim_gradient_band: 0 } }],
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב", symbol: { symbolLayers: [{
+          type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.5,
+        }] },
+      }] } },
+    });
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toEqual([
+      "case",
+      ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
+      0.5,
+      ["*", 0.5, 0.28],
+    ]);
+  });
+
+  it("keeps failed battle and fire fills transparent during projection dimming", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const fire = polygon(2, 400, "עלומים", "שריפה");
+    const classes = ["מרחב לחימה - קרב", "שריפה"].map((value) => ({
+      value,
+      symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.5 }] },
+    }));
+    renderer.render(frame([400], { projectionNovaDim: true }), {
+      polygonFeatures: [battle, fire],
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes } },
+      bufferedGradientSidecarStatus: "failed",
+    });
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-fire:fill-opacity")).toBe(0);
+  });
+
+  it("composes processed outline opacity with projection dimming", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    renderer.render(frame([400], { projectionNovaDim: true }), {
+      polygonFeatures: [battle],
+      bufferedGradientFeatures: [{ ...battle, properties: { ...battle.properties, __cim_gradient_band: 0 } }],
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב", symbol: { symbolLayers: [
+          { type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.5 },
+          { type: "stroke", color: "#654321", width: 2, opacity: 0.6 },
+        ] },
+      }] } },
+    });
+    expect(map.paints.get("nli-investigation-polygon-category-line-battle:line-opacity")).toEqual([
+      "case",
+      ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
+      0.6,
+      ["*", 0.6, 0.28],
+    ]);
+  });
+
+  it("renders every processed hostage gradient band through sidecar geometry", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const kidnap = polygon(1, 400, "עלומים", "מוקד חטיפה");
+    const resolvedOpacities = [0.14, 0.27, 0.46, 0.68, 1];
+    renderer.render(frame([400]), {
+      polygonFeatures: [kidnap],
+      bufferedGradientFeatures: resolvedOpacities.map((_, ordinal) => ({
+        ...kidnap,
+        properties: { ...kidnap.properties, __cim_gradient_band: ordinal },
+      })),
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מוקד חטיפה", symbol: { symbolLayers: [{
+          type: "fill",
+          fillType: "gradient",
+          interval: 5,
+          resolvedColors: Array(5).fill("#ffff73"),
+          resolvedOpacities,
+          opacity: 0.14,
+        }] },
+      }] } },
+    });
+    const hostageBandLayers = map.addLayer.mock.calls.map(([layer]) => layer)
+      .filter((layer) => layer.type === "fill"
+        && layer.source === "nli-investigation-polygon-buffered-gradient"
+        && layer.id.includes("kidnap"));
+    expect(hostageBandLayers).toHaveLength(5);
+    expect(hostageBandLayers.map((layer) => layer.source)).toEqual(
+      Array(5).fill("nli-investigation-polygon-buffered-gradient"),
+    );
+    expect(hostageBandLayers.map((layer) => layer.paint["fill-color"]))
+      .toEqual(Array(5).fill("#ffff73"));
+    expect(hostageBandLayers.map((layer) => layer.paint["fill-opacity"]))
+      .toEqual(resolvedOpacities);
+  });
+
+  it("keeps every hostage gradient band transparent while the declared sidecar is loading", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const kidnap = polygon(1, 400, "עלומים", "מוקד חטיפה");
+    renderer.render(frame([400]), {
+      polygonFeatures: [kidnap],
+      bufferedGradientSidecarStatus: "loading",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מוקד חטיפה", symbol: { symbolLayers: [{
+          type: "fill", fillType: "gradient", interval: 5,
+          resolvedColors: Array(5).fill("#ffff73"),
+          resolvedOpacities: [0.14, 0.27, 0.46, 0.68, 1], opacity: 0.14,
+        }] },
+      }] } },
+    });
+    const hostageBandLayers = map.addLayer.mock.calls.map(([layer]) => layer)
+      .filter((layer) => layer.type === "fill"
+        && layer.source === "nli-investigation-polygon-buffered-gradient"
+        && layer.id.includes("kidnap"));
+    expect(hostageBandLayers.map((layer) => layer.paint["fill-opacity"]))
+      .toEqual(Array(5).fill(0));
+  });
+
+  it("keeps every hostage gradient band transparent when the declared sidecar fails", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const kidnap = polygon(1, 400, "עלומים", "מוקד חטיפה");
+    renderer.render(frame([400]), {
+      polygonFeatures: [kidnap],
+      bufferedGradientSidecarStatus: "failed",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מוקד חטיפה", symbol: { symbolLayers: [{
+          type: "fill", fillType: "gradient", interval: 5,
+          resolvedColors: Array(5).fill("#ffff73"),
+          resolvedOpacities: [0.14, 0.27, 0.46, 0.68, 1], opacity: 0.14,
+        }] },
+      }] } },
+    });
+    const hostageBandLayers = map.addLayer.mock.calls.map(([layer]) => layer)
+      .filter((layer) => layer.type === "fill"
+        && layer.source === "nli-investigation-polygon-buffered-gradient"
+        && layer.id.includes("kidnap"));
+    expect(hostageBandLayers.map((layer) => layer.paint["fill-opacity"]))
+      .toEqual(Array(5).fill(0));
+  });
+
+  it("composes projection dimming with each processed hostage band opacity", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const kidnap = polygon(1, 400, "עלומים", "מוקד חטיפה");
+    const opacities = [0.14, 0.27, 0.46, 0.68, 1];
+    renderer.render(frame([400], { projectionNovaDim: true }), {
+      polygonFeatures: [kidnap],
+      bufferedGradientFeatures: [0, 1, 2, 3, 4].map((ordinal) => ({
+        ...kidnap,
+        properties: { ...kidnap.properties, __cim_gradient_band: ordinal },
+      })),
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מוקד חטיפה", symbol: { symbolLayers: [{
+          type: "fill", fillType: "gradient", interval: 5,
+          resolvedColors: Array(5).fill("#ffff73"),
+          resolvedOpacities: opacities, opacity: 0.14,
+        }] },
+      }] } },
+    });
+    for (const [ordinal, opacity] of opacities.entries()) {
+      const id = ordinal === 0
+        ? "nli-investigation-polygon-category-fill-kidnap"
+        : `nli-investigation-polygon-category-fill-kidnap-band-${ordinal}`;
+      expect(map.paints.get(`${id}:fill-opacity`)).toEqual([
+        "case",
+        ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
+        opacity,
+        ["*", opacity, 0.28],
+      ]);
+    }
+  });
   it("uses the same impact outline width on GIS and projection profiles", () => {
     const gisMap = makeMap();
     const projMap = makeMap();
@@ -168,6 +410,19 @@ describe("investigation polygon renderer", () => {
     expect(coords[0]).toEqual(coords[coords.length - 1]);
   });
 
+  it("writes polygon hole rings to the authored outline source", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const fire = polygon(1, 400, "עלומים", "שריפה");
+    fire.geometry.coordinates.push([
+      [34.002, 31.002], [34.008, 31.002], [34.008, 31.008], [34.002, 31.008], [34.002, 31.002],
+    ]);
+    renderer.render(frame([400]), { polygonFeatures: [fire] });
+    const outline = map.sources.get("nli-investigation-polygon-category-outline");
+    const feats = outline.setData.mock.calls.at(-1)[0].features;
+    expect(feats).toHaveLength(2);
+  });
+
   it("warns once per distinct unmatched Notes string", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
@@ -209,6 +464,51 @@ describe("investigation polygon renderer", () => {
     fetchSpy.mockRestore();
   });
 
+  it("paints the narrative focus settlement outline white and leaves other impact outlines red", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    renderer.render({
+      achievedPolygonBeats: [],
+      achievedSettlementOutlineIds: [32, 20],
+      narrativeFocusOutlineId: 32,
+      narrative: { phase: "idle" },
+    }, {
+      settlementFeatures: [settlement(32), settlement(20)],
+      settlementFeaturesByOutlineId: { 32: settlement(32), 20: settlement(20) },
+    });
+    expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toEqual([
+      "case",
+      [
+        "any",
+        ["==", ["to-string", ["get", "outlineObjectId"]], "32"],
+        ["==", ["to-string", ["get", "OBJECTID"]], "32"],
+      ],
+      "#ffffff",
+      "#c31f4f",
+    ]);
+  });
+
+  it("restores red impact outlines when narrative focus outline is absent", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const data = {
+      settlementFeatures: [settlement(32), settlement(20)],
+      settlementFeaturesByOutlineId: { 32: settlement(32), 20: settlement(20) },
+    };
+    renderer.render({
+      achievedPolygonBeats: [],
+      achievedSettlementOutlineIds: [32, 20],
+      narrativeFocusOutlineId: 32,
+      narrative: { phase: "idle" },
+    }, data);
+    renderer.render({
+      achievedPolygonBeats: [],
+      achievedSettlementOutlineIds: [20],
+      narrative: { phase: "idle" },
+    }, data);
+    expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toBe("#c31f4f");
+  });
+
   it("renders settlement outlines from the inclusive OR of polygon and route triggers", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {}, {
@@ -239,7 +539,7 @@ describe("investigation polygon renderer", () => {
       .toHaveLength(1);
   });
 
-  it("lights Nova outline 100 in infiltration red without using Reim 18", () => {
+  it("lights Nova outline 100 in incident red without using Reim 18", () => {
     const sidecar = fs.existsSync(SETTLEMENTS_PATH)
       ? JSON.parse(fs.readFileSync(SETTLEMENTS_PATH, "utf8")).features || []
       : [];
@@ -609,45 +909,84 @@ describe("investigation polygon renderer", () => {
     expect(map.addLayer.mock.calls.at(-1)[1]).toBe("labels");
   });
 
-  it("reset restores host visibility without orange paints and dispose removes owned state", () => {
+  it("re-hides raw host polygons after an external retained-layer restore on an unchanged frame", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const currentFrame = frame([400]);
+    const hostage = polygon(1, 400, "עלומים", "מוקד חטיפה");
+    const data = {
+      polygonFeatures: [hostage],
+      polygonStyle: {
+        renderer: "uniqueValue",
+        uniqueValues: { field: "Notes", classes: [{
+          value: "מוקד חטיפה",
+          symbol: { symbolLayers: [{
+            type: "fill", fillType: "solid", color: "#ffff73", opacity: 1, enable: true,
+          }] },
+        }] },
+      },
+    };
+
+    renderer.render(currentFrame, data);
+    map.setLayoutProperty.mockClear();
+    map.setLayoutProperty("nli__investigation_polygons__fill__0", "visibility", "visible");
+    map.setLayoutProperty("nli__investigation_polygons__line__1", "visibility", "visible");
+
+    renderer.render(currentFrame, data);
+
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "nli__investigation_polygons__fill__0", "visibility", "none",
+    );
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      "nli__investigation_polygons__line__1", "visibility", "none",
+    );
+    expect(map.getLayoutProperty("nli__investigation_polygons__fill__0", "visibility")).toBe("none");
+    expect(map.getLayoutProperty("nli__investigation_polygons__line__1", "visibility")).toBe("none");
+    expect(map.getLayoutProperty("nli-investigation-polygon-category-fill-kidnap", "visibility")).toBe("visible");
+  });
+
+  it("reset removes owned state without restoring raw host visibility", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
     renderer.mount();
     renderer.render(frame([400]), { polygonFeatures: [polygon(1, 400)] });
+    map.setLayoutProperty.mockClear();
     renderer.reset();
-    expect(map.setLayoutProperty).toHaveBeenCalledWith(
-      "nli__investigation_polygons__fill__0",
-      "visibility",
-      "visible",
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
+      "nli__investigation_polygons__fill__0", "visibility", "visible",
     );
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
+      "nli__investigation_polygons__line__1", "visibility", "visible",
+    );
+    expect(map.getLayoutProperty("nli__investigation_polygons__fill__0", "visibility")).toBe("none");
+    expect(map.getLayoutProperty("nli__investigation_polygons__line__1", "visibility")).toBe("none");
     expect(map.paints.get("nli__investigation_polygons__fill__0:fill-color")).not.toBe("#f79009");
     expect(map.getSource("nli-investigation-settlement-impact")).toBeNull();
     expect(map.getSource("nli-investigation-polygon-category")).toBeNull();
+  });
+
+  it("dispose removes owned state without restoring raw host visibility", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    renderer.mount();
+    renderer.render(frame([400]), { polygonFeatures: [polygon(1, 400)] });
+    map.setLayoutProperty.mockClear();
     renderer.dispose();
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
+      "nli__investigation_polygons__fill__0", "visibility", "visible",
+    );
+    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
+      "nli__investigation_polygons__line__1", "visibility", "visible",
+    );
+    expect(map.getLayoutProperty("nli__investigation_polygons__fill__0", "visibility")).toBe("none");
+    expect(map.getLayoutProperty("nli__investigation_polygons__line__1", "visibility")).toBe("none");
+    expect(map.getSource("nli-investigation-settlement-impact")).toBeNull();
+    expect(map.getSource("nli-investigation-polygon-category")).toBeNull();
     expect(map.sources.size).toBe(0);
     expect(map.layers.map((layer) => layer.id)).toEqual([
       "nli__investigation_polygons__fill__0",
       "nli__investigation_polygons__line__1",
     ]);
-  });
-
-  it("keeps host pack hidden when reset is caused by the polygons row becoming disabled", () => {
-    const map = makeMap();
-    const renderer = createInvestigationPolygonRenderer(map, {});
-    renderer.render(frame([400]), { polygonFeatures: [polygon(1, 400)] });
-    map.setLayoutProperty.mockClear();
-    renderer.reset({ restoreHostVisibility: false });
-    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
-      "nli__investigation_polygons__fill__0",
-      "visibility",
-      "visible",
-    );
-    expect(map.setLayoutProperty).not.toHaveBeenCalledWith(
-      "nli__investigation_polygons__line__1",
-      "visibility",
-      "visible",
-    );
-    expect(map.getSource("nli-investigation-polygon-category")).toBeNull();
   });
 
   it("preserves semantic host paints while removing the settlement overlay", () => {

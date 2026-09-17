@@ -3,6 +3,40 @@ import { legendLayerFromConfig } from "../../frontend/src/map/legend-model-build
 import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
 import { NLI_LEGEND_SHORT_LABELS } from "../../frontend/src/shared/nli-investigation-legend.js";
 
+function peopleStatusClass(value, fillColor) {
+  return {
+    value,
+    label: value,
+    symbol: {
+      symbolLayers: [
+        {
+          type: "markerPoint",
+          marker: { fillColor, size: 16 },
+        },
+      ],
+    },
+  };
+}
+
+function peopleStatusConfig() {
+  return {
+    geometryType: "point",
+    name: "people",
+    style: {
+      renderer: "uniqueValue",
+      uniqueValues: {
+        field: "status",
+        classes: [
+          peopleStatusClass("Murdered", "#b42318"),
+          peopleStatusClass("Killed on duty", "#175cd3"),
+          peopleStatusClass("Kidnap survivor", "#079455"),
+          peopleStatusClass("Murdered in captivity", "#7a2222"),
+        ],
+      },
+    },
+  };
+}
+
 function uniqueValuePointConfig({ legendLabel } = {}) {
   const config = {
     geometryType: "point",
@@ -61,6 +95,47 @@ describe("legendLayerFromConfig uniqueValue", () => {
     expect(layer.items).toHaveLength(1);
     expect(layer.items[0].label).toBe("Roads");
     expect(layer.items[0].fill).toBe("#b42318");
+  });
+
+  it("omits kidnap survivors from the nli.people legend in general view", () => {
+    const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
+      fullId: "nli.people",
+      narrativeId: null,
+    });
+    expect(layer.items.map((item) => item.label)).toEqual([
+      "Murdered",
+      "Killed on duty",
+      "Murdered in captivity",
+    ]);
+  });
+
+  it("keeps only kidnap survivors on the nli.people legend during hostages", () => {
+    const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
+      fullId: "nli.people",
+      narrativeId: "hostages",
+    });
+    expect(layer.items.map((item) => item.label)).toEqual(["Kidnap survivor"]);
+  });
+
+  it("keeps every nli.people status class during nova", () => {
+    const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
+      fullId: "nli.people",
+      narrativeId: "nova",
+    });
+    expect(layer.items.map((item) => item.label)).toEqual([
+      "Murdered",
+      "Killed on duty",
+      "Kidnap survivor",
+      "Murdered in captivity",
+    ]);
+  });
+
+  it("does not filter uniqueValue classes for unrelated layers", () => {
+    const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
+      fullId: "nli.other_points",
+      narrativeId: "hostages",
+    });
+    expect(layer.items).toHaveLength(4);
   });
 
   it("lists each class color when ui.legendLabel is absent", () => {
@@ -136,14 +211,57 @@ describe("legendLayerFromConfig uniqueValue", () => {
       fullId: "nli.investigation_polygons",
     });
     expect(layer.items).toHaveLength(3);
-    expect(layer.items.map((item) => item.label)).toEqual(["קרב", "חטיפה", "שריפה"]);
+    expect(layer.items.map((item) => item.label)).toEqual([
+      "מוקד קרב/טבח",
+      "מוקד שריפה",
+      "מוקד חטיפה",
+    ]);
     expect(layer.items.map((item) => item.fill)).toEqual([
       NLI_VISUAL_TOKENS.polygonCategories["מרחב לחימה - קרב"].fill,
-      NLI_VISUAL_TOKENS.polygonCategories["מוקד חטיפה"].fill,
       NLI_VISUAL_TOKENS.polygonCategories["שריפה"].fill,
+      "#ffff73",
     ]);
     expect(layer.items.every((item) => item.shape === "polygon")).toBe(true);
     expect(layer.items.map((item) => item.fill)).not.toContain("#f79009");
-    expect(NLI_LEGEND_SHORT_LABELS["מרחב לחימה - קרב"]).toBe("קרב");
+    expect(NLI_LEGEND_SHORT_LABELS["מרחב לחימה - קרב"]).toBe("מוקד קרב/טבח");
+  });
+
+  it("uses raw processed style classes for gradient swatches", () => {
+    const config = {
+      name: "investigation_polygons",
+      geometryType: "polygon",
+      style: {
+        renderer: "uniqueValue",
+        defaultStyle: { fillColor: "#808080" },
+      },
+    };
+    const rawStyle = {
+      renderer: "uniqueValue",
+      uniqueValues: {
+        field: "Notes",
+        classes: [
+          {
+            value: "מרחב לחימה - קרב",
+            displayLabel: "מוקד קרב/טבח",
+            symbol: {
+              symbolLayers: [
+                { type: "stroke", color: "#123456" },
+                { type: "fill", fillType: "gradient", resolvedColors: ["#111111", "#222222", "#333333"] },
+              ],
+            },
+          },
+          { value: "שריפה", displayLabel: "מוקד שריפה", symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", resolvedColors: ["#444444", "#555555"] }] } },
+          { value: "מוקד חטיפה", displayLabel: "מוקד חטיפה", symbol: { symbolLayers: [{ type: "fill", color: "#ffff73" }] } },
+        ],
+      },
+    };
+    const layer = legendLayerFromConfig(config, { id: "investigation_polygons" }, {
+      fullId: "nli.investigation_polygons",
+      rawStyle,
+    });
+    expect(layer.items[0].fill).toContain("#111111");
+    expect(layer.items[0].fill).toContain("#333333");
+    expect(layer.items[0].fill).not.toContain("#808080");
+    expect(layer.items[0].stroke).toBe("#123456");
   });
 });

@@ -9,7 +9,7 @@ import {
 } from "../projection/maplibre-projection.js";
 import { installProjectionRenderDebugOverlay } from "../projection/projection-render-debug-overlay.js";
 import { syncProjectionLayers } from "../projection/maplibre-projection-layers.js";
-import { applyNovaMarkerFilter } from "../map/nli-nova-marker-filter.js";
+import { applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 import {
   loadCuratedLayerToMapLibre,
   removeCuratedHtmlMarkers,
@@ -478,6 +478,11 @@ async function bootstrapProjectionRuntime() {
           updateMapLegend({ surface: "projection" });
         }),
       );
+      registerDisposer(
+        OTEFDataContext.subscribe("narrativeState", () => {
+          updateMapLegend({ surface: "projection" });
+        }),
+      );
       updateMapLegend({ surface: "projection" });
     } catch (e) {
       console.warn("[projection-main] Legend module not available:", e);
@@ -843,7 +848,7 @@ async function bootstrapProjectionRuntime() {
 
     function syncProjectionLayersWithNarrative(targetMap, groups, options) {
       syncProjectionLayers(targetMap, groups, options);
-      applyNovaMarkerFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
+      applyNarrativePeopleFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
     }
 
     const syncProjectionLayersAndRaiseHighlight = (projectionMap, groups, options) => {

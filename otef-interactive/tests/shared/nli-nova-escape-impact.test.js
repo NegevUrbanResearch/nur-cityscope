@@ -221,13 +221,15 @@ describe("Nova escape-impact outlines", () => {
       focusSettlementOutlineId: 18,
     })).toBe(false);
     expect(shouldIncludeNarrativeSettlementOutline(NLI_NARRATIVES.segev)).toBe(true);
+    expect(shouldIncludeNarrativeSettlementOutline(NLI_NARRATIVES.sderot)).toBe(true);
+    expect(shouldIncludeNarrativeSettlementOutline(NLI_NARRATIVES.hostages)).toBe(true);
   });
 
   test("layer id is not the infiltration impact overlay", () => {
     expect(NOVA_ESCAPE_IMPACT_LAYER_ID).not.toBe("nli-investigation-settlement-impact-outline");
   });
 
-  test("infiltration red and fleeing orange stay two distinct strokes", async () => {
+  test("red infiltration outline and fleeing orange stay two distinct strokes", async () => {
     const map = createHostMap();
     maps.push(map);
     const coordinator = createNovaEscapeCoordinator({

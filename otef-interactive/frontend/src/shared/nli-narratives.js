@@ -27,11 +27,42 @@ const NOVA_NARRATIVE = Object.freeze({
   focusSettlement: "נובה",
   focusSettlementOutlineId: 43,
   hasEscapeOverlay: true,
+  keepFocusLabelWithAchieved: true,
+});
+
+const SDEROT_CENTER = Object.freeze([34.59744, 31.529518]);
+const SDEROT_MARKER = Object.freeze([34.59205662207849, 31.52320675782405]);
+
+const SDEROT_NARRATIVE = Object.freeze({
+  id: "sderot",
+  label: "תחנת המשטרה",
+  center: SDEROT_CENTER,
+  zoom: 15,
+  marker: SDEROT_MARKER,
+  basemap: "satellite_bw",
+  focusSettlement: "שדרות",
+  focusSettlementOutlineId: 32,
+});
+
+const HOSTAGES_CENTER = Object.freeze([34.40244, 31.312639]);
+const HOSTAGES_MARKER = Object.freeze([34.40026099200003, 31.31130147400006]);
+
+const HOSTAGES_NARRATIVE = Object.freeze({
+  id: "hostages",
+  label: "משפחת פרי",
+  center: HOSTAGES_CENTER,
+  zoom: 15,
+  marker: HOSTAGES_MARKER,
+  basemap: "satellite_bw",
+  focusSettlement: "ניר עוז",
+  focusSettlementOutlineId: 14,
 });
 
 export const NLI_NARRATIVES = Object.freeze({
   segev: SEGEV_NARRATIVE,
   nova: NOVA_NARRATIVE,
+  sderot: SDEROT_NARRATIVE,
+  hostages: HOSTAGES_NARRATIVE,
 });
 
 export const NLI_NARRATIVE_EXIT_SCENE = Object.freeze({

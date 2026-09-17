@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
-import { NOVA_MARKER_FILTER } from "../../frontend/src/map/nli-nova-marker-filter.js";
+import { EXCLUDE_SURVIVOR_FILTER, NOVA_PEOPLE_FILTER } from "../../frontend/src/map/nli-people-marker-filter.js";
 
 function setup(options = {}) {
   const map = createFakeMapLibreMap({
@@ -40,6 +40,7 @@ describe("GIS Segev narrative scene", () => {
     expect(d.personVisual.hide).toHaveBeenCalled();
     expect(d.closeArchive).toHaveBeenCalled();
     expect(d.map.getLayer("nli-narrative-focus-halo")).toBeTruthy();
+    expect(d.map.getLayer("nli-narrative-focus-label").paint["text-halo-color"]).toBe("#000000");
     expect(d.syncTimeline).toHaveBeenCalled();
     expect(d.controller.isActive()).toBe(true);
   });
@@ -118,7 +119,7 @@ describe("GIS Segev narrative scene", () => {
       duration: 1600,
     });
     expect(d.map.fitBounds).not.toHaveBeenCalled();
-    expect(d.map.setFilter).toHaveBeenCalledWith("nli-people", NOVA_MARKER_FILTER);
+    expect(d.map.setFilter).toHaveBeenCalledWith("nli-people", NOVA_PEOPLE_FILTER);
   });
 
   test("Nova victim filter is reapplied after style reconstruction and cleared on exit", async () => {
@@ -128,10 +129,13 @@ describe("GIS Segev narrative scene", () => {
     d.map.wipeStyle();
     d.map.addLayer({ id: "nli-people", type: "circle", source: "nli.people" });
     d.controller.onStyleLoad();
-    expect(d.map.setFilter).toHaveBeenCalledWith("nli-people", NOVA_MARKER_FILTER);
+    expect(d.map.setFilter).toHaveBeenCalledWith("nli-people", NOVA_PEOPLE_FILTER);
 
     d.controller.apply({ id: null, transition: "exit", revision: 2 });
-    expect(d.map.setFilter).toHaveBeenLastCalledWith("nli-people", null);
+    expect(d.map.setFilter).toHaveBeenLastCalledWith("nli-people", EXCLUDE_SURVIVOR_FILTER);
+    d.map.setFilter.mockClear();
+    d.controller.onStyleLoad();
+    expect(d.map.setFilter).toHaveBeenCalledWith("nli-people", EXCLUDE_SURVIVOR_FILTER);
   });
 
   test("already handled Nova reconnect remounts focus without a second flyTo", async () => {
@@ -183,5 +187,50 @@ describe("GIS Segev narrative scene", () => {
     expect(source).toMatch(
       /onStyleLoadOverlay:\s*\(\)\s*=>\s*novaEscapeCoordinator\?\.onStyleLoad\?\.\(\{\s*styleLoss:\s*true\s*\}\)/,
     );
+  });
+
+  test("Sderot flies to the settlement at zoom 15 and marks the police station", async () => {
+    const d = await setup();
+    d.controller.apply({ id: "sderot", transition: "enter", revision: 1 });
+    expect(d.viewportSync.beginCameraTravel).toHaveBeenCalledWith("narrative-sderot");
+    expect(d.map.flyTo).toHaveBeenCalledWith({
+      center: NLI_NARRATIVES.sderot.center,
+      zoom: 15,
+      essential: true,
+      duration: 1600,
+    });
+    expect(d.map.flyTo.mock.calls[0][0].center).not.toEqual(NLI_NARRATIVES.sderot.marker);
+    const focus = d.map.getSource("nli-narrative-focus")?.data?.features?.[0];
+    expect(focus?.geometry?.coordinates).toEqual(NLI_NARRATIVES.sderot.marker);
+    expect(focus?.properties?.label).toBe("תחנת המשטרה");
+  });
+
+  test("Hostages flies to Nir Oz at zoom 15 and marks משפחת פרי", async () => {
+    const d = await setup();
+    d.controller.apply({ id: "hostages", transition: "enter", revision: 1 });
+    expect(d.viewportSync.beginCameraTravel).toHaveBeenCalledWith("narrative-hostages");
+    expect(d.map.flyTo).toHaveBeenCalledWith({
+      center: NLI_NARRATIVES.hostages.center,
+      zoom: 15,
+      essential: true,
+      duration: 1600,
+    });
+    const focus = d.map.getSource("nli-narrative-focus")?.data?.features?.[0];
+    expect(focus?.geometry?.coordinates).toEqual(NLI_NARRATIVES.hostages.marker);
+    expect(focus?.properties?.label).toBe("משפחת פרי");
+  });
+
+  test("replacing Sderot with Hostages flies to Nir Oz and marks משפחת פרי", async () => {
+    const d = await setup();
+    d.controller.apply({ id: "sderot", transition: "enter", revision: 1 });
+    d.controller.apply({ id: "hostages", transition: "replace", revision: 2 });
+    expect(d.map.flyTo).toHaveBeenNthCalledWith(2, {
+      center: NLI_NARRATIVES.hostages.center,
+      zoom: 15,
+      essential: true,
+      duration: 1600,
+    });
+    const focus = d.map.getSource("nli-narrative-focus")?.data?.features?.[0];
+    expect(focus?.geometry?.coordinates).toEqual(NLI_NARRATIVES.hostages.marker);
   });
 });

@@ -8,6 +8,16 @@ import {
 } from "./nli-investigation-beats.js";
 import layerRegistry from "./layer-registry.js";
 import {
+  bufferedGradientResource,
+  isBufferedGradientStyle,
+} from "./cim-buffered-gradient.js";
+
+const SIDECAR_STATUSES = new Set(["not-required", "loading", "ready", "failed"]);
+
+function normalizeSidecarStatus(value) {
+  return SIDECAR_STATUSES.has(value) ? value : "not-required";
+}
+import {
   buildRouteSettlementCollisionIndex,
   deriveAchievedSettlementOutlineIds,
 } from "./nli-route-settlement-collisions.js";
@@ -94,6 +104,41 @@ function fetchJsonSafely(deps, url) {
   }
 }
 
+function layerConfigFor(deps, fullId) {
+  try {
+    if (typeof deps.getLayerConfig === "function") return deps.getLayerConfig(fullId);
+    return layerRegistry.getLayerConfig(fullId);
+  } catch (_) {
+    return null;
+  }
+}
+
+function layerStyleFor(deps, fullId) {
+  if (deps.polygonStyle !== undefined && fullId === INVESTIGATION_POLYGONS_FULL_ID) return deps.polygonStyle;
+  if (deps.style !== undefined && fullId === INVESTIGATION_POLYGONS_FULL_ID) return deps.style;
+  if (deps.styleById && deps.styleById[fullId] !== undefined) return deps.styleById[fullId];
+  if (typeof deps.getLayerStyle === "function") return deps.getLayerStyle(fullId);
+  try {
+    const raw = layerRegistry.getPackStyleJsonForLayer(fullId);
+    return raw || layerRegistry.getLayerConfig(fullId)?.style || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function resourceUrlFor(deps, fullId, resource) {
+  if (!resource?.file) return null;
+  if (typeof deps.getLayerResourceUrl === "function") {
+    return deps.getLayerResourceUrl(fullId, resource);
+  }
+  if (typeof deps.bufferedGradientUrl === "string" && fullId === INVESTIGATION_POLYGONS_FULL_ID) {
+    return deps.bufferedGradientUrl;
+  }
+  const config = layerConfigFor(deps, fullId);
+  const groupId = config?.groupId || fullId.split(".")[0];
+  return `/otef-interactive/public/processed/layers/${groupId}/${encodeURIComponent(resource.file)}`;
+}
+
 async function loadLayerFeatures(deps, fullId) {
   const provided = deps.featuresById && deps.featuresById[fullId];
   if (provided !== undefined) return featureList(provided);
@@ -133,6 +178,11 @@ export function createInvestigationTimelineData(deps = {}) {
     polygonFeatures: null,
     lineFeatures: null,
     alarmFeatures: null,
+    polygonStyle: deps.polygonStyle ?? null,
+    bufferedGradientFeatures: null,
+    bufferedGradientSidecarStatus: "not-required",
+    bufferedGradientStatus: "not-required",
+    sidecarStatus: "not-required",
     locationToOutlineObjectId: deps.locationToOutlineObjectId || null,
     locationIndexExplicit: Object.prototype.hasOwnProperty.call(deps, "locationToOutlineObjectId"),
     settlementFeatures: Array.isArray(deps.settlementFeatures) ? deps.settlementFeatures : null,
@@ -141,6 +191,8 @@ export function createInvestigationTimelineData(deps = {}) {
     dataVersion: deps.dataVersion ?? null,
     dataRevision: 0,
     featureLoadPromises: new Map(),
+    styleLoadPromise: null,
+    bufferedGradientLoadPromise: null,
     settlementLoadPromise: null,
     linePartitionCache: null,
     collisionIndexCache: null,
@@ -206,9 +258,16 @@ export function refreshInvestigationTimelineData(data, deps = {}) {
   if (hasVersion && data.dataVersion !== deps.dataVersion) {
     data.dataVersion = deps.dataVersion;
     data.polygonFeatures = data.lineFeatures = data.alarmFeatures = data.settlementFeatures = null;
+    data.polygonStyle = null;
+    data.bufferedGradientFeatures = null;
+    data.bufferedGradientSidecarStatus = "not-required";
+    data.bufferedGradientStatus = "not-required";
+    data.sidecarStatus = "not-required";
     data.locationToOutlineObjectId = data.settlementFeaturesByOutlineId = null;
     data.locationIndexExplicit = data.outlineIndexExplicit = false;
     data.featureLoadPromises.clear();
+    data.styleLoadPromise = null;
+    data.bufferedGradientLoadPromise = null;
     data.settlementLoadPromise = null;
     invalidateIndexes(data);
     changed = true;
@@ -227,6 +286,33 @@ export function refreshInvestigationTimelineData(data, deps = {}) {
     injected("alarmFeatures", byId[INVESTIGATION_ALARMS_FULL_ID]);
   }
   if (deps.features !== undefined) injected("polygonFeatures", deps.features);
+
+  if (Object.prototype.hasOwnProperty.call(deps, "polygonStyle")) {
+    if (data.polygonStyle !== deps.polygonStyle) changed = true;
+    data.polygonStyle = deps.polygonStyle;
+  }
+  if (Object.prototype.hasOwnProperty.call(deps, "bufferedGradientFeatures")) {
+    const next = deps.bufferedGradientFeatures == null ? null : featureList(deps.bufferedGradientFeatures);
+    if (data.bufferedGradientFeatures !== next) changed = true;
+    data.bufferedGradientFeatures = next;
+    if (next) {
+      data.bufferedGradientSidecarStatus = deps.bufferedGradientSidecarStatus || "ready";
+      data.bufferedGradientStatus = data.bufferedGradientSidecarStatus;
+      data.sidecarStatus = data.bufferedGradientSidecarStatus;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(deps, "bufferedGradientSidecarStatus")
+    || Object.prototype.hasOwnProperty.call(deps, "bufferedGradientStatus")
+    || Object.prototype.hasOwnProperty.call(deps, "sidecarStatus")) {
+    const injectedStatus = deps.bufferedGradientSidecarStatus
+      ?? deps.bufferedGradientStatus
+      ?? deps.sidecarStatus;
+    const normalized = normalizeSidecarStatus(injectedStatus);
+    if (data.bufferedGradientSidecarStatus !== normalized) changed = true;
+    data.bufferedGradientSidecarStatus = normalized;
+    data.bufferedGradientStatus = normalized;
+    data.sidecarStatus = normalized;
+  }
 
   if (Object.prototype.hasOwnProperty.call(deps, "locationToOutlineObjectId")) {
     if (data.locationToOutlineObjectId !== deps.locationToOutlineObjectId) changed = true;
@@ -262,6 +348,75 @@ export function refreshInvestigationTimelineData(data, deps = {}) {
     data.dataRevision += 1;
     invalidateIndexes(data);
   }
+}
+
+/** Load the processed polygon style through the same registry/data path as features. */
+export async function ensureInvestigationPolygonStyle(data, deps = {}, { request = null, isCurrent = () => true } = {}) {
+  if (data.polygonStyle !== null && data.polygonStyle !== undefined) return;
+  const version = data.dataVersion;
+  let record = data.styleLoadPromise?.version === version
+    ? data.styleLoadPromise
+    : { version, request, promise: Promise.resolve(layerStyleFor(deps, INVESTIGATION_POLYGONS_FULL_ID)) };
+  if (data.styleLoadPromise?.version === version && request) record.request = request;
+  data.styleLoadPromise = record;
+  const loaded = await record.promise;
+  if (data.styleLoadPromise === record) data.styleLoadPromise = null;
+  if (data.dataVersion !== version || !isCurrent(record.request)) return;
+  data.polygonStyle = loaded && typeof loaded === "object" ? loaded : null;
+  data.dataRevision += 1;
+  if (!isBufferedGradientStyle(data.polygonStyle)) {
+    data.bufferedGradientSidecarStatus = "not-required";
+    data.bufferedGradientStatus = "not-required";
+    data.sidecarStatus = "not-required";
+  }
+}
+
+/** Load the optional processed buffered-gradient sidecar with stale-request protection. */
+export async function ensureInvestigationBufferedGradient(data, deps = {}, { request = null, isCurrent = () => true } = {}) {
+  if (Array.isArray(data.bufferedGradientFeatures)) {
+    data.bufferedGradientSidecarStatus = "ready";
+    data.bufferedGradientStatus = "ready";
+    data.sidecarStatus = "ready";
+    return;
+  }
+  if (data.bufferedGradientSidecarStatus === "failed") return;
+  if (!isBufferedGradientStyle(data.polygonStyle)) {
+    data.bufferedGradientSidecarStatus = "not-required";
+    data.bufferedGradientStatus = "not-required";
+    data.sidecarStatus = "not-required";
+    return;
+  }
+  const config = layerConfigFor(deps, INVESTIGATION_POLYGONS_FULL_ID);
+  const resource = bufferedGradientResource(config) || bufferedGradientResource(deps);
+  const url = resourceUrlFor(deps, INVESTIGATION_POLYGONS_FULL_ID, resource);
+  if (!url) {
+    data.bufferedGradientSidecarStatus = "not-required";
+    data.bufferedGradientStatus = "not-required";
+    data.sidecarStatus = "not-required";
+    return;
+  }
+  const version = data.dataVersion;
+  let record = data.bufferedGradientLoadPromise?.version === version
+    ? data.bufferedGradientLoadPromise
+    : { version, request, promise: fetchJsonSafely(deps, url) };
+  if (data.bufferedGradientLoadPromise?.version === version && request) record.request = request;
+  data.bufferedGradientLoadPromise = record;
+  data.bufferedGradientSidecarStatus = "loading";
+  data.bufferedGradientStatus = "loading";
+  data.sidecarStatus = "loading";
+  const loaded = await record.promise;
+  if (data.bufferedGradientLoadPromise === record) data.bufferedGradientLoadPromise = null;
+  if (data.dataVersion !== version || !isCurrent(record.request)) return;
+  if (loaded?.type === "FeatureCollection" && Array.isArray(loaded.features)) {
+    data.bufferedGradientFeatures = featureList(loaded);
+    data.bufferedGradientSidecarStatus = "ready";
+  } else {
+    data.bufferedGradientFeatures = null;
+    data.bufferedGradientSidecarStatus = "failed";
+  }
+  data.sidecarStatus = data.bufferedGradientSidecarStatus;
+  data.bufferedGradientStatus = data.bufferedGradientSidecarStatus;
+  data.dataRevision += 1;
 }
 
 /** Ensure a single layer bag, adopting only a current request's result. */

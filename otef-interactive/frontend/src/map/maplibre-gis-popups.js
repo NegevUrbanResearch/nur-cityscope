@@ -8,6 +8,7 @@
  */
 import { renderPopupContent } from "../map-utils/popup-renderer.js";
 import layerRegistry from "../shared/layer-registry.js";
+import { resolveInvestigationPolygonDisplayLabel } from "../shared/nli-investigation-legend.js";
 
 /** Query box padding so 4px circle-radius points remain clickable. */
 export const GIS_POPUP_HIT_PADDING_PX = 8;
@@ -105,8 +106,20 @@ export function attachGisFeaturePopups(map, maplibregl, options = {}) {
       popup.remove();
       return;
     }
+    const properties = { ...(hit.feature.properties || {}) };
+    if (hit.fullId === "nli.investigation_polygons" && Object.prototype.hasOwnProperty.call(properties, "Notes")) {
+      let rawStyle = null;
+      try {
+        rawStyle = typeof options.getPackStyleJsonForLayer === "function"
+          ? options.getPackStyleJsonForLayer(hit.fullId)
+          : layerRegistry.getPackStyleJsonForLayer(hit.fullId);
+      } catch (_) {
+        rawStyle = null;
+      }
+      properties.Notes = resolveInvestigationPolygonDisplayLabel(properties.Notes, rawStyle);
+    }
     const html = renderPopupContent(
-      { properties: hit.feature.properties || {} },
+      { properties },
       hit.popupConfig,
       hit.layerName,
     );

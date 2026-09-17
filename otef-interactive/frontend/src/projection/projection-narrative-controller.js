@@ -1,14 +1,12 @@
-import { createNarrativeFocusRenderer } from "../shared/maplibre-narrative-focus.js";
 import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narratives.js";
-import { applyNovaMarkerFilter } from "../map/nli-nova-marker-filter.js";
+import { applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 
-/** Render the durable narrative focus on projection without owning its camera. */
+/** Apply durable narrative state on projection without a GIS family marker. */
 export function createProjectionNarrativeController({
   map,
   syncTimeline = () => {},
   onStyleLoadOverlay,
 } = {}) {
-  const focus = createNarrativeFocusRenderer(map, { profile: "projection" });
   let definition = null;
   let disposed = false;
 
@@ -21,16 +19,13 @@ export function createProjectionNarrativeController({
       if (disposed) return false;
       const normalized = normalizeNarrativeState(nextState);
       definition = getNliNarrative(normalized.id);
-      applyNovaMarkerFilter(map, definition?.id ?? null);
-      if (definition && definition.id !== "nova") focus.show(definition);
-      else focus.clear();
+      applyNarrativePeopleFilter(map, definition?.id ?? null);
       resync();
       return true;
     },
     onStyleLoad() {
       if (disposed) return;
-      focus.onStyleLoad();
-      applyNovaMarkerFilter(map, definition?.id ?? null);
+      applyNarrativePeopleFilter(map, definition?.id ?? null);
       resync();
       onStyleLoadOverlay?.();
     },
@@ -40,7 +35,6 @@ export function createProjectionNarrativeController({
       definition = null;
       resync();
       disposed = true;
-      focus.dispose();
     },
   };
 }

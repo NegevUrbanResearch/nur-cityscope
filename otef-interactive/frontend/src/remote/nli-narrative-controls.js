@@ -3,7 +3,14 @@ import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narrativ
 import { t } from "./remote-locale.js";
 
 const DEFAULT_PRESENTATION_TIMEOUT_MS = 6000;
-const NARRATIVE_BUTTON_IDS = ["segev", "nova"];
+const NARRATIVE_BUTTON_IDS = ["segev", "nova", "sderot", "hostages"];
+
+const NARRATIVE_COPY = Object.freeze({
+  segev: { labelKey: "nliNarrativeSegev", ariaKey: "nliNarrativeSegevAria" },
+  nova: { labelKey: "nliNarrativeNova", ariaKey: "nliNarrativeNovaAria" },
+  sderot: { labelKey: "nliNarrativeSderot", ariaKey: "nliNarrativeSderotAria" },
+  hostages: { labelKey: "nliNarrativeHostages", ariaKey: "nliNarrativeHostagesAria" },
+});
 
 function escape(value) {
   return escapeHtml(String(value ?? ""));
@@ -19,10 +26,7 @@ function hasPresentationUrl(id) {
 }
 
 function narrativeCopyKeys(id) {
-  if (id === "nova") {
-    return { labelKey: "nliNarrativeNova", ariaKey: "nliNarrativeNovaAria" };
-  }
-  return { labelKey: "nliNarrativeSegev", ariaKey: "nliNarrativeSegevAria" };
+  return NARRATIVE_COPY[id] || NARRATIVE_COPY.segev;
 }
 
 function narrativeButtonHtml(id, acknowledged, narrativeDisabled) {

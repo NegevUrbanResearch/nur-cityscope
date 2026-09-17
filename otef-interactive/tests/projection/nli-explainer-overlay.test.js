@@ -112,6 +112,12 @@ describe("nli explainer layout", () => {
     expect(gisClockLayoutSlotId(null)).toBe("start");
     expect(gisClockLayoutSlotId("segev")).toBe("segev");
     expect(gisClockLayoutSlotId("nova")).toBe("nova");
+    expect(gisClockLayoutSlotId("sderot")).toBe("sderot");
+    expect(gisClockLayoutSlotId("hostages")).toBe("hostages");
+    expect(mergeGisClockLayout("sderot", {}, NLI_GIS_CLOCK_DEFAULT_LAYOUT))
+      .toEqual(NLI_GIS_CLOCK_DEFAULT_LAYOUT);
+    expect(mergeGisClockLayout("hostages", {}, NLI_GIS_CLOCK_DEFAULT_LAYOUT))
+      .toEqual(NLI_GIS_CLOCK_DEFAULT_LAYOUT);
     expect(gisClockLayoutSlotId("unknown-future")).toBe("start");
   });
 
