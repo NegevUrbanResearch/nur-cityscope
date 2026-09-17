@@ -379,6 +379,50 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getLayer("nli-investigation-polygon-category-line-battle").paint["line-color"]).toBe("#654321");
   });
 
+  it("does not schedule polygon RAF for invalid-only ready sidecars, but does for mixed sidecars", async () => {
+    const style = {
+      renderer: "uniqueValue",
+      uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב",
+        symbol: { symbolLayers: [{
+          type: "fill", fillType: "gradient", interval: 1, resolvedColors: ["#123456"], opacity: 0.4,
+        }] },
+      }] },
+    };
+    const invalid = {
+      properties: { Notes: "מרחב לחימה - קרב" },
+      geometry: null,
+    };
+    const valid = {
+      properties: { Notes: "מרחב לחימה - קרב", __cim_gradient_band: 0, timeline_minutes: 400 },
+      geometry: { type: "Polygon", coordinates: [[[34, 31], [34.01, 31], [34, 31.01], [34, 31]]] },
+    };
+    const sync = async (map, sidecar) => syncInvestigationTimelineToMap(
+      map,
+      idleNliClock(),
+      [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }],
+      {
+        featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [valid] },
+        polygonStyle: style,
+        bufferedGradientFeatures: sidecar,
+        bufferedGradientSidecarStatus: "ready",
+        settlementFeatures: [],
+        getLayerDataUrl: () => null,
+        now: () => 0,
+      },
+    );
+
+    const invalidOnlyRaf = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", invalidOnlyRaf);
+    await sync(makeMap(), [invalid]);
+    expect(invalidOnlyRaf).not.toHaveBeenCalled();
+
+    const mixedRaf = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", mixedRaf);
+    await sync(makeMap(), [invalid, valid]);
+    expect(mixedRaf).toHaveBeenCalled();
+  });
+
   it("keeps the authored Be'eri outline visible during narrative focus even when ordinary investigation layers are hidden", async () => {
     const map = makeOrientationMap();
     const hidden = [{ id: "nli", layers: [
@@ -2731,7 +2775,7 @@ describe("syncInvestigationTimelineToMap", () => {
       now: () => 0,
     });
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]]);
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
     await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
       featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
@@ -2742,7 +2786,7 @@ describe("syncInvestigationTimelineToMap", () => {
       now: () => 0,
     });
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["99"]]], 1, 0.28]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["99"]]], 0.55, ["*", 0.55, 0.28]]);
     await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
       featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
       narrativeFocus: { id: "nova" },
@@ -2761,7 +2805,7 @@ describe("syncInvestigationTimelineToMap", () => {
       now: () => 0,
     });
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]]);
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
     disposeInvestigationTimelineForMap(map);
   });
@@ -2809,7 +2853,7 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("projection nova fallback fill uses 0.28/1 while GIS does not dim it", async () => {
+  it("projection Nova fallback fill composes authored opacity while GIS does not dim it", async () => {
     const unknown = {
       type: "Feature",
       properties: {
@@ -2827,8 +2871,8 @@ describe("syncInvestigationTimelineToMap", () => {
       0,
     );
     const at500 = { ...playing, positionMs: 0, phase: "paused", seekKind: "none" };
-    const faded = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28];
-    const lit = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["77"]]], 1, 0.28];
+    const faded = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]];
+    const lit = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["77"]]], 0.55, ["*", 0.55, 0.28]];
     const fallbackId = "nli-investigation-polygon-category-fill-fallback";
     const projection = makeMap();
     await syncInvestigationTimelineToMap(projection, at500, polygonOnlyGroups(), {
@@ -2911,7 +2955,7 @@ describe("syncInvestigationTimelineToMap", () => {
       now: () => 0,
     });
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["1"]]], 1, 0.28]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["1"]]], 0.55, ["*", 0.55, 0.28]]);
     expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity"))
       .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28]);
     await syncInvestigationTimelineToMap(map, at400, bothGroups(), {
@@ -2926,7 +2970,7 @@ describe("syncInvestigationTimelineToMap", () => {
       now: () => 0,
     });
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]]);
     expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity"))
       .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["1"]]], 1, 0.28]);
     disposeInvestigationTimelineForMap(map);

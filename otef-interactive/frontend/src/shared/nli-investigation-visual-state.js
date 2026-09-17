@@ -11,6 +11,7 @@ import {
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
   TIMELINE_BEAT_MS,
+  TIMELINE_HOLD_MS,
   mapClockStoryPosition,
 } from "./nli-investigation-beats.js";
 import { clockPositionMs, evaluateClock } from "./nli-investigation-clock.js";
@@ -108,6 +109,38 @@ function activeProgressFor(phase, clock, nowMs) {
   );
 }
 
+function polygonEntriesFor(phase, beats, routeBeats, seekKind = null) {
+  if (phase.phase === "idle" || phase.phase === "ended" || phase.leadIn) return [];
+  const entries = [];
+  const index = phase.mode === "hold"
+    ? beats.length
+    : Number.isInteger(phase.index) ? phase.index : -1;
+  const elapsed = Math.max(0, finiteNumber(phase.beatElapsedMs));
+  const entryDuration = phase.mode === "hold"
+    ? Math.min(NLI_VISUAL_TOKENS.revealDurationMs, TIMELINE_HOLD_MS)
+    : NLI_VISUAL_TOKENS.revealDurationMs;
+  const progress = Math.min(1, elapsed / entryDuration);
+  const currentBeat = beats[index];
+  if (
+    phase.mode === "beat" &&
+    currentBeat != null &&
+    !routeBeats?.has(Number(currentBeat)) &&
+    progress < 1
+  ) {
+    entries.push({ beat: Number(currentBeat), progress });
+  }
+  const previousBeat = beats[index - 1];
+  if (
+    seekKind !== "jump" &&
+    previousBeat != null &&
+    routeBeats?.has(Number(previousBeat)) &&
+    progress < 1
+  ) {
+    entries.push({ beat: Number(previousBeat), progress });
+  }
+  return entries;
+}
+
 function alarmOnsetFor(clock, phase, nowMs, enabled, beats, position) {
   if (!enabled || !Array.isArray(beats) || beats.length === 0) return null;
   if (clock?.phase === "idle" || clock?.phase === "ended") return null;
@@ -149,12 +182,17 @@ export function deriveInvestigationFrame(
   options = {},
 ) {
   const src = clock && typeof clock === "object" ? clock : { phase: "idle" };
+  const correctedNowValid =
+    correctedNowMs != null &&
+    Number.isFinite(Number(correctedNowMs)) &&
+    Number(correctedNowMs) >= 0;
   const nowMs = finiteNumber(correctedNowMs);
   const motionMode = normalizedMotionMode(options);
   const enabled = normalizedEnabledIds(effectiveEnabledIds);
   const routeBeats = normalizedRouteBeats(options?.routeBeats);
   const beats = Array.isArray(src.beats) ? src.beats.slice() : [];
   const phase = evaluateClock(src, nowMs);
+  const polygonEntries = polygonEntriesFor(phase, beats, routeBeats, src.seekKind);
   const activeProgress = activeProgressFor(phase, src, nowMs);
   const completedBeats = completedInvestigationBeats(
     phase,
@@ -219,8 +257,14 @@ export function deriveInvestigationFrame(
     (src.phase === "paused" && src.seekKind === "jump" && activeProgress < 1);
   const completedFlowNeedsFrames = completedRouteFlow.active;
   const narrativeNeedsFrames = narrativeAdvances && phase.phase !== "ended";
-  const polygonMotionNeedsFrames =
-    options.polygonMotionActive === true && motionMode === "full";
+  const completedPolygonAmbientActive =
+    options.polygonMotionActive === true &&
+    motionMode === "full" &&
+    !phase.leadIn &&
+    achievedPolygonBeats.some(
+      (beat) => !polygonEntries.some((entry) => entry.beat === Number(beat)),
+    );
+  const polygonMotionNeedsFrames = completedPolygonAmbientActive;
   const personGlowNeedsFrames =
     options.personGlowActive === true && motionMode === "full";
   return {
@@ -239,11 +283,14 @@ export function deriveInvestigationFrame(
     activeProgress,
     completedBeats,
     achievedPolygonBeats,
+    polygonEntries,
+    completedPolygonAmbientActive,
     completedRouteFlow,
     alarmOnset,
     alarmOnsetId: alarmOnset?.id ?? null,
     alarmOnsetOriginMs: alarmOnset?.originMs ?? null,
     nowMs,
+    correctedNowValid,
     motionMode,
     routeTimelineEnabled: linesEnabled,
     narrativeAdvances,
