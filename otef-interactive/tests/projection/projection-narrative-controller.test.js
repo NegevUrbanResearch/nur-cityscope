@@ -5,6 +5,11 @@ import { NARRATIVE_FOCUS_RENDERER_IDS } from "../../frontend/src/shared/maplibre
 import { createProjectionNarrativeController } from "../../frontend/src/projection/projection-narrative-controller.js";
 import { syncInvestigationTimelineToMap } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { idleNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
+import {
+  EXCLUDE_SURVIVOR_FILTER,
+  HOSTAGES_PEOPLE_FILTER,
+  NOVA_PEOPLE_FILTER,
+} from "../../frontend/src/map/nli-people-marker-filter.js";
 
 function setup(options = {}) {
   const map = createFakeMapLibreMap({
@@ -16,8 +21,11 @@ function setup(options = {}) {
     ],
   });
   map.flyTo = vi.fn();
+  map.fitBounds = vi.fn();
   map.jumpTo = vi.fn();
   map.easeTo = vi.fn();
+  map.stop = vi.fn();
+  map.beginCameraTravel = vi.fn();
   map.setFilter = vi.fn();
   const syncTimeline = vi.fn();
   return {
@@ -65,10 +73,16 @@ describe("projection Segev narrative focus", () => {
     const { map, controller } = setup();
 
     controller.apply({ id: "nova", transition: "enter", revision: 1 });
-    expect(map.setFilter).toHaveBeenCalledWith("nli-people", ["==", ["get", "location"], "Nova"]);
+    expect(map.setFilter).toHaveBeenCalledWith("nli-people", NOVA_PEOPLE_FILTER);
+    expect(map.flyTo).not.toHaveBeenCalled();
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    expect(map.jumpTo).not.toHaveBeenCalled();
+    expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.stop).not.toHaveBeenCalled();
+    expect(map.beginCameraTravel).not.toHaveBeenCalled();
 
     controller.apply({ id: null, transition: "exit", revision: 2 });
-    expect(map.setFilter).toHaveBeenLastCalledWith("nli-people", null);
+    expect(map.setFilter).toHaveBeenLastCalledWith("nli-people", EXCLUDE_SURVIVOR_FILTER);
   });
 
   test("Nova reapplies the victim filter after projection style reconstruction", () => {
@@ -80,7 +94,36 @@ describe("projection Segev narrative focus", () => {
 
     controller.onStyleLoad();
 
-    expect(map.setFilter).toHaveBeenCalledWith("nli-people", ["==", ["get", "location"], "Nova"]);
+    expect(map.setFilter).toHaveBeenCalledWith("nli-people", NOVA_PEOPLE_FILTER);
+    expect(map.flyTo).not.toHaveBeenCalled();
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    expect(map.jumpTo).not.toHaveBeenCalled();
+    expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.stop).not.toHaveBeenCalled();
+    expect(map.beginCameraTravel).not.toHaveBeenCalled();
+  });
+
+  test("Hostages applies the survivor-only filter without moving the projection camera", () => {
+    const { map, controller } = setup();
+
+    controller.apply({ id: "hostages", transition: "enter", revision: 1 });
+    expect(map.setFilter).toHaveBeenCalledWith("nli-people", HOSTAGES_PEOPLE_FILTER);
+    expect(map.flyTo).not.toHaveBeenCalled();
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    expect(map.jumpTo).not.toHaveBeenCalled();
+    expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.stop).not.toHaveBeenCalled();
+    expect(map.beginCameraTravel).not.toHaveBeenCalled();
+
+    map.setFilter.mockClear();
+    controller.onStyleLoad();
+    expect(map.setFilter).toHaveBeenCalledWith("nli-people", HOSTAGES_PEOPLE_FILTER);
+    expect(map.flyTo).not.toHaveBeenCalled();
+    expect(map.fitBounds).not.toHaveBeenCalled();
+    expect(map.jumpTo).not.toHaveBeenCalled();
+    expect(map.easeTo).not.toHaveBeenCalled();
+    expect(map.stop).not.toHaveBeenCalled();
+    expect(map.beginCameraTravel).not.toHaveBeenCalled();
   });
 
   test("does not remount a Segev marker after the host layers are rebuilt", () => {

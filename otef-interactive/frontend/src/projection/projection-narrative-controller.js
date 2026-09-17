@@ -1,5 +1,5 @@
 import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narratives.js";
-import { applyNovaMarkerFilter } from "../map/nli-nova-marker-filter.js";
+import { applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 
 /** Apply durable narrative state on projection without a GIS family marker. */
 export function createProjectionNarrativeController({
@@ -19,13 +19,13 @@ export function createProjectionNarrativeController({
       if (disposed) return false;
       const normalized = normalizeNarrativeState(nextState);
       definition = getNliNarrative(normalized.id);
-      applyNovaMarkerFilter(map, definition?.id ?? null);
+      applyNarrativePeopleFilter(map, definition?.id ?? null);
       resync();
       return true;
     },
     onStyleLoad() {
       if (disposed) return;
-      applyNovaMarkerFilter(map, definition?.id ?? null);
+      applyNarrativePeopleFilter(map, definition?.id ?? null);
       resync();
       onStyleLoadOverlay?.();
     },

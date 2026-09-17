@@ -602,7 +602,7 @@ function applyOrientationVisuals(map, state, outlineIds = []) {
     mode: focus ? "narrative" : undefined,
     focusCityname: focus?.focusSettlement,
     focusOutlineObjectId: focus?.focusSettlementOutlineId,
-    keepFocusLabelWithAchieved: focus?.id === "nova",
+    keepFocusLabelWithAchieved: focus?.keepFocusLabelWithAchieved === true,
   });
 }
 

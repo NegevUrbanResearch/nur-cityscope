@@ -98,4 +98,47 @@ describe("MapLibre narrative focus renderer", () => {
     expect(source).not.toContain("personId");
     expect(source).not.toContain("otef-person-selection");
   });
+
+  it("places the halo on marker when center is the settlement", () => {
+    const map = createFakeMapLibreMap();
+    const renderer = createNarrativeFocusRenderer(map, { profile: "gis" });
+    renderer.show({
+      label: "משפחת פרי",
+      center: [34.40244, 31.312639],
+      marker: [34.41, 31.32],
+    });
+    expect(renderedFocus(map)).toEqual({
+      type: "Feature",
+      properties: { label: "משפחת פרי" },
+      geometry: { type: "Point", coordinates: [34.41, 31.32] },
+    });
+  });
+
+  it("does not fall back to center when a present marker is invalid", () => {
+    const map = createFakeMapLibreMap();
+    const renderer = createNarrativeFocusRenderer(map, { profile: "gis" });
+    renderer.show({
+      label: "תחנת המשטרה",
+      center: [34.59744, 31.529518],
+      marker: [NaN, 31.52],
+    });
+    expect(renderedFocus(map)).toBeUndefined();
+    expect(map.getLayer("nli-narrative-focus-halo")).toBeFalsy();
+  });
+
+  it("clears a previous halo when a replacement marker is present and invalid", () => {
+    const map = createFakeMapLibreMap();
+    const renderer = createNarrativeFocusRenderer(map, { profile: "gis" });
+    renderer.show(segev);
+    expect(renderedFocus(map)).toBeTruthy();
+    expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.halo)).toBeTruthy();
+
+    renderer.show({
+      label: "תחנת המשטרה",
+      center: [34.59744, 31.529518],
+      marker: [NaN, 31.52],
+    });
+    expect(renderedFocus(map)).toBeUndefined();
+    expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.halo)).toBeFalsy();
+  });
 });

@@ -99,7 +99,7 @@ describe("remote NLI narrative controls", () => {
     expect(en).toContain('aria-label="Open Segev family presentation"');
   });
 
-  test("lists Segev then Nova and hides presentation while Nova is active", async () => {
+  test("lists Segev, Nova, Sderot, Hostages and hides presentation while Nova is active", async () => {
     const { nliNarrativeControlsHtml } = await import(
       "../../frontend/src/remote/nli-narrative-controls.js"
     );
@@ -110,11 +110,38 @@ describe("remote NLI narrative controls", () => {
     );
     expect(html.indexOf('data-nli-narrative="segev"'))
       .toBeLessThan(html.indexOf('data-nli-narrative="nova"'));
-    expect(html).toContain('data-nli-narrative="nova"');
+    expect(html.indexOf('data-nli-narrative="nova"'))
+      .toBeLessThan(html.indexOf('data-nli-narrative="sderot"'));
+    expect(html.indexOf('data-nli-narrative="sderot"'))
+      .toBeLessThan(html.indexOf('data-nli-narrative="hostages"'));
     expect(html).toMatch(/data-nli-narrative="nova"[^>]*aria-pressed="true"/);
-    expect(html).toMatch(/data-nli-narrative="segev"[^>]*aria-pressed="false"/);
     expect(html).not.toContain("data-nli-narrative-presentation");
-    expect(html).toContain("nli-narrative-actions-row");
+  });
+
+  test("Hostages and Sderot use their own copy, not Segev", async () => {
+    const { setLocale } = await import("../../frontend/src/remote/remote-locale.js");
+    const { nliNarrativeControlsHtml } = await import(
+      "../../frontend/src/remote/nli-narrative-controls.js"
+    );
+    setLocale("he", { force: true });
+    const he = nliNarrativeControlsHtml(
+      { id: "nli" },
+      { id: "hostages", transition: "enter", revision: 1 },
+      null,
+    );
+    expect(he).toContain("חטופים");
+    expect(he).toContain("שדרות");
+    expect(he).toContain("הפעלה או סיום של נרטיב חטופים");
+    expect(he).toMatch(/data-nli-narrative="hostages"[^>]*aria-pressed="true"/);
+    setLocale("en", { force: true });
+    const en = nliNarrativeControlsHtml(
+      { id: "nli" },
+      { id: "sderot", transition: "enter", revision: 1 },
+      null,
+    );
+    expect(en).toContain("Sderot");
+    expect(en).toContain("Hostages");
+    expect(en).toContain("Activate or end the Sderot narrative");
   });
 
   test("places presentation on a second actions row when Segev is active", async () => {

@@ -2380,6 +2380,47 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
+  it("keepFocusLabelWithAchieved is taken from narrativeFocus.keepFocusLabelWithAchieved", async () => {
+    const impactSettlement = {
+      type: "Feature",
+      properties: { outlineObjectId: 19, locations: ["עיר א"] },
+      geometry: STORY_SETTLEMENT.geometry,
+    };
+
+    const nova = makeOrientationMap();
+    await syncInvestigationTimelineToMap(nova, idleNliClock(), polygonOnlyGroups(), {
+      ...orientationDeps(),
+      narrativeFocus: NLI_NARRATIVES.nova,
+      settlementFeatures: [impactSettlement],
+    });
+    setEscapeImpactOrientationIds(nova, ["19"]);
+    expect(nova.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.35]);
+    disposeInvestigationTimelineForMap(nova);
+
+    const sderot = makeOrientationMap();
+    await syncInvestigationTimelineToMap(sderot, idleNliClock(), polygonOnlyGroups(), {
+      ...orientationDeps(),
+      narrativeFocus: NLI_NARRATIVES.sderot,
+      settlementFeatures: [impactSettlement],
+    });
+    setEscapeImpactOrientationIds(sderot, ["19"]);
+    expect(sderot.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
+      .toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.35]);
+    disposeInvestigationTimelineForMap(sderot);
+
+    const flagged = makeOrientationMap();
+    await syncInvestigationTimelineToMap(flagged, idleNliClock(), polygonOnlyGroups(), {
+      ...orientationDeps(),
+      narrativeFocus: { ...NLI_NARRATIVES.sderot, keepFocusLabelWithAchieved: true },
+      settlementFeatures: [impactSettlement],
+    });
+    setEscapeImpactOrientationIds(flagged, ["19"]);
+    expect(flagged.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["שדרות", "עיר א"]]], 1, 0.35]);
+    disposeInvestigationTimelineForMap(flagged);
+  });
+
   it("Nova idle lights the existing נובה place name on projection", async () => {
     const map = makeOrientationMap();
     await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), {

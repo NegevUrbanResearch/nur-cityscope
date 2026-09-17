@@ -101,6 +101,8 @@ describe("NLI Segev narrative cross-surface contract", () => {
 
   test("allows Nova in the registry without adding AcrossLine to the six-module HSV 60 graph", () => {
     expect(getNliNarrative("nova")?.id).toBe("nova");
+    expect(getNliNarrative("sderot")?.id).toBe("sderot");
+    expect(getNliNarrative("hostages")?.id).toBe("hostages");
     expect(Object.keys(narrativeModules)).toEqual([
       "registry",
       "gisNarrativeController",

@@ -13,6 +13,10 @@ from django.test import (
 )
 
 from backend.models import OTEFViewportState, Table
+from backend.otef_escape_overlay import (
+    EMPTY_ESCAPE_OVERLAY,
+    NOVA_ENTER_ESCAPE_OVERLAY,
+)
 from backend.otef_investigation_clock import idle_investigation_clock
 from backend.otef_narrative import (
     empty_narrative_state,
@@ -75,9 +79,26 @@ class NarrativeStateNormalizationTests(SimpleTestCase):
                 self.assertEqual(normalize_narrative_state(raw), initial)
 
     def test_nova_is_an_allowed_narrative_id(self):
-        from backend.otef_narrative import NARRATIVE_IDS
+        from backend.otef_narrative import NARRATIVE_IDS, NARRATIVE_PRESENTATION_IDS
 
-        self.assertEqual(NARRATIVE_IDS, frozenset({"segev", "nova"}))
+        self.assertEqual(
+            NARRATIVE_IDS, frozenset({"segev", "nova", "sderot", "hostages"})
+        )
+        self.assertEqual(NARRATIVE_PRESENTATION_IDS, frozenset({"segev"}))
+
+    def test_sderot_and_hostages_normalize(self):
+        self.assertEqual(
+            normalize_narrative_state(
+                {"id": "sderot", "transition": "enter", "revision": 2}
+            ),
+            {"id": "sderot", "transition": "enter", "revision": 2},
+        )
+        self.assertEqual(
+            normalize_narrative_state(
+                {"id": "hostages", "transition": "replace", "revision": 3}
+            ),
+            {"id": "hostages", "transition": "replace", "revision": 3},
+        )
 
     def test_normalize_still_strips_unknown_narrative_keys(self):
         self.assertEqual(
@@ -211,6 +232,54 @@ class OTEFNarrativeApiTests(TestCase):
             scene["personSelection"],
             {"personId": None, "datasetVersion": None, "revision": 3},
         )
+
+    def test_sderot_hostages_scene_enter_replace_exit(self):
+        with transaction.atomic():
+            locked = OTEFViewportState.objects.select_for_update().get(pk=self.state.pk)
+            entered = transition_narrative_scene(locked, "sderot", 3)
+            self.assertEqual(entered["narrativeState"]["transition"], "enter")
+            self.assertEqual(entered["narrativeState"]["id"], "sderot")
+            self.assertEqual(entered["basemap"], "satellite_bw")
+            self.assertEqual(entered["investigationClock"]["phase"], "idle")
+            self.assertEqual(
+                entered["personSelection"]["personId"],
+                None,
+            )
+            self.assertEqual(entered["escapeOverlay"], dict(EMPTY_ESCAPE_OVERLAY))
+
+            locked.narrative_state = entered["narrativeState"]
+            replaced = transition_narrative_scene(
+                locked, "hostages", entered["narrativeState"]["revision"]
+            )
+            self.assertEqual(replaced["narrativeState"]["transition"], "replace")
+            self.assertEqual(replaced["narrativeState"]["id"], "hostages")
+            self.assertEqual(replaced["basemap"], "satellite_bw")
+            self.assertEqual(replaced["escapeOverlay"], dict(EMPTY_ESCAPE_OVERLAY))
+
+            locked.narrative_state = replaced["narrativeState"]
+            exited = transition_narrative_scene(
+                locked, None, replaced["narrativeState"]["revision"]
+            )
+            self.assertEqual(exited["narrativeState"]["id"], None)
+            self.assertEqual(exited["narrativeState"]["transition"], "exit")
+            self.assertEqual(exited["basemap"], "dark")
+            self.assertEqual(exited["escapeOverlay"], dict(EMPTY_ESCAPE_OVERLAY))
+
+    def test_nova_overlay_clears_on_sderot_and_restores_on_nova_replace(self):
+        with transaction.atomic():
+            locked = OTEFViewportState.objects.select_for_update().get(pk=self.state.pk)
+            nova = transition_narrative_scene(locked, "nova", 3)
+            self.assertEqual(nova["escapeOverlay"], dict(NOVA_ENTER_ESCAPE_OVERLAY))
+            locked.narrative_state = nova["narrativeState"]
+            sderot = transition_narrative_scene(
+                locked, "sderot", nova["narrativeState"]["revision"]
+            )
+            self.assertEqual(sderot["escapeOverlay"], dict(EMPTY_ESCAPE_OVERLAY))
+            locked.narrative_state = sderot["narrativeState"]
+            back = transition_narrative_scene(
+                locked, "nova", sderot["narrativeState"]["revision"]
+            )
+            self.assertEqual(back["escapeOverlay"], dict(NOVA_ENTER_ESCAPE_OVERLAY))
 
     @patch("channels.layers.get_channel_layer")
     def test_activation_persists_one_captured_scene_and_broadcasts_after_commit(

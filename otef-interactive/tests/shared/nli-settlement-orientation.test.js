@@ -106,6 +106,64 @@ describe("narrative settlement orientation", () => {
     expect(label).toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.35]);
   });
 
+  it("Sderot lights yeshuv OBJECTID 32 and שדרות", () => {
+    const target = map();
+    applySettlementOrientationPaint(target, {
+      phase: "idle",
+      mode: "narrative",
+      focusCityname: "שדרות",
+      focusOutlineObjectId: 32,
+      layers,
+    });
+    const label = target.setPaintProperty.mock.calls.find(([id]) => id === "settlements-label")?.[2];
+    const fill = target.setPaintProperty.mock.calls.find(([id]) => id === "settlements-fill")?.[2];
+    expect(label).toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.35]);
+    expect(fill).toEqual(["case", ["==", ["get", "OBJECTID"], 32], 1, 0.28]);
+  });
+
+  it("Hostages lights yeshuv OBJECTID 14 and ניר עוז", () => {
+    const target = map();
+    applySettlementOrientationPaint(target, {
+      phase: "idle",
+      mode: "narrative",
+      focusCityname: "ניר עוז",
+      focusOutlineObjectId: 14,
+      layers,
+    });
+    const label = target.setPaintProperty.mock.calls.find(([id]) => id === "settlements-label")?.[2];
+    const fill = target.setPaintProperty.mock.calls.find(([id]) => id === "settlements-fill")?.[2];
+    expect(label).toEqual(["case", ["==", ["get", "cityname"], "ניר עוז"], 1, 0.35]);
+    expect(fill).toEqual(["case", ["==", ["get", "OBJECTID"], 14], 1, 0.28]);
+  });
+
+  it("Nova registry flag unions achieved labels; Sderot does not", () => {
+    const nova = map();
+    applySettlementOrientationPaint(nova, {
+      phase: "idle",
+      mode: "narrative",
+      focusCityname: "נובה",
+      focusOutlineObjectId: 43,
+      keepFocusLabelWithAchieved: true,
+      achievedCitynames: ["עיר א"],
+      layers,
+    });
+    expect(nova.setPaintProperty.mock.calls.find(([id]) => id === "settlements-label")?.[2])
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.35]);
+
+    const sderot = map();
+    applySettlementOrientationPaint(sderot, {
+      phase: "idle",
+      mode: "narrative",
+      focusCityname: "שדרות",
+      focusOutlineObjectId: 32,
+      keepFocusLabelWithAchieved: false,
+      achievedCitynames: ["עיר א"],
+      layers,
+    });
+    expect(sderot.setPaintProperty.mock.calls.find(([id]) => id === "settlements-label")?.[2])
+      .toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.35]);
+  });
+
   it("restores normal host paint outside narrative mode", () => {
     const target = map();
     applySettlementOrientationPaint(target, { phase: "idle", mode: "idle", layers });

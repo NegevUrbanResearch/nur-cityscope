@@ -10,7 +10,7 @@ import { createGisPersonController } from "../map/maplibre-gis-person-controller
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
 import { createNarrativePresentation, handleNarrativePresentationCommand } from "../map/nli-narrative-presentation.js";
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
-import { applyNovaMarkerFilter } from "../map/nli-nova-marker-filter.js";
+import { applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
@@ -364,7 +364,7 @@ async function bootstrapMapRuntime() {
     const initialGroups = filterGroupsForGisMap(rawInitialLayerGroups);
     const applyGisLayerGroups = (groups) => {
       applyLayerGroupsToMap(map, groups);
-      applyNovaMarkerFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
+      applyNarrativePeopleFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
     };
     applyGisLayerGroups(initialGroups);
     applyStoredNliLabelHeading(map);

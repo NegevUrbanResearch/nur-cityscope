@@ -59,8 +59,11 @@ function profileFor(profile) {
 
 function featureFor(definition) {
   const label = typeof definition?.label === "string" ? definition.label : "";
-  const coordinates = Array.isArray(definition?.center) ? definition.center : [];
-  if (!label || coordinates.length !== 2 || !coordinates.every(Number.isFinite)) return null;
+  const coordinates = Object.prototype.hasOwnProperty.call(definition || {}, "marker")
+    ? definition.marker
+    : definition?.center;
+  if (!label || !Array.isArray(coordinates) || coordinates.length !== 2
+    || !coordinates.every(Number.isFinite)) return null;
   return {
     type: "Feature",
     properties: { label },
@@ -128,7 +131,11 @@ export function createNarrativeFocusRenderer(map, { profile } = {}) {
   }
 
   function show(nextDefinition) {
-    if (disposed || !featureFor(nextDefinition)) return;
+    if (disposed) return;
+    if (!featureFor(nextDefinition)) {
+      clear();
+      return;
+    }
     definition = nextDefinition;
     mount();
   }

@@ -33,17 +33,52 @@ describe("NLI narrative registry", () => {
       focusSettlement: "נובה",
       focusSettlementOutlineId: 43,
       hasEscapeOverlay: true,
+      keepFocusLabelWithAchieved: true,
+    });
+    expect(NLI_NARRATIVES.sderot).toEqual({
+      id: "sderot",
+      label: "תחנת המשטרה",
+      center: [34.59744, 31.529518],
+      zoom: 15,
+      marker: [34.59205662207849, 31.52320675782405],
+      basemap: "satellite_bw",
+      focusSettlement: "שדרות",
+      focusSettlementOutlineId: 32,
+    });
+    expect(NLI_NARRATIVES.hostages).toEqual({
+      id: "hostages",
+      label: "משפחת פרי",
+      center: [34.40244, 31.312639],
+      zoom: 15,
+      marker: [34.40026099200003, 31.31130147400006],
+      basemap: "satellite_bw",
+      focusSettlement: "ניר עוז",
+      focusSettlementOutlineId: 14,
     });
     expect(NLI_NARRATIVES).toEqual({
       segev: NLI_NARRATIVES.segev,
       nova: NLI_NARRATIVES.nova,
+      sderot: NLI_NARRATIVES.sderot,
+      hostages: NLI_NARRATIVES.hostages,
     });
     expect(NLI_NARRATIVES.nova).not.toHaveProperty("fitBounds");
     expect(NLI_NARRATIVES.nova).not.toHaveProperty("fitBoundsPadding");
     expect(NLI_NARRATIVES.nova).not.toHaveProperty("presentationUrl");
     expect(NLI_NARRATIVES.nova).not.toHaveProperty("escapeOverlay");
+    expect(NLI_NARRATIVES.sderot).not.toHaveProperty("presentationUrl");
+    expect(NLI_NARRATIVES.hostages).not.toHaveProperty("presentationUrl");
+    expect(NLI_NARRATIVES.sderot).not.toHaveProperty("hasEscapeOverlay");
+    expect(NLI_NARRATIVES.hostages).not.toHaveProperty("hasEscapeOverlay");
     expect(Object.isFrozen(NLI_NARRATIVES.nova)).toBe(true);
     expect(Object.isFrozen(NLI_NARRATIVES.nova.center)).toBe(true);
+    expect(Object.isFrozen(NLI_NARRATIVES.sderot)).toBe(true);
+    expect(Object.isFrozen(NLI_NARRATIVES.hostages)).toBe(true);
+    expect(Object.isFrozen(NLI_NARRATIVES.sderot.center)).toBe(true);
+    expect(Object.isFrozen(NLI_NARRATIVES.sderot.marker)).toBe(true);
+    expect(Object.isFrozen(NLI_NARRATIVES.hostages.center)).toBe(true);
+    expect(Object.isFrozen(NLI_NARRATIVES.hostages.marker)).toBe(true);
+    expect(NLI_NARRATIVES.sderot.marker).not.toEqual(NLI_NARRATIVES.sderot.center);
+    expect(NLI_NARRATIVES.hostages.marker).not.toEqual(NLI_NARRATIVES.hostages.center);
   });
 
   test("contains the exact deterministic exit scene", () => {
@@ -93,6 +128,21 @@ describe("NLI narrative registry", () => {
       revision: 4,
     });
     expect(getNliNarrative("nova")).toBe(NLI_NARRATIVES.nova);
+  });
+
+  test("normalizes sderot and hostages enter/replace", () => {
+    expect(normalizeNarrativeState({ id: "sderot", transition: "enter", revision: 4 })).toEqual({
+      id: "sderot",
+      transition: "enter",
+      revision: 4,
+    });
+    expect(normalizeNarrativeState({ id: "hostages", transition: "replace", revision: 5 })).toEqual({
+      id: "hostages",
+      transition: "replace",
+      revision: 5,
+    });
+    expect(getNliNarrative("sderot")).toBe(NLI_NARRATIVES.sderot);
+    expect(getNliNarrative("hostages")).toBe(NLI_NARRATIVES.hostages);
   });
 
   test("normalizes revision zero, unsupported IDs, and inconsistent transitions inactive", () => {
