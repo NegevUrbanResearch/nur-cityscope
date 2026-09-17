@@ -170,6 +170,13 @@ export function initNliStaffRemote(dataContext) {
   async function applyScene(id, options = {}) {
     const scene = SCENES.find((item) => item.id === id);
     if (!scene) return;
+    if (id === "layers") {
+      if (packMenus?.isOpen()) packMenus.close();
+      else packMenus?.open();
+      renderFree();
+      return;
+    }
+    packMenus?.close({ silent: true });
     const turningOff = !options.force && state.scene === id;
     const target = turningOff ? null : id;
     state.scene = target;
@@ -281,7 +288,7 @@ export function initNliStaffRemote(dataContext) {
       el.hidden = !on;
     });
     $("homeBtn").hidden = name === "home";
-    if (name !== "free") packMenus?.close();
+    if (name !== "free") packMenus?.close({ silent: true });
     if (name !== "player") paintTimelineMounts();
     if (name === "free") mountJoystick();
     else joystickController?.destroy();
@@ -476,13 +483,14 @@ export function initNliStaffRemote(dataContext) {
     paintTimelineMounts();
     const list = $("sceneList");
     if (list) {
-      list.innerHTML = SCENES.map(
-        (scene) => `
-            <button type="button" class="scene-btn${state.scene === scene.id ? " is-active" : ""}" data-scene="${scene.id}">
+      list.innerHTML = SCENES.map((scene) => {
+        const active = scene.id === "layers" ? packMenus?.isOpen() : state.scene === scene.id;
+        return `
+            <button type="button" class="scene-btn${active ? " is-active" : ""}" data-scene="${scene.id}">
               <span class="scene-btn-title">${loc(scene.title)}</span>
               <span class="scene-btn-meta">${loc(scene.meta)}</span>
-            </button>`,
-      ).join("");
+            </button>`;
+      }).join("");
     }
     packMenus?.render();
     const archivePerson = peopleArchive?.getAcknowledgedPerson?.();
@@ -619,6 +627,12 @@ export function initNliStaffRemote(dataContext) {
     isConnected: () => state.connected,
     titleForPack: (id) => (id === "nli" ? txt("packLibrary") : txt("packBase")),
     emptyLabel: () => txt("packEmpty"),
+    sheetTitle: () => txt("layersSheetTitle"),
+    sheetLede: () => txt("layersSheetLede"),
+    closeLabel: () => txt("layersClose"),
+    onClose: () => {
+      if (state.screen === "free") renderFree();
+    },
   });
 
   peopleArchive = createRemotePeopleArchiveController({

@@ -234,12 +234,16 @@ export function createRemoteJoystickController({
     if (!zone || !nippleLib || typeof nippleLib.create !== "function") return null;
     if (!zoneIsLaidOut()) return null;
     destroy();
+    const box = zone.getBoundingClientRect?.();
+    const resolvedSize = box
+      ? Math.max(40, Math.round(Math.min(box.width, box.height)))
+      : size;
     manager = nippleLib.create({
       zone,
       mode: "static",
       position: { left: "50%", top: "50%" },
       color,
-      size,
+      size: resolvedSize,
       threshold: FORCE_DEADZONE,
       fadeTime: 200,
       restOpacity,

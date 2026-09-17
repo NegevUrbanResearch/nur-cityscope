@@ -105,6 +105,7 @@ describe("remote joystick controls", () => {
     nipple.create.mockReturnValue({ on: vi.fn(), destroy: vi.fn() });
     expect(controller.init()).toBeTruthy();
     expect(nipple.create).toHaveBeenCalledTimes(1);
+    expect(nipple.create.mock.calls[0][0].size).toBe(100);
   });
 
   test("init uses globalThis.nipplejs when no library is passed", () => {

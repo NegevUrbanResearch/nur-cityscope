@@ -11,8 +11,21 @@ function htmlRoot() {
   const listeners = [];
   return {
     innerHTML: "",
+    hidden: true,
+    classList: {
+      _open: false,
+      toggle(name, on) {
+        if (name === "is-open") this._open = !!on;
+      },
+      contains(name) {
+        return name === "is-open" ? this._open : false;
+      },
+    },
     contains() {
       return true;
+    },
+    querySelector() {
+      return { focus() {} };
     },
     addEventListener(type, fn) {
       listeners.push({ type, fn });
@@ -25,6 +38,31 @@ function htmlRoot() {
       listeners.filter((item) => item.type === type).forEach((item) => item.fn(event));
     },
   };
+}
+
+function menusFor(root, extras = {}) {
+  return createStaffPackMenus({
+    root,
+    getGroups: () => [
+      {
+        id: "nli",
+        layers: [{ id: "people_names", name: "Names", enabled: false }],
+      },
+      {
+        id: "projector_base",
+        layers: [{ id: "רקע_שחור", name: "Black", enabled: true }],
+      },
+    ],
+    getClock: () => ({ phase: "idle" }),
+    setLayersEnabled: vi.fn().mockResolvedValue(undefined),
+    isConnected: () => true,
+    titleForPack: (id) => (id === "nli" ? "Library Content" : "Base Layers"),
+    emptyLabel: () => "No layers",
+    sheetTitle: () => "Layer Control",
+    sheetLede: () => "Manually select layers",
+    closeLabel: () => "Close",
+    ...extras,
+  });
 }
 
 describe("staff pack menus", () => {
@@ -51,43 +89,23 @@ describe("staff pack menus", () => {
     expect(labelForPackRow(rows[1], "en")).toBe("Black background");
   });
 
-  test("renders Library Content / Base Layers and toggles a layer row", async () => {
+  test("opens one popup with both packs and toggles a layer row", async () => {
     setLocale("en");
     const root = htmlRoot();
     const setLayersEnabled = vi.fn().mockResolvedValue(undefined);
-    const menus = createStaffPackMenus({
-      root,
-      getGroups: () => [
-        {
-          id: "nli",
-          layers: [{ id: "people_names", name: "Names", enabled: false }],
-        },
-        {
-          id: "projector_base",
-          layers: [{ id: "רקע_שחור", name: "Black", enabled: true }],
-        },
-      ],
-      getClock: () => ({ phase: "idle" }),
-      setLayersEnabled,
-      isConnected: () => true,
-      titleForPack: (id) => (id === "nli" ? "Library Content" : "Base Layers"),
-      emptyLabel: () => "No layers",
-    });
+    const menus = menusFor(root, { setLayersEnabled });
 
+    expect(menus.isOpen()).toBe(false);
+    expect(root.innerHTML).toBe("");
+
+    menus.open();
+    expect(menus.isOpen()).toBe(true);
+    expect(root.innerHTML).toContain("Layer Control");
+    expect(root.innerHTML).toContain("Manually select layers");
     expect(root.innerHTML).toContain("Library Content");
     expect(root.innerHTML).toContain("Base Layers");
-
-    root.emit("click", {
-      target: {
-        closest(selector) {
-          return selector === "[data-pack-trigger]"
-            ? { getAttribute: () => "nli" }
-            : null;
-        },
-      },
-    });
-    expect(menus.getOpenId()).toBe("nli");
     expect(root.innerHTML).toContain("nli.people_names");
+    expect(root.innerHTML).toContain('role="dialog"');
 
     const layerButton = {
       disabled: false,
@@ -110,8 +128,7 @@ describe("staff pack menus", () => {
   test("locks playable NLI rows while the clock is running", () => {
     setLocale("en");
     const root = htmlRoot();
-    const menus = createStaffPackMenus({
-      root,
+    const menus = menusFor(root, {
       getGroups: () => [
         {
           id: "nli",
@@ -119,22 +136,32 @@ describe("staff pack menus", () => {
         },
       ],
       getClock: () => ({ phase: "playing" }),
-      setLayersEnabled: vi.fn(),
-      isConnected: () => true,
-      titleForPack: () => "Library Content",
     });
+
+    menus.open();
+    expect(root.innerHTML).toContain("is-locked");
+    expect(root.innerHTML).toContain("disabled");
+    menus.destroy();
+  });
+
+  test("dismisses the popup from the backdrop without changing layer state", () => {
+    setLocale("en");
+    const root = htmlRoot();
+    const onClose = vi.fn();
+    const setLayersEnabled = vi.fn();
+    const menus = menusFor(root, { onClose, setLayersEnabled });
+    menus.open();
 
     root.emit("click", {
       target: {
         closest(selector) {
-          return selector === "[data-pack-trigger]"
-            ? { getAttribute: () => "nli" }
-            : null;
+          return selector === "[data-layer-sheet-dismiss]" ? this : null;
         },
       },
     });
-    expect(root.innerHTML).toContain("is-locked");
-    expect(root.innerHTML).toContain("disabled");
+    expect(menus.isOpen()).toBe(false);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(setLayersEnabled).not.toHaveBeenCalled();
     menus.destroy();
   });
 });
