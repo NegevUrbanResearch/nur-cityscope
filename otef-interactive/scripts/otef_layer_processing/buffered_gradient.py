@@ -167,14 +167,19 @@ def _band_geometries(
     relative = max(0.0, min(100.0, float(relative_size))) / 100.0
     span = depth * relative
     threshold = max(MIN_AREA_SQUARE_METRES, source.area * 1e-8)
-    bands: List[Optional[Any]] = [source]
+    nested: List[Any] = [source]
     for ordinal in range(1, interval):
         boundary_depth = span * ordinal / interval
         inner = _surviving_inset(source, boundary_depth, threshold)
         if inner is None:
-            bands.append(None)
-            continue
-        bands.append(inner if not inner.is_empty else None)
+            return [None] * (interval - 1) + [source]
+        nested.append(inner)
+
+    bands: List[Optional[Any]] = []
+    for outer, inner in zip(nested, nested[1:]):
+        ring = _polygonal_geometry(make_valid(outer.difference(inner)))
+        bands.append(ring if ring is not None and not ring.is_empty else None)
+    bands.append(nested[-1])
     return bands
 
 

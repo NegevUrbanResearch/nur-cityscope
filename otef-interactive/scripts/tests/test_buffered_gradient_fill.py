@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pyproj import Transformer
 from shapely.geometry import Polygon, shape
-from shapely.ops import transform
+from shapely.ops import transform, unary_union
 
 from otef_layer_processing.buffered_gradient import (
     build_buffered_gradient_feature_collection,
@@ -30,6 +30,35 @@ def _rgb(values):
         "colorSpace": {"type": "CIMICCColorSpace", "url": "Default RGB"},
         "values": [*values, 100],
     }
+
+
+def _rgb_alpha(values, alpha):
+    color = _rgb(values)
+    color["values"][3] = alpha
+    return color
+
+
+def _constant_yellow_alpha_ramp(opacities=(14, 27, 46, 68, 100)):
+    return {
+        "type": "CIMMultipartColorRamp",
+        "colorSpace": {"type": "CIMICCColorSpace", "url": "Default RGB"},
+        "weights": [1] * len(opacities),
+        "colorRamps": [
+            {
+                "type": "CIMLinearContinuousColorRamp",
+                "colorSpace": {"type": "CIMICCColorSpace", "url": "Default RGB"},
+                "fromColor": _rgb_alpha((255, 255, 115), alpha),
+                "toColor": _rgb_alpha((255, 255, 115), alpha),
+            }
+            for alpha in opacities
+        ],
+    }
+
+
+def _gradient_fill_from_ramp(ramp, interval):
+    fill = _gradient_fill(BATTLE_STOPS, BATTLE_WEIGHTS, interval)
+    fill["colorRamp"] = ramp
+    return fill
 
 
 def _multipart_ramp(stops, weights):
@@ -193,6 +222,70 @@ class BufferedGradientFillTests(unittest.TestCase):
             path = Path(directory) / "polygon.lyrx"
             path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             return parse_lyrx_style(path)
+
+    def test_gradient_resolves_one_opacity_per_band(self):
+        payload = buffered_gradient_polygon_lyrx()
+        fill = payload["layerDefinitions"][0]["renderer"]["groups"][0]["classes"][2]["symbol"]["symbol"]["symbolLayers"][1]
+        fill.clear()
+        fill.update(_gradient_fill_from_ramp(_constant_yellow_alpha_ramp(), interval=5))
+
+        gradient = self._parse(payload).to_dict()["uniqueValues"]["classes"][2]["symbol"]["symbolLayers"][0]
+        self.assertEqual(gradient["resolvedColors"], ["#ffff73"] * 5)
+        self.assertEqual(gradient["resolvedOpacities"], [0.14, 0.27, 0.46, 0.68, 1.0])
+        self.assertEqual(gradient["opacity"], 0.14)
+
+    def test_gradient_without_alpha_defaults_each_band_to_opaque(self):
+        payload = buffered_gradient_polygon_lyrx()
+        fill = payload["layerDefinitions"][0]["renderer"]["groups"][0]["classes"][0]["symbol"]["symbol"]["symbolLayers"][1]
+        for segment in fill["colorRamp"]["colorRamps"]:
+            segment["fromColor"]["values"] = segment["fromColor"]["values"][:3]
+            segment["toColor"]["values"] = segment["toColor"]["values"][:3]
+
+        gradient = self._parse(payload).to_dict()["uniqueValues"]["classes"][0]["symbol"]["symbolLayers"][0]
+        self.assertEqual(gradient["resolvedOpacities"], [1.0] * gradient["interval"])
+
+    def test_gradient_rejects_invalid_alpha_before_sampling(self):
+        for invalid in ("opaque", True, False, float("nan"), float("inf"), float("-inf"), -1, 101):
+            with self.subTest(invalid=invalid):
+                payload = buffered_gradient_polygon_lyrx()
+                fill = payload["layerDefinitions"][0]["renderer"]["groups"][0]["classes"][0]["symbol"]["symbol"]["symbolLayers"][1]
+                fill["interval"] = 1
+                fill["colorRamp"]["weights"][-1] = 0
+                fill["colorRamp"]["colorRamps"][-1]["toColor"]["values"][3] = invalid
+                with self.assertRaisesRegex(UnsupportedCimGradientFillError, "alpha"):
+                    self._parse(payload)
+
+    def test_gradient_interpolates_alpha_with_weighted_rgb_segment(self):
+        ramp = {
+            "type": "CIMMultipartColorRamp",
+            "colorSpace": {"type": "CIMICCColorSpace", "url": "Default RGB"},
+            "weights": [0.25, 0.75],
+            "colorRamps": [
+                {
+                    "type": "CIMLinearContinuousColorRamp",
+                    "colorSpace": {"type": "CIMICCColorSpace", "url": "Default RGB"},
+                    "fromColor": _rgb_alpha((255, 0, 0), 10),
+                    "toColor": _rgb_alpha((0, 255, 0), 30),
+                },
+                {
+                    "type": "CIMLinearContinuousColorRamp",
+                    "colorSpace": {"type": "CIMICCColorSpace", "url": "Default RGB"},
+                    "fromColor": _rgb_alpha((0, 255, 0), 40),
+                    "toColor": _rgb_alpha((0, 0, 255), 80),
+                },
+            ],
+        }
+        payload = buffered_gradient_polygon_lyrx()
+        fill = payload["layerDefinitions"][0]["renderer"]["groups"][0]["classes"][0]["symbol"]["symbol"]["symbolLayers"][1]
+        fill.clear()
+        fill.update(_gradient_fill_from_ramp(ramp, interval=4))
+
+        gradient = self._parse(payload).to_dict()["uniqueValues"]["classes"][0]["symbol"]["symbolLayers"][0]
+        self.assertEqual(
+            gradient["resolvedOpacities"],
+            [0.2, 0.4666666666666667, 0.6000000000000001, 0.7333333333333334],
+        )
+        self.assertEqual(gradient["opacity"], 0.2)
 
     def test_buffered_classes_preserve_gradient_fields_and_resolve_bands(self):
         data = self._parse(buffered_gradient_polygon_lyrx()).to_dict()
@@ -375,37 +468,59 @@ class BufferedGradientBandTests(unittest.TestCase):
         )
         return result["features"]
 
-    def test_rectangle_produces_nested_bands_with_stable_ordinals(self):
-        features = self._bands(self._source(Polygon([(160000, 700000), (160100, 700000), (160100, 700060), (160000, 700060)])))
+    @staticmethod
+    def _project_to_work_crs(geometry):
+        return transform(
+            Transformer.from_crs("EPSG:4326", "EPSG:2039", always_xy=True).transform,
+            geometry,
+        )
+
+    def _assert_disjoint_union(self, source, features):
+        source_geometry = dict(source["features"][0]["geometry"])
+        source_geometry["coordinates"] = _round_coordinates(source_geometry["coordinates"])
+        projected_source = self._project_to_work_crs(shape(source_geometry))
+        projected_bands = [
+            self._project_to_work_crs(shape(feature["geometry"])) for feature in features
+        ]
+        tolerance = max(0.01, projected_source.area * 1e-8)
+        union = unary_union(projected_bands)
+        self.assertLessEqual(projected_source.symmetric_difference(union).area, tolerance)
+        for left_index, left in enumerate(projected_bands):
+            for right in projected_bands[left_index + 1 :]:
+                self.assertLessEqual(left.intersection(right).area, tolerance)
+
+    def test_rectangle_produces_disjoint_bands_with_stable_ordinals(self):
+        source = self._source(Polygon([(160000, 700000), (160100, 700000), (160100, 700060), (160000, 700060)]))
+        features = self._bands(source)
 
         self.assertEqual([f["properties"]["__cim_gradient_band"] for f in features], [0, 1, 2, 3])
         self.assertTrue(all(shape(f["geometry"]).is_valid for f in features))
         self.assertTrue(all(f["properties"]["__cim_source_object_id"] == 17 for f in features))
         self.assertTrue(all(f["properties"]["keep"] == "yes" for f in features))
-        cumulative = None
-        for feature in features:
-            cumulative = shape(feature["geometry"]) if cumulative is None else cumulative.union(shape(feature["geometry"]))
-            self.assertTrue(cumulative.is_valid)
-        self.assertGreater(cumulative.area, 0)
+        self._assert_disjoint_union(source, features)
 
-    def test_concave_polygon_keeps_valid_nested_coverage(self):
+    def test_concave_polygon_keeps_valid_disjoint_union(self):
         geometry = Polygon([(160000, 700000), (160100, 700000), (160100, 700100), (160060, 700100), (160060, 700035), (160000, 700035)])
-        features = self._bands(self._source(geometry))
+        source = self._source(geometry)
+        features = self._bands(source)
 
         self.assertEqual([f["properties"]["__cim_gradient_band"] for f in features], [0, 1, 2, 3])
         self.assertTrue(all(shape(f["geometry"]).is_valid for f in features))
+        self._assert_disjoint_union(source, features)
 
     def test_polygon_with_hole_preserves_hole_in_outer_band(self):
         geometry = Polygon(
             [(160000, 700000), (160100, 700000), (160100, 700100), (160000, 700100)],
             [[(160035, 700035), (160065, 700035), (160065, 700065), (160035, 700065)]],
         )
-        features = self._bands(self._source(geometry))
+        source = self._source(geometry)
+        features = self._bands(source)
 
         outer = shape(features[0]["geometry"])
         polygons = list(outer.geoms) if outer.geom_type == "MultiPolygon" else [outer]
         self.assertGreaterEqual(sum(len(part.interiors) for part in polygons), 1)
         self.assertTrue(all(shape(f["geometry"]).is_valid for f in features))
+        self._assert_disjoint_union(source, features)
 
     def test_multipart_polygon_keeps_components_in_each_ordinal(self):
         geometry = {
@@ -415,19 +530,35 @@ class BufferedGradientBandTests(unittest.TestCase):
                 [[(160100, 700000), (160140, 700000), (160140, 700040), (160100, 700040), (160100, 700000)]],
             ],
         }
-        features = self._bands(self._source(shape(geometry)))
+        source = self._source(shape(geometry))
+        features = self._bands(source)
 
         self.assertEqual(len(features), 4)
         self.assertTrue(all(shape(f["geometry"]).geom_type in ("Polygon", "MultiPolygon") for f in features))
         self.assertEqual([shape(f["geometry"]).geom_type for f in features[:1]], ["MultiPolygon"])
+        self._assert_disjoint_union(source, features)
 
     def test_narrow_polygon_emits_final_original_when_depth_collapses(self):
         geometry = Polygon([(160000, 700000), (160100, 700000), (160100, 700000.02), (160000, 700000.02)])
-        features = self._bands(self._source(geometry), interval=4)
+        source = self._source(geometry)
+        features = self._bands(source, interval=4)
 
         self.assertEqual([f["properties"]["__cim_gradient_band"] for f in features], [3])
         self.assertTrue(shape(features[0]["geometry"]).is_valid)
         self._assert_wgs84_coordinates(features[0]["geometry"]["coordinates"])
+        self._assert_disjoint_union(source, features)
+
+    def test_hostage_style_emits_five_disjoint_ordinals(self):
+        geometry = Polygon([(160000, 700000), (160100, 700000), (160100, 700060), (160000, 700060)])
+        source = self._source(geometry, value="מוקד חטיפה")
+        result = build_buffered_gradient_feature_collection(
+            source,
+            self._style(value="מוקד חטיפה", interval=5),
+        )
+        features = result["features"]
+
+        self.assertEqual([f["properties"]["__cim_gradient_band"] for f in features], [0, 1, 2, 3, 4])
+        self._assert_disjoint_union(source, features)
 
     def test_representative_nli_polygons_are_deterministic_and_rounded(self):
         source_path = Path(__file__).parents[2] / "public/source/layers/nli/gis/investigation_polygons.geojson"
@@ -452,6 +583,19 @@ class BufferedGradientBandTests(unittest.TestCase):
             self.assertTrue(shape(feature["geometry"]).is_valid)
             self._assert_wgs84_coordinates(feature["geometry"]["coordinates"])
 
+        for source_feature in source["features"]:
+            source_id = source_feature.get("id")
+            source_group = {
+                "type": "FeatureCollection",
+                "features": [source_feature],
+            }
+            bands = [
+                feature
+                for feature in first["features"]
+                if feature["properties"]["__cim_source_object_id"] == source_id
+            ]
+            self._assert_disjoint_union(source_group, bands)
+
     @staticmethod
     def _assert_wgs84_coordinates(coordinates):
         if coordinates and isinstance(coordinates[0], (int, float)):
@@ -464,7 +608,7 @@ class BufferedGradientBandTests(unittest.TestCase):
         for child in coordinates:
             BufferedGradientBandTests._assert_wgs84_coordinates(child)
 
-    def test_cumulative_inner_polygons_are_covered_with_exact_area_tolerance(self):
+    def test_disjoint_bands_union_source_with_exact_area_tolerance(self):
         source = self._source(Polygon([(160000, 700000), (160100, 700000), (160100, 700060), (160000, 700060)]))
         result = build_buffered_gradient_feature_collection(source, self._style())
         rounded_source_geojson = {
@@ -473,12 +617,14 @@ class BufferedGradientBandTests(unittest.TestCase):
         }
         projected = transform(Transformer.from_crs("EPSG:4326", "EPSG:2039", always_xy=True).transform, shape(rounded_source_geojson))
         output = [shape(feature["geometry"]) for feature in result["features"]]
-        output = [transform(Transformer.from_crs("EPSG:4326", "EPSG:2039", always_xy=True).transform, geometry) for geometry in output]
+        output = [self._project_to_work_crs(geometry) for geometry in output]
         tolerance = max(0.01, projected.area * 1e-8)
 
-        self.assertLessEqual(projected.difference(output[0]).area, tolerance)
-        for outer, inner in zip(output, output[1:]):
-            self.assertLessEqual(inner.difference(outer).area, tolerance)
+        union = unary_union(output)
+        self.assertLessEqual(projected.symmetric_difference(union).area, tolerance)
+        for left_index, left in enumerate(output):
+            for right in output[left_index + 1 :]:
+                self.assertLessEqual(left.intersection(right).area, tolerance)
 
     def test_invalid_geometry_is_repaired_to_polygonal_output_only(self):
         invalid = Polygon([(160000, 700000), (160100, 700060), (160000, 700060), (160100, 700000)])

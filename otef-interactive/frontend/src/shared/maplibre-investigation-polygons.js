@@ -282,7 +282,6 @@ export function createInvestigationPolygonRenderer(
     waitingForHostStyle: false,
     overlayMounted: false,
     categoryMounted: false,
-    hostHidden: false,
     lastCategoryMotionMode: null,
     lastCategoryNovaSiteExclusion: null,
     lastCategoryParallelDim: null,
@@ -592,8 +591,7 @@ export function createInvestigationPolygonRenderer(
       const classPlan = state.processedPlan.classes[spec.notes];
       const fillId = CATEGORY_FILL_LAYER_IDS[spec.suffix];
       const lineId = CATEGORY_LINE_LAYER_IDS[spec.suffix];
-      const isGradient = (spec.suffix === "battle" || spec.suffix === "fire")
-        && Array.isArray(classPlan?.bands) && classPlan.bands.length > 0;
+      const isGradient = Array.isArray(classPlan?.bands) && classPlan.bands.length > 0;
       if (isGradient) {
         for (const band of classPlan.bands) {
           const id = band.ordinal === 0 ? fillId : `${fillId}-band-${band.ordinal}`;
@@ -653,22 +651,12 @@ export function createInvestigationPolygonRenderer(
   }
 
   function hideHostPack() {
-    if (state.hostHidden || state.baseLayers.length === 0) return;
+    if (state.baseLayers.length === 0) return;
     for (const layer of state.baseLayers) {
       if (layer.type === "fill" || layer.type === "line") {
         setLayout(map, layer.id, "visibility", "none");
       }
     }
-    state.hostHidden = true;
-  }
-
-  function showHostPack() {
-    for (const layer of state.baseLayers) {
-      if (layer.type === "fill" || layer.type === "line") {
-        setLayout(map, layer.id, "visibility", "visible");
-      }
-    }
-    state.hostHidden = false;
   }
 
   function warnUnmatchedNotes(features) {
@@ -744,21 +732,21 @@ export function createInvestigationPolygonRenderer(
       const impactIds = parallelImpactIdList(frame, data);
       for (const spec of CATEGORY_SPECS) {
         const classPlan = state.processedPlan.classes[spec.notes];
-        const gradientCategory = spec.suffix === "battle" || spec.suffix === "fire";
-        const authored = gradientCategory ? classPlan?.bands?.[0]?.opacity : classPlan?.solid?.opacity;
+        const isGradient = Array.isArray(classPlan?.bands) && classPlan.bands.length > 0;
+        const authored = isGradient ? classPlan.bands[0]?.opacity : classPlan?.solid?.opacity;
         if (!Number.isFinite(Number(authored))) continue;
-        const ids = spec.suffix === "battle" || spec.suffix === "fire"
+        const ids = isGradient
           ? state.processedFillLayerIds.filter((id) => id.includes(`fill-${spec.suffix}`))
           : [CATEGORY_FILL_LAYER_IDS[spec.suffix]];
         for (const id of ids) {
-          const band = gradientCategory && classPlan?.bands?.find((entry) => id === CATEGORY_FILL_LAYER_IDS[spec.suffix]
+          const band = isGradient && classPlan.bands.find((entry) => id === CATEGORY_FILL_LAYER_IDS[spec.suffix]
             ? entry.ordinal === 0
             : id.endsWith(`-band-${entry.ordinal}`));
           const opacity = band?.opacity ?? classPlan?.solid?.opacity ?? authored;
           const sidecarReady = state.bufferedGradientSidecarStatus === "ready";
-          setPaint(map, id, "fill-opacity", projectionNovaDim && (sidecarReady || !gradientCategory)
+          setPaint(map, id, "fill-opacity", projectionNovaDim && (sidecarReady || !isGradient)
             ? parallelImpactOpacityExpression(impactIds, opacity)
-            : (sidecarReady || !gradientCategory ? opacity : 0));
+            : (sidecarReady || !isGradient ? opacity : 0));
         }
         const outlineOpacity = Number(classPlan?.outline?.opacity);
         if (Number.isFinite(outlineOpacity)) {
@@ -904,7 +892,7 @@ export function createInvestigationPolygonRenderer(
     }
     if (state.processedStyleActive && state.bufferedGradientSidecarStatus === "failed" && !state.warnedBufferedGradientFailure) {
       state.warnedBufferedGradientFailure = true;
-      console.warn("Investigation polygon buffered-gradient sidecar failed; battle and fire fills are hidden.");
+      console.warn("Investigation polygon buffered-gradient sidecar failed; processed fills are hidden.");
     }
     state.currentFrame = frame;
     mount({ settlementOnly: !renderPolygons });
@@ -986,7 +974,7 @@ export function createInvestigationPolygonRenderer(
     }
   }
 
-  function reset({ preserveBasePaints = false, restoreHostVisibility = true } = {}) {
+  function reset({ preserveBasePaints = false } = {}) {
     if (state.disposed) return;
     const hasOwnedState =
       state.mounted ||
@@ -995,11 +983,8 @@ export function createInvestigationPolygonRenderer(
       state.baseLayersCaptured ||
       state.waitingForHostStyle ||
       state.overlayMounted ||
-      state.categoryMounted ||
-      state.hostHidden;
+      state.categoryMounted;
     if (!hasOwnedState) return;
-    if (restoreHostVisibility) showHostPack();
-    else state.hostHidden = false;
     removeOverlay();
     state.mounted = false;
     state.overlayMounted = false;

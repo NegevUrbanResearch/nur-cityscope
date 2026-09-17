@@ -201,10 +201,10 @@ describe("syncInvestigationTimelineToMap", () => {
       },
     };
     const layers = [
-      { id: fillId, type: "fill", source: "nli__investigation_polygons" },
-      { id: lineId, type: "line", source: "nli__investigation_polygons" },
-      { id: routeId, type: "line", source: "nli__lines" },
-      { id: alarmId, type: "circle", source: "nli__alarms" },
+      { id: fillId, type: "fill", source: "nli__investigation_polygons", layout: { visibility: "visible" } },
+      { id: lineId, type: "line", source: "nli__investigation_polygons", layout: { visibility: "visible" } },
+      { id: routeId, type: "line", source: "nli__lines", layout: { visibility: "visible" } },
+      { id: alarmId, type: "circle", source: "nli__alarms", layout: { visibility: "visible" } },
     ];
     const sources = {};
     return {
@@ -231,7 +231,15 @@ describe("syncInvestigationTimelineToMap", () => {
         if (!paints[id]) paints[id] = {};
         paints[id][key] = value;
       }),
-      setLayoutProperty: vi.fn(),
+      getLayoutProperty: vi.fn((id, key) => {
+        const layer = layers.find((entry) => entry.id === id);
+        if (!layer) return undefined;
+        return layer.layout?.[key] ?? (key === "visibility" ? "visible" : undefined);
+      }),
+      setLayoutProperty: vi.fn((id, key, value) => {
+        const layer = layers.find((entry) => entry.id === id);
+        if (layer) layer.layout = { ...layer.layout, [key]: value };
+      }),
       getContainer: vi.fn(() => {
         const el = { querySelector: () => null, appendChild: vi.fn() };
         return el;
@@ -498,6 +506,52 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.setPaintProperty.mock.calls.some(
       ([id, , value]) => String(id).startsWith("nli__investigation_polygons") && value === "#f79009",
     )).toBe(false);
+  });
+
+  it("reasserts raw polygon suppression across Nova, general, and disabled transitions", async () => {
+    const map = makeMap();
+    const fillId = "nli__investigation_polygons__fill__0";
+    const lineId = "nli__investigation_polygons__line__1";
+    const playingNova = playClock([INVESTIGATION_POLYGONS_FULL_ID], [400]);
+    const polygonsOffGroups = [{
+      id: "nli",
+      layers: [{ id: "investigation_polygons", enabled: false }],
+    }];
+    const baseDeps = {
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      now: () => 0,
+    };
+    const novaDeps = { ...baseDeps, narrativeFocus: { id: "nova" } };
+    const generalDeps = { ...baseDeps, narrativeFocus: null };
+
+    await syncInvestigationTimelineToMap(map, playingNova, polygonOnlyGroups(), novaDeps);
+    map.setLayoutProperty(fillId, "visibility", "visible");
+    map.setLayoutProperty(lineId, "visibility", "visible");
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), generalDeps);
+    const lastVisibilityWrite = (id) => [...map.setLayoutProperty.mock.calls]
+      .reverse()
+      .find(([layerId, property]) => layerId === id && property === "visibility");
+    expect(lastVisibilityWrite(fillId)).toEqual([fillId, "visibility", "none"]);
+    expect(lastVisibilityWrite(lineId)).toEqual([lineId, "visibility", "none"]);
+    expect(map.getLayoutProperty(fillId, "visibility")).toBe("none");
+    expect(map.getLayoutProperty(lineId, "visibility")).toBe("none");
+    expect(map.getLayer("nli-investigation-polygon-category-fill-battle")).toBeTruthy();
+    expect(map.getLayer("nli-investigation-polygon-category-line-battle")).toBeTruthy();
+    expect(map.getLayoutProperty("nli-investigation-polygon-category-fill-battle", "visibility")).toBe("visible");
+    expect(map.getLayoutProperty("nli-investigation-polygon-category-line-battle", "visibility")).toBe("visible");
+
+    map.setLayoutProperty(fillId, "visibility", "visible");
+    map.setLayoutProperty(lineId, "visibility", "visible");
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonsOffGroups, generalDeps);
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), generalDeps);
+    expect(lastVisibilityWrite(fillId)).toEqual([fillId, "visibility", "none"]);
+    expect(lastVisibilityWrite(lineId)).toEqual([lineId, "visibility", "none"]);
+    expect(map.getLayoutProperty(fillId, "visibility")).toBe("none");
+    expect(map.getLayoutProperty(lineId, "visibility")).toBe("none");
+    expect(map.getLayer("nli-investigation-polygon-category-fill-battle")).toBeTruthy();
+    expect(map.getLayer("nli-investigation-polygon-category-line-battle")).toBeTruthy();
+    expect(map.getLayoutProperty("nli-investigation-polygon-category-fill-battle", "visibility")).toBe("visible");
+    expect(map.getLayoutProperty("nli-investigation-polygon-category-line-battle", "visibility")).toBe("visible");
   });
 
   it("idle storyBeats unions polygon and line timeline minutes", async () => {

@@ -6,6 +6,7 @@ import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-t
 import {
   investigationPolygonLegendItems,
   polygonGroupEnabled,
+  resolvedColorsToLegendFill,
 } from "../../frontend/src/shared/nli-investigation-legend.js";
 
 describe("nli investigation legend", () => {
@@ -34,7 +35,14 @@ describe("nli investigation legend", () => {
           {
             value: "מוקד חטיפה",
             displayLabel: "מוקד חטיפה",
-            symbol: { symbolLayers: [{ type: "fill", color: "#ffff73" }] },
+            symbol: {
+              symbolLayers: [{
+                type: "fill",
+                fillType: "gradient",
+                resolvedColors: ["#ffff73", "#ffff73", "#ffff73", "#ffff73", "#ffff73"],
+                resolvedOpacities: [0.14, 0.27, 0.46, 0.68, 1],
+              }],
+            },
           },
           {
             value: "שריפה",
@@ -67,7 +75,27 @@ describe("nli investigation legend", () => {
     expect(items[0].stroke).toBe("#2a6b62");
     expect(items[1].fill).toContain("#7b5622");
     expect(items[1].fill).toContain("#ffc400");
-    expect(items[2].fill).toBe("#ffff73");
+    expect(items[2].label).toBe("מוקד חטיפה");
+    expect(items[2].fill).toContain("rgba(255, 255, 115, 0.14)");
+    expect(items[2].fill).toContain("rgba(255, 255, 115, 0.27)");
+    expect(items[2].fill).toContain("rgba(255, 255, 115, 0.46)");
+    expect(items[2].fill).toContain("rgba(255, 255, 115, 0.68)");
+    expect(items[2].fill).toContain("rgba(255, 255, 115, 1)");
+    expect(items[2].fill).not.toBe("#ffff73");
+    expect(items[2].fill).toBe([
+      "linear-gradient(rgba(255, 255, 115, 1) 0 0) center / 20% 20% no-repeat",
+      "linear-gradient(rgba(255, 255, 115, 0.68) 0 0) center / 40% 40% no-repeat",
+      "linear-gradient(rgba(255, 255, 115, 0.46) 0 0) center / 60% 60% no-repeat",
+      "linear-gradient(rgba(255, 255, 115, 0.27) 0 0) center / 80% 80% no-repeat",
+      "linear-gradient(rgba(255, 255, 115, 0.14) 0 0) center / 100% 100% no-repeat",
+    ].join(", "));
+    expect(items[2].stroke).toBe("transparent");
+  });
+
+  it("keeps legacy color-only swatches and safely ignores malformed opacity metadata", () => {
+    expect(resolvedColorsToLegendFill(["#111111", "#222222"])).toContain("#111111");
+    expect(resolvedColorsToLegendFill(["#111111", "#222222"], [0.2])).toContain("#111111");
+    expect(resolvedColorsToLegendFill(["#111111", "#222222"], [0.2, "0.8"])).toContain("#111111");
   });
 
   it("uses an explicit transparent stroke when a processed class has no enabled authored stroke", () => {

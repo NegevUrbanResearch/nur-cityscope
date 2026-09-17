@@ -1,4 +1,5 @@
 import json
+import math
 import re
 import logging
 from copy import deepcopy
@@ -184,6 +185,21 @@ def cim_color_opacity(color: object, default: float = 1.0) -> float:
     return default
 
 
+def _gradient_rgb_opacity(color: Dict[str, Any]) -> float:
+    values = color.get("values") or []
+    if len(values) < 4:
+        return 1.0
+    if isinstance(values[3], bool):
+        raise _gradient_fill_error("RGB alpha must be numeric")
+    try:
+        alpha = float(values[3])
+    except (TypeError, ValueError):
+        raise _gradient_fill_error("RGB alpha must be numeric")
+    if not math.isfinite(alpha) or alpha < 0 or alpha > 100:
+        raise _gradient_fill_error("RGB alpha must be between 0 and 100")
+    return alpha / 100.0
+
+
 def _gradient_fill_error(message: str) -> UnsupportedCimGradientFillError:
     return UnsupportedCimGradientFillError(f"UnsupportedCimGradientFillError: {message}")
 
@@ -258,7 +274,15 @@ def _gradient_fill_ir(layer: Dict[str, Any]) -> Dict[str, Any]:
         running += weight / total_weight
         cumulative.append(running)
 
-    def interpolate(t: float) -> str:
+    endpoint_opacities = [
+        (
+            _gradient_rgb_opacity(part["fromColor"]),
+            _gradient_rgb_opacity(part["toColor"]),
+        )
+        for part in ramps
+    ]
+
+    def interpolate(t: float) -> Tuple[str, float]:
         segment_index = next(
             (index for index, end in enumerate(cumulative) if t <= end),
             len(ramps) - 1,
@@ -273,10 +297,13 @@ def _gradient_fill_ir(layer: Dict[str, Any]) -> Dict[str, Any]:
             int(round(float(a) + (float(b) - float(a)) * local_t))
             for a, b in zip(from_values[:3], to_values[:3])
         ]
-        return f"#{channels[0]:02x}{channels[1]:02x}{channels[2]:02x}"
+        from_opacity, to_opacity = endpoint_opacities[segment_index]
+        opacity = from_opacity + (to_opacity - from_opacity) * local_t
+        return f"#{channels[0]:02x}{channels[1]:02x}{channels[2]:02x}", opacity
 
-    colors = [interpolate((index + 0.5) / interval) for index in range(interval)]
-    opacity = cim_color_opacity(ramps[0].get("fromColor"), 1.0)
+    samples = [interpolate((index + 0.5) / interval) for index in range(interval)]
+    colors = [color for color, _ in samples]
+    opacities = [opacity for _, opacity in samples]
     # Preserve the authored CIM fields alongside the renderer-facing fields.
     return {
         "type": "fill",
@@ -290,7 +317,8 @@ def _gradient_fill_ir(layer: Dict[str, Any]) -> Dict[str, Any]:
         "interval": interval,
         "colorRamp": deepcopy(ramp),
         "resolvedColors": colors,
-        "opacity": opacity,
+        "resolvedOpacities": opacities,
+        "opacity": opacities[0],
     }
 
 

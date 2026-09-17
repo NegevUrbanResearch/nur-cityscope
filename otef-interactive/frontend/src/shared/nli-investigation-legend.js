@@ -25,15 +25,29 @@ function symbolLayersFor(classEntry) {
 /**
  * Convert an outside-to-inside color ramp to the legend's existing CSS fill
  * contract. Each centered, hard-edged rectangle is a separate background.
+ * Optional processed opacities are paired with the colors so a buffered
+ * gradient's discrete falloff remains visible at legend size.
  */
-export function resolvedColorsToLegendFill(resolvedColors) {
+export function resolvedColorsToLegendFill(resolvedColors, resolvedOpacities = null) {
   const colors = Array.isArray(resolvedColors)
     ? resolvedColors.filter((color) => typeof color === "string" && color.trim())
     : [];
   if (colors.length === 0) return null;
+  const opacities = Array.isArray(resolvedOpacities)
+    && resolvedOpacities.length === colors.length
+    && resolvedOpacities.every((opacity) => typeof opacity === "number" && Number.isFinite(opacity) && opacity >= 0 && opacity <= 1)
+    ? resolvedOpacities
+    : null;
+  const cssColor = (color, opacity) => {
+    if (opacity == null) return color;
+    const match = /^#([0-9a-f]{6})$/i.exec(color.trim());
+    if (!match) return color;
+    const channels = [0, 2, 4].map((offset) => Number.parseInt(match[1].slice(offset, offset + 2), 16));
+    return `rgba(${channels.join(", ")}, ${opacity})`;
+  };
   const step = 100 / colors.length;
   return colors
-    .map((color, index) => ({ color: color.trim(), size: 100 - index * step }))
+    .map((color, index) => ({ color: cssColor(color, opacities?.[index]), size: 100 - index * step }))
     .reverse()
     .map(({ color, size }) => `linear-gradient(${color} 0 0) center / ${size}% ${size}% no-repeat`)
     .join(", ");
@@ -69,9 +83,8 @@ export function investigationPolygonLegendItems(rawStyle = null) {
     const solid = layers.find((layer) => layer?.type === "fill" && layer?.fillType !== "gradient" && layer?.enable !== false);
     const stroke = layers.find((layer) => layer?.type === "stroke" && layer?.enable !== false);
     const token = NLI_VISUAL_TOKENS.polygonCategories[key];
-    const fill = key === "מוקד חטיפה"
-      ? "#ffff73"
-      : resolvedColorsToLegendFill(gradient?.resolvedColors) || solid?.color || token?.fill || NLI_VISUAL_TOKENS.polygonFallbackFill;
+    const fill = resolvedColorsToLegendFill(gradient?.resolvedColors, gradient?.resolvedOpacities)
+      || solid?.color || token?.fill || NLI_VISUAL_TOKENS.polygonFallbackFill;
     return {
       label: classEntry?.displayLabel != null ? String(classEntry.displayLabel) : fallbackLabel,
       fill,

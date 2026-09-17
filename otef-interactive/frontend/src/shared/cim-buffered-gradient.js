@@ -23,6 +23,24 @@ function gradientFor(cls) {
   ) || null;
 }
 
+function resolvedOpacitiesFor(gradient) {
+  const colors = gradient.resolvedColors;
+  const interval = gradient.interval;
+  if (!Number.isInteger(interval) || interval <= 0 || colors.length !== interval) {
+    throw new Error("Buffered gradient resolvedOpacities and resolvedColors must match interval");
+  }
+  if (gradient.resolvedOpacities == null) {
+    const opacity = Number.isFinite(Number(gradient.opacity)) ? Number(gradient.opacity) : 1;
+    return colors.map(() => opacity);
+  }
+  if (!Array.isArray(gradient.resolvedOpacities)
+      || gradient.resolvedOpacities.length !== colors.length
+      || gradient.resolvedOpacities.some((value) => typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1)) {
+    throw new Error("Buffered gradient resolvedOpacities must match resolvedColors and contain values from 0 to 1");
+  }
+  return [...gradient.resolvedOpacities];
+}
+
 function outlineFor(cls) {
   const layer = symbolLayersFor(cls).find((entry) =>
     entry?.type === "stroke" && entry?.enable !== false,
@@ -65,11 +83,12 @@ export function buildBufferedGradientRenderPlan(style) {
     const value = cls?.value;
     if (value == null) continue;
     const gradient = gradientFor(cls);
+    const opacities = gradient ? resolvedOpacitiesFor(gradient) : [];
     const bands = gradient
       ? gradient.resolvedColors.map((color, ordinal) => ({
           ordinal,
           color,
-          opacity: Number.isFinite(Number(gradient.opacity)) ? Number(gradient.opacity) : 1,
+          opacity: opacities[ordinal],
         }))
       : [];
     classes[String(value)] = {
