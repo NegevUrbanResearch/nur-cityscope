@@ -34,6 +34,7 @@ export const NLI_VISUAL_TOKENS = Object.freeze({
   routeFlowDensity: 8,
   routeFlowDutyCycle: 0.45,
   routeFlowSpeed: 0.00072,
+  polygonGradientCycleMs: 6000,
   alarmRadiusStops: radiusStops,
   flowPatternSteps: 4,
   completedFlowPatternSteps: 4,
@@ -47,9 +48,9 @@ export const NLI_VISUAL_TOKENS = Object.freeze({
   personGlowStrokeWidth: 2.5,
   personGlowPulseMs: 2400,
   polygonCategories: Object.freeze({
-    "מרחב לחימה - קרב": Object.freeze({ fill: "#3d9a8c", outline: "#2a6b62", fillOpacity: 0.55, periodMs: 4000, fillOpacityMin: 0.45, fillOpacityMax: 0.62 }),
-    "מוקד חטיפה": Object.freeze({ fill: "#ffff73", outline: "#c47388", fillOpacity: 0.55, periodMs: 2800, lineWidthMin: 1.4, lineWidthMax: 2.2, fillOpacityMin: 0.5, fillOpacityMax: 0.62 }),
-    "שריפה": Object.freeze({ fill: "#d85a1f", outline: "#a33d12", fillOpacity: 0.55, periodMs: 1800, fillOpacityMin: 0.42, fillOpacityMax: 0.7 }),
+    "מרחב לחימה - קרב": Object.freeze({ fill: "#3d9a8c", outline: "#2a6b62", fillOpacity: 0.55 }),
+    "מוקד חטיפה": Object.freeze({ fill: "#ffff73", outline: "#c47388", fillOpacity: 0.55 }),
+    "שריפה": Object.freeze({ fill: "#d85a1f", outline: "#a33d12", fillOpacity: 0.55 }),
   }),
   polygonFallbackFill: "#9a9a9a",
 });

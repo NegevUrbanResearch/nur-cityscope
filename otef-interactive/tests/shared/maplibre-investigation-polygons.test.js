@@ -3,9 +3,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { createInvestigationPolygonRenderer } from "../../frontend/src/shared/maplibre-investigation-polygons.js";
-import { deriveInvestigationFrame } from "../../frontend/src/shared/nli-investigation-visual-state.js";
-import { idleNliClock } from "../../frontend/src/shared/nli-investigation-clock.js";
-import { INVESTIGATION_POLYGONS_FULL_ID } from "../../frontend/src/shared/nli-investigation-beats.js";
 import { NLI_DISPLAY_PROFILES } from "../../frontend/src/shared/nli-investigation-theme.js";
 import { buildInvestigationSettlementIndexes } from "../../frontend/src/shared/nli-investigation-timeline-data.js";
 
@@ -44,6 +41,7 @@ function makeMap() {
       const index = layers.findIndex((layer) => layer.id === id);
       if (index >= 0) layers.splice(index, 1);
     }),
+    setFilter: vi.fn(),
     getPaintProperty: vi.fn((id, key) => paints.get(`${id}:${key}`)),
     setPaintProperty: vi.fn((id, key, value) => paints.set(`${id}:${key}`, value)),
     getLayoutProperty: vi.fn((id, key) => {
@@ -83,7 +81,321 @@ const frame = (achievedPolygonBeats, extra = {}) => ({
   ...extra,
 });
 
+function rgbChannels(color) {
+  return [
+    Number.parseInt(color.slice(1, 3), 16),
+    Number.parseInt(color.slice(3, 5), 16),
+    Number.parseInt(color.slice(5, 7), 16),
+  ];
+}
+
+function evaluatePaintForTimeline(expression, timelineMinutes) {
+  if (!Array.isArray(expression)) return expression;
+  if (expression[0] === "case") {
+    for (let index = 1; index < expression.length - 1; index += 2) {
+      const condition = expression[index];
+      if (condition?.[0] !== "==" || condition[1]?.[0] !== "to-number"
+          || condition[1][1]?.[0] !== "get" || condition[1][1][1] !== "timeline_minutes") {
+        continue;
+      }
+      if (Number(condition[2]) === Number(timelineMinutes)) {
+        return evaluatePaintForTimeline(expression[index + 1], timelineMinutes);
+      }
+    }
+    return evaluatePaintForTimeline(expression.at(-1), timelineMinutes);
+  }
+  if (expression[0] === "*") {
+    return evaluatePaintForTimeline(expression[1], timelineMinutes)
+      * evaluatePaintForTimeline(expression[2], timelineMinutes);
+  }
+  return expression;
+}
+
 describe("investigation polygon renderer", () => {
+  it("animates processed gradient paints at valid full-motion timestamps", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const bands = ["#111111", "#333333", "#555555"].map((color, ordinal) => ({
+      ...battle,
+      properties: { ...battle.properties, __cim_gradient_band: ordinal },
+    }));
+    const data = {
+      polygonFeatures: [battle],
+      bufferedGradientFeatures: bands,
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב",
+        symbol: { symbolLayers: [{
+          type: "fill", fillType: "gradient", interval: 3,
+          resolvedColors: ["#111111", "#333333", "#555555"],
+          resolvedOpacities: [0.2, 0.4, 0.6], opacity: 0.2,
+        }] },
+      }] } },
+    };
+    renderer.render(frame([400], { motionMode: "full", nowMs: 0, correctedNowValid: true }), data);
+    const firstColor = map.paints.get("nli-investigation-polygon-category-fill-battle:fill-color");
+    renderer.render(frame([400], { motionMode: "full", nowMs: 3000, correctedNowValid: true }), data);
+    const secondColor = map.paints.get("nli-investigation-polygon-category-fill-battle:fill-color");
+
+    expect(secondColor).not.toEqual(firstColor);
+  });
+
+  it("shifts every processed palette inward by one fixed buffered geometry", () => {
+    const makeData = (notes, colors, opacities) => {
+      const feature = polygon(1, 400, "עלומים", notes);
+      return {
+        polygonFeatures: [feature],
+        bufferedGradientFeatures: colors.map((_, ordinal) => ({
+          ...feature,
+          properties: { ...feature.properties, __cim_gradient_band: ordinal },
+        })),
+        bufferedGradientSidecarStatus: "ready",
+        polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+          value: notes,
+          symbol: { symbolLayers: [{
+            type: "fill", fillType: "gradient", interval: colors.length,
+            resolvedColors: colors, resolvedOpacities: opacities, opacity: opacities[0],
+          }] },
+        }] } },
+      };
+    };
+    const cases = [
+      ["battle", "מרחב לחימה - קרב", ["#000000", "#808080", "#ffffff"], [0.2, 0.4, 0.6]],
+      ["fire", "שריפה", ["#202020", "#808080", "#d0d0d0"], [0.2, 0.4, 0.6]],
+      ["kidnap", "מוקד חטיפה", ["#ffff73", "#ffff73", "#ffff73"], [0.1, 0.3, 0.8]],
+    ];
+    for (const [suffix, notes, colors, opacities] of cases) {
+      const map = makeMap();
+      const renderer = createInvestigationPolygonRenderer(map, {});
+      const data = makeData(notes, colors, opacities);
+      renderer.render(frame([400], { motionMode: "full", nowMs: 0, correctedNowValid: true }), data);
+      renderer.render(frame([400], { motionMode: "full", nowMs: 2000, correctedNowValid: true }), data);
+      colors.forEach((_, ordinal) => {
+        const layerId = `nli-investigation-polygon-category-fill-${suffix}${ordinal === 0 ? "" : `-band-${ordinal}`}`;
+        const sourceOrdinal = (ordinal - 1 + colors.length) % colors.length;
+        expect(map.paints.get(`${layerId}:fill-color`)).toBe(colors[sourceOrdinal]);
+        expect(map.paints.get(`${layerId}:fill-opacity`)).toBe(opacities[sourceOrdinal]);
+      });
+    }
+  });
+
+  it("keeps processed conveyor paint continuous across the phase wrap", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const data = {
+      polygonFeatures: [battle],
+      bufferedGradientFeatures: [0, 1, 2].map((ordinal) => ({
+        ...battle, properties: { ...battle.properties, __cim_gradient_band: ordinal },
+      })),
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב",
+        symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 3,
+          resolvedColors: ["#111111", "#555555", "#999999"],
+          resolvedOpacities: [0.2, 0.4, 0.6], opacity: 0.2 }] },
+      }] } },
+    };
+    renderer.render(frame([400], { motionMode: "full", nowMs: 5999, correctedNowValid: true }), data);
+    const before = rgbChannels(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-color"));
+    renderer.render(frame([400], { motionMode: "full", nowMs: 0, correctedNowValid: true }), data);
+    const after = rgbChannels(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-color"));
+    expect(Math.max(...before.map((channel, index) => Math.abs(channel - after[index])))).toBeLessThanOrEqual(1);
+  });
+
+  it.each([
+    ["reduced", { motionMode: "reduced", nowMs: 3000, correctedNowValid: true }],
+    ["missing", { motionMode: "full", correctedNowValid: true }],
+    ["null", { motionMode: "full", nowMs: null, correctedNowValid: true }],
+    ["undefined", { motionMode: "full", nowMs: undefined, correctedNowValid: true }],
+    ["NaN", { motionMode: "full", nowMs: NaN, correctedNowValid: true }],
+    ["Infinity", { motionMode: "full", nowMs: Infinity, correctedNowValid: true }],
+    ["negative", { motionMode: "full", nowMs: -1, correctedNowValid: true }],
+    ["corrected-invalid", { motionMode: "full", nowMs: 3000, correctedNowValid: false }],
+  ])("uses authored processed paint for %s motion time", (_, motion) => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const data = {
+      polygonFeatures: [battle],
+      bufferedGradientFeatures: [0, 1, 2].map((ordinal) => ({
+        ...battle, properties: { ...battle.properties, __cim_gradient_band: ordinal },
+      })),
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב",
+        symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 3,
+          resolvedColors: ["#111111", "#333333", "#555555"],
+          resolvedOpacities: [0.2, 0.4, 0.6], opacity: 0.2 }] },
+      }] } },
+    };
+    renderer.render(frame([400], motion), data);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-color")).toBe("#111111");
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0.2);
+  });
+
+  it("isolates one or more active entries from the ambient conveyor", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const data = {
+      polygonFeatures: [battle],
+      bufferedGradientFeatures: [0, 1, 2].map((ordinal) => ({
+        ...battle, properties: { ...battle.properties, __cim_gradient_band: ordinal },
+      })),
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב",
+        symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 3,
+          resolvedColors: ["#111111", "#333333", "#555555"],
+          resolvedOpacities: [0.2, 0.4, 0.6], opacity: 0.2 }] },
+      }] } },
+    };
+    renderer.render(frame([400], {
+      motionMode: "full", nowMs: 3000, correctedNowValid: true,
+      polygonEntries: [{ beat: 400, progress: 0.2 }, { beat: 420, progress: 0 }],
+    }), data);
+    const color = map.paints.get("nli-investigation-polygon-category-fill-battle:fill-color");
+    const opacity = map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity");
+    expect(color).toEqual(["case",
+      ["==", ["to-number", ["get", "timeline_minutes"]], 400], "#444444",
+      ["==", ["to-number", ["get", "timeline_minutes"]], 420], "#444444",
+      expect.anything(),
+    ]);
+    expect(opacity[0]).toBe("case");
+    expect(opacity[1]).toEqual(["==", ["to-number", ["get", "timeline_minutes"]], 400]);
+    expect(opacity[3]).toEqual(["==", ["to-number", ["get", "timeline_minutes"]], 420]);
+    expect(opacity[2]).toEqual(["*", 0.5, 0.6480000000000001]);
+    expect(opacity[4]).toEqual(["*", 0.5, 0]);
+  });
+
+  it("returns an entry to the current conveyor paint when the entry completes", () => {
+    const makeData = () => {
+      const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+      return {
+        polygonFeatures: [battle],
+        bufferedGradientFeatures: [0, 1, 2].map((ordinal) => ({
+          ...battle, properties: { ...battle.properties, __cim_gradient_band: ordinal },
+        })),
+        bufferedGradientSidecarStatus: "ready",
+        polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+          value: "מרחב לחימה - קרב",
+          symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 3,
+            resolvedColors: ["#111111", "#555555", "#999999"], opacity: 0.2 }] },
+        }] } },
+      };
+    };
+    const entryMap = makeMap();
+    const entryRenderer = createInvestigationPolygonRenderer(entryMap, {});
+    const data = makeData();
+    entryRenderer.render(frame([400], {
+      motionMode: "full", nowMs: 1500, correctedNowValid: true,
+      polygonEntries: [{ beat: 400, progress: 0.5 }],
+    }), data);
+    entryRenderer.render(frame([400], {
+      motionMode: "full", nowMs: 1500, correctedNowValid: true,
+      polygonEntries: [],
+    }), data);
+
+    const ambientMap = makeMap();
+    const ambientRenderer = createInvestigationPolygonRenderer(ambientMap, {});
+    ambientRenderer.render(frame([400], { motionMode: "full", nowMs: 1500, correctedNowValid: true }), makeData());
+    expect(entryMap.paints.get("nli-investigation-polygon-category-fill-battle:fill-color"))
+      .toBe(ambientMap.paints.get("nli-investigation-polygon-category-fill-battle:fill-color"));
+    expect(entryMap.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity"))
+      .toBe(ambientMap.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity"));
+  });
+
+  it.each([
+    ["battle", "מרחב לחימה - קרב", ["#8e0912", "#c7171c", "#f14230", "#fb7a5a", "#fcad91", "#fdd1be"], [1, 1, 1, 1, 1, 1]],
+    ["fire", "שריפה", ["#7b5622", "#a66b18", "#d07e0c", "#f99201", "#ffc400"], [1, 1, 1, 1, 1]],
+    ["kidnap", "מוקד חטיפה", ["#ffff73", "#ffff73", "#ffff73", "#ffff73", "#ffff73"], [0.14, 0.27, 0.46, 0.68, 1]],
+  ])("hands off %s entry paint to the current conveyor at completion", (suffix, notes, colors, opacities) => {
+    const makeData = () => {
+      const target = polygon(1, 400, "עלומים", notes);
+      const unaffected = polygon(2, 420, "עלומים", notes);
+      const bands = colors.flatMap((_, ordinal) => [target, unaffected].map((feature) => ({
+        ...feature,
+        properties: { ...feature.properties, __cim_gradient_band: ordinal },
+      })));
+      return {
+        polygonFeatures: [target, unaffected],
+        bufferedGradientFeatures: bands,
+        bufferedGradientSidecarStatus: "ready",
+        polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+          value: notes,
+          symbol: { symbolLayers: [{
+            type: "fill", fillType: "gradient", interval: colors.length,
+            resolvedColors: colors, resolvedOpacities: opacities, opacity: opacities[0],
+          }] },
+        }] } },
+      };
+    };
+    const motion = { motionMode: "full", nowMs: 1500, correctedNowValid: true };
+    const ambientMap = makeMap();
+    const ambientRenderer = createInvestigationPolygonRenderer(ambientMap, {});
+    ambientRenderer.render(frame([400, 420], motion), makeData());
+    const ambientColor = ambientMap.paints.get(`nli-investigation-polygon-category-fill-${suffix}:fill-color`);
+    const ambientOpacity = ambientMap.paints.get(`nli-investigation-polygon-category-fill-${suffix}:fill-opacity`);
+
+    const entryMap = makeMap();
+    const entryRenderer = createInvestigationPolygonRenderer(entryMap, {});
+    entryRenderer.render(frame([400, 420], {
+      ...motion,
+      polygonEntries: [{ beat: 400, progress: 1 - 1e-9 }],
+    }), makeData());
+    const entryColor = entryMap.paints.get(`nli-investigation-polygon-category-fill-${suffix}:fill-color`);
+    const entryOpacity = entryMap.paints.get(`nli-investigation-polygon-category-fill-${suffix}:fill-opacity`);
+    expect(evaluatePaintForTimeline(entryColor, 400)).toBe(ambientColor);
+    expect(evaluatePaintForTimeline(entryOpacity, 400)).toBeCloseTo(ambientOpacity, 6);
+    expect(evaluatePaintForTimeline(entryColor, 420)).toBe(ambientColor);
+    expect(evaluatePaintForTimeline(entryOpacity, 420)).toBe(ambientOpacity);
+
+    entryRenderer.render(frame([400, 420], motion), makeData());
+    expect(entryMap.paints.get(`nli-investigation-polygon-category-fill-${suffix}:fill-color`)).toBe(ambientColor);
+    expect(entryMap.paints.get(`nli-investigation-polygon-category-fill-${suffix}:fill-opacity`)).toBe(ambientOpacity);
+  });
+
+  it("updates only bounded fill paints on a changed conveyor tick", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const data = {
+      polygonFeatures: [battle],
+      bufferedGradientFeatures: [0, 1].map((ordinal) => ({
+        ...battle, properties: { ...battle.properties, __cim_gradient_band: ordinal },
+      })),
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב",
+        symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 2,
+          resolvedColors: ["#111111", "#333333"], opacity: 0.3 },
+          { type: "stroke", color: "#654321", opacity: 0.6 }] },
+      }] } },
+    };
+    renderer.render(frame([400], { motionMode: "full", nowMs: 0, correctedNowValid: true }), data);
+    const allSources = [...map.sources.values()];
+    const setDataCalls = allSources.map((source) => source.setData.mock.calls.length);
+    map.setPaintProperty.mockClear();
+    map.setLayoutProperty.mockClear();
+    map.setFilter.mockClear();
+    map.addSource.mockClear();
+    map.addLayer.mockClear();
+    map.removeSource.mockClear();
+    map.removeLayer.mockClear();
+    renderer.render(frame([400], { motionMode: "full", nowMs: 3000, correctedNowValid: true }), data);
+    expect(map.setPaintProperty.mock.calls).toHaveLength(4);
+    expect(map.setPaintProperty.mock.calls.every(([, property]) => property === "fill-color" || property === "fill-opacity")).toBe(true);
+    expect(map.setLayoutProperty).not.toHaveBeenCalled();
+    expect(map.setFilter).not.toHaveBeenCalled();
+    expect(map.addSource).not.toHaveBeenCalled();
+    expect(map.addLayer).not.toHaveBeenCalled();
+    expect(map.removeSource).not.toHaveBeenCalled();
+    expect(map.removeLayer).not.toHaveBeenCalled();
+    expect(allSources.every((source, index) => source.setData.mock.calls.length === setDataCalls[index])).toBe(true);
+  });
+
   it("renders processed buffered bands outside-to-inside and uses original fire outlines", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {}, { dataVersion: "v1" });
@@ -129,7 +441,7 @@ describe("investigation polygon renderer", () => {
     renderer.render(frame([400]), {
       polygonFeatures: [kidnap],
       polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [
-        { value: "מרחב לחימה - קרב", symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 2, resolvedColors: ["#111", "#222"], opacity: 0.5 }] } },
+        { value: "מרחב לחימה - קרב", symbol: { symbolLayers: [{ type: "fill", fillType: "gradient", interval: 2, resolvedColors: ["#111111", "#222222"], opacity: 0.5 }] } },
         { value: "מוקד חטיפה", symbol: { symbolLayers: [{ type: "fill", fillType: "solid", color: "#ffff73", opacity: 0.55 }] } },
       ] } },
       bufferedGradientSidecarStatus: "failed",
@@ -366,33 +678,88 @@ describe("investigation polygon renderer", () => {
     expect(fill.filter).toEqual(["==", ["get", "Notes"], "מרחב לחימה - קרב"]);
   });
 
-  it("battle outline uses completed-route line-gradient phase-step, not dashoffset", () => {
-    const map = makeMap();
-    const renderer = createInvestigationPolygonRenderer(map, {});
-    const battle = polygon(1, 400);
-    battle.properties.Notes = "מרחב לחימה - קרב";
-    renderer.render(frame([400], { motionMode: "full" }), { polygonFeatures: [battle] });
-    const outline = map.addLayer.mock.calls.find(([layer]) => layer.id.includes("battle") && layer.type === "line")[0];
-    expect(outline.source).toBe("nli-investigation-polygon-category-outline");
-    expect(outline.paint["line-gradient"]).toBeTruthy();
-    expect(outline.paint["line-dasharray"]).toBeUndefined();
-    expect(JSON.stringify(outline.paint["line-gradient"])).toContain("line-progress");
-  });
-
-  it("advances battle fill-opacity and line-gradient when nowMs changes", () => {
+  it("fallback category outlines stay scalar during full motion", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
     const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
-    const data = { polygonFeatures: [battle] };
-    const options = { motionMode: "full", storyBeats: [400], polygonMotionActive: true };
-    const at0 = deriveInvestigationFrame(idleNliClock(), 0, [INVESTIGATION_POLYGONS_FULL_ID], options);
-    const atHalfPeriod = deriveInvestigationFrame(idleNliClock(), 2000, [INVESTIGATION_POLYGONS_FULL_ID], options);
-    renderer.render(at0, data);
-    const opacity0 = map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity");
-    const gradient0 = map.paints.get("nli-investigation-polygon-category-line-battle:line-gradient");
-    renderer.render(atHalfPeriod, data);
-    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).not.toEqual(opacity0);
-    expect(map.paints.get("nli-investigation-polygon-category-line-battle:line-gradient")).not.toEqual(gradient0);
+    const kidnap = polygon(2, 400, "עלומים", "מוקד חטיפה");
+    renderer.render(frame([400], { motionMode: "full", nowMs: 0, correctedNowValid: true }), {
+      polygonFeatures: [battle, kidnap],
+    });
+    const outline = map.getLayer("nli-investigation-polygon-category-line-battle");
+    expect(outline.paint["line-color"]).toBe("#2a6b62");
+    expect(outline.paint["line-width"]).toBe(1.8);
+    expect(outline.paint["line-gradient"]).toBeUndefined();
+  });
+
+  it("repeated full-motion fallback renders retain authored scalar paints", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const battle = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const kidnap = polygon(2, 400, "עלומים", "מוקד חטיפה");
+    const fire = polygon(3, 400, "עלומים", "שריפה");
+    const data = { polygonFeatures: [battle, kidnap, fire] };
+    renderer.render(frame([400], { motionMode: "full", nowMs: 0, correctedNowValid: true }), data);
+    const first = {
+      battleFill: map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity"),
+      kidnapFill: map.paints.get("nli-investigation-polygon-category-fill-kidnap:fill-opacity"),
+      fireFill: map.paints.get("nli-investigation-polygon-category-fill-fire:fill-opacity"),
+      battleColor: map.paints.get("nli-investigation-polygon-category-line-battle:line-color"),
+      kidnapWidth: map.paints.get("nli-investigation-polygon-category-line-kidnap:line-width"),
+    };
+    renderer.render(frame([400], { motionMode: "full", nowMs: 2000, correctedNowValid: true }), data);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(first.battleFill);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-kidnap:fill-opacity")).toBe(first.kidnapFill);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-fire:fill-opacity")).toBe(first.fireFill);
+    expect(map.paints.get("nli-investigation-polygon-category-line-battle:line-color")).toBe(first.battleColor);
+    expect(map.paints.get("nli-investigation-polygon-category-line-kidnap:line-width")).toBe(first.kidnapWidth);
+    expect(map.paints.get("nli-investigation-polygon-category-line-battle:line-gradient")).toBeUndefined();
+  });
+
+  it("composes Nova dimming with each authored fallback fill opacity", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const features = [
+      polygon(1, 400, "עלומים", "מרחב לחימה - קרב"),
+      polygon(2, 400, "עלומים", "מוקד חטיפה"),
+      polygon(3, 400, "עלומים", "שריפה"),
+    ];
+    renderer.render(frame([400], {
+      motionMode: "full", nowMs: 2000, correctedNowValid: true, projectionNovaDim: true,
+    }), { polygonFeatures: features });
+    for (const suffix of ["battle", "kidnap", "fire"]) {
+      expect(map.paints.get(`nli-investigation-polygon-category-fill-${suffix}:fill-opacity`)).toEqual([
+        "case",
+        ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
+        0.55,
+        ["*", 0.55, 0.28],
+      ]);
+    }
+  });
+
+  it("warns once and suppresses processed classes when the style is malformed", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const feature = polygon(1, 400, "עלומים", "מרחב לחימה - קרב");
+    const data = {
+      polygonFeatures: [feature],
+      bufferedGradientFeatures: [feature],
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: { renderer: "uniqueValue", uniqueValues: { field: "Notes", classes: [{
+        value: "מרחב לחימה - קרב",
+        symbol: { symbolLayers: [{
+          type: "fill", fillType: "gradient", interval: 2,
+          resolvedColors: ["#123456", "#12345"], resolvedOpacities: [0.5, 0.5],
+        }] },
+      }] } },
+    };
+    expect(() => renderer.render(frame([400]), data)).not.toThrow();
+    renderer.render(frame([400]), data);
+    expect(warn.mock.calls.filter(([message]) => String(message).includes("processed style is malformed"))).toHaveLength(1);
+    expect(map.getLayoutProperty("nli__investigation_polygons__fill__0", "visibility")).toBe("none");
+    expect(map.addLayer.mock.calls.some(([layer]) => layer.id.includes("category-fill-battle"))).toBe(false);
+    warn.mockRestore();
   });
 
   it("writes closed LineString rings to the outline source with lineMetrics", () => {
@@ -712,12 +1079,34 @@ describe("investigation polygon renderer", () => {
     expect(map.paints.get("nli-investigation-polygon-category-fill-kidnap:fill-opacity")).toBe(0.55);
   });
 
-  it("non-nova battle fill stays a scalar oscillated opacity", () => {
+  it("non-nova battle fill stays at static reduced-motion opacity", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
     const battle = polygon(100, 400, "נובה", "מרחב לחימה - קרב");
     renderer.render(frame([400], { motionMode: "reduced" }), { polygonFeatures: [battle] });
     expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0.55);
+  });
+
+  it.each([
+    ["missing", {}],
+    ["null", { nowMs: null }],
+    ["NaN", { nowMs: NaN }],
+    ["Infinity", { nowMs: Infinity }],
+    ["negative", { nowMs: -1 }],
+  ])("full-motion non-processed fallback uses authored static paint for %s time", (_, time) => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    renderer.render(frame([400], { motionMode: "full", correctedNowValid: true, ...time }), {
+      polygonFeatures: [
+        polygon(1, 400, "עלומים", "מרחב לחימה - קרב"),
+        polygon(2, 400, "עלומים", "מוקד חטיפה"),
+      ],
+    });
+
+    expect(map.paints.get("nli-investigation-polygon-category-fill-battle:fill-opacity")).toBe(0.55);
+    expect(map.paints.get("nli-investigation-polygon-category-fill-kidnap:fill-opacity")).toBe(0.55);
+    expect(map.getLayer("nli-investigation-polygon-category-line-kidnap").paint["line-width"]).toBe(1.8);
+    expect(map.getLayer("nli-investigation-polygon-category-line-battle").paint["line-opacity"]).toBe(0.95);
   });
 
   it("does not register style reload listeners", () => {
