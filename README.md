@@ -50,13 +50,20 @@ docker-compose logs -f nur-api
 
 ### Normal OTEF launch
 
-Use the Windows helper to start the Compose stack, wait for nginx and the OTEF API, publish the current phone-share address, and open the launcher:
+Phone remotes and the launcher QR need a one-shot host file at `otef-interactive/frontend/runtime/share.json`. That file is **not** written when containers start. After nginx is ready, `start-otef` writes it once from this machine:
+
+- **Local:** `http://{hostname}.local` (plus `:{port}` if nginx is not on 80)
+- **Tailnet:** `http://{tailscale-ipv4}` when `tailscale ip -4` succeeds; if Tailscale is missing, Tailnet is hidden and Local still works
+
+GIS and other workstation Open links stay on `http://localhost`. `setup.ps1` / `setup.sh` call the same helper at the end of first-time setup. `docker compose up` alone does not write the file.
 
 ```powershell
 .\otef-interactive\scripts\start-otef.ps1
 ```
 
-Running `docker compose up` directly starts containers but does not run the host-side network discovery watcher. Use the helper when the launcher and phone QR address are needed.
+```bash
+./otef-interactive/scripts/start-otef.sh
+```
 
 ### Environment Variables
 

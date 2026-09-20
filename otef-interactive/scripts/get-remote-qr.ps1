@@ -1,8 +1,7 @@
 # Open the existing printable QR page on the running local OTEF origin.
-# The page resolves the current phone address from runtime/network.json.
+# The page resolves the current phone address from runtime/share.json.
 $ErrorActionPreference = 'Stop'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $scriptDir 'projection-network.ps1')
 . (Join-Path $scriptDir 'start-otef.ps1') -DotSource
 
 $repositoryRoot = Split-Path (Split-Path $scriptDir -Parent) -Parent
@@ -12,9 +11,12 @@ if (-not $port) {
     exit 1
 }
 
-$runtimePath = Join-Path $repositoryRoot 'otef-interactive\frontend\runtime\network.json'
-Update-ProjectionNetworkRuntime -Path $runtimePath -ComposeRoot $repositoryRoot | Out-Null
-Start-ProjectionWatcherHidden -RepositoryRoot $repositoryRoot -RuntimePath $runtimePath
+node --experimental-detect-module (Join-Path $PSScriptRoot 'write-share-hosts.mjs') --repository-root $repositoryRoot --port $port
+if ($LASTEXITCODE -ne 0) {
+    Write-Error 'Failed to write hostname share file.'
+    exit 1
+}
+
 $url = "$(Get-ProjectionLocalOrigin -Port ([int]$port))/otef-interactive/qr.html"
 Write-Host "Opening QR code page: $url" -ForegroundColor Cyan
 Start-Process $url

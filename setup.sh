@@ -114,6 +114,11 @@ docker exec nur-api python manage.py import_otef_data || echo "   (OTEF import s
 echo "✅ All services have been successfully configured and data has been loaded."
 echo ""
 
+# Same as setup.ps1: write hostname/Tailscale share.json and open the launcher.
+# Compose is already up; start-otef.sh's `docker compose up -d` is a no-op then.
+echo "Writing OTEF share origins and opening the launcher..."
+"$SCRIPT_DIR/otef-interactive/scripts/start-otef.sh"
+
 # Get local IP address
 get_local_ip() {
     # Try different methods to get the local IP

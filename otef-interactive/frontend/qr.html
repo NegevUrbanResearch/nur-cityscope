@@ -97,6 +97,42 @@
             color: var(--text-secondary);
         }
 
+        .share-modes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            margin: 0 0 16px;
+        }
+
+        .share-qr-modes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            margin: 0 0 12px;
+        }
+
+        .share-modes button,
+        .share-qr-modes button {
+            min-height: 44px;
+            padding: 0 14px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            background: transparent;
+            color: var(--text-primary);
+            font: inherit;
+            font-weight: 650;
+            cursor: pointer;
+        }
+
+        .share-modes button[aria-pressed="true"],
+        .share-qr-modes button[aria-pressed="true"] {
+            background: #2b6cb0;
+            color: #eaf3ff;
+            border-color: #4c8fd4;
+        }
+
         .share-status {
             margin: 8px 0 0;
             color: var(--text-muted);
@@ -148,6 +184,11 @@
                 backdrop-filter: none;
             }
 
+            .share-modes,
+            .share-qr-modes {
+                display: none;
+            }
+
             .headline {
                 color: #111;
             }
@@ -192,12 +233,19 @@
         <div class="qr-card">
             <h1 class="headline">שלט רחוק להקרנה</h1>
             <p class="tagline">סרקו את הקוד לפתיחת השלט</p>
+            <p class="net-note">Connect on the same Wi-Fi, or use Tailnet off-LAN.</p>
+            <div class="share-modes" role="group" aria-label="Share network">
+                <button id="shareModeLocal" type="button">Local</button>
+                <button id="shareModeTailnet" type="button">Tailnet</button>
+            </div>
 
             <div class="qr-wrap">
                 <div id="qrcode" role="img" aria-label="קוד QR לפתיחת השלט"></div>
             </div>
-
-            <p class="net-note">Connect your phone to the same network as this PC.</p>
+            <div class="share-qr-modes" role="group" aria-label="Share remote">
+                <button id="shareQrRemote" type="button">Regular</button>
+                <button id="shareQrNli" type="button">NLI</button>
+            </div>
             <p class="share-status" id="shareStatus" role="status">Loading network address…</p>
 
             <p class="url-foot" id="targetUrl" translate="no" dir="ltr">---</p>

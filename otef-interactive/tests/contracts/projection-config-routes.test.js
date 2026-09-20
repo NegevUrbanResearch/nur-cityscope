@@ -34,3 +34,13 @@ test("vite builds every OTEF entry and nginx preserves the application routes", 
 test("generated runtime metadata is ignored as a directory", () => {
   expect(read("../.gitignore")).toContain("otef-interactive/frontend/runtime/");
 });
+
+test("start helpers write share hosts once and do not launch a LAN watcher", () => {
+  expect(read("scripts/start-otef.ps1")).toContain("write-share-hosts.mjs");
+  expect(read("scripts/start-otef.sh")).toContain("write-share-hosts.mjs");
+  expect(read("scripts/start-otef.ps1")).not.toContain("watch-projection-network");
+  expect(read("scripts/get-remote-qr.ps1")).not.toContain("watch-projection-network");
+  expect(read("scripts/get-remote-qr.ps1")).toContain("write-share-hosts.mjs");
+  expect(read("../setup.ps1")).toContain("start-otef.ps1");
+  expect(read("../setup.sh")).toContain("start-otef.sh");
+});

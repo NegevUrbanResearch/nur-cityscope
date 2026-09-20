@@ -6,12 +6,48 @@ param(
     [scriptblock]$PortProvider = $null,
     [scriptblock]$Probe = $null,
     [scriptblock]$Sleep = $null,
-    [scriptblock]$WatcherLauncher = $null,
     [scriptblock]$BrowserLauncher = $null,
     [switch]$DotSource
 )
 
-. (Join-Path $PSScriptRoot 'projection-network.ps1')
+function Invoke-ProjectionDocker {
+    param([string[]]$Arguments, [string]$ComposeRoot = (Get-Location).Path)
+    Push-Location -LiteralPath $ComposeRoot
+    try {
+        $output = @(& docker @Arguments 2>$null)
+        $exitCode = $LASTEXITCODE
+        return [pscustomobject]@{ Output = $output; ExitCode = $exitCode }
+    }
+    finally { Pop-Location }
+}
+
+function Get-ProjectionPublishedPort {
+    param(
+        [string]$ComposeRoot = (Get-Location).Path,
+        [scriptblock]$Runner = $null
+    )
+    if ($null -eq $Runner) { $Runner = { param([string[]]$arguments) Invoke-ProjectionDocker -Arguments $arguments -ComposeRoot $ComposeRoot } }
+    $result = & $Runner @('compose', 'port', 'nginx', '80')
+    $exitCode = 0
+    $output = @($result)
+    if ($result -and $result.PSObject.Properties['Output']) {
+        $output = @($result.Output)
+        $exitCode = [int]$result.ExitCode
+    }
+    if ($output.Count -eq 0 -or $exitCode -ne 0) { return $null }
+    foreach ($line in $output) {
+        if ([string]$line -match ':(\d+)\s*$') {
+            $port = [int]$Matches[1]
+            if ($port -ge 1 -and $port -le 65535) { return $port }
+        }
+    }
+    return $null
+}
+
+function Get-ProjectionLocalOrigin([int]$Port, [string]$HostName = 'localhost') {
+    if ($Port -eq 80) { return "http://$HostName" }
+    return "http://$HostName`:$Port"
+}
 
 function Invoke-ProjectionComposeStart {
     param([string]$ComposeRoot)
@@ -60,16 +96,6 @@ function Wait-ProjectionReadiness {
     return $false
 }
 
-function Start-ProjectionWatcherHidden {
-    param([string]$RepositoryRoot, [string]$RuntimePath)
-    $watcher = Join-Path $PSScriptRoot 'watch-projection-network.ps1'
-    $quotedWatcher = '"' + $watcher.Replace('"', '\"') + '"'
-    $quotedRoot = '"' + $RepositoryRoot.Replace('"', '\"') + '"'
-    $quotedRuntime = '"' + $RuntimePath.Replace('"', '\"') + '"'
-    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $quotedWatcher, '-RepositoryRoot', $quotedRoot, '-RuntimePath', $quotedRuntime)
-    Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -WorkingDirectory $RepositoryRoot -ArgumentList $arguments | Out-Null
-}
-
 function Invoke-ProjectionStartup {
     param(
         [switch]$AlreadyStarted,
@@ -79,7 +105,6 @@ function Invoke-ProjectionStartup {
         [scriptblock]$PortProvider = $null,
         [scriptblock]$Probe = $null,
         [scriptblock]$Sleep = $null,
-        [scriptblock]$WatcherLauncher = $null,
         [scriptblock]$BrowserLauncher = $null
     )
     if ($null -eq $ComposeStart) { $ComposeStart = { param($root) Invoke-ProjectionComposeStart -ComposeRoot $root } }
@@ -103,10 +128,11 @@ function Invoke-ProjectionStartup {
         return $false
     }
 
-    $runtimePath = Join-Path $RepositoryRoot 'otef-interactive\frontend\runtime\network.json'
-    Update-ProjectionNetworkRuntime -Path $runtimePath -ComposeRoot $RepositoryRoot | Out-Null
-    if ($null -eq $WatcherLauncher) { $WatcherLauncher = { param($root, $path) Start-ProjectionWatcherHidden -RepositoryRoot $root -RuntimePath $path } }
-    & $WatcherLauncher $RepositoryRoot $runtimePath | Out-Null
+    node --experimental-detect-module (Join-Path $PSScriptRoot 'write-share-hosts.mjs') --repository-root $RepositoryRoot --port $port
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error 'Failed to write hostname share file.'
+        return $false
+    }
     $launcherUrl = "$origin/otef-interactive/launcher.html"
     if ($null -eq $BrowserLauncher) { $BrowserLauncher = { param($url) Start-Process $url | Out-Null } }
     & $BrowserLauncher $launcherUrl | Out-Null
@@ -117,6 +143,6 @@ function Invoke-ProjectionStartup {
 if (-not $DotSource -and $MyInvocation.InvocationName -ne '.') {
     $startupResult = Invoke-ProjectionStartup -AlreadyStarted:$AlreadyStarted -RepositoryRoot $RepositoryRoot -TimeoutSeconds $TimeoutSeconds `
         -ComposeStart $ComposeStart -PortProvider $PortProvider -Probe $Probe -Sleep $Sleep `
-        -WatcherLauncher $WatcherLauncher -BrowserLauncher $BrowserLauncher
+        -BrowserLauncher $BrowserLauncher
     if (-not $startupResult) { exit 1 }
 }

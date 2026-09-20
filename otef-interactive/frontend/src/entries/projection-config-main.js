@@ -1,6 +1,6 @@
 import { createProjectionConfigClient } from "../shared/projection-config-client.js";
 import { createUuid } from "../shared/uuid.js";
-import { loadShareOrigin } from "../shared/share-origin.js";
+import { loadShareHosts } from "../shared/share-origin.js";
 import { copyUrl } from "../shared/copy-url.js";
 import { renderQr } from "../shared/qr-code.js";
 import { OTEFWebSocketClient } from "../shared/websocket-client.js";
@@ -22,8 +22,9 @@ function readImportFile(file) {
 }
 
 async function shareConfigUrl({ location = globalThis.location, fetchImpl = globalThis.fetch, document = globalThis.document } = {}) {
-  const origin = await loadShareOrigin({ location, fetchImpl });
-  if (!origin) return null;
+  const hosts = await loadShareHosts({ location, fetchImpl });
+  const origin = hosts.fromShareFile ? hosts.localOrigin : location.origin;
+  if (!origin || origin === "null") return null;
   const url = new URL("/otef-interactive/projection-config.html", origin).href;
   const copied = await copyUrl(url, { document });
   const qrHost = document?.getElementById("shareQr");
