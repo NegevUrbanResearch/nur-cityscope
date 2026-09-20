@@ -38,6 +38,13 @@ export const PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE = 0.3;
 export const GIS_GAZA_ROADS_LINE_OPACITY_SCALE = 0.45;
 
 /**
+ * Multiplies `projector_base.ישובים` `line-width` on the interactive GIS map only.
+ * Opening / dark-basemap white outlines should read as context, not compete with
+ * NLI investigation overlays. Projection keeps the existing stroke scale.
+ */
+export const GIS_SETTLEMENT_OUTLINE_WIDTH_SCALE = 0.4;
+
+/**
  * Multiplies IR-derived **point** `circle-radius` (and square `icon-size`) on the projection
  * MapLibre map when `applyProjectionHatchPresentation` is true. GIS stays at scale 1.
  * Hatch / line scales are unchanged.

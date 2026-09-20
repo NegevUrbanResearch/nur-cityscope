@@ -5,6 +5,7 @@
 import {
   GIS_GAZA_ROADS_LINE_OPACITY_SCALE,
   GIS_NLI_PEOPLE_POINT_RADIUS_SCALE,
+  GIS_SETTLEMENT_OUTLINE_WIDTH_SCALE,
   projectionHatchRasterParams,
   PROJECTION_NLI_PEOPLE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
@@ -196,10 +197,7 @@ function scaleNliPeoplePointRadius(radius, hatchPresentation, fullLayerId) {
  * @param {number|Array|undefined} lineWidth
  * @param {string} [fullLayerId]
  */
-function scaleLineWidthPaintForProjection(lineWidth, hatchPresentation, fullLayerId) {
-  if (String(fullLayerId) === "nli.ציר_232") return lineWidth;
-  if (!hatchPresentation?.applyProjectionHatchPresentation) return lineWidth;
-  const scale = Number(PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE);
+function scaleNumericLineWidth(lineWidth, scale) {
   if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return lineWidth;
   if (lineWidth == null) return Math.max(0, scale);
   if (typeof lineWidth === "number" && Number.isFinite(lineWidth)) {
@@ -207,6 +205,22 @@ function scaleLineWidthPaintForProjection(lineWidth, hatchPresentation, fullLaye
   }
   if (Array.isArray(lineWidth)) {
     return ["*", scale, lineWidth];
+  }
+  return lineWidth;
+}
+
+/**
+ * @param {{ applyProjectionHatchPresentation?: boolean }} hatchPresentation
+ * @param {number|Array|undefined} lineWidth
+ * @param {string} [fullLayerId]
+ */
+function scaleLineWidthPaintForProjection(lineWidth, hatchPresentation, fullLayerId) {
+  if (String(fullLayerId) === "nli.ציר_232") return lineWidth;
+  if (hatchPresentation?.applyProjectionHatchPresentation) {
+    return scaleNumericLineWidth(lineWidth, Number(PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE));
+  }
+  if (String(fullLayerId) === "projector_base.ישובים") {
+    return scaleNumericLineWidth(lineWidth, Number(GIS_SETTLEMENT_OUTLINE_WIDTH_SCALE));
   }
   return lineWidth;
 }

@@ -3,6 +3,7 @@ import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import { createGISMap, setGISBasemap, maplibregl } from "../map/maplibre-map.js";
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
 import { applyLayerGroupsToMap, clearAllLayers, removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
+import { raiseDarkBasemapPlaceLabels } from "../map/dark-basemap-labels.js";
 import { attachGisFeaturePopups } from "../map/maplibre-gis-popups.js";
 import { createGisPersonSelection } from "../map/maplibre-person-selection.js";
 import { createNliArchiveCommandBridge, createNliArchiveWindowController } from "../map/nli-archive-window.js";
@@ -256,7 +257,7 @@ async function bootstrapMapRuntime() {
         typeof OTEFDataContext.getAnimations === "function" ? OTEFDataContext.getAnimations() : {};
       void syncRouteProgressOverlaysToMap(map, anim, currentGroups, {
         visibilityLayerGroups: groupsAsArray,
-      });
+      }).finally(() => raiseDarkBasemapPlaceLabels(map));
     };
     let explainerDebugVisible = false;
     let nliGisClockDebugApi = null;
@@ -282,7 +283,7 @@ async function bootstrapMapRuntime() {
             : Date.now(),
         getPersonSelection: () => OTEFDataContext.getPersonSelection(),
         narrativeFocus: narrativeController?.getDefinition?.() || null,
-      });
+      }).finally(() => raiseDarkBasemapPlaceLabels(map));
     };
     try {
       nliGisClockDebugApi = installNliExplainerDebug({
@@ -365,6 +366,7 @@ async function bootstrapMapRuntime() {
     const applyGisLayerGroups = (groups) => {
       applyLayerGroupsToMap(map, groups);
       applyNarrativePeopleFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
+      raiseDarkBasemapPlaceLabels(map);
     };
     applyGisLayerGroups(initialGroups);
     applyStoredNliLabelHeading(map);

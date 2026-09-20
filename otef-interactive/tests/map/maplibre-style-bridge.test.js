@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   GIS_GAZA_ROADS_LINE_OPACITY_SCALE,
+  GIS_SETTLEMENT_OUTLINE_WIDTH_SCALE,
   PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
 } from "../../frontend/src/shared/hatch-projection-presentation.js";
@@ -1395,6 +1396,44 @@ describe("irToMapLibreLayers", () => {
     const projLine = proj.find((L) => L.type === "line");
     expect(gisLine.paint["line-color"]).toBe("#5a3a2a");
     expect(projLine.paint["line-color"]).toBe(gisLine.paint["line-color"]);
+  });
+
+  it("thins projector_base ישובים strokes on GIS only, leaving investigation outlines alone", () => {
+    const yishuvim = {
+      geometryType: "polygon",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [
+            { type: "stroke", color: "#fdfdfd", width: 1.5238095238095237, opacity: 1 },
+            { type: "stroke", color: "#bfbf99", width: 2.6666666666666665, opacity: 1 },
+          ],
+        },
+      },
+    };
+    const gis = irToMapLibreLayers("projector_base.ישובים", "src", yishuvim);
+    const proj = irToMapLibreLayers("projector_base.ישובים", "src", yishuvim, {
+      applyProjectionHatchPresentation: true,
+    });
+    const gisLines = gis.filter((L) => L.type === "line");
+    const projLines = proj.filter((L) => L.type === "line");
+    expect(gisLines[0].paint["line-width"]).toBeCloseTo(1.5238095238095237 * GIS_SETTLEMENT_OUTLINE_WIDTH_SCALE);
+    expect(gisLines[1].paint["line-width"]).toBeCloseTo(2.6666666666666665 * GIS_SETTLEMENT_OUTLINE_WIDTH_SCALE);
+    expect(projLines[0].paint["line-width"]).toBeCloseTo(
+      1.5238095238095237 * PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
+    );
+    expect(gisLines[0].paint["line-width"]).toBeLessThan(1.5238095238095237);
+
+    const otherGis = irToMapLibreLayers("projector_base.Tkuma_Area_LIne", "src", {
+      geometryType: "line",
+      style: {
+        renderer: "simple",
+        defaultSymbol: {
+          symbolLayers: [{ type: "stroke", color: "#ff0000", width: 1.3333333333333333, opacity: 1 }],
+        },
+      },
+    });
+    expect(otherGis.find((L) => L.type === "line").paint["line-width"]).toBe(1.3333333333333333);
   });
 
   it("defaults missing labels.field to cityname for *.שמות_יישובים when map labels pass", () => {
