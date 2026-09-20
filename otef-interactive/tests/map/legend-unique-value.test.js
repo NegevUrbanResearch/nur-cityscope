@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { legendLayerFromConfig } from "../../frontend/src/map/legend-model-builder.js";
-import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
 import { NLI_LEGEND_SHORT_LABELS } from "../../frontend/src/shared/nli-investigation-legend.js";
 
 function peopleStatusClass(value, fillColor) {
@@ -217,9 +216,9 @@ describe("legendLayerFromConfig uniqueValue", () => {
       "מוקד חטיפה",
     ]);
     expect(layer.items.map((item) => item.fill)).toEqual([
-      NLI_VISUAL_TOKENS.polygonCategories["מרחב לחימה - קרב"].fill,
-      NLI_VISUAL_TOKENS.polygonCategories["שריפה"].fill,
-      "#ffff73",
+      "transparent",
+      "transparent",
+      "transparent",
     ]);
     expect(layer.items.every((item) => item.shape === "polygon")).toBe(true);
     expect(layer.items.map((item) => item.fill)).not.toContain("#f79009");

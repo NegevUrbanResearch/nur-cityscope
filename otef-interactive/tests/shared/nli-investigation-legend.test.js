@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
 import {
   investigationPolygonLegendItems,
   polygonGroupEnabled,
@@ -19,9 +18,9 @@ describe("nli investigation legend", () => {
       "מוקד חטיפה",
     ]);
     expect(items.map((item) => item.fill)).toEqual([
-      NLI_VISUAL_TOKENS.polygonCategories["מרחב לחימה - קרב"].fill,
-      NLI_VISUAL_TOKENS.polygonCategories["שריפה"].fill,
-      "#ffff73",
+      "transparent",
+      "transparent",
+      "transparent",
     ]);
     expect(items.every((item) => item.shape === "polygon")).toBe(true);
   });
@@ -125,7 +124,7 @@ describe("nli investigation legend", () => {
     expect(items.map((item) => item.stroke)).toEqual(["transparent", "#6e6e6e", "transparent"]);
   });
 
-  it("keeps the fallback category pairs in one explicit ordered array", () => {
+  it("keeps the category labels in one explicit ordered array", () => {
     const source = readFileSync(
       path.resolve(here, "../../frontend/src/shared/nli-investigation-legend.js"),
       "utf8",

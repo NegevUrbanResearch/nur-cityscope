@@ -68,32 +68,9 @@ describe("nli-investigation-theme", () => {
       personGlowRadius: 14,
       personGlowStrokeWidth: 2.5,
       personGlowPulseMs: 2400,
-      polygonFallbackFill: "#9a9a9a",
-      polygonCategories: {
-        "מרחב לחימה - קרב": {
-          fill: "#3d9a8c",
-          outline: "#2a6b62",
-          fillOpacity: 0.55,
-        },
-        "מוקד חטיפה": {
-          fill: "#ffff73",
-          outline: "#c47388",
-          fillOpacity: 0.55,
-        },
-        "שריפה": {
-          fill: "#d85a1f",
-          outline: "#a33d12",
-          fillOpacity: 0.55,
-        },
-      },
     });
-    const categoryFills = Object.values(NLI_VISUAL_TOKENS.polygonCategories).map(
-      (cat) => cat.fill,
-    );
-    expect(categoryFills).not.toContain("#c31f4f");
-    expect(categoryFills).not.toContain("#f5c542");
-    expect(categoryFills).not.toContain("#c4a35a");
-    expect(categoryFills).not.toContain("#6b2d5b");
+    expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonCategories");
+    expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonFallbackFill");
     expect(NLI_DISPLAY_PROFILES.gis).toHaveProperty("lineWidthMultiplier");
     expect(NLI_DISPLAY_PROFILES.gis).toHaveProperty("routeScale", 1);
     expect(NLI_DISPLAY_PROFILES.projection.routeScale).toBeGreaterThan(1);
@@ -110,13 +87,6 @@ describe("deriveInvestigationFrame", () => {
     const frame = deriveInvestigationFrame(clock, 1600, enabled, {
       routeBeats: [420],
     });
-    for (const token of Object.values(NLI_VISUAL_TOKENS.polygonCategories)) {
-      expect(token).not.toHaveProperty("periodMs");
-      expect(token).not.toHaveProperty("fillOpacityMin");
-      expect(token).not.toHaveProperty("fillOpacityMax");
-      expect(token).not.toHaveProperty("lineWidthMin");
-      expect(token).not.toHaveProperty("lineWidthMax");
-    }
 
     expect(frame.polygonEntries).toEqual([{ beat: 400, progress: 0.5 }]);
   });

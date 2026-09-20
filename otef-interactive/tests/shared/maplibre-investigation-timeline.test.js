@@ -521,7 +521,7 @@ describe("syncInvestigationTimelineToMap", () => {
     const map = makeMap();
     const visible = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
     const hidden = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: false }] }];
-    const deps = { featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES }, now: () => 0 };
+    const deps = withProcessedPolygons({ featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES }, now: () => 0 });
     const playing = playClock([INVESTIGATION_POLYGONS_FULL_ID], POLYGON_BEATS);
 
     await syncInvestigationTimelineToMap(map, playing, visible, deps);
@@ -566,15 +566,51 @@ describe("syncInvestigationTimelineToMap", () => {
     return [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
   }
 
+  function processedPolygonStyle() {
+    const fill = (color) => ({
+      type: "fill",
+      fillType: "gradient",
+      interval: 1,
+      resolvedColors: [color],
+      resolvedOpacities: [0.55],
+      opacity: 0.55,
+    });
+    const stroke = { type: "stroke", color: "#6e6e6e", width: 1.8, opacity: 0.95 };
+    return {
+      renderer: "uniqueValue",
+      uniqueValues: {
+        field: "Notes",
+        classes: [
+          { value: "מרחב לחימה - קרב", symbol: { symbolLayers: [fill("#8e0912"), stroke] } },
+          { value: "מוקד חטיפה", symbol: { symbolLayers: [fill("#ffff73"), stroke] } },
+          { value: "שריפה", symbol: { symbolLayers: [fill("#7b5622"), stroke] } },
+        ],
+      },
+    };
+  }
+
+  function withProcessedPolygons(deps = {}) {
+    const features = deps.featuresById?.[INVESTIGATION_POLYGONS_FULL_ID] || [];
+    return {
+      ...deps,
+      polygonStyle: deps.polygonStyle ?? processedPolygonStyle(),
+      bufferedGradientFeatures: deps.bufferedGradientFeatures ?? features.map((feature) => ({
+        ...feature,
+        properties: { ...feature.properties, __cim_gradient_band: 0 },
+      })),
+      bufferedGradientSidecarStatus: deps.bufferedGradientSidecarStatus ?? "ready",
+    };
+  }
+
   it("idle Stop with polygons visible paints the complete category story", async () => {
     const map = makeMap();
     const polygons = [STORY_POLYGON_A, STORY_POLYGON_B];
     const playing = playClock([INVESTIGATION_POLYGONS_FULL_ID], [400, 420]);
-    const deps = {
+    const deps = withProcessedPolygons({
       featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: polygons },
       settlementFeatures: [STORY_SETTLEMENT],
       now: () => 0,
-    };
+    });
     await syncInvestigationTimelineToMap(map, playing, polygonOnlyGroups(), deps);
     map.setPaintProperty.mockClear();
     await syncInvestigationTimelineToMap(map, stopNliClock(playing), polygonOnlyGroups(), deps);
@@ -607,10 +643,10 @@ describe("syncInvestigationTimelineToMap", () => {
       id: "nli",
       layers: [{ id: "investigation_polygons", enabled: false }],
     }];
-    const baseDeps = {
+    const baseDeps = withProcessedPolygons({
       featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
       now: () => 0,
-    };
+    });
     const novaDeps = { ...baseDeps, narrativeFocus: { id: "nova" } };
     const generalDeps = { ...baseDeps, narrativeFocus: null };
 
@@ -651,14 +687,14 @@ describe("syncInvestigationTimelineToMap", () => {
       LINE_FEATURES[0],
       { ...LINE_FEATURES[2], properties: { ...LINE_FEATURES[2].properties, timeline_minutes: 740 } },
     ];
-    await syncInvestigationTimelineToMap(map, idleNliClock(), bothGroups(), {
+    await syncInvestigationTimelineToMap(map, idleNliClock(), bothGroups(), withProcessedPolygons({
       featuresById: {
         [INVESTIGATION_POLYGONS_FULL_ID]: polygons,
         [INVESTIGATION_LINES_FULL_ID]: lines,
       },
       settlementFeatures: [STORY_SETTLEMENT],
       now: () => 0,
-    });
+    }));
     const overlayMinutes = map.getSource("nli-investigation-polygon-category")
       .setData.mock.calls.at(-1)[0].features
       .map((feature) => feature.properties.timeline_minutes);
@@ -760,7 +796,7 @@ describe("syncInvestigationTimelineToMap", () => {
     const visible = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
     const hidden = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: false }] }];
     let now = 0;
-    const deps = { featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES }, now: () => now };
+    const deps = withProcessedPolygons({ featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES }, now: () => now });
     const playing = playClock([INVESTIGATION_POLYGONS_FULL_ID], POLYGON_BEATS);
 
     await syncInvestigationTimelineToMap(map, playing, visible, deps);
@@ -776,7 +812,7 @@ describe("syncInvestigationTimelineToMap", () => {
     const map = makeMap();
     const visible = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
     const hidden = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: false }] }];
-    const deps = { featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES }, now: () => 0 };
+    const deps = withProcessedPolygons({ featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: INVESTIGATION_FEATURES }, now: () => 0 });
     await syncInvestigationTimelineToMap(map, idleNliClock(), visible, deps);
     expect(map.setLayoutProperty).toHaveBeenCalledWith(
       "nli__investigation_polygons__fill__0",
@@ -2397,11 +2433,11 @@ describe("syncInvestigationTimelineToMap", () => {
   }
 
   function orientationDeps() {
-    return {
+    return withProcessedPolygons({
       featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
       settlementFeatures: [STORY_SETTLEMENT],
       now: () => 0,
-    };
+    });
   }
 
   function dottedOrientationPaintCalls(map) {
@@ -2530,7 +2566,7 @@ describe("syncInvestigationTimelineToMap", () => {
 
   it("idle nova GIS has no fills, persistent nova-site battle line, and no complete-story lines", async () => {
     const map = makeMap();
-    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), {
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), withProcessedPolygons({
       featuresById: {
         [INVESTIGATION_POLYGONS_FULL_ID]: [{
           type: "Feature",
@@ -2547,7 +2583,7 @@ describe("syncInvestigationTimelineToMap", () => {
       displayProfile: "gis",
       motionMode: "reduced",
       now: () => 0,
-    });
+    }));
     const fills = map.getSource("nli-investigation-polygon-category")?.setData?.mock?.calls?.at(-1)?.[0]?.features
       ?? map.getSource("nli-investigation-polygon-category")?.data?.features
       ?? [];
@@ -2565,7 +2601,7 @@ describe("syncInvestigationTimelineToMap", () => {
         { id: "lines", enabled: false },
       ],
     }];
-    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, {
+    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, withProcessedPolygons({
       featuresById: {
         [INVESTIGATION_POLYGONS_FULL_ID]: [{
           type: "Feature",
@@ -2582,7 +2618,7 @@ describe("syncInvestigationTimelineToMap", () => {
       displayProfile: "gis",
       motionMode: "reduced",
       now: () => 0,
-    });
+    }));
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
     expect(groups[0].layers[0].enabled).toBe(false);
     disposeInvestigationTimelineForMap(map);
@@ -2618,13 +2654,13 @@ describe("syncInvestigationTimelineToMap", () => {
         }],
       }),
     })));
-    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, {
+    await syncInvestigationTimelineToMap(map, idleNliClock(), groups, withProcessedPolygons({
       getLayerDataUrl,
       narrativeFocus: { id: "nova" },
       displayProfile: "gis",
       motionMode: "reduced",
       now: () => 0,
-    });
+    }));
     expect(getLayerDataUrl).toHaveBeenCalledWith(INVESTIGATION_POLYGONS_FULL_ID);
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
     expect(groups[0].layers[0].enabled).toBe(false);
@@ -2648,7 +2684,7 @@ describe("syncInvestigationTimelineToMap", () => {
       0,
     );
     const at492 = { ...playing, positionMs: TIMELINE_BEAT_MS, phase: "paused", seekKind: "none" };
-    await syncInvestigationTimelineToMap(map, at492, groups, {
+    await syncInvestigationTimelineToMap(map, at492, groups, withProcessedPolygons({
       featuresById: {
         [INVESTIGATION_POLYGONS_FULL_ID]: [{
           type: "Feature",
@@ -2666,7 +2702,7 @@ describe("syncInvestigationTimelineToMap", () => {
       displayProfile: "projection",
       motionMode: "reduced",
       now: () => 0,
-    });
+    }));
     expect(map.getSource("nli-investigation-line-completed-carrier")?.setData?.mock?.calls?.length
       ?? map.getSource("nli-investigation-line-completed-carrier")?.data?.features?.length
       ?? 0).toBeGreaterThan(0);
@@ -2689,13 +2725,13 @@ describe("syncInvestigationTimelineToMap", () => {
       geometry: STORY_POLYGON_A.geometry,
     };
     const playing = playClock([INVESTIGATION_POLYGONS_FULL_ID], [500]);
-    const deps = {
+    const deps = withProcessedPolygons({
       ...orientationDeps(),
       featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site] },
       narrativeFocus: NLI_NARRATIVES.nova,
       motionMode: "reduced",
       now: () => 0,
-    };
+    });
     for (const displayProfile of ["gis", "projection"]) {
       const map = makeOrientationMap();
       await syncInvestigationTimelineToMap(map, playing, polygonOnlyGroups(), {
@@ -2712,7 +2748,7 @@ describe("syncInvestigationTimelineToMap", () => {
 
   it("projection nova idle lights yeshuv 43 instead of cloning polygon 100", async () => {
     const map = makeOrientationMap();
-    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), {
+    await syncInvestigationTimelineToMap(map, idleNliClock(), polygonOnlyGroups(), withProcessedPolygons({
       ...orientationDeps(),
       featuresById: {
         [INVESTIGATION_POLYGONS_FULL_ID]: [{
@@ -2730,7 +2766,7 @@ describe("syncInvestigationTimelineToMap", () => {
       displayProfile: "projection",
       motionMode: "reduced",
       now: () => 0,
-    });
+    }));
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
     expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity"))
       .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.28]);
@@ -2765,45 +2801,25 @@ describe("syncInvestigationTimelineToMap", () => {
       [492, 500],
       0,
     );
-    const at500 = { ...playing, positionMs: TIMELINE_BEAT_MS, phase: "paused", seekKind: "none" };
-    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
+    const novaPolyDeps = (impactIds) => withProcessedPolygons({
       featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
       narrativeFocus: { id: "nova" },
       displayProfile: "projection",
-      parallelImpactIds: new Set(),
+      parallelImpactIds: new Set(impactIds),
       motionMode: "reduced",
       now: () => 0,
     });
+    const at500 = { ...playing, positionMs: TIMELINE_BEAT_MS, phase: "paused", seekKind: "none" };
+    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), novaPolyDeps([]));
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
       .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]]);
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
-    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
-      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
-      narrativeFocus: { id: "nova" },
-      displayProfile: "projection",
-      parallelImpactIds: new Set(["polygon:99"]),
-      motionMode: "reduced",
-      now: () => 0,
-    });
+    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), novaPolyDeps(["polygon:99"]));
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
       .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["99"]]], 0.55, ["*", 0.55, 0.28]]);
-    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
-      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
-      narrativeFocus: { id: "nova" },
-      displayProfile: "projection",
-      parallelImpactIds: new Set(["polygon:100"]),
-      motionMode: "reduced",
-      now: () => 0,
-    });
+    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), novaPolyDeps(["polygon:100"]));
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
-    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
-      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
-      narrativeFocus: { id: "nova" },
-      displayProfile: "projection",
-      parallelImpactIds: new Set(),
-      motionMode: "reduced",
-      now: () => 0,
-    });
+    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), novaPolyDeps([]));
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
       .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]]);
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
@@ -2839,84 +2855,18 @@ describe("syncInvestigationTimelineToMap", () => {
       0,
     );
     const at500 = { ...playing, positionMs: TIMELINE_BEAT_MS, phase: "paused", seekKind: "none" };
-    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), {
+    await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), withProcessedPolygons({
       featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
       narrativeFocus: { id: "nova" },
       displayProfile: "gis",
       parallelImpactIds: new Set(),
       motionMode: "reduced",
       now: () => 0,
-    });
+    }));
     const paint = map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity");
     expect(JSON.stringify(paint)).not.toContain("0.28");
     expect(paint === 0.55 || JSON.stringify(paint).includes("0.55")).toBe(true);
     disposeInvestigationTimelineForMap(map);
-  });
-
-  it("projection Nova fallback fill composes authored opacity while GIS does not dim it", async () => {
-    const unknown = {
-      type: "Feature",
-      properties: {
-        OBJECTID: 77,
-        timeline_minutes: 500,
-        Notes: "לא ידוע",
-        מיקום: "נובה",
-      },
-      geometry: STORY_POLYGON_A.geometry,
-    };
-    const playing = playNliClock(
-      idleNliClock(),
-      [INVESTIGATION_POLYGONS_FULL_ID],
-      [500],
-      0,
-    );
-    const at500 = { ...playing, positionMs: 0, phase: "paused", seekKind: "none" };
-    const faded = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]];
-    const lit = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["77"]]], 0.55, ["*", 0.55, 0.28]];
-    const fallbackId = "nli-investigation-polygon-category-fill-fallback";
-    const projection = makeMap();
-    await syncInvestigationTimelineToMap(projection, at500, polygonOnlyGroups(), {
-      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [unknown] },
-      narrativeFocus: { id: "nova" },
-      displayProfile: "projection",
-      parallelImpactIds: new Set(),
-      motionMode: "reduced",
-      now: () => 0,
-    });
-    expect(projection.getPaintProperty(fallbackId, "fill-opacity")).toEqual(faded);
-    await syncInvestigationTimelineToMap(projection, at500, polygonOnlyGroups(), {
-      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [unknown] },
-      narrativeFocus: { id: "nova" },
-      displayProfile: "projection",
-      parallelImpactIds: new Set(["polygon:77"]),
-      motionMode: "reduced",
-      now: () => 0,
-    });
-    expect(projection.getPaintProperty(fallbackId, "fill-opacity")).toEqual(lit);
-    await syncInvestigationTimelineToMap(projection, at500, polygonOnlyGroups(), {
-      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [unknown] },
-      narrativeFocus: null,
-      displayProfile: "projection",
-      parallelImpactIds: new Set(["polygon:77"]),
-      motionMode: "reduced",
-      now: () => 0,
-    });
-    expect(projection.getPaintProperty(fallbackId, "fill-opacity")).toBe(0.55);
-    disposeInvestigationTimelineForMap(projection);
-
-    const gis = makeMap();
-    await syncInvestigationTimelineToMap(gis, at500, polygonOnlyGroups(), {
-      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [unknown] },
-      narrativeFocus: { id: "nova" },
-      displayProfile: "gis",
-      parallelImpactIds: new Set(),
-      motionMode: "reduced",
-      now: () => 0,
-    });
-    const gisPaint = gis.getPaintProperty(fallbackId, "fill-opacity");
-    expect(JSON.stringify(gisPaint)).not.toContain("0.28");
-    expect(gisPaint).toBe(0.55);
-    disposeInvestigationTimelineForMap(gis);
   });
 
   it("projection nova shared OBJECTID lights only the namespaced kind", async () => {
@@ -2943,7 +2893,7 @@ describe("syncInvestigationTimelineToMap", () => {
       0,
     );
     const at400 = { ...playing, positionMs: 0, phase: "paused", seekKind: "none" };
-    await syncInvestigationTimelineToMap(map, at400, bothGroups(), {
+    await syncInvestigationTimelineToMap(map, at400, bothGroups(), withProcessedPolygons({
       featuresById: {
         [INVESTIGATION_POLYGONS_FULL_ID]: [poly1],
         [INVESTIGATION_LINES_FULL_ID]: [line1],
@@ -2953,12 +2903,12 @@ describe("syncInvestigationTimelineToMap", () => {
       parallelImpactIds: new Set(["polygon:1"]),
       motionMode: "reduced",
       now: () => 0,
-    });
+    }));
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
       .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["1"]]], 0.55, ["*", 0.55, 0.28]]);
     expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity"))
       .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28]);
-    await syncInvestigationTimelineToMap(map, at400, bothGroups(), {
+    await syncInvestigationTimelineToMap(map, at400, bothGroups(), withProcessedPolygons({
       featuresById: {
         [INVESTIGATION_POLYGONS_FULL_ID]: [poly1],
         [INVESTIGATION_LINES_FULL_ID]: [line1],
@@ -2968,7 +2918,7 @@ describe("syncInvestigationTimelineToMap", () => {
       parallelImpactIds: new Set(["line:1"]),
       motionMode: "reduced",
       now: () => 0,
-    });
+    }));
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
       .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]]);
     expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity"))

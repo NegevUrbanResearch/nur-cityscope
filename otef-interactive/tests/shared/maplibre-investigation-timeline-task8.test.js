@@ -276,7 +276,7 @@ describe("Task 8 investigation timeline coordinator", () => {
     expect(map.getSource("nli-investigation-settlement-impact")?.data?.features).toEqual([settlement]);
   });
 
-  it("does not schedule polygon frames for unprocessed fallback category paints", async () => {
+  it("does not paint or schedule frames without a processed polygon style", async () => {
     const map = mapWithHostLayers();
     let now = 0;
     const polygonGroups = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
@@ -293,12 +293,10 @@ describe("Task 8 investigation timeline coordinator", () => {
     };
     await syncInvestigationTimelineToMap(map, clock, polygonGroups, deps);
     await syncInvestigationTimelineToMap(map, stopNliClock(clock), polygonGroups, deps);
+    expect(map.getLayer("nli-investigation-polygon-category-fill-battle")).toBeFalsy();
     expect(map.pendingAnimationFrameCount()).toBe(0);
-    const opacity0 = map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity");
     now = 66;
     expect(map.driveAnimationFrame(66)).toBe(false);
-    expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity")).toBe(opacity0);
-    expect(map.getPaintProperty("nli-investigation-polygon-category-line-battle", "line-gradient")).toBeUndefined();
   });
 
   it("does not schedule polygon ambient frames when the processed sidecar has no matching style class", async () => {
