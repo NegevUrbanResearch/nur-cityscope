@@ -3,7 +3,7 @@ import {
   REQUIRED_PACK_IDS,
   getPackDisplayLabel,
   normalizePackId,
-} from "../../frontend/src/remote/layer-pack-display-names.js";
+} from "../../frontend/src/shared/legend-copy.js";
 
 describe("layer-pack-display-names (contract)", () => {
   test("normalizePackId trims, lowercases, maps spaces and hyphens to underscore", () => {

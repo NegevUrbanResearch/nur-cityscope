@@ -115,6 +115,7 @@ class LayerRegistry {
           id: packId,
           name: manifest.name || packId,
           layers: manifest.layers || [],
+          ...(manifest.legend ? { legend: manifest.legend } : {}),
         });
       }
     }

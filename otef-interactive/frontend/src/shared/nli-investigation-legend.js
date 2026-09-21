@@ -1,22 +1,12 @@
-import { INVESTIGATION_POLYGONS_FULL_ID } from "./nli-investigation-beats.js";
-
-// Canonical Notes values and Hebrew labels, in the order both legend surfaces show.
+// Canonical popup copy for investigation polygon Notes values.
 export const NLI_INVESTIGATION_CATEGORY_LABELS = Object.freeze([
   Object.freeze({ key: "מרחב לחימה - קרב", label: "מוקד קרב/טבח" }),
   Object.freeze({ key: "שריפה", label: "מוקד שריפה" }),
   Object.freeze({ key: "מוקד חטיפה", label: "מוקד חטיפה" }),
 ]);
 
-export const NLI_LEGEND_SHORT_LABELS = Object.freeze(
-  Object.fromEntries(NLI_INVESTIGATION_CATEGORY_LABELS.map(({ key, label }) => [key, label])),
-);
-
 function investigationClasses(style) {
   return Array.isArray(style?.uniqueValues?.classes) ? style.uniqueValues.classes : [];
-}
-
-function symbolLayersFor(classEntry) {
-  return Array.isArray(classEntry?.symbol?.symbolLayers) ? classEntry.symbol.symbolLayers : [];
 }
 
 /**
@@ -56,39 +46,4 @@ export function resolveInvestigationPolygonDisplayLabel(value, rawStyle = null) 
   const classEntry = investigationClasses(rawStyle).find((entry) => String(entry?.value) === key);
   if (classEntry && classEntry.displayLabel != null) return String(classEntry.displayLabel);
   return NLI_INVESTIGATION_CATEGORY_LABELS.find((entry) => entry.key === key)?.label || value;
-}
-
-export function polygonGroupEnabled(layerGroups) {
-  const groups = Array.isArray(layerGroups) ? layerGroups : [];
-  for (const group of groups) {
-    if (group?.id !== "nli") continue;
-    for (const layer of group.layers || []) {
-      if (`${group.id}.${layer.id}` === INVESTIGATION_POLYGONS_FULL_ID) return layer.enabled === true;
-    }
-  }
-  return false;
-}
-
-export function investigationPolygonLegendItems(rawStyle = null) {
-  const classes = investigationClasses(rawStyle);
-  return NLI_INVESTIGATION_CATEGORY_LABELS.map(({ key, label }) => {
-    const classEntry = classes.find((entry) => String(entry?.value) === key);
-    const layers = symbolLayersFor(classEntry);
-    const gradient = layers.find((layer) =>
-      layer?.type === "fill" && layer?.fillType === "gradient" && layer?.enable !== false && Array.isArray(layer.resolvedColors),
-    );
-    const solid = layers.find((layer) => layer?.type === "fill" && layer?.fillType !== "gradient" && layer?.enable !== false);
-    const stroke = layers.find((layer) => layer?.type === "stroke" && layer?.enable !== false);
-    const fill = resolvedColorsToLegendFill(gradient?.resolvedColors, gradient?.resolvedOpacities)
-      || solid?.color
-      || "transparent";
-    return {
-      label: classEntry?.displayLabel != null ? String(classEntry.displayLabel) : label,
-      fill,
-      // A processed class is authoritative: no enabled authored stroke is an
-      // explicit no-border result, not permission to revive legacy tokens.
-      stroke: classEntry ? (stroke?.color || "transparent") : "transparent",
-      shape: "polygon",
-    };
-  });
 }

@@ -1395,4 +1395,10 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
   return [...baseLayers, ...leaderLineLayers, ...labelLayers];
 }
 
-export { buildMatchLayer };
+export {
+  buildMatchLayer,
+  scaleLineOpacityPaintForGis,
+  scaleLineWidthPaintForProjection,
+  scaleNliPeoplePointRadius,
+  scalePointRadiusPaintForProjection,
+};
