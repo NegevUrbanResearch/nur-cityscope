@@ -4,6 +4,12 @@ import { createNodeCanvas } from "./node-canvas.js";
 import { createActiveOutputPreview } from "./active-output-preview.js";
 
 const docFor = (root) => root?.ownerDocument || globalThis.document;
+function isTouchOnlySurface(doc) {
+  const media = doc?.defaultView?.matchMedia;
+  if (typeof media !== "function") return false;
+  try { return Boolean(media.call(doc.defaultView, "(pointer: coarse)")?.matches || media.call(doc.defaultView, "(hover: none)")?.matches); }
+  catch { return false; }
+}
 
 function make(doc, tag, props = {}, text = "") {
   const node = doc.createElement(tag);
@@ -79,6 +85,7 @@ function renderField(doc, descriptor, onField, onNudge, compact = false) {
 export function createProjectionConfigView(root, {
   descriptors = [],
   onAction = () => {},
+  onOutputAction = () => {},
   onField = () => {},
   onNudge = () => {},
   onNode = () => {},
@@ -88,6 +95,10 @@ export function createProjectionConfigView(root, {
   root.className = "projection-config-app";
   const fields = new Map();
   const controls = {};
+  const touchOnlySurface = isTouchOnlySurface(doc);
+  let outputSelection = { left: "", right: "" };
+  let outputScreensSignature = null;
+  let outputAssignmentsSignature = null;
   const app = make(doc, "div", { className: "config-shell" });
   const chrome = make(doc, "div", { className: "config-chrome" });
   const heading = make(doc, "header", { className: "config-header" });
@@ -122,6 +133,33 @@ export function createProjectionConfigView(root, {
   controls.import.addEventListener("change", () => onAction("import", controls.import.files?.[0] || null));
   controls.share.addEventListener("click", () => onAction("share"));
   controls.presets.addEventListener("change", () => onAction("preset-select", controls.presets.value));
+
+  const outputToolbar = make(doc, "section", { className: "output-launch-controls", ariaLabel: "Workstation browser output controls" });
+  const outputTitle = make(doc, "strong", {}, "Workstation browser outputs");
+  controls.outputIdentify = button(doc, "Identify displays", "output-identify");
+  controls.outputLeftDisplay = make(doc, "select", { ariaLabel: "Left projector display", dataset: { action: "output-left-display" } });
+  controls.outputRightDisplay = make(doc, "select", { ariaLabel: "Right projector display", dataset: { action: "output-right-display" } });
+  controls.outputAssign = button(doc, "Save display assignment", "output-assign");
+  controls.outputOpenBoth = button(doc, "Open Both", "output-open-both");
+  controls.outputCloseBoth = button(doc, "Close Both", "output-close-both");
+  controls.outputStatus = make(doc, "span", { className: "output-launch-status", role: "status", ariaLive: "polite" });
+  controls.outputHandoff = make(doc, "small", { className: "output-launch-handoff" }, "TD projectorWindows off → Open Both; Close Both → TD projectorWindows on. If this page reloads, manually close old browser output windows before reopening.");
+  const leftLabel = make(doc, "label", { className: "output-display-label" }, "Left projector"); leftLabel.appendChild(controls.outputLeftDisplay);
+  const rightLabel = make(doc, "label", { className: "output-display-label" }, "Right projector"); rightLabel.appendChild(controls.outputRightDisplay);
+  outputToolbar.append(outputTitle, controls.outputIdentify, leftLabel, rightLabel, controls.outputAssign, controls.outputOpenBoth, controls.outputCloseBoth, controls.outputStatus, controls.outputHandoff);
+  const outputAction = (action, value) => { if (!touchOnlySurface) onOutputAction(action, value); };
+  controls.outputIdentify.addEventListener("click", () => { outputSelection = { left: "", right: "" }; outputScreensSignature = null; outputAction("identify"); });
+  controls.outputAssign.addEventListener("click", () => outputAction("assign", { left: controls.outputLeftDisplay.value, right: controls.outputRightDisplay.value }));
+  controls.outputOpenBoth.addEventListener("click", () => outputAction("open"));
+  controls.outputCloseBoth.addEventListener("click", () => outputAction("close"));
+  controls.outputLeftDisplay.addEventListener("change", () => { outputSelection.left = controls.outputLeftDisplay.value; });
+  controls.outputRightDisplay.addEventListener("change", () => { outputSelection.right = controls.outputRightDisplay.value; });
+  for (const control of [controls.outputIdentify, controls.outputAssign, controls.outputOpenBoth, controls.outputCloseBoth, controls.outputLeftDisplay, controls.outputRightDisplay]) control.disabled = touchOnlySurface;
+  if (touchOnlySurface) {
+    controls.outputStatus.textContent = "Display opening is workstation-only. Use this page to tell the workstation operator which displays to assign and open.";
+    controls.outputHandoff.textContent = "Phone/tablet instructions only: on the workstation, turn TD projectorWindows off before Open Both; Close Both before TD projectorWindows on.";
+  }
+  chrome.appendChild(outputToolbar);
 
   const status = make(doc, "section", { className: "config-status", role: "status", ariaLive: "polite" });
   controls.status = make(doc, "span", { className: "draft-status" });
@@ -241,7 +279,7 @@ export function createProjectionConfigView(root, {
       if (control) control.wrap.hidden = descriptor.node !== selected;
     }
   };
-  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", statusRows = [] } = {}) => {
+  const update = ({ state = {}, errors = {}, conflict = "", statusText = "", selectedNode = "pre", statusRows = [], outputState = {} } = {}) => {
     controls.live.checked = Boolean(state.live);
     controls.status.textContent = statusText;
     controls.conflict.textContent = conflict;
@@ -252,6 +290,20 @@ export function createProjectionConfigView(root, {
     controls.connectionStatus.textContent = state.hydrationError ? `Settings check failed: ${state.hydrationError}` : state.hydrating ? "Checking current settings…" : "";
     controls.connectionStatus.hidden = !state.hydrating && !state.hydrationError;
     controls.retryHydration.hidden = !state.hydrationError;
+    const screens = Array.isArray(outputState.screens) ? outputState.screens : [];
+    const assignments = outputState.assignments || {};
+    const optionFor = (screen) => make(doc, "option", { value: screen.key }, `${screen.label?.trim() || "Display"} · ${screen.left},${screen.top} · ${screen.width}×${screen.height}`);
+    const selectedKey = (assignment) => screens.find((screen) => assignment?.key === screen.key || (assignment?.label === screen.label && ["left", "top", "width", "height"].every((key) => Number(assignment?.bounds?.[key]) === Number(screen[key]))))?.key || "";
+    const screensSignature = screens.map((screen) => screen.key).join("|");
+    const assignmentsSignature = JSON.stringify(assignments);
+    if (screensSignature !== outputScreensSignature || assignmentsSignature !== outputAssignmentsSignature) outputSelection = { left: selectedKey(assignments.left), right: selectedKey(assignments.right) };
+    outputScreensSignature = screensSignature;
+    outputAssignmentsSignature = assignmentsSignature;
+    controls.outputLeftDisplay.replaceChildren(...screens.map(optionFor));
+    controls.outputRightDisplay.replaceChildren(...screens.map(optionFor));
+    controls.outputLeftDisplay.value = outputSelection.left;
+    controls.outputRightDisplay.value = outputSelection.right;
+    controls.outputStatus.textContent = touchOnlySurface ? "Display opening is workstation-only. Use this page to tell the workstation operator which displays to assign and open." : outputState.error || outputState.message || "Identify displays on the workstation.";
     const presets = state.snapshot?.presets || [];
     const selectedPreset = state.selectedPresetId || state.snapshot?.selectedPresetId || "original";
     controls.presets.replaceChildren(...presets.map((preset) => make(doc, "option", { value: preset.id }, preset.name)));

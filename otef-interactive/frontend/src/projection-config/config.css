@@ -12,6 +12,13 @@ body { margin: 0; min-width: 320px; background: #0a0d12; overflow-x: hidden; }
 .config-toolbar input[type=text] { width: 126px; }
 .config-toolbar input[type=file] { max-width: 150px; }
 .config-toolbar select { max-width: 150px; }
+.output-launch-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; padding: 6px; background: #151a23ed; border: 1px solid #283241; border-radius: 10px; }
+.output-launch-controls strong { flex-basis: 100%; }
+.output-display-label { display: inline-flex; align-items: center; gap: 4px; color: #b8c5d6; }
+.output-display-label select { max-width: 260px; }
+.output-launch-status, .output-launch-handoff { color: #b8c5d6; }
+.output-launch-status { flex-basis: 100%; }
+.output-launch-handoff { flex-basis: 100%; max-width: 880px; }
 button, input, select { min-height: 44px; font: inherit; }
 button, select, input { color: #edf2f7; background: #202936; border: 1px solid #3a4759; border-radius: 6px; padding: 8px 10px; }
 button { cursor: pointer; }

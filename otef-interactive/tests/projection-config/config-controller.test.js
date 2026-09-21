@@ -30,9 +30,10 @@ function element(tag = "div") {
   };
 }
 
-function documentStub() {
+function documentStub({ coarse = false, noHover = false } = {}) {
   return {
     activeElement: null,
+    defaultView: { matchMedia: (query) => ({ matches: query.includes("pointer: coarse") ? coarse : query.includes("hover: none") ? noHover : false, addEventListener() {}, removeEventListener() {} }) },
     createElement: element,
     createElementNS: (_namespace, tag) => element(tag),
     createTextNode: (text) => ({ textContent: text }),
@@ -110,13 +111,19 @@ describe("projection config controller", () => {
     const root = element("main");
     const api = mountProjectionConfig(root, { client, socket });
     const snapshot = { revision: 4, config: clone(DEFAULTS), presets: [{ id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true }], selectedPresetId: "original" };
-    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 4, success: true });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 4, success: true, route: "browser", baseline: { type: "identity" } });
     expect(api.getStatusRows()).toHaveLength(0);
     const beforeHydration = socket.send.mock.calls.length;
     client.hydrate(snapshot);
     expect(socket.send.mock.calls.slice(beforeHydration).some(([message]) => message.type === "otef_projection_status_request")).toBe(true);
-    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 4, success: true });
-    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "second", revision: 4, success: true });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 4, success: true, route: "browser", baseline: { type: "identity" } });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "second", revision: 4, success: true, route: "browser", baseline: { type: "identity" } });
+    expect(api.getStatusRows()).toHaveLength(2);
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "missing-route", revision: 4, success: true, baseline: { type: "identity" } });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "missing-baseline", revision: 4, success: true, route: "browser" });
+    expect(api.getStatusRows()).toHaveLength(2);
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "wrong-route", revision: 4, success: true, route: "td" });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "wrong-baseline", revision: 4, success: true, route: "browser", baseline: { type: "tdMesh", assetId: "other" } });
     expect(api.getStatusRows()).toHaveLength(2);
     const pattern = find(root, (node) => node.attributes?.["aria-label"] === "Pattern");
     pattern.value = "grid"; pattern.dispatch("change");
@@ -127,7 +134,7 @@ describe("projection config controller", () => {
     const afterConnect = socket.send.mock.calls.length;
     client.hydrate(snapshot); // cached-state notification before the newer HTTP hydration
     expect(socket.send.mock.calls.length).toBe(afterConnect);
-    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 5, success: true });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 5, success: true, route: "browser", baseline: { type: "identity" } });
     expect(api.getStatusRows()).toHaveLength(0);
     const beforeRehydration = socket.send.mock.calls.length;
     client.hydrate({ ...snapshot, revision: 5 });
@@ -209,5 +216,64 @@ describe("projection config controller", () => {
     api.dispose();
     expect(client.stop).toHaveBeenCalledTimes(1);
     globalThis.document = previousDocument;
+  });
+
+  test("wires workstation display assignment and browser output actions into the existing toolbar", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const screens = [
+      { key: "left-screen", label: "Left screen", left: -100, top: 0, width: 1920, height: 1080 },
+      { key: "right-screen", label: "Right screen", left: 1820, top: 0, width: 1920, height: 1080 },
+    ];
+    let outputState = { screens: [], assignments: { left: null, right: null }, message: "Identify displays", error: "", ownedSpans: [] };
+    const outputListeners = new Set();
+    const outputController = {
+      identifyDisplays: vi.fn(async () => { outputState = { ...outputState, screens, message: "Displays identified" }; outputListeners.forEach((listener) => listener(outputState)); return screens; }),
+      assignDisplays: vi.fn((selection) => { outputState = { ...outputState, assignments: selection, message: "Assignment saved" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
+      openBoth: vi.fn(async () => { outputState = { ...outputState, ownedSpans: ["left", "right"], message: "Browser outputs opened" }; outputListeners.forEach((listener) => listener(outputState)); return outputState.ownedSpans; }),
+      closeBoth: vi.fn(() => { outputState = { ...outputState, ownedSpans: [], message: "Browser outputs closed" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
+      getState: () => outputState,
+      subscribe(listener) { outputListeners.add(listener); listener(outputState); return () => outputListeners.delete(listener); },
+    };
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client, outputController });
+    const action = (name) => find(root, (node) => node.dataset?.action === name);
+    action("output-identify").dispatch("click");
+    await vi.waitFor(() => expect(outputController.identifyDisplays).toHaveBeenCalledTimes(1));
+    const left = find(root, (node) => node.dataset?.action === "output-left-display");
+    const right = find(root, (node) => node.dataset?.action === "output-right-display");
+    expect(left.children.map((option) => option.textContent).join(" ")).toContain("-100,0");
+    expect(right.children.map((option) => option.textContent).join(" ")).toContain("1820,0");
+    left.value = "left-screen"; right.value = "right-screen"; left.dispatch("change"); right.dispatch("change");
+    client.report({ previewError: "unrelated preview refresh" });
+    expect(left.value).toBe("left-screen");
+    expect(right.value).toBe("right-screen");
+    action("output-assign").dispatch("click");
+    expect(outputController.assignDisplays).toHaveBeenCalledWith({ left: "left-screen", right: "right-screen" });
+    action("output-open-both").dispatch("click");
+    await vi.waitFor(() => expect(outputController.openBoth).toHaveBeenCalledTimes(1));
+    action("output-close-both").dispatch("click");
+    expect(outputController.closeBoth).toHaveBeenCalledTimes(1);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("blocks local output actions on coarse or no-hover surfaces and shows workstation instructions", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub({ coarse: true });
+    const root = element("main");
+    const outputController = {
+      identifyDisplays: vi.fn(), assignDisplays: vi.fn(), openBoth: vi.fn(), closeBoth: vi.fn(),
+      getState: () => ({ screens: [], assignments: { left: null, right: null }, message: "Identify displays", error: "", ownedSpans: [] }),
+      subscribe(listener) { listener(this.getState()); return () => {}; },
+    };
+    const api = mountProjectionConfig(root, { client: fakeClient(), outputController });
+    const identify = find(root, (node) => node.dataset?.action === "output-identify");
+    const status = find(root, (node) => node.className === "output-launch-status");
+    identify.dispatch("click");
+    expect(identify.disabled).toBe(true);
+    expect(outputController.identifyDisplays).not.toHaveBeenCalled();
+    expect(status.textContent).toMatch(/workstation-only/i);
+    api.dispose(); globalThis.document = previousDocument;
   });
 });

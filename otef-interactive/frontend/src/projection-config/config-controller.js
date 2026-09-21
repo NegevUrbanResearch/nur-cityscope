@@ -55,7 +55,7 @@ function statusText(state, selectedPresetId) {
   return "Saved";
 }
 
-export function mountProjectionConfig(root, { client, share, onExport, onImport, socket } = {}) {
+export function mountProjectionConfig(root, { client, share, onExport, onImport, socket, outputController } = {}) {
   if (!client) throw new Error("projection config client is required");
   const sourceId = createUuid();
   let selectedNode = "pre";
@@ -64,6 +64,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let conflict = "";
   let disposed = false;
   let state = client.getState?.() || {};
+  let outputState = outputController?.getState?.() || { screens: [], assignments: { left: null, right: null }, error: "", message: "Workstation output controls unavailable." };
   let statusRows = new Map();
   let expectedRevision = Number.isSafeInteger(state.snapshot?.revision) ? state.snapshot.revision : null;
   let reconnectStatusRevision = null;
@@ -72,7 +73,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   let showUnconfirmed = false;
   let activePattern = { pattern: "off", branch: "left" };
   let patternTimer = null;
-  const view = createProjectionConfigView(root, { descriptors: FIELD_DESCRIPTORS, onField: handleField, onNudge: handleNudge, onNode: (node) => { selectedNode = node; refresh(); }, onAction: handleAction });
+  const view = createProjectionConfigView(root, { descriptors: FIELD_DESCRIPTORS, onField: handleField, onNudge: handleNudge, onNode: (node) => { selectedNode = node; refresh(); }, onAction: handleAction, onOutputAction: handleOutputAction });
 
   function rowText(row) {
     const identity = row.instanceId ? ` · ${row.instanceId}` : "";
@@ -83,7 +84,20 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function refresh() {
     if (disposed) return;
     const rows = [...statusRows.values()].map((row) => ({ ...row, text: rowText(row) }));
-    view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors, conflict, statusText: statusText(state, loadedPresetId), selectedNode, statusRows: rows });
+    view.update({ state: { ...state, selectedPresetId }, errors: fieldErrors, conflict, statusText: statusText(state, loadedPresetId), selectedNode, statusRows: rows, outputState });
+  }
+  async function handleOutputAction(action, value) {
+    if (!outputController) { fieldErrors = { action: "Workstation output controls are unavailable in this browser." }; refresh(); return; }
+    try {
+      if (action === "identify") await outputController.identifyDisplays();
+      if (action === "assign") outputController.assignDisplays(value);
+      if (action === "open") await outputController.openBoth();
+      if (action === "close") outputController.closeBoth();
+      outputState = outputController.getState?.() || outputState;
+    } catch (error) {
+      outputState = outputController.getState?.() || { ...outputState, error: error?.message || String(error) };
+    }
+    refresh();
   }
   const setConflict = (message) => { conflict = String(message || "Calibration changed on another screen; latest settings loaded."); refresh(); };
   function expectRevision(nextState, force = false) {
@@ -171,12 +185,19 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function statusMessage(message) {
     if (!message || message.table !== "otef" || !["left", "right"].includes(message.output) || typeof message.instanceId !== "string" || !message.instanceId || !Number.isSafeInteger(message.revision) || message.revision < 0 || typeof message.success !== "boolean" || (!message.success && typeof message.error !== "string")) return;
     if (message.revision !== expectedRevision) return;
+    if (message.route !== "browser" || !message.baseline || typeof message.baseline !== "object") return;
+    const expectedWarp = state.snapshot?.config?.outputs?.[message.output]?.warp;
+    const expected = expectedWarp?.enabled === false
+      ? { type: "identity" }
+      : (expectedWarp?.baseline || { type: "identity" });
+    if (message.baseline.type !== expected.type || message.baseline.assetId !== expected.assetId || message.baseline.sha256?.toLowerCase() !== expected.sha256?.toLowerCase()) return;
     showUnconfirmed = false;
     statusRows.delete(`${message.output}:pending`);
     statusRows.set(`${message.output}:${message.instanceId}`, message); refresh();
   }
   function requestStatus() { socket?.send?.({ type: "otef_projection_status_request", table: "otef", sourceId }); }
   const unsubscribe = client.subscribe(handleState);
+  const unsubscribeOutput = outputController?.subscribe?.((nextState) => { outputState = nextState; refresh(); });
   socket?.on?.("otef_projection_applied", statusMessage);
   const onConnect = () => { reconnectStatusRevision = expectedRevision; expectRevision(state, true); requestStatus(); if (activePattern.pattern !== "off") setPattern(activePattern); refresh(); };
   socket?.on?.("connect", onConnect);
@@ -189,7 +210,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     sourceId,
     getStatusRows: () => [...statusRows.values()].map((row) => ({ ...row })),
     setConflict,
-    dispose() { disposed = true; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); unsubscribe?.(); view.dispose(); client.stop?.(); },
+    dispose() { disposed = true; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); unsubscribe?.(); unsubscribeOutput?.(); view.dispose(); client.stop?.(); },
   };
 }
 
