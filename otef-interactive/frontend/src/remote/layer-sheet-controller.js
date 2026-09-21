@@ -14,7 +14,7 @@ import {
   getLocale,
   t,
 } from "./remote-locale.js";
-import { getPackDisplayLabel } from "./layer-pack-display-names.js";
+import { getPackDisplayLabel } from "../shared/legend-copy.js";
 import { buildCurationColorSwatchHtml } from "../curation/curation-submissions.js";
 import { generateTraceId, recordTraceEvent } from "../shared/otef-trace.js";
 import { usesRouteProgressOverlay } from "../shared/maplibre-flow-animation.js";
@@ -184,6 +184,49 @@ function escapeHtmlSafe(value) {
 
 function encAttrId(id) {
   return encodeURIComponent(String(id));
+}
+
+function isLegendSummaryEligible(group) {
+  return !!(
+    group &&
+    group.id !== "nli" &&
+    group.legend &&
+    group.legend.summary &&
+    group.legend.summary.label
+  );
+}
+
+function mergeLegendMetadataFromRegistry(groups = [], registryGroups = []) {
+  const registryById = new Map(
+    registryGroups.map((group) => [String(group.id), group]),
+  );
+  return groups.map((group) => {
+    const registryGroup = registryById.get(String(group.id));
+    if (!registryGroup?.legend) return group;
+    return {
+      ...group,
+      legend: {
+        ...registryGroup.legend,
+        ...(group.legend || {}),
+      },
+    };
+  });
+}
+
+function renderLegendSummaryControl(group, summarizedGroupIds = []) {
+  if (!isLegendSummaryEligible(group)) return "";
+  const groupId = String(group.id);
+  const checked = summarizedGroupIds.map(String).includes(groupId);
+  return `<label class="group-toggle legend-summary-toggle">
+    <input
+      type="checkbox"
+      data-legend-summary-group
+      value="${escapeHtmlSafe(groupId)}"
+      ${checked ? "checked" : ""}
+    />
+    <span class="toggle-indicator"></span>
+    <span>${escapeHtmlSafe(t("legendSummaryToggle"))}</span>
+  </label>`;
 }
 
 function fullLayerIdsForGroup(group) {
@@ -444,6 +487,7 @@ class LayerSheetController {
         this.render();
       });
       this._subscribeDataContext("escapeOverlay", () => this.render());
+      this._subscribeDataContext("legendSettings", () => this.render());
     }
 
     if (typeof window !== "undefined") {
@@ -591,6 +635,9 @@ class LayerSheetController {
           return;
         }
         this.toggleGroupEnabled(gid, t.checked);
+      } else if (t.matches("input[data-legend-summary-group]")) {
+        e.stopPropagation();
+        void this.setLegendGroupSummarized(t.value, t.checked);
       }
     });
 
@@ -773,6 +820,18 @@ class LayerSheetController {
     }
   }
 
+  async setLegendGroupSummarized(groupId, summarized) {
+    if (
+      typeof OTEFDataContext === "undefined" ||
+      typeof OTEFDataContext.setLegendSettings !== "function"
+    ) return;
+    const current = OTEFDataContext.getLegendSettings?.()?.summarizedGroupIds || [];
+    const ids = new Set(current.map(String));
+    if (summarized) ids.add(String(groupId));
+    else ids.delete(String(groupId));
+    await OTEFDataContext.setLegendSettings({ summarizedGroupIds: [...ids] });
+  }
+
   async toggleLayerRow(fullLayerIds, enabled, options = {}) {
     if (!Array.isArray(fullLayerIds) || fullLayerIds.length === 0) {
       return { ok: false };
@@ -863,7 +922,12 @@ class LayerSheetController {
         }
       }
     }
-    return groups;
+    const registryGroups =
+      typeof layerRegistry !== "undefined" &&
+      typeof layerRegistry.getGroups === "function"
+        ? layerRegistry.getGroups()
+        : [];
+    return mergeLegendMetadataFromRegistry(groups, registryGroups);
   }
 
   buildLayerRowsHtml(group, animations) {
@@ -1000,6 +1064,12 @@ class LayerSheetController {
           />
           <span class="toggle-indicator"></span>
         </label>
+        ${renderLegendSummaryControl(
+          selected,
+          (typeof OTEFDataContext !== "undefined" &&
+            OTEFDataContext.getLegendSettings?.()?.summarizedGroupIds) ||
+            [],
+        )}
       </div>
       <div class="group-layers group-layers--expanded group-layers--tiles">
         <div class="layer-tile-grid">
@@ -1129,6 +1199,9 @@ export {
   isLayerAnimatable,
   isPinkLineRouteSheetRow,
   orderMoreshetWorkshopSheetRows,
+  isLegendSummaryEligible,
+  mergeLegendMetadataFromRegistry,
   renderLayerRow,
+  renderLegendSummaryControl,
   renderNliTimelineTransport,
 };

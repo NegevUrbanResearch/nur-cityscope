@@ -78,6 +78,11 @@ import { createProjectionConfigClient } from "../shared/projection-config-client
 import { createUuid } from "../shared/uuid.js";
 import { createProjectionConfigRuntime } from "../projection/projection-config-runtime.js";
 import { createProjectionPattern } from "../projection/projection-pattern.js";
+import {
+  createLegendStyleLoadRefresh,
+  installMapLegendLifecycle,
+} from "../map/legend-integration.js";
+import { installLegendLayout } from "../projection/legend-layout.js";
 
 function getEffectiveProjectionLayerGroups() {
   if (
@@ -475,22 +480,39 @@ async function bootstrapProjectionRuntime() {
       if (window.NliExplainerDebug?.isVisible?.()) return;
       applyStoredExplainerLayout();
     }));
-    try {
-      const { updateMapLegend } = await import("../map/map-legend.js");
-      registerDisposer(
-        OTEFDataContext.subscribe("layerGroups", () => {
-          updateMapLegend({ surface: "projection" });
-        }),
-      );
-      registerDisposer(
-        OTEFDataContext.subscribe("narrativeState", () => {
-          updateMapLegend({ surface: "projection" });
-        }),
-      );
-      updateMapLegend({ surface: "projection" });
-    } catch (e) {
-      console.warn("[projection-main] Legend module not available:", e);
-    }
+    await new Promise((resolve) => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+    });
+    const legendElement = document.getElementById("mapLegend");
+    const legendSpan = nliExplainerSpanKey(
+      typeof window !== "undefined" ? window.location.search : "",
+    );
+    let legendLifecycle = null;
+    const legendLayout = installLegendLayout({
+      element: legendElement,
+      clockElement: nliExplainerHost,
+      dataContext: OTEFDataContext,
+      spanKey: legendSpan,
+      getProjectionConfig: getEffectiveProjectionConfig,
+      onEditingChange: (editing) => legendLifecycle?.setEditing(editing),
+    });
+    legendLifecycle = installMapLegendLifecycle({
+      element: legendElement,
+      surface: "projection",
+      projectionSpan: legendSpan,
+      dataContext: OTEFDataContext,
+      registry: layerRegistry,
+      onLegendSettings: (settings) => {
+        const projection = settings?.projection || {};
+        const saved = projection[legendSpan];
+        if (saved) legendLayout?.applyServerSettings?.(saved);
+      },
+    });
+    const refreshLegendAfterStyleLoad = createLegendStyleLoadRefresh(
+      () => legendLifecycle,
+    );
+    registerDisposer(() => legendLifecycle.dispose());
+    registerDisposer(() => legendLayout?.dispose());
     const onExplainerResize = () => {
       if (window.NliExplainerDebug?.isVisible?.()) return;
       applyStoredExplainerLayout();
@@ -571,6 +593,8 @@ async function bootstrapProjectionRuntime() {
         ),
         onVisibleChange: (visible) => {
           explainerDebugVisible = visible === true;
+          legendLayout?.setVisible(explainerDebugVisible);
+          legendLifecycle?.setEditing(explainerDebugVisible);
           syncContextInvestigation();
         },
         getProjectionConfig: getEffectiveProjectionConfig,
@@ -766,6 +790,7 @@ async function bootstrapProjectionRuntime() {
         syncContextFlowAnimations();
         syncPinkLineAxisCompanionForMapLibre(map, currentGroups);
         projectionNarrativeController?.onStyleLoad();
+        refreshLegendAfterStyleLoad();
         raiseProjectionHighlightLayers(map);
         return;
       }
@@ -787,6 +812,7 @@ async function bootstrapProjectionRuntime() {
       syncContextFlowAnimations();
       syncPinkLineAxisCompanionForMapLibre(map, currentGroups);
       projectionNarrativeController?.onStyleLoad();
+      refreshLegendAfterStyleLoad();
       raiseProjectionHighlightLayers(map);
     };
     const shouldSkipLiveProjectionRefresh = () =>
@@ -861,6 +887,7 @@ async function bootstrapProjectionRuntime() {
       applyStoredNliLabelHeading(projectionMap);
       syncContextFlowAnimations();
       projectionNarrativeController?.onStyleLoad();
+      refreshLegendAfterStyleLoad();
       raiseProjectionHighlightLayers(projectionMap);
     };
 
@@ -977,6 +1004,7 @@ async function bootstrapProjectionRuntime() {
               nameFieldController.sync(Array.isArray(groups) ? groups : Object.values(groups || {}));
               syncContextFlowAnimations();
               projectionNarrativeController?.onStyleLoad();
+              refreshLegendAfterStyleLoad();
               raiseProjectionHighlightLayers(map);
             },
             mapDeps: {},

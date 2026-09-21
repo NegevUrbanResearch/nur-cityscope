@@ -14,6 +14,11 @@ import { createGisNarrativeController } from "../map/nli-narrative-controller.js
 import { applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
+import {
+  createLegendStyleLoadRefresh,
+  installMapLegendLifecycle,
+  positionGisLegend,
+} from "../map/legend-integration.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
@@ -212,11 +217,13 @@ async function bootstrapMapRuntime() {
       mapContainer,
       { hostId: "nliGisClockHost" },
     );
+    let positionLegend = () => {};
     const applyStoredGisClockLayout = () => {
       const stored = OTEFDataContext.getNliClockLayout?.()?.gis || {};
       const slotId = gisClockLayoutSlotId(OTEFDataContext.getNarrativeState?.()?.id);
       const box = mergeGisClockLayout(slotId, stored, NLI_GIS_CLOCK_DEFAULT_LAYOUT);
       applyNliExplainerLayout(nliGisClockHost, box);
+      positionLegend();
     };
     applyStoredGisClockLayout();
     registerDisposer(OTEFDataContext.subscribe("nliClockLayout", () => {
@@ -237,6 +244,7 @@ async function bootstrapMapRuntime() {
     const onGisClockResize = () => {
       if (window.NliExplainerDebug?.isVisible?.()) return;
       applyStoredGisClockLayout();
+      positionLegend();
     };
     window.addEventListener("resize", onGisClockResize);
     registerDisposer(() => window.removeEventListener("resize", onGisClockResize));
@@ -571,6 +579,10 @@ async function bootstrapMapRuntime() {
     await refreshCuratedLayers({ groupsOverride: rawInitialLayerGroups });
     narrativeController.apply(OTEFDataContext.getNarrativeState?.());
 
+    let legendLifecycle = null;
+    const refreshLegendAfterStyleLoad = createLegendStyleLoadRefresh(
+      () => legendLifecycle,
+    );
     const basemapCoordinator = createGisBasemapStyleCoordinator({
       map,
       initialBasemap: currentBasemap,
@@ -578,6 +590,7 @@ async function bootstrapMapRuntime() {
       personVisual,
       narrativeController,
       getLayerGroups: () => OTEFDataContext.getLayerGroups(),
+      onStyleLoad: refreshLegendAfterStyleLoad,
       refreshLayers: async ({ basemap, groupsOverride, syncFlow = false, isCurrent }) => {
         if (!isCurrent()) return;
         currentBasemap = basemap;
@@ -629,6 +642,7 @@ async function bootstrapMapRuntime() {
               );
               applyStoredNliLabelHeading(map);
               syncContextFlowAnimations();
+              legendLifecycle?.refresh();
             },
             mapDeps: {},
           });
@@ -644,21 +658,24 @@ async function bootstrapMapRuntime() {
     }
 
     // Map legend
-    try {
-      const { updateMapLegend } = await import("../map/map-legend.js");
-      registerDisposer(
-        OTEFDataContext.subscribe("layerGroups", () => {
-          updateMapLegend({ surface: "gis" });
-        }),
-      );
-      registerDisposer(
-        OTEFDataContext.subscribe("narrativeState", () => {
-          updateMapLegend({ surface: "gis" });
-        }),
-      );
-      updateMapLegend({ surface: "gis" });
-    } catch (e) {
-      console.warn("[map-main] Legend module not available:", e);
+    const legendElement = document.getElementById("mapLegend");
+    legendLifecycle = installMapLegendLifecycle({
+      element: legendElement,
+      surface: "gis",
+      dataContext: OTEFDataContext,
+      registry: layerRegistry,
+    });
+    registerDisposer(() => legendLifecycle.dispose());
+    positionLegend = () => positionGisLegend({
+      element: legendElement,
+      clockElement: nliGisClockHost,
+    });
+    positionLegend();
+    if (typeof ResizeObserver !== "undefined") {
+      const legendPlacementObserver = new ResizeObserver(positionLegend);
+      legendPlacementObserver.observe(legendElement);
+      legendPlacementObserver.observe(nliGisClockHost);
+      registerDisposer(() => legendPlacementObserver.disconnect());
     }
   });
 }

@@ -5,7 +5,7 @@ const coordinators = new WeakMap();
  * A MapLibre style can finish after a newer setStyle call, so every listener is
  * generation-scoped and the old listener is detached before replacing it.
  */
-export function installGisStyleReload({ map, refreshLayers, personVisual, narrativeController, getLayerGroups, isCurrent = () => true } = {}) {
+export function installGisStyleReload({ map, refreshLayers, personVisual, narrativeController, getLayerGroups, onStyleLoad: afterStyleLoad, isCurrent = () => true } = {}) {
   if (!map || typeof refreshLayers !== "function" || typeof map.on !== "function") return () => {};
   const prior = coordinators.get(map);
   if (prior?.listener) map.off?.("style.load", prior.listener);
@@ -22,6 +22,7 @@ export function installGisStyleReload({ map, refreshLayers, personVisual, narrat
     if (coordinators.get(map) !== record || !isCurrent()) return;
     personVisual?.bringToFront?.();
     narrativeController?.onStyleLoad?.();
+    afterStyleLoad?.();
   };
   record.listener = onStyleLoad;
   coordinators.set(map, record);
@@ -42,6 +43,7 @@ export function createGisBasemapStyleCoordinator({
   personVisual,
   narrativeController,
   getLayerGroups,
+  onStyleLoad,
 } = {}) {
   let requestedBasemap = initialBasemap;
   let requestGeneration = 0;
@@ -59,6 +61,7 @@ export function createGisBasemapStyleCoordinator({
       personVisual,
       narrativeController,
       getLayerGroups,
+      onStyleLoad,
       isCurrent,
       refreshLayers: (options) => refreshLayers?.({ ...options, basemap: nextBasemap, isCurrent }),
     });
