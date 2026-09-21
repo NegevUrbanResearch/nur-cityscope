@@ -20,6 +20,7 @@ export const OTEF_MESSAGE_TYPES = {
   NARRATIVE_PRESENTATION_RESULT: "otef_narrative_presentation_result",
   ESCAPE_OVERLAY_CHANGED: "otef_escape_overlay_changed",
   NLI_CLOCK_LAYOUT_CHANGED: "otef_nli_clock_layout_changed",
+  LEGEND_SETTINGS_CHANGED: "otef_legend_settings_changed",
 };
 
 export const DEFAULT_LAYER_STATES = {

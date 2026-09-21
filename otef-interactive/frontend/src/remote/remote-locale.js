@@ -18,6 +18,7 @@ const SUPPORTED = /** @type {const} */ (["he", "en"]);
 
 /** @type {LocaleId} */
 let _locale = "he";
+let _serverLocaleConfirmed = false;
 
 /**
  * Not translated via MESSAGES: compact language labels on the toggle ("עב", "en" in markup);
@@ -161,6 +162,7 @@ const MESSAGES = {
     nliRouteFlowActive: "זרימת המסלול פעילה",
     layersBulkVisibility: "כל השכבות בחבילה",
     ariaLayersBulkVisibility: "הפעלת או כיבוי כל השכבות בחבילה שנבחרה",
+    legendSummaryToggle: "הצגה כסיכום במקרא",
     layersBack: "רשימת חבילות",
     ariaLayersBack: "חזרה לרשימת חבילות",
     ariaLayersOpenPack: "הצגת שכבות בחבילה",
@@ -356,6 +358,7 @@ const MESSAGES = {
     nliRouteFlowActive: "Route flow active",
     layersBulkVisibility: "All layers in pack",
     ariaLayersBulkVisibility: "Enable or disable every layer in the selected pack",
+    legendSummaryToggle: "Show as legend summary",
     layersBack: "All packs",
     ariaLayersBack: "Back to all packs",
     ariaLayersOpenPack: "View layers in this pack",
@@ -537,7 +540,7 @@ export function setLocale(next, opts = {}) {
 
   _locale = next;
   try {
-    localStorage.setItem(LOCALE_STORAGE_KEY, _locale);
+    if (opts.persist !== false) localStorage.setItem(LOCALE_STORAGE_KEY, _locale);
   } catch {
     // ignore
   }
@@ -548,6 +551,39 @@ export function setLocale(next, opts = {}) {
       new CustomEvent(LOCALE_EVENT, { detail: { locale: _locale } }),
     );
   }
+}
+
+/** Apply the server's authoritative shared legend language without posting intent. */
+export function applyServerLocale(next) {
+  if (!isLocaleId(next)) return;
+  _serverLocaleConfirmed = true;
+  setLocale(next, { force: true, persist: false });
+}
+
+export async function setLocaleFromUserIntent(next, dataContext) {
+  setLocale(next);
+  const result = await dataContext?.setLegendSettings?.({ language: next });
+  if (result?.ok === false) throw new Error(result.reason || "legend language rejected");
+  return result;
+}
+
+/**
+ * Bind an explicit language intent to remote buttons. Server rejection restores
+ * the confirmed language and lets each remote surface show its own feedback.
+ */
+export function bindLocaleButtons({ heButton, enButton, dataContext, onFailure } = {}) {
+  const setRemoteLocale = async (locale) => {
+    try {
+      return await setLocaleFromUserIntent(locale, dataContext);
+    } catch (error) {
+      applyServerLocale(dataContext?.getLegendSettings?.()?.language || "he");
+      onFailure?.(error);
+      return { ok: false, error };
+    }
+  };
+  heButton?.addEventListener?.("click", () => void setRemoteLocale("he"));
+  enButton?.addEventListener?.("click", () => void setRemoteLocale("en"));
+  return setRemoteLocale;
 }
 
 /**
@@ -575,7 +611,7 @@ export function initLocale() {
     window.addEventListener("storage", (e) => {
       if (e.key !== LOCALE_STORAGE_KEY) return;
       const v = e.newValue;
-      if (v === "he" || v === "en") {
+      if (!_serverLocaleConfirmed && (v === "he" || v === "en")) {
         setLocale(/** @type {LocaleId} */ (v), { force: true });
       }
     });

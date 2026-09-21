@@ -22,7 +22,7 @@ import {
 } from "./remote-joystick-controls.js";
 import { createStaffPackMenus } from "./nli-staff-pack-menus.js";
 import { labelForPlace, placeIsWithinRemoteBounds } from "./remote-place-navigation.js";
-import { getLocale, setLocale, t, LOCALE_EVENT } from "./remote-locale.js";
+import { applyServerLocale, bindLocaleButtons, getLocale, t, LOCALE_EVENT } from "./remote-locale.js";
 import { COPY, NARRATIVES, SCENES } from "./nli-staff-script.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
 
@@ -44,6 +44,15 @@ export const WALL_LAYER_IDS = [
 ];
 
 const $ = (id) => document.getElementById(id);
+
+export function initNliStaffLocaleControls(dataContext, { onFailure } = {}) {
+  return bindLocaleButtons({
+    heButton: $("localeHe"),
+    enButton: $("localeEn"),
+    dataContext,
+    onFailure,
+  });
+}
 
 export function initNliStaffRemote(dataContext) {
   const peopleSearch = createPeopleSearchRuntime();
@@ -779,8 +788,15 @@ export function initNliStaffRemote(dataContext) {
     if (btn?.dataset.scene) void applyScene(btn.dataset.scene);
   });
 
-  $("localeHe").addEventListener("click", () => setLocale("he"));
-  $("localeEn").addEventListener("click", () => setLocale("en"));
+  initNliStaffLocaleControls(dataContext, {
+    onFailure: () => {
+      state.freeError = t("statusError");
+      renderFree();
+    },
+  });
+  dataContext?.subscribe?.("legendSettings", (settings) => {
+    if (settings?.language) applyServerLocale(settings.language);
+  });
   window.addEventListener(LOCALE_EVENT, () => {
     peopleArchive.handleLocaleChange();
     render();

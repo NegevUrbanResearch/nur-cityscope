@@ -14,6 +14,8 @@ import re
 import time
 from django.conf import settings
 from datetime import datetime
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 from .models import (
     Table,
@@ -56,6 +58,7 @@ from .otef_nli_clock_layout import (
     merge_nli_clock_layout_surface,
     normalize_nli_clock_layout,
 )
+from .otef_legend_settings import merge_legend_settings, normalize_legend_settings
 from .otef_narrative import (
     NARRATIVE_IDS,
     NARRATIVE_PRESENTATION_IDS,
@@ -861,6 +864,51 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             }
         )
 
+    def _broadcast_legend_settings(self, table_name, settings, metadata):
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+        meta = metadata or {}
+        async_to_sync(channel_layer.group_send)("otef_channel", {
+            "type": "broadcast_message",
+            "message": {
+                "type": "otef_legend_settings_changed",
+                "table": table_name,
+                "legendSettings": settings,
+                "sourceId": meta.get("sourceId"),
+                "timestamp": meta.get("timestamp"),
+            },
+        })
+
+    def _set_legend_settings_command(self, table, request):
+        payload = request.data if isinstance(request.data, dict) else {}
+        fields = [key for key in ("language", "span", "summarizedGroupIds") if key in payload]
+        if len(fields) != 1:
+            return Response({"error": "provide exactly one of language, span/layout, or summarizedGroupIds"}, status=status.HTTP_400_BAD_REQUEST)
+        if "span" in payload and "layout" not in payload:
+            return Response({"error": "span requires layout"}, status=status.HTTP_400_BAD_REQUEST)
+        if "language" in payload and payload.get("language") not in ("he", "en"):
+            return Response({"error": "language must be he or en"}, status=status.HTTP_400_BAD_REQUEST)
+        if "summarizedGroupIds" in payload and not isinstance(payload.get("summarizedGroupIds"), list):
+            return Response({"error": "summarizedGroupIds must be an array"}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            locked = OTEFViewportState.objects.select_for_update().get(table=table)
+            merged = merge_legend_settings(
+                locked.legend_settings,
+                language=payload.get("language"),
+                span=payload.get("span"),
+                layout=payload.get("layout"),
+                summarized_group_ids=payload.get("summarizedGroupIds"),
+            )
+            if merged is None:
+                return Response({"error": "invalid legend settings"}, status=status.HTTP_400_BAD_REQUEST)
+            locked.legend_settings = merged
+            locked.save(update_fields=["legend_settings", "updated_at"])
+            captured = normalize_legend_settings(merged)
+            metadata = {"sourceId": payload.get("sourceId"), "timestamp": payload.get("timestamp")}
+            transaction.on_commit(lambda: self._broadcast_legend_settings(table.name, captured, metadata))
+        return Response({"status": "ok", "action": "set_legend_settings", "legendSettings": captured})
+
     def _narrative_presentation_command(self, table, request):
         payload = request.data if isinstance(request.data, dict) else {}
         presentation_action = payload.get("presentationAction")
@@ -1525,6 +1573,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                 normalize_narrative_state(state.narrative_state)["id"],
             ),
             'nli_clock_layout': normalize_nli_clock_layout(state.nli_clock_layout),
+            'legend_settings': normalize_legend_settings(state.legend_settings),
             'updated_at': state.updated_at.isoformat() if state.updated_at else None,
         }
 
@@ -2159,6 +2208,9 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         if action == "set_nli_clock_layout":
             return self._set_nli_clock_layout_command(table, request)
 
+        if action == "set_legend_settings":
+            return self._set_legend_settings_command(table, request)
+
         if action == "narrative_presentation":
             return self._narrative_presentation_command(table, request)
 
@@ -2409,8 +2461,6 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
 # Now lets program the views for the API as an interactive platform
 
 from . import globals
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
 
 def broadcast_presentation_update(table_name=None):
     """Broadcast presentation state to all connected WebSocket clients"""

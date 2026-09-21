@@ -10,6 +10,8 @@ import {
 import { normalizeNarrativeState } from "../shared/nli-narratives.js";
 import {
   LOCALE_EVENT,
+  applyServerLocale,
+  bindLocaleButtons,
   getLocale,
   setLocale,
   t,
@@ -134,6 +136,11 @@ async function initialize() {
       updateConnectionStatus(isConnected ? "connected" : "disconnected");
     }),
   );
+  unsubscribeFunctions.push(
+    OTEFDataContext.subscribe("legendSettings", (settings) => {
+      if (settings?.language) applyServerLocale(settings.language);
+    }),
+  );
 
   // Track orientation for viewer-frame → ITM-frame mapping
   unsubscribeFunctions.push(
@@ -184,7 +191,7 @@ async function initialize() {
   });
   joystickController.init();
   initRemoteShellTabs();
-  initRemoteLocaleControls();
+  initRemoteLocaleControls(OTEFDataContext);
 
   // Initial UI render with whatever state DataContext has
   updateUI();
@@ -259,7 +266,7 @@ function setRemoteTab(activeKey) {
 /**
  * Hebrew / English toggle and `otef:locale` → connection line + toggle `aria-pressed`
  */
-function initRemoteLocaleControls() {
+export function initRemoteLocaleControls(dataContext = globalThis.OTEFDataContext) {
   const heBtn = document.getElementById("remoteLocaleHe");
   const enBtn = document.getElementById("remoteLocaleEn");
 
@@ -277,12 +284,12 @@ function initRemoteLocaleControls() {
 
   syncToggleFromLocale();
 
-  if (heBtn) {
-    heBtn.addEventListener("click", () => setLocale("he"));
-  }
-  if (enBtn) {
-    enBtn.addEventListener("click", () => setLocale("en"));
-  }
+  bindLocaleButtons({
+    heButton: heBtn,
+    enButton: enBtn,
+    dataContext,
+    onFailure: () => updateConnectionStatus("error"),
+  });
 
   if (typeof window !== "undefined") {
     window.addEventListener(LOCALE_EVENT, () => {

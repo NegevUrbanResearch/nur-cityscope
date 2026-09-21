@@ -124,6 +124,7 @@ class OTEFDataContextClass {
       narrativePresentationResult: new Set(),
       escapeOverlay: new Set(),
       nliClockLayout: new Set(),
+      legendSettings: new Set(),
     };
 
     this._wsClient = null;
@@ -152,6 +153,7 @@ class OTEFDataContextClass {
     this._narrativeState = normalizeNarrativeState(null);
     this._escapeOverlay = normalizeEscapeOverlay(null, null);
     this._nliClockLayout = emptyNliClockLayout();
+    this._legendSettings = { language: "he", projection: {}, summarizedGroupIds: [] };
     this._clockOffsetMs = 0;
     this._clockPatchQueue = null;
   }
@@ -450,6 +452,30 @@ class OTEFDataContextClass {
 
   getNliClockLayout() {
     return this._nliClockLayout;
+  }
+
+  getLegendSettings() {
+    return this._legendSettings;
+  }
+
+  _applyLegendSettings(raw) {
+    if (!raw || typeof raw !== "object") return;
+    const next = {
+      language: raw.language === "en" ? "en" : "he",
+      projection: raw.projection && typeof raw.projection === "object" ? { ...raw.projection } : {},
+      summarizedGroupIds: Array.isArray(raw.summarizedGroupIds) ? [...raw.summarizedGroupIds] : [],
+    };
+    if (JSON.stringify(this._legendSettings) === JSON.stringify(next)) return;
+    this._legendSettings = next;
+    this._notify("legendSettings", this._legendSettings);
+  }
+
+  async setLegendSettings(patch) {
+    const actions = OTEFDataContextInternals.actions;
+    if (!actions || typeof actions.setLegendSettings !== "function") {
+      throw new Error("Missing setLegendSettings action helper");
+    }
+    return actions.setLegendSettings(this, patch);
   }
 
   _applyNliClockLayout(raw) {
@@ -880,6 +906,9 @@ class OTEFDataContextClass {
         break;
       case "nliClockLayout":
         current = this._nliClockLayout;
+        break;
+      case "legendSettings":
+        current = this._legendSettings;
         break;
       case "navigationCommand":
         current = undefined;
