@@ -36,6 +36,11 @@ const GIS_EXTRA_KNOWN_PLACES = Object.freeze([
   { he: "אשקלון", en: ["Ashkelon", "Ashqelon"] },
 ]);
 
+export const GIS_NOVA_PLACE_LABEL_LAYER_ID = "gis-nova-place-label";
+const GIS_NOVA_PLACE_SOURCE_ID = GIS_NOVA_PLACE_LABEL_LAYER_ID;
+const GIS_NOVA_CITYCODE = "nvaP";
+const GIS_NOVA_TEXT_OFFSET_EM = Object.freeze([2, -0.5]);
+
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -204,12 +209,74 @@ function moveLayerToTop(map, id) {
 }
 
 function isBasemapPlaceLabelLayer(layer) {
+  if (layer?.id === GIS_NOVA_PLACE_LABEL_LAYER_ID) return true;
   return layer?.type === "symbol" && layer["source-layer"] === PLACE_SOURCE_LAYER;
 }
 
 function isForegroundOverlayLayer(layer) {
   const id = typeof layer?.id === "string" ? layer.id : "";
   return FOREGROUND_OVERLAY_PREFIXES.some((prefix) => id.startsWith(prefix));
+}
+
+function novaPlaceFeature(catalog = placeCatalog) {
+  const place = (catalog?.entries || []).find((entry) => entry?.citycode === GIS_NOVA_CITYCODE);
+  const lng = Number(place?.cameraHint?.center?.lng);
+  const lat = Number(place?.cameraHint?.center?.lat);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+  const he = String(place?.name?.he || "נובה").trim() || "נובה";
+  return {
+    type: "Feature",
+    properties: {
+      citycode: GIS_NOVA_CITYCODE,
+      "name:he": he,
+      "name:en": String(place?.name?.en || "Nova"),
+      name: he,
+    },
+    geometry: { type: "Point", coordinates: [lng, lat] },
+  };
+}
+
+/** GIS-only Nova name: OSM has no place feature, unlike Be'eri and Re'im. */
+export function ensureGisNovaPlaceLabel(map) {
+  if (!map || typeof map.addLayer !== "function") return;
+  const feature = novaPlaceFeature();
+  if (!feature) return;
+  const collection = { type: "FeatureCollection", features: [feature] };
+  const existingSource = typeof map.getSource === "function" ? map.getSource(GIS_NOVA_PLACE_SOURCE_ID) : null;
+  if (!existingSource) {
+    try {
+      map.addSource(GIS_NOVA_PLACE_SOURCE_ID, { type: "geojson", data: collection });
+    } catch (_) {
+      return;
+    }
+  } else if (typeof existingSource.setData === "function") {
+    existingSource.setData(collection);
+  }
+  if (typeof map.getLayer === "function" && map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID)) return;
+  try {
+    map.addLayer({
+      id: GIS_NOVA_PLACE_LABEL_LAYER_ID,
+      type: "symbol",
+      source: GIS_NOVA_PLACE_SOURCE_ID,
+      layout: {
+        "text-field": feature.properties["name:he"],
+        "text-font": [...DARK_BASEMAP_PLACE_TEXT_FONT],
+        "text-size": DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE,
+        "text-offset": [...GIS_NOVA_TEXT_OFFSET_EM],
+        "text-anchor": "center",
+        "text-allow-overlap": true,
+        "text-ignore-placement": true,
+      },
+      paint: {
+        "text-color": DARK_BASEMAP_TEXT_COLOR,
+        "text-halo-color": "rgba(0,0,0,0.7)",
+        "text-halo-width": 1,
+        "text-opacity": 1,
+      },
+    });
+  } catch (_) {
+    /* style was replaced mid-sync */
+  }
 }
 
 /**
@@ -219,6 +286,7 @@ function isForegroundOverlayLayer(layer) {
  */
 export function raiseDarkBasemapPlaceLabels(map) {
   if (!map) return;
+  ensureGisNovaPlaceLabel(map);
   const layers = styleLayers(map);
   const placeIds = layers.filter(isBasemapPlaceLabelLayer).map((layer) => layer.id);
   const overlayIds = layers.filter(isForegroundOverlayLayer).map((layer) => layer.id);

@@ -471,6 +471,39 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toBe(1);
   });
 
+  it("keeps the Nova yeshuv outline 43 red during narrative focus even when ordinary investigation layers are hidden", async () => {
+    const map = makeOrientationMap();
+    const hidden = [{ id: "nli", layers: [
+      { id: "investigation_polygons", enabled: false },
+      { id: "lines", enabled: false },
+    ] }];
+    const novaOutline = {
+      type: "Feature",
+      properties: { outlineObjectId: 43, OBJECTID: 43, locations: ["נובה"] },
+      geometry: { type: "Polygon", coordinates: [[[34.46, 31.39], [34.47, 31.39], [34.47, 31.40], [34.46, 31.39]]] },
+    };
+    const labelsSourceId = map.getStyle().layers.find((layer) => layer.id === SHEMOT_LABEL_ID).source;
+    map.getSource(labelsSourceId).data = {
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        properties: { cityname: novaOutline.properties.locations[0] },
+        geometry: { type: "Point", coordinates: [34.46, 31.39] },
+      }],
+    };
+    await syncInvestigationTimelineToMap(map, idleNliClock(), hidden, {
+      settlementFeatures: [novaOutline],
+      narrativeFocus: NLI_NARRATIVES.nova,
+      now: () => 0,
+    });
+
+    expect(map.getSource("nli-investigation-settlement-impact").setData.mock.calls.at(-1)[0]).toEqual({
+      type: "FeatureCollection",
+      features: [novaOutline],
+    });
+    expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toBe("#c31f4f");
+  });
+
   it("paints Segev, Sderot, and Hostages place outlines white during narrative focus", async () => {
     const hidden = [{ id: "nli", layers: [
       { id: "investigation_polygons", enabled: false },

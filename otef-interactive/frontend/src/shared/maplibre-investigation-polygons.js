@@ -506,6 +506,26 @@ export function createInvestigationPolygonRenderer(
     else map.addLayer(layer);
   }
 
+  function restackOwnedOverlays() {
+    if (!map || typeof map.moveLayer !== "function") return;
+    const beforeId = overlayBeforeId();
+    const owned = [];
+    const seen = new Set();
+    for (const id of [...state.processedFillLayerIds, ...CATEGORY_LAYER_IDS, SETTLEMENT_LAYER_ID]) {
+      if (!id || seen.has(id) || !layerPresent(map, id)) continue;
+      seen.add(id);
+      owned.push(id);
+    }
+    for (const id of owned) {
+      try {
+        if (beforeId) map.moveLayer(id, beforeId);
+        else map.moveLayer(id);
+      } catch (_) {
+        // Style can be replaced between collection and move.
+      }
+    }
+  }
+
   function mountCategoryOverlay() {
     if (state.disposed || !map) return;
     if (!state.processedStyleActive || state.processedStyleInvalid) {
@@ -830,7 +850,10 @@ export function createInvestigationPolygonRenderer(
       }
       applyCategoryMotion(frame, data);
     }
-    if (!membershipChanged && !dataChanged) return;
+    if (!membershipChanged && !dataChanged) {
+      restackOwnedOverlays();
+      return;
+    }
     const outlines = new Map();
     const hasExplicitSettlementIds = Object.prototype.hasOwnProperty.call(
       frame,
@@ -857,6 +880,7 @@ export function createInvestigationPolygonRenderer(
       source.setData(featureCollection([...outlines.values()]));
       state.appliedRegistryGeneration = state.registryGeneration;
     }
+    restackOwnedOverlays();
   }
 
   function renderSettlement(frame = {}, data = {}) {

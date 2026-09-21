@@ -36,6 +36,13 @@ function makeMap() {
       if (beforeIndex >= 0) layers.splice(beforeIndex, 0, layer);
       else layers.push(layer);
     }),
+    moveLayer: vi.fn((id, beforeId) => {
+      const index = layers.findIndex((layer) => layer.id === id);
+      if (index < 0) return;
+      const [layer] = layers.splice(index, 1);
+      const target = beforeId == null ? layers.length : layers.findIndex((item) => item.id === beforeId);
+      layers.splice(target < 0 ? layers.length : target, 0, layer);
+    }),
     removeSource: vi.fn((id) => sources.delete(id)),
     removeLayer: vi.fn((id) => {
       const index = layers.findIndex((layer) => layer.id === id);
@@ -1325,6 +1332,46 @@ describe("investigation polygon renderer", () => {
     expect(impactIndex).toBeGreaterThan(baseIndex);
     expect(impactIndex).toBeLessThan(labelsIndex);
     expect(map.addLayer.mock.calls.at(-1)[1]).toBe("labels");
+  });
+
+  it("keeps the settlement impact outline above category fills after lines-then-polygons mount", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const data = {
+      ...processedOverlayData([polygon(1, 400, "עלומים", "מרחב לחימה - קרב")]),
+      settlementFeatures: [settlement(20)],
+      settlementFeaturesByOutlineId: { 20: settlement(20) },
+    };
+    renderer.renderSettlement(frame([], {
+      achievedSettlementOutlineIds: [20],
+    }), data);
+    renderer.render(frame([400], { achievedSettlementOutlineIds: [20] }), data);
+    const impactIndex = map.layers.findIndex((layer) => layer.id === "nli-investigation-settlement-impact-outline");
+    const fillIndex = map.layers.findIndex((layer) => layer.id === "nli-investigation-polygon-category-fill-battle");
+    expect(fillIndex).toBeGreaterThanOrEqual(0);
+    expect(impactIndex).toBeGreaterThan(fillIndex);
+  });
+
+  it("re-raises owned overlays above a pack layer after an unchanged-frame render", () => {
+    const map = makeMap();
+    map.layers.push({ id: "projector_base__רקע_שחור__fill__0", type: "fill", source: "projector_base.רקע_שחור" });
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const data = {
+      ...processedOverlayData([polygon(1, 400, "עלומים", "מרחב לחימה - קרב")]),
+      settlementFeatures: [settlement(20)],
+      settlementFeaturesByOutlineId: { 20: settlement(20) },
+    };
+    renderer.render(frame([400], { achievedSettlementOutlineIds: [20] }), data);
+    map.moveLayer("projector_base__רקע_שחור__fill__0");
+    const blackIndexAfterRaise = map.layers.findIndex((layer) => layer.id === "projector_base__רקע_שחור__fill__0");
+    const impactBefore = map.layers.findIndex((layer) => layer.id === "nli-investigation-settlement-impact-outline");
+    expect(blackIndexAfterRaise).toBeGreaterThan(impactBefore);
+    renderer.render(frame([400], { achievedSettlementOutlineIds: [20] }), data);
+    const impactAfter = map.layers.findIndex((layer) => layer.id === "nli-investigation-settlement-impact-outline");
+    const fillAfter = map.layers.findIndex((layer) => layer.id === "nli-investigation-polygon-category-fill-battle");
+    const blackAfter = map.layers.findIndex((layer) => layer.id === "projector_base__רקע_שחור__fill__0");
+    expect(impactAfter).toBeGreaterThan(fillAfter);
+    expect(impactAfter).toBeGreaterThan(blackAfter);
   });
 
   it("re-hides raw host polygons after an external retained-layer restore on an unchanged frame", () => {

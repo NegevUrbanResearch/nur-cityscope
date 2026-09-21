@@ -9,6 +9,8 @@ import {
   DARK_BASEMAP_UNKNOWN_PLACE_TEXT_OPACITY,
   applyDarkBasemapLabelPolicy,
   collectKnownBasemapPlaceNames,
+  ensureGisNovaPlaceLabel,
+  GIS_NOVA_PLACE_LABEL_LAYER_ID,
   raiseDarkBasemapPlaceLabels,
 } from "../../frontend/src/map/dark-basemap-labels.js";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
@@ -301,8 +303,34 @@ describe("raiseDarkBasemapPlaceLabels", () => {
       "projector_base__ישובים__0",
       "place_village",
       "place_city",
+      GIS_NOVA_PLACE_LABEL_LAYER_ID,
       "nli__people_names__labels",
       "otef-person-selection-halo",
     ]);
+  });
+});
+
+describe("ensureGisNovaPlaceLabel", () => {
+  it("paints Nova on GIS like known settlement names, between Re'im and Be'eri", () => {
+    const map = createFakeMapLibreMap();
+    ensureGisNovaPlaceLabel(map);
+
+    const layer = map.getLayer(GIS_NOVA_PLACE_LABEL_LAYER_ID);
+    expect(layer?.type).toBe("symbol");
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "text-field")).toBe("נובה");
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "text-font")).toEqual(DARK_BASEMAP_PLACE_TEXT_FONT);
+    expect(map.getLayoutProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "text-size")).toBe(DARK_BASEMAP_KNOWN_PLACE_TEXT_SIZE);
+    expect(map.getPaintProperty(GIS_NOVA_PLACE_LABEL_LAYER_ID, "text-color")).toBe(DARK_BASEMAP_TEXT_COLOR);
+
+    const coords = map.getSource(GIS_NOVA_PLACE_LABEL_LAYER_ID)?.data?.features?.[0]?.geometry?.coordinates;
+    expect(coords[0]).toBeCloseTo(34.46982, 4);
+    expect(coords[1]).toBeCloseTo(31.39722, 4);
+  });
+
+  it("does not add a second Nova layer when GIS restacks", () => {
+    const map = createFakeMapLibreMap();
+    ensureGisNovaPlaceLabel(map);
+    ensureGisNovaPlaceLabel(map);
+    expect(map.getStyle().layers.filter((layer) => layer.id === GIS_NOVA_PLACE_LABEL_LAYER_ID)).toHaveLength(1);
   });
 });

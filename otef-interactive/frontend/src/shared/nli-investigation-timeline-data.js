@@ -11,18 +11,22 @@ import {
   bufferedGradientResource,
   isBufferedGradientStyle,
 } from "./cim-buffered-gradient.js";
+import { aliasNovaSiteOutlineToYeshuv } from "./nli-nova-escape-impact.js";
+import { NLI_NARRATIVES } from "./nli-narratives.js";
+import {
+  buildRouteSettlementCollisionIndex,
+  deriveAchievedSettlementOutlineIds,
+} from "./nli-route-settlement-collisions.js";
 
 const SIDECAR_STATUSES = new Set(["not-required", "loading", "ready", "failed"]);
 
 function normalizeSidecarStatus(value) {
   return SIDECAR_STATUSES.has(value) ? value : "not-required";
 }
-import {
-  buildRouteSettlementCollisionIndex,
-  deriveAchievedSettlementOutlineIds,
-} from "./nli-route-settlement-collisions.js";
 
 export const DEFAULT_INVESTIGATION_SETTLEMENTS_URL = "/otef-interactive/public/processed/layers/nli/investigation_settlements.geojson";
+const YESHUVIM_FULL_ID = "projector_base.ישובים";
+export const DEFAULT_YESHUVIM_URL = `/otef-interactive/public/processed/layers/projector_base/${encodeURIComponent("ישובים.geojson")}`;
 
 function featureList(value) {
   if (Array.isArray(value)) return value;
@@ -32,6 +36,58 @@ function featureList(value) {
 function settlementOutlineObjectId(feature) {
   const props = feature?.properties || {};
   return props.outlineObjectId ?? props.outlineObjectID ?? null;
+}
+
+function packFeatureObjectId(feature) {
+  const props = feature?.properties || {};
+  return props.OBJECTID ?? props.objectid ?? null;
+}
+
+function layerDataUrlFor(deps, fullId) {
+  if (typeof deps.getLayerDataUrl === "function") {
+    try {
+      return deps.getLayerDataUrl(fullId) || null;
+    } catch (_) {
+      return null;
+    }
+  }
+  try {
+    const url = layerRegistry.getLayerDataUrl(fullId);
+    if (url) return url;
+  } catch (_) {
+    // fall through to the pack default
+  }
+  return fullId === YESHUVIM_FULL_ID ? DEFAULT_YESHUVIM_URL : null;
+}
+
+function asNovaYeshuvSettlementFeature(feature) {
+  const outlineId = NLI_NARRATIVES.nova.focusSettlementOutlineId;
+  return {
+    type: "Feature",
+    id: `nli-settlement-outline-${outlineId}`,
+    properties: {
+      outlineObjectId: outlineId,
+      OBJECTID: outlineId,
+      locations: [NLI_NARRATIVES.nova.focusSettlement],
+    },
+    geometry: feature.geometry,
+  };
+}
+
+function mergeNovaYeshuvOutlineFeature(settlementFeatures, yeshuvFeatures) {
+  const outlineId = String(NLI_NARRATIVES.nova.focusSettlementOutlineId);
+  const list = Array.isArray(settlementFeatures) ? [...settlementFeatures] : [];
+  const already = list.some((feature) => {
+    const id = settlementOutlineObjectId(feature) ?? packFeatureObjectId(feature);
+    return id != null && String(id) === outlineId;
+  });
+  if (already) return list;
+  const yeshuv = (Array.isArray(yeshuvFeatures) ? yeshuvFeatures : []).find((feature) => (
+    String(packFeatureObjectId(feature)) === outlineId && feature?.geometry
+  ));
+  if (!yeshuv) return list;
+  list.push(asNovaYeshuvSettlementFeature(yeshuv));
+  return list;
 }
 
 /** Build the exact sidecar location and outline-feature indexes. */
@@ -165,7 +221,10 @@ async function loadSettlementFeatures(deps) {
   } catch (_) {
     return [];
   }
-  return url ? featureList(await fetchJsonSafely(deps, url)) : [];
+  const settlements = url ? featureList(await fetchJsonSafely(deps, url)) : [];
+  const yeshuvUrl = layerDataUrlFor(deps, YESHUVIM_FULL_ID);
+  const yeshuvim = yeshuvUrl ? featureList(await fetchJsonSafely(deps, yeshuvUrl)) : [];
+  return mergeNovaYeshuvOutlineFeature(settlements, yeshuvim);
 }
 
 function invalidateIndexes(data) {
@@ -239,15 +298,18 @@ function routeSettlementCollisionIndex(data) {
 /** Derive outline IDs through cached collision associations, never spatial scans. */
 export function buildInvestigationSettlementOutlineIdsForFrame(data, frame, lineFrame = {}) {
   const routeEnabled = frame?.routeTimelineEnabled !== false;
-  return deriveAchievedSettlementOutlineIds({
-    achievedPolygonBeats: frame?.achievedPolygonBeats || [],
-    polygonFeatures: data?.polygonFeatures || [],
-    locationToOutlineObjectId: data?.locationToOutlineObjectId,
-    collisionIndex: routeSettlementCollisionIndex(data),
-    completedRouteFeatures: routeEnabled ? lineFrame?.completedFeatures || [] : [],
-    activeRouteFeatures: routeEnabled ? lineFrame?.activeFeatures || [] : [],
-    activeRouteProgress: frame?.activeProgress || 0,
-  });
+  return aliasNovaSiteOutlineToYeshuv(
+    deriveAchievedSettlementOutlineIds({
+      achievedPolygonBeats: frame?.achievedPolygonBeats || [],
+      polygonFeatures: data?.polygonFeatures || [],
+      locationToOutlineObjectId: data?.locationToOutlineObjectId,
+      collisionIndex: routeSettlementCollisionIndex(data),
+      completedRouteFeatures: routeEnabled ? lineFrame?.completedFeatures || [] : [],
+      activeRouteFeatures: routeEnabled ? lineFrame?.activeFeatures || [] : [],
+      activeRouteProgress: frame?.activeProgress || 0,
+    }),
+    data?.settlementFeaturesByOutlineId,
+  );
 }
 
 /** Apply injected data and invalidate loaded data when its version changes. */

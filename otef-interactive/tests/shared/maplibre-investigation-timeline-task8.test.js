@@ -173,7 +173,18 @@ describe("Task 8 investigation timeline coordinator", () => {
     const at82 = flowPaintWrites();
     expect(at82).toBeGreaterThan(before);
     expect(map.getStyleCallCount()).toBe(styleScans);
-    expect(map.calls.filter((call) => call.method === "moveLayer")).toEqual([]);
+    expect(map.calls.filter((call) => call.method === "moveLayer")).toEqual([
+      {
+        method: "moveLayer",
+        id: "nli-investigation-settlement-impact-outline",
+        beforeId: "host__people_names",
+      },
+      {
+        method: "moveLayer",
+        id: "nli-investigation-settlement-impact-outline",
+        beforeId: "host__people_names",
+      },
+    ]);
   });
 
   it("does not schedule ambient completed flow in reduced motion", async () => {

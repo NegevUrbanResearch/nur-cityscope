@@ -1,3 +1,4 @@
+import { NLI_NARRATIVES } from "./nli-narratives.js";
 import { buildRouteSettlementCollisionIndex } from "./nli-route-settlement-collisions.js";
 
 export const NOVA_ESCAPE_IMPACT_LAYER_ID = "nli-nova-escape-impact-outline";
@@ -282,6 +283,28 @@ export function escapeImpactOutlineIds({
 
 export function shouldIncludeNarrativeSettlementOutline(narrativeFocus) {
   return narrativeFocus?.id !== "nova";
+}
+
+function outlineIndexHas(index, id) {
+  if (!index || id == null) return false;
+  const key = String(id);
+  if (typeof index.has === "function") return index.has(key);
+  return index[key] != null || Object.prototype.hasOwnProperty.call(index, key);
+}
+
+/** Map Nova site outline 100 onto yeshuv 43 when that geometry is in the settlement index. */
+export function aliasNovaSiteOutlineToYeshuv(outlineIds, settlementFeaturesByOutlineId) {
+  const yeshuvId = String(NLI_NARRATIVES.nova.focusSettlementOutlineId);
+  const hasYeshuv = outlineIndexHas(settlementFeaturesByOutlineId, yeshuvId);
+  const incoming = outlineIds instanceof Set || Array.isArray(outlineIds) ? outlineIds : [];
+  const result = new Set();
+  for (const id of incoming) {
+    if (id == null) continue;
+    const key = String(id);
+    if (hasYeshuv && key === SITE_OUTLINE_ID) result.add(yeshuvId);
+    else result.add(key);
+  }
+  return result;
 }
 
 export const NOVA_PARALLEL_DIM_OPACITY = 0.28;

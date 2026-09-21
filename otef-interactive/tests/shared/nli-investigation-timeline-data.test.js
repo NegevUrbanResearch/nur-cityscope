@@ -7,6 +7,7 @@ import {
   ensureInvestigationLayerFeatures,
   ensureInvestigationPolygonStyle,
   ensureInvestigationBufferedGradient,
+  ensureInvestigationSettlementFeatures,
   getInvestigationTimelineDataDiagnostics,
   refreshInvestigationTimelineData,
 } from "../../frontend/src/shared/nli-investigation-timeline-data.js";
@@ -188,6 +189,71 @@ describe("investigation timeline data store", () => {
     refreshInvestigationTimelineData(data, { settlementFeatures: replacement });
     expect(buildInvestigationSettlementOutlineIdsForFrame(data, frame, lineFrame)).toEqual(new Set(["30"]));
     expect(getInvestigationTimelineDataDiagnostics(data).collisionIndexBuilds).toBe(2);
+  });
+
+  it("lights the Nova yeshuv outline 43 from a נובה polygon, not sidecar site 100", () => {
+    const site = {
+      properties: { outlineObjectId: 100, locations: ["נובה"] },
+      geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] },
+    };
+    const yeshuv = {
+      properties: { outlineObjectId: 43, OBJECTID: 43, locations: ["נובה"] },
+      geometry: { type: "Polygon", coordinates: [[[2, 2], [4, 2], [4, 4], [2, 2]]] },
+    };
+    const data = createInvestigationTimelineData({
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [{ properties: { timeline_minutes: 500, מיקום: "נובה" } }],
+      },
+      settlementFeatures: [site, yeshuv],
+    });
+    const ids = buildInvestigationSettlementOutlineIdsForFrame(data, { achievedPolygonBeats: [500] });
+    expect(ids.has("43")).toBe(true);
+    expect(ids.has("100")).toBe(false);
+  });
+
+  it("merges yeshuv outline 43 when the settlement sidecar only has Nova site 100", async () => {
+    const site = {
+      properties: { outlineObjectId: 100, locations: ["נובה"] },
+      geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] },
+    };
+    const yeshuv = {
+      properties: { OBJECTID: 43 },
+      geometry: { type: "Polygon", coordinates: [[[2, 2], [4, 2], [4, 4], [2, 2]]] },
+    };
+    const data = createInvestigationTimelineData();
+    await ensureInvestigationSettlementFeatures(data, {
+      investigationSettlementsUrl: "/settlements.json",
+      getLayerDataUrl: (id) => (id === "projector_base.ישובים" ? "/yeshuvim.json" : null),
+      fetchJson: async (url) => {
+        if (url === "/settlements.json") return { features: [site] };
+        if (url === "/yeshuvim.json") return { features: [yeshuv] };
+        return null;
+      },
+    });
+    expect(data.settlementFeaturesByOutlineId.get("43")?.geometry).toEqual(yeshuv.geometry);
+    expect(data.settlementFeaturesByOutlineId.get("100")?.geometry).toEqual(site.geometry);
+  });
+
+  it("falls back to the pack yeshuvim URL when the layer registry is not initialized", async () => {
+    const site = {
+      properties: { outlineObjectId: 100, locations: ["נובה"] },
+      geometry: { type: "Polygon", coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] },
+    };
+    const yeshuv = {
+      properties: { OBJECTID: 43 },
+      geometry: { type: "Polygon", coordinates: [[[2, 2], [4, 2], [4, 4], [2, 2]]] },
+    };
+    const yeshuvimUrl = `/otef-interactive/public/processed/layers/projector_base/${encodeURIComponent("ישובים.geojson")}`;
+    const data = createInvestigationTimelineData();
+    await ensureInvestigationSettlementFeatures(data, {
+      investigationSettlementsUrl: "/settlements.json",
+      fetchJson: async (url) => {
+        if (url === "/settlements.json") return { features: [site] };
+        if (url === yeshuvimUrl) return { features: [yeshuv] };
+        return null;
+      },
+    });
+    expect(data.settlementFeaturesByOutlineId.get("43")?.geometry).toEqual(yeshuv.geometry);
   });
 
   it("rebuilds the collision index after in-place mutation with a data-version bump", () => {
