@@ -222,6 +222,53 @@ describe("mountMapLegend", () => {
     mounted.dispose();
   });
 
+  it("publishes a complete projection page snapshot and clears it for right span or producer failure", async () => {
+    const { element } = setupWithDocument();
+    const snapshots = [];
+    const mounted = mountMapLegend({
+      element,
+      surface: "projection",
+      projectionSpan: "left",
+      dataContext: { getLegendSettings: () => ({ language: "en", projection: { left: { fontPx: 16 } } }) },
+      buildModel: async () => model(),
+      onRenderSnapshot: (snapshot) => snapshots.push(snapshot),
+    });
+    await mounted.refresh();
+    const current = mounted.getRenderSnapshot();
+    expect(current.language).toBe("en");
+    expect(current.spanId).toBe("left");
+    expect(current.visible).toBe(true);
+    expect(current.blocks).toHaveLength(1);
+    expect(snapshots.at(-1).blocks).toEqual(current.blocks);
+    mounted.dispose();
+    expect(snapshots.at(-1).visible).toBe(false);
+    expect(snapshots.at(-1).blocks).toEqual([]);
+
+    const rightSnapshots = [];
+    const right = mountMapLegend({
+      element: setup().element,
+      surface: "projection",
+      projectionSpan: "right",
+      buildModel: async () => model(),
+      onRenderSnapshot: (snapshot) => rightSnapshots.push(snapshot),
+    });
+    await right.refresh();
+    expect(rightSnapshots.at(-1).visible).toBe(false);
+    right.dispose();
+
+    const failedSnapshots = [];
+    const failed = mountMapLegend({
+      element: setup().element,
+      surface: "projection",
+      buildModel: async () => { throw new Error("fixture failure"); },
+      onRenderSnapshot: (snapshot) => failedSnapshots.push(snapshot),
+    });
+    await failed.refresh();
+    expect(failedSnapshots.at(-1).visible).toBe(false);
+    expect(failedSnapshots.at(-1).blocks).toEqual([]);
+    failed.dispose();
+  });
+
   it("renders same-pack GIS layers in one group without layer subtitles", async () => {
     const { element } = setup();
     element.clientWidth = 80;

@@ -392,6 +392,7 @@ function updateCaption(state, phase, _previousClock) {
   if (!el) return;
   if (state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY && !state.clockOnlyCaptionRelevant) {
     clearCaption(el);
+    state.captionRenderSnapshot = { model: null, visible: false, phase: state.clockPhase };
     return;
   }
   setCaptionDirRtl(el);
@@ -443,6 +444,7 @@ function updateCaption(state, phase, _previousClock) {
     el.innerHTML = nliExplainerInnerHtml(model, {
       nliCaptionMode: state.nliCaptionMode,
     });
+    state.captionRenderSnapshot = { model, visible: true, phase: state.clockPhase };
     return;
   }
   if (state.explainerDebugVisible) {
@@ -450,6 +452,7 @@ function updateCaption(state, phase, _previousClock) {
     el.innerHTML = nliExplainerInnerHtml(NLI_EXPLAINER_SAMPLE_MODEL, {
       nliCaptionMode: state.nliCaptionMode,
     });
+    state.captionRenderSnapshot = { model: NLI_EXPLAINER_SAMPLE_MODEL, visible: true, phase: state.clockPhase };
     return;
   }
   if (state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY) {
@@ -463,10 +466,12 @@ function updateCaption(state, phase, _previousClock) {
     el.innerHTML = nliExplainerInnerHtml(model, {
       nliCaptionMode: state.nliCaptionMode,
     });
+    state.captionRenderSnapshot = { model, visible: true, phase: state.clockPhase };
     return;
   }
   el.hidden = true;
   el.innerHTML = "";
+  state.captionRenderSnapshot = { model: null, visible: false, phase: state.clockPhase };
 }
 
 function jumpPreviousClock(state, vis, frame) {
@@ -1341,4 +1346,11 @@ export function disposeInvestigationTimelineForMap(map) {
     state.captionEl.innerHTML = "";
   }
   stateByMap.delete(map);
+}
+
+/** Return the canonical caption model already selected for the TD caption. */
+export function getInvestigationTimelineRenderSnapshot(map) {
+  const state = stateByMap.get(map);
+  const snapshot = state?.captionRenderSnapshot;
+  return snapshot ? { ...snapshot, model: snapshot.model ? { ...snapshot.model, rows: snapshot.model.rows?.map((row) => ({ ...row, items: [...(row.items || [])] })) } : null } : null;
 }

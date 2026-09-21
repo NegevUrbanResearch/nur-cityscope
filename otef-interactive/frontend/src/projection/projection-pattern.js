@@ -3,6 +3,7 @@ import { t3ToOutput } from "../shared/projection-config-geometry.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PATTERNS = new Set(["off", "grid", "output_id"]);
+const DEFAULT_PATTERN_FONT_FAMILY = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
 function node(tag) {
   if (typeof document !== "undefined" && typeof document.createElementNS === "function") return document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -13,7 +14,7 @@ function node(tag) {
   };
 }
 
-function sourceToOutput(u, v, config, branch) {
+export function sourceToOutput(u, v, config, branch) {
   const pre = config.pre;
   const radians = (-Number(pre.rotateDeg) * Math.PI) / 180;
   // The camera's pre translation is expressed in canonical 1920×1080
@@ -28,6 +29,25 @@ function sourceToOutput(u, v, config, branch) {
   return t3ToOutput(rotated, branch);
 }
 
+/** Build the validated pattern primitives used by both TD SVG and browser canvas. */
+export function buildProjectionPatternGeometry(command, config, spanId) {
+  const branch = config?.outputs?.[spanId];
+  if (!branch || !command || !PATTERNS.has(command.pattern) || command.pattern === "off") return null;
+  const corners = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([u, v]) => sourceToOutput(u, v, config, branch));
+  const lines = [{ points: [...corners, corners[0]], width: 0.003 }];
+  if (command.pattern === "grid") {
+    for (let i = 1; i < 10; i += 1) {
+      const n = i / 10;
+      lines.push({ points: [sourceToOutput(n, 0, config, branch), sourceToOutput(n, 1, config, branch)], width: 0.001 });
+      lines.push({ points: [sourceToOutput(0, n, config, branch), sourceToOutput(1, n, config, branch)], width: 0.001 });
+    }
+  }
+  const label = command.pattern === "output_id"
+    ? { point: sourceToOutput(0.5, 0.52, config, branch), text: String(spanId).toUpperCase() }
+    : null;
+  return { lines, label };
+}
+
 function drawPath(svg, points, stroke = "white", width = 0.002) {
   const path = node("path");
   path.setAttribute("d", `M ${points.map((p) => `${p.u} ${p.v}`).join(" L ")}`);
@@ -35,7 +55,7 @@ function drawPath(svg, points, stroke = "white", width = 0.002) {
   svg.appendChild(path);
 }
 
-export function createProjectionPattern({ host, spanId, clock = globalThis, table = "otef" } = {}) {
+export function createProjectionPattern({ host, spanId, clock = globalThis, table = "otef", onRenderSnapshot } = {}) {
   let svg = null;
   let timer = null;
   let disposed = false;
@@ -43,7 +63,7 @@ export function createProjectionPattern({ host, spanId, clock = globalThis, tabl
   let activeCommand = null;
 
   const clearTimer = () => { if (timer !== null && typeof clock.clearTimeout === "function") clock.clearTimeout(timer); timer = null; };
-  const remove = ({ clearCommand = true } = {}) => { clearTimer(); if (svg?.parentElement?.removeChild) svg.parentElement.removeChild(svg); else if (svg && host?.removeChild) host.removeChild(svg); svg = null; if (clearCommand) activeCommand = null; };
+  const remove = ({ clearCommand = true } = {}) => { clearTimer(); if (svg?.parentElement?.removeChild) svg.parentElement.removeChild(svg); else if (svg && host?.removeChild) host.removeChild(svg); svg = null; if (clearCommand) activeCommand = null; onRenderSnapshot?.({ active: false, pattern: "off", spanId }); };
   const armExpiry = () => { clearTimer(); if (typeof clock.setTimeout === "function") timer = clock.setTimeout(remove, 3000); };
 
   function render(command, renewExpiry) {
@@ -53,20 +73,20 @@ export function createProjectionPattern({ host, spanId, clock = globalThis, tabl
     svg.setAttribute("viewBox", "0 0 1 1"); svg.setAttribute("preserveAspectRatio", "none");
     svg.dataset.pattern = command.pattern;
     svg.style.position = "absolute"; svg.style.inset = "0"; svg.style.width = "100%"; svg.style.height = "100%"; svg.style.pointerEvents = "none"; svg.style.zIndex = "20";
-    const branch = config.outputs[spanId];
-    const corners = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([u, v]) => sourceToOutput(u, v, config, branch));
-    drawPath(svg, [...corners, corners[0]], "#fff", 0.003);
-    if (command.pattern === "grid") {
-      for (let i = 1; i < 10; i += 1) {
-        const n = i / 10;
-        drawPath(svg, [sourceToOutput(n, 0, config, branch), sourceToOutput(n, 1, config, branch)], "#fff", 0.001);
-        drawPath(svg, [sourceToOutput(0, n, config, branch), sourceToOutput(1, n, config, branch)], "#fff", 0.001);
-      }
-    } else {
-      const point = sourceToOutput(0.5, 0.52, config, branch);
-      const label = node("text"); label.setAttribute("x", point.u); label.setAttribute("y", point.v); label.setAttribute("text-anchor", "middle"); label.setAttribute("fill", "white"); label.setAttribute("font-size", "0.08"); label.textContent = spanId.toUpperCase(); svg.appendChild(label);
+    const geometry = buildProjectionPatternGeometry(command, config, spanId);
+    for (const line of geometry.lines) drawPath(svg, line.points, "#fff", line.width);
+    let labelFontFamily = DEFAULT_PATTERN_FONT_FAMILY;
+    if (geometry.label) {
+      const label = node("text"); label.setAttribute("x", geometry.label.point.u); label.setAttribute("y", geometry.label.point.v); label.setAttribute("text-anchor", "middle"); label.setAttribute("fill", "white"); label.setAttribute("font-size", "0.08"); label.textContent = geometry.label.text; svg.appendChild(label);
     }
     if (host?.appendChild) host.appendChild(svg);
+    const label = svg?.querySelector?.("text")
+      || svg?.children?.find?.((child) => String(child?.textContent || "") === String(geometry?.label?.text || ""))
+      || null;
+    if (label && typeof getComputedStyle === "function") {
+      labelFontFamily = getComputedStyle(label).fontFamily || labelFontFamily;
+    }
+    onRenderSnapshot?.({ active: true, pattern: command.pattern, command: { ...command }, config, fontFamily: labelFontFamily, spanId });
     if (renewExpiry) armExpiry();
   }
 

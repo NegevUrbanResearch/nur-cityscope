@@ -31,9 +31,12 @@ function makeHarness(spanId = "left", instanceId = "11111111-1111-4111-8111-1111
   };
   const runtime = createProjectionConfigRuntime({
     map, spanId, client, socket, instanceId,
-    requestFrame: (fn) => { queued.push(fn); return queued.length; },
-    cancelFrame: vi.fn(),
-    applyConfig: (config, revision) => { applied.push({ config, revision }); options.applyConfig?.(config, revision, { render: () => [...renderListeners].forEach((fn) => fn()) }); },
+      requestFrame: (fn) => { queued.push(fn); return queued.length; },
+      cancelFrame: vi.fn(),
+      applyConfig: (config, revision) => { applied.push({ config, revision }); options.applyConfig?.(config, revision, { render: () => [...renderListeners].forEach((fn) => fn()) }); },
+      drawCompletion: options.drawCompletion,
+      route: options.route,
+      baseline: options.baseline,
   });
   return {
     runtime,
@@ -134,6 +137,24 @@ describe("projection config runtime", () => {
     h.render();
     expect(h.sent()).toContainEqual(expect.objectContaining({
       type: "otef_projection_applied", revision: 3, success: true, output: "left",
+    }));
+  });
+
+  test("browser acknowledgement waits for the completed compositor draw and carries route identity", async () => {
+    let drawn = false;
+    const h = makeHarness("left", "11111111-1111-4111-8111-111111111111", {
+      drawCompletion: () => drawn,
+      route: "browser",
+      baseline: () => ({ type: "tdMesh", assetId: "left-baseline", sha256: "a".repeat(64) }),
+    });
+    await h.runtime.start();
+    h.state(3); h.frame(); h.render();
+    expect(h.sent().filter((message) => message.type === "otef_projection_applied")).toEqual([]);
+    drawn = true;
+    h.render();
+    expect(h.sent()).toContainEqual(expect.objectContaining({
+      type: "otef_projection_applied", route: "browser", revision: 3, success: true,
+      baseline: { type: "tdMesh", assetId: "left-baseline", sha256: "a".repeat(64) },
     }));
   });
 
@@ -306,6 +327,21 @@ describe("projection config runtime", () => {
     const next = { ...DEFAULT_PROJECTION_CONFIG, pre: { ...DEFAULT_PROJECTION_CONFIG.pre, tx: 0.2 } };
     h.state(2, next); h.frame(); h.error({ error: new Error("render failed") });
     expect(h.applied.at(-1).revision).toBe(2);
+    expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 2, success: false, error: "render failed" }));
+  });
+
+  test("does not claim rollback restoration when its draw does not complete", async () => {
+    let drawCount = 0;
+    const h = makeHarness("left", "11111111-1111-4111-8111-111111111111", {
+      drawCompletion: () => ++drawCount === 1,
+    });
+    const rollback = vi.fn();
+    h.map._otefNliNameFieldController = { _rollbackProjectionConfig: rollback };
+    await h.runtime.start();
+    h.state(1); h.frame(); h.render();
+    const next = { ...DEFAULT_PROJECTION_CONFIG, pre: { ...DEFAULT_PROJECTION_CONFIG.pre, tx: 0.2 } };
+    h.state(2, next); h.frame(); h.error({ error: new Error("render failed") });
+    expect(rollback).toHaveBeenCalledWith(DEFAULT_PROJECTION_CONFIG, 2);
     expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 2, success: false, error: "render failed" }));
   });
 

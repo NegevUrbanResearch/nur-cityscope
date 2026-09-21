@@ -29,6 +29,7 @@ function installMapLegendLifecycle({
   registry,
   mount = mountMapLegend,
   onLegendSettings,
+  onRenderSnapshot,
 } = {}) {
   const mounted = mount({
     element,
@@ -36,6 +37,7 @@ function installMapLegendLifecycle({
     projectionSpan,
     dataContext,
     registry,
+    onRenderSnapshot,
   });
   const unsubscribers = [];
   let disposed = false;
@@ -62,6 +64,7 @@ function installMapLegendLifecycle({
   return {
     refresh: scheduleRefresh,
     setEditing: (editing) => mounted.setEditing(editing),
+    getRenderSnapshot: () => mounted.getRenderSnapshot?.() || null,
     dispose() {
       if (disposed) return;
       disposed = true;

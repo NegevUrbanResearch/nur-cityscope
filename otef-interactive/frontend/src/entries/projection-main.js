@@ -31,6 +31,9 @@ import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
 import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
 import { installProjectionPreviewBridge } from "../projection/projection-preview-bridge.js";
+import { createProjectionConfigClient } from "../shared/projection-config-client.js";
+import { createProjectionConfigRuntime } from "../projection/projection-config-runtime.js";
+import { createUuid } from "../shared/uuid.js";
 import { createProjectionNarrativeController } from "../projection/projection-narrative-controller.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
@@ -49,6 +52,8 @@ import {
   parseProjectionSpanId,
   restoreProjectionSpanBase,
   runWhenMapIdle,
+  createProjectionImageDescriptor,
+  createProjectionMapDescriptor,
 } from "../projection/projection-span-view.js";
 import {
   DEFAULT_PROJECTION_CONFIG,
@@ -74,10 +79,14 @@ import {
   NLI_LABEL_HEADING_STORAGE_KEY,
   readNliLabelHeading,
 } from "../shared/nli-label-heading.js";
-import { createProjectionConfigClient } from "../shared/projection-config-client.js";
-import { createUuid } from "../shared/uuid.js";
-import { createProjectionConfigRuntime } from "../projection/projection-config-runtime.js";
 import { createProjectionPattern } from "../projection/projection-pattern.js";
+import { createProjectionCaptionAdapter } from "../projection/projection-caption-adapter.js";
+import { createProjectionLegendAdapter } from "../projection/projection-legend-adapter.js";
+import { createProjectionPatternAdapter } from "../projection/projection-pattern-adapter.js";
+import { getInvestigationTimelineRenderSnapshot } from "../shared/maplibre-investigation-timeline.js";
+import { loadCapturedProjectionFraming } from "../projection/projection-captured-baseline.js";
+import { visibleProjectionBrowserError } from "../projection/projection-browser-error.js";
+import { createProjectionLifecycle } from "../projection/projection-lifecycle.js";
 import {
   createLegendStyleLoadRefresh,
   installMapLegendLifecycle,
@@ -197,6 +206,41 @@ function toggleProjectionFullscreen() {
 async function bootstrapProjectionRuntime() {
   const previewMode = new URLSearchParams(window.location.search).get("preview") === "1";
   if (previewMode) document.body.classList.add("projection-preview");
+  const startupSearch = typeof window !== "undefined" ? window.location.search : "";
+  const projectionSpanId = parseProjectionSpanId(startupSearch);
+  const projectionOutputMode = new URLSearchParams(String(startupSearch).replace(/^\?/, "")).get("outputMode") === "browser"
+    ? "browser"
+    : "td";
+  const browserMode = !!(projectionSpanId && projectionOutputMode === "browser");
+  const projectionLifecycle = createProjectionLifecycle();
+  let runtimeDisposed = false;
+  const disposers = [];
+  const isRuntimeAlive = () => !runtimeDisposed && projectionLifecycle.isAlive();
+  const registerDisposer = (fn) => {
+    if (typeof fn !== "function") return;
+    if (runtimeDisposed) {
+      try { fn(); } catch (error) { console.warn("[projection-main] late disposer failed", error); }
+      return;
+    }
+    disposers.push(fn);
+  };
+  const cleanup = () => {
+    if (runtimeDisposed) return;
+    runtimeDisposed = true;
+    projectionLifecycle.dispose();
+    while (disposers.length > 0) {
+      const fn = disposers.pop();
+      try {
+        fn();
+      } catch (error) {
+        console.warn("[projection-main] disposer failed", error);
+      }
+    }
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("beforeunload", cleanup, { once: true });
+    registerDisposer(() => window.removeEventListener("beforeunload", cleanup));
+  }
   const modules = [
     "../shared/logger.js",
     "../shared/map-projection-config.js",
@@ -213,16 +257,21 @@ async function bootstrapProjectionRuntime() {
 
   for (const mod of modules) {
     await import(mod);
+    if (!isRuntimeAlive()) return;
   }
 
   await OTEFDataContext.init("otef");
+  if (!isRuntimeAlive()) return;
   await layerRegistry.init();
+  if (!isRuntimeAlive()) return;
 
-  const boundsResp = await fetch("data/model-bounds.json");
+  const boundsResp = await fetch("data/model-bounds.json", { signal: projectionLifecycle.signal });
+  if (!isRuntimeAlive()) return;
   if (!boundsResp.ok) {
     throw new Error(`Failed to load model-bounds.json (${boundsResp.status})`);
   }
   const modelBoundsData = await boundsResp.json();
+  if (!isRuntimeAlive()) return;
 
   const itmBounds = {
     west: modelBoundsData.west ?? modelBoundsData.bounds?.west,
@@ -274,15 +323,32 @@ async function bootstrapProjectionRuntime() {
   if (typeof document !== "undefined" && document.fonts && typeof document.fonts.load === "function") {
     try {
       await document.fonts.load("11px 'Guttman Hatzvi'");
+      if (!isRuntimeAlive()) return;
     } catch (err) {
       console.warn("[projection-main] Guttman Hatzvi font preload failed; labels may flash", err);
     }
   }
 
-  const projectionSpanId = parseProjectionSpanId(
-    typeof window !== "undefined" ? window.location.search : "",
-  );
+  let capturedProjection = null;
   let effectiveProjectionConfig = DEFAULT_PROJECTION_CONFIG;
+  if (projectionSpanId) {
+    try {
+      capturedProjection = await loadCapturedProjectionFraming({ signal: projectionLifecycle.signal });
+    } catch (error) {
+      if (browserMode && isRuntimeAlive() && error?.name !== "AbortError") {
+        visibleProjectionBrowserError(document.getElementById("displayContainer"), error);
+      }
+      if (!browserMode || error?.name === "AbortError") {
+        cleanup();
+        return;
+      }
+      console.warn("[projection-main] captured framing unavailable; browser calibration will use the saved identity/default until a TD baseline is available", error);
+      capturedProjection = null;
+      effectiveProjectionConfig = DEFAULT_PROJECTION_CONFIG;
+    }
+    if (capturedProjection) effectiveProjectionConfig = capturedProjection.framing;
+  }
+  if (!isRuntimeAlive()) return;
   const getEffectiveProjectionConfig = () => effectiveProjectionConfig;
   const displayContainerEl = document.getElementById("displayContainer");
   if (projectionSpanId) {
@@ -294,10 +360,15 @@ async function bootstrapProjectionRuntime() {
       config: effectiveProjectionConfig,
     });
   }
+  if (!isRuntimeAlive()) return;
   const urlOrConfigPixelRatio = resolveProjectionMapPixelRatio();
   const map = createProjectionMap("projectionMap", modelBounds, {
     ...(urlOrConfigPixelRatio !== undefined ? { pixelRatio: urlOrConfigPixelRatio } : {}),
+    ...(projectionSpanId && projectionOutputMode === "browser"
+      ? { canvasContextAttributes: { preserveDrawingBuffer: true } }
+      : {}),
   });
+  let browserSurface = null;
   if (typeof window !== "undefined") {
     window._maplibreMap = map;
   }
@@ -340,6 +411,7 @@ async function bootstrapProjectionRuntime() {
   map.getEffectiveProjectionConfig = getEffectiveProjectionConfig;
   map.setEffectiveProjectionConfig = projectionConfigBridge.setEffectiveConfig;
   let projectionRuntime = null;
+  let projectionPattern = null;
   let lastViewport = null;
   /** @type {ReturnType<import("../shared/slideshow-pack-runtime.js").createSlideshowPackRuntime> | null} */
   let slideshowRuntime = null;
@@ -355,27 +427,10 @@ async function bootstrapProjectionRuntime() {
     }
   };
 
-  const disposers = [];
   /** @type {null | { toggle: () => void; setVisible: (v: boolean) => void; getActive: () => boolean; dispose: () => void }} */
   let shemotLabelDebugApi = null;
   /** @type {null | { toggle: () => void; setVisible: (v: boolean) => void; isVisible: () => boolean; dispose: () => void }} */
   let nliExplainerDebugApi = null;
-  const registerDisposer = (fn) => {
-    if (typeof fn === "function") disposers.push(fn);
-  };
-  const cleanup = () => {
-    while (disposers.length > 0) {
-      const fn = disposers.pop();
-      try {
-        fn();
-      } catch (error) {
-        console.warn("[projection-main] disposer failed", error);
-      }
-    }
-  };
-  if (typeof window !== "undefined") {
-    window.addEventListener("beforeunload", cleanup, { once: true });
-  }
 
   /** Tesuga reads Web Render info DAT `title`; keep in sync with `slideshowRuntime.isActive()`. */
   let presentationPollId = null;
@@ -446,12 +501,20 @@ async function bootstrapProjectionRuntime() {
   }
 
   let projectionMapBooted = false;
-  map.on("load", async () => {
+  const onProjectionMapLoad = async () => {
+    if (!isRuntimeAlive()) return;
     if (projectionMapBooted) return;
     projectionMapBooted = true;
+    const captionAdapter = browserMode ? createProjectionCaptionAdapter({}) : null;
+    const legendAdapter = browserMode ? createProjectionLegendAdapter({}) : null;
+    const patternAdapter = browserMode ? createProjectionPatternAdapter({ spanId: projectionSpanId }) : null;
+    if (captionAdapter) registerDisposer(() => captionAdapter.dispose());
+    if (legendAdapter) registerDisposer(() => legendAdapter.dispose());
+    if (patternAdapter) registerDisposer(() => patternAdapter.dispose());
     const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "projection", projectionSpan: projectionSpanId, motionMode: resolveMotionMode() });
     registerDisposer(() => nameFieldController.dispose());
-    nameFieldController.setProjectionConfig(DEFAULT_PROJECTION_CONFIG);
+    if (projectionSpanId) nameFieldController.setProjectionConfig(effectiveProjectionConfig);
+    else nameFieldController.setProjectionConfig(DEFAULT_PROJECTION_CONFIG);
     if (modelBounds && modelBounds.bounds && typeof map.fitBounds === "function") {
       map.fitBounds(modelBounds.bounds, { animate: false, padding: 0 });
     }
@@ -464,15 +527,14 @@ async function bootstrapProjectionRuntime() {
     const displayContainer = document.getElementById("displayContainer");
     const { host: nliExplainerHost, captionEl: nliExplainerCaptionEl } =
       ensureNliExplainerHost(displayContainer);
+    let currentCaptionLayout = {};
     const applyStoredExplainerLayout = () => {
       const search = typeof window !== "undefined" ? window.location.search : "";
       const remote = OTEFDataContext.getNliClockLayout?.()?.projection;
       const stored = remote && typeof remote === "object" ? remote : {};
       const spanKey = nliExplainerSpanKey(search);
-      applyNliExplainerLayout(
-        nliExplainerHost,
-        mergeNliExplainerLayout(spanKey, stored, MapProjectionConfig.NLI_EXPLAINER_LAYOUT),
-      );
+      currentCaptionLayout = mergeNliExplainerLayout(spanKey, stored, MapProjectionConfig.NLI_EXPLAINER_LAYOUT);
+      applyNliExplainerLayout(nliExplainerHost, currentCaptionLayout);
       applyNliExplainerHostPresence(nliExplainerHost, spanKey);
     };
     applyStoredExplainerLayout();
@@ -483,6 +545,7 @@ async function bootstrapProjectionRuntime() {
     await new Promise((resolve) => {
       window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
     });
+    if (!isRuntimeAlive()) return;
     const legendElement = document.getElementById("mapLegend");
     const legendSpan = nliExplainerSpanKey(
       typeof window !== "undefined" ? window.location.search : "",
@@ -506,6 +569,10 @@ async function bootstrapProjectionRuntime() {
         const projection = settings?.projection || {};
         const saved = projection[legendSpan];
         if (saved) legendLayout?.applyServerSettings?.(saved);
+      },
+      onRenderSnapshot: (snapshot) => {
+        legendAdapter?.sync(snapshot);
+        browserSurface?.draw?.();
       },
     });
     const refreshLegendAfterStyleLoad = createLegendStyleLoadRefresh(
@@ -581,6 +648,12 @@ async function bootstrapProjectionRuntime() {
         getPersonSelection: () => OTEFDataContext.getPersonSelection(),
         narrativeFocus: projectionNarrativeController?.getDefinition(),
         parallelImpactIds,
+      }).then(() => {
+        captionAdapter?.sync({
+          snapshot: getInvestigationTimelineRenderSnapshot(map),
+          layout: currentCaptionLayout,
+        });
+        browserSurface?.draw?.();
       });
     };
     try {
@@ -621,52 +694,25 @@ async function bootstrapProjectionRuntime() {
       syncContextInvestigation();
     };
 
-    if (previewMode) registerDisposer(installProjectionPreviewBridge({
-      win: window, output: projectionSpanId, map, nameFieldController, syncContextInvestigation,
-    }));
-
     if (projectionSpanId && !previewMode && OTEFDataContext._wsClient) {
-      const projectionConfigClient = createProjectionConfigClient({
-        table: "otef",
-        sourceId: createUuid(),
-        socket: OTEFDataContext._wsClient,
-      });
-      const projectionPattern = createProjectionPattern({
+      projectionPattern = createProjectionPattern({
         host: document.getElementById("projectionMap") || displayContainer,
         spanId: projectionSpanId,
+        onRenderSnapshot: (snapshot) => {
+          patternAdapter?.sync(snapshot);
+          browserSurface?.draw?.();
+        },
       });
+      projectionPattern.setConfig(effectiveProjectionConfig);
       const patternHandler = (message) => projectionPattern.receive(message);
       const disconnectPattern = () => projectionPattern.clear();
       OTEFDataContext._wsClient.on("otef_projection_pattern", patternHandler);
       OTEFDataContext._wsClient.on("disconnect", disconnectPattern);
-      const applyEffectiveProjectionConfig = (config, revision) => {
-        if (map.setEffectiveProjectionConfig(config, revision) === false) {
-          throw new Error("projection camera rejected calibration");
-        }
-        if (typeof nameFieldController.setProjectionConfig === "function" && !nameFieldController.setProjectionConfig(config, revision)) {
-          throw new Error("projection names rejected calibration");
-        }
-        projectionPattern.setConfig(config);
-        syncContextInvestigation();
-        return true;
-      };
-      projectionRuntime = createProjectionConfigRuntime({
-        map,
-        spanId: projectionSpanId,
-        client: projectionConfigClient,
-        socket: OTEFDataContext._wsClient,
-        instanceId: createUuid(),
-        applyConfig: applyEffectiveProjectionConfig,
-      });
       registerDisposer(() => {
-        projectionRuntime.stop();
-        projectionConfigClient.stop?.();
         projectionPattern.dispose();
+        projectionPattern = null;
         OTEFDataContext._wsClient.off?.("otef_projection_pattern", patternHandler);
         OTEFDataContext._wsClient.off?.("disconnect", disconnectPattern);
-      });
-      void projectionRuntime.start().catch((error) => {
-        console.warn("[projection-main] projection config runtime failed", error);
       });
     }
     novaEscapeCoordinator = createNovaEscapeCoordinator({
@@ -752,6 +798,7 @@ async function bootstrapProjectionRuntime() {
       groupsOverride,
       layerStyleOptions,
     } = {}) => {
+      if (!isRuntimeAlive()) return;
       const rawGroups = groupsOverride ?? getEffectiveProjectionLayerGroups();
       const currentGroups = asLayerGroupsArray(rawGroups);
 
@@ -796,6 +843,7 @@ async function bootstrapProjectionRuntime() {
       }
 
       const maplibregl = await resolveMaplibregl();
+      if (!isRuntimeAlive()) return;
       for (const fullId of toRefresh) {
         if (fromSlideshowTick && hasMapLibreLayerWithPrefix(map, fullId)) {
           continue;
@@ -857,11 +905,106 @@ async function bootstrapProjectionRuntime() {
     }
 
     await loadProjectionCuratedLayers(map);
+    if (!isRuntimeAlive()) return;
+
+    if (browserMode) {
+      try {
+        const { createProjectionBrowserSurface } = await import("../projection/projection-browser-route.js");
+        if (!isRuntimeAlive()) return;
+        const renderBrowserScene = () => {
+          // MapLibre render ticks carry the canonical timeline snapshot forward;
+          // the caption adapter caches unchanged snapshots and only rerasterizes
+          // when the producer's model or layout actually changes.
+          captionAdapter?.sync({
+            snapshot: getInvestigationTimelineRenderSnapshot(map),
+            layout: currentCaptionLayout,
+          });
+          return {
+          image: createProjectionImageDescriptor({ map, imageEl: modelImgEl, config: effectiveProjectionConfig, spanId: projectionSpanId }),
+          map: createProjectionMapDescriptor({ map, config: effectiveProjectionConfig, spanId: projectionSpanId }),
+          caption: captionAdapter?.draw?.(),
+          pattern: patternAdapter?.draw?.(),
+          legend: legendAdapter?.draw?.(),
+          };
+        };
+        const hiddenSources = [
+          document.getElementById("projectionImageClip"),
+          document.getElementById("projectionMap"),
+          nliExplainerHost,
+          legendElement,
+        ];
+        registerDisposer(() => browserSurface?.dispose?.());
+        browserSurface = await createProjectionBrowserSurface({
+          host: displayContainer,
+          spanId: projectionSpanId,
+          image: modelImgEl,
+          mapCanvas: map.getCanvas?.(),
+          getScene: renderBrowserScene,
+          hideTargets: hiddenSources,
+          signal: projectionLifecycle.signal,
+          initialConfig: effectiveProjectionConfig,
+          onContextLost: () => projectionRuntime?.invalidate?.(),
+          onContextRestored: () => { projectionRuntime?.reapply?.(); map.triggerRepaint?.(); },
+        });
+        if (!isRuntimeAlive()) {
+          browserSurface.dispose();
+          browserSurface = null;
+          return;
+        }
+        const onMapRender = () => browserSurface?.draw?.();
+        map.on?.("render", onMapRender);
+        registerDisposer(() => map.off?.("render", onMapRender));
+      } catch (error) {
+        if (isRuntimeAlive() && error?.name !== "AbortError") {
+          visibleProjectionBrowserError(displayContainer, error);
+          console.warn("[projection-main] browser projection unavailable", error);
+        }
+        return;
+      }
+    }
+
+    if (previewMode) registerDisposer(installProjectionPreviewBridge({
+      win: window,
+      output: projectionSpanId,
+      map,
+      nameFieldController,
+      syncContextInvestigation,
+      applyProjectionConfig: browserMode ? (config) => browserSurface?.applyConfig?.(config) !== false : null,
+    }));
+
+    if (browserMode && !previewMode && OTEFDataContext._wsClient) {
+      const sourceId = createUuid();
+      const configClient = createProjectionConfigClient({
+        table: "otef",
+        sourceId,
+        socket: OTEFDataContext._wsClient,
+      });
+      const applyBrowserConfig = (config, revision) => {
+        if (browserSurface?.applyConfig?.(config) === false) throw new Error("browser projection rejected calibration");
+        if (projectionConfigBridge.setEffectiveConfig(config, revision) === false) throw new Error("projection camera rejected calibration");
+        if (!nameFieldController.setProjectionConfig(config, revision)) throw new Error("projection labels rejected calibration");
+        projectionPattern?.setConfig?.(config);
+      };
+      projectionRuntime = createProjectionConfigRuntime({
+        map,
+        spanId: projectionSpanId,
+        client: configClient,
+        socket: OTEFDataContext._wsClient,
+        instanceId: sourceId,
+        applyConfig: applyBrowserConfig,
+        drawCompletion: () => browserSurface?.draw?.() === true,
+        route: "browser",
+        baseline: (config) => browserSurface?.getBaselineIdentity?.(config) || null,
+      });
+      registerDisposer(() => { projectionRuntime?.stop?.(); projectionRuntime = null; configClient.stop?.(); });
+      await projectionRuntime.start();
+    }
 
     try {
       const { installShemotLabelDebug } = await import(
         "../projection/projection-shemot-label-debug.js"
       );
+      if (!isRuntimeAlive()) return;
       shemotLabelDebugApi = installShemotLabelDebug({ map, registerDisposer });
       if (typeof window !== "undefined" && shemotLabelDebugApi) {
         window.ShemotLabelDebug = shemotLabelDebugApi;
@@ -1019,12 +1162,24 @@ async function bootstrapProjectionRuntime() {
     } catch (e) {
       console.warn("[projection-main] Curated layer modules not available:", e);
     }
-  });
+  };
+  const projectionMapLoadListener = () => {
+    void onProjectionMapLoad().catch((error) => {
+      if (browserMode && isRuntimeAlive() && error?.name !== "AbortError") {
+        visibleProjectionBrowserError(document.getElementById("displayContainer"), error);
+      }
+      console.error("[projection-main] projection map startup failed", error);
+    });
+  };
+  map.on("load", projectionMapLoadListener);
+  registerDisposer(() => map.off?.("load", projectionMapLoadListener));
   if (map.loaded() || map._loaded) map.fire("load");
 
   if (previewMode) return;
   await import("../projection/projection-bounds-editor.js");
+  if (!isRuntimeAlive()) return;
   await import("../projection/projection-rotation-editor.js");
+  if (!isRuntimeAlive()) return;
 
   const getDisplayedImageBounds = () => {
     const container = document.getElementById("displayContainer");
@@ -1251,4 +1406,12 @@ async function boot() {
   await bootstrapProjectionRuntime();
 }
 
-boot().catch((error) => console.error("[frontend-b] projection bootstrap failed", error));
+boot().catch((error) => {
+  const search = typeof window !== "undefined" ? window.location.search : "";
+  const browserMode = parseProjectionSpanId(search) &&
+    new URLSearchParams(String(search).replace(/^\?/, "")).get("outputMode") === "browser";
+  if (browserMode) {
+    visibleProjectionBrowserError(document.getElementById("displayContainer"), error);
+  }
+  console.error("[frontend-b] projection bootstrap failed", error);
+});

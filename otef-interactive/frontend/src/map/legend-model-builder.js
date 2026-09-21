@@ -253,6 +253,18 @@ function symbolIRToLegendItems(symbol, label, geometryType, presentation = {}) {
     const gradient = fills.find(
       (f) => f.fillType === "gradient" && Array.isArray(f.resolvedColors),
     );
+    const gradientBands = gradient
+      ? gradient.resolvedColors
+        .filter((color) => typeof color === "string" && color.trim())
+        .map((color, index, colors) => ({
+          color,
+          opacity: Array.isArray(gradient.resolvedOpacities)
+            && Number.isFinite(gradient.resolvedOpacities[index])
+            ? gradient.resolvedOpacities[index]
+            : 1,
+          size: 1 - index / colors.length,
+        }))
+      : null;
     if (gradient) {
       fill = resolvedColorsToLegendFill(gradient.resolvedColors, gradient.resolvedOpacities) || fill;
     }
@@ -273,6 +285,7 @@ function symbolIRToLegendItems(symbol, label, geometryType, presentation = {}) {
       })),
       hatchStyle,
       hatchStyle2,
+      ...(gradientBands?.length ? { bands: gradientBands } : {}),
     });
     return { items, singleRowMultiSymbol: false };
   }
