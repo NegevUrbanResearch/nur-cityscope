@@ -663,7 +663,6 @@ function narrativeSettlementOutlineId(state) {
 }
 
 function includeNarrativeSettlementOutline(outlineIds, state) {
-  if (!shouldIncludeNarrativeSettlementOutline(state?.narrativeFocus)) return outlineIds;
   const focusOutlineId = narrativeSettlementOutlineId(state);
   if (focusOutlineId == null) return outlineIds;
   const merged = Array.isArray(outlineIds) ? [...outlineIds] : [];

@@ -35,7 +35,6 @@ const NARRATIVE_SETTLEMENT_OUTLINE = NLI_VISUAL_TOKENS.narrativeSettlementOutlin
 const NOTES_BATTLE = "מרחב לחימה - קרב";
 const NOTES_KIDNAP = "מוקד חטיפה";
 const NOTES_FIRE = "שריפה";
-const KNOWN_NOTES = Object.freeze([NOTES_BATTLE, NOTES_KIDNAP, NOTES_FIRE]);
 const CATEGORY_SPECS = Object.freeze([
   Object.freeze({ suffix: "battle", notes: NOTES_BATTLE }),
   Object.freeze({ suffix: "kidnap", notes: NOTES_KIDNAP }),
@@ -45,13 +44,11 @@ const CATEGORY_FILL_LAYER_IDS = Object.freeze({
   battle: `${CATEGORY_SOURCE_ID}-fill-battle`,
   kidnap: `${CATEGORY_SOURCE_ID}-fill-kidnap`,
   fire: `${CATEGORY_SOURCE_ID}-fill-fire`,
-  fallback: `${CATEGORY_SOURCE_ID}-fill-fallback`,
 });
 const CATEGORY_LINE_LAYER_IDS = Object.freeze({
   battle: `${CATEGORY_SOURCE_ID}-line-battle`,
   kidnap: `${CATEGORY_SOURCE_ID}-line-kidnap`,
   fire: `${CATEGORY_SOURCE_ID}-line-fire`,
-  fallback: `${CATEGORY_SOURCE_ID}-line-fallback`,
 });
 const CATEGORY_LAYER_IDS = Object.freeze([
   ...Object.values(CATEGORY_FILL_LAYER_IDS),
@@ -186,10 +183,6 @@ function achievedPolygonFeatures(features, frame) {
 
 function notesEqualsFilter(notes) {
   return ["==", ["get", "Notes"], notes];
-}
-
-function unmatchedNotesFilter() {
-  return ["!", ["in", ["get", "Notes"], ["literal", [...KNOWN_NOTES]]]];
 }
 
 function setPaint(map, id, property, value) {
@@ -513,24 +506,32 @@ export function createInvestigationPolygonRenderer(
     else map.addLayer(layer);
   }
 
-  function categoryFillPaint(token) {
-    return {
-      "fill-color": token.fill,
-      "fill-opacity": token.fillOpacity,
-    };
-  }
-
-  function categoryLinePaint(token) {
-    const width = 1.8 * Number(displayProfile.lineWidthMultiplier || 1);
-    return {
-      "line-color": token.outline,
-      "line-opacity": 0.95,
-      "line-width": width,
-    };
+  function restackOwnedOverlays() {
+    if (!map || typeof map.moveLayer !== "function") return;
+    const beforeId = overlayBeforeId();
+    const owned = [];
+    const seen = new Set();
+    for (const id of [...state.processedFillLayerIds, ...CATEGORY_LAYER_IDS, SETTLEMENT_LAYER_ID]) {
+      if (!id || seen.has(id) || !layerPresent(map, id)) continue;
+      seen.add(id);
+      owned.push(id);
+    }
+    for (const id of owned) {
+      try {
+        if (beforeId) map.moveLayer(id, beforeId);
+        else map.moveLayer(id);
+      } catch (_) {
+        // Style can be replaced between collection and move.
+      }
+    }
   }
 
   function mountCategoryOverlay() {
     if (state.disposed || !map) return;
+    if (!state.processedStyleActive || state.processedStyleInvalid) {
+      state.categoryMounted = false;
+      return;
+    }
     if (!sourcePresent(map, CATEGORY_SOURCE_ID) && typeof map.addSource === "function") {
       map.addSource(CATEGORY_SOURCE_ID, { type: "geojson", data: featureCollection() });
     }
@@ -541,64 +542,16 @@ export function createInvestigationPolygonRenderer(
         data: featureCollection(),
       });
     }
-    if (state.processedStyleActive && !sourcePresent(map, BUFFERED_GRADIENT_SOURCE_ID) && typeof map.addSource === "function") {
+    if (!sourcePresent(map, BUFFERED_GRADIENT_SOURCE_ID) && typeof map.addSource === "function") {
       map.addSource(BUFFERED_GRADIENT_SOURCE_ID, { type: "geojson", data: featureCollection() });
     }
     if (typeof map.addLayer !== "function") {
       state.categoryMounted = sourcePresent(map, CATEGORY_SOURCE_ID) && sourcePresent(map, CATEGORY_OUTLINE_SOURCE_ID);
       return;
     }
-    if (state.processedStyleActive) {
-      mountProcessedCategoryLayers();
-      state.categoryMounted = sourcePresent(map, CATEGORY_SOURCE_ID) && sourcePresent(map, CATEGORY_OUTLINE_SOURCE_ID);
-      return;
-    }
-    const tokens = NLI_VISUAL_TOKENS.polygonCategories;
-    for (const spec of CATEGORY_SPECS) {
-      const token = tokens[spec.notes];
-      const fillId = CATEGORY_FILL_LAYER_IDS[spec.suffix];
-      const lineId = CATEGORY_LINE_LAYER_IDS[spec.suffix];
-      addOwnedLayer({
-        id: fillId,
-        type: "fill",
-        source: CATEGORY_SOURCE_ID,
-        filter: notesEqualsFilter(spec.notes),
-        paint: categoryFillPaint(token),
-      });
-      addOwnedLayer({
-        id: lineId,
-        type: "line",
-        source: CATEGORY_OUTLINE_SOURCE_ID,
-        filter: notesEqualsFilter(spec.notes),
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: categoryLinePaint(token),
-      });
-    }
-    addOwnedLayer({
-      id: CATEGORY_FILL_LAYER_IDS.fallback,
-      type: "fill",
-      source: CATEGORY_SOURCE_ID,
-      filter: unmatchedNotesFilter(),
-      paint: {
-        "fill-color": NLI_VISUAL_TOKENS.polygonFallbackFill,
-        "fill-opacity": 0.55,
-      },
-    });
-    addOwnedLayer({
-      id: CATEGORY_LINE_LAYER_IDS.fallback,
-      type: "line",
-      source: CATEGORY_OUTLINE_SOURCE_ID,
-      filter: unmatchedNotesFilter(),
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": NLI_VISUAL_TOKENS.polygonFallbackFill,
-        "line-opacity": 0.95,
-        "line-width": 1.8 * Number(displayProfile.lineWidthMultiplier || 1),
-      },
-    });
+    mountProcessedCategoryLayers();
     state.categoryMounted = sourcePresent(map, CATEGORY_SOURCE_ID)
-      && sourcePresent(map, CATEGORY_OUTLINE_SOURCE_ID)
-      && layerPresent(map, CATEGORY_FILL_LAYER_IDS.battle);
+      && sourcePresent(map, CATEGORY_OUTLINE_SOURCE_ID);
   }
 
   function processedLinePaint(classPlan) {
@@ -635,24 +588,16 @@ export function createInvestigationPolygonRenderer(
             },
           });
         }
-      } else if (classPlan?.solid) {
+      } else if (classPlan?.solid?.color) {
         addOwnedLayer({
           id: fillId,
           type: "fill",
           source: CATEGORY_SOURCE_ID,
           filter: notesEqualsFilter(spec.notes),
           paint: {
-            "fill-color": classPlan.solid.color || "#ffff73",
+            "fill-color": classPlan.solid.color,
             "fill-opacity": classPlan.solid.opacity,
           },
-        });
-      } else if (spec.suffix === "kidnap") {
-        addOwnedLayer({
-          id: fillId,
-          type: "fill",
-          source: CATEGORY_SOURCE_ID,
-          filter: notesEqualsFilter(spec.notes),
-          paint: { "fill-color": "#ffff73", "fill-opacity": 0.55 },
         });
       }
       if (classPlan?.outline) {
@@ -700,10 +645,8 @@ export function createInvestigationPolygonRenderer(
   }
 
   function warnUnmatchedNotes(features) {
-    if (state.processedStyleInvalid) return;
-    const known = state.processedStyleActive
-      ? state.processedPlan.classes
-      : NLI_VISUAL_TOKENS.polygonCategories;
+    if (!state.processedStyleActive || state.processedStyleInvalid) return;
+    const known = state.processedPlan.classes;
     for (const feature of features) {
       const notes = feature?.properties?.Notes;
       if (typeof notes === "string" && known[notes]) continue;
@@ -776,110 +719,57 @@ export function createInvestigationPolygonRenderer(
   }
 
   function applyCategoryMotion(frame, data) {
-    if (!state.categoryMounted) return;
+    if (!state.categoryMounted || !state.processedStyleActive) return;
     const motionMode = frame?.motionMode === "full" ? "full" : "reduced";
     const nowMs = frameNowMs(frame, data);
-    if (state.processedStyleActive) {
-      const projectionNovaDim = frame?.projectionNovaDim === true || data?.projectionNovaDim === true;
-      const impactIds = parallelImpactIdList(frame, data);
-      const impactKey = impactIds.join(",");
-      const sidecarReady = state.bufferedGradientSidecarStatus === "ready";
-      const phase = motionMode === "full" ? polygonGradientPhase(nowMs) : null;
-      const entries = phase == null ? [] : asArray(frame?.polygonEntries);
-      const animated = sidecarReady && phase != null;
-      for (const spec of CATEGORY_SPECS) {
-        const classPlan = state.processedPlan.classes[spec.notes];
-        const isGradient = Array.isArray(classPlan?.bands) && classPlan.bands.length > 0;
-        const authored = isGradient ? classPlan.bands[0]?.opacity : classPlan?.solid?.opacity;
-        if (!Number.isFinite(Number(authored))) continue;
-        const ids = isGradient
-          ? state.processedFillLayerIds.filter((id) => id.includes(`fill-${spec.suffix}`))
-          : [CATEGORY_FILL_LAYER_IDS[spec.suffix]];
-        for (const id of ids) {
-          const band = isGradient && classPlan.bands.find((entry) => id === CATEGORY_FILL_LAYER_IDS[spec.suffix]
-            ? entry.ordinal === 0
-            : id.endsWith(`-band-${entry.ordinal}`));
-          const opacity = band?.opacity ?? classPlan?.solid?.opacity ?? authored;
-          const staticColor = band?.color ?? classPlan?.solid?.color;
-          const conveyor = band && animated
-            ? polygonGradientBandPaint(classPlan.bands, band.ordinal, phase, { motionMode })
-            : null;
-          const color = conveyor
-            ? entryPaintExpression(entries, band, classPlan.bands.length, "color", conveyor.color)
-            : staticColor;
-          const baseOpacity = conveyor
-            ? entryPaintExpression(entries, band, classPlan.bands.length, "opacity", conveyor.opacity)
-            : (sidecarReady || !isGradient ? opacity : 0);
-          if (color != null) setPaint(map, id, "fill-color", color);
-          setPaint(map, id, "fill-opacity", projectionNovaDim && (sidecarReady || !isGradient)
-            ? parallelImpactOpacityExpression(impactIds, baseOpacity)
-            : baseOpacity);
-        }
-      }
-      const outlineChanged = state.lastProcessedOutlineDim !== projectionNovaDim
-        || state.lastProcessedOutlineImpactKey !== impactKey;
-      if (outlineChanged) {
-        for (const spec of CATEGORY_SPECS) {
-          const outlineOpacity = Number(state.processedPlan.classes[spec.notes]?.outline?.opacity);
-          if (!Number.isFinite(outlineOpacity)) continue;
-          setPaint(map, CATEGORY_LINE_LAYER_IDS[spec.suffix], "line-opacity", projectionNovaDim
-            ? parallelImpactOpacityExpression(impactIds, outlineOpacity)
-            : outlineOpacity);
-        }
-        state.lastProcessedOutlineDim = projectionNovaDim;
-        state.lastProcessedOutlineImpactKey = impactKey;
-      }
-      state.lastCategoryParallelDim = projectionNovaDim;
-      state.lastCategoryParallelImpactKey = impactKey;
-      return;
-    }
-    const tokens = NLI_VISUAL_TOKENS.polygonCategories;
-    const battle = tokens[NOTES_BATTLE];
-    const kidnap = tokens[NOTES_KIDNAP];
-    const fire = tokens[NOTES_FIRE];
     const projectionNovaDim = frame?.projectionNovaDim === true || data?.projectionNovaDim === true;
     const impactIds = parallelImpactIdList(frame, data);
     const impactKey = impactIds.join(",");
-    if (state.lastCategoryParallelDim === projectionNovaDim
-        && state.lastCategoryParallelImpactKey === impactKey) return;
-    const fillFor = (tokenFill) => (
-      projectionNovaDim ? parallelImpactOpacityExpression(impactIds, tokenFill) : tokenFill
-    );
-    setPaint(
-      map,
-      CATEGORY_FILL_LAYER_IDS.battle,
-      "fill-opacity",
-      fillFor(battle.fillOpacity),
-    );
-    setPaint(
-      map,
-      CATEGORY_FILL_LAYER_IDS.kidnap,
-      "fill-opacity",
-      fillFor(kidnap.fillOpacity),
-    );
-    setPaint(
-      map,
-      CATEGORY_FILL_LAYER_IDS.fire,
-      "fill-opacity",
-      fillFor(fire.fillOpacity),
-    );
-    setPaint(
-      map,
-      CATEGORY_FILL_LAYER_IDS.fallback,
-      "fill-opacity",
-      fillFor(0.55),
-    );
-    if (projectionNovaDim) {
-      const dimPaint = parallelImpactOpacityExpression(impactIds, 0.95);
-      setPaint(map, CATEGORY_LINE_LAYER_IDS.battle, "line-opacity", dimPaint);
-      setPaint(map, CATEGORY_LINE_LAYER_IDS.kidnap, "line-opacity", dimPaint);
-      setPaint(map, CATEGORY_LINE_LAYER_IDS.fire, "line-opacity", dimPaint);
-      setPaint(map, CATEGORY_LINE_LAYER_IDS.fallback, "line-opacity", dimPaint);
-    } else if (state.lastCategoryParallelDim) {
-      setPaint(map, CATEGORY_LINE_LAYER_IDS.battle, "line-opacity", 0.95);
-      setPaint(map, CATEGORY_LINE_LAYER_IDS.kidnap, "line-opacity", 0.95);
-      setPaint(map, CATEGORY_LINE_LAYER_IDS.fire, "line-opacity", 0.95);
-      setPaint(map, CATEGORY_LINE_LAYER_IDS.fallback, "line-opacity", 0.95);
+    const sidecarReady = state.bufferedGradientSidecarStatus === "ready";
+    const phase = motionMode === "full" ? polygonGradientPhase(nowMs) : null;
+    const entries = phase == null ? [] : asArray(frame?.polygonEntries);
+    const animated = sidecarReady && phase != null;
+    for (const spec of CATEGORY_SPECS) {
+      const classPlan = state.processedPlan.classes[spec.notes];
+      const isGradient = Array.isArray(classPlan?.bands) && classPlan.bands.length > 0;
+      const authored = isGradient ? classPlan.bands[0]?.opacity : classPlan?.solid?.opacity;
+      if (!Number.isFinite(Number(authored))) continue;
+      const ids = isGradient
+        ? state.processedFillLayerIds.filter((id) => id.includes(`fill-${spec.suffix}`))
+        : [CATEGORY_FILL_LAYER_IDS[spec.suffix]];
+      for (const id of ids) {
+        const band = isGradient && classPlan.bands.find((entry) => id === CATEGORY_FILL_LAYER_IDS[spec.suffix]
+          ? entry.ordinal === 0
+          : id.endsWith(`-band-${entry.ordinal}`));
+        const opacity = band?.opacity ?? classPlan?.solid?.opacity ?? authored;
+        const staticColor = band?.color ?? classPlan?.solid?.color;
+        const conveyor = band && animated
+          ? polygonGradientBandPaint(classPlan.bands, band.ordinal, phase, { motionMode })
+          : null;
+        const color = conveyor
+          ? entryPaintExpression(entries, band, classPlan.bands.length, "color", conveyor.color)
+          : staticColor;
+        const baseOpacity = conveyor
+          ? entryPaintExpression(entries, band, classPlan.bands.length, "opacity", conveyor.opacity)
+          : (sidecarReady || !isGradient ? opacity : 0);
+        if (color != null) setPaint(map, id, "fill-color", color);
+        setPaint(map, id, "fill-opacity", projectionNovaDim && (sidecarReady || !isGradient)
+          ? parallelImpactOpacityExpression(impactIds, baseOpacity)
+          : baseOpacity);
+      }
+    }
+    const outlineChanged = state.lastProcessedOutlineDim !== projectionNovaDim
+      || state.lastProcessedOutlineImpactKey !== impactKey;
+    if (outlineChanged) {
+      for (const spec of CATEGORY_SPECS) {
+        const outlineOpacity = Number(state.processedPlan.classes[spec.notes]?.outline?.opacity);
+        if (!Number.isFinite(outlineOpacity)) continue;
+        setPaint(map, CATEGORY_LINE_LAYER_IDS[spec.suffix], "line-opacity", projectionNovaDim
+          ? parallelImpactOpacityExpression(impactIds, outlineOpacity)
+          : outlineOpacity);
+      }
+      state.lastProcessedOutlineDim = projectionNovaDim;
+      state.lastProcessedOutlineImpactKey = impactKey;
     }
     state.lastCategoryParallelDim = projectionNovaDim;
     state.lastCategoryParallelImpactKey = impactKey;
@@ -914,7 +804,7 @@ export function createInvestigationPolygonRenderer(
     }
     if (!settlementOnly) {
       mountCategoryOverlay();
-      if (state.categoryMounted) hideHostPack();
+      hideHostPack();
     }
     mountSettlementOverlay();
   }
@@ -945,8 +835,10 @@ export function createInvestigationPolygonRenderer(
     const membershipChanged = state.achievedMembershipKey !== key;
     const dataChanged = state.appliedRegistryGeneration !== state.registryGeneration;
     state.achievedMembershipKey = key;
-    if (renderPolygons && state.categoryMounted) {
+    if (renderPolygons) {
       hideHostPack();
+    }
+    if (renderPolygons && state.categoryMounted) {
       const novaSiteExclusion = novaNarrativeActive(frame, data);
       if (
         membershipChanged
@@ -958,7 +850,10 @@ export function createInvestigationPolygonRenderer(
       }
       applyCategoryMotion(frame, data);
     }
-    if (!membershipChanged && !dataChanged) return;
+    if (!membershipChanged && !dataChanged) {
+      restackOwnedOverlays();
+      return;
+    }
     const outlines = new Map();
     const hasExplicitSettlementIds = Object.prototype.hasOwnProperty.call(
       frame,
@@ -985,6 +880,7 @@ export function createInvestigationPolygonRenderer(
       source.setData(featureCollection([...outlines.values()]));
       state.appliedRegistryGeneration = state.registryGeneration;
     }
+    restackOwnedOverlays();
   }
 
   function renderSettlement(frame = {}, data = {}) {
@@ -1038,6 +934,9 @@ export function createInvestigationPolygonRenderer(
     state.processedStyleActive = false;
     state.processedStyleInvalid = false;
     state.processedPlan = { field: "Notes", classes: {}, processed: false };
+    state.polygonStyle = null;
+    state.bufferedGradientFeatures = [];
+    state.bufferedGradientSidecarStatus = "not-required";
     state.lastCategoryNovaSiteExclusion = null;
     state.lastCategoryParallelDim = null;
     state.lastCategoryParallelImpactKey = null;
@@ -1058,6 +957,10 @@ export function createInvestigationPolygonRenderer(
     state.settlementFeaturesByOutlineId = new Map();
     state.inputRefs = {
       polygonFeatures: undefined,
+      bufferedGradientFeatures: undefined,
+      polygonStyle: undefined,
+      bufferedGradientSidecarStatus: undefined,
+      bufferedGradientStatus: undefined,
       locationToOutlineObjectId: undefined,
       settlementFeatures: undefined,
       settlementFeaturesByOutlineId: undefined,

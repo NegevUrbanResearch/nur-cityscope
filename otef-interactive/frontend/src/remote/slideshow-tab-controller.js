@@ -1,7 +1,7 @@
 import { MapProjectionConfig } from "../shared/map-projection-config.js";
 import { stopNliClock } from "../shared/nli-investigation-clock.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
-import { getPackDisplayLabel } from "./layer-pack-display-names.js";
+import { getPackDisplayLabel } from "../shared/legend-copy.js";
 import { LOCALE_EVENT, applyRemoteChromeI18n, getLocale, t } from "./remote-locale.js";
 
 function escapeHtml(value) {

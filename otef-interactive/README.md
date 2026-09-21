@@ -22,6 +22,22 @@ Interactive mapping module for the OTEF physical model with synchronized project
 - **Projection Display**: http://localhost/otef-interactive/projection.html
 - **Remote Controller**: http://localhost/otef-interactive/remote-controller.html
 
+## Phone remotes and QR
+
+GIS and workstation Open links stay on `http://localhost`. Phone remotes and the QR use **Local** (`http://{hostname}.local`) or **Tailnet** (`http://{tailscale-ipv4}`).
+
+Those origins are written once, on the host, by:
+
+```powershell
+.\otef-interactive\scripts\start-otef.ps1
+```
+
+```bash
+./otef-interactive/scripts/start-otef.sh
+```
+
+`setup.ps1` / `setup.sh` do this at the end of first-time setup. Container startup and `docker compose up` do not. If Tailscale is not installed, the Tailnet control is hidden and Local still works. The launcher status tells you to run `start-otef` when `share.json` is missing.
+
 ## Setup
 
 Everything initializes automatically when Docker containers start:

@@ -11,7 +11,7 @@ describe("map-main GIS style reload lifecycle", () => {
       "utf8",
     );
     expect(source).toMatch(
-      /const applyGisLayerGroups = \(groups\) => \{\s*applyLayerGroupsToMap\(map, groups\);\s*applyNarrativePeopleFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*\};/,
+      /const applyGisLayerGroups = \(groups\) => \{\s*applyLayerGroupsToMap\(map, groups\);\s*applyNarrativePeopleFilter\(map, OTEFDataContext\.getNarrativeState\?\.\(\)\?\.id \?\? null\);\s*raiseDarkBasemapPlaceLabels\(map\);\s*\};/,
     );
     expect(source.match(/applyLayerGroupsToMap\(/g)).toHaveLength(1);
   });

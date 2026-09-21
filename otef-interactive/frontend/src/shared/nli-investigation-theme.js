@@ -47,12 +47,6 @@ export const NLI_VISUAL_TOKENS = Object.freeze({
   personGlowRadius: 14,
   personGlowStrokeWidth: 2.5,
   personGlowPulseMs: 2400,
-  polygonCategories: Object.freeze({
-    "מרחב לחימה - קרב": Object.freeze({ fill: "#3d9a8c", outline: "#2a6b62", fillOpacity: 0.55 }),
-    "מוקד חטיפה": Object.freeze({ fill: "#ffff73", outline: "#c47388", fillOpacity: 0.55 }),
-    "שריפה": Object.freeze({ fill: "#d85a1f", outline: "#a33d12", fillOpacity: 0.55 }),
-  }),
-  polygonFallbackFill: "#9a9a9a",
 });
 
 export const NLI_DISPLAY_PROFILES = Object.freeze({

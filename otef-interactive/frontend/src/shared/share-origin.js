@@ -1,6 +1,4 @@
-const RUNTIME_PATH = "/otef-interactive/runtime/network.json";
-const MAX_RUNTIME_AGE_MS = 60_000;
-const RUNTIME_KEYS = ["version", "remoteOrigin", "generatedAt", "status"];
+const SHARE_PATH = "/otef-interactive/runtime/share.json";
 
 function asUrl(location) {
   if (location instanceof URL) return location;
@@ -28,7 +26,12 @@ function isLoopbackHostname(hostname) {
   return octets.length === 4 && octets[0] === "127" && octets.every((part) => /^\d+$/.test(part) && Number(part) <= 255);
 }
 
-function isHttpOrigin(value) {
+function isTsNetHostname(hostname) {
+  const host = String(hostname || "").toLowerCase().replace(/\.+$/, "");
+  return host === "ts.net" || host.endsWith(".ts.net");
+}
+
+function allowedHttpOrigin(value) {
   if (typeof value !== "string" || !value) return null;
   let parsed;
   try {
@@ -36,49 +39,68 @@ function isHttpOrigin(value) {
   } catch {
     return null;
   }
-  if (!/^https?:$/.test(parsed.protocol) || parsed.origin !== value) return null;
-  if (parsed.username || parsed.password || isLoopbackHostname(parsed.hostname)) return null;
+  if (parsed.protocol !== "http:" || parsed.origin !== value) return null;
+  if (parsed.username || parsed.password || isLoopbackHostname(parsed.hostname) || isTsNetHostname(parsed.hostname)) {
+    return null;
+  }
   return parsed.origin;
 }
 
-function isLoopbackPage(location) {
+function missingShareHosts(location) {
   const page = asUrl(location);
-  return !!page && isLoopbackHostname(page.hostname);
+  if (!page || isLoopbackHostname(page.hostname)) {
+    return { localOrigin: null, tailnetOrigin: null, fromShareFile: false };
+  }
+  return { localOrigin: allowedHttpOrigin(page.origin), tailnetOrigin: null, fromShareFile: false };
 }
 
-function isRuntimeShape(runtime) {
-  if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) return false;
-  if (Object.keys(runtime).length !== RUNTIME_KEYS.length || Object.keys(runtime).some((key) => !RUNTIME_KEYS.includes(key))) return false;
-  return runtime.version === 1 && runtime.status === "ready" && typeof runtime.generatedAt === "string" && runtime.generatedAt.length > 0;
+export function mdnsLabelFromHostname(hostname) {
+  return String(hostname || "").split(".")[0].toLowerCase();
 }
 
-export function resolveShareOrigin(location, runtime) {
-  const page = asUrl(location);
-  if (!page || !/^https?:$/.test(page.protocol) || page.username || page.password) return null;
-  if (!isLoopbackHostname(page.hostname)) return page.origin;
-  if (!isRuntimeShape(runtime)) return null;
-  return isHttpOrigin(runtime.remoteOrigin);
+export function httpOrigin(hostname, port) {
+  if (typeof hostname !== "string" || !hostname || !Number.isFinite(port)) return null;
+  const origin = port === 80 ? `http://${hostname}` : `http://${hostname}:${port}`;
+  return allowedHttpOrigin(origin);
 }
 
-export async function loadShareOrigin({ location, fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
-  const page = asUrl(location);
-  if (!page) return null;
-  const direct = resolveShareOrigin(page, null);
-  if (direct) return direct;
-  if (!isLoopbackPage(page) || typeof fetchImpl !== "function") return null;
+export function parseShareHosts(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const localOrigin = allowedHttpOrigin(value.localOrigin);
+  if (!localOrigin) return null;
+  if (value.tailnetOrigin === null) return { localOrigin, tailnetOrigin: null };
+  const tailnetOrigin = allowedHttpOrigin(value.tailnetOrigin);
+  if (!tailnetOrigin) return null;
+  return { localOrigin, tailnetOrigin };
+}
+
+export async function loadShareHosts({ location, fetchImpl = globalThis.fetch } = {}) {
+  if (typeof fetchImpl !== "function") return missingShareHosts(location);
   try {
-    const response = await fetchImpl(RUNTIME_PATH, { cache: "no-store" });
-    if (!response?.ok) return null;
-    const runtime = await response.json();
-    const generatedAt = Date.parse(runtime?.generatedAt);
-    const current = Number(typeof now === "function" ? now() : now);
-    if (!Number.isFinite(generatedAt) || !Number.isFinite(current)) return null;
-    const age = current - generatedAt;
-    if (age < 0 || age > MAX_RUNTIME_AGE_MS) return null;
-    return resolveShareOrigin(page, runtime);
+    const response = await fetchImpl(SHARE_PATH, { cache: "no-store" });
+    if (!response?.ok) return missingShareHosts(location);
+    const parsed = parseShareHosts(await response.json());
+    if (!parsed) return missingShareHosts(location);
+    return { ...parsed, fromShareFile: true };
   } catch {
-    return null;
+    return missingShareHosts(location);
   }
 }
 
-export { RUNTIME_PATH, MAX_RUNTIME_AGE_MS };
+export async function loadShareOrigin(options = {}) {
+  const hosts = await loadShareHosts(options);
+  return hosts.localOrigin;
+}
+
+export function originForMode(mode, hosts) {
+  switch (mode) {
+    case "local":
+      return hosts.localOrigin;
+    case "tailnet":
+      return hosts.tailnetOrigin ?? hosts.localOrigin;
+    default:
+      throw new Error(`unknown share mode: ${mode}`);
+  }
+}
+
+export { SHARE_PATH };

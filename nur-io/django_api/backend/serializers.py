@@ -16,6 +16,7 @@ from .models import (
 )
 from .otef_escape_overlay import normalize_escape_overlay
 from .otef_nli_clock_layout import normalize_nli_clock_layout
+from .otef_legend_settings import normalize_legend_settings
 from .otef_person_selection import normalize_person_selection
 from .otef_narrative import normalize_narrative_state
 
@@ -225,6 +226,7 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
     narrative_state = serializers.SerializerMethodField()
     escape_overlay = serializers.SerializerMethodField()
     nli_clock_layout = serializers.SerializerMethodField()
+    legend_settings = serializers.SerializerMethodField()
 
     class Meta:
         model = OTEFViewportState
@@ -242,6 +244,7 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "narrative_state",
             "escape_overlay",
             "nli_clock_layout",
+            "legend_settings",
             "workshop_auto_publish",
             "workshop_autopublish_started_at",
             "updated_at",
@@ -254,6 +257,7 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
             "narrative_state",
             "escape_overlay",
             "nli_clock_layout",
+            "legend_settings",
             "workshop_autopublish_started_at",
         ]
 
@@ -269,6 +273,9 @@ class OTEFViewportStateSerializer(serializers.ModelSerializer):
 
     def get_nli_clock_layout(self, obj):
         return normalize_nli_clock_layout(obj.nli_clock_layout)
+
+    def get_legend_settings(self, obj):
+        return normalize_legend_settings(obj.legend_settings)
 
 
 class LayerStateSerializer(serializers.ModelSerializer):

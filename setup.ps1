@@ -173,7 +173,7 @@ Write-Host ""
 Write-Host "All services have been successfully configured and data has been loaded." -ForegroundColor Green
 Write-Host ""
 
-# Hand setup off to the same readiness, host-discovery and launcher helper used
+# Hand setup off to the same readiness, share-origin, and launcher helper used
 # for normal starts. Containers are already running, so avoid a second Compose
 # startup here.
 Write-Host "Opening OTEF launcher after setup..." -ForegroundColor Cyan

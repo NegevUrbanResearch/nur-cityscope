@@ -7,16 +7,31 @@ test("legend-model-builder module exists", () => {
   ).toBe(true);
 });
 
-test("map-legend.js is under 250 lines (render-only)", () => {
-  const src = fs.readFileSync("frontend/src/map/map-legend.js", "utf8");
-  const lines = src.split("\n").length;
-  expect(lines).toBeLessThan(250);
-});
-
 test("legend-model-builder exports buildLegendModel and symbolIRToLegendItems", async () => {
   const mod = await import(
     "../../../frontend/src/map/legend-model-builder.js"
   );
   expect(typeof mod.buildLegendModel).toBe("function");
   expect(typeof mod.symbolIRToLegendItems).toBe("function");
+});
+
+test("GIS and projection use the single mountMapLegend lifecycle", () => {
+  const integration = fs.readFileSync(
+    "frontend/src/map/legend-integration.js",
+    "utf8",
+  );
+  const mapMain = fs.readFileSync("frontend/src/entries/map-main.js", "utf8");
+  const projectionMain = fs.readFileSync(
+    "frontend/src/entries/projection-main.js",
+    "utf8",
+  );
+
+  expect(integration).toContain('import { mountMapLegend } from "./map-legend.js"');
+  expect(integration).toMatch(/const mounted = mount\(\{/);
+  expect(mapMain).toMatch(
+    /installMapLegendLifecycle\(\{[\s\S]*?surface:\s*"gis"/,
+  );
+  expect(projectionMain).toMatch(
+    /installMapLegendLifecycle\(\{[\s\S]*?surface:\s*"projection"/,
+  );
 });

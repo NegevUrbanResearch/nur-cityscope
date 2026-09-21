@@ -881,6 +881,20 @@ async function setNliClockLayout(ctx, patch = {}) {
   return response;
 }
 
+async function setLegendSettings(ctx, patch = {}) {
+  if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  if (!patch || typeof patch !== "object") return { ok: false, reason: "invalid_legend_settings" };
+  const keys = Object.keys(patch).filter((key) => ["language", "span", "layout", "summarizedGroupIds"].includes(key));
+  if (!(keys.length === 1 || (keys.length === 2 && keys.includes("span") && keys.includes("layout")))) {
+    return { ok: false, reason: "invalid_legend_settings" };
+  }
+  const response = await OTEF_API.setLegendSettings(ctx._tableName, patch, {
+    sourceId: ctx._clientId, timestamp: Date.now(),
+  });
+  if (response?.legendSettings) ctx._applyLegendSettings(response.legendSettings);
+  return response;
+}
+
 async function narrativePresentationCommand(ctx, action, id, requestId) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
   if ((action !== "open" && action !== "close") || !getNliNarrative(id)) {
@@ -1040,6 +1054,7 @@ OTEFDataContextInternals.actions = {
   setNarrative,
   setEscapeOverlay,
   setNliClockLayout,
+  setLegendSettings,
   narrativePresentationCommand,
   narrativePresentationResult,
   computePanViewport,
@@ -1069,6 +1084,7 @@ export {
   setNarrative,
   setEscapeOverlay,
   setNliClockLayout,
+  setLegendSettings,
   narrativePresentationCommand,
   narrativePresentationResult,
   computePanViewport,

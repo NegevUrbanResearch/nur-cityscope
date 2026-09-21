@@ -198,6 +198,14 @@ export const OTEF_API = {
     });
   },
 
+  async setLegendSettings(tableName = this.defaultTable, patch, meta = {}) {
+    return this.executeCommand(tableName, {
+      action: "set_legend_settings",
+      ...(patch && typeof patch === "object" ? patch : {}),
+      ...meta,
+    });
+  },
+
   async narrativePresentationCommand(tableName = this.defaultTable, command) {
     return this.executeCommand(tableName, {
       action: "narrative_presentation",

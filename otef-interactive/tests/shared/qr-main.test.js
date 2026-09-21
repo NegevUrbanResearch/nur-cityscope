@@ -1,52 +1,187 @@
 import { expect, test, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import { initPrintableQr } from "../../frontend/src/entries/qr-main.js";
+
+const SHARE_MODE_KEY = "otef.share.mode";
+const SHARE_QR_KEY = "otef.share.qr";
+
+function makeElement(id, ownerDocument) {
+  return {
+    id,
+    ownerDocument,
+    textContent: "",
+    children: [],
+    hidden: false,
+    attributes: {},
+    listeners: new Map(),
+    setAttribute(key, value) { this.attributes[key] = String(value); },
+    removeAttribute(key) { delete this.attributes[key]; },
+    addEventListener(type, callback) { this.listeners.set(type, callback); },
+    removeEventListener(type) { this.listeners.delete(type); },
+    async dispatch(type) { return this.listeners.get(type)?.({ currentTarget: this }); },
+    replaceChildren(...children) { this.children = children; },
+  };
+}
 
 function makeDocument() {
   const nodes = new Map();
-  const node = (id) => {
-    const value = { id, textContent: "", children: [], replaceChildren(...children) { this.children = children; } };
-    nodes.set(id, value);
-    return value;
+  const document = {
+    hidden: false,
+    listeners: new Map(),
+    createElementNS(_namespace, name) {
+      return { nodeName: name, attributes: {}, children: [], setAttribute(key, value) { this.attributes[key] = String(value); }, appendChild(child) { this.children.push(child); } };
+    },
+    getElementById: (id) => nodes.get(id),
+    addEventListener(type, cb) { this.listeners.set(type, cb); },
+    removeEventListener(type) { this.listeners.delete(type); },
+    nodes,
   };
-  node("targetUrl"); node("qrcode"); node("shareStatus");
-  const document = { hidden: false, listeners: new Map(), createElementNS(_namespace, name) { return { nodeName: name, attributes: {}, children: [], setAttribute(key, value) { this.attributes[key] = String(value); }, appendChild(child) { this.children.push(child); } }; }, getElementById: (id) => nodes.get(id), addEventListener(type, cb) { this.listeners.set(type, cb); }, removeEventListener(type) { this.listeners.delete(type); }, nodes };
-  nodes.get("qrcode").ownerDocument = document;
+  for (const id of ["targetUrl", "qrcode", "shareStatus", "shareModeLocal", "shareModeTailnet", "shareQrRemote", "shareQrNli"]) {
+    nodes.set(id, makeElement(id, document));
+  }
   return document;
 }
 
-function clockHarness() {
-  let next = 0;
-  const timers = new Map();
-  return { setTimeout(callback) { const id = ++next; timers.set(id, callback); return id; }, clearTimeout(id) { timers.delete(id); }, timers };
+function makeStorage(initial = {}) {
+  const store = { ...initial };
+  return {
+    getItem(key) {
+      return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
+    },
+    setItem(key, value) {
+      store[key] = String(value);
+    },
+  };
 }
 
-const metadata = (origin, generatedAt = "2026-09-13T10:00:00.000Z") => ({ version: 1, remoteOrigin: origin, generatedAt, status: "ready" });
+function shareHosts(tailnetOrigin = "http://100.64.252.114") {
+  return { localOrigin: "http://labpc.local", tailnetOrigin };
+}
 
-test("printable QR refreshes on focus, clears stale/unavailable output, and disposes late work", async () => {
+function fetchShare(hosts = shareHosts()) {
+  return vi.fn().mockResolvedValue({ ok: true, json: async () => hosts });
+}
+
+async function flush() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+test("qr.html includes Local/Tailnet at the top and Regular/NLI near the QR", () => {
+  const html = fs.readFileSync(path.resolve(__dirname, "../../frontend/qr.html"), "utf8");
+  expect(html).toContain('id="shareModeLocal"');
+  expect(html).toContain('id="shareModeTailnet"');
+  expect(html).toContain('id="shareQrRemote"');
+  expect(html).toContain('id="shareQrNli"');
+  expect(html).toContain('button[aria-pressed="true"]');
+  expect(html).not.toMatch(/aria-pressed="true"[^}]*background:\s*#d5e5ff/);
+  expect(html.indexOf('id="shareModeLocal"')).toBeLessThan(html.indexOf('id="qrcode"'));
+  expect(html.indexOf('id="shareQrRemote"')).toBeGreaterThan(html.indexOf('id="qrcode"'));
+});
+
+test("printable QR defaults to the local guest remote when share.json loads", async () => {
   const document = makeDocument();
-  const pending = [];
-  const fetchImpl = vi.fn(() => new Promise((resolve) => pending.push(resolve)));
-  const clock = clockHarness();
-  const listeners = new Map();
-  vi.stubGlobal("addEventListener", (type, callback) => listeners.set(type, callback));
-  vi.stubGlobal("removeEventListener", (type) => listeners.delete(type));
-  const dispose = initPrintableQr({ document, location: new URL("http://localhost:8500/qr.html"), fetchImpl, now: () => Date.parse("2026-09-13T10:00:00.000Z"), clock });
-  pending[0]({ ok: true, json: () => Promise.resolve(metadata("http://192.0.2.10:8500")) });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(document.nodes.get("targetUrl").textContent).toContain("192.0.2.10");
-  expect(clock.timers.size).toBe(1);
-  await listeners.get("focus")();
-  pending[1]({ ok: true, json: () => Promise.resolve(metadata("http://192.0.2.11:8500", "2026-09-13T09:58:00.000Z")) });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(document.nodes.get("targetUrl").textContent).toBe("—");
-  expect(document.nodes.get("shareStatus").textContent).toBe("Network address unavailable.");
-  expect(document.nodes.get("qrcode").children).toHaveLength(0);
-  await listeners.get("focus")();
-  expect(pending).toHaveLength(3);
+  const storage = makeStorage();
+  const dispose = initPrintableQr({
+    document,
+    location: new URL("http://localhost/otef-interactive/qr.html"),
+    fetchImpl: fetchShare(),
+    storage,
+  });
+  await flush();
+  expect(document.nodes.get("targetUrl").textContent).toBe("http://labpc.local/otef-interactive/remote-controller.html");
+  expect(document.nodes.get("qrcode").children).toHaveLength(1);
+  expect(storage.getItem(SHARE_MODE_KEY)).toBe("local");
+  expect(document.nodes.get("shareModeLocal").attributes["aria-pressed"]).toBe("true");
+  expect(document.nodes.get("shareModeTailnet").attributes["aria-pressed"]).toBe("false");
+  expect(document.nodes.get("shareQrRemote").attributes["aria-pressed"]).toBe("true");
+  expect(document.nodes.get("shareQrNli").attributes["aria-pressed"]).toBe("false");
   dispose();
-  expect(clock.timers.size).toBe(0);
-  const before = document.nodes.get("targetUrl").textContent;
-  pending[2]({ ok: true, json: () => Promise.resolve(metadata("http://192.0.2.12:8500")) });
-  expect(document.nodes.get("targetUrl").textContent).toBe(before);
-  vi.unstubAllGlobals();
+});
+
+test("loopback share miss shows no QR", async () => {
+  const document = makeDocument();
+  const dispose = initPrintableQr({
+    document,
+    location: new URL("http://localhost/otef-interactive/qr.html"),
+    fetchImpl: vi.fn().mockResolvedValue({ ok: false }),
+    storage: makeStorage(),
+  });
+  await flush();
+  expect(document.nodes.get("qrcode").children).toHaveLength(0);
+  expect(document.nodes.get("targetUrl").textContent).toBe("—");
+  dispose();
+});
+
+test("qr-main reads stored tailnet mode and Tailnet click persists and rebuilds the guest QR", async () => {
+  const document = makeDocument();
+  const storage = makeStorage({ [SHARE_MODE_KEY]: "tailnet" });
+  const dispose = initPrintableQr({
+    document,
+    location: new URL("http://localhost/otef-interactive/qr.html"),
+    fetchImpl: fetchShare(),
+    storage,
+  });
+  await flush();
+  expect(document.nodes.get("targetUrl").textContent).toBe("http://100.64.252.114/otef-interactive/remote-controller.html");
+  expect(document.nodes.get("qrcode").children).toHaveLength(1);
+  storage.setItem(SHARE_MODE_KEY, "local");
+  await document.nodes.get("shareModeTailnet").dispatch("click");
+  expect(storage.getItem(SHARE_MODE_KEY)).toBe("tailnet");
+  expect(document.nodes.get("targetUrl").textContent).toBe("http://100.64.252.114/otef-interactive/remote-controller.html");
+  expect(document.nodes.get("qrcode").children).toHaveLength(1);
+  dispose();
+});
+
+test("shareQrNli switches the printable QR to the staff remote", async () => {
+  const document = makeDocument();
+  const storage = makeStorage();
+  const dispose = initPrintableQr({
+    document,
+    location: new URL("http://localhost/otef-interactive/qr.html"),
+    fetchImpl: fetchShare(),
+    storage,
+  });
+  await flush();
+  await document.nodes.get("shareQrNli").dispatch("click");
+  expect(document.nodes.get("targetUrl").textContent).toBe("http://labpc.local/otef-interactive/nli-staff-remote.html");
+  expect(document.nodes.get("qrcode").children).toHaveLength(1);
+  expect(document.nodes.get("shareQrRemote").attributes["aria-pressed"]).toBe("false");
+  expect(document.nodes.get("shareQrNli").attributes["aria-pressed"]).toBe("true");
+  expect(storage.getItem(SHARE_QR_KEY)).toBe("nli");
+  dispose();
+});
+
+test("invalid stored share mode with a valid share.json load still enables QR on Local", async () => {
+  const document = makeDocument();
+  const storage = makeStorage({ [SHARE_MODE_KEY]: "nope" });
+  const dispose = initPrintableQr({
+    document,
+    location: new URL("http://localhost/otef-interactive/qr.html"),
+    fetchImpl: fetchShare(),
+    storage,
+  });
+  await flush();
+  expect(document.nodes.get("targetUrl").textContent).toBe("http://labpc.local/otef-interactive/remote-controller.html");
+  expect(document.nodes.get("qrcode").children).toHaveLength(1);
+  expect(document.nodes.get("shareStatus").textContent).toBe("Ready to connect.");
+  expect(storage.getItem(SHARE_MODE_KEY)).toBe("local");
+  dispose();
+});
+
+test("missing tailnetOrigin clamps stored tailnet to local", async () => {
+  const document = makeDocument();
+  const storage = makeStorage({ [SHARE_MODE_KEY]: "tailnet" });
+  const dispose = initPrintableQr({
+    document,
+    location: new URL("http://localhost/otef-interactive/qr.html"),
+    fetchImpl: fetchShare(shareHosts(null)),
+    storage,
+  });
+  await flush();
+  expect(document.nodes.get("shareModeTailnet").hidden).toBe(true);
+  expect(storage.getItem(SHARE_MODE_KEY)).toBe("local");
+  expect(document.nodes.get("targetUrl").textContent).toBe("http://labpc.local/otef-interactive/remote-controller.html");
+  expect(document.nodes.get("qrcode").children).toHaveLength(1);
+  dispose();
 });

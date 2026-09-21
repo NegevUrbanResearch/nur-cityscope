@@ -404,6 +404,8 @@ class OTEFViewportState(models.Model):
 
     nli_clock_layout = models.JSONField(default=dict, blank=True)
 
+    legend_settings = models.JSONField(default=dict, blank=True)
+
     basemap = models.CharField(max_length=16, default="osm")
 
     updated_at = models.DateTimeField(auto_now=True)

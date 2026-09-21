@@ -79,6 +79,7 @@ describe("maplibre basemap switching", () => {
       "../../frontend/src/map/maplibre-map.js"
     );
     const {
+      DARK_BASEMAP_PLACE_TEXT_FONT,
       DARK_BASEMAP_TEXT_COLOR,
       DARK_BASEMAP_TEXT_FIELD,
     } = await import("../../frontend/src/map/dark-basemap-labels.js");
@@ -102,7 +103,23 @@ describe("maplibre basemap switching", () => {
       expect(layer.layout["text-field"]).toEqual(DARK_BASEMAP_TEXT_FIELD);
       expect(layer.paint["text-color"]).toBe(DARK_BASEMAP_TEXT_COLOR);
       expect(layer.layout["text-transform"]).toBeUndefined();
+      if (layer["source-layer"] === "place") {
+        expect(layer.layout["text-font"]).toEqual(DARK_BASEMAP_PLACE_TEXT_FONT);
+        const size = layer.layout["text-size"];
+        const usesZoom = JSON.stringify(size).includes('"zoom"');
+        if (usesZoom) {
+          expect(["interpolate", "step"]).toContain(size[0]);
+        } else {
+          expect(size[0]).toBe("case");
+        }
+        expect(layer.paint["text-opacity"][0]).toBe("case");
+      } else {
+        expect(layer.layout["text-font"]).toEqual(["Noto Sans Regular"]);
+      }
     }
+    expect(BASEMAP_STYLES.dark["font-faces"]["Guttman Hatzvi"][0].url).toBe(
+      "./fonts/Guttman-Hatzvi.ttf",
+    );
 
     const motorway = BASEMAP_STYLES.dark.layers.find(
       (layer) => layer.id === "highway_name_motorway",

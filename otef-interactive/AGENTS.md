@@ -36,6 +36,12 @@
   Chrome shortcuts so GIS can close the NLI archive window. Quit Chrome fully
   and start GIS from an updated shortcut before that close path works. This
   setup is a technician action; the presenter interacts only with the remote.
+- Phone remotes and QR need `otef-interactive/frontend/runtime/share.json`.
+  `start-otef.ps1` / `start-otef.sh` write it once from this machine's hostname
+  and optional `tailscale ip -4`. `setup.ps1` / `setup.sh` call that helper at
+  the end of first-time setup. `docker compose up` alone does not. If Tailscale
+  is missing, hide Tailnet and keep Local remotes enabled. Do not bring back a
+  LAN-IP watcher or `network.json` freshness window.
 
 ## Interaction and rendering contracts
 

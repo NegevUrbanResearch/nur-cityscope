@@ -168,6 +168,9 @@ function applyStateFromApi(ctx, state, options = {}) {
   if (Object.prototype.hasOwnProperty.call(state, "nli_clock_layout") && typeof ctx._applyNliClockLayout === "function") {
     ctx._applyNliClockLayout(state.nli_clock_layout);
   }
+  if (Object.prototype.hasOwnProperty.call(state, "legend_settings") && typeof ctx._applyLegendSettings === "function") {
+    ctx._applyLegendSettings(state.legend_settings);
+  }
 }
 
 function setupWebSocket(ctx) {
@@ -420,6 +423,12 @@ function setupWebSocket(ctx) {
     if (msg.table && msg.table !== ctx._tableName) return;
     if (typeof ctx._applyNliClockLayout !== "function") return;
     ctx._applyNliClockLayout(msg.nliClockLayout);
+  });
+  ctx._wsClient.on(OTEF_MESSAGE_TYPES.LEGEND_SETTINGS_CHANGED, (msg = {}) => {
+    if (msg.table && msg.table !== ctx._tableName) return;
+    if (msg.legendSettings && typeof ctx._applyLegendSettings === "function") {
+      ctx._applyLegendSettings(msg.legendSettings);
+    }
   });
 
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_COMMAND, (msg = {}) => {

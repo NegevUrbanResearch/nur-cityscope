@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { legendLayerFromConfig } from "../../frontend/src/map/legend-model-builder.js";
-import { NLI_VISUAL_TOKENS } from "../../frontend/src/shared/nli-investigation-theme.js";
-import { NLI_LEGEND_SHORT_LABELS } from "../../frontend/src/shared/nli-investigation-legend.js";
 
 function peopleStatusClass(value, fillColor) {
   return {
@@ -86,14 +84,17 @@ function uniqueValuePointConfig({ legendLabel } = {}) {
 }
 
 describe("legendLayerFromConfig uniqueValue", () => {
-  it("collapses to one row when ui.legendLabel is set", () => {
+  it("keeps one row per class when ui.legendLabel is set", () => {
     const layer = legendLayerFromConfig(
       uniqueValuePointConfig({ legendLabel: "Roads" }),
       { id: "Gaza_Roads" },
     );
     expect(layer.name).toBe("Roads");
-    expect(layer.items).toHaveLength(1);
-    expect(layer.items[0].label).toBe("Roads");
+    expect(layer.items).toHaveLength(2);
+    expect(layer.items.map((item) => item.label)).toEqual([
+      "Murdered",
+      "Killed on duty",
+    ]);
     expect(layer.items[0].fill).toBe("#b42318");
   });
 
@@ -192,41 +193,7 @@ describe("legendLayerFromConfig uniqueValue", () => {
     expect(layer.items[0].shape).toBe("square");
   });
 
-  it("expands nli.investigation_polygons to three category rows and ignores ui.legendLabel collapse", () => {
-    const config = {
-      name: "investigation_polygons",
-      geometryType: "polygon",
-      ui: { legendLabel: "Investigation polygons" },
-      style: {
-        renderer: "uniqueValue",
-        uniqueValues: {
-          field: "Notes",
-          classes: [
-            { value: "x", label: "host orange", symbol: { symbolLayers: [{ type: "fill", color: "#f79009" }] } },
-          ],
-        },
-      },
-    };
-    const layer = legendLayerFromConfig(config, { id: "investigation_polygons" }, {
-      fullId: "nli.investigation_polygons",
-    });
-    expect(layer.items).toHaveLength(3);
-    expect(layer.items.map((item) => item.label)).toEqual([
-      "מוקד קרב/טבח",
-      "מוקד שריפה",
-      "מוקד חטיפה",
-    ]);
-    expect(layer.items.map((item) => item.fill)).toEqual([
-      NLI_VISUAL_TOKENS.polygonCategories["מרחב לחימה - קרב"].fill,
-      NLI_VISUAL_TOKENS.polygonCategories["שריפה"].fill,
-      "#ffff73",
-    ]);
-    expect(layer.items.every((item) => item.shape === "polygon")).toBe(true);
-    expect(layer.items.map((item) => item.fill)).not.toContain("#f79009");
-    expect(NLI_LEGEND_SHORT_LABELS["מרחב לחימה - קרב"]).toBe("מוקד קרב/טבח");
-  });
-
-  it("uses raw processed style classes for gradient swatches", () => {
+  it("uses authoritative raw processed classes for investigation polygon swatches", () => {
     const config = {
       name: "investigation_polygons",
       geometryType: "polygon",
