@@ -98,6 +98,37 @@ describe("projection config controller", () => {
     expect(Number.isNaN(fieldValueFromInput(descriptor, "   "))).toBe(true);
   });
 
+  test("selecting a warp stage synchronizes the editor mode and opens its inspector", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const api = mountProjectionConfig(root, { client: fakeClient() });
+    const grid = find(root, (node) => node.dataset?.node === "right-grid");
+    grid.dispatch("click");
+    const mode = find(root, (node) => node.attributes?.["aria-label"] === "Warp stage");
+    const inspector = find(root, (node) => node.className === "inspector");
+    expect(mode.value).toBe("grid");
+    expect(inspector.open).toBe(true);
+    const keystone = find(root, (node) => node.dataset?.node === "left-keystone");
+    keystone.dispatch("click");
+    expect(mode.value).toBe("keystone");
+    api.dispose();
+    globalThis.document = previousDocument;
+  });
+
+  test("warp stage picker navigates the matching calibration node", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const api = mountProjectionConfig(root, { client: fakeClient() });
+    find(root, (node) => node.dataset?.node === "right-grid").dispatch("click");
+    const mode = find(root, (node) => node.attributes?.["aria-label"] === "Warp stage");
+    mode.value = "keystone"; mode.dispatch("change");
+    expect(mode.value).toBe("keystone");
+    expect(find(root, (node) => node.className === "warp-selection-status").textContent).toContain("Right · Keystone");
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
   test("first hydration re-requests status and reconnect renews the selected pattern", () => {
     vi.useFakeTimers();
     const previousDocument = globalThis.document;
@@ -184,6 +215,44 @@ describe("projection config controller", () => {
     expect(client.getState().snapshot.presets.find((item) => item.id === "original").readOnly).toBe(true);
     api.dispose(); globalThis.document = previousDocument;
   });
+
+  test("v1 imports are migrated before entering the v2 warp editor", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const legacy = clone(DEFAULTS);
+    legacy.schemaVersion = 1;
+    for (const output of ["left", "right"]) {
+      delete legacy.outputs[output].presentationEffect;
+      delete legacy.outputs[output].warp;
+    }
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client, onImport: async () => ({ name: "Legacy checkpoint", config: legacy }) });
+    const importedInput = find(root, (node) => node.attributes?.["aria-label"] === "Import calibration");
+    importedInput.files = [{}]; importedInput.dispatch("change");
+    await vi.waitFor(() => expect(client.getState().draft.schemaVersion).toBe(2));
+    expect(client.getState().draft.pre).toEqual(legacy.pre);
+    expect(client.getState().draft.outputs.left.warp.baseline.type).toBe("identity");
+    expect(client.getState().draft.outputs.right.warp.grid.offsets).toHaveLength(56);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+  test("v1 accepted snapshots are migrated before editor hydration", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const legacy = clone(DEFAULTS);
+    legacy.schemaVersion = 1;
+    for (const output of ["left", "right"]) {
+      delete legacy.outputs[output].presentationEffect;
+      delete legacy.outputs[output].warp;
+    }
+    const client = fakeClient(null);
+    const root = element("main");
+    const api = mountProjectionConfig(root, { client });
+    client.hydrate({ revision: 5, config: legacy, presets: [{ id: "legacy", name: "Legacy", config: legacy }], selectedPresetId: "legacy" });
+    find(root, (node) => node.dataset?.node === "right-grid").dispatch("click");
+    expect(find(root, (node) => node.className === "warp-selection-status").textContent).toContain("Right · Grid Warp");
+    api.dispose(); globalThis.document = previousDocument;
+  });
   test("percentage edit maps once to normalized offset", () => {
     const descriptor = FIELD_DESCRIPTORS.find((item) => item.path === "pre.tx");
     expect(fieldValueFromInput(descriptor, "1.2")).toBe(0.012);
@@ -216,6 +285,97 @@ describe("projection config controller", () => {
     api.dispose();
     expect(client.stop).toHaveBeenCalledTimes(1);
     globalThis.document = previousDocument;
+  });
+
+  test("server hydration replaces the cached preset selection", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const client = fakeClient(null);
+    const root = element("main");
+    const api = mountProjectionConfig(root, { client });
+    const serverConfig = clone(DEFAULTS);
+    const snapshot = {
+      revision: 9,
+      config: serverConfig,
+      presets: [
+        { id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true },
+        { id: "td-baseline", name: "TD migration baseline", config: serverConfig, readOnly: false },
+      ],
+      selectedPresetId: "td-baseline",
+    };
+    client.hydrate(snapshot);
+    expect(find(root, (node) => node.attributes?.["aria-label"] === "Preset").value).toBe("td-baseline");
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("warp arrows use the draft path and flush only while Live is enabled", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const leftNode = find(root, (node) => node.dataset?.node === "left-keystone");
+    leftNode.dispatch("click");
+    const arrow = find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right");
+    arrow.dispatch("click");
+    expect(client.setDraft).toHaveBeenCalled();
+    await vi.waitFor(() => expect(client.apply).toHaveBeenCalled());
+    client.setLive(false);
+    arrow.dispatch("click");
+    expect(client.apply).toHaveBeenCalledTimes(1);
+    const enabled = find(root, (node) => node.attributes?.["aria-label"] === "Enable browser warp");
+    enabled.checked = false; enabled.dispatch("change");
+    expect(client.getState().draft.outputs.left.warp.enabled).toBe(false);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("Live-off warp undo and redo survive synchronous draft notifications", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
+    const arrow = find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right");
+    const undo = find(root, (node) => node.dataset?.action === "warp-undo");
+    const redo = find(root, (node) => node.dataset?.action === "warp-redo");
+    arrow.dispatch("click");
+    const moved = clone(client.getState().draft);
+    undo.dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+    redo.dispatch("click");
+    expect(client.getState().draft).toEqual(moved);
+    expect(client.apply).not.toHaveBeenCalled();
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("own Live acknowledgement preserves warp history independently per output", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const listeners = new Map();
+    const socket = {
+      send: vi.fn(), getConnected: () => true,
+      on(type, handler) { listeners.set(type, handler); }, off(type) { listeners.delete(type); },
+    };
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client, socket });
+    const initial = clone(client.getState().draft);
+    find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
+    find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right").dispatch("click");
+    const leftMoved = clone(client.getState().draft);
+    expect(leftMoved.outputs.left.warp.keystone.corners).not.toEqual(initial.outputs.left.warp.keystone.corners);
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "local", revision: 2, success: true, route: "browser", baseline: clone(initial.outputs.left.warp.baseline) });
+    find(root, (node) => node.dataset?.node === "right-keystone").dispatch("click");
+    find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "down").dispatch("click");
+    const rightMoved = clone(client.getState().draft);
+    find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
+    find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners).toEqual(initial.outputs.left.warp.keystone.corners);
+    expect(client.getState().draft.outputs.right.warp.keystone.corners).toEqual(rightMoved.outputs.right.warp.keystone.corners);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners).not.toEqual(leftMoved.outputs.left.warp.keystone.corners);
+    api.dispose(); globalThis.document = previousDocument;
   });
 
   test("wires workstation display assignment and browser output actions into the existing toolbar", async () => {

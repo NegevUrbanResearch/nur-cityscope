@@ -1,11 +1,14 @@
 const COLUMNS = [
   ["content"], ["pre"], ["left-crop", "right-crop"],
-  ["left-fit", "right-fit"], ["left-output", "right-output"],
+  ["left-fit", "right-fit"], ["left-keystone", "right-keystone"],
+  ["left-grid", "right-grid"], ["left-output", "right-output"],
 ];
 const EDGES = [
   ["content", "pre"], ["pre", "left-crop"], ["pre", "right-crop"],
   ["left-crop", "left-fit"], ["right-crop", "right-fit"],
-  ["left-fit", "left-output"], ["right-fit", "right-output"],
+  ["left-fit", "left-keystone"], ["right-fit", "right-keystone"],
+  ["left-keystone", "left-grid"], ["right-keystone", "right-grid"],
+  ["left-grid", "left-output"], ["right-grid", "right-output"],
 ];
 const PAD = 28;
 const COLUMN_GAP = 48;
@@ -16,8 +19,8 @@ const topOf = (card) => Number.isFinite(card.offsetTop) ? card.offsetTop : Numbe
 export function layoutNodePositions(sizes) {
   const widthOf = (id) => sizes[id]?.width || 280;
   const heightOf = (id) => sizes[id]?.height || 300;
-  const topHeight = Math.max(...["left-crop", "left-fit", "left-output"].map(heightOf));
-  const bottomHeight = Math.max(...["right-crop", "right-fit", "right-output"].map(heightOf));
+  const topHeight = Math.max(...["left-crop", "left-fit", "left-keystone", "left-grid", "left-output"].map(heightOf));
+  const bottomHeight = Math.max(...["right-crop", "right-fit", "right-keystone", "right-grid", "right-output"].map(heightOf));
   const height = PAD * 2 + topHeight + ROW_GAP + bottomHeight;
   const positions = {};
   let x = PAD;

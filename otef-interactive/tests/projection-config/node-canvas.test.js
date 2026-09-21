@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { createNodeCanvas, fitTransform, layoutNodePositions, zoomAt } from "../../frontend/src/projection-config/node-canvas.js";
 
-const ids = ["content", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-output", "right-output"];
+const ids = ["content", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"];
 
 test("node layout separates every card and fit shows the complete graph", () => {
   const sizes = Object.fromEntries(ids.map((id) => [id, { width: 330, height: id.includes("crop") ? 430 : 300 }]));
