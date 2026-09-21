@@ -830,14 +830,12 @@ describe("createNliNameFieldController", () => {
 
   it('compares projection configs independent of object key order', () => {
     const d = setup({ applyProjectionConfig: false });
-    const reordered = {
-      outputs: {
-        right: { post: { ty: -0.049, tx: 0, scale: 2 }, crop: { y1: 1, y0: 0, x1: 1, x0: 0.4 } },
-        left: { post: { ty: -0.049, tx: 0, scale: 2 }, crop: { y1: 1, y0: 0, x1: 0.6, x0: 0 } },
-      },
-      pre: { ty: 0, tx: 0.01, rotateDeg: -50, scale: 1.41 },
-      schemaVersion: 1,
-    };
+    const reverseKeys = (value) => Array.isArray(value)
+      ? value.map(reverseKeys)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(Object.entries(value).reverse().map(([key, item]) => [key, reverseKeys(item)]))
+        : value;
+    const reordered = reverseKeys(DEFAULTS);
     expect(d.controller.setProjectionConfig(DEFAULTS, 7)).toBe(true);
     expect(d.controller.setProjectionConfig(reordered, 7)).toBe(true);
   });

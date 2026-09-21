@@ -155,6 +155,16 @@ class ProjectionConfigApiTests(TestCase):
             self.assertEqual(self.state(), original)
             broadcast.assert_not_called()
 
+    @patch("backend.projection_config_service._broadcast")
+    def test_semantically_invalid_warp_does_not_persist_or_broadcast(self, broadcast):
+        original = self.state()
+        config = copy.deepcopy(original["config"])
+        config["outputs"]["left"]["warp"]["keystone"]["corners"] = [[0, 0], [1, 0], [0, 0], [1, 1]]
+        response = self.post_action("preview", config=config)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.state(), original)
+        broadcast.assert_not_called()
+
     def test_selected_checkpoint_survives_reload(self):
         original = self.state()
         config = copy.deepcopy(original["config"])

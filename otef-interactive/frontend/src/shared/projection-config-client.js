@@ -1,4 +1,10 @@
-import { DEFAULT_PROJECTION_CONFIG, validateProjectionConfig } from './projection-config-schema.js';
+import {
+  DEFAULT_PROJECTION_CONFIG,
+  LEGACY_DEFAULT_PROJECTION_CONFIG,
+  TD_MIGRATION_PRESET_ID,
+  TD_MIGRATION_PRESET_NAME,
+  validateProjectionConfig,
+} from './projection-config-schema.js';
 
 const API_URL = '/api/otef/projection-config/';
 const TABLE = 'otef';
@@ -39,7 +45,9 @@ function validSnapshot(value) {
     ids.add(preset.id);
     if (preset.id === 'original') {
       originalCount += 1;
-      if (!preset.readOnly || preset.name !== 'Original calibration' || !equal(preset.config, DEFAULT_PROJECTION_CONFIG)) return false;
+      if (!preset.readOnly || preset.name !== 'Original calibration' || (!equal(preset.config, DEFAULT_PROJECTION_CONFIG) && !equal(preset.config, LEGACY_DEFAULT_PROJECTION_CONFIG))) return false;
+    } else if (preset.id === TD_MIGRATION_PRESET_ID) {
+      if (!preset.readOnly || preset.name !== TD_MIGRATION_PRESET_NAME) return false;
     } else if (!isUuid(preset.id) || preset.readOnly) return false;
   }
   if (originalCount !== 1 || typeof value.selectedPresetId !== 'string' || !ids.has(value.selectedPresetId)) return false;
@@ -446,4 +454,4 @@ export function createProjectionConfigClient({
   return { start, stop, retryHydration, setDraft, setLive, apply, save, load, revert, getState, subscribe };
 }
 
-export { validSnapshot as validateProjectionConfigSnapshot };
+export { TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, validSnapshot as validateProjectionConfigSnapshot };
