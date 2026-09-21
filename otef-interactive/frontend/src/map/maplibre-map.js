@@ -122,7 +122,7 @@ export function createGISMap(containerId, options = {}) {
     maxZoom,
     // Integer-step zoom: align with remote/OTEF (zoomSnap:1; Map ctor has no roundZoom—see style “roundZoom” on sources).
     zoomSnap: 1,
-    attributionControl: true,
+    attributionControl: false,
     dragRotate: false,
   });
 
