@@ -1,5 +1,6 @@
 import TableSwitcher from "../shared/table-switcher.js";
 import { initLocale } from "../remote/remote-locale.js";
+import { bindRemoteConnectionRecovery } from "../remote/remote-connection-recovery.js";
 import { initNliStaffRemote } from "../remote/nli-staff-remote.js";
 
 async function bootstrapRemoteRuntime() {
@@ -51,6 +52,7 @@ async function boot() {
   ]);
   await layerRegistry.init();
   await OTEFDataContext.init("otef");
+  bindRemoteConnectionRecovery(() => OTEFDataContext.reconnect());
   initNliStaffRemote(OTEFDataContext);
 }
 

@@ -22,15 +22,18 @@ export class OTEFWebSocketClient {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
 
     this.isConnecting = true;
+    this.emit("connecting");
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = this.url.startsWith("ws")
       ? this.url
       : `${protocol}//${window.location.host}${this.url}`;
 
     try {
-      this.ws = new WebSocket(wsUrl);
+      const socket = new WebSocket(wsUrl);
+      this.ws = socket;
 
       this.ws.onopen = () => {
+        if (this.ws !== socket) return;
         this.isConnected = true;
         this.isConnecting = false;
         this.reconnectAttempts = 0;
@@ -39,6 +42,7 @@ export class OTEFWebSocketClient {
       };
 
       this.ws.onmessage = (event) => {
+        if (this.ws !== socket) return;
         try {
           const msg = JSON.parse(event.data);
           this.handleMessage(msg);
@@ -48,6 +52,7 @@ export class OTEFWebSocketClient {
       };
 
       this.ws.onclose = () => {
+        if (this.ws !== socket) return;
         this.isConnected = false;
         this.isConnecting = false;
         if (this.onDisconnectCallback) this.onDisconnectCallback();
@@ -56,6 +61,7 @@ export class OTEFWebSocketClient {
       };
 
       this.ws.onerror = (error) => {
+        if (this.ws !== socket) return;
         getLogger().error("[OTEF WS] Error:", error);
         this.isConnected = false;
         if (this.onErrorCallback) this.onErrorCallback(error);
@@ -77,6 +83,7 @@ export class OTEFWebSocketClient {
       this.maxReconnectDelay,
     );
     this.reconnectAttempts += 1;
+    this.emit("connecting");
     this.reconnectTimeout = setTimeout(() => this.connect(), delay);
   }
 
@@ -86,11 +93,20 @@ export class OTEFWebSocketClient {
       this.reconnectTimeout = null;
     }
     if (this.ws) {
-      this.ws.close();
+      const socket = this.ws;
       this.ws = null;
+      socket.close();
     }
     this.isConnected = false;
     this.isConnecting = false;
+  }
+
+  restart() {
+    this.disconnect();
+    this.reconnectAttempts = 0;
+    if (this.onDisconnectCallback) this.onDisconnectCallback();
+    this.emit("disconnect");
+    this.connect();
   }
 
   send(message) {

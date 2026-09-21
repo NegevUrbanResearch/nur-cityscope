@@ -195,6 +195,7 @@ function setupWebSocket(ctx) {
     onDisconnect: () => ctx._setConnection(false),
     onError: () => ctx._setConnection(false),
   });
+  ctx._wsClient.on("connecting", () => ctx._setConnection(false, "connecting"));
 
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.VIEWPORT_CHANGED, async (msg) => {
     try {
