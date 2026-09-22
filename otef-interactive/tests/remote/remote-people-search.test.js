@@ -173,7 +173,7 @@ describe("remote people search", () => {
     settlementButton.dispatchEvent({ type: "click" });
     await Promise.resolve();
     expect(dataContext.clearPerson).toHaveBeenCalledTimes(2);
-    expect(settlementButton.attributes["aria-pressed"]).toBe("true");
+    await vi.waitFor(() => expect(settlementButton.attributes["aria-pressed"]).toBe("true"));
     peopleButton.dispatchEvent({ type: "click" });
     await Promise.resolve();
     expect(archiveButton.hidden).toBe(true);
