@@ -13,6 +13,7 @@ import { createNarrativePresentation, handleNarrativePresentationCommand } from 
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
 import { applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
+import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
 import {
   createLegendStyleLoadRefresh,
@@ -271,6 +272,7 @@ async function bootstrapMapRuntime() {
     let nliGisClockDebugApi = null;
     let narrativeController = null;
     let novaEscapeCoordinator = null;
+    let morRouteCoordinator = null;
     const syncContextInvestigation = () => {
       const { groupsAsArray, currentGroups } = gisOverlayGroups();
       const clock =
@@ -405,6 +407,12 @@ async function bootstrapMapRuntime() {
       surface: "gis",
     });
     registerDisposer(() => novaEscapeCoordinator?.dispose?.());
+    morRouteCoordinator = createMorRouteCoordinator({
+      map,
+      dataContext: OTEFDataContext,
+      profile: "gis",
+    });
+    registerDisposer(() => morRouteCoordinator?.dispose?.());
     narrativeController = createGisNarrativeController({
       map,
       dataContext: OTEFDataContext,
@@ -414,7 +422,10 @@ async function bootstrapMapRuntime() {
       closeArchive: () => archiveWindow.close(),
       resolveExitCenter: () => resolveCenterFromBounds(OTEFDataContext.getBounds()) || DEFAULT_MAP_CENTER,
       syncTimeline: syncContextInvestigation,
-      onStyleLoadOverlay: () => novaEscapeCoordinator?.onStyleLoad?.({ styleLoss: true }),
+      onStyleLoadOverlay: () => {
+        novaEscapeCoordinator?.onStyleLoad?.({ styleLoss: true });
+        morRouteCoordinator?.onStyleLoad?.({ styleLoss: true });
+      },
     });
     registerDisposer(() => narrativeController?.dispose?.());
     registerDisposer(() => narrativePresentation.dispose());

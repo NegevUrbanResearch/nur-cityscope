@@ -719,10 +719,11 @@ class LayerSheetController {
     const current =
       (typeof OTEFDataContext.getEscapeOverlay === "function" &&
         OTEFDataContext.getEscapeOverlay()) ||
-      { individual: false, overlap: false };
+      { individual: false, overlap: false, mor: false };
     await OTEFDataContext.setEscapeOverlay({
       individual: patch?.individual ?? current.individual,
       overlap: patch?.overlap ?? current.overlap,
+      mor: patch?.mor ?? current.mor,
     });
   }
 
@@ -1046,7 +1047,7 @@ class LayerSheetController {
       this._readNarrativeState(),
       (typeof OTEFDataContext !== "undefined" &&
         OTEFDataContext.getEscapeOverlay?.()) ||
-        { individual: false, overlap: false },
+        { individual: false, overlap: false, mor: false },
     );
     const extras = selected.id === "nli" && pane === "timeline"
       ? `${narrativeSheet}${escapeToggles}${nliSheet}`

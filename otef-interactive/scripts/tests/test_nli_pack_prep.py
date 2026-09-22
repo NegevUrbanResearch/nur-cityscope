@@ -12,6 +12,8 @@ from nli_pack_prep import (
     ASHKELON_NORTH_FALLBACK_LAT,
     FLEEING_GEOJSON_ZIP_SHA256,
     FLEEING_LYRX_ZIP_SHA256,
+    MOR_ROUTE_URL,
+    MOR_ROUTE_ZIP_SHA256,
     FLEEING_ROUTE_OVERLAPP_URL,
     FLEEING_ROUTE_URL,
     MITZPE_RAMON_LAT,
@@ -47,6 +49,7 @@ from nli_pack_prep import (
     merge_popup_config,
     nli_authority_url,
     NLI_POPUP_CONFIG,
+    install_nli_mor_route,
     object_ids_active_at,
     parse_alarm_timestamp_to_minutes,
     parse_local_timeline_to_minutes,
@@ -1533,6 +1536,38 @@ class KeepStemsFleeingTests(unittest.TestCase):
         self.assertNotIn("fleeing_route_overlapp", ZIP_LAYER_MAP.values())
         self.assertNotIn("fleeing_route", NLI_POPUP_CONFIG["nli"]["layers"])
         self.assertNotIn("fleeing_route_overlapp", NLI_POPUP_CONFIG["nli"]["layers"])
+
+    def test_mor_route_is_a_hidden_processed_sidecar(self):
+        self.assertIn("mor_levy_route", NLI_KEEP_STEMS)
+        self.assertNotIn("mor_levy_route", ZIP_LAYER_MAP.values())
+        self.assertNotIn("mor_levy_route", NLI_POPUP_CONFIG["nli"]["layers"])
+        self.assertEqual(MOR_ROUTE_URL, "/otef-interactive/public/processed/layers/nli/mor_levy_route.geojson")
+
+    def test_install_mor_route_projects_and_reverses_parts_with_hash_guard(self):
+        tmp = Path(tempfile.mkdtemp())
+        source = tmp / "Mor_levy.zip"
+        with zipfile.ZipFile(source, "w") as archive:
+            archive.writestr("Mor_levy.geojson", json.dumps({
+                "type": "FeatureCollection",
+                "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+                "features": [{"type": "Feature", "geometry": {"type": "MultiLineString", "coordinates": [[[0, 0], [111319.49, 0]], [[111319.49, 0], [222638.98, 111325.14]]]}, "properties": {"OBJECTID": 1}}],
+            }))
+        output = install_nli_mor_route(tmp / "processed", source, expected_sha256=sha256_file(source))
+        self.assertEqual(output["url"], MOR_ROUTE_URL)
+        route = json.loads((tmp / "processed" / "mor_levy_route.geojson").read_text(encoding="utf-8"))
+        coordinates = route["features"][0]["geometry"]["coordinates"]
+        self.assertAlmostEqual(coordinates[0][0][0], 2, places=4)
+        self.assertAlmostEqual(coordinates[0][0][1], 1, places=4)
+        self.assertEqual(coordinates[0][-1], coordinates[1][0])
+        self.assertNotIn("crs", route)
+
+    def test_install_mor_route_requires_a_sha256(self):
+        tmp = Path(tempfile.mkdtemp())
+        source = tmp / "Mor_levy.zip"
+        with zipfile.ZipFile(source, "w") as archive:
+            archive.writestr("Mor_levy.geojson", json.dumps({"type": "FeatureCollection", "features": []}))
+        with self.assertRaises(ValueError):
+            install_nli_mor_route(tmp / "processed", source)
 
     def test_fleeing_overlay_urls_use_exhibit_public_prefix(self):
         self.assertEqual(

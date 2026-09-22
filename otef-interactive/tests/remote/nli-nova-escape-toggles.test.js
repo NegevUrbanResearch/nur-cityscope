@@ -60,13 +60,15 @@ describe("remote Nova fleeing overlay toggles", () => {
     setLocale("en", { force: true });
     const html = nliNovaEscapeTogglesHtml(
       { id: "nova", transition: "enter", revision: 1 },
-      { individual: true, overlap: false },
+      { individual: true, overlap: false, mor: true },
     );
     expect(html).toContain('data-nli-nova-escape="individual"');
     expect(html).toContain('data-nli-nova-escape="overlap"');
+    expect(html).toContain('data-nli-nova-escape="mor"');
     expect(html).toContain("Fleeing routes");
     expect(html).toContain("Fleeing density (overlap count)");
-    expect(html).toContain("Test layers for routes from Nova, not survival paths");
+    expect(html).toContain("Mor Levy route");
+    expect(html).toContain("Routes from Nova");
     expect(html).toContain('aria-pressed="true"');
     expect(html).toMatch(/data-nli-nova-escape="overlap"[^>]*aria-pressed="false"/);
     expect(html).not.toContain("data-nli-narrative");
@@ -89,9 +91,9 @@ describe("remote Nova fleeing overlay toggles", () => {
       "../../frontend/src/remote/nli-nova-escape-toggles.js"
     );
     const host = { setEscapeOverlay: vi.fn(), setNarrative: vi.fn() };
-    const event = clickEvent('[data-nli-nova-escape="overlap"]');
+    const event = clickEvent('[data-nli-nova-escape="mor"]');
     consumeNliNovaEscapeClick(event, host);
-    expect(host.setEscapeOverlay).toHaveBeenCalledWith({ overlap: true });
+    expect(host.setEscapeOverlay).toHaveBeenCalledWith({ mor: true });
     expect(host.setNarrative).not.toHaveBeenCalled();
     expect(event.preventDefault).toHaveBeenCalled();
     expect(event.stopPropagation).toHaveBeenCalled();
@@ -111,6 +113,7 @@ describe("remote Nova fleeing overlay toggles", () => {
     expect(layerSheet.indexOf("consumeNliNovaEscapeClick(e, this)"))
       .toBeLessThan(layerSheet.indexOf("consumeNliNarrativeButtonClick(e, this)"));
     expect(layerSheet).toContain("setEscapeOverlay");
+    expect(layerSheet).toContain("mor: patch?.mor ?? current.mor");
     expect(layerSheet).toContain('_subscribeDataContext("escapeOverlay"');
 
     const css = fs.readFileSync(

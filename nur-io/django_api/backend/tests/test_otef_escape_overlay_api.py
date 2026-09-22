@@ -56,10 +56,10 @@ class EscapeOverlaySceneTests(TestCase):
             scene = transition_narrative_scene(locked, "nova", 3)
 
         self.assertEqual(
-            scene["escapeOverlay"], {"individual": False, "overlap": False}
+            scene["escapeOverlay"], {"individual": False, "overlap": False, "mor": False}
         )
         self.assertEqual(
-            locked.escape_overlay, {"individual": False, "overlap": False}
+            locked.escape_overlay, {"individual": False, "overlap": False, "mor": False}
         )
         self.assertEqual(
             scene["narrativeState"],
@@ -70,10 +70,10 @@ class EscapeOverlaySceneTests(TestCase):
             scene = transition_narrative_scene(locked, None, scene["sceneRevision"])
 
         self.assertEqual(
-            scene["escapeOverlay"], {"individual": False, "overlap": False}
+            scene["escapeOverlay"], {"individual": False, "overlap": False, "mor": False}
         )
         self.assertEqual(
-            locked.escape_overlay, {"individual": False, "overlap": False}
+            locked.escape_overlay, {"individual": False, "overlap": False, "mor": False}
         )
 
     def test_replace_nova_to_segev_zeros_overlay(self):
@@ -87,10 +87,10 @@ class EscapeOverlaySceneTests(TestCase):
         self.assertEqual(scene["narrativeState"]["id"], "segev")
         self.assertEqual(scene["narrativeState"]["transition"], "replace")
         self.assertEqual(
-            scene["escapeOverlay"], {"individual": False, "overlap": False}
+            scene["escapeOverlay"], {"individual": False, "overlap": False, "mor": False}
         )
         self.assertEqual(
-            locked.escape_overlay, {"individual": False, "overlap": False}
+            locked.escape_overlay, {"individual": False, "overlap": False, "mor": False}
         )
 
     @patch("channels.layers.get_channel_layer")
@@ -107,12 +107,14 @@ class EscapeOverlaySceneTests(TestCase):
         self.assertEqual(enter.json()["scene"]["escapeOverlay"], {
             "individual": False,
             "overlap": False,
+            "mor": False,
         })
 
         response = self.command(
             "set_escape_overlay",
             individual=False,
             overlap=True,
+            mor=True,
             sourceId="remote-a",
             timestamp=123,
         )
@@ -123,7 +125,7 @@ class EscapeOverlaySceneTests(TestCase):
             {
                 "status": "ok",
                 "action": "set_escape_overlay",
-                "escapeOverlay": {"individual": False, "overlap": True},
+                "escapeOverlay": {"individual": False, "overlap": True, "mor": True},
             },
         )
 
@@ -131,14 +133,14 @@ class EscapeOverlaySceneTests(TestCase):
         self.assertEqual(self.state.narrative_state["revision"], revision)
         self.assertEqual(self.state.narrative_state["id"], "nova")
         self.assertEqual(
-            self.state.escape_overlay, {"individual": False, "overlap": True}
+            self.state.escape_overlay, {"individual": False, "overlap": True, "mor": True}
         )
 
         listed = self.client.get("/api/otef_viewport/by-table/otef/")
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(
             listed.json()["escape_overlay"],
-            {"individual": False, "overlap": True},
+            {"individual": False, "overlap": True, "mor": True},
         )
         self.assertEqual(listed.json()["narrative_state"]["revision"], revision)
 
@@ -153,7 +155,7 @@ class EscapeOverlaySceneTests(TestCase):
             {
                 "type": "otef_escape_overlay_changed",
                 "table": "otef",
-                "escapeOverlay": {"individual": False, "overlap": True},
+                "escapeOverlay": {"individual": False, "overlap": True, "mor": True},
                 "sourceId": "remote-a",
                 "timestamp": 123,
             },
@@ -181,18 +183,18 @@ class EscapeOverlaySceneTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json()["escapeOverlay"],
-            {"individual": False, "overlap": False},
+            {"individual": False, "overlap": False, "mor": False},
         )
         self.state.refresh_from_db()
         self.assertEqual(self.state.narrative_state["id"], "segev")
         self.assertEqual(self.state.narrative_state["revision"], revision)
         self.assertEqual(
-            self.state.escape_overlay, {"individual": False, "overlap": False}
+            self.state.escape_overlay, {"individual": False, "overlap": False, "mor": False}
         )
         listed = self.client.get("/api/otef_viewport/by-table/otef/")
         self.assertEqual(
             listed.json()["escape_overlay"],
-            {"individual": False, "overlap": False},
+            {"individual": False, "overlap": False, "mor": False},
         )
 
     def test_presentation_open_for_nova_is_400(self):

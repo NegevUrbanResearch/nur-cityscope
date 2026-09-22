@@ -853,9 +853,22 @@ async function setNarrative(ctx, id) {
 
 async function setEscapeOverlay(ctx, overlay) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
+  const current = ctx.getEscapeOverlay?.() || {};
+  const patch = overlay && typeof overlay === "object" ? overlay : {};
+  const nextOverlay = {
+    individual: Object.prototype.hasOwnProperty.call(patch, "individual")
+      ? patch.individual === true
+      : current.individual === true,
+    overlap: Object.prototype.hasOwnProperty.call(patch, "overlap")
+      ? patch.overlap === true
+      : current.overlap === true,
+    mor: Object.prototype.hasOwnProperty.call(patch, "mor")
+      ? patch.mor === true
+      : current.mor === true,
+  };
   const response = await OTEF_API.setEscapeOverlay(
     ctx._tableName,
-    overlay,
+    nextOverlay,
     { sourceId: ctx._clientId, timestamp: Date.now() },
   );
   if (response?.escapeOverlay) {

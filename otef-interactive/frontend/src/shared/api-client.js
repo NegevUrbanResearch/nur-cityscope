@@ -185,6 +185,7 @@ export const OTEF_API = {
       action: "set_escape_overlay",
       individual: overlay.individual === true,
       overlap: overlay.overlap === true,
+      mor: overlay.mor === true,
       ...meta,
     });
   },

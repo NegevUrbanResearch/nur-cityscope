@@ -1,11 +1,13 @@
 export const EMPTY_ESCAPE_OVERLAY = Object.freeze({
   individual: false,
   overlap: false,
+  mor: false,
 });
 
 export const NOVA_ENTER_ESCAPE_OVERLAY = Object.freeze({
   individual: false,
   overlap: false,
+  mor: false,
 });
 
 function asBool(value) {
@@ -22,6 +24,7 @@ export function normalizeEscapeOverlay(raw, narrativeId, options = {}) {
   return {
     individual: asBool(raw.individual),
     overlap: asBool(raw.overlap),
+    mor: asBool(raw.mor),
   };
 }
 

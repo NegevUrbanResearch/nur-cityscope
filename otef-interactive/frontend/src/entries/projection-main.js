@@ -36,6 +36,7 @@ import { createProjectionConfigRuntime } from "../projection/projection-config-r
 import { createUuid } from "../shared/uuid.js";
 import { createProjectionNarrativeController } from "../projection/projection-narrative-controller.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
+import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import MapProjectionConfig from "../shared/map-projection-config.js";
 import {
   createSlideshowPackRuntime,
@@ -625,6 +626,7 @@ async function bootstrapProjectionRuntime() {
     let explainerDebugVisible = false;
     let projectionNarrativeController = null;
     let novaEscapeCoordinator = null;
+    let morRouteCoordinator = null;
     let parallelImpactIds = new Set();
     const syncContextInvestigation = () => {
       const { currentGroups, overlayGroups, presentationActive } = projectionOverlayContext();
@@ -726,10 +728,19 @@ async function bootstrapProjectionRuntime() {
       },
     });
     registerDisposer(() => novaEscapeCoordinator?.dispose?.());
+    morRouteCoordinator = createMorRouteCoordinator({
+      map,
+      dataContext: OTEFDataContext,
+      profile: "projection",
+    });
+    registerDisposer(() => morRouteCoordinator?.dispose?.());
     projectionNarrativeController = createProjectionNarrativeController({
       map,
       syncTimeline: syncContextInvestigation,
-      onStyleLoadOverlay: () => novaEscapeCoordinator?.onStyleLoad?.(),
+      onStyleLoadOverlay: () => {
+        novaEscapeCoordinator?.onStyleLoad?.();
+        morRouteCoordinator?.onStyleLoad?.();
+      },
     });
     registerDisposer(() => projectionNarrativeController?.dispose());
     registerDisposer(
