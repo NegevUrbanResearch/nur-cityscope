@@ -121,6 +121,10 @@ POST /api/otef_viewport/
 
 ### NLI investigation and people records
 
+The [NLI remote run of show](docs/nli-remote-run-of-show.md) is the translated
+NLI-authored source for the intended exhibit sequence. It preserves incomplete
+steps and notes which narrative scene elements are already implemented.
+
 - With the timeline off, during playback, or after **Stop**, every visible
   investigation route remains in the red route family. Future and revealing
   routes show a solid red route; the active reveal follows its reviewed travel
