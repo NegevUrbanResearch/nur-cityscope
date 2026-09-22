@@ -92,7 +92,36 @@ otef-interactive/
 
 ## Layer Processing
 
-Setup and reset scripts run `process_layers.py`, which:
+The setup scripts check the newest versioned GitHub `layers-v*` release and
+install both `source.zip` and `processed.zip`. If the processed manifest is
+present, setup skips local processing. The layer updater runs independently of
+setup and refreshes Django layer groups when the API container is running:
+
+```bash
+python otef-interactive/scripts/update_layers.py
+```
+
+The updater checks for a newer release each time. A new version replaces both
+local layer trees; save local data edits separately before running it. If Django
+is stopped, rerun the updater after starting it to refresh layer groups.
+
+Processing remains an explicit operation. To process after an update, run
+`python otef-interactive/scripts/update_layers.py --process`. To process local
+source files without downloading first, run
+`python otef-interactive/scripts/process_layers.py`. Processing requires the
+dependencies in `scripts/requirements.txt` and Docker for PMTiles.
+
+To build verified archives for a new release:
+
+```bash
+python otef-interactive/scripts/pack_layer_release.py --output-dir otef-interactive/public/release-build/layers-v1.1.0
+```
+
+The archives contain `source/` and `processed/` roots and are named
+`source.zip` and `processed.zip` for the downloader.
+
+When no processed manifest is available, or when explicitly invoked,
+`process_layers.py`:
 
 1. Discovers layer packs in `public/source/layers/` (see [Adding layers](docs/adding-layers.md))
 2. Transforms GeoJSON to WGS84, parses `.lyrx` styles

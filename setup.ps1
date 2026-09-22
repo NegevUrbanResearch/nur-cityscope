@@ -98,29 +98,26 @@ if (-not $pythonCmd) {
     Write-Host "Ensuring dependencies are installed..." -ForegroundColor Gray
     & "$venvPath\Scripts\python" -m pip install -q -r "$SCRIPT_DIR\otef-interactive\scripts\requirements.txt"
 
-    # Fetch source layers if needed
-    Write-Host "Fetching source layers if needed..." -ForegroundColor Cyan
+    # Install the latest matching source and processed layer release.
+    Write-Host "Checking for the latest layer release..." -ForegroundColor Cyan
     & "$venvPath\Scripts\python" "$SCRIPT_DIR\otef-interactive\scripts\fetch_data.py" --output "$SCRIPT_DIR\otef-interactive\public\source"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Layer release download failed."
+    }
 
     $dockerRunning = docker info 2>$null
     if ($LASTEXITCODE -eq 0) {
         $manifestPath = "$SCRIPT_DIR\otef-interactive\public\processed\layers\layers-manifest.json"
-        $shouldProcess = $true
         if (Test-Path $manifestPath) {
-            $manifestTime = (Get-Item $manifestPath).LastWriteTime
-            $sourceDir = "$SCRIPT_DIR\otef-interactive\public\source\layers"
-            $newerFiles = Get-ChildItem -Path $sourceDir -Recurse -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.LastWriteTime -gt $manifestTime }
-            if ($null -eq $newerFiles -or $newerFiles.Count -eq 0) {
-                Write-Host "Layer packs already processed (manifest up to date), skipping..." -ForegroundColor Gray
-                $shouldProcess = $false
-            }
-        }
-        if ($shouldProcess) {
+            Write-Host "Processed layer release is present; skipping layer processing." -ForegroundColor Gray
+        } else {
             Write-Host "Processing layer packs (process_layers.py)..." -ForegroundColor Cyan
             & "$venvPath\Scripts\python" "$SCRIPT_DIR\otef-interactive\scripts\process_layers.py" `
                 --source "$SCRIPT_DIR\otef-interactive\public\source\layers" `
                 --output "$SCRIPT_DIR\otef-interactive\public\processed\layers"
+            if ($LASTEXITCODE -ne 0) {
+                throw "Layer processing failed."
+            }
         }
     } else {
         Write-Host "Warning: Docker not running, skipping layer pack processing" -ForegroundColor Yellow
@@ -167,6 +164,12 @@ Write-Host "Creating data structure..." -ForegroundColor Cyan
 docker exec nur-api python manage.py create_data
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Warning: Data creation may have failed. Check logs with: docker-compose logs nur-api" -ForegroundColor Yellow
+}
+
+Write-Host "Refreshing OTEF layer groups from processed manifests..." -ForegroundColor Cyan
+docker exec nur-api python manage.py import_otef_data
+if ($LASTEXITCODE -ne 0) {
+    throw "OTEF layer import failed."
 }
 
 Write-Host ""

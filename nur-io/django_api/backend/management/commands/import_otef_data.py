@@ -17,6 +17,12 @@ from django.conf import settings
 class Command(BaseCommand):
     help = 'Import OTEF model config and seed layer groups from processed manifests'
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--layers-only', action='store_true',
+            help='Refresh layer groups without changing model bounds or viewport orientation',
+        )
+
     def _model_bounds_candidates(self):
         """Paths to check for model-bounds.json (Docker mount, then repo-relative, then legacy)."""
         base = Path(settings.BASE_DIR)
@@ -33,6 +39,12 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.ERROR('[ERROR] OTEF table not found! Run migrations first.')
             )
+            return
+
+        if options['layers_only']:
+            self._seed_layer_groups(otef_table)
+            self._remove_retired_nli_layer_states(otef_table)
+            self.stdout.write(self.style.SUCCESS('\n[SUCCESS] OTEF layer import completed.'))
             return
 
         # Import model config: try frontend data path first (Docker), then legacy locations

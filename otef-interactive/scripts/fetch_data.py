@@ -1,129 +1,163 @@
 #!/usr/bin/env python3
-import os
-import sys
-import zipfile
-import requests
-import shutil
-from pathlib import Path
-from tqdm import tqdm
+"""Install a matching source/processed pair from the newest layer release."""
+
 import argparse
-
-def download_file(url, target_path):
-    """Download a file with a progress bar."""
-    response = requests.get(url, stream=True)
-    response.raise_for_status()
-    total_size = int(response.headers.get('content-length', 0))
-
-    with open(target_path, 'wb') as f, tqdm(
-        desc=f"Downloading {os.path.basename(url)}",
-        total=total_size,
-        unit='B',
-        unit_scale=True,
-        unit_divisor=1024,
-    ) as bar:
-        for chunk in response.iter_content(chunk_size=8192):
-            size = f.write(chunk)
-            bar.update(size)
-
-DEFAULT_SOURCE_URL = "https://github.com/NegevUrbanResearch/nur-cityscope/releases/download/layers/source.zip"
-DEFAULT_PROCESSED_URL = "https://github.com/NegevUrbanResearch/nur-cityscope/releases/download/layers/processed.zip"
+import hashlib
+import json
+import re
+import shutil
+import sys
+import tempfile
+import zipfile
+from pathlib import Path, PurePosixPath
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 
-def pack_has_data(pack_dir):
-    for path in pack_dir.rglob("*"):
-        if path.is_file() and path.name != ".gitkeep":
-            return True
-    return False
+RELEASES_API = "https://api.github.com/repos/NegevUrbanResearch/nur-cityscope/releases?per_page=100"
+TAG_PATTERN = re.compile(r"layers-v(\d+)\.(\d+)\.(\d+)$")
+ASSET_NAMES = ("source.zip", "processed.zip")
+RECEIPT_NAME = ".layer-release.json"
+
+
+def choose_layer_release(releases):
+    candidates = []
+    for release in releases:
+        match = TAG_PATTERN.fullmatch(release.get("tag_name", ""))
+        if not match or release.get("draft") or release.get("prerelease"):
+            continue
+        if set(ASSET_NAMES) <= {asset.get("name") for asset in release.get("assets", [])}:
+            candidates.append((tuple(map(int, match.groups())), release))
+    if not candidates:
+        raise ValueError("No versioned layer release with source.zip and processed.zip was found")
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def latest_layer_release():
+    request = Request(RELEASES_API, headers={"Accept": "application/vnd.github+json", "User-Agent": "nur-cityscope-layer-updater"})
+    with urlopen(request, timeout=30) as response:
+        return choose_layer_release(json.load(response))
 
 
 def data_exists(output_dir):
-    check_path = output_dir / "layers"
-    if not check_path.exists():
-        return False
-    for entry in check_path.iterdir():
-        if entry.is_dir() and entry.name != "example_layer_group" and pack_has_data(entry):
-            return True
-    return False
+    layers = Path(output_dir) / "layers"
+    return layers.is_dir() and any(
+        path.is_file() and path.name != ".gitkeep" for path in layers.rglob("*")
+    )
 
 
-def fetch_zip(url, output_dir, force=False):
-    if data_exists(output_dir) and not force:
-        print(f"Data already exists at {output_dir / 'layers'}. Skipping (use --force to overwrite).")
-        return
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    temp_zip = output_dir / "temp_data.zip"
-
-    try:
-        print(f"Fetching data from {url}...")
-        download_file(url, temp_zip)
-
-        print(f"Extracting to {output_dir}...")
-        extract_zip(temp_zip, output_dir)
-
-        print("Cleanup...")
-        if temp_zip.exists():
-            temp_zip.unlink()
-
-        print(f"Successfully updated {output_dir}")
-    except Exception as e:
-        print(f"Error fetching data: {e}")
-        if temp_zip.exists():
-            temp_zip.unlink()
-        raise
+def download_file(url, target_path, expected_digest=None):
+    digest = hashlib.sha256()
+    request = Request(url, headers={"User-Agent": "nur-cityscope-layer-updater"})
+    with urlopen(request, timeout=120) as response, Path(target_path).open("wb") as output:
+        while chunk := response.read(1024 * 1024):
+            output.write(chunk)
+            digest.update(chunk)
+    actual = digest.hexdigest()
+    if expected_digest and expected_digest != f"sha256:{actual}":
+        raise ValueError(f"Download digest mismatch for {target_path}")
+    return actual
 
 
 def extract_zip(zip_path, extract_path):
-    """Extract a zip file, flattening if it contains a single top-level directory matching the target."""
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        files = zip_ref.namelist()
+    """Extract an archive whose sole top-level directory matches the target."""
+    extract_path = Path(extract_path)
+    seen = set()
+    with zipfile.ZipFile(zip_path) as archive:
+        for info in archive.infolist():
+            parts = PurePosixPath(info.filename).parts
+            if not parts or parts[0] != extract_path.name or any(part in (".", "..") for part in parts):
+                raise ValueError(f"Unsafe or unexpected archive entry: {info.filename}")
+            if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                raise ValueError(f"Symlink in archive: {info.filename}")
+            relative = Path(*parts[1:])
+            key = str(relative).casefold()
+            if key in seen and relative != Path():
+                raise ValueError(f"Duplicate archive entry: {info.filename}")
+            seen.add(key)
+            destination = extract_path / relative
+            if info.is_dir():
+                destination.mkdir(parents=True, exist_ok=True)
+            elif relative != Path():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(info) as source, destination.open("wb") as target:
+                    shutil.copyfileobj(source, target)
+            else:
+                raise ValueError(f"Invalid archive root file: {info.filename}")
 
-        # Determine if we should flatten (if zip has a single root folder that matches target's basename)
-        root_dirs = set(f.split('/')[0] for f in files if '/' in f)
-        flatten_prefix = ""
-        if len(root_dirs) == 1:
-            root_dir = list(root_dirs)[0]
-            if root_dir == os.path.basename(extract_path):
-                flatten_prefix = root_dir + "/"
 
-        with tqdm(desc="Extracting", total=len(files), unit='file') as bar:
-            for file in files:
-                # Skip the root directory entry itself if flattening
-                if flatten_prefix and file == flatten_prefix:
-                    bar.update(1)
-                    continue
+def install_staged(staging, public_dir, force=False):
+    staging, public_dir = Path(staging), Path(public_dir)
+    names = ("source", "processed")
+    if any((public_dir / name).exists() for name in names) and not force:
+        raise FileExistsError("Existing layer directories require --force to replace")
+    old, installed = [], []
+    try:
+        for name in names:
+            current = public_dir / name
+            if current.exists():
+                backup = staging / f"backup-{name}"
+                current.rename(backup)
+                old.append((backup, current))
+        for name in names:
+            target = public_dir / name
+            (staging / name).rename(target)
+            installed.append((target, staging / name))
+    except Exception:
+        for target, original_stage in reversed(installed):
+            target.rename(original_stage)
+        for backup, original in reversed(old):
+            backup.rename(original)
+        raise
 
-                # Strip prefix if flattening
-                target_name = file[len(flatten_prefix):] if flatten_prefix else file
-                if not target_name:
-                    bar.update(1)
-                    continue
 
-                target_file_path = extract_path / target_name
+def fetch_latest(public_dir, force=False):
+    public_dir = Path(public_dir)
+    source, processed = public_dir / "source", public_dir / "processed"
+    release = latest_layer_release()
+    tag = release["tag_name"]
+    receipt = processed / RECEIPT_NAME
+    installed_tag = json.loads(receipt.read_text(encoding="utf-8")).get("tag") if receipt.is_file() else None
+    if not force and data_exists(source) and data_exists(processed) and installed_tag == tag:
+        print(f"Layer release {tag} is already installed.")
+        return False
 
-                if file.endswith('/'):
-                    target_file_path.mkdir(parents=True, exist_ok=True)
-                else:
-                    target_file_path.parent.mkdir(parents=True, exist_ok=True)
-                    with zip_ref.open(file) as source, open(target_file_path, "wb") as target:
-                        shutil.copyfileobj(source, target)
-                bar.update(1)
+    assets = {asset["name"]: asset for asset in release["assets"] if asset.get("name") in ASSET_NAMES}
+    public_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="layer-release-", dir=public_dir) as temporary:
+        staging = Path(temporary)
+        digests = {}
+        for name in ASSET_NAMES:
+            asset = assets[name]
+            archive_path = staging / name
+            digests[name] = download_file(asset["browser_download_url"], archive_path, asset.get("digest"))
+            extract_zip(archive_path, staging / name[:-4])
+        if not all(data_exists(staging / name) for name in ("source", "processed")):
+            raise ValueError("The release does not contain both populated layer trees")
+        (staging / "processed" / RECEIPT_NAME).write_text(
+            json.dumps({"tag": tag, "assets": digests}, indent=2) + "\n", encoding="utf-8"
+        )
+        install_staged(staging, public_dir, force=True)
+    print(f"Installed source and processed layers from {tag}.")
+    return True
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Fetch and extract OTEF layer data")
-    parser.add_argument("--url", default=DEFAULT_SOURCE_URL, help="URL of the zip file to download")
-    parser.add_argument("--output", required=True, help="Output directory for extraction")
-    parser.add_argument("--force", action="store_true", help="Force download even if data exists")
-
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True, help="Path to public/source")
+    parser.add_argument("--force", action="store_true", help="Reinstall even when the latest release is already present")
     args = parser.parse_args()
-    output_dir = Path(args.output).resolve()
-
+    if args.output.name != "source":
+        parser.error("--output must be the public/source directory")
     try:
-        fetch_zip(args.url, output_dir, force=args.force)
-        if args.url == DEFAULT_SOURCE_URL and output_dir.name == "source":
-            fetch_zip(DEFAULT_PROCESSED_URL, output_dir.parent / "processed", force=args.force)
-    except Exception:
-        sys.exit(1)
+        fetch_latest(args.output.parent, force=args.force)
+    except (URLError, ValueError, OSError, zipfile.BadZipFile) as error:
+        if not args.force and data_exists(args.output) and data_exists(args.output.parent / "processed"):
+            print(f"Could not check layer releases ({error}); retaining existing local layers.")
+            return
+        print(f"Layer download failed: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
 
 if __name__ == "__main__":
     main()

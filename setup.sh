@@ -53,33 +53,24 @@ fi
 echo "Ensuring dependencies are installed..."
 "$VENV_PATH/bin/python" -m pip install -q -r "$SCRIPT_DIR/otef-interactive/scripts/requirements.txt"
 
-# Fetch source layers if needed
-echo "Fetching source layers if needed..."
+# Install the latest matching source and processed layer release.
+echo "Checking for the latest layer release..."
 "$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/fetch_data.py" --output "$SCRIPT_DIR/otef-interactive/public/source"
+if [ $? -ne 0 ]; then
+    echo "Layer release download failed" >&2
+    exit 1
+fi
 
 
 if docker info >/dev/null 2>&1; then
     MANIFEST_PATH="$SCRIPT_DIR/otef-interactive/public/processed/layers/layers-manifest.json"
-    # Only process if manifest doesn't exist or is older than source files
-    SHOULD_PROCESS=true
     if [ -f "$MANIFEST_PATH" ]; then
-        MANIFEST_TIME=$(stat -f "%m" "$MANIFEST_PATH" 2>/dev/null || stat -c "%Y" "$MANIFEST_PATH" 2>/dev/null || echo "0")
-        SOURCE_DIR="$SCRIPT_DIR/otef-interactive/public/source/layers"
-        # Check if any source files are newer than manifest
-        if [ -d "$SOURCE_DIR" ]; then
-            NEWER_FILES=$(find "$SOURCE_DIR" -type f -newer "$MANIFEST_PATH" 2>/dev/null | wc -l)
-            if [ "$NEWER_FILES" -eq 0 ]; then
-                echo "Layer packs already processed (manifest up to date), skipping..."
-                SHOULD_PROCESS=false
-            fi
-        fi
-    fi
-
-    if [ "$SHOULD_PROCESS" = true ]; then
+        echo "Processed layer release is present; skipping layer processing."
+    else
         echo "Processing layer packs (process_layers.py)..."
         "$VENV_PATH/bin/python" "$SCRIPT_DIR/otef-interactive/scripts/process_layers.py" \
             --source "$SCRIPT_DIR/otef-interactive/public/source/layers" \
-            --output "$SCRIPT_DIR/otef-interactive/public/processed/layers"
+            --output "$SCRIPT_DIR/otef-interactive/public/processed/layers" || exit 1
     fi
 else
     echo "Warning: Docker not running, skipping layer pack processing"

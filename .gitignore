@@ -158,6 +158,7 @@ otef-interactive/public/processed/**/*
 !otef-interactive/public/processed/.gitkeep
 !otef-interactive/public/processed/**/.gitkeep
 otef-interactive/public/*.zip
+otef-interactive/public/release-build/
 
 nur-colab-map
 
