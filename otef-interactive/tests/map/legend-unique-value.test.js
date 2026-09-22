@@ -228,6 +228,11 @@ describe("legendLayerFromConfig uniqueValue", () => {
     });
     expect(layer.items[0].fill).toContain("#111111");
     expect(layer.items[0].fill).toContain("#333333");
+    expect(layer.items[0].bands.map(({ color }) => color)).toEqual(["#111111", "#222222", "#333333"]);
+    expect(layer.items[0].bands.map(({ opacity }) => opacity)).toEqual([1, 1, 1]);
+    expect(layer.items[0].bands[0].size).toBeCloseTo(1);
+    expect(layer.items[0].bands[1].size).toBeCloseTo(2 / 3);
+    expect(layer.items[0].bands[2].size).toBeCloseTo(1 / 3);
     expect(layer.items[0].fill).not.toContain("#808080");
     expect(layer.items[0].stroke).toBe("#123456");
   });

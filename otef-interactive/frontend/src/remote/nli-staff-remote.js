@@ -63,6 +63,7 @@ export function initNliStaffRemote(dataContext) {
     narrativeId: null,
     step: 0,
     connected: false,
+    connectionStatus: "disconnected",
     scene: null,
     freeError: null,
     placeName: null,
@@ -286,7 +287,8 @@ export function initNliStaffRemote(dataContext) {
   function renderConnection() {
     const el = $("staffConnection");
     if (!el) return;
-    el.textContent = state.connected ? txt("connected") : txt("disconnected");
+    el.textContent = state.connectionStatus === "connecting"
+      ? t("statusConnecting") : state.connected ? txt("connected") : txt("disconnected");
     el.classList.toggle("is-on", state.connected);
   }
 
@@ -818,6 +820,10 @@ export function initNliStaffRemote(dataContext) {
     peopleArchive.syncArchiveButton();
     renderKit();
     renderFree();
+  });
+  dataContext?.subscribe?.("connectionStatus", (status) => {
+    state.connectionStatus = status;
+    renderConnection();
   });
   dataContext?.subscribe?.("investigationClock", () => {
     paintTimelineMounts();

@@ -104,6 +104,7 @@ class OTEFDataContextClass {
     this._bounds = null;
     this._viewerAngleDeg = 0;
     this._isConnected = false;
+    this._connectionStatus = "disconnected";
 
     this._subscribers = {
       viewport: new Set(),
@@ -112,6 +113,7 @@ class OTEFDataContextClass {
       basemap: new Set(),
       bounds: new Set(),
       connection: new Set(),
+      connectionStatus: new Set(),
       orientation: new Set(),
       projectionSlideshow: new Set(),
       investigationClock: new Set(),
@@ -195,6 +197,10 @@ class OTEFDataContextClass {
     }
   }
 
+  reconnect() {
+    this._wsClient?.restart();
+  }
+
   _setupWebSocket() {
     const websocket = OTEFDataContextInternals.websocket;
     if (!websocket || typeof websocket.setupWebSocket !== "function") {
@@ -213,10 +219,15 @@ class OTEFDataContextClass {
     websocket.applyStateFromApi(this, state, options);
   }
 
-  _setConnection(isConnected) {
-    if (this._isConnected === isConnected) return;
-    this._isConnected = isConnected;
-    this._notify("connection", this._isConnected);
+  _setConnection(isConnected, status = isConnected ? "connected" : "disconnected") {
+    if (this._isConnected !== isConnected) {
+      this._isConnected = isConnected;
+      this._notify("connection", isConnected);
+    }
+    if (this._connectionStatus !== status) {
+      this._connectionStatus = status;
+      this._notify("connectionStatus", status);
+    }
   }
 
   _setViewport(viewport) {
@@ -885,6 +896,9 @@ class OTEFDataContextClass {
         break;
       case "connection":
         current = this._isConnected;
+        break;
+      case "connectionStatus":
+        current = this._connectionStatus;
         break;
       case "orientation":
         current = this._viewerAngleDeg;

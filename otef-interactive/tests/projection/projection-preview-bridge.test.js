@@ -28,3 +28,20 @@ test("preview accepts only its same-origin parent and applies a validated draft 
   dispose();
   expect(listeners.has("message")).toBe(false);
 });
+
+test("preview exposes the candidate apply hook before local camera consumers", () => {
+  const listeners = new Map();
+  const parent = { postMessage: vi.fn() };
+  const win = { parent, location: { origin: "http://localhost" }, addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener: () => {} };
+  const order = [];
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  const dispose = installProjectionPreviewBridge({
+    win, output: "right", map: { setEffectiveProjectionConfig: vi.fn(() => { order.push("map"); return true; }) },
+    nameFieldController: { setProjectionConfig: vi.fn(() => { order.push("names"); return true; }) },
+    syncContextInvestigation: () => order.push("sync"),
+    applyProjectionConfig: (candidate) => { expect(candidate).toEqual(config); order.push("warp"); return true; },
+  });
+  listeners.get("message")({ source: parent, origin: "http://localhost", data: { type: "otef_projection_preview_config", output: "right", requestId: 4, config } });
+  expect(order).toEqual(["warp", "map", "names", "sync"]);
+  dispose();
+});

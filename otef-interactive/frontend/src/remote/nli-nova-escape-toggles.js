@@ -8,7 +8,9 @@ function escape(value) {
 }
 
 function toggleButtonHtml(kind, pressed) {
-  const labelKey = kind === "overlap" ? "nliNovaEscapeOverlap" : "nliNovaEscapeIndividual";
+  const labelKey = kind === "overlap"
+    ? "nliNovaEscapeOverlap"
+    : kind === "mor" ? "nliNovaEscapeMor" : "nliNovaEscapeIndividual";
   const activeClass = pressed ? " is-active" : "";
   return `<button type="button" class="nli-narrative-button nli-nova-escape-toggle${activeClass}" data-nli-nova-escape="${escape(kind)}" aria-pressed="${pressed ? "true" : "false"}">${escape(t(labelKey))}</button>`;
 }
@@ -20,6 +22,7 @@ export function nliNovaEscapeTogglesHtml(narrativeState, overlayState) {
   return `<section class="nli-nova-escape-toggles" aria-label="${escape(t("nliNovaEscapeTogglesAria"))}">
     ${toggleButtonHtml("individual", overlay.individual === true)}
     ${toggleButtonHtml("overlap", overlay.overlap === true)}
+    ${toggleButtonHtml("mor", overlay.mor === true)}
   </section>`;
 }
 
@@ -31,7 +34,7 @@ export function consumeNliNovaEscapeClick(event, host) {
   event.preventDefault?.();
   event.stopPropagation?.();
   const kind = button.getAttribute("data-nli-nova-escape");
-  if (kind === "individual" || kind === "overlap") {
+  if (kind === "individual" || kind === "overlap" || kind === "mor") {
     const pressed = button.getAttribute("aria-pressed") === "true";
     void host?.setEscapeOverlay?.({ [kind]: !pressed });
   }

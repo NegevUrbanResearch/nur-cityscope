@@ -1,7 +1,7 @@
 """Normalize Nova-only fleeing-route overlay flags stored beside narrative state."""
 
-EMPTY_ESCAPE_OVERLAY = {"individual": False, "overlap": False}
-NOVA_ENTER_ESCAPE_OVERLAY = {"individual": False, "overlap": False}
+EMPTY_ESCAPE_OVERLAY = {"individual": False, "overlap": False, "mor": False}
+NOVA_ENTER_ESCAPE_OVERLAY = {"individual": False, "overlap": False, "mor": False}
 
 
 def normalize_escape_overlay(raw, narrative_id, apply_enter_defaults=False):
@@ -12,4 +12,5 @@ def normalize_escape_overlay(raw, narrative_id, apply_enter_defaults=False):
     return {
         "individual": raw.get("individual") is True,
         "overlap": raw.get("overlap") is True,
+        "mor": raw.get("mor") is True,
     }

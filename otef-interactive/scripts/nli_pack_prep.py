@@ -835,6 +835,10 @@ FLEEING_ROUTE_GEOJSON_MEMBER = "Fleeing_route.geojson"
 FLEEING_ROUTE_OVERLAPP_GEOJSON_MEMBER = "fleeing_route_overlapp.geojson"
 FLEEING_ROUTE_LYRX_MEMBER = "Fleeing_route.lyrx"
 FLEEING_ROUTE_OVERLAPP_LYRX_MEMBER = "fleeing_route_overlapp.lyrx"
+MOR_ROUTE_STEM = "mor_levy_route"
+MOR_ROUTE_URL = "/otef-interactive/public/processed/layers/nli/mor_levy_route.geojson"
+MOR_ROUTE_ZIP_SHA256 = "8e16adaae212a6dc47fe96599a6c8045cb45eb0c0de63023a75aff2d7dcdd93e"
+MOR_ROUTE_GEOJSON_MEMBER = "Mor_levy.geojson"
 NOVA_FACILITY_WGS84 = (34.46975, 31.39851)
 NOVA_FLEEING_ENVELOPE = (34.36128, 31.23319, 34.60479, 31.52479)
 OVERLAP_CLASS_BREAKS = (
@@ -850,6 +854,7 @@ NLI_KEEP_STEMS = set(ZIP_LAYER_MAP.values()) | {
     ROUTE_232_STEM,
     FLEEING_ROUTE_STEM,
     FLEEING_ROUTE_OVERLAPP_STEM,
+    MOR_ROUTE_STEM,
 }
 
 PROJECTED_STEMS = {"investigation_polygons", "lines"}
@@ -1617,6 +1622,39 @@ def install_nli_fleeing_overlays(
     }
 
 
+def install_nli_mor_route(
+    processed_dir: Path,
+    route_zip: Path,
+    expected_sha256: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Install the reviewed Mor route as a hidden, projected NLI sidecar."""
+    if not expected_sha256:
+        raise ValueError("Mor route zip SHA-256 is required")
+    _require_sha256(Path(route_zip), expected_sha256, "Mor route zip")
+    collection = _zip_member_payload(Path(route_zip), MOR_ROUTE_GEOJSON_MEMBER)
+    collection["metadata"] = {
+        "source": "Mor_levy.zip",
+        "source_member": MOR_ROUTE_GEOJSON_MEMBER,
+        "source_sha256": (expected_sha256 or MOR_ROUTE_ZIP_SHA256),
+    }
+    for feature in collection.get("features") or []:
+        geometry = feature.get("geometry") or {}
+        coords = geometry.get("coordinates")
+        if geometry.get("type") == "MultiLineString" and isinstance(coords, list):
+            geometry["coordinates"] = [
+                list(reversed(part)) if isinstance(part, list) else part
+                for part in reversed(coords)
+            ]
+        elif geometry.get("type") == "LineString" and isinstance(coords, list):
+            geometry["coordinates"] = list(reversed(coords))
+        props = feature.setdefault("properties", {})
+        props["flow_direction"] = "nova-outward"
+    reproject_web_mercator_collection_to_wgs84(collection)
+    output = Path(processed_dir) / f"{MOR_ROUTE_STEM}.geojson"
+    _write_json(output, collection)
+    return {"installed": True, "path": str(output), "url": MOR_ROUTE_URL, "features": len(collection.get("features") or [])}
+
+
 def generate_nova_escape_index(
     routes_path: Path,
     polygons_path: Path,
@@ -1670,6 +1708,8 @@ def prepare_nli_pack(
     fleeing_lyrx_zip: Optional[Path] = None,
     fleeing_geojson_sha256: Optional[str] = None,
     fleeing_lyrx_sha256: Optional[str] = None,
+    mor_route_zip: Optional[Path] = None,
+    mor_route_sha256: Optional[str] = None,
     investigation_polygons_lyrx: Optional[Path] = None,
 ) -> Dict[str, Any]:
     authored_polygon_lyrx = Path(investigation_polygons_lyrx) if investigation_polygons_lyrx is not None else None
@@ -1777,6 +1817,12 @@ def prepare_nli_pack(
             expected_geojson_sha256=fleeing_geojson_sha256,
             expected_lyrx_sha256=fleeing_lyrx_sha256,
         )
+    if mor_route_zip is not None:
+        if mor_route_sha256 != MOR_ROUTE_ZIP_SHA256:
+            raise ValueError("Mor route zip must use the pinned SHA-256")
+        summary["mor_route"] = install_nli_mor_route(
+            sidecar_dir, Path(mor_route_zip), expected_sha256=mor_route_sha256
+        )
     impact_index_path = sidecar_dir / "fleeing_route_impacts.json"
     if generate_nova_escape_index(
         sidecar_dir / f"{FLEEING_ROUTE_STEM}.geojson",
@@ -1816,6 +1862,7 @@ def main() -> None:
     downloads_zip = Path.home() / "Downloads" / "drive-download-20260827T125810Z-1-001.zip"
     fleeing_geojson_zip = Path.home() / "Downloads" / "fleeing_route_geojson.zip"
     fleeing_lyrx_zip = Path.home() / "Downloads" / "Fleeing_route_lyrx.zip"
+    mor_route_zip = Path.home() / "Downloads" / "Mor_levy.zip"
     if not zip_path.is_file() and downloads_zip.is_file():
         zip_path = downloads_zip
     summary = prepare_nli_pack(
@@ -1829,6 +1876,8 @@ def main() -> None:
         fleeing_lyrx_zip=fleeing_lyrx_zip if fleeing_lyrx_zip.is_file() else None,
         fleeing_geojson_sha256=FLEEING_GEOJSON_ZIP_SHA256,
         fleeing_lyrx_sha256=FLEEING_LYRX_ZIP_SHA256,
+        mor_route_zip=mor_route_zip if mor_route_zip.is_file() else None,
+        mor_route_sha256=MOR_ROUTE_ZIP_SHA256 if mor_route_zip.is_file() else None,
         investigation_polygons_lyrx=args.investigation_polygons_lyrx,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))

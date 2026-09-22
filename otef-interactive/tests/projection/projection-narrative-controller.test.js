@@ -227,7 +227,7 @@ describe("projection Segev narrative focus", () => {
       new URL("../../frontend/src/entries/projection-main.js", import.meta.url),
       "utf8",
     ));
-    expect(source).toMatch(/onStyleLoadOverlay:\s*\(\)\s*=>\s*novaEscapeCoordinator\?\.onStyleLoad\?\.\(\)/);
+    expect(source).toMatch(/onStyleLoadOverlay:\s*\(\)\s*=>\s*\{\s*novaEscapeCoordinator\?\.onStyleLoad\?\.\(\)/);
     expect(source).not.toMatch(/onStyleLoad\?\.\(\{\s*styleLoss:\s*true\s*\}\)/);
   });
 

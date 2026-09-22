@@ -160,3 +160,8 @@ otef-interactive/public/processed/**/*
 otef-interactive/public/*.zip
 
 nur-colab-map
+
+# Local TouchDesigner capture evidence; converted browser meshes remain tracked.
+otef-interactive/public/projection-calibration/td-baselines/*-raw.json
+otef-interactive/public/projection-calibration/td-baselines/*-evaluated-mesh.json
+otef-interactive/public/projection-calibration/td-baselines/capture-fingerprints.json

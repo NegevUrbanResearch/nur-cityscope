@@ -14,9 +14,18 @@ class ProjectionTransientRelayTests(IsolatedAsyncioTestCase):
             {"type": "otef_projection_pattern", "table": "otef", "output": "left", "pattern": "grid", "sourceId": valid_uuid},
             {"type": "otef_projection_status_request", "table": "otef", "sourceId": valid_uuid},
             {"type": "otef_projection_applied", "table": "otef", "output": "left", "revision": 2, "instanceId": valid_uuid, "success": True},
+            {"type": "otef_projection_applied", "table": "otef", "output": "left", "revision": 3, "instanceId": valid_uuid, "success": True, "route": "browser", "baseline": {"type": "identity"}},
+            {"type": "otef_projection_applied", "table": "otef", "output": "right", "revision": 4, "instanceId": valid_uuid, "success": True, "route": "browser", "baseline": {"type": "tdMesh", "assetId": "fixture-right", "sha256": "a" * 64}},
+            {"type": "otef_projection_applied", "table": "otef", "output": "right", "revision": 4, "instanceId": valid_uuid, "success": False, "error": "mesh unavailable", "route": "browser", "baseline": {"type": "tdMesh", "assetId": "fixture-right", "sha256": "SHA256:" + "a" * 64}},
         ):
             await consumer.handle_otef_message(message)
-        self.assertEqual(consumer.channel_layer.group_send.await_count, 3)
+        self.assertEqual(consumer.channel_layer.group_send.await_count, 6)
+        relayed = [call.args[1]["message"] for call in consumer.channel_layer.group_send.await_args_list]
+        self.assertEqual(relayed[-1]["success"], False)
+        self.assertEqual(relayed[-1]["route"], "browser")
+        self.assertEqual(relayed[-2]["success"], True)
+        self.assertEqual(relayed[-2]["baseline"]["type"], "tdMesh")
+        self.assertEqual(relayed[-1]["baseline"]["sha256"], "SHA256:" + "a" * 64)
 
     async def test_invalid_projection_transient_payload_is_dropped(self):
         consumer = GeneralConsumer()
@@ -37,6 +46,21 @@ class ProjectionTransientRelayTests(IsolatedAsyncioTestCase):
             {"type": "otef_projection_pattern", "table": "otef", "output": [], "pattern": "grid", "sourceId": valid_uuid},
             {"type": "otef_projection_status_request", "table": "otef", "sourceId": valid_uuid, "extra": "x"},
             {"type": "otef_projection_applied", "table": "otef", "output": "left", "revision": 9007199254740992, "instanceId": valid_uuid, "success": True},
+        ]
+        for message in invalid:
+            await consumer.handle_otef_message(message)
+        consumer.channel_layer.group_send.assert_not_awaited()
+
+    async def test_projection_ack_rejects_malformed_route_and_baseline_metadata(self):
+        consumer = GeneralConsumer()
+        consumer.room_group_name = "otef_channel"
+        consumer.channel_layer = type("Layer", (), {"group_send": AsyncMock()})()
+        valid_uuid = "11111111-1111-4111-8111-111111111111"
+        invalid = [
+            {"type": "otef_projection_applied", "table": "otef", "output": "left", "revision": 1, "instanceId": valid_uuid, "success": True, "route": "unknown"},
+            {"type": "otef_projection_applied", "table": "otef", "output": "left", "revision": 1, "instanceId": valid_uuid, "success": True, "route": "browser", "baseline": {"type": "identity", "extra": True}},
+            {"type": "otef_projection_applied", "table": "otef", "output": "left", "revision": 1, "instanceId": valid_uuid, "success": True, "route": "browser", "baseline": {"type": "tdMesh", "assetId": "fixture", "sha256": "not-a-hash"}},
+            {"type": "otef_projection_applied", "table": "otef", "output": "left", "revision": 1, "instanceId": valid_uuid, "success": True, "route": "browser", "baseline": {"type": "tdMesh", "assetId": "fixture", "sha256": "a" * 64, "width": 1920}},
         ]
         for message in invalid:
             await consumer.handle_otef_message(message)

@@ -6,6 +6,7 @@ import {
   serializeProjectionExport,
   validateProjectionConfig,
 } from '../../frontend/src/shared/projection-config-schema.js';
+import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
 
 const fixtureDocument = JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-config-v1.json', import.meta.url)));
 const fixture = fixtureDocument.valid;
@@ -13,7 +14,8 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 
 test('canonical fixture and defaults validate', () => {
   expect(validateProjectionConfig(fixture)).toEqual({});
-  expect(DEFAULT_PROJECTION_CONFIG).toEqual(fixture);
+  expect(DEFAULT_PROJECTION_CONFIG).toEqual(migrateProjectionConfigToV2(fixture));
+  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(2);
   expect(Object.isFrozen(DEFAULT_PROJECTION_CONFIG)).toBe(true);
 });
 

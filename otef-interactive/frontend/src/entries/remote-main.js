@@ -1,5 +1,6 @@
 import TableSwitcher from "../shared/table-switcher.js";
 import { initLocale } from "../remote/remote-locale.js";
+import { bindRemoteConnectionRecovery } from "../remote/remote-connection-recovery.js";
 
 async function bootstrapRemoteRuntime() {
   const modules = [
@@ -63,6 +64,7 @@ async function boot() {
     ],
   );
 
+  bindRemoteConnectionRecovery(() => OTEFDataContext.reconnect());
   initRemotePlaceNavigation({
     dataContext: OTEFDataContext,
     isConnected: () => OTEFDataContext.isConnected?.() !== false,

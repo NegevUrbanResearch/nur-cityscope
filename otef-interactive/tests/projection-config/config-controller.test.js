@@ -30,9 +30,10 @@ function element(tag = "div") {
   };
 }
 
-function documentStub() {
+function documentStub({ coarse = false, noHover = false } = {}) {
   return {
     activeElement: null,
+    defaultView: { matchMedia: (query) => ({ matches: query.includes("pointer: coarse") ? coarse : query.includes("hover: none") ? noHover : false, addEventListener() {}, removeEventListener() {} }) },
     createElement: element,
     createElementNS: (_namespace, tag) => element(tag),
     createTextNode: (text) => ({ textContent: text }),
@@ -97,6 +98,37 @@ describe("projection config controller", () => {
     expect(Number.isNaN(fieldValueFromInput(descriptor, "   "))).toBe(true);
   });
 
+  test("selecting a warp stage synchronizes the editor mode and opens its inspector", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const api = mountProjectionConfig(root, { client: fakeClient() });
+    const grid = find(root, (node) => node.dataset?.node === "right-grid");
+    grid.dispatch("click");
+    const mode = find(root, (node) => node.attributes?.["aria-label"] === "Warp stage");
+    const inspector = find(root, (node) => node.className === "inspector");
+    expect(mode.value).toBe("grid");
+    expect(inspector.open).toBe(true);
+    const keystone = find(root, (node) => node.dataset?.node === "left-keystone");
+    keystone.dispatch("click");
+    expect(mode.value).toBe("keystone");
+    api.dispose();
+    globalThis.document = previousDocument;
+  });
+
+  test("warp stage picker navigates the matching calibration node", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const api = mountProjectionConfig(root, { client: fakeClient() });
+    find(root, (node) => node.dataset?.node === "right-grid").dispatch("click");
+    const mode = find(root, (node) => node.attributes?.["aria-label"] === "Warp stage");
+    mode.value = "keystone"; mode.dispatch("change");
+    expect(mode.value).toBe("keystone");
+    expect(find(root, (node) => node.className === "warp-selection-status").textContent).toContain("Right · Keystone");
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
   test("first hydration re-requests status and reconnect renews the selected pattern", () => {
     vi.useFakeTimers();
     const previousDocument = globalThis.document;
@@ -110,13 +142,19 @@ describe("projection config controller", () => {
     const root = element("main");
     const api = mountProjectionConfig(root, { client, socket });
     const snapshot = { revision: 4, config: clone(DEFAULTS), presets: [{ id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true }], selectedPresetId: "original" };
-    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 4, success: true });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 4, success: true, route: "browser", baseline: { type: "identity" } });
     expect(api.getStatusRows()).toHaveLength(0);
     const beforeHydration = socket.send.mock.calls.length;
     client.hydrate(snapshot);
     expect(socket.send.mock.calls.slice(beforeHydration).some(([message]) => message.type === "otef_projection_status_request")).toBe(true);
-    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 4, success: true });
-    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "second", revision: 4, success: true });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 4, success: true, route: "browser", baseline: { type: "identity" } });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "second", revision: 4, success: true, route: "browser", baseline: { type: "identity" } });
+    expect(api.getStatusRows()).toHaveLength(2);
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "missing-route", revision: 4, success: true, baseline: { type: "identity" } });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "missing-baseline", revision: 4, success: true, route: "browser" });
+    expect(api.getStatusRows()).toHaveLength(2);
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "wrong-route", revision: 4, success: true, route: "td" });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "wrong-baseline", revision: 4, success: true, route: "browser", baseline: { type: "tdMesh", assetId: "other" } });
     expect(api.getStatusRows()).toHaveLength(2);
     const pattern = find(root, (node) => node.attributes?.["aria-label"] === "Pattern");
     pattern.value = "grid"; pattern.dispatch("change");
@@ -127,7 +165,7 @@ describe("projection config controller", () => {
     const afterConnect = socket.send.mock.calls.length;
     client.hydrate(snapshot); // cached-state notification before the newer HTTP hydration
     expect(socket.send.mock.calls.length).toBe(afterConnect);
-    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 5, success: true });
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "first", revision: 5, success: true, route: "browser", baseline: { type: "identity" } });
     expect(api.getStatusRows()).toHaveLength(0);
     const beforeRehydration = socket.send.mock.calls.length;
     client.hydrate({ ...snapshot, revision: 5 });
@@ -177,6 +215,44 @@ describe("projection config controller", () => {
     expect(client.getState().snapshot.presets.find((item) => item.id === "original").readOnly).toBe(true);
     api.dispose(); globalThis.document = previousDocument;
   });
+
+  test("v1 imports are migrated before entering the v2 warp editor", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const legacy = clone(DEFAULTS);
+    legacy.schemaVersion = 1;
+    for (const output of ["left", "right"]) {
+      delete legacy.outputs[output].presentationEffect;
+      delete legacy.outputs[output].warp;
+    }
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client, onImport: async () => ({ name: "Legacy checkpoint", config: legacy }) });
+    const importedInput = find(root, (node) => node.attributes?.["aria-label"] === "Import calibration");
+    importedInput.files = [{}]; importedInput.dispatch("change");
+    await vi.waitFor(() => expect(client.getState().draft.schemaVersion).toBe(2));
+    expect(client.getState().draft.pre).toEqual(legacy.pre);
+    expect(client.getState().draft.outputs.left.warp.baseline.type).toBe("identity");
+    expect(client.getState().draft.outputs.right.warp.grid.offsets).toHaveLength(56);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+  test("v1 accepted snapshots are migrated before editor hydration", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const legacy = clone(DEFAULTS);
+    legacy.schemaVersion = 1;
+    for (const output of ["left", "right"]) {
+      delete legacy.outputs[output].presentationEffect;
+      delete legacy.outputs[output].warp;
+    }
+    const client = fakeClient(null);
+    const root = element("main");
+    const api = mountProjectionConfig(root, { client });
+    client.hydrate({ revision: 5, config: legacy, presets: [{ id: "legacy", name: "Legacy", config: legacy }], selectedPresetId: "legacy" });
+    find(root, (node) => node.dataset?.node === "right-grid").dispatch("click");
+    expect(find(root, (node) => node.className === "warp-selection-status").textContent).toContain("Right · Grid Warp");
+    api.dispose(); globalThis.document = previousDocument;
+  });
   test("percentage edit maps once to normalized offset", () => {
     const descriptor = FIELD_DESCRIPTORS.find((item) => item.path === "pre.tx");
     expect(fieldValueFromInput(descriptor, "1.2")).toBe(0.012);
@@ -209,5 +285,155 @@ describe("projection config controller", () => {
     api.dispose();
     expect(client.stop).toHaveBeenCalledTimes(1);
     globalThis.document = previousDocument;
+  });
+
+  test("server hydration replaces the cached preset selection", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const client = fakeClient(null);
+    const root = element("main");
+    const api = mountProjectionConfig(root, { client });
+    const serverConfig = clone(DEFAULTS);
+    const snapshot = {
+      revision: 9,
+      config: serverConfig,
+      presets: [
+        { id: "original", name: "Original calibration", config: clone(DEFAULTS), readOnly: true },
+        { id: "td-baseline", name: "TD migration baseline", config: serverConfig, readOnly: false },
+      ],
+      selectedPresetId: "td-baseline",
+    };
+    client.hydrate(snapshot);
+    expect(find(root, (node) => node.attributes?.["aria-label"] === "Preset").value).toBe("td-baseline");
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("warp arrows use the draft path and flush only while Live is enabled", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const leftNode = find(root, (node) => node.dataset?.node === "left-keystone");
+    leftNode.dispatch("click");
+    const arrow = find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right");
+    arrow.dispatch("click");
+    expect(client.setDraft).toHaveBeenCalled();
+    await vi.waitFor(() => expect(client.apply).toHaveBeenCalled());
+    client.setLive(false);
+    arrow.dispatch("click");
+    expect(client.apply).toHaveBeenCalledTimes(1);
+    const enabled = find(root, (node) => node.attributes?.["aria-label"] === "Enable browser warp");
+    enabled.checked = false; enabled.dispatch("change");
+    expect(client.getState().draft.outputs.left.warp.enabled).toBe(false);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("Live-off warp undo and redo survive synchronous draft notifications", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.setLive(false);
+    find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
+    const arrow = find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right");
+    const undo = find(root, (node) => node.dataset?.action === "warp-undo");
+    const redo = find(root, (node) => node.dataset?.action === "warp-redo");
+    arrow.dispatch("click");
+    const moved = clone(client.getState().draft);
+    undo.dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners[0][0]).toBe(0);
+    redo.dispatch("click");
+    expect(client.getState().draft).toEqual(moved);
+    expect(client.apply).not.toHaveBeenCalled();
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("own Live acknowledgement preserves warp history independently per output", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const listeners = new Map();
+    const socket = {
+      send: vi.fn(), getConnected: () => true,
+      on(type, handler) { listeners.set(type, handler); }, off(type) { listeners.delete(type); },
+    };
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client, socket });
+    const initial = clone(client.getState().draft);
+    find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
+    find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "right").dispatch("click");
+    const leftMoved = clone(client.getState().draft);
+    expect(leftMoved.outputs.left.warp.keystone.corners).not.toEqual(initial.outputs.left.warp.keystone.corners);
+    listeners.get("otef_projection_applied")({ table: "otef", output: "left", instanceId: "local", revision: 2, success: true, route: "browser", baseline: clone(initial.outputs.left.warp.baseline) });
+    find(root, (node) => node.dataset?.node === "right-keystone").dispatch("click");
+    find(root, (node) => node.dataset?.action === "warp-nudge" && node.dataset?.direction === "down").dispatch("click");
+    const rightMoved = clone(client.getState().draft);
+    find(root, (node) => node.dataset?.node === "left-keystone").dispatch("click");
+    find(root, (node) => node.dataset?.action === "warp-undo").dispatch("click");
+    expect(client.getState().draft.outputs.left.warp.keystone.corners).toEqual(initial.outputs.left.warp.keystone.corners);
+    expect(client.getState().draft.outputs.right.warp.keystone.corners).toEqual(rightMoved.outputs.right.warp.keystone.corners);
+    expect(client.getState().draft.outputs.left.warp.keystone.corners).not.toEqual(leftMoved.outputs.left.warp.keystone.corners);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("wires workstation display assignment and browser output actions into the existing toolbar", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const screens = [
+      { key: "left-screen", label: "Left screen", left: -100, top: 0, width: 1920, height: 1080 },
+      { key: "right-screen", label: "Right screen", left: 1820, top: 0, width: 1920, height: 1080 },
+    ];
+    let outputState = { screens: [], assignments: { left: null, right: null }, message: "Identify displays", error: "", ownedSpans: [] };
+    const outputListeners = new Set();
+    const outputController = {
+      identifyDisplays: vi.fn(async () => { outputState = { ...outputState, screens, message: "Displays identified" }; outputListeners.forEach((listener) => listener(outputState)); return screens; }),
+      assignDisplays: vi.fn((selection) => { outputState = { ...outputState, assignments: selection, message: "Assignment saved" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
+      openBoth: vi.fn(async () => { outputState = { ...outputState, ownedSpans: ["left", "right"], message: "Browser outputs opened" }; outputListeners.forEach((listener) => listener(outputState)); return outputState.ownedSpans; }),
+      closeBoth: vi.fn(() => { outputState = { ...outputState, ownedSpans: [], message: "Browser outputs closed" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
+      getState: () => outputState,
+      subscribe(listener) { outputListeners.add(listener); listener(outputState); return () => outputListeners.delete(listener); },
+    };
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client, outputController });
+    const action = (name) => find(root, (node) => node.dataset?.action === name);
+    action("output-identify").dispatch("click");
+    await vi.waitFor(() => expect(outputController.identifyDisplays).toHaveBeenCalledTimes(1));
+    const left = find(root, (node) => node.dataset?.action === "output-left-display");
+    const right = find(root, (node) => node.dataset?.action === "output-right-display");
+    expect(left.children.map((option) => option.textContent).join(" ")).toContain("-100,0");
+    expect(right.children.map((option) => option.textContent).join(" ")).toContain("1820,0");
+    left.value = "left-screen"; right.value = "right-screen"; left.dispatch("change"); right.dispatch("change");
+    client.report({ previewError: "unrelated preview refresh" });
+    expect(left.value).toBe("left-screen");
+    expect(right.value).toBe("right-screen");
+    action("output-assign").dispatch("click");
+    expect(outputController.assignDisplays).toHaveBeenCalledWith({ left: "left-screen", right: "right-screen" });
+    action("output-open-both").dispatch("click");
+    await vi.waitFor(() => expect(outputController.openBoth).toHaveBeenCalledTimes(1));
+    action("output-close-both").dispatch("click");
+    expect(outputController.closeBoth).toHaveBeenCalledTimes(1);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("blocks local output actions on coarse or no-hover surfaces and shows workstation instructions", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub({ coarse: true });
+    const root = element("main");
+    const outputController = {
+      identifyDisplays: vi.fn(), assignDisplays: vi.fn(), openBoth: vi.fn(), closeBoth: vi.fn(),
+      getState: () => ({ screens: [], assignments: { left: null, right: null }, message: "Identify displays", error: "", ownedSpans: [] }),
+      subscribe(listener) { listener(this.getState()); return () => {}; },
+    };
+    const api = mountProjectionConfig(root, { client: fakeClient(), outputController });
+    const identify = find(root, (node) => node.dataset?.action === "output-identify");
+    const status = find(root, (node) => node.className === "output-launch-status");
+    identify.dispatch("click");
+    expect(identify.disabled).toBe(true);
+    expect(outputController.identifyDisplays).not.toHaveBeenCalled();
+    expect(status.textContent).toMatch(/workstation-only/i);
+    api.dispose(); globalThis.document = previousDocument;
   });
 });

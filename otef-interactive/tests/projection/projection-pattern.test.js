@@ -79,4 +79,15 @@ describe("projection patterns", () => {
     const label = h.children[0].children.at(-1);
     expect(Number(label.x ?? label.getAttribute?.("x"))).toBeCloseTo(0.6, 6);
   });
+
+  test("publishes the effective inherited pattern font without a second expiry field", () => {
+    const h = host();
+    const snapshots = [];
+    vi.stubGlobal("getComputedStyle", () => ({ fontFamily: '"Measured Sans", sans-serif' }));
+    const p = createProjectionPattern({ host: h, spanId: "left", onRenderSnapshot: (snapshot) => snapshots.push(snapshot) });
+    p.receive({ type: "otef_projection_pattern", table: "otef", output: "left", pattern: "output_id", sourceId: "11111111-1111-4111-8111-111111111111" });
+    expect(snapshots.at(-1).fontFamily).toBe('"Measured Sans", sans-serif');
+    expect(snapshots.at(-1)).not.toHaveProperty("expiresAt");
+    vi.unstubAllGlobals();
+  });
 });

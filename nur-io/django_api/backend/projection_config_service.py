@@ -1,12 +1,18 @@
 import copy
+import os
 import uuid
+from pathlib import Path
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import IntegrityError, transaction
+from django.conf import settings
 
 from .models import OTEFProjectionCalibration, Table, projection_config_defaults
 from .projection_config_schema import validate_projection_config
+from .projection_warp_assets import load_trusted_projection_asset
+from .projection_warp_geometry import evaluate_warp_mesh
+from .projection_warp_schema import validate_projection_config_v2
 
 
 class ProjectionConfigError(Exception):
@@ -24,6 +30,42 @@ class ProjectionConflict(ProjectionConfigError):
     def __init__(self, state):
         self.state = state
         super().__init__("conflict")
+
+
+def projection_baseline_root():
+    configured = os.environ.get('OTEF_PROJECTION_BASELINE_ROOT')
+    if configured:
+        return Path(configured)
+    return Path(settings.BASE_DIR) / 'public' / 'projection-calibration' / 'td-baselines'
+
+
+def validate_projection_config_for_persistence(config):
+    errors = validate_projection_config(config)
+    if errors:
+        return errors
+    if config.get('schemaVersion') != 2:
+        return {}
+    manifest = None
+    for side in ('left', 'right'):
+        warp = config['outputs'][side]['warp']
+        if not warp.get('enabled'):
+            continue
+        baseline = warp['baseline']
+        mesh = None
+        if baseline['type'] == 'tdMesh':
+            try:
+                mesh, manifest, _ = load_trusted_projection_asset(projection_baseline_root(), side)
+            except (OSError, ValueError, TypeError) as error:
+                return {f'outputs.{side}.warp.baseline': str(error)}
+        if baseline['type'] == 'tdMesh':
+            errors = validate_projection_config_v2(config, trusted_manifest=manifest)
+            if errors:
+                return errors
+        try:
+            evaluate_warp_mesh(mesh, warp)
+        except (ValueError, TypeError, KeyError) as error:
+            return {f'outputs.{side}.warp': str(error)}
+    return {}
 
 
 def _snapshot(row):
@@ -107,7 +149,7 @@ def mutate_projection_state(table_name, base_revision, action, source_id, **payl
             config = payload.get("config")
             if not isinstance(config, dict):
                 raise ProjectionConfigError("invalid", {"config": "is required"})
-            config_errors = validate_projection_config(config)
+            config_errors = validate_projection_config_for_persistence(config)
             if config_errors:
                 raise ProjectionConfigError("invalid", config_errors)
             if action == "preview":
@@ -150,6 +192,9 @@ def mutate_projection_state(table_name, base_revision, action, source_id, **payl
             if target is None:
                 raise ProjectionConfigError("invalid", {"presetId": "preset not found"})
             row.working_config = copy.deepcopy(target["config"])
+            config_errors = validate_projection_config_for_persistence(row.working_config)
+            if config_errors:
+                raise ProjectionConfigError("invalid", config_errors)
             row.selected_preset_id = preset_id
             changed = True
         else:
@@ -157,6 +202,9 @@ def mutate_projection_state(table_name, base_revision, action, source_id, **payl
             if target is None:
                 raise ProjectionConfigError("invalid", {"selectedPresetId": "preset not found"})
             row.working_config = copy.deepcopy(target["config"])
+            config_errors = validate_projection_config_for_persistence(row.working_config)
+            if config_errors:
+                raise ProjectionConfigError("invalid", config_errors)
             changed = True
 
         if not changed:

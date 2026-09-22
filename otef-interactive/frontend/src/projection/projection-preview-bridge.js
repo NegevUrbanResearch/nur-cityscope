@@ -1,6 +1,6 @@
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
 
-export function installProjectionPreviewBridge({ win, output, map, nameFieldController, syncContextInvestigation }) {
+export function installProjectionPreviewBridge({ win, output, map, nameFieldController, syncContextInvestigation, applyProjectionConfig }) {
   if (!win?.parent || win.parent === win || !["left", "right"].includes(output)) return () => {};
   const origin = win.location.origin;
   const reply = (message) => win.parent.postMessage({ ...message, output }, origin);
@@ -12,6 +12,7 @@ export function installProjectionPreviewBridge({ win, output, map, nameFieldCont
       return;
     }
     try {
+      if (typeof applyProjectionConfig === "function" && applyProjectionConfig(message.config) === false) throw new Error("Projection output rejected draft");
       if (map.setEffectiveProjectionConfig(message.config) === false) throw new Error("Projection camera rejected draft");
       if (nameFieldController.setProjectionConfig(message.config) === false) throw new Error("Projection labels rejected draft");
       syncContextInvestigation();

@@ -3,6 +3,9 @@ import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narrativ
 import { applyNarrativePeopleFilter } from "./nli-people-marker-filter.js";
 
 const EXIT_CENTER = Object.freeze([34.5, 31.4]);
+// Reviewed Mor route extent, in WGS84. Padding keeps the route head and tail
+// visible while leaving the Nova label readable.
+const MOR_ROUTE_BOUNDS = Object.freeze([[34.466, 31.350], [34.499, 31.400]]);
 const SCENE_STORAGE_KEY = "otef.nliNarrativeSceneRevision";
 
 function readHandledRevision(storage) {
@@ -42,6 +45,8 @@ export function createGisNarrativeController({
   let disposed = false;
   let state = normalizeNarrativeState(null);
   let activeDefinition = null;
+  let escapeOverlay = dataContext?.getEscapeOverlay?.() || { mor: false };
+  let morCameraActive = false;
   let handledRevision = readHandledRevision(storage);
   let styleGeneration = 0;
 
@@ -53,6 +58,28 @@ export function createGisNarrativeController({
     const resolved = typeof resolveExitCenter === "function" ? resolveExitCenter() : centerFromBounds(dataContext?.getBounds?.());
     return Array.isArray(resolved) && resolved.length === 2 && resolved.every(Number.isFinite) ? resolved : EXIT_CENTER;
   };
+  const fitMorRoute = () => {
+    if (morCameraActive || activeDefinition?.id !== "nova") return;
+    morCameraActive = true;
+    map?.stop?.();
+    viewportSync?.beginCameraTravel?.("narrative-nova-mor-route");
+    map?.fitBounds?.(MOR_ROUTE_BOUNDS, { padding: 48, essential: true, duration: 1000 });
+  };
+  const restoreNovaCamera = () => {
+    if (!morCameraActive || activeDefinition?.id !== "nova") return;
+    morCameraActive = false;
+    map?.stop?.();
+    viewportSync?.beginCameraTravel?.("narrative-nova");
+    map?.flyTo?.({ center: activeDefinition.center, zoom: activeDefinition.zoom, essential: true, duration: 1000 });
+  };
+  const syncMorCamera = () => {
+    if (activeDefinition?.id !== "nova") {
+      morCameraActive = false;
+      return;
+    }
+    if (escapeOverlay?.mor === true) fitMorRoute();
+    else restoreNovaCamera();
+  };
   const activate = (definition) => {
     presentation?.close?.();
     activeDefinition = definition;
@@ -62,10 +89,12 @@ export function createGisNarrativeController({
     map?.stop?.();
     viewportSync?.beginCameraTravel?.(`narrative-${definition.id}`);
     map?.flyTo?.({ center: definition.center, zoom: definition.zoom, essential: true, duration: 1600 });
+    syncMorCamera();
   };
   const exit = () => {
     presentation?.close?.();
     activeDefinition = null;
+    morCameraActive = false;
     clearPeopleAndArchive();
     focus.clear();
     syncTimeline();
@@ -73,6 +102,11 @@ export function createGisNarrativeController({
     viewportSync?.beginCameraTravel?.("narrative-exit");
     map?.flyTo?.({ center: exitCenter(), zoom: 10, essential: true, duration: 1600 });
   };
+
+  const unsubscribeOverlay = dataContext?.subscribe?.("escapeOverlay", (nextOverlay) => {
+    escapeOverlay = nextOverlay || { mor: false };
+    syncMorCamera();
+  });
 
   return {
     apply(nextState) {
@@ -88,6 +122,7 @@ export function createGisNarrativeController({
           clearPeopleAndArchive();
           focus.show(definition);
         } else focus.clear();
+        syncMorCamera();
         syncTimeline();
         return false;
       }
@@ -112,6 +147,7 @@ export function createGisNarrativeController({
       disposed = true;
       activeDefinition = null;
       focus.dispose();
+      unsubscribeOverlay?.();
     },
   };
 }

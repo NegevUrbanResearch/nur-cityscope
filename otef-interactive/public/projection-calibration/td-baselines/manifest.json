@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-09-21",
+  "source": "/project1/split_view",
+  "width": 1920,
+  "height": 1080,
+  "assets": {
+    "left": {
+      "assetId": "otef-left-td-2026-09-21",
+      "path": "left.json",
+      "sha256": "e625d3cac525d9b4b5c3f2eb306d89e85d104eecb26d313512cad9a6d9b9c331",
+      "rawPath": "left-raw.json",
+      "rawSha256": "c9ab500c7710986438c7f4489f6f769b8f1395521b77fca7655aaa67282a22ac",
+      "evaluatedPath": "left-evaluated-mesh.json",
+      "evaluatedSha256": "eacb3542806d77b77860be76dcbc22ae453a2ebcb942a804d3bec691855fb484",
+      "logicalGrid": {
+        "columns": 7,
+        "rows": 7
+      },
+      "denseGrid": {
+        "columns": 79,
+        "rows": 79
+      }
+    },
+    "right": {
+      "assetId": "otef-right-td-2026-09-21",
+      "path": "right.json",
+      "sha256": "6156d5a18dc1cc627a6085bc53939d1e1edb997992e416cb17a239b91ada52d4",
+      "rawPath": "right-raw.json",
+      "rawSha256": "395df9aef90b5983193787009fb28b7f34a05604411c6582779ee1a54d846e78",
+      "evaluatedPath": "right-evaluated-mesh.json",
+      "evaluatedSha256": "3280f80f21f808b05ed55a178a7749a791739d4afd6cf9971fee32a8268cd97c",
+      "logicalGrid": {
+        "columns": 8,
+        "rows": 7
+      },
+      "denseGrid": {
+        "columns": 78,
+        "rows": 67
+      }
+    }
+  },
+  "framing": {
+    "path": "../td-source-config.json",
+    "sha256": "0a864ff0377e24b24e0a288c1b90cdfa510d7b60c6464d51a359ef0cf3fcfd20"
+  }
+}

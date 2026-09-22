@@ -16,8 +16,16 @@ describe("normalizeEscapeOverlay", () => {
 
   test("hydrates existing nova booleans without re-applying enter defaults", () => {
     expect(
-      normalizeEscapeOverlay({ individual: false, overlap: true }, "nova"),
-    ).toEqual({ individual: false, overlap: true });
+      normalizeEscapeOverlay({ individual: false, overlap: true, mor: true }, "nova"),
+    ).toEqual({ individual: false, overlap: true, mor: true });
+  });
+
+  test("defaults missing Mor flag for old two-key Nova payloads", () => {
+    expect(normalizeEscapeOverlay({ individual: true, overlap: false }, "nova")).toEqual({
+      individual: true,
+      overlap: false,
+      mor: false,
+    });
   });
 
   test("enter defaults apply only when applyEnterDefaults is true and raw is empty", () => {
@@ -28,11 +36,12 @@ describe("normalizeEscapeOverlay", () => {
   });
 
   test("Nova enter overlay is both flags false", () => {
-    expect(NOVA_ENTER_ESCAPE_OVERLAY).toEqual({ individual: false, overlap: false });
+    expect(NOVA_ENTER_ESCAPE_OVERLAY).toEqual({ individual: false, overlap: false, mor: false });
     expect(NOVA_ENTER_ESCAPE_OVERLAY).toEqual(EMPTY_ESCAPE_OVERLAY);
     expect(normalizeEscapeOverlay(null, "nova", { applyEnterDefaults: true })).toEqual({
       individual: false,
       overlap: false,
+      mor: false,
     });
   });
 });

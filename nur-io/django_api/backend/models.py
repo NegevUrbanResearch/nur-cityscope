@@ -2,6 +2,9 @@ from django.db import models
 import os
 from django.utils import timezone
 
+from .projection_config_schema import legacy_projection_config_defaults
+from .projection_warp_schema import migrate_projection_config_to_v2
+
 
 def indicator_media_path(instance, filename):
     """
@@ -669,14 +672,7 @@ class LayerState(models.Model):
 
 
 def projection_config_defaults():
-    return {
-        "schemaVersion": 1,
-        "pre": {"scale": 1.41, "rotateDeg": -50, "tx": 0.01, "ty": 0},
-        "outputs": {
-            "left": {"crop": {"x0": 0, "x1": 0.6, "y0": 0, "y1": 1}, "post": {"scale": 2, "tx": 0, "ty": -0.049}},
-            "right": {"crop": {"x0": 0.4, "x1": 1, "y0": 0, "y1": 1}, "post": {"scale": 2, "tx": 0, "ty": -0.049}},
-        },
-    }
+    return migrate_projection_config_to_v2(legacy_projection_config_defaults())
 
 
 def projection_presets_defaults():

@@ -1,5 +1,4 @@
 import { DEFAULT_PROJECTION_CONFIG } from "../shared/projection-config-schema.js";
-import { equalProjectionConfig } from "../shared/projection-config-client.js";
 
 const TABLE = "otef";
 
@@ -21,6 +20,9 @@ export function createProjectionConfigRuntime({
   clock = globalThis,
   renderTimeoutMs = 1000,
   isDocumentVisible = () => globalThis.document?.visibilityState !== "hidden",
+  drawCompletion = null,
+  route = "maplibre",
+  baseline = null,
 } = {}) {
   let stopped = true;
   let unsubscribe = null;
@@ -33,6 +35,7 @@ export function createProjectionConfigRuntime({
   let hydrated = false;
   let failedRevision = -1;
   let failedError = null;
+  let failedBaseline = null;
   let renderWait = null;
   let suspended = false;
   let awaitingReapply = false;
@@ -51,13 +54,17 @@ export function createProjectionConfigRuntime({
     renderWait = null;
   };
 
-  const acknowledge = (revision, success, error) => {
-    const message = { type: "otef_projection_applied", table, output: spanId, revision, instanceId, success };
+  const acknowledge = (revision, success, error, baselineOverride = undefined) => {
+    const message = { type: "otef_projection_applied", table, output: spanId, revision, instanceId, success, route };
+    const baselineIdentity = baselineOverride !== undefined ? baselineOverride : (typeof baseline === "function" ? baseline() : baseline);
+    if (baselineIdentity != null) message.baseline = clone(baselineIdentity);
     if (error) message.error = String(error).slice(0, 240);
     send(message);
   };
+  const baselineFor = (config) => typeof baseline === "function" ? baseline(config) : baseline;
 
-  function handleRenderFailure(revision, error) {
+  function handleRenderFailure(revision, error, baselineOverride = undefined) {
+    const failedIdentity = baselineOverride !== undefined ? baselineOverride : renderWait?.baseline;
     generation += 1;
     removeRenderWait();
     const rollbackConfig = appliedConfig || initialConfig;
@@ -66,7 +73,9 @@ export function createProjectionConfigRuntime({
     let restored = false;
     try {
       applyConfig(rollbackConfig, revision);
-      restored = true;
+      restored = typeof drawCompletion === "function"
+        ? drawCompletion(rollbackConfig, revision) === true
+        : true;
     } catch { /* report failure without claiming restoration */ }
     finally {
       if (map) {
@@ -80,7 +89,8 @@ export function createProjectionConfigRuntime({
     }
     failedRevision = revision;
     failedError = String(error?.message || error || "projection render failed").slice(0, 240);
-    acknowledge(revision, false, failedError);
+    failedBaseline = failedIdentity ?? null;
+    acknowledge(revision, false, failedError, failedIdentity);
   }
 
   const settleRender = (event) => {
@@ -96,10 +106,16 @@ export function createProjectionConfigRuntime({
       return;
     }
     if (wait.applying) return;
+    if (typeof drawCompletion === "function") {
+      let complete = false;
+      try { complete = drawCompletion(wait.config, wait.revision) === true; } catch (error) { handleRenderFailure(wait.revision, error); return; }
+      if (!complete) return;
+    }
     appliedConfig = clone(wait.config);
     appliedRevision = wait.revision;
     failedRevision = -1;
     failedError = null;
+    failedBaseline = null;
     awaitingReapply = false;
     removeRenderWait();
     acknowledge(wait.revision, true);
@@ -116,7 +132,7 @@ export function createProjectionConfigRuntime({
       if (!renderWait || renderWait.errorListener !== errorListener || !event?.error || event.sourceId || event.source || event.tile) return;
       settleRender(event);
     };
-    renderWait = { listener, errorListener, revision, applyGeneration, config, applying, pendingError: null, timer: null };
+    renderWait = { listener, errorListener, revision, applyGeneration, config, applying, pendingError: null, baseline: null, timer: null };
     if (typeof map?.on === "function") map.on("render", listener);
     else if (typeof map?.once === "function") map.once("render", listener);
     if (typeof map?.on === "function") map.on("error", errorListener);
@@ -155,17 +171,19 @@ export function createProjectionConfigRuntime({
         applyConfig(item.config, item.revision);
         failedRevision = item.revision;
         failedError = "render completion unavailable";
-        acknowledge(item.revision, false, "render completion unavailable");
+        acknowledge(item.revision, false, "render completion unavailable", baselineFor(item.config));
       } catch (error) {
-        acknowledge(item.revision, false, error?.message || error);
+        acknowledge(item.revision, false, error?.message || error, baselineFor(item.config));
       }
       return;
     }
     waitForRender(item.revision, applyGeneration, item.config);
     try {
-      applyConfig(item.config, item.revision);
       const wait = renderWait;
+      if (wait) wait.baseline = clone(baselineFor(item.config));
+      applyConfig(item.config, item.revision);
       if (wait) {
+        wait.baseline = clone(baselineFor(item.config));
         wait.applying = false;
         if (wait.pendingError) {
           handleRenderFailure(item.revision, wait.pendingError);
@@ -182,15 +200,14 @@ export function createProjectionConfigRuntime({
     const snapshot = state?.snapshot;
     if (spanId !== "left" && spanId !== "right") return;
     if (!snapshot || !Number.isSafeInteger(snapshot.revision) || !snapshot.config) return;
-    if (snapshot.revision < latestRevision) return;
-    if (snapshot.revision === latestRevision && latest && equalProjectionConfig(snapshot.config, latest.config)) return;
+    if (snapshot.revision <= latestRevision) return;
     if (snapshot.revision > latestRevision && renderWait) {
       generation += 1;
       removeRenderWait();
     }
     latestRevision = snapshot.revision;
     latest = { revision: snapshot.revision, config: clone(snapshot.config) };
-    if (snapshot.revision > failedRevision) { failedRevision = -1; failedError = null; }
+    if (snapshot.revision > failedRevision) { failedRevision = -1; failedError = null; failedBaseline = null; }
     if (!hydrated) {
       hydrated = true;
       requestStatus();
@@ -204,7 +221,7 @@ export function createProjectionConfigRuntime({
     if (suspended) return;
     if (awaitingReapply) { schedule(); return; }
     if (failedRevision === latestRevision) {
-      acknowledge(failedRevision, false, failedError || "projection render failed");
+      acknowledge(failedRevision, false, failedError || "projection render failed", failedBaseline);
       return;
     }
     if (!appliedConfig || appliedRevision < 0) return;
@@ -265,5 +282,15 @@ export function createProjectionConfigRuntime({
     schedule();
   }
 
-  return { start, stop, requestStatus, invalidate, resume };
+  function reapply() {
+    if (stopped) return;
+    failedRevision = -1;
+    failedError = null;
+    failedBaseline = null;
+    suspended = false;
+    awaitingReapply = true;
+    schedule();
+  }
+
+  return { start, stop, requestStatus, invalidate, resume, reapply };
 }

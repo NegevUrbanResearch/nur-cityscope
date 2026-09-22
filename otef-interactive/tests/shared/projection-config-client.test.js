@@ -1,6 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from '../../frontend/src/shared/projection-config-schema.js';
-import { createProjectionConfigClient, validateProjectionConfigSnapshot } from '../../frontend/src/shared/projection-config-client.js';
+import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
+import { createProjectionConfigClient, TD_MIGRATION_PRESET_ID, validateProjectionConfigSnapshot } from '../../frontend/src/shared/projection-config-client.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const stateFor = (revision, config = DEFAULTS) => ({
@@ -76,6 +77,31 @@ test('hydrates revision zero from a full snapshot', async () => {
   await started;
   expect(h.client.getState().snapshot.revision).toBe(0);
   expect(h.client.getState().draft).toEqual(DEFAULTS);
+});
+
+test('accepts a legacy Original alongside the v2 reserved TD migration preset', () => {
+  const legacy = {
+    schemaVersion: 1,
+    pre: clone(DEFAULTS.pre),
+    outputs: Object.fromEntries(['left', 'right'].map((side) => [side, {
+      crop: clone(DEFAULTS.outputs[side].crop),
+      post: clone(DEFAULTS.outputs[side].post),
+    }])),
+  };
+  const baseline = {
+    ...legacy,
+    pre: { ...legacy.pre, scale: 1.25 },
+  };
+  const snapshot = {
+    revision: 1,
+    config: legacy,
+    presets: [
+      { id: 'original', name: 'Original calibration', config: legacy, readOnly: true },
+      { id: TD_MIGRATION_PRESET_ID, name: 'TD migration baseline', config: baseline, readOnly: true },
+    ],
+    selectedPresetId: 'original',
+  };
+  expect(validateProjectionConfigSnapshot(snapshot)).toBe(true);
 });
 
 test('failed initial GET keeps writes blocked until an explicit fresh retry succeeds', async () => {

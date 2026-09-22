@@ -353,6 +353,12 @@ function clipRectForBranch(branch) {
   return x1 > x0 && y1 > y0 ? { x0, x1, y0, y1 } : null;
 }
 
+export function getProjectionSpanClipRect(config, spanId) {
+  const effective = resolveProjectionConfig(config);
+  const branch = effective?.outputs?.[spanId];
+  return branch ? clipRectForBranch(branch) : null;
+}
+
 function clipPathForRect(rect) {
   if (!rect) return "inset(100% 100% 100% 100%)";
   return `inset(${rect.y0 * 100}% ${(1 - rect.x1) * 100}% ${(1 - rect.y1) * 100}% ${rect.x0 * 100}%)`;
@@ -395,6 +401,56 @@ function geographicImageMatrix(map, imageEl, dimensions) {
     width,
     height,
   };
+}
+
+export function getProjectionImagePlacement({ map, imageEl, dimensions } = {}) {
+  return geographicImageMatrix(map, imageEl, dimensions || dimensionsForMap(map));
+}
+
+function cssMatrix3dToNormalized(matrix3d, width, height, outputWidth, outputHeight) {
+  if (!Array.isArray(matrix3d) || matrix3d.length !== 16) return null;
+  const values = [
+    matrix3d[0] * width / outputWidth, matrix3d[1] * width / outputHeight, matrix3d[3] * width,
+    matrix3d[4] * height / outputWidth, matrix3d[5] * height / outputHeight, matrix3d[7] * height,
+    matrix3d[12] / outputWidth, matrix3d[13] / outputHeight, matrix3d[15],
+  ];
+  return values.every(Number.isFinite) ? values : null;
+}
+
+export function createProjectionImageDescriptor({
+  map,
+  imageEl,
+  config = DEFAULT_PROJECTION_CONFIG,
+  spanId,
+  outputWidth = 1920,
+  outputHeight = 1080,
+} = {}) {
+  const clip = getProjectionSpanClipRect(config, spanId);
+  const viewport = dimensionsForMap(map);
+  const placement = getProjectionImagePlacement({ map, imageEl, dimensions: viewport });
+  if (!clip || !placement) return null;
+  const matrix = cssMatrix3dToNormalized(
+    placement.matrix3d,
+    placement.width,
+    placement.height,
+    viewport.width || outputWidth,
+    viewport.height || outputHeight,
+  );
+  if (!matrix) return null;
+  const opacity = Number(imageEl?.style?.opacity);
+  return {
+    source: imageEl,
+    matrix,
+    clip: [clip.x0, clip.y0, clip.x1, clip.y1],
+    opacity: Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1,
+  };
+}
+
+export function createProjectionMapDescriptor({ map, config = DEFAULT_PROJECTION_CONFIG, spanId } = {}) {
+  const clip = getProjectionSpanClipRect(config, spanId);
+  const source = typeof map?.getCanvas === "function" ? map.getCanvas() : null;
+  if (!source || !clip) return null;
+  return { source, clip: [clip.x0, clip.y0, clip.x1, clip.y1] };
 }
 
 function solveLinearSystem(matrix, values) {

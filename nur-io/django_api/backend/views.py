@@ -771,9 +771,10 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
         payload = request.data if isinstance(request.data, dict) else {}
         individual = payload.get("individual")
         overlap = payload.get("overlap")
-        if not isinstance(individual, bool) or not isinstance(overlap, bool):
+        mor = payload.get("mor", False)
+        if not isinstance(individual, bool) or not isinstance(overlap, bool) or not isinstance(mor, bool):
             return Response(
-                {"error": "individual and overlap must be booleans"},
+                {"error": "individual, overlap, and mor must be booleans"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -782,7 +783,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             narrative_id = normalize_narrative_state(locked.narrative_state)["id"]
             if narrative_id == "nova":
                 overlay = normalize_escape_overlay(
-                    {"individual": individual, "overlap": overlap},
+                    {"individual": individual, "overlap": overlap, "mor": mor},
                     "nova",
                 )
             else:

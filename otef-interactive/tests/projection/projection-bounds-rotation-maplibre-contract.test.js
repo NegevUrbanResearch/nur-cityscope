@@ -214,9 +214,9 @@ test("projection entry applies span after load fitBounds without CSS pixel-ratio
   expect(beforeMap).toContain("parseProjectionSpanId");
   expect(beforeMap).toContain("applyProjectionSpanView");
 
-  const loadStart = src.indexOf('map.on("load"');
+  const loadStart = src.indexOf("const onProjectionMapLoad");
   const loadSlice =
-    loadStart >= 0 ? src.slice(loadStart, src.indexOf("await import", loadStart)) : "";
+    loadStart >= 0 ? src.slice(loadStart, src.indexOf("const projectionMapLoadListener", loadStart)) : "";
   const loadApplyName = loadSlice.includes("applySpanCamera")
     ? "applySpanCamera"
     : "applyProjectionSpanView";

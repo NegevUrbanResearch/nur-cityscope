@@ -60,7 +60,7 @@ function makeChildren(element) {
   return { content, pager };
 }
 
-function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dataContext, registry, buildModel = buildLegendModel } = {}) {
+function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dataContext, registry, buildModel = buildLegendModel, onRenderSnapshot } = {}) {
   if (!element) return { refresh: async () => {}, setEditing: () => {}, dispose: () => {} };
   const mode = surface === "projection" ? "projection" : "gis";
   const { content, pager } = makeChildren(element);
@@ -72,6 +72,7 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
   let page = 0;
   let pages = [];
   let currentBlocks = [];
+  let currentModel = null;
   const listeners = [];
   const on = (target, name, callback) => { target?.addEventListener?.(name, callback); if (target?.removeEventListener) listeners.push(() => target.removeEventListener(name, callback)); };
   const clearTimer = () => { if (timer != null) clearInterval(timer); timer = null; };
@@ -139,6 +140,7 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       height: Math.ceil(naturalWidth / 2),
       fits: fitsGisTwoRows(html, panelWidth()),
       pack,
+      layers: fragments,
       layersMarkup,
     };
   };
@@ -198,6 +200,7 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
         id: `${pack.id}${suffix}`,
         height: blockHeight(html),
         pack,
+        layers: fragments,
         layersMarkup,
       };
     };
@@ -257,6 +260,21 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
       }
     }
   };
+  const renderSnapshot = (visibleBlocks = []) => {
+    const layout = settings().projection?.[projectionSpan] || settings().projection?.full || null;
+    return {
+      model: currentModel,
+      pages: pages.map((ids) => [...ids]),
+      pageIndex: page,
+      blocks: visibleBlocks.map((block) => ({ id: block.id, pack: block.pack, layers: block.layers || [] })),
+      language: language(),
+      spanId: projectionSpan,
+      visible: !(mode === "projection" && projectionSpan === "right") && layout?.visible !== false && visibleBlocks.length > 0,
+      editing,
+      layout,
+      animationNow: Date.now(),
+    };
+  };
   const renderPage = () => {
     const ids = pages[page] || [];
     const visible = currentBlocks.filter((block) => ids.includes(block.id));
@@ -268,6 +286,7 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
     }
     content.innerHTML = groups.map(({ pack, layersMarkup }) => packMarkup(pack, layersMarkup)).join("");
     renderPager();
+    onRenderSnapshot?.(renderSnapshot(visible));
   };
   const refresh = async () => {
     if (disposed) return;
@@ -302,19 +321,47 @@ function mountMapLegend({ element, surface = "gis", projectionSpan = "full", dat
         return { pages, oversizedBlockIds: [] };
       })() : packLegendPages(blocks, panelHeight());
       currentBlocks = blocks;
+      currentModel = model;
       pages = packed.pages;
       if (pager) pager.dataset.legendOverflow = packed.oversizedBlockIds.length > 0 ? "true" : "false";
       page = Math.max(0, pages.findIndex((ids) => ids.includes(priorId || currentBlocks[0]?.id)));
       if (page < 0) page = 0;
       element.classList?.toggle("map-legend-has-content", pages.length > 0);
       renderPage();
-    } catch (error) { console.warn("[MapLegend] build failed", error); content.innerHTML = ""; currentBlocks = []; pages = []; renderPager(); }
+    } catch (error) {
+      console.warn("[MapLegend] build failed", error);
+      content.innerHTML = "";
+      currentModel = null;
+      currentBlocks = [];
+      pages = [];
+      page = 0;
+      renderPager();
+      onRenderSnapshot?.(renderSnapshot([]));
+    }
   };
   const setEditing = (next) => { editing = !!next; if (editing) clearTimer(); else renderPager(); };
   on(typeof document !== "undefined" ? document : null, "visibilitychange", () => { if (document.hidden) clearTimer(); else renderPager(); });
   if (typeof ResizeObserver !== "undefined") { const observer = new ResizeObserver(() => { if (!disposed) refresh(); }); observer.observe(element); listeners.push(() => observer.disconnect()); }
   if (typeof document !== "undefined" && document.fonts?.addEventListener) { const callback = () => refresh(); document.fonts.addEventListener("loadingdone", callback); listeners.push(() => document.fonts.removeEventListener("loadingdone", callback)); }
-  return { refresh, setEditing, dispose() { disposed = true; generation += 1; clearTimer(); listeners.splice(0).forEach((remove) => remove()); content.innerHTML = ""; } };
+  return {
+    refresh,
+    setEditing,
+    getRenderSnapshot: () => {
+      const visible = currentBlocks.filter((block) => (pages[page] || []).includes(block.id));
+      return renderSnapshot(visible);
+    },
+    dispose() {
+      if (!disposed) onRenderSnapshot?.(renderSnapshot([]));
+      disposed = true;
+      generation += 1;
+      clearTimer();
+      listeners.splice(0).forEach((remove) => remove());
+      content.innerHTML = "";
+      currentModel = null;
+      currentBlocks = [];
+      pages = [];
+    },
+  };
 }
 
 export { mountMapLegend };

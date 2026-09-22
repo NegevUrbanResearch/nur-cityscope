@@ -133,8 +133,10 @@ async function initialize() {
     OTEFDataContext.subscribe("connection", (isConnected) => {
       currentState.isConnected = !!isConnected;
       updateBasemapUI(currentState.basemap);
-      updateConnectionStatus(isConnected ? "connected" : "disconnected");
     }),
+  );
+  unsubscribeFunctions.push(
+    OTEFDataContext.subscribe("connectionStatus", updateConnectionStatus),
   );
   unsubscribeFunctions.push(
     OTEFDataContext.subscribe("legendSettings", (settings) => {
@@ -298,9 +300,7 @@ export function initRemoteLocaleControls(dataContext = globalThis.OTEFDataContex
     });
   }
 
-  updateConnectionStatus(
-    currentState.isConnected ? "connected" : "disconnected",
-  );
+  updateConnectionStatus(lastConnectionUiStatus);
 }
 
 function initRemoteShellTabs() {
@@ -344,7 +344,7 @@ function initRemoteShellTabs() {
 /**
  * Update connection status UI
  */
-function updateConnectionStatus(status) {
+export function updateConnectionStatus(status) {
   lastConnectionUiStatus = status;
 
   const indicator = document.getElementById("statusIndicator");
@@ -363,7 +363,7 @@ function updateConnectionStatus(status) {
     connecting: {
       class: "connecting",
       textKey: "statusConnecting",
-      showWarning: false,
+      showWarning: true,
     },
     error: { class: "disconnected", textKey: "statusError", showWarning: true },
   };
@@ -378,6 +378,12 @@ function updateConnectionStatus(status) {
 
   if (warning) {
     warning.classList.toggle("hidden", !config.showWarning);
+    const message = warning.querySelector(".warning-text");
+    const key = status === "connecting" ? "statusConnecting" : "warningControlsDisabled";
+    if (message) {
+      message.setAttribute("data-i18n", key);
+      message.textContent = t(key);
+    }
   }
 
   updateUI();

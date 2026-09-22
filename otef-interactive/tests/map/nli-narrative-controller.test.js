@@ -20,11 +20,20 @@ function setup(options = {}) {
   const viewportSync = { beginCameraTravel: vi.fn() };
   const closeArchive = vi.fn();
   const syncTimeline = options.syncTimeline ?? vi.fn();
+  const listeners = new Map();
+  const dataContext = {
+    getBounds: () => options.bounds ?? null,
+    getEscapeOverlay: () => options.overlay ?? { mor: false },
+    subscribe: (topic, listener) => {
+      listeners.set(topic, listener);
+      return () => listeners.delete(topic);
+    },
+  };
   return import("../../frontend/src/map/nli-narrative-controller.js").then(({ createGisNarrativeController }) => ({
-    map, presentation, personVisual, viewportSync, closeArchive,
+    map, presentation, personVisual, viewportSync, closeArchive, listeners,
     syncTimeline,
     controller: createGisNarrativeController({
-      map, dataContext: { getBounds: () => options.bounds ?? null }, viewportSync, personVisual,
+      map, dataContext, viewportSync, personVisual,
       presentation, closeArchive, storage: options.storage ?? { getItem: () => null, setItem: vi.fn() }, syncTimeline,
       onStyleLoadOverlay: options.onStyleLoadOverlay,
     }),
@@ -122,6 +131,24 @@ describe("GIS Segev narrative scene", () => {
     expect(d.map.setFilter).toHaveBeenCalledWith("nli-people", NOVA_PEOPLE_FILTER);
   });
 
+  test("Mor overlay fits the route and closing it restores Nova camera", async () => {
+    const d = await setup();
+    d.controller.apply({ id: "nova", transition: "enter", revision: 1 });
+    d.map.flyTo.mockClear();
+    d.listeners.get("escapeOverlay")({ mor: true });
+    expect(d.map.fitBounds).toHaveBeenCalledWith(
+      [[34.466, 31.350], [34.499, 31.400]],
+      expect.objectContaining({ padding: 48, essential: true, duration: 1000 }),
+    );
+    d.listeners.get("escapeOverlay")({ mor: false });
+    expect(d.map.flyTo).toHaveBeenCalledWith({
+      center: NLI_NARRATIVES.nova.center,
+      zoom: 15,
+      essential: true,
+      duration: 1000,
+    });
+  });
+
   test("Nova victim filter is reapplied after style reconstruction and cleared on exit", async () => {
     const d = await setup();
     d.controller.apply({ id: "nova", transition: "enter", revision: 1 });
@@ -185,7 +212,7 @@ describe("GIS Segev narrative scene", () => {
       "utf8",
     );
     expect(source).toMatch(
-      /onStyleLoadOverlay:\s*\(\)\s*=>\s*novaEscapeCoordinator\?\.onStyleLoad\?\.\(\{\s*styleLoss:\s*true\s*\}\)/,
+      /onStyleLoadOverlay:\s*\(\)\s*=>\s*\{\s*novaEscapeCoordinator\?\.onStyleLoad\?\.\(\{\s*styleLoss:\s*true\s*\}\)/,
     );
   });
 

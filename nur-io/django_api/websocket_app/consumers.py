@@ -10,11 +10,14 @@ WebSocket is used for:
 from channels.generic.websocket import AsyncWebsocketConsumer
 from asgiref.sync import sync_to_async
 import json
+import re
 import uuid
 
 
 _PROJECTION_OUTPUTS = {"left", "right"}
 _PROJECTION_PATTERNS = {"off", "grid", "output_id"}
+_PROJECTION_ROUTES = {"browser", "maplibre", "td"}
+_PROJECTION_SHA256 = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$", re.IGNORECASE)
 
 
 def _valid_uuid(value):
@@ -25,6 +28,19 @@ def _valid_uuid(value):
     except (ValueError, AttributeError, TypeError):
         return False
     return str(parsed) == value.lower()
+
+
+def _valid_projection_baseline(value):
+    if not isinstance(value, dict):
+        return False
+    baseline_type = value.get("type")
+    if baseline_type == "identity":
+        return set(value) == {"type"}
+    if baseline_type != "tdMesh" or set(value) != {"type", "assetId", "sha256"}:
+        return False
+    asset_id = value.get("assetId")
+    digest = value.get("sha256")
+    return isinstance(asset_id, str) and 0 < len(asset_id) <= 128 and isinstance(digest, str) and bool(_PROJECTION_SHA256.fullmatch(digest))
 
 
 def _valid_projection_transient(data):
@@ -46,7 +62,7 @@ def _valid_projection_transient(data):
             return None
         return {key: data[key] for key in ("type", "table", "sourceId")}
     if message_type == "otef_projection_applied":
-        allowed = {"type", "table", "output", "revision", "instanceId", "success", "error"}
+        allowed = {"type", "table", "output", "revision", "instanceId", "success", "error", "route", "baseline"}
         if set(data) - allowed or not {"type", "table", "output", "revision", "instanceId", "success"}.issubset(data):
             return None
         if not isinstance(data.get("output"), str) or data["output"] not in _PROJECTION_OUTPUTS:
@@ -58,9 +74,17 @@ def _valid_projection_transient(data):
             return None
         if "error" in data and (not isinstance(data["error"], str) or not 0 < len(data["error"]) <= 240):
             return None
+        if "route" in data and data["route"] not in _PROJECTION_ROUTES:
+            return None
+        if "baseline" in data and not _valid_projection_baseline(data["baseline"]):
+            return None
         payload = {key: data[key] for key in ("type", "table", "output", "revision", "instanceId", "success")}
         if "error" in data:
             payload["error"] = data["error"]
+        if "route" in data:
+            payload["route"] = data["route"]
+        if "baseline" in data:
+            payload["baseline"] = data["baseline"]
         return payload
     return None
 

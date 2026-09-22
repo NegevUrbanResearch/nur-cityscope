@@ -1,4 +1,6 @@
-const DEFAULT_PROJECTION_CONFIG = {
+import { migrateProjectionConfigToV2, validateProjectionConfigV2 } from './projection-warp-schema.js';
+
+const LEGACY_DEFAULT_PROJECTION_CONFIG = {
   schemaVersion: 1,
   pre: { scale: 1.41, rotateDeg: -50, tx: 0.01, ty: 0 },
   outputs: {
@@ -7,6 +9,10 @@ const DEFAULT_PROJECTION_CONFIG = {
   },
 };
 
+const TD_MIGRATION_PRESET_ID = '6b6f2e4d-2c67-4df2-9d7e-1a7bb4ef3b2c';
+const TD_MIGRATION_PRESET_NAME = 'TD migration baseline';
+const DEFAULT_PROJECTION_CONFIG = migrateProjectionConfigToV2(LEGACY_DEFAULT_PROJECTION_CONFIG);
+
 function freeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.values(value).forEach(freeze);
@@ -14,6 +20,7 @@ function freeze(value) {
   }
   return value;
 }
+freeze(LEGACY_DEFAULT_PROJECTION_CONFIG);
 freeze(DEFAULT_PROJECTION_CONFIG);
 
 const ownKeys = (value, keys, path, errors) => {
@@ -32,6 +39,7 @@ const number = (value, path, min, max, errors) => {
 };
 
 export function validateProjectionConfig(value) {
+  if (value?.schemaVersion === 2 && value.outputs?.left?.warp && value.outputs?.right?.warp) return validateProjectionConfigV2(value);
   const errors = {};
   if (!ownKeys(value, ['schemaVersion', 'pre', 'outputs'], '', errors)) return errors;
   if (value.schemaVersion !== 1 || typeof value.schemaVersion !== 'number') errors.schemaVersion = 'must equal 1';
@@ -60,7 +68,8 @@ export function parseProjectionImport(text) {
   try { document = JSON.parse(text); } catch (error) { throw new Error(`invalid JSON: ${error.message}`); }
   const errors = {};
   if (!ownKeys(document, ['schemaVersion', 'name', 'config'], '', errors)) throw new Error(formatErrors(errors));
-  if (document.schemaVersion !== 1) errors.schemaVersion = 'must equal 1';
+  if (document.schemaVersion !== 1 && document.schemaVersion !== 2) errors.schemaVersion = 'must equal 1 or 2';
+  if (document.config && document.schemaVersion !== document.config.schemaVersion) errors.schemaVersion = 'must match config schemaVersion';
   if (typeof document.name !== 'string' || document.name.trim().length < 1 || document.name.trim().length > 80) errors.name = 'must be 1–80 characters';
   Object.assign(errors, Object.fromEntries(Object.entries(validateProjectionConfig(document.config)).map(([key, value]) => [`config.${key}`, value])));
   if (Object.keys(errors).length) throw new Error(formatErrors(errors));
@@ -72,7 +81,7 @@ export function serializeProjectionExport(name, config) {
   const errors = validateProjectionConfig(config);
   if (!trimmed || trimmed.length > 80) errors.name = 'must be 1–80 characters';
   if (Object.keys(errors).length) throw new Error(formatErrors(errors));
-  return JSON.stringify({ schemaVersion: 1, name: trimmed, config });
+  return JSON.stringify({ schemaVersion: config.schemaVersion, name: trimmed, config });
 }
 
-export { DEFAULT_PROJECTION_CONFIG };
+export { DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG, TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME };

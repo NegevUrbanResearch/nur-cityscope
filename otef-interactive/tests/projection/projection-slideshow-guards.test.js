@@ -214,9 +214,9 @@ describe("projection-main slideshow overlay wiring", () => {
     expect(src).toMatch(/setNliClockLayout/);
     expect(src).toMatch(/nliClockLayout/);
     expect(src).toMatch(/nli-explainer-overlay/);
-    const loadIdx = src.indexOf('map.on("load"');
+    const loadIdx = src.indexOf("const onProjectionMapLoad");
     expect(loadIdx).toBeGreaterThan(-1);
-    const afterLoad = src.slice(loadIdx);
+    const afterLoad = src.slice(loadIdx, src.indexOf("const projectionMapLoadListener", loadIdx));
     const hostIdx = afterLoad.indexOf("ensureNliExplainerHost");
     const syncIdx = afterLoad.indexOf("syncInvestigationTimelineToMap");
     expect(hostIdx).toBeGreaterThan(-1);

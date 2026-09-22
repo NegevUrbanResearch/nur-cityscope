@@ -5,6 +5,7 @@ import { copyUrl } from "../shared/copy-url.js";
 import { renderQr } from "../shared/qr-code.js";
 import { OTEFWebSocketClient } from "../shared/websocket-client.js";
 import { mountProjectionConfig } from "../projection-config/config-controller.js";
+import { createOutputWindowController } from "../projection-config/output-window-controller.js";
 
 function downloadExport(content, name) {
   if (typeof document === "undefined" || typeof URL?.createObjectURL !== "function") return;
@@ -40,7 +41,9 @@ export function bootProjectionConfig({ document = globalThis.document, location 
   const ownsSocket = !socket;
   let mounted = null;
   const client = createProjectionConfigClient({ fetchImpl, socket: ws, sourceId: createUuid(), onConflict: (message) => mounted?.setConflict?.(message) });
-  mounted = mountProjectionConfig(root, { client, socket: ws, share: () => shareConfigUrl({ location, fetchImpl, document }), onExport: downloadExport, onImport: readImportFile });
+  const outputLocation = location?.href ? new URL("./projection.html", location.href).href : "projection.html";
+  const outputController = createOutputWindowController({ location: outputLocation, open: globalThis.open, screenApi: globalThis, navigatorApi: globalThis.navigator, storage: (() => { try { return globalThis.localStorage; } catch { return null; } })() });
+  mounted = mountProjectionConfig(root, { client, socket: ws, outputController, share: () => shareConfigUrl({ location, fetchImpl, document }), onExport: downloadExport, onImport: readImportFile });
   return () => { mounted.dispose(); if (ownsSocket) ws.disconnect?.(); };
 }
 

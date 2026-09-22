@@ -109,7 +109,7 @@ describe("NLI Nova overlay remount contract", () => {
   test("GIS map-main overlay remount still uses the narrative onStyleLoad bus", () => {
     const mapEntry = readSource("../../frontend/src/entries/map-main.js");
     expect(mapEntry).toMatch(
-      /onStyleLoadOverlay:\s*\(\)\s*=>\s*novaEscapeCoordinator\?\.onStyleLoad\?\.\(\{\s*styleLoss:\s*true\s*\}\)/,
+      /onStyleLoadOverlay:\s*\(\)\s*=>\s*\{\s*novaEscapeCoordinator\?\.onStyleLoad\?\.\(\{\s*styleLoss:\s*true\s*\}\)/,
     );
   });
 
