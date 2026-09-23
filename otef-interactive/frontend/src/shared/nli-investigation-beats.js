@@ -16,6 +16,47 @@ export const NLI_PLAYABLE_IDS = Object.freeze([
 export const TIMELINE_BEAT_MS = NLI_VISUAL_TOKENS.revealDurationMs;
 export const TIMELINE_HOLD_MS = 2500;
 
+/** Provisional Segev-clock beat lengths. Through 06:41, then until 11:00, then the rest of the day. */
+const OPENING_END_MINUTES = 6 * 60 + 41;
+const MIDDAY_START_MINUTES = 11 * 60;
+const OPENING_BEAT_MS = 4000;
+const MIDDAY_BEAT_MS = 2500;
+const LATE_BEAT_MS = 1000;
+
+export function timelineBeatDurationMs(minutes) {
+  const value = Number(minutes);
+  if (!Number.isFinite(value)) return LATE_BEAT_MS;
+  if (value <= OPENING_END_MINUTES) return OPENING_BEAT_MS;
+  if (value < MIDDAY_START_MINUTES) return MIDDAY_BEAT_MS;
+  return LATE_BEAT_MS;
+}
+
+/** Milliseconds occupied by beats[start, end). */
+export function timelineSpanMs(beats, start = 0, end) {
+  const list = Array.isArray(beats) ? beats : [];
+  const from = Math.max(0, Math.trunc(start));
+  const to = end == null ? list.length : Math.max(from, Math.min(list.length, Math.trunc(end)));
+  let total = 0;
+  for (let index = from; index < to; index += 1) {
+    total += timelineBeatDurationMs(list[index]);
+  }
+  return total;
+}
+
+function locateBeat(list, start, count, elapsedMs) {
+  let cursor = 0;
+  const elapsed = Math.max(0, Number(elapsedMs) || 0);
+  const last = Math.min(list.length, start + count);
+  for (let index = start; index < last; index += 1) {
+    const duration = timelineBeatDurationMs(list[index]);
+    if (elapsed < cursor + duration) {
+      return { index, beatElapsedMs: elapsed - cursor };
+    }
+    cursor += duration;
+  }
+  return null;
+}
+
 function isFiniteAlarmMinute(value) {
   return typeof value !== "boolean" && Number.isFinite(Number(value));
 }
@@ -94,17 +135,18 @@ export function previousTimelineBeat(beats, clock) {
 export function timelinePhaseAt(elapsedMs, beats) {
   const list = Array.isArray(beats) ? beats : [];
   if (list.length === 0) return { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 };
-  const cycle = list.length * TIMELINE_BEAT_MS + TIMELINE_HOLD_MS;
+  const playableMs = timelineSpanMs(list);
+  const cycle = playableMs + TIMELINE_HOLD_MS;
   const t = ((Number(elapsedMs) % cycle) + cycle) % cycle;
-  if (t >= list.length * TIMELINE_BEAT_MS) {
+  if (t >= playableMs) {
     return { mode: "hold", clock: null, index: -1, beatElapsedMs: 0 };
   }
-  const index = Math.floor(t / TIMELINE_BEAT_MS);
+  const found = locateBeat(list, 0, list.length, t);
   return {
     mode: "beat",
-    clock: list[index],
-    index,
-    beatElapsedMs: t - index * TIMELINE_BEAT_MS,
+    clock: list[found.index],
+    index: found.index,
+    beatElapsedMs: found.beatElapsedMs,
   };
 }
 
@@ -112,13 +154,14 @@ export function mapClockStoryPosition(beats, clock, positionMs) {
   const list = Array.isArray(beats) ? beats : [];
   const leadInMinutes = Number(clock?.leadInMinutes);
   const hasLeadIn = Number.isFinite(leadInMinutes);
-  const leadInDurationMs = hasLeadIn ? TIMELINE_BEAT_MS : 0;
+  const leadInDurationMs = hasLeadIn ? timelineBeatDurationMs(leadInMinutes) : 0;
   const found = hasLeadIn ? list.findIndex((m) => m >= leadInMinutes) : 0;
   const playableStartIndex = found < 0 ? 0 : found;
   const playableCount = hasLeadIn ? Math.max(0, list.length - playableStartIndex) : list.length;
+  const playableMs = timelineSpanMs(list, playableStartIndex, playableStartIndex + playableCount);
   const durationMs = list.length === 0
     ? 0
-    : leadInDurationMs + playableCount * TIMELINE_BEAT_MS + TIMELINE_HOLD_MS;
+    : leadInDurationMs + playableMs + TIMELINE_HOLD_MS;
   let absolute = Math.max(0, Number(positionMs) || 0);
   const cycleOrdinal = clock?.loop && durationMs
     ? Math.floor(absolute / durationMs)
@@ -148,19 +191,18 @@ export function mapClockStoryPosition(beats, clock, positionMs) {
     };
   }
   const tPlay = wrappedMs - leadInDurationMs;
-  if (tPlay >= playableCount * TIMELINE_BEAT_MS) {
+  if (tPlay >= playableMs) {
     return {
       durationMs, leadInDurationMs, playableStartIndex, playableCount,
       wrappedMs, leadIn: false, mode: "hold", index: -1, clock: null,
-      beatElapsedMs: tPlay - playableCount * TIMELINE_BEAT_MS, cycleOrdinal,
+      beatElapsedMs: tPlay - playableMs, cycleOrdinal,
     };
   }
-  const playableIndex = Math.floor(tPlay / TIMELINE_BEAT_MS);
-  const index = playableStartIndex + playableIndex;
+  const located = locateBeat(list, playableStartIndex, playableCount, tPlay);
   return {
     durationMs, leadInDurationMs, playableStartIndex, playableCount,
-    wrappedMs, leadIn: false, mode: "beat", index, clock: list[index],
-    beatElapsedMs: tPlay - playableIndex * TIMELINE_BEAT_MS, cycleOrdinal,
+    wrappedMs, leadIn: false, mode: "beat", index: located.index, clock: list[located.index],
+    beatElapsedMs: located.beatElapsedMs, cycleOrdinal,
   };
 }
 

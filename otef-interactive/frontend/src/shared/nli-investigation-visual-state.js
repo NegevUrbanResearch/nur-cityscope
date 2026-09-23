@@ -10,9 +10,10 @@ import {
   INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
-  TIMELINE_BEAT_MS,
   TIMELINE_HOLD_MS,
   mapClockStoryPosition,
+  timelineBeatDurationMs,
+  timelineSpanMs,
 } from "./nli-investigation-beats.js";
 import { clockPositionMs, evaluateClock } from "./nli-investigation-clock.js";
 import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
@@ -85,28 +86,22 @@ export function completedInvestigationBeats(phase, clock, beats, activeProgress)
   const index = Number.isInteger(phase.index) ? phase.index : -1;
   const completed = beats.slice(0, Math.max(0, index));
   const progress = activeProgress == null
-    ? finiteNumber(phase.beatElapsedMs) / TIMELINE_BEAT_MS
+    ? finiteNumber(phase.beatElapsedMs) / timelineBeatDurationMs(phase.clock)
     : finiteNumber(activeProgress);
   if (index >= 0 && index < beats.length && progress >= 1) completed.push(beats[index]);
   return completed;
 }
 
 function activeProgressFor(phase, clock, nowMs) {
+  const duration = timelineBeatDurationMs(phase.clock);
   if (clock?.phase === "paused" && clock.seekKind === "jump") {
     const anchor = Number(clock.anchorMs);
-    if (Number.isFinite(anchor)) {
-      return Math.min(
-        1,
-        Math.max(0, finiteNumber(nowMs) - anchor) /
-          NLI_VISUAL_TOKENS.revealDurationMs,
-      );
+    if (Number.isFinite(anchor) && duration > 0) {
+      return Math.min(1, Math.max(0, (finiteNumber(nowMs) - anchor) / duration));
     }
   }
-  if (phase.mode !== "beat") return 0;
-  return Math.min(
-    1,
-    Math.max(0, finiteNumber(phase.beatElapsedMs) / NLI_VISUAL_TOKENS.revealDurationMs),
-  );
+  if (phase.mode !== "beat" || duration <= 0) return 0;
+  return Math.min(1, Math.max(0, finiteNumber(phase.beatElapsedMs) / duration));
 }
 
 function polygonEntriesFor(phase, beats, routeBeats, seekKind = null) {
@@ -118,7 +113,7 @@ function polygonEntriesFor(phase, beats, routeBeats, seekKind = null) {
   const elapsed = Math.max(0, finiteNumber(phase.beatElapsedMs));
   const entryDuration = phase.mode === "hold"
     ? Math.min(NLI_VISUAL_TOKENS.revealDurationMs, TIMELINE_HOLD_MS)
-    : NLI_VISUAL_TOKENS.revealDurationMs;
+    : timelineBeatDurationMs(beats[index]);
   const progress = Math.min(1, elapsed / entryDuration);
   const currentBeat = beats[index];
   if (
@@ -154,7 +149,7 @@ function alarmOnsetFor(clock, phase, nowMs, enabled, beats, position) {
   const playableIndex = index - mapping.playableStartIndex;
   const absoluteBeatStart = mapping.cycleOrdinal * mapping.durationMs
     + mapping.leadInDurationMs
-    + playableIndex * TIMELINE_BEAT_MS;
+    + timelineSpanMs(beats, mapping.playableStartIndex, mapping.playableStartIndex + playableIndex);
   const derivedOrigin = Number.isFinite(anchor)
     ? anchor + absoluteBeatStart - finiteNumber(clock?.positionMs)
     : NaN;

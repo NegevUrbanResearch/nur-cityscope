@@ -15,6 +15,7 @@ import {
   collectTimelineBeats,
   formatMinutesAsLocalClock,
   isNliPlayableFullId,
+  timelineBeatDurationMs,
 } from "../shared/nli-investigation-beats.js";
 import {
   beatsForMembership,
@@ -212,15 +213,23 @@ function nliThumbIndex(clock, displayBeats) {
   if (n === 0) return 0;
   if (!clock || clock.phase === "idle") return 0;
   const vis = evaluateClock(clock, nliNowMs());
+  if (vis.leadIn) {
+    const lead = Number(clock.leadInMinutes);
+    const start = beats.findIndex((minutes) => Number(minutes) >= lead);
+    return start < 0 ? 0 : start;
+  }
   if (vis.mode === "beat" && vis.index >= 0 && vis.index < n) return vis.index;
   return n - 1;
 }
 
 function nliStoryClockLabel(clock, displayBeats) {
+  if (clock && clock.phase !== "idle") {
+    const vis = evaluateClock(clock, nliNowMs());
+    if (Number.isFinite(Number(vis.clock))) return formatMinutesAsLocalClock(Number(vis.clock));
+  }
   const beats = nliDisplayBeats(clock, displayBeats);
   const index = nliThumbIndex(clock, displayBeats);
-  const minutes = beats[index];
-  return formatMinutesAsLocalClock(minutes);
+  return formatMinutesAsLocalClock(beats[index]);
 }
 
 export function nliBeatIndexFromPointer(el, clientX, beats) {
@@ -584,7 +593,10 @@ export const nliTimelineHostMethods = {
     const vis = evaluateClock(clock, nliNowMs());
     if (vis.phase === "ended") return;
     const elapsed = Number(vis.beatElapsedMs);
-    const delay = Math.max(0, TIMELINE_BEAT_MS - (Number.isFinite(elapsed) ? elapsed : 0));
+    const beatMs = Number.isFinite(Number(vis.clock))
+      ? timelineBeatDurationMs(vis.clock)
+      : TIMELINE_BEAT_MS;
+    const delay = Math.max(0, beatMs - (Number.isFinite(elapsed) ? elapsed : 0));
     this._nliPlayheadTimer = setTimeout(() => {
       this._nliPlayheadTimer = null;
       if (this._nliScrub) return;

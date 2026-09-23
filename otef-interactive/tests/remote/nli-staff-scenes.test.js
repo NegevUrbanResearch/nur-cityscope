@@ -47,9 +47,10 @@ describe("NLI staff run of show", () => {
     expect(identity).not.toContain("gaza.Gaza_Roads");
   });
 
-  test("the opening minutes stop at 06:41 and the rest of the day starts there", () => {
+  test("the opening minutes stop at 06:41 and the rest of the day starts at 06:42", () => {
     expect(SHOW.steps[1].cue.clock).toEqual({ to: 401 });
-    expect(SHOW.steps[3].cue.clock).toEqual({ from: 401 });
+    expect(SHOW.steps[3].cue.clock).toEqual({ from: 402 });
+    expect(SHOW.steps[3].clock).toBe("06:42");
   });
 
   test("free control offers a looping timeline preset and the layers sheet", () => {

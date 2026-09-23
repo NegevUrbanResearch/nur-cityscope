@@ -23,13 +23,16 @@ import {
   prepareInvestigationTimelineForStyleReload,
   previousTimelineBeat,
   syncInvestigationTimelineToMap,
-  TIMELINE_BEAT_MS,
   timelinePhaseAt,
   wakeInvestigationTimelinePersonGlow,
   setEscapeImpactOrientationIds,
 } from "../../frontend/src/shared/maplibre-investigation-timeline.js";
 import { PEOPLE_HALO_LAYER_ID } from "../../frontend/src/map/maplibre-person-selection.js";
-import { formatMinutesAsLocalClock } from "../../frontend/src/shared/nli-investigation-beats.js";
+import {
+  formatMinutesAsLocalClock,
+  timelineBeatDurationMs,
+  timelineSpanMs,
+} from "../../frontend/src/shared/nli-investigation-beats.js";
 import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
 import {
   endNliClock,
@@ -88,7 +91,7 @@ describe("investigation polygon timeline", () => {
 
   it("hold phase after last beat treats every polygon as past", () => {
     const beats = [400, 410, 420];
-    const holdStart = beats.length * TIMELINE_BEAT_MS;
+    const holdStart = timelineSpanMs(beats);
     expect(timelinePhaseAt(holdStart, beats)).toEqual({
       mode: "hold",
       clock: null,
@@ -162,8 +165,8 @@ describe("investigation polygon timeline", () => {
   it("grows a line once during its beat and keeps it full afterward", () => {
     expect(lineProgressAt(420, 400, 0)).toBe(0);
     expect(lineProgressAt(420, 420, 0)).toBe(0);
-    expect(lineProgressAt(420, 420, TIMELINE_BEAT_MS / 2)).toBeCloseTo(0.5);
-    expect(lineProgressAt(420, 420, TIMELINE_BEAT_MS)).toBe(1);
+    expect(lineProgressAt(420, 420, timelineBeatDurationMs(420) / 2)).toBeCloseTo(0.5);
+    expect(lineProgressAt(420, 420, timelineBeatDurationMs(420))).toBe(1);
     expect(lineProgressAt(420, 435, 0)).toBe(1);
     expect(lineProgressAt(420, null, 0)).toBe(1);
   });
@@ -834,7 +837,7 @@ describe("syncInvestigationTimelineToMap", () => {
 
     await syncInvestigationTimelineToMap(map, playing, visible, deps);
     await syncInvestigationTimelineToMap(map, playing, hidden, deps);
-    now = TIMELINE_BEAT_MS * 2;
+    now = timelineSpanMs(POLYGON_BEATS, 0, 2);
     await syncInvestigationTimelineToMap(map, playing, hidden, deps);
 
     expect(map.getSource("nli-investigation-polygon-category")).toBeFalsy();
@@ -940,7 +943,7 @@ describe("syncInvestigationTimelineToMap", () => {
     });
     const active = () => map.getSource("nli-investigation-line-active").setData.mock.calls.at(-1)[0].features;
     expect(map.getSource("nli-investigation-line-active")).toBeTruthy();
-    now += TIMELINE_BEAT_MS;
+    now += timelineBeatDurationMs(400);
     rafCallback();
     expect(active()).toEqual([]);
     expect(map.getSource("nli-investigation-line-completed-carrier").setData.mock.calls.at(-1)[0].features)
@@ -1030,7 +1033,7 @@ describe("syncInvestigationTimelineToMap", () => {
     );
     const headData = map.getSource("nli-investigation-line-head").setData;
     expect(headData.mock.calls.at(-1)[0].features).toHaveLength(1);
-    now = Math.ceil(TIMELINE_BEAT_MS * 0.999);
+    now = Math.ceil(timelineBeatDurationMs(LINE_BEATS[0]) * 0.999);
     rafCb();
     expect(headData.mock.calls.at(-1)[0].features).toEqual([]);
     disposeInvestigationTimelineForMap(map);
@@ -1053,7 +1056,7 @@ describe("syncInvestigationTimelineToMap", () => {
         now: () => now,
       },
     );
-    now = TIMELINE_BEAT_MS;
+    now = timelineBeatDurationMs(LINE_BEATS[0]);
     rafCb();
     const activeData = map.getSource("nli-investigation-line-active").setData;
     const drawn = activeData.mock.calls.at(-1)[0].features.map((f) => f.properties.OBJECTID);
@@ -1080,7 +1083,7 @@ describe("syncInvestigationTimelineToMap", () => {
     const gradient = [...map.setPaintProperty.mock.calls].reverse().find((call) => call[1] === "line-gradient");
     expect(gradient).toBeDefined();
     expect(JSON.stringify(gradient[2])).toContain("line-progress");
-    expect(JSON.stringify(gradient[2])).toContain(String(1600 / TIMELINE_BEAT_MS));
+    expect(JSON.stringify(gradient[2])).toContain(String(1600 / timelineBeatDurationMs(400)));
     disposeInvestigationTimelineForMap(map);
   });
 
@@ -1141,7 +1144,7 @@ describe("syncInvestigationTimelineToMap", () => {
       now: () => now,
     };
     await syncInvestigationTimelineToMap(map, clock, armedGroups, deps);
-    now = 800 + TIMELINE_BEAT_MS;
+    now = 800 + timelineBeatDurationMs(POLYGON_BEATS[0]);
     await syncInvestigationTimelineToMap(map, clock, liveAlarmsOnlyGroups, deps);
     expect(map.getSource("nli-investigation-polygon-category")).toBeFalsy();
     cancelAnimationFrame.mockClear();
@@ -1216,14 +1219,14 @@ describe("syncInvestigationTimelineToMap", () => {
     const gradientAtPause = [...map.setPaintProperty.mock.calls]
       .reverse()
       .find((call) => call[1] === "line-gradient");
-    expect(JSON.stringify(gradientAtPause[2])).toContain(String(800 / TIMELINE_BEAT_MS));
+    expect(JSON.stringify(gradientAtPause[2])).toContain(String(800 / timelineBeatDurationMs(400)));
     expect(captionEl?.hidden).toBe(false);
     now += 10_000;
     await syncInvestigationTimelineToMap(map, paused, bothGroups(), deps);
     const gradientLater = [...map.setPaintProperty.mock.calls]
       .reverse()
       .find((call) => call[1] === "line-gradient");
-    expect(JSON.stringify(gradientLater[2])).toContain(String(800 / TIMELINE_BEAT_MS));
+    expect(JSON.stringify(gradientLater[2])).toContain(String(800 / timelineBeatDurationMs(400)));
     expect(captionEl?.hidden).toBe(false);
     disposeInvestigationTimelineForMap(map);
   });
@@ -1260,12 +1263,12 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(lastActiveIds()).toEqual([1]);
     expect(JSON.stringify(lastGradient()[2])).not.toContain("0.5");
 
-    now = 10_000 + 1600;
+    now = 10_000 + timelineBeatDurationMs(420) / 2;
     rafCb();
     expect(lastActiveIds()).toEqual([1]);
-    expect(JSON.stringify(lastGradient()[2])).toContain(String(1600 / TIMELINE_BEAT_MS));
+    expect(JSON.stringify(lastGradient()[2])).toContain(String(0.5));
 
-    now = 10_000 + TIMELINE_BEAT_MS;
+    now = 10_000 + timelineBeatDurationMs(420);
     rafCb();
     expect(lastActiveIds()).toEqual([]);
     expect(JSON.stringify(lastGradient()[2])).toContain(String(1 - 0.00015));
@@ -1326,7 +1329,7 @@ describe("syncInvestigationTimelineToMap", () => {
     rafCb();
     expect(flashingCities()).toEqual([]);
 
-    now = 10_000 + TIMELINE_BEAT_MS;
+    now = 10_000 + timelineBeatDurationMs(420);
     rafCb();
     expect(flashingCities()).toEqual([]);
 
@@ -1368,7 +1371,7 @@ describe("syncInvestigationTimelineToMap", () => {
     };
     await syncInvestigationTimelineToMap(map, clock, groups, deps);
     expect(injected.innerHTML).toMatch(/B/);
-    now = 10_000 + TIMELINE_BEAT_MS;
+    now = 10_000 + timelineBeatDurationMs(420);
     rafCb();
     expect(injected.hidden).toBe(false);
     expect(injected.innerHTML).toMatch(/B/);
@@ -1402,7 +1405,7 @@ describe("syncInvestigationTimelineToMap", () => {
       getLayerDataUrl: () => null,
       now: () => now,
     });
-    now = start + TIMELINE_BEAT_MS + 50;
+    now = start + timelineBeatDurationMs(420) + 50;
     rafCb();
     expect(injected.hidden).toBe(false);
     expect(injected.innerHTML).toMatch(/07:00/);
@@ -1441,7 +1444,7 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(injected.innerHTML).toContain("07:00");
     expect(injected.innerHTML).not.toContain("nli-tl-row");
 
-    now = start + TIMELINE_BEAT_MS + 50;
+    now = start + timelineBeatDurationMs(420) + 50;
     rafCb();
     expect(injected.hidden).toBe(false);
     expect(injected.innerHTML).toContain("07:00");
@@ -1933,7 +1936,7 @@ describe("syncInvestigationTimelineToMap", () => {
     await syncInvestigationTimelineToMap(map, clock, groups, deps);
     expect(flashingCities()).toEqual(["B"]);
 
-    now = TIMELINE_BEAT_MS;
+    now = timelineBeatDurationMs(420);
     await syncInvestigationTimelineToMap(map, clock, groups, deps);
 
     disposeInvestigationTimelineForMap(map);
@@ -1999,7 +2002,7 @@ describe("syncInvestigationTimelineToMap", () => {
     const lastGradient = [...map.setPaintProperty.mock.calls]
       .reverse()
       .find((call) => call[1] === "line-gradient");
-    expect(JSON.stringify(lastGradient[2])).toContain(String(1000 / TIMELINE_BEAT_MS));
+    expect(JSON.stringify(lastGradient[2])).toContain(String(1000 / timelineBeatDurationMs(420)));
     disposeInvestigationTimelineForMap(map);
   });
 
@@ -2716,7 +2719,7 @@ describe("syncInvestigationTimelineToMap", () => {
       [400, 492],
       0,
     );
-    const at492 = { ...playing, positionMs: TIMELINE_BEAT_MS, phase: "paused", seekKind: "none" };
+    const at492 = { ...playing, positionMs: timelineBeatDurationMs(400), phase: "paused", seekKind: "none" };
     await syncInvestigationTimelineToMap(map, at492, groups, withProcessedPolygons({
       featuresById: {
         [INVESTIGATION_POLYGONS_FULL_ID]: [{
@@ -2842,7 +2845,7 @@ describe("syncInvestigationTimelineToMap", () => {
       motionMode: "reduced",
       now: () => 0,
     });
-    const at500 = { ...playing, positionMs: TIMELINE_BEAT_MS, phase: "paused", seekKind: "none" };
+    const at500 = { ...playing, positionMs: timelineBeatDurationMs(492), phase: "paused", seekKind: "none" };
     await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), novaPolyDeps([]));
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
       .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]]);
@@ -2887,7 +2890,7 @@ describe("syncInvestigationTimelineToMap", () => {
       [492, 500],
       0,
     );
-    const at500 = { ...playing, positionMs: TIMELINE_BEAT_MS, phase: "paused", seekKind: "none" };
+    const at500 = { ...playing, positionMs: timelineBeatDurationMs(492), phase: "paused", seekKind: "none" };
     await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), withProcessedPolygons({
       featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [site100, neighbor99] },
       narrativeFocus: { id: "nova" },

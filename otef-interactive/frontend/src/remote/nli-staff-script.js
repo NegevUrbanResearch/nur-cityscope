@@ -161,15 +161,15 @@ export const SHOW = {
       kit: [],
     },
     {
-      clock: "06:41",
+      clock: "06:42",
       title: { he: "שאר היום", en: "The rest of the day" },
       note: {
-        he: "זום־אאוט משגב בחזרה לכל הנגב; ציר הזמן ממשיך מ־6:41 ועד סוף היום.",
-        en: "Zoom out from the Segev family to the whole Negev; the timeline runs from 06:41 to the end of the day.",
+        he: "זום־אאוט משגב בחזרה לכל הנגב; ציר הזמן ממשיך מ־6:42 ועד סוף היום.",
+        en: "Zoom out from the Segev family to the whole Negev; the timeline runs from 06:42 to the end of the day.",
       },
       gis: TIMELINE_GIS,
       model: TIMELINE_MODEL,
-      cue: { layers: TIMELINE_LAYER_IDS, clock: { from: 401 } },
+      cue: { layers: TIMELINE_LAYER_IDS, clock: { from: 402 } },
       kit: ["timeline"],
     },
     {

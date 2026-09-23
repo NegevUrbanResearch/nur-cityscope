@@ -18,6 +18,7 @@ import { LOCALE_EVENT } from "../../frontend/src/remote/remote-locale.js";
 import {
   clockPositionMs,
   endNliClock,
+  evaluateClock,
   idleNliClock,
   pauseNliClock,
   playNliClock,
@@ -25,8 +26,9 @@ import {
 } from "../../frontend/src/shared/nli-investigation-clock.js";
 import {
   clockStoryDurationMs,
-  TIMELINE_BEAT_MS,
   TIMELINE_HOLD_MS,
+  timelineBeatDurationMs,
+  timelineSpanMs,
   INVESTIGATION_POLYGONS_FULL_ID,
 } from "../../frontend/src/shared/nli-investigation-beats.js";
 import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
@@ -212,13 +214,13 @@ describe("nli timeline transport", () => {
     const notCompleted = {
       ...playing,
       phase: "paused",
-      positionMs: TIMELINE_BEAT_MS - 1,
-      anchorMs: TIMELINE_BEAT_MS - 1,
+      positionMs: timelineBeatDurationMs(400) - 1,
+      anchorMs: timelineBeatDurationMs(400) - 1,
     };
     const completed = {
       ...notCompleted,
-      positionMs: TIMELINE_BEAT_MS,
-      anchorMs: TIMELINE_BEAT_MS,
+      positionMs: timelineBeatDurationMs(400),
+      anchorMs: timelineBeatDurationMs(400),
     };
     const cases = [
       ["incomplete", selected, notCompleted, false],
@@ -240,8 +242,8 @@ describe("nli timeline transport", () => {
     const hold = {
       ...playing,
       phase: "paused",
-      positionMs: playing.beats.length * TIMELINE_BEAT_MS,
-      anchorMs: playing.beats.length * TIMELINE_BEAT_MS,
+      positionMs: timelineSpanMs(playing.beats),
+      anchorMs: timelineSpanMs(playing.beats),
     };
     const override = { ...playing, phase: "paused", positionMs: 0, anchorMs: 0 };
     const loop = { ...playing, loop: true };
@@ -249,9 +251,9 @@ describe("nli timeline transport", () => {
     for (const [name, clock, options, active] of [
       ["paused hold", hold, {}, true],
       ["explicit completed beats", override, { completedBeats: [740] }, true],
-      ["loop after first beat", loop, { nowMs: TIMELINE_BEAT_MS + 1 }, true],
+      ["loop after first beat", loop, { nowMs: timelineBeatDurationMs(400) + 1 }, true],
       ["replay before first beat", replay, { nowMs: 9_000 }, false],
-      ["replay after first beat", replay, { nowMs: 9_000 + TIMELINE_BEAT_MS }, true],
+      ["replay after first beat", replay, { nowMs: 9_000 + timelineBeatDurationMs(400) }, true],
     ]) {
       expect(routeActive(clock, options), name).toBe(active);
     }
@@ -265,8 +267,8 @@ describe("nli timeline transport", () => {
     const clock = {
       ...playNliClock(idleNliClock(), [LINES_ID], [400, 740], 0),
       phase: "paused",
-      positionMs: TIMELINE_BEAT_MS,
-      anchorMs: TIMELINE_BEAT_MS,
+      positionMs: timelineBeatDurationMs(400),
+      anchorMs: timelineBeatDurationMs(400),
     };
     const html = renderNliTimelineTransport(clock, {
       displayBeats: [400, 740],
@@ -645,6 +647,32 @@ describe("nli timeline transport", () => {
     expect(patched.leadInMinutes).toBe(483);
   });
 
+  test("lead-in remote clock matches the map minute instead of the last beat", () => {
+    const beats = [389, 400, 410, 740];
+    const playing = playNliClock(idleNliClock(), [LINES_ID], beats, 1000, { leadInMinutes: 401 });
+    stubContext({ correctedNow: () => 1000 });
+    const html = renderNliTimelineTransport(playing, { displayBeats: beats });
+    expect(evaluateClock(playing, 1000).clock).toBe(401);
+    expect(html).toMatch(/class="nli-tl-clock"[^>]*>06:41</);
+    expect(html).toMatch(/aria-valuenow="2"/);
+  });
+
+  test("rest-of-day play from 06:42 shows that minute on the remote and the map", async () => {
+    const beats = [389, 401, 402, 659, 660, 740];
+    const ctx = stubContext({ correctedNow: () => 5000 });
+    const c = makeController({
+      _nliFeatureCache: {
+        [LINES_ID]: beats.map((minutes) => ({ properties: { timeline_minutes: minutes } })),
+      },
+    });
+    await c.handleNliTimelinePlay({ from: 402 });
+    const clock = ctx.patchInvestigationClock.mock.calls[0][0];
+    const html = renderNliTimelineTransport(clock, { displayBeats: clock.beats });
+    expect(evaluateClock(clock, 5000).clock).toBe(402);
+    expect(html).toMatch(/class="nli-tl-clock"[^>]*>06:42</);
+    expect(html).toMatch(/aria-valuenow="2"/);
+  });
+
   test("idle play with a window trims later beats and starts at the window", async () => {
     const ctx = stubContext();
     const c = makeController({
@@ -717,7 +745,7 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
     expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({
       phase: "paused",
-      positionMs: TIMELINE_BEAT_MS,
+      positionMs: timelineBeatDurationMs(400),
       seekKind: "jump",
       anchorMs: 1000,
     });
@@ -730,7 +758,7 @@ describe("nli timeline transport", () => {
     await c.handleNliTimelineStep(1);
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
     expect(ctx.patchInvestigationClock.mock.calls[0][0].phase).toBe("paused");
-    expect(ctx.patchInvestigationClock.mock.calls[0][0].positionMs).toBe(TIMELINE_BEAT_MS);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].positionMs).toBe(timelineBeatDurationMs(400));
   });
 
   test("stop PATCHes idle and keeps loop", async () => {
@@ -766,7 +794,7 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(2);
     expect(ctx.patchInvestigationClock.mock.calls[1][0]).toMatchObject({
       phase: "paused",
-      positionMs: TIMELINE_BEAT_MS,
+      positionMs: timelineBeatDurationMs(400),
     });
   });
 
@@ -989,7 +1017,9 @@ describe("nli timeline transport", () => {
     c._syncNliEndedTimer(playing);
     const withoutLeadIn = clockStoryDurationMs(novaBeats);
     const withLeadIn = clockStoryDurationMs(novaBeats, playing);
-    expect(withLeadIn).toBe(TIMELINE_BEAT_MS + 2 * TIMELINE_BEAT_MS + TIMELINE_HOLD_MS);
+    expect(withLeadIn).toBe(
+      timelineBeatDurationMs(483) + timelineSpanMs([492, 500]) + TIMELINE_HOLD_MS,
+    );
     expect(withLeadIn).toBeLessThan(withoutLeadIn);
     const delay = Math.max(0, withLeadIn - clockPositionMs(playing, now));
     await vi.advanceTimersByTimeAsync(delay - 1);
@@ -1095,8 +1125,8 @@ describe("nli timeline transport", () => {
     });
     ctx.correctedNow = () => 1000;
     c._syncNliPlayheadTicker(playing);
-    ctx.correctedNow = () => 1000 + 3200;
-    await vi.advanceTimersByTimeAsync(3200);
+    ctx.correctedNow = () => 1000 + timelineBeatDurationMs(400);
+    await vi.advanceTimersByTimeAsync(timelineBeatDurationMs(400));
     expect(track.thumb.style.left).toBe("75%");
     expect(clockEl.textContent).toMatch(/12:20/);
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
@@ -1117,8 +1147,8 @@ describe("nli timeline transport", () => {
       sheet: { querySelector: () => ({ querySelector: () => track, innerHTML: "KEEP" }) },
     });
     c._syncNliPlayheadTicker(playing);
-    ctx.correctedNow = () => 1000 + 3200;
-    await vi.advanceTimersByTimeAsync(3200);
+    ctx.correctedNow = () => 1000 + timelineBeatDurationMs(400);
+    await vi.advanceTimersByTimeAsync(timelineBeatDurationMs(400));
     expect(track.thumb.style.left).not.toBe("75%");
   });
 
@@ -1145,8 +1175,8 @@ describe("nli timeline transport", () => {
     });
     c._syncNliPlayheadTicker(playing);
     c._syncNliPlayheadTicker(pauseNliClock(playing, 1000));
-    ctx.correctedNow = () => 1000 + 3200;
-    await vi.advanceTimersByTimeAsync(3200);
+    ctx.correctedNow = () => 1000 + timelineBeatDurationMs(400);
+    await vi.advanceTimersByTimeAsync(timelineBeatDurationMs(400));
     expect(track.thumb.style.left).not.toBe("75%");
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
     expect(c.render).not.toHaveBeenCalled();
@@ -1177,11 +1207,11 @@ describe("nli timeline transport", () => {
       _nliArmPayload: () => ({ beats: [400, 740], visibleMembership: [LINES_ID] }),
     });
     c._syncNliPlayheadTicker(playing);
-    ctx.correctedNow = () => 1000 + 3200;
-    await vi.advanceTimersByTimeAsync(3200);
+    ctx.correctedNow = () => 1000 + timelineBeatDurationMs(400);
+    await vi.advanceTimersByTimeAsync(timelineBeatDurationMs(400));
     expect(track.thumb.style.left).toBe("75%");
     ctx.correctedNow = () => 1000 + clockStoryDurationMs(playing.beats);
-    await vi.advanceTimersByTimeAsync(3200);
+    await vi.advanceTimersByTimeAsync(timelineBeatDurationMs(400));
     expect(track.thumb.style.left).toBe("25%");
     expect(clockEl.textContent).toMatch(/06:40/);
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
@@ -1215,8 +1245,8 @@ describe("nli timeline transport", () => {
     c._syncNliPlayheadTicker(playing);
     expect(c._nliEndTimer).toBe(endedId);
     endedSpy.mockClear();
-    ctx.correctedNow = () => 1000 + 3200;
-    await vi.advanceTimersByTimeAsync(3200);
+    ctx.correctedNow = () => 1000 + timelineBeatDurationMs(400);
+    await vi.advanceTimersByTimeAsync(timelineBeatDurationMs(400));
     expect(c._nliEndTimer).toBe(endedId);
     expect(endedSpy).not.toHaveBeenCalled();
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();

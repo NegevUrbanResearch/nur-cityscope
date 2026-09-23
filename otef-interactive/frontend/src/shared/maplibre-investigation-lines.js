@@ -8,7 +8,7 @@
  */
 
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
-import { TIMELINE_BEAT_MS } from "./nli-investigation-beats.js";
+import { timelineBeatDurationMs } from "./nli-investigation-beats.js";
 import { maplibreLineDashFromLeafletPx } from "./maplibre-line-dash.js";
 import {
   buildLinePathMetrics,
@@ -185,7 +185,7 @@ function legacyLineCoordinates(feature) {
 
 export function lineHeadCoordinatesAt(features, clock, beatElapsedMs) {
   if (clock == null) return [];
-  const progress = Math.min(1, Math.max(0, Number(beatElapsedMs) / TIMELINE_BEAT_MS || 0));
+  const progress = Math.min(1, Math.max(0, Number(beatElapsedMs) / timelineBeatDurationMs(clock) || 0));
   if (progress >= HEAD_HIDE_AT) return [];
   const points = [];
   for (const feature of Array.isArray(features) ? features : []) {

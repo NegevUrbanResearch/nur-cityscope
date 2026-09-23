@@ -14,7 +14,7 @@ import {
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
   INVESTIGATION_ALARMS_FULL_ID,
-  TIMELINE_BEAT_MS,
+  timelineBeatDurationMs,
 } from "../../frontend/src/shared/nli-investigation-beats.js";
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import * as telemetry from "../../frontend/src/map/perf-telemetry.js";
@@ -139,14 +139,14 @@ describe("Task 8 investigation timeline coordinator", () => {
 
   it("keeps completed route flow alive at the 15 fps cadence in full motion", async () => {
     const map = mapWithHostLayers();
-    let now = 3200;
+    let now = timelineBeatDurationMs(400);
     const clock = {
       phase: "paused",
       membership: [INVESTIGATION_LINES_FULL_ID],
       beats: [400],
       loop: false,
-      positionMs: 3200,
-      anchorMs: 3200,
+      positionMs: timelineBeatDurationMs(400),
+      anchorMs: timelineBeatDurationMs(400),
       seekKind: "none",
       revision: 1,
     };
@@ -194,11 +194,11 @@ describe("Task 8 investigation timeline coordinator", () => {
       membership: [INVESTIGATION_LINES_FULL_ID],
       beats: [400],
       loop: false,
-      positionMs: 3200,
-      anchorMs: 3200,
+      positionMs: timelineBeatDurationMs(400),
+      anchorMs: timelineBeatDurationMs(400),
       seekKind: "none",
       revision: 2,
-    }, groups, { featuresById: features, now: () => 3200, motionMode: "reduced" });
+    }, groups, { featuresById: features, now: () => timelineBeatDurationMs(400), motionMode: "reduced" });
     expect(map.pendingAnimationFrameCount()).toBe(0);
   });
 
@@ -222,14 +222,14 @@ describe("Task 8 investigation timeline coordinator", () => {
       membership: [INVESTIGATION_LINES_FULL_ID],
       beats: [400],
       loop: false,
-      positionMs: TIMELINE_BEAT_MS,
-      anchorMs: TIMELINE_BEAT_MS,
+      positionMs: timelineBeatDurationMs(400),
+      anchorMs: timelineBeatDurationMs(400),
       seekKind: "none",
       revision: 31,
     };
     await syncInvestigationTimelineToMap(map, clock, groups, {
       featuresById: features,
-      now: () => TIMELINE_BEAT_MS,
+      now: () => timelineBeatDurationMs(400),
       motionMode: "full",
     });
 
@@ -245,14 +245,14 @@ describe("Task 8 investigation timeline coordinator", () => {
 
     await syncInvestigationTimelineToMap(map, stopNliClock(clock), groups, {
       featuresById: features,
-      now: () => TIMELINE_BEAT_MS,
+      now: () => timelineBeatDurationMs(400),
       motionMode: "full",
     });
 
     expect(map.getLayer("nli-investigation-line-completed-motion-line")).not.toBeNull();
     expect(map.getSource("nli-investigation-line-completed-motion")).not.toBeNull();
     expect(map.pendingAnimationFrameCount()).toBe(1);
-    expect(map.driveAnimationFrame(TIMELINE_BEAT_MS + 66)).toBe(true);
+    expect(map.driveAnimationFrame(timelineBeatDurationMs(400) + 66)).toBe(true);
     expect(flowPaintWrites()).toBeGreaterThan(writesBeforeStop);
   });
 
@@ -339,7 +339,7 @@ describe("Task 8 investigation timeline coordinator", () => {
 
   it("repaints a paused eligible polygon conveyor only at the 66 ms cadence", async () => {
     const map = mapWithHostLayers();
-    let now = TIMELINE_BEAT_MS;
+    let now = timelineBeatDurationMs(400);
     const polygonGroups = [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }];
     const polygon = {
       properties: { OBJECTID: 1, timeline_minutes: 400, Notes: "מרחב לחימה - קרב" },
@@ -357,8 +357,8 @@ describe("Task 8 investigation timeline coordinator", () => {
       membership: [INVESTIGATION_POLYGONS_FULL_ID],
       beats: [400, 420],
       loop: false,
-      positionMs: TIMELINE_BEAT_MS,
-      anchorMs: TIMELINE_BEAT_MS,
+      positionMs: timelineBeatDurationMs(400),
+      anchorMs: timelineBeatDurationMs(400),
       seekKind: "none",
       revision: 1,
     }, polygonGroups, {
@@ -422,7 +422,7 @@ describe("Task 8 investigation timeline coordinator", () => {
 
   it("keeps completed route flow scheduled while a deferred polygon reload becomes ineligible", async () => {
     const map = mapWithHostLayers();
-    let now = TIMELINE_BEAT_MS;
+    let now = timelineBeatDurationMs(400);
     let releaseSidecar;
     const sidecarGate = new Promise((resolve) => { releaseSidecar = resolve; });
     const polygon = {
@@ -440,8 +440,8 @@ describe("Task 8 investigation timeline coordinator", () => {
       membership: [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID],
       beats: [400],
       loop: false,
-      positionMs: TIMELINE_BEAT_MS,
-      anchorMs: TIMELINE_BEAT_MS,
+      positionMs: timelineBeatDurationMs(400),
+      anchorMs: timelineBeatDurationMs(400),
       seekKind: "none",
       revision: 1,
     };
@@ -497,8 +497,8 @@ describe("Task 8 investigation timeline coordinator", () => {
       membership: [INVESTIGATION_POLYGONS_FULL_ID],
       beats: [400, 420],
       loop: false,
-      positionMs: TIMELINE_BEAT_MS,
-      anchorMs: TIMELINE_BEAT_MS,
+      positionMs: timelineBeatDurationMs(400),
+      anchorMs: timelineBeatDurationMs(400),
       seekKind: "none",
       revision: 1,
     };
@@ -509,7 +509,7 @@ describe("Task 8 investigation timeline coordinator", () => {
       getLayerConfig: () => ({ resources: { bufferedGradient: { file: "gradient.geojson", format: "geojson" } } }),
       fetchJson: () => sidecarGate,
       settlementFeatures: [],
-      now: () => TIMELINE_BEAT_MS,
+      now: () => timelineBeatDurationMs(400),
       motionMode: "full",
     };
     const preStyleSync = syncInvestigationTimelineToMap(map, clock, groups, deferredDeps);
@@ -546,14 +546,14 @@ describe("Task 8 investigation timeline coordinator", () => {
     };
     await syncInvestigationTimelineToMap(map, {
       phase: "paused", membership: [INVESTIGATION_POLYGONS_FULL_ID], beats: [400, 420],
-      loop: false, positionMs: TIMELINE_BEAT_MS, anchorMs: TIMELINE_BEAT_MS, seekKind: "none", revision: 1,
+      loop: false, positionMs: timelineBeatDurationMs(400), anchorMs: timelineBeatDurationMs(400), seekKind: "none", revision: 1,
     }, [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }], {
       featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [polygon] },
       polygonStyle: style,
       bufferedGradientFeatures: [{ ...polygon, properties: { ...polygon.properties, __cim_gradient_band: 0 } }],
       bufferedGradientSidecarStatus: "ready",
       settlementFeatures: [],
-      now: () => TIMELINE_BEAT_MS,
+      now: () => timelineBeatDurationMs(400),
       motionMode: "full",
       ...override,
     });
@@ -575,10 +575,10 @@ describe("Task 8 investigation timeline coordinator", () => {
     const deps = {
       featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [polygon] }, polygonStyle: style,
       bufferedGradientFeatures: [{ ...polygon, properties: { ...polygon.properties, __cim_gradient_band: 0 } }],
-      bufferedGradientSidecarStatus: "ready", settlementFeatures: [], now: () => TIMELINE_BEAT_MS,
+      bufferedGradientSidecarStatus: "ready", settlementFeatures: [], now: () => timelineBeatDurationMs(400),
       motionMode: "reduced",
     };
-    await syncInvestigationTimelineToMap(map, { phase: "paused", membership: [INVESTIGATION_POLYGONS_FULL_ID], beats: [400, 420], loop: false, positionMs: TIMELINE_BEAT_MS, anchorMs: TIMELINE_BEAT_MS, seekKind: "none", revision: 1 }, [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }], deps);
+    await syncInvestigationTimelineToMap(map, { phase: "paused", membership: [INVESTIGATION_POLYGONS_FULL_ID], beats: [400, 420], loop: false, positionMs: timelineBeatDurationMs(400), anchorMs: timelineBeatDurationMs(400), seekKind: "none", revision: 1 }, [{ id: "nli", layers: [{ id: "investigation_polygons", enabled: true }] }], deps);
     expect(map.pendingAnimationFrameCount()).toBe(0);
     await syncInvestigationTimelineToMap(map, endNliClock(playNliClock(
       idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], [400], 0,
@@ -885,8 +885,8 @@ describe("Task 8 investigation timeline coordinator", () => {
         membership: [INVESTIGATION_LINES_FULL_ID],
         beats: [400],
         loop: false,
-        positionMs: TIMELINE_BEAT_MS,
-        anchorMs: TIMELINE_BEAT_MS,
+        positionMs: timelineBeatDurationMs(400),
+        anchorMs: timelineBeatDurationMs(400),
         seekKind: "none",
         revision: 1,
       },
@@ -898,7 +898,7 @@ describe("Task 8 investigation timeline coordinator", () => {
           calls.push(url);
           return { type: "FeatureCollection", features: [settlement] };
         },
-        now: () => TIMELINE_BEAT_MS,
+        now: () => timelineBeatDurationMs(400),
       },
     );
 
@@ -1044,7 +1044,7 @@ describe("Task 8 investigation timeline coordinator", () => {
 
   it("does not rebuild line partitions or alarm structural rows on ambient ticks", async () => {
     const map = mapWithHostLayers();
-    let now = 3200;
+    let now = timelineBeatDurationMs(400);
     let linePartitionBuilds = 0;
     let alarmStructuralRowsBuilds = 0;
     const clock = {
@@ -1052,8 +1052,8 @@ describe("Task 8 investigation timeline coordinator", () => {
       membership: [INVESTIGATION_LINES_FULL_ID, INVESTIGATION_ALARMS_FULL_ID],
       beats: [400],
       loop: false,
-      positionMs: TIMELINE_BEAT_MS,
-      anchorMs: TIMELINE_BEAT_MS,
+      positionMs: timelineBeatDurationMs(400),
+      anchorMs: timelineBeatDurationMs(400),
       seekKind: "none",
       revision: 7,
     };

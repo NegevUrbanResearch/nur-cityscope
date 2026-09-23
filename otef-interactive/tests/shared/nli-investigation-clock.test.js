@@ -3,10 +3,11 @@ import {
   INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
-  TIMELINE_BEAT_MS,
   TIMELINE_HOLD_MS,
   clockStoryDurationMs,
   formatMinutesAsLocalClock,
+  timelineBeatDurationMs,
+  timelineSpanMs,
 } from "../../frontend/src/shared/nli-investigation-beats.js";
 import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
 import {
@@ -106,7 +107,7 @@ describe("canonical clock actions", () => {
       playNliClock(idleNliClock(), [polygons], beats, 0),
       true,
     );
-    const absolute = duration * 2 + TIMELINE_BEAT_MS + 275;
+    const absolute = duration * 2 + timelineSpanMs(beats, 0, 1) + 275;
     const paused = pauseNliClock(looping, absolute);
     expect(paused).toMatchObject({
       phase: "paused", positionMs: absolute, anchorMs: absolute, seekKind: "none",
@@ -138,8 +139,8 @@ describe("canonical clock actions", () => {
   it("preserves beat, hold, end, and loop boundaries", () => {
     const oneBeat = playNliClock(idleNliClock(), [polygons], [400], 0);
     const duration = clockStoryDurationMs([400]);
-    expect(duration).toBe(TIMELINE_BEAT_MS + TIMELINE_HOLD_MS);
-    expect(evaluateClock(oneBeat, TIMELINE_BEAT_MS)).toMatchObject({
+    expect(duration).toBe(timelineBeatDurationMs(400) + TIMELINE_HOLD_MS);
+    expect(evaluateClock(oneBeat, timelineBeatDurationMs(400))).toMatchObject({
       mode: "hold", beatElapsedMs: 0,
     });
     expect(evaluateClock(oneBeat, duration - 1).phase).toBe("playing");
@@ -151,7 +152,7 @@ describe("canonical clock actions", () => {
 
   it("pause in hold preserves all completed narrative state", () => {
     const playing = playNliClock(idleNliClock(), [polygons], beats, 0);
-    const holdPosition = beats.length * TIMELINE_BEAT_MS + 400;
+    const holdPosition = timelineSpanMs(beats) + 400;
     const paused = pauseNliClock(playing, holdPosition);
     expect(paused.positionMs).toBe(holdPosition);
     expect(evaluateClock(paused, 99_000)).toMatchObject({
@@ -184,7 +185,7 @@ describe("seek and step boundary policy", () => {
       visibleMembership: [polygons], beats,
     });
     expect(jumped).toMatchObject({
-      phase: "paused", positionMs: TIMELINE_BEAT_MS,
+      phase: "paused", positionMs: timelineSpanMs(beats, 0, 1),
       anchorMs: 10_000, seekKind: "jump",
     });
     expect(evaluateClock(jumped, 99_000)).toMatchObject({
@@ -207,7 +208,7 @@ describe("seek and step boundary policy", () => {
       true,
     );
     expect(stepNliClock(playing, 1, 800)).toMatchObject({
-      phase: "paused", positionMs: TIMELINE_BEAT_MS,
+      phase: "paused", positionMs: timelineSpanMs(beats, 0, 1),
       anchorMs: 800, seekKind: "jump",
     });
     const atFirst = seekNliClock(playing, 0, 1_000);
@@ -216,7 +217,7 @@ describe("seek and step boundary policy", () => {
 
   it("step past the last beat freezes progress when loop is off", () => {
     const playing = playNliClock(idleNliClock(), [polygons], [400, 420], 0);
-    const now = TIMELINE_BEAT_MS + 800;
+    const now = timelineBeatDurationMs(400) + 800;
     const stepped = stepNliClock(playing, 1, now);
     expect(stepped).toMatchObject({
       phase: "paused", positionMs: now, anchorMs: now, seekKind: "none",
@@ -232,7 +233,7 @@ describe("seek and step boundary policy", () => {
       playNliClock(idleNliClock(), [polygons], beats, 0),
       true,
     );
-    const now = duration * 2 + (beats.length - 1) * TIMELINE_BEAT_MS + 100;
+    const now = duration * 2 + timelineSpanMs(beats, 0, beats.length - 1) + 100;
     const wrapped = stepNliClock(looping, 1, now);
     expect(wrapped).toMatchObject({
       phase: "paused", positionMs: duration * 3,
@@ -283,10 +284,10 @@ describe("context-free clock parsing", () => {
     const legacy = normalizeNliClock({
       phase: "paused", membership: [polygons], beats, loop: true,
       beatIndex: 0, beatElapsedMs: 12,
-      narrativeElapsedMs: TIMELINE_BEAT_MS + 350, cycleIndex: 2,
+      narrativeElapsedMs: timelineSpanMs(beats, 0, 1) + 350, cycleIndex: 2,
       narrativeEpochMs: 1_000, seekKind: "none",
     });
-    expect(legacy.positionMs).toBe(duration * 2 + TIMELINE_BEAT_MS + 350);
+    expect(legacy.positionMs).toBe(duration * 2 + timelineSpanMs(beats, 0, 1) + 350);
     expect(legacy.anchorMs).toBe(1_000 + legacy.positionMs);
     expect(evaluateClock(legacy, 999_000)).toMatchObject({
       index: 1, beatElapsedMs: 350,
@@ -298,7 +299,7 @@ describe("context-free clock parsing", () => {
       phase: "paused", membership: [polygons], beats, loop: false,
       beatIndex: -1, beatElapsedMs: 450, playEpochMs: null, seekKind: "none",
     });
-    expect(hold.positionMs).toBe(beats.length * TIMELINE_BEAT_MS + 450);
+    expect(hold.positionMs).toBe(timelineSpanMs(beats) + 450);
     expect(evaluateClock(hold, 999_000)).toMatchObject({
       mode: "hold", beatElapsedMs: 450,
     });
@@ -308,7 +309,7 @@ describe("context-free clock parsing", () => {
       beatIndex: 1, beatElapsedMs: 0, playEpochMs: 12_345, seekKind: "jump",
     });
     expect(jump).toMatchObject({
-      positionMs: TIMELINE_BEAT_MS, anchorMs: 12_345, seekKind: "jump",
+      positionMs: timelineSpanMs(beats, 0, 1), anchorMs: 12_345, seekKind: "jump",
     });
   });
 
@@ -332,7 +333,7 @@ describe("context-free clock parsing", () => {
 describe("Nova lead-in", () => {
   const novaBeats = [400, 480, 492, 500];
 
-  it("Nova play lead-in shows 08:03 for TIMELINE_BEAT_MS then skips to first beat >= 483", () => {
+  it("Nova play lead-in shows 08:03 for that clock's beat length then skips to first beat >= 483", () => {
     const playing = playNliClock(
       idleNliClock(),
       [polygons],
@@ -348,8 +349,9 @@ describe("Nova lead-in", () => {
       phase: "playing", mode: "beat", clock: 483, index: -1, leadIn: true, beatElapsedMs: 0,
     });
     expect(formatMinutesAsLocalClock(evaluateClock(playing, 1_000).clock)).toBe("08:03");
-    expect(evaluateClock(playing, 1_000 + TIMELINE_BEAT_MS - 1).leadIn).toBe(true);
-    expect(evaluateClock(playing, 1_000 + TIMELINE_BEAT_MS)).toMatchObject({
+    const leadInMs = timelineBeatDurationMs(483);
+    expect(evaluateClock(playing, 1_000 + leadInMs - 1).leadIn).toBe(true);
+    expect(evaluateClock(playing, 1_000 + leadInMs)).toMatchObject({
       phase: "playing", mode: "beat", clock: 492, index: 2, leadIn: false,
     });
   });
@@ -364,7 +366,7 @@ describe("Nova lead-in", () => {
     expect(evaluateClock(paused, 99_000)).toMatchObject({ clock: 483, leadIn: true });
     const resumed = resumeNliClock(paused, 5_000);
     expect(evaluateClock(resumed, 5_000 + 800).leadIn).toBe(true);
-    expect(evaluateClock(resumed, 5_000 + TIMELINE_BEAT_MS - 800).clock).toBe(492);
+    expect(evaluateClock(resumed, 5_000 + timelineBeatDurationMs(483) - 800).clock).toBe(492);
   });
 
   it("stop drops lead-in and evaluateClock idle has no 08:03", () => {
@@ -411,7 +413,7 @@ describe("Nova lead-in", () => {
       playNliClock(idleNliClock(), [polygons], novaBeats, 0, { leadInMinutes: 483 }),
       true,
     );
-    const now = clockStoryDurationMs(novaBeats, looping) + TIMELINE_BEAT_MS;
+    const now = clockStoryDurationMs(novaBeats, looping) + timelineBeatDurationMs(483);
     expect(evaluateClock(looping, now)).toMatchObject({
       clock: 492, index: 2, leadIn: false,
     });
@@ -420,5 +422,42 @@ describe("Nova lead-in", () => {
     expect(evaluateClock(stepped, now)).toMatchObject({
       clock: 500, index: 3, leadIn: false,
     });
+  });
+});
+
+describe("window that starts on a real beat", () => {
+  const restBeats = [389, 401, 402, 659, 660, 740];
+
+  it("plays 06:42 once, then 2.5s until 11:00 and 1s through the end of the day", () => {
+    const start = 5_000;
+    const playing = playNliClock(
+      idleNliClock(),
+      [polygons],
+      restBeats,
+      start,
+      { leadInMinutes: 402 },
+    );
+    expect(playing.leadInMinutes).toBe(402);
+    expect(playing.positionMs).toBe(timelineBeatDurationMs(402));
+    expect(evaluateClock(playing, start)).toMatchObject({
+      clock: 402, index: 2, leadIn: false, beatElapsedMs: 0,
+    });
+    const at1059 = start + timelineBeatDurationMs(402);
+    expect(evaluateClock(playing, at1059)).toMatchObject({
+      clock: 659, beatElapsedMs: 0, leadIn: false,
+    });
+    expect(timelineBeatDurationMs(659)).toBe(2500);
+    const at1100 = at1059 + timelineBeatDurationMs(659);
+    expect(evaluateClock(playing, at1100)).toMatchObject({
+      clock: 660, beatElapsedMs: 0, leadIn: false,
+    });
+    expect(timelineBeatDurationMs(660)).toBe(1000);
+    const at1220 = at1100 + timelineBeatDurationMs(660);
+    expect(evaluateClock(playing, at1220)).toMatchObject({
+      clock: 740, beatElapsedMs: 0, leadIn: false,
+    });
+    const replayed = replayNliClock(endNliClock(playing), 9_000, { leadInMinutes: 402 });
+    expect(evaluateClock(replayed, 9_000).clock).toBe(402);
+    expect(replayed.positionMs).toBe(timelineBeatDurationMs(402));
   });
 });

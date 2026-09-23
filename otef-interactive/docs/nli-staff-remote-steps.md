@@ -87,7 +87,7 @@ narrative.
 | :---: | :--- | :--- | :--- | :--- | :--- |
 | 1 | Opening | Opening | Stopped (idle) | | |
 | 2 | The opening minutes | Timeline | Plays from the first event up to 06:41 | | Timeline; Next becomes **Start the story: Segev family** |
-| 3 | The rest of the day | Timeline | Plays from 06:41 to the end (earlier events already shown) | | Timeline; Next becomes **Start the story: Nova and Mor Levy** |
+| 3 | The rest of the day | Timeline | Plays from 06:42 to the end (earlier events already shown) | | Timeline; Next becomes **Start the story: Nova and Mor Levy** |
 | 4 | Identity database | Identity | Stopped (idle) | | Name search |
 | 5 | Wall of names | Wall | Stopped (idle) | | Name search |
 | 6 | Back to the start | Opening | Stopped (idle) | | |

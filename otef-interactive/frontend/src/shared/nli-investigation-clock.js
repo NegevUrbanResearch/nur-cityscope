@@ -8,12 +8,13 @@ import {
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
   NLI_PLAYABLE_IDS,
-  TIMELINE_BEAT_MS,
   clockStoryDurationMs,
   collectPlaybackTimelineBeats,
   isNliPlayableFullId,
   mapClockStoryPosition,
   previousTimelineBeat,
+  timelineBeatDurationMs,
+  timelineSpanMs,
 } from "./nli-investigation-beats.js";
 
 const PHASES = ["idle", "playing", "paused", "ended"];
@@ -99,7 +100,7 @@ function absoluteBeatStart(clock, positionMs) {
   const playableIndex = mapping.index - mapping.playableStartIndex;
   return mapping.cycleOrdinal * mapping.durationMs
     + mapping.leadInDurationMs
-    + playableIndex * TIMELINE_BEAT_MS;
+    + timelineSpanMs(beats, mapping.playableStartIndex, mapping.playableStartIndex + playableIndex);
 }
 
 function currentAlarmOrigin(clock, nowMs, positionMs) {
@@ -197,7 +198,13 @@ export function playNliClock(prev, membership, beats, nowMs, options = {}) {
     anchorMs: finiteTimestamp(nowMs),
     seekKind: "none",
   };
-  if (Number.isFinite(leadInMinutes)) extras.leadInMinutes = leadInMinutes;
+  if (Number.isFinite(leadInMinutes)) {
+    extras.leadInMinutes = leadInMinutes;
+    // A lead-in on a real beat would show that minute twice. Start on the beat.
+    if (list.includes(leadInMinutes)) {
+      extras.positionMs = timelineBeatDurationMs(leadInMinutes);
+    }
+  }
   return armedClock(prev, membership, list, extras);
 }
 
@@ -293,7 +300,7 @@ export function seekNliClock(clock, beatIndex, nowMs, arm) {
     ...next,
     phase: "paused",
     beats,
-    positionMs: index * TIMELINE_BEAT_MS,
+    positionMs: timelineSpanMs(beats, 0, index),
     anchorMs: finiteTimestamp(nowMs),
     seekKind: "jump",
   }, nowMs);
@@ -352,7 +359,7 @@ export function stepNliClock(clock, delta, nowMs, arm) {
     ...src,
     phase: "paused",
     beats,
-    positionMs: cycle * duration + nextIndex * TIMELINE_BEAT_MS,
+      positionMs: cycle * duration + timelineSpanMs(beats, 0, nextIndex),
     anchorMs: finiteTimestamp(nowMs),
     seekKind: "jump",
   }, nowMs);
@@ -470,8 +477,8 @@ export function normalizeNliClock(raw) {
     } else {
       const index = Math.trunc(Number(src.beatIndex));
       const elapsed = nonnegativeNumber(src.beatElapsedMs);
-      positionMs = (index >= 0 ? Math.min(index, beats.length - 1) : beats.length) *
-        TIMELINE_BEAT_MS + elapsed;
+      const startIndex = index >= 0 ? Math.min(index, beats.length - 1) : beats.length;
+      positionMs = timelineSpanMs(beats, 0, startIndex) + elapsed;
     }
     const legacyJumpOrigin = seekKind === "jump" ? finiteTimestamp(src.playEpochMs) : null;
     const narrativeEpoch = finiteTimestamp(src.narrativeEpochMs);

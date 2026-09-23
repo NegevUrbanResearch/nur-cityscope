@@ -4,7 +4,7 @@ import {
   INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
-  TIMELINE_BEAT_MS,
+  timelineBeatDurationMs,
 } from "./nli-investigation-beats.js";
 import layerRegistry from "./layer-registry.js";
 import {
@@ -129,7 +129,7 @@ export function lineProgressAt(minutes, clock, beatElapsedMs) {
   if (clock == null) return 1;
   if (minutes < clock) return 1;
   if (minutes > clock) return 0;
-  const u = Number(beatElapsedMs) / TIMELINE_BEAT_MS;
+  const u = Number(beatElapsedMs) / timelineBeatDurationMs(clock);
   return !Number.isFinite(u) || u <= 0 ? 0 : Math.min(1, u);
 }
 

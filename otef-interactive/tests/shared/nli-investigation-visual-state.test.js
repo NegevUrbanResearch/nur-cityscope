@@ -10,9 +10,10 @@ import {
   INVESTIGATION_ALARMS_FULL_ID,
   INVESTIGATION_LINES_FULL_ID,
   INVESTIGATION_POLYGONS_FULL_ID,
-  TIMELINE_BEAT_MS,
   TIMELINE_HOLD_MS,
   clockStoryDurationMs,
+  timelineBeatDurationMs,
+  timelineSpanMs,
 } from "../../frontend/src/shared/nli-investigation-beats.js";
 import {
   endNliClock,
@@ -84,7 +85,7 @@ describe("nli-investigation-theme", () => {
 describe("deriveInvestigationFrame", () => {
   it("derives a polygon-only current entry from beat elapsed time", () => {
     const clock = playNliClock(idleNliClock(), membership, [400], 0);
-    const frame = deriveInvestigationFrame(clock, 1600, enabled, {
+    const frame = deriveInvestigationFrame(clock, timelineBeatDurationMs(400) / 2, enabled, {
       routeBeats: [420],
     });
 
@@ -93,7 +94,7 @@ describe("deriveInvestigationFrame", () => {
 
   it("does not enter a route-sharing current beat before route completion", () => {
     const clock = playNliClock(idleNliClock(), membership, [400, 420], 0);
-    const frame = deriveInvestigationFrame(clock, 3199, enabled, {
+    const frame = deriveInvestigationFrame(clock, timelineBeatDurationMs(400) - 1, enabled, {
       routeBeats: [400, 420],
     });
 
@@ -103,7 +104,7 @@ describe("deriveInvestigationFrame", () => {
 
   it("enters the completed route beat on the next beat using new elapsed time", () => {
     const clock = playNliClock(idleNliClock(), membership, [400, 420], 0);
-    const frame = deriveInvestigationFrame(clock, TIMELINE_BEAT_MS, enabled, {
+    const frame = deriveInvestigationFrame(clock, timelineBeatDurationMs(400), enabled, {
       routeBeats: [400, 420],
     });
 
@@ -113,9 +114,12 @@ describe("deriveInvestigationFrame", () => {
 
   it("allows simultaneous previous route and current polygon entries", () => {
     const clock = playNliClock(idleNliClock(), membership, [400, 420], 0);
-    const frame = deriveInvestigationFrame(clock, TIMELINE_BEAT_MS + 1600, enabled, {
-      routeBeats: [400],
-    });
+    const frame = deriveInvestigationFrame(
+      clock,
+      timelineBeatDurationMs(400) + timelineBeatDurationMs(420) / 2,
+      enabled,
+      { routeBeats: [400] },
+    );
 
     expect(frame.polygonEntries).toEqual([
       { beat: 420, progress: 0.5 },
@@ -127,7 +131,7 @@ describe("deriveInvestigationFrame", () => {
     const clock = playNliClock(idleNliClock(), membership, [400], 0);
     const frame = deriveInvestigationFrame(
       clock,
-      TIMELINE_BEAT_MS + TIMELINE_HOLD_MS - 1,
+      timelineBeatDurationMs(400) + TIMELINE_HOLD_MS - 1,
       enabled,
       { routeBeats: [400] },
     );
@@ -140,8 +144,9 @@ describe("deriveInvestigationFrame", () => {
 
   it("freezes ordinary paused polygon entries across corrected wall timestamps", () => {
     const playing = playNliClock(idleNliClock(), membership, [400], 0);
-    const paused = pauseNliClock(playing, 1600);
-    const first = deriveInvestigationFrame(paused, 1600, enabled, {
+    const halfway = timelineBeatDurationMs(400) / 2;
+    const paused = pauseNliClock(playing, halfway);
+    const first = deriveInvestigationFrame(paused, halfway, enabled, {
       routeBeats: [420],
     });
     const later = deriveInvestigationFrame(paused, 90_000, enabled, {
@@ -194,7 +199,7 @@ describe("deriveInvestigationFrame", () => {
       membership,
       beats: [400, 420],
       beatIndex: 1,
-      beatElapsedMs: 1600,
+      beatElapsedMs: timelineBeatDurationMs(420) / 2,
       seekKind: "none",
     });
     const frame = deriveInvestigationFrame(clock, 90_000, enabled, {
@@ -233,7 +238,7 @@ describe("deriveInvestigationFrame", () => {
   it("requests polygon ambient frames only for completed eligible polygons", () => {
     const paused = pauseNliClock(
       playNliClock(idleNliClock(), membership, [400, 420], 0),
-      TIMELINE_BEAT_MS,
+      timelineSpanMs([400, 420], 0, 1),
     );
     const completed = deriveInvestigationFrame(paused, 90_000, enabled, {
       motionMode: "full",
@@ -316,11 +321,12 @@ describe("deriveInvestigationFrame", () => {
   it("delays a same-beat polygon until its route reveal completes", () => {
     const sameBeat = [400];
     const clock = playNliClock(idleNliClock(), membership, sameBeat, 0);
-    const revealing = deriveInvestigationFrame(clock, 3199, enabled, {
+    const beatMs = timelineBeatDurationMs(400);
+    const revealing = deriveInvestigationFrame(clock, beatMs - 1, enabled, {
       motionMode: "full",
       routeBeats: [400],
     });
-    const completed = deriveInvestigationFrame(clock, 3200, enabled, {
+    const completed = deriveInvestigationFrame(clock, beatMs, enabled, {
       motionMode: "full",
       routeBeats: [400],
     });
@@ -337,10 +343,11 @@ describe("deriveInvestigationFrame", () => {
       sameBeat,
       0,
     );
-    const revealing = deriveInvestigationFrame(clock, 3199, [INVESTIGATION_POLYGONS_FULL_ID], {
+    const beatMs = timelineBeatDurationMs(400);
+    const revealing = deriveInvestigationFrame(clock, beatMs - 1, [INVESTIGATION_POLYGONS_FULL_ID], {
       routeBeats: [400],
     });
-    const completed = deriveInvestigationFrame(clock, 3200, [INVESTIGATION_POLYGONS_FULL_ID], {
+    const completed = deriveInvestigationFrame(clock, beatMs, [INVESTIGATION_POLYGONS_FULL_ID], {
       routeBeats: [400],
     });
 
@@ -378,7 +385,7 @@ describe("deriveInvestigationFrame", () => {
 
   it("keeps completed route flow active while an ordinary pause freezes narrative time", () => {
     let clock = playNliClock(idleNliClock(), membership, beats, 0);
-    clock = pauseNliClock(clock, TIMELINE_BEAT_MS + 400);
+    clock = pauseNliClock(clock, timelineSpanMs(beats, 0, 1) + 400);
     const frame = deriveInvestigationFrame(clock, 99_000, enabled, {
       motionMode: "full",
     });
@@ -403,7 +410,7 @@ describe("deriveInvestigationFrame", () => {
       [INVESTIGATION_POLYGONS_FULL_ID],
       { motionMode: "full" },
     );
-    expect(frame.narrative.activeProgress).toBe(800 / NLI_VISUAL_TOKENS.revealDurationMs);
+    expect(frame.narrative.activeProgress).toBe(800 / timelineBeatDurationMs(400));
     expect(frame.completedRouteFlow.active).toBe(false);
     expect(frame.completedFlowNeedsFrames).toBe(false);
     expect(frame.narrativeAdvances).toBe(false);
@@ -414,7 +421,7 @@ describe("deriveInvestigationFrame", () => {
     const clock = playNliClock(idleNliClock(), membership, beats, 0);
     const frame = deriveInvestigationFrame(
       clock,
-      beats.length * TIMELINE_BEAT_MS,
+      timelineSpanMs(beats),
       enabled,
       { motionMode: "full" },
     );
@@ -428,7 +435,7 @@ describe("deriveInvestigationFrame", () => {
     const playing = playNliClock(idleNliClock(), membership, beats, 0);
     const paused = pauseNliClock(
       playing,
-      beats.length * TIMELINE_BEAT_MS + 500,
+      timelineSpanMs(beats) + 500,
     );
     const pausedFrame = deriveInvestigationFrame(paused, 90_000, enabled, {});
     expect(pausedFrame.narrative.mode).toBe("hold");
@@ -497,7 +504,7 @@ describe("deriveInvestigationFrame", () => {
     const looping = setNliLoop(playing, true);
     const wrapped = deriveInvestigationFrame(
       looping,
-      3 * TIMELINE_BEAT_MS + 2500,
+      clockStoryDurationMs(beats),
       enabled,
       {},
     );
@@ -691,7 +698,7 @@ describe("deriveInvestigationFrame", () => {
 
   it("keeps a loop jump's half-reveal onset through pause and resume", () => {
     const jumpAt = 10_000;
-    const halfReveal = NLI_VISUAL_TOKENS.revealDurationMs / 2;
+    const halfReveal = timelineBeatDurationMs(420) / 2;
     const jumped = seekNliClock(
       setNliLoop(idleNliClock(), true),
       1,
@@ -786,7 +793,7 @@ describe("deriveInvestigationFrame", () => {
   it("derives the same completed-flow phase for two clients at one corrected time", () => {
     const clock = pauseNliClock(
       playNliClock(idleNliClock(), membership, beats, 0),
-      TIMELINE_BEAT_MS + 10,
+      timelineSpanMs(beats, 0, 1) + 10,
     );
     const a = deriveInvestigationFrame(clock, 123_456, enabled, {});
     const b = deriveInvestigationFrame({ ...clock }, 123_456, enabled, {});
@@ -832,7 +839,7 @@ describe("deriveInvestigationFrame", () => {
     const resumed = resumeNliClock(paused, 5_000);
     const afterLeadIn = deriveInvestigationFrame(
       resumed,
-      5_000 + TIMELINE_BEAT_MS - 800,
+      5_000 + timelineBeatDurationMs(483) - 800,
       [INVESTIGATION_ALARMS_FULL_ID, INVESTIGATION_POLYGONS_FULL_ID],
       { narrativeId: "nova" },
     );
