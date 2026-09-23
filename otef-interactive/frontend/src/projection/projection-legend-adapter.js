@@ -1,4 +1,5 @@
 import { OUTPUT_HEIGHT, OUTPUT_WIDTH, projectionOverlayMatrix } from "./projection-overlay-placement.js";
+import { paintCaptivityBleedMarker } from "../shared/captivity-bleed-marker.js";
 
 const FONT = '"Guttman Hatzvi", "Noto Sans Hebrew", Arial, sans-serif';
 const INK = "#f2f3f4";
@@ -163,6 +164,9 @@ function drawSymbol(context, part, x, y, font) {
     if (part.halo && part.halo !== "transparent") { context.shadowColor = part.halo; context.shadowBlur = 1; }
     context.stroke();
     context.setLineDash?.([]);
+  } else if (part.captivityBleed) {
+    const r = Math.min(symbolWidth, symbolHeight) / 2;
+    paintCaptivityBleedMarker(context, { cx: x, cy: y, r });
   } else {
     shapePath(context, shape, x, y, symbolWidth, symbolHeight);
     if (Array.isArray(part.bands) && part.bands.length > 0) {

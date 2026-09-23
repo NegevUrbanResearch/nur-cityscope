@@ -11,6 +11,12 @@ import {
   PROJECTION_MAPLIBRE_POINT_RADIUS_SCALE,
   PROJECTION_MAPLIBRE_STROKE_WIDTH_SCALE,
 } from "./hatch-projection-presentation.js";
+import {
+  buildCaptivityBleedImageSpec,
+  KIDNAP_SURVIVOR_STATUS,
+  MURDERED_IN_CAPTIVITY_STATUS,
+  RIBBON_YELLOW,
+} from "./captivity-bleed-marker.js";
 import { buildMarkerLineSquareImageSpec } from "./markerline-square-image.js";
 
 function getNestedProp(obj, propPath) {
@@ -190,6 +196,97 @@ function scaleNliPeoplePointRadius(radius, hatchPresentation, fullLayerId) {
   if (typeof radius === "number" && Number.isFinite(radius)) return Math.max(0, radius * scale);
   if (Array.isArray(radius)) return ["*", scale, radius];
   return radius;
+}
+
+/**
+ * Remap unique-value match pairs: status → paint value.
+ * Leaves non-match literals unchanged.
+ * @param {unknown} expression
+ * @param {(status: string, value: unknown) => unknown} remap
+ */
+function remapUniqueValueMatchPaint(expression, remap) {
+  if (!Array.isArray(expression) || expression[0] !== "match") return expression;
+  const next = expression.slice();
+  for (let i = 2; i < next.length - 1; i += 2) {
+    const status = next[i];
+    const value = next[i + 1];
+    if (typeof status === "string") {
+      next[i + 1] = remap(status, value);
+    }
+  }
+  return next;
+}
+
+function numericCircleRadius(paintRadius) {
+  if (typeof paintRadius === "number" && Number.isFinite(paintRadius)) return paintRadius;
+  return null;
+}
+
+/**
+ * People-status hook: ribbon-yellow survivors; captivity uses a bleed symbol, not a flat circle.
+ * Only applies to unique-value people circles (match expressions), not simple markers.
+ * @param {object[]} layers
+ * @param {string} fullLayerId
+ * @param {string} idBase
+ */
+function applyNliPeopleStatusPresentation(layers, fullLayerId, idBase) {
+  if (String(fullLayerId) !== "nli.people" || !Array.isArray(layers)) return layers;
+  const ribbonYellow = RIBBON_YELLOW.toLowerCase();
+  const output = [];
+  let captivitySpec = null;
+
+  for (const layer of layers) {
+    if (!layer || layer.type !== "circle") {
+      output.push(layer);
+      continue;
+    }
+    const paint = { ...(layer.paint || {}) };
+    const color = paint["circle-color"];
+    const isUniqueValueMatch = Array.isArray(color) && color[0] === "match";
+    if (!isUniqueValueMatch) {
+      output.push(layer);
+      continue;
+    }
+
+    paint["circle-color"] = remapUniqueValueMatchPaint(color, (status, value) => {
+      if (status === KIDNAP_SURVIVOR_STATUS) return ribbonYellow;
+      return value;
+    });
+
+    const opacityExpr = ["match", uniqueValueClassificationInputExpression("status")];
+    opacityExpr.push(MURDERED_IN_CAPTIVITY_STATUS, 0, 1);
+    paint["circle-opacity"] = opacityExpr;
+    paint["circle-stroke-opacity"] = opacityExpr;
+
+    const radius = numericCircleRadius(paint["circle-radius"]);
+    if (radius != null && !captivitySpec) {
+      captivitySpec = buildCaptivityBleedImageSpec({ radius });
+    }
+
+    output.push({ ...layer, paint });
+  }
+
+  if (captivitySpec) {
+    const statusInput = uniqueValueClassificationInputExpression("status");
+    output.push({
+      id: `${idBase}__captivity_bleed`,
+      type: "symbol",
+      paint: {
+        "icon-opacity": ["match", statusInput, MURDERED_IN_CAPTIVITY_STATUS, 1, 0],
+      },
+      layout: {
+        "icon-image": captivitySpec.imageId,
+        "icon-size": 1,
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+        "icon-rotation-alignment": "map",
+        "symbol-placement": "point",
+      },
+      _captivityBleedPattern: captivitySpec,
+    });
+  }
+
+  return output;
 }
 
 /**
@@ -1383,7 +1480,7 @@ export function irToMapLibreLayers(fullLayerId, sourceLayerId, layerConfig, styl
 
   const baseLayers = isLineGeometryType(layerConfig?.geometryType)
     ? sortLinePackStrokeOrderForDashedVisibility(rawBaseLayers)
-    : rawBaseLayers;
+    : applyNliPeopleStatusPresentation(rawBaseLayers, fullLayerId, idBase);
 
   const passMapLabels = shouldRenderMapLabelsFromStyle(styleOptions, fullLayerId);
   const leaderLineLayers = passMapLabels

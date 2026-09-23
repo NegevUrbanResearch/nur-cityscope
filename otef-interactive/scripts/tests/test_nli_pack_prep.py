@@ -505,6 +505,12 @@ class LyrxBuilderTests(unittest.TestCase):
         self.assertEqual(murdered[0]["marker"]["fillColor"], "#b42318")
         self.assertEqual(murdered[0]["marker"]["strokeColor"], "#ffffff")
         self.assertEqual(murdered[0]["marker"]["shape"], "circle")
+        survivor = [
+            layer
+            for layer in classes[2]["symbol"]["symbolLayers"]
+            if layer.get("type") == "markerPoint"
+        ]
+        self.assertEqual(survivor[0]["marker"]["fillColor"], "#ffd100")
 
     def test_people_names_lyrx_is_labels_only_point_with_hebrew_name_and_force_visible(self):
         payload = labels_only_point_lyrx()
@@ -557,6 +563,7 @@ class LegendClassContractTests(unittest.TestCase):
         )
         self.assertFalse(any("bibas" in value.lower() for value in values))
         self.assertEqual(OCT7_STATUS_CLASSES[0][2], (180, 35, 24))
+        self.assertEqual(OCT7_STATUS_CLASSES[2][2], (255, 209, 0))
         self.assertEqual(OCT7_STATUS_CLASSES[3][2], (122, 34, 34))
 
 class GroupingTests(unittest.TestCase):

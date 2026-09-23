@@ -32,6 +32,12 @@ import {
 import AdvancedStyleEngine from "../map-utils/advanced-style-engine.js";
 import { peopleLegendClassVisible } from "./nli-people-marker-filter.js";
 import { NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
+import {
+  captivityBleedDataUrl,
+  KIDNAP_SURVIVOR_STATUS,
+  MURDERED_IN_CAPTIVITY_STATUS,
+  RIBBON_YELLOW,
+} from "../shared/captivity-bleed-marker.js";
 
 // ---------------------------------------------------------------------------
 // Geometry helpers
@@ -468,6 +474,29 @@ function uniqueValueClassesForLegend(config, options = {}) {
   return visible.filter((entry) => peopleLegendClassVisible(options.narrativeId, entry?.value));
 }
 
+function applyNliPeopleLegendPresentation(items, options = {}) {
+  if (options.fullId !== "nli.people" || !Array.isArray(items)) return items;
+  const ribbon = RIBBON_YELLOW.toLowerCase();
+  return items.map((item) => {
+    const status = item?._classValue;
+    if (status === KIDNAP_SURVIVOR_STATUS) {
+      return { ...item, fill: ribbon };
+    }
+    if (status === MURDERED_IN_CAPTIVITY_STATUS) {
+      const radius =
+        typeof item.pointRadius === "number" && item.pointRadius > 0 ? item.pointRadius : 8;
+      const swatchDataUrl = captivityBleedDataUrl({ radius });
+      return {
+        ...item,
+        fill: ribbon,
+        captivityBleed: true,
+        ...(swatchDataUrl ? { swatchDataUrl } : {}),
+      };
+    }
+    return item;
+  });
+}
+
 /**
  * Items from uniqueValue: each class resolved to symbol IR, then IR -> legend.
  */
@@ -509,7 +538,7 @@ function itemsFromUniqueValue(config, options = {}) {
       }
     }
   }
-  return out;
+  return applyNliPeopleLegendPresentation(out, options);
 }
 
 // ---------------------------------------------------------------------------

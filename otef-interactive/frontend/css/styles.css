@@ -180,6 +180,13 @@ body {
 .map-legend-symbol--line { height: max(2px, var(--legend-stroke-width)); margin-top: .27em; overflow: visible; opacity: var(--legend-stroke-opacity); background: var(--legend-fill); border: 0; box-shadow: 0 0 0 1px color-mix(in srgb, var(--legend-halo, transparent) 35%, transparent); }
 .map-legend-symbol--line::before { content: none; }
 .map-legend-symbol--point { width: .55em; height: .55em; flex-basis: .55em; margin: .09em .32em 0; border-radius: 50%; }
+.map-legend-symbol--point.map-legend-symbol--captivity-bleed { border: 0; background: transparent; }
+.map-legend-symbol--point.map-legend-symbol--captivity-bleed::before {
+  inset: 0;
+  opacity: 1;
+  background: var(--legend-swatch-image) center / contain no-repeat;
+  border-radius: 50%;
+}
 .map-legend-symbol--square { width: .55em; height: .55em; flex-basis: .55em; margin: .09em .32em 0; }
 .map-legend-symbol--diamond { width: .45em; height: .45em; flex-basis: .45em; margin: .14em .36em 0; transform: rotate(45deg); }
 .map-legend-symbol--alarm-shockwave { overflow: visible; }

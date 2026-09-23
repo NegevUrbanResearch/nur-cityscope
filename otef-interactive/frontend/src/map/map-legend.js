@@ -29,8 +29,16 @@ function symbolMarkup(part = {}) {
     ? ` map-legend-symbol--alarm-shockwave`
     : "";
   const shockwaveColor = part.alarmShockwaveColor || part.fill || "transparent";
-  const style = `--legend-fill:${background};--legend-fill-opacity:${fillOpacity};--legend-stroke:${stroke};--legend-stroke-width:${width}px;--legend-stroke-opacity:${strokeOpacity};--legend-halo:${halo};${part.alarmShockwave ? `--legend-alarm-shockwave:${shockwaveColor};` : ""}`;
-  return `<span class="map-legend-symbol map-legend-symbol--${escapeHtml(shape)}${shockwave}" style="${escapeHtml(style)}" aria-hidden="true"></span>`;
+  const captivityBleed = part.captivityBleed && part.swatchDataUrl
+    ? ` map-legend-symbol--captivity-bleed`
+    : "";
+  const swatchImage = part.captivityBleed && part.swatchDataUrl
+    ? `--legend-swatch-image:url("${part.swatchDataUrl}");`
+    : "";
+  const legendStroke = part.captivityBleed && part.swatchDataUrl ? "transparent" : stroke;
+  const legendStrokeWidth = part.captivityBleed && part.swatchDataUrl ? 0 : width;
+  const style = `--legend-fill:${background};--legend-fill-opacity:${fillOpacity};--legend-stroke:${legendStroke};--legend-stroke-width:${legendStrokeWidth}px;--legend-stroke-opacity:${strokeOpacity};--legend-halo:${halo};${part.alarmShockwave ? `--legend-alarm-shockwave:${shockwaveColor};` : ""}${swatchImage}`;
+  return `<span class="map-legend-symbol map-legend-symbol--${escapeHtml(shape)}${shockwave}${captivityBleed}" style="${escapeHtml(style)}" aria-hidden="true"></span>`;
 }
 
 function itemMarkup(item) {

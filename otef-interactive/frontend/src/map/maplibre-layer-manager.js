@@ -6,6 +6,7 @@
  */
 import { createHatchImageDataFromSpec } from "../shared/hatch-pattern-tile.js";
 import { createMarkerLineSquareImageData } from "../shared/markerline-square-image.js";
+import { createCaptivityBleedImageData } from "../shared/captivity-bleed-marker.js";
 import { irToMapLibreLayers } from "../shared/maplibre-style-bridge.js";
 import layerRegistry from "../shared/layer-registry.js";
 
@@ -329,6 +330,28 @@ function registerHatchPatternImages(map, styleLayer, state, trackedPatternIds) {
     if (trackedPatternIds.has(imageId)) continue;
     if (!map.hasImage(imageId)) {
       const image = createMarkerLineSquareImageData(spec);
+      map.addImage(imageId, image);
+    }
+    trackedPatternIds.add(imageId);
+    const currentRefCount = state.hatchPatternRefCounts.get(imageId) || 0;
+    state.hatchPatternRefCounts.set(imageId, currentRefCount + 1);
+  }
+
+  const captivityBleedSpecs = [];
+  if (styleLayer._captivityBleedPattern) {
+    captivityBleedSpecs.push(styleLayer._captivityBleedPattern);
+  }
+  if (Array.isArray(styleLayer._captivityBleedPatterns)) {
+    for (const s of styleLayer._captivityBleedPatterns) {
+      if (s) captivityBleedSpecs.push(s);
+    }
+  }
+  for (const spec of captivityBleedSpecs) {
+    const imageId = spec?.imageId;
+    if (!imageId) continue;
+    if (trackedPatternIds.has(imageId)) continue;
+    if (!map.hasImage(imageId)) {
+      const image = createCaptivityBleedImageData(spec);
       map.addImage(imageId, image);
     }
     trackedPatternIds.add(imageId);
@@ -904,9 +927,13 @@ function addLayerToMap(map, fullId, state, layerStyleOptions, stagedMeta) {
       _hatchPatterns,
       _markerLineSquarePattern,
       _markerLineSquarePatterns,
+      _captivityBleedPattern,
+      _captivityBleedPatterns,
       _uniqueValuePointColorFallback,
       ...styleRest
     } = styleLayer;
+    void _captivityBleedPattern;
+    void _captivityBleedPatterns;
     if (_uniqueValuePointColorFallback) {
       console.warn(
         `[maplibre-layer-manager] uniqueValue point symbol has no resolvable color for ${fullId} ` +

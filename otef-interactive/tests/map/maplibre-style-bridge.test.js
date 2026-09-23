@@ -463,22 +463,52 @@ describe("irToMapLibreLayers", () => {
     expect(squareSpec.rotate == null || squareSpec.rotate === 0).toBe(true);
   });
 
-  it("maps processed people murdered uniqueValue to a circle at #b42318", () => {
-    const oct7 = nliStyles.people;
-    const result = irToMapLibreLayers("nli.people", "nli__people", {
-      geometryType: oct7.type,
-      style: oct7,
-    });
-    expect(result.some((layer) => layer.type === "symbol")).toBe(false);
-    const circle = result.find((layer) => layer.type === "circle");
-    expect(circle).toBeDefined();
-    const color = circle.paint["circle-color"];
-    if (Array.isArray(color)) {
-      expect(color).toContain("Murdered");
-      expect(color).toContain("#b42318");
-    } else {
-      expect(color).toBe("#b42318");
+  it("keeps processed nli.people Kidnap survivor free of legacy green fills", () => {
+    const survivor = nliStyles.people.uniqueValues.classes.find((c) => c.value === "Kidnap survivor");
+    expect(survivor).toBeDefined();
+    for (const layer of survivor.symbol.symbolLayers) {
+      if (layer?.type === "markerPoint") {
+        expect(String(layer.marker?.fillColor || "").toLowerCase()).not.toBe("#079455");
+        expect(String(layer.marker?.fill || "").toLowerCase()).not.toBe("#079455");
+      }
+      if (layer?.type === "fill") {
+        expect(String(layer.color || "").toLowerCase()).not.toBe("#079455");
+      }
     }
+  });
+
+  it("maps nli.people statuses to ribbon-yellow survivors and a captivity bleed symbol", () => {
+    const style = structuredClone(nliStyles.people);
+    const survivor = style.uniqueValues.classes.find((c) => c.value === "Kidnap survivor");
+    const captivity = style.uniqueValues.classes.find((c) => c.value === "Murdered in captivity");
+    survivor.symbol.symbolLayers[0].marker.fillColor = "#079455";
+    captivity.symbol.symbolLayers[0].marker.fillColor = "#7a2222";
+
+    const result = irToMapLibreLayers("nli.people", "nli__people", {
+      geometryType: style.type,
+      style,
+    });
+    const circle = result.find((layer) => layer.type === "circle");
+    const symbol = result.find((layer) => layer.type === "symbol" && layer._captivityBleedPattern);
+    expect(circle).toBeDefined();
+    expect(symbol).toBeDefined();
+
+    const color = circle.paint["circle-color"];
+    expect(color).toContain("Murdered");
+    expect(color).toContain("#b42318");
+    expect(color).toContain("Kidnap survivor");
+    expect(String(color[color.indexOf("Kidnap survivor") + 1]).toLowerCase()).toBe("#ffd100");
+
+    const opacity = circle.paint["circle-opacity"];
+    expect(Array.isArray(opacity)).toBe(true);
+    expect(opacity).toContain("Murdered in captivity");
+    expect(opacity[opacity.indexOf("Murdered in captivity") + 1]).toBe(0);
+
+    expect(symbol.layout["icon-allow-overlap"]).toBe(true);
+    expect(symbol.layout["icon-ignore-placement"]).toBe(true);
+    expect(symbol.layout["icon-rotation-alignment"]).toBe("map");
+    expect(symbol.layout["icon-image"]).toBe(symbol._captivityBleedPattern.imageId);
+    expect(symbol._captivityBleedPattern.radius).toBeCloseTo(circle.paint["circle-radius"]);
   });
 
   it("keeps markerLine squares un-rotated when catalog points are squares", () => {

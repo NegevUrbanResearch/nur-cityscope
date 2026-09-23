@@ -164,7 +164,7 @@ def apply_people_name_offsets(features: List[Dict[str, Any]]) -> int:
 OCT7_STATUS_CLASSES = [
     ("Murdered", "Murdered", (180, 35, 24)),
     ("Killed on duty", "Killed on duty", (23, 92, 211)),
-    ("Kidnap survivor", "Kidnap survivor", (7, 148, 85)),
+    ("Kidnap survivor", "Kidnap survivor", (255, 209, 0)),
     ("Murdered in captivity", "Murdered in captivity", (122, 34, 34)),
 ]
 

@@ -131,6 +131,18 @@ describe("legendLayerFromConfig uniqueValue", () => {
     ]);
   });
 
+  it("uses ribbon yellow for survivors and captivity bleed for murdered in captivity", () => {
+    const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
+      fullId: "nli.people",
+      narrativeId: "nova",
+    });
+    const survivor = layer.items.find((item) => item.label === "Kidnap survivor");
+    const captivity = layer.items.find((item) => item.label === "Murdered in captivity");
+    expect(String(survivor.fill).toLowerCase()).toBe("#ffd100");
+    expect(String(captivity.fill).toLowerCase()).not.toBe("#7a2222");
+    expect(captivity.captivityBleed === true || Boolean(captivity.swatchDataUrl)).toBe(true);
+  });
+
   it("does not filter uniqueValue classes for unrelated layers", () => {
     const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
       fullId: "nli.other_points",
