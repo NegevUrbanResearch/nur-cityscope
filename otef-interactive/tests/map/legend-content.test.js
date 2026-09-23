@@ -484,6 +484,8 @@ describe("legend content model", () => {
         expect(getLegendCategoryCopy(fullId, value, "en"), `${fullId}:${value}:en`).toBeTruthy();
       }
     }
+    expect(getLegendCategoryCopy("nli.people", "Kidnap survivor", "he")).toBe("שורדי שבי");
+    expect(getLegendCategoryCopy("nli.people", "Murdered in captivity", "he")).toBe("נרצחו בשבי");
     expect(Object.keys(LEGEND_CATEGORY_COPY)).toEqual(expect.arrayContaining(inventory.map(([id]) => id)));
     for (const [fullId, rows] of Object.entries(LEGEND_CATEGORY_COPY)) {
       for (const value of Object.keys(rows)) {

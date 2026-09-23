@@ -111,7 +111,7 @@ export const LEGEND_CATEGORY_COPY = Object.freeze({
   "nli.people": Object.freeze({
     "Murdered": Object.freeze({ he: "נרצחו", en: "Murdered" }),
     "Killed on duty": Object.freeze({ he: "נפלו בעת מילוי תפקידם", en: "Killed on duty" }),
-    "Kidnap survivor": Object.freeze({ he: "שורדי חטיפה", en: "Kidnap survivors" }),
+    "Kidnap survivor": Object.freeze({ he: "שורדי שבי", en: "Kidnap survivors" }),
     "Murdered in captivity": Object.freeze({ he: "נרצחו בשבי", en: "Murdered in captivity" }),
   }),
   "nli.investigation_polygons": Object.freeze({

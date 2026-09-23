@@ -103,7 +103,7 @@ describe("projection Segev narrative focus", () => {
     expect(map.beginCameraTravel).not.toHaveBeenCalled();
   });
 
-  test("Hostages applies the survivor-only filter without moving the projection camera", () => {
+  test("Hostages applies the captivity filter without moving the projection camera", () => {
     const { map, controller } = setup();
 
     controller.apply({ id: "hostages", transition: "enter", revision: 1 });

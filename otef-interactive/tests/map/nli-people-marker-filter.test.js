@@ -41,9 +41,13 @@ describe("narrative people marker filter", () => {
     expect(map.setFilter).toHaveBeenLastCalledWith("nli-people", NOVA_PEOPLE_FILTER);
   });
 
-  test("hostages shows only kidnap survivors", () => {
+  test("hostages shows kidnap survivors and people murdered in captivity", () => {
     expect(peopleFilterForNarrative("hostages")).toEqual(HOSTAGES_PEOPLE_FILTER);
-    expect(HOSTAGES_PEOPLE_FILTER).toEqual(["==", ["get", "status"], "Kidnap survivor"]);
+    expect(HOSTAGES_PEOPLE_FILTER).toEqual([
+      "any",
+      ["==", ["get", "status"], "Kidnap survivor"],
+      ["==", ["get", "status"], "Murdered in captivity"],
+    ]);
   });
 
   test("nova unions Nova location with kidnap survivors", () => {
@@ -100,6 +104,7 @@ describe("narrative people marker filter", () => {
     ]);
     expect(statuses.filter((status) => peopleLegendClassVisible("hostages", status))).toEqual([
       "Kidnap survivor",
+      "Murdered in captivity",
     ]);
     expect(statuses.filter((status) => peopleLegendClassVisible("nova", status))).toEqual(statuses);
   });
