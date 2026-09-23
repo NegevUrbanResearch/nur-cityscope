@@ -73,7 +73,7 @@ The legend matches the people filter.
 | Timeline | Opening + investigation polygons, infiltration routes, alarms |
 | Nova timeline | Focus + investigation polygons, infiltration routes, alarms (no SEA, no Gaza roads) |
 | Identity | Focus + people |
-| Wall | People names + black ground |
+| Wall | People names only (while names are on, both screens draw no other layer) |
 
 Open spaces is `land_use.שטחים_פתוחים`, the layer labelled "Open space" in
 the visitor remote.
