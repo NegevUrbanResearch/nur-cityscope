@@ -80,7 +80,7 @@ describe("NLI Segev narrative cross-surface contract", () => {
 
     expect(segev).toMatchObject({
       id: "segev",
-      label: "משפחת שגב",
+      label: "בית משפחת שגב",
       center: [34.48647925700004, 31.422958191000077],
       zoom: 18,
       basemap: "satellite_bw",

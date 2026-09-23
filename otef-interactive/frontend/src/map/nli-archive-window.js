@@ -173,6 +173,16 @@ export function createNliArchiveCommandBridge({ windowController, resolvePerson,
     return true;
   }
 
+  function openSelected(person) {
+    const selection = getPersonSelection?.();
+    if (!person?.nliUrl || !selection?.personId || String(person.pid) !== String(selection.personId)) return false;
+    token += 1;
+    pendingPerson = null;
+    if (windowController.navigate(person.nliUrl)?.ok !== true) return false;
+    activePerson = { personId: selection.personId, datasetVersion: selection.datasetVersion };
+    return true;
+  }
+
   function handlePersonSelection(selection) {
     const current = activePerson || pendingPerson;
     if (!current || samePerson(selection, current)) return false;
@@ -184,5 +194,5 @@ export function createNliArchiveCommandBridge({ windowController, resolvePerson,
     return true;
   }
 
-  return { handleCommand, handlePersonSelection };
+  return { handleCommand, handlePersonSelection, openSelected };
 }

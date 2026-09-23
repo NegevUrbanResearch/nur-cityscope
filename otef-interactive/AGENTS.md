@@ -51,7 +51,8 @@
   **Stop** / `idle` shows the complete investigation story (all category polygons,
   settlement impact outlines, completed route flow). Alarms stay idle/off.
 - People selection belongs in the existing remote **Navigation** tab. The GIS
-  bubble contains only name and location; archive actions belong on the remote.
+  bubble shows only name and location; clicking it opens that person's archive
+  record through the same archive bridge the remote uses.
 - Archive open/close is an ephemeral command. Do not add migrations, leases,
   owners, heartbeats, polling, iframe embedding, or durable archive state
   without a new owner decision.

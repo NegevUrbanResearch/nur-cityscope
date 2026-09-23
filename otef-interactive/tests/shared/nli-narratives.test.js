@@ -11,9 +11,10 @@ describe("NLI narrative registry", () => {
   test("contains the exact trusted Segev definition and frozen Nova sibling", () => {
     expect(NLI_NARRATIVES.segev).toEqual({
       id: "segev",
-      label: "משפחת שגב",
+      label: "בית משפחת שגב",
       center: [34.48647925700004, 31.422958191000077],
       zoom: 18,
+      idleClockMinutes: 401,
       basemap: "satellite_bw",
       focusSettlement: "בארי",
       focusSettlementOutlineId: 19,
@@ -47,7 +48,7 @@ describe("NLI narrative registry", () => {
     });
     expect(NLI_NARRATIVES.hostages).toEqual({
       id: "hostages",
-      label: "משפחת פרי",
+      label: "בית משפחת פרי",
       center: [34.40244, 31.312639],
       zoom: 15,
       marker: [34.40026099200003, 31.31130147400006],
@@ -60,6 +61,13 @@ describe("NLI narrative registry", () => {
       nova: NLI_NARRATIVES.nova,
       sderot: NLI_NARRATIVES.sderot,
       hostages: NLI_NARRATIVES.hostages,
+      hostages_all: NLI_NARRATIVES.hostages_all,
+    });
+    expect(NLI_NARRATIVES.hostages_all).toEqual({
+      id: "hostages_all",
+      center: [34.5, 31.4],
+      zoom: 10,
+      basemap: "satellite_bw",
     });
     expect(NLI_NARRATIVES.nova).not.toHaveProperty("fitBounds");
     expect(NLI_NARRATIVES.nova).not.toHaveProperty("fitBoundsPadding");

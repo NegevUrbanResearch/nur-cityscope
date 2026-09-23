@@ -82,7 +82,8 @@ class NarrativeStateNormalizationTests(SimpleTestCase):
         from backend.otef_narrative import NARRATIVE_IDS, NARRATIVE_PRESENTATION_IDS
 
         self.assertEqual(
-            NARRATIVE_IDS, frozenset({"segev", "nova", "sderot", "hostages"})
+            NARRATIVE_IDS,
+            frozenset({"segev", "nova", "sderot", "hostages", "hostages_all"}),
         )
         self.assertEqual(NARRATIVE_PRESENTATION_IDS, frozenset({"segev"}))
 

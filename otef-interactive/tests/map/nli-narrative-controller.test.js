@@ -232,7 +232,7 @@ describe("GIS Segev narrative scene", () => {
     expect(focus?.properties?.label).toBe("תחנת המשטרה");
   });
 
-  test("Hostages flies to Nir Oz at zoom 15 and marks משפחת פרי", async () => {
+  test("Hostages flies to Nir Oz at zoom 15 and marks בית משפחת פרי", async () => {
     const d = await setup();
     d.controller.apply({ id: "hostages", transition: "enter", revision: 1 });
     expect(d.viewportSync.beginCameraTravel).toHaveBeenCalledWith("narrative-hostages");
@@ -244,10 +244,10 @@ describe("GIS Segev narrative scene", () => {
     });
     const focus = d.map.getSource("nli-narrative-focus")?.data?.features?.[0];
     expect(focus?.geometry?.coordinates).toEqual(NLI_NARRATIVES.hostages.marker);
-    expect(focus?.properties?.label).toBe("משפחת פרי");
+    expect(focus?.properties?.label).toBe("בית משפחת פרי");
   });
 
-  test("replacing Sderot with Hostages flies to Nir Oz and marks משפחת פרי", async () => {
+  test("replacing Sderot with Hostages flies to Nir Oz and marks בית משפחת פרי", async () => {
     const d = await setup();
     d.controller.apply({ id: "sderot", transition: "enter", revision: 1 });
     d.controller.apply({ id: "hostages", transition: "replace", revision: 2 });

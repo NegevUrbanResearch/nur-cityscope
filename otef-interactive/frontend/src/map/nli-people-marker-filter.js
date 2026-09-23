@@ -13,24 +13,24 @@ export const HOSTAGES_PEOPLE_FILTER = Object.freeze([
   Object.freeze(["==", Object.freeze(["get", "status"]), MURDERED_IN_CAPTIVITY_STATUS]),
 ]);
 
-export const NOVA_PEOPLE_FILTER = Object.freeze([
-  "any",
-  Object.freeze(["==", Object.freeze(["get", "location"]), "Nova"]),
-  Object.freeze(["==", Object.freeze(["get", "status"]), KIDNAP_SURVIVOR_STATUS]),
-]);
+const locationFilter = (location) => Object.freeze(["==", Object.freeze(["get", "location"]), location]);
+
+export const NOVA_PEOPLE_FILTER = locationFilter("Nova");
+export const NIR_OZ_PEOPLE_FILTER = locationFilter("Nir Oz");
 
 export function peopleFilterForNarrative(narrativeId) {
   if (narrativeId === "nova") return NOVA_PEOPLE_FILTER;
-  if (narrativeId === "hostages") return HOSTAGES_PEOPLE_FILTER;
+  if (narrativeId === "hostages") return NIR_OZ_PEOPLE_FILTER;
+  if (narrativeId === "hostages_all") return HOSTAGES_PEOPLE_FILTER;
   return EXCLUDE_SURVIVOR_FILTER;
 }
 
 export function peopleLegendClassVisible(narrativeId, classValue) {
   const value = String(classValue ?? "");
-  if (narrativeId === "hostages") {
+  if (narrativeId === "hostages_all") {
     return value === KIDNAP_SURVIVOR_STATUS || value === MURDERED_IN_CAPTIVITY_STATUS;
   }
-  if (narrativeId === "nova") return true;
+  if (narrativeId === "nova" || narrativeId === "hostages") return true;
   return value !== KIDNAP_SURVIVOR_STATUS;
 }
 

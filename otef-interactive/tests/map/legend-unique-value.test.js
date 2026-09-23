@@ -110,10 +110,10 @@ describe("legendLayerFromConfig uniqueValue", () => {
     ]);
   });
 
-  it("keeps kidnap survivors and murdered in captivity on the nli.people legend during hostages", () => {
+  it("keeps kidnap survivors and murdered in captivity on the nli.people legend during all-hostages", () => {
     const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
       fullId: "nli.people",
-      narrativeId: "hostages",
+      narrativeId: "hostages_all",
     });
     expect(layer.items.map((item) => item.label)).toEqual([
       "Kidnap survivor",
@@ -124,7 +124,7 @@ describe("legendLayerFromConfig uniqueValue", () => {
   it("labels hostages people classes in Hebrew from the shared legend copy", () => {
     const layer = legendLayerFromConfig(peopleStatusConfig(), { id: "people" }, {
       fullId: "nli.people",
-      narrativeId: "hostages",
+      narrativeId: "hostages_all",
       language: "he",
     });
     expect(layer.items.map((item) => item.label)).toEqual([

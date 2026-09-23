@@ -196,7 +196,7 @@ export function syncPersonHaloPaint(map, { motionMode = "full", nowMs = 0 } = {}
 }
 
 /** Own one reusable MapLibre halo and bubble. */
-export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl, beginCameraTravel } = {}) {
+export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl, beginCameraTravel, onBubbleClick } = {}) {
   let disposed = false; let current = null; let renderToken = 0; let cameraListener = null;
   const popup = typeof maplibregl?.Popup === "function" ? new maplibregl.Popup({ className: "gis-person-bubble-popup", closeButton: false, closeOnClick: false, maxWidth: "240px", offset: 14 }) : null;
   const runtimePromise = loadPeopleRuntime({ fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl });
@@ -216,6 +216,11 @@ export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, 
   const showBubble = (person, token) => {
     if (disposed || token !== renderToken || current !== person || !popup) return;
     popup.setLngLat(person.coordinates).setHTML(popupMarkup(person)).addTo(map);
+    const element = popup.getElement?.();
+    if (!element) return;
+    const clickable = Boolean(onBubbleClick && person.nliUrl);
+    element.classList.toggle("gis-person-bubble-popup--link", clickable);
+    element.onclick = clickable ? () => onBubbleClick(person) : null;
   };
   const show = (person, { focus = false, reducedMotion = false } = {}) => {
     const coordinates = coordinatesOf(person);

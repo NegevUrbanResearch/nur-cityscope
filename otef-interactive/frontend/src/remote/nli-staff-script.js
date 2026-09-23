@@ -1,36 +1,33 @@
+import { NLI_PLAYABLE_IDS } from "../shared/nli-investigation-beats.js";
+
 export const COPY = {
   he: {
     home: "דף הבית",
-    live: "שידור",
     prev: "הקודם",
     next: "הבא",
     done: "סיום",
+    backToShow: "סיום הסיפור, המשך הרצף",
+    startStory: "התחלת הסיפור: {{title}}",
     of: "מתוך",
     gisLabel: "מסך GIS",
     modelLabel: "הקרנה / מודל",
     kitIdle: "אין שליטה בשלב זה — המשך בנרטיב.",
-    kitReset: "שלב זה נפתח ב־{{clock}}. מעבר לשלב הבא מאפס.",
-    kitResetOpen: "שלב זה נפתח בנקודת הפתיחה. מעבר לשלב הבא מאפס.",
+    cueApplying: "מעדכן את המפה…",
+    cueReady: "המפה מוכנה לשלב זה",
+    cueFailed: "לא ניתן לעדכן את המפה",
+    stepAria: "מעבר לשלב {{n}}",
+    showTitle: "מהלך ההקרנה",
+    showMeta: "הרצף המלא, שלב אחר שלב",
     freeTitle: "שליטה חופשית",
     searchLabel: "חיפוש שם או מקום",
     searchPlaceholder: "חיפוש שם או מקום",
     nowShowing: "מוצג כעת",
     draft: "התוכן לשלב זה עדיין נכתב.",
     steps: "שלבים",
-    freeMeta: "סצנות, חיפוש, ניווט, שכבות ושעון",
+    freeMeta: "סצנות מוכנות ושכבות",
     disconnected: "אין חיבור למפה",
     connected: "מחובר",
     connecting: "מתחבר…",
-    zoom: "זום",
-    zoomLabel: "זום:",
-    zoomLevelAria: "רמת מיקוד",
-    joystickAria: "מוט כיוון לגרירת המפה",
-    panNorth: "הזזה צפונה",
-    panSouth: "הזזה דרומה",
-    panEast: "הזזה מזרחה",
-    panWest: "הזזה מערבה",
-    zoomInAria: "התקרבות",
-    zoomOutAria: "התרחקות",
     packLibrary: "תוכן הספרייה",
     packBase: "שכבות בסיס",
     packEmpty: "אין שכבות בחבילה זו",
@@ -44,36 +41,31 @@ export const COPY = {
   },
   en: {
     home: "Home",
-    live: "Live",
     prev: "Previous",
     next: "Next",
     done: "Finish",
+    backToShow: "Finish story, continue sequence",
+    startStory: "Start the story: {{title}}",
     of: "of",
     gisLabel: "GIS screen",
     modelLabel: "Projection / model",
     kitIdle: "No controls in this step — continue the narrative.",
-    kitReset: "This step opens at {{clock}}. Moving on resets.",
-    kitResetOpen: "This step opens at the start point. Moving on resets.",
+    cueApplying: "Updating the map…",
+    cueReady: "Map is set for this step",
+    cueFailed: "Could not update the map",
+    stepAria: "Go to step {{n}}",
+    showTitle: "Run of show",
+    showMeta: "The full sequence, step by step",
     freeTitle: "Free control",
     searchLabel: "Search a name or place",
     searchPlaceholder: "Search a name or place",
     nowShowing: "Now showing",
     draft: "This step is still being written.",
     steps: "steps",
-    freeMeta: "Scenes, search, navigation, layers, and the clock",
+    freeMeta: "Preset scenes and layers",
     disconnected: "Map is disconnected",
     connected: "Connected",
     connecting: "Connecting…",
-    zoom: "Zoom",
-    zoomLabel: "Zoom:",
-    zoomLevelAria: "Zoom level",
-    joystickAria: "Virtual joystick for map panning",
-    panNorth: "Pan north",
-    panSouth: "Pan south",
-    panEast: "Pan east",
-    panWest: "Pan west",
-    zoomInAria: "Zoom in",
-    zoomOutAria: "Zoom out",
     packLibrary: "Library Content",
     packBase: "Base Layers",
     packEmpty: "No layers in this pack",
@@ -87,37 +79,169 @@ export const COPY = {
   },
 };
 
-export const SCENES = [
-  {
-    id: "open",
-    title: { he: "פתיחה", en: "Opening" },
-    meta: { he: "רקע שחור, יישובים, כביש 232", en: "Black ground, settlements, Road 232" },
-  },
-  {
-    id: "hour",
-    title: { he: "השעה הראשונה", en: "The first hour" },
-    meta: { he: "6:29 · פוליגונים וצירי חדירה", en: "6:29 · polygons and infiltration axes" },
-  },
-  {
-    id: "wall",
-    title: { he: "קיר השמות", en: "Names wall" },
-    meta: { he: "כל השמות על המודל", en: "All names on the model" },
-  },
-  {
-    id: "layers",
-    title: { he: COPY.he.layersTitle, en: COPY.en.layersTitle },
-    meta: { he: COPY.he.layersMeta, en: COPY.en.layersMeta },
-  },
+const SETTLEMENT_LAYER_IDS = [
+  "projector_base.שמות_יישובים",
+  "projector_base.Locations_Lines",
+  "projector_base.ישובים",
 ];
+const BLACK_GROUND = "projector_base.רקע_שחור";
+const ROUTE_232 = "nli.ציר_232";
+const SEA = "projector_base.SEA";
+const GAZA_ROADS = "gaza.Gaza_Roads";
+const PEOPLE = "nli.people";
+const OPEN_SPACES = "land_use.שטחים_פתוחים";
 
-function draftStep(n, kit = ["timeline"]) {
+export const PEOPLE_NAMES_LAYER_IDS = ["nli.people_names"];
+export const FOCUS_LAYER_IDS = [...SETTLEMENT_LAYER_IDS, ROUTE_232, BLACK_GROUND];
+export const OPENING_LAYER_IDS = [...FOCUS_LAYER_IDS, SEA, GAZA_ROADS];
+export const TIMELINE_LAYER_IDS = [...OPENING_LAYER_IDS, ...NLI_PLAYABLE_IDS];
+export const IDENTITY_LAYER_IDS = [...FOCUS_LAYER_IDS, PEOPLE];
+export const WALL_LAYER_IDS = [...PEOPLE_NAMES_LAYER_IDS, BLACK_GROUND];
+
+const NOVA_TIMELINE_LAYER_IDS = [...FOCUS_LAYER_IDS, ...NLI_PLAYABLE_IDS];
+
+/**
+ * A cue is the map state a step applies on entry. Every key is optional:
+ * `narrative` overrides the script narrative (`null` exits to the overview),
+ * `layers` is the exact set of enabled layers, `clock` is `"idle"` or a play
+ * window `{ from, to }` in minutes of the day, and `escape` sets the Nova
+ * escape overlay (unlisted routes turn off).
+ */
+const OPENING_CUE = { layers: OPENING_LAYER_IDS, clock: "idle" };
+const IDENTITY_CUE = { layers: IDENTITY_LAYER_IDS, clock: "idle" };
+const WALL_CUE = { layers: WALL_LAYER_IDS, clock: "idle" };
+
+const same = { he: "אותו דבר", en: "Same" };
+const unknown = { he: "?", en: "?" };
+
+const OPENING_COPY = {
+  he: "שמות ישובים וקווי מתאר של ישובים, כביש 232, SEA, דרכי עזה.",
+  en: "Settlement names and outlines, Route 232, SEA, and Gaza roads.",
+};
+const TIMELINE_MODEL = {
+  he: "ישובים ושמותיהם מחשיכים; פוליגונים, צירי חדירה ואזעקות מופיעים ככל שהזמן מתקדם; ישובים מתגלים והופכים אדומים בהתנגשות עם צירי חדירה או פוליגונים פעילים. השעון מופיע מתחת לעזה.",
+  en: "Settlements and names dim. Polygons, infiltration routes, and alarms appear as time advances; settlements turn red when active routes or polygons intersect them. The clock appears below Gaza.",
+};
+const TIMELINE_GIS = {
+  he: `${TIMELINE_MODEL.he} אפשר לראות את אשקלון, נתיבות ואופקים.`,
+  en: `${TIMELINE_MODEL.en} Ashkelon, Netivot, and Ofakim are visible.`,
+};
+const PER_NARRATIVE = { he: "לפי טבלת הנרטיב", en: "Per the narrative table" };
+
+export const SHOW = {
+  id: "show",
+  narrative: null,
+  title: { he: COPY.he.showTitle, en: COPY.en.showTitle },
+  meta: { he: COPY.he.showMeta, en: COPY.en.showMeta },
+  steps: [
+    {
+      title: { he: "התחלה", en: "Opening" },
+      gis: OPENING_COPY,
+      model: OPENING_COPY,
+      cue: OPENING_CUE,
+      kit: [],
+    },
+    {
+      clock: "06:29",
+      title: { he: "הדקות הראשונות", en: "The opening minutes" },
+      note: {
+        he: "ציר זמן 6:29–6:41, עד שעת ההתחלה של האירועים של משפחת שגב.",
+        en: "Timeline 06:29–06:41, up to the start of the Segev family events.",
+      },
+      gis: TIMELINE_GIS,
+      model: TIMELINE_MODEL,
+      cue: { layers: TIMELINE_LAYER_IDS, clock: { to: 401 } },
+      kit: ["timeline"],
+    },
+    {
+      title: { he: "משפחת שגב", en: "Segev family" },
+      gis: PER_NARRATIVE,
+      model: PER_NARRATIVE,
+      branch: ["segev"],
+      kit: [],
+    },
+    {
+      clock: "06:41",
+      title: { he: "שאר היום", en: "The rest of the day" },
+      note: {
+        he: "זום־אאוט משגב בחזרה לכל הנגב; ציר הזמן ממשיך מ־6:41 ועד סוף היום.",
+        en: "Zoom out from the Segev family to the whole Negev; the timeline runs from 06:41 to the end of the day.",
+      },
+      gis: TIMELINE_GIS,
+      model: TIMELINE_MODEL,
+      cue: { layers: TIMELINE_LAYER_IDS, clock: { from: 401 } },
+      kit: ["timeline"],
+    },
+    {
+      title: { he: "נובה ומור לוי", en: "Nova and Mor Levy" },
+      gis: PER_NARRATIVE,
+      model: PER_NARRATIVE,
+      branch: ["nova"],
+      kit: [],
+    },
+    {
+      title: { he: "נרטיבים", en: "Narratives" },
+      note: {
+        he: "בחירה חופשית: שדרות, מחנה שורה, חטופים (חיים פרי מניר עוז).",
+        en: "Free choice: Sderot, Shura Camp, Hostages (Haim Peri of Nir Oz).",
+      },
+      gis: PER_NARRATIVE,
+      model: PER_NARRATIVE,
+      branch: ["sderot", "shura", "hostages"],
+      kit: [],
+    },
+    {
+      title: { he: "מאגר הזהויות", en: "Identity database" },
+      note: {
+        he: "חפשו שם — המפה מתמקדת בנקודה. מהשלט אפשר לפתוח את הרשומה בארכיון.",
+        en: "Search a name — the map zooms to the point. The remote can open the archive record.",
+      },
+      gis: {
+        he: "שמות ישובים וקווי מתאר, כביש 232 ו״אנשים״ כנקודות, ללא דרכי עזה. לאחר חיפוש: זום־אין על הנקודה וחלונית עם השם מעליה.",
+        en: "Settlement names and outlines, Route 232, and people as points, without Gaza roads. After a search: zoom to the point with a name pop-up above it.",
+      },
+      model: {
+        he: "אותן שכבות. לאחר חיפוש: ריבוע של אור על הנקודה, ושאר הנקודות מחשיכות.",
+        en: "The same layers. After a search: a square of light on the point, other points dimmed.",
+      },
+      cue: IDENTITY_CUE,
+      kit: ["search"],
+    },
+    {
+      title: { he: "קיר השמות", en: "Wall of names" },
+      note: {
+        he: "חפשו שם או מקום — השמות המשויכים מוארים, השאר מחשיכים, והמקום הנבחר מואר.",
+        en: "Search a name or place — associated names light up, the rest dim, and the chosen place lights up.",
+      },
+      gis: {
+        he: "כל השמות מופיעים על המודל כקיר; כל שאר השכבות מוחשכות.",
+        en: "All names appear on the model as a wall; all other layers are dimmed.",
+      },
+      model: same,
+      cue: WALL_CUE,
+      kit: ["search"],
+    },
+    {
+      title: { he: "בחזרה להתחלה", en: "Back to the start" },
+      gis: OPENING_COPY,
+      model: OPENING_COPY,
+      cue: OPENING_CUE,
+      kit: [],
+    },
+  ],
+};
+
+function slides(from, to) {
   return {
-    title: { he: `שלב ${n}`, en: `Step ${n}` },
-    note: { he: COPY.he.draft, en: COPY.en.draft },
-    gis: { he: "—", en: "—" },
-    model: { he: "—", en: "—" },
-    kit,
-    draft: true,
+    he: `המפה מתחלפת למצגת — שקופיות ${from}–${to}.`,
+    en: `The map yields to the presentation — slides ${from}–${to}.`,
+  };
+}
+
+function focusModel(he, en) {
+  return {
+    he: `מודל מוחשך ופוקוס על ${he}. ישובים אחרים מוחשכים, רק ${he} בולט עם ריבוע האור והילה סביבו.`,
+    en: `Model dimmed and focused on ${en}. Other settlements dim; only ${en} stands out with a square of light and a halo.`,
   };
 }
 
@@ -125,191 +249,243 @@ export const NARRATIVES = [
   {
     id: "segev",
     index: "01",
+    narrative: "segev",
     title: { he: "משפחת שגב", en: "Segev family" },
     meta: { he: "בארי", en: "Be'eri" },
     steps: [
       {
-        clock: "x:xx",
+        clock: "06:41",
         title: { he: "הבית בבארי", en: "The house in Be'eri" },
-        note: {
-          he: "צריך לברר את שעת ההתחלה. המדריך פותח בבית המשפחה.",
-          en: "Confirm the start time. The guide opens at the family house.",
-        },
         gis: {
-          he: "זום אין על הבית בתצ״א שחור־לבן. שעון x:xx.",
-          en: "Zoom to the house on black-and-white aerial. Clock x:xx.",
+          he: "זום־אין על הבית של משפחת שגב בתצ״א שחור־לבן, שעון 6:41. סימון הבית בריבוע ורוד/אדום והכיתוב ״בית משפחת שגב״.",
+          en: "Zoom to the Segev family home on black-and-white aerial, clock 06:41. The house is marked with a pink/red square and “Segev family home.”",
         },
-        model: {
-          he: "פוקוס על בארי. יישובים אחרים מוחשכים, ריבוע אור סביב בארי.",
-          en: "Focus Be'eri. Other settlements dimmed, a light rectangle around it.",
-        },
-        kit: ["timeline"],
+        model: focusModel("בארי", "Be'eri"),
+        cue: { layers: FOCUS_LAYER_IDS },
+        kit: [],
       },
-      draftStep(2),
-      draftStep(3, ["presentation"]),
-      draftStep(4),
-      draftStep(5),
-      draftStep(6),
-      draftStep(7),
+      {
+        title: { he: "מצגת", en: "Presentation" },
+        gis: slides(1, 8),
+        model: same,
+        cue: { layers: FOCUS_LAYER_IDS },
+        kit: ["presentation"],
+      },
     ],
   },
   {
     id: "nova",
     index: "02",
+    narrative: "nova",
     title: { he: "נובה ומור לוי", en: "Nova and Mor Levy" },
     meta: { he: "אתר הנובה", en: "Nova site" },
     steps: [
       {
         clock: "08:03",
         title: { he: "אתר הנובה", en: "The Nova site" },
-        note: {
-          he: "מתחילים בסיפור הקולקטיבי. בניגוד לסיפור שהתחולל כולו בממד, כאן הסיפור מרחבי — אנשים נסו על נפשם מהאתר.",
-          en: "Start with the collective story. Unlike the house-bound previous narrative, this one is spatial — people fleeing the site.",
-        },
         gis: {
-          he: "זום אין על אתר הנובה ושמות המתחמים. שעון 08:03.",
-          en: "Zoom to the Nova site and compound names. Clock 08:03.",
+          he: "זום־אין על אתר הנובה בתצ״א שחור־לבן. שעון 08:03.",
+          en: "Zoom to the Nova site on black-and-white aerial. Clock 08:03.",
         },
         model: {
-          he: "המודל מוחשך. פוקוס על אתר הנובה ושעון 08:03.",
-          en: "Model darkened. Focus on the Nova site and clock 08:03.",
+          he: `${focusModel("הנובה", "Nova").he} ברקע שכבת השטחים הפתוחים.`,
+          en: `${focusModel("הנובה", "Nova").en} The open-spaces layer is in the background.`,
         },
-        kit: ["timeline"],
-      },
-      {
-        clock: "08:03",
-        title: { he: "אתרי הטווח", en: "Range sites" },
-        note: {
-          he: "המפה מתחלפת למצגת — תמונת ארכיון של היער. אתרי הטווח עולים לפי סדר כרונולוגי.",
-          en: "The map yields to a presentation — an archive photo of the forest. Range sites appear in chronological order.",
-        },
-        gis: {
-          he: "מצגת. פוליגוני אתרי הטווח לפי הזמן; בשעון שעת ההתחלה.",
-          en: "Presentation. Range-site polygons by time; clock shows the start.",
-        },
-        model: {
-          he: "נשאר בפוקוס על הנובה בזמן שהמסך מספר.",
-          en: "Stays focused on Nova while the screen narrates.",
-        },
+        cue: { layers: [...FOCUS_LAYER_IDS, OPEN_SPACES], clock: "idle", escape: {} },
         kit: [],
       },
       {
-        title: { he: "תנועה ופיזור", en: "Movement and scatter" },
-        note: {
-          he: "מהקולקטיב אל הסיפור האישי של מור לוי. נקודות ומסלולי בריחה — קו שונה בצבע ובסוג מהמחבלים.",
-          en: "From the collective to Mor Levy. People points and escape routes — a line distinct in color and type from the attackers.",
-        },
+        clock: "08:03",
+        title: { he: "המתחמים", en: "The compounds" },
         gis: {
-          he: "נקודות אנשים בנובה ומסלולי הבריחה.",
-          en: "People points at Nova and the escape routes.",
+          he: "זום־אין על אתר הנובה: חלוקה למתחמים ושמות.",
+          en: "Zoom to the Nova site: its compounds and their names.",
         },
         model: {
-          he: "אותה תנועה על המודל, בגרפיקה שקטה יותר.",
-          en: "The same movement on the model, in quieter graphic language.",
+          he: "שכבת השטחים הפתוחים יורדת. פוליגוני הנובה עולים לפי סדר כרונולוגי והשעון מתקדם איתם (עד 5 ביטים).",
+          en: "The open-spaces layer is removed. Nova polygons appear chronologically and the clock advances with them (up to 5 beats).",
         },
+        cue: { layers: NOVA_TIMELINE_LAYER_IDS, clock: { from: 483 }, escape: {} },
         kit: ["timeline"],
+      },
+      {
+        title: { he: "מסלולי הבריחה", en: "Escape routes" },
+        note: {
+          he: "החלק הראשון תיאר מה קרה באופן קולקטיבי; עכשיו צוללים לסיפור האישי של מור לוי.",
+          en: "The first part was the collective story; now move to Mor Levy's personal story.",
+        },
+        gis: { he: "—", en: "—" },
+        model: {
+          he: "מסלולי הבריחה של האנשים מהנובה; ישובים נדלקים כשקווי הבריחה מתנגשים בהם.",
+          en: "Escape routes of people from Nova; settlements light up where the routes intersect them.",
+        },
+        cue: { layers: NOVA_TIMELINE_LAYER_IDS, escape: { individual: true } },
+        kit: ["escape"],
       },
       {
         title: { he: "מור לוי", en: "Mor Levy" },
         note: {
-          he: "המדריך מספר את הרקע והמסלול. ארכיון הספרייה נפתח לרשומה שלה.",
-          en: "The guide tells her background and path. The NLI archive opens on her record.",
+          he: "מתחילים בסיפור של מור. המדריך מספר את הרקע והמסלול שעשתה.",
+          en: "Begin Mor's story. The guide tells her background and the route she took.",
         },
-        gis: {
-          he: "השם ״מור לוי״ על המפה.",
-          en: "The name “Mor Levy” on the map.",
-        },
+        gis: slides(9, 11),
         model: {
-          he: "המסלול: נובה → פרדס לימונים → אתר ההתארגנות של המידבּרן.",
-          en: "The path: Nova → lemon grove → the Midburn staging site.",
+          he: "המסלול של מור: מהנובה, בריחה לאחד מפרדסי הלימונים ואז לאתר ההתארגנות של המידברן.",
+          en: "Mor's route: from Nova, to one of the lemon groves, then to the Midburn staging site.",
         },
-        kit: ["archive"],
+        cue: { layers: NOVA_TIMELINE_LAYER_IDS, escape: { mor: true } },
+        kit: ["escape", "archive", "presentation"],
         personQuery: "מור לוי",
       },
       {
-        title: { he: "קטע וידאו", en: "Video" },
-        note: {
-          he: "אחרי הקטע מסיימים את הסיפור האישי.",
-          en: "After the clip, close the personal story.",
-        },
-        gis: { he: "קטע הווידאו על המסך.", en: "The video on the screen." },
-        model: {
-          he: "המודל מחזיק את נקודת הסיום של המסלול.",
-          en: "The model holds the end point of the path.",
-        },
-        kit: [],
-      },
-      {
-        title: { he: "שבים לקולקטיב", en: "Back to the collective" },
-        note: {
-          he: "טקסט בהקלדה: מספר האזרחים שנטבחו, שנחטפו ונרצחו, שנחטפו וחזרו בחיים.",
-          en: "Typed text: civilians murdered; kidnapped and murdered; kidnapped and returned alive.",
-        },
-        gis: {
-          he: "המספרים על המסך. נקודות — כולל מי שנרצח מחוץ למתחם הנובה.",
-          en: "The numbers on screen. Points — including those murdered outside the compound.",
-        },
-        model: {
-          he: "נקודות הנובה לפי החלוקה: נרצחו, נחטפו ונרצחו, נחטפו וחזרו.",
-          en: "Nova points by group: murdered, kidnapped and murdered, kidnapped and returned.",
-        },
-        kit: [],
-      },
-      {
         title: { he: "הנצחה", en: "Memorial" },
-        note: {
-          he: "רצף תמונות ארכיון עם נקודות הנצחה, שמסתיים בתמונת היער ועמודי ההנצחה.",
-          en: "A run of archive photos with memorial markers, ending on the forest and the memorial pillars.",
-        },
         gis: {
-          he: "מצגת תמונות שרצה לבד, בלי לחיצה לכל פריים.",
-          en: "A photo sequence that runs on its own, without a click per frame.",
+          he: "שקופיות 12–16: תמונות מתוך הארכיון של אתר הנובה עם נקודות הנצחה.",
+          en: "Slides 12–16: images from the Nova site archive with memorial points.",
         },
-        model: { he: "חוזר למבט רחב על האתר.", en: "Returns to a wide view of the site." },
-        kit: [],
+        model: {
+          he: "מודל מוחשך חוץ מהישובים ששמותיהם ״התנגשו״ בצירי הבריחה, עם נקודות של מי שנרצחו בנובה, ושל מי שנחטפו ונרצחו או נחטפו וחזרו בחיים.",
+          en: "Model dimmed except the settlements hit by the escape routes, with points for people murdered at Nova and those kidnapped and murdered or returned alive.",
+        },
+        cue: { layers: [...FOCUS_LAYER_IDS, PEOPLE], escape: { individual: true } },
+        kit: ["escape", "presentation"],
       },
     ],
   },
   {
     id: "sderot",
     index: "03",
+    narrative: "sderot",
     title: { he: "שדרות", en: "Sderot" },
-    meta: { he: "העיר", en: "The city" },
-    steps: [1, 2, 3, 4, 5, 6, 7].map((n) => draftStep(n)),
+    meta: { he: "תחנת המשטרה", en: "The police station" },
+    steps: [
+      {
+        title: { he: "שדרות", en: "Sderot" },
+        gis: {
+          he: "זום־אין על שדרות בתצ״א שחור־לבן, נקודה על משטרת שדרות.",
+          en: "Zoom to Sderot on black-and-white aerial, with a point on the Sderot police station.",
+        },
+        model: focusModel("שדרות", "Sderot"),
+        cue: { layers: FOCUS_LAYER_IDS },
+        kit: [],
+      },
+      {
+        title: { he: "מצגת", en: "Presentation" },
+        gis: slides(17, 20),
+        model: same,
+        cue: { layers: FOCUS_LAYER_IDS },
+        kit: ["presentation"],
+      },
+    ],
   },
   {
     id: "shura",
     index: "04",
-    title: { he: "מחנה שורה", en: "Camp Shura" },
+    narrative: null,
+    title: { he: "מחנה שורה", en: "Shura Camp" },
     meta: { he: "הזיהוי", en: "Identification" },
-    steps: [1, 2, 3, 4, 5, 6, 7].map((n) => draftStep(n)),
+    steps: [
+      {
+        title: { he: "מחנה שורה", en: "Shura Camp" },
+        note: { he: COPY.he.draft, en: COPY.en.draft },
+        gis: unknown,
+        model: unknown,
+        cue: { layers: FOCUS_LAYER_IDS },
+        kit: [],
+        draft: true,
+      },
+      {
+        title: { he: "מצגת", en: "Presentation" },
+        note: { he: COPY.he.draft, en: COPY.en.draft },
+        gis: slides(21, 27),
+        model: unknown,
+        cue: { layers: FOCUS_LAYER_IDS },
+        kit: ["presentation"],
+        draft: true,
+      },
+    ],
   },
   {
     id: "hostages",
     index: "05",
+    narrative: "hostages",
     title: { he: "חטופים", en: "Hostages" },
     meta: { he: "חיים פרי, ניר עוז", en: "Haim Peri, Nir Oz" },
     steps: [
       {
-        title: { he: "חיים פרי", en: "Haim Peri" },
-        note: {
-          he: "נרטיב החטופים נפתח בחיים פרי מניר עוז. ארכיון הספרייה נפתח לרשומה שלו.",
-          en: "The hostage narrative opens with Haim Peri of Nir Oz. The NLI archive opens on his record.",
-        },
+        title: { he: "ניר עוז", en: "Nir Oz" },
         gis: {
-          he: "פירוט הנרטיב בטבלה; השם כקישור.",
-          en: "Narrative detail in the table; the name is a link.",
+          he: "זום־אין על ניר עוז בתצ״א שחור־לבן, נקודה על הבית של משפחת פרי והכיתוב ״בית משפחת פרי״.",
+          en: "Zoom to Nir Oz on black-and-white aerial, with a point on the Peri family home and “Peri family home.”",
         },
-        model: { he: "פוקוס על ניר עוז ועל השם.", en: "Focus on Nir Oz and the name." },
+        model: focusModel("ניר עוז", "Nir Oz"),
+        cue: { layers: FOCUS_LAYER_IDS },
         kit: ["archive"],
         personQuery: "חיים פרי",
       },
-      draftStep(2),
-      draftStep(3),
-      draftStep(4),
-      draftStep(5),
-      draftStep(6),
-      draftStep(7),
+      {
+        title: { he: "מצגת", en: "Presentation" },
+        gis: slides(28, 33),
+        model: same,
+        cue: { layers: FOCUS_LAYER_IDS },
+        kit: ["presentation"],
+      },
+      {
+        title: { he: "נרצחים וחטופים בניר עוז", en: "Nir Oz victims and hostages" },
+        note: { he: "צריך לראות מה במצגת מתאים לזה.", en: "Determine which presentation content belongs here." },
+        gis: { he: "—", en: "—" },
+        model: {
+          he: "אותו דבר, עם נקודות של מי שנרצחו בניר עוז, ושל מי שנחטפו ונרצחו או נחטפו וחזרו בחיים.",
+          en: "Same, with points for people murdered in Nir Oz and those kidnapped and murdered or returned alive.",
+        },
+        cue: { layers: [...FOCUS_LAYER_IDS, PEOPLE] },
+        kit: [],
+      },
+      {
+        title: { he: "כל החטופים", en: "All hostages" },
+        note: { he: "צריך לראות מה במצגת מתאים לזה.", en: "Determine which presentation content belongs here." },
+        gis: { he: "—", en: "—" },
+        model: {
+          he: "המודל מפסיק להיות מוחשך והפוקוס יורד מניר עוז. נקודות של כל החטופים בלבד.",
+          en: "The model is no longer dimmed and the focus leaves Nir Oz. Points for all hostages only.",
+        },
+        cue: { narrative: "hostages_all", layers: [...FOCUS_LAYER_IDS, PEOPLE] },
+        kit: [],
+      },
     ],
+  },
+];
+
+export const SCRIPTS = [SHOW, ...NARRATIVES];
+
+export const SCENES = [
+  {
+    id: "open",
+    title: { he: "פתיחה", en: "Opening" },
+    meta: { he: "יישובים, כביש 232, SEA, דרכי עזה", en: "Settlements, Road 232, SEA, Gaza roads" },
+    cue: OPENING_CUE,
+  },
+  {
+    id: "loop",
+    title: { he: "ציר זמן בלולאה", en: "Loop timeline" },
+    meta: { he: "כל היום, מתנגן ברצף", en: "The whole day, playing on repeat" },
+    cue: { layers: TIMELINE_LAYER_IDS, clock: { loop: true } },
+  },
+  {
+    id: "identity",
+    title: { he: "מאגר הזהויות", en: "Identity database" },
+    meta: { he: "אנשים כנקודות", en: "People as points" },
+    cue: IDENTITY_CUE,
+  },
+  {
+    id: "wall",
+    title: { he: "קיר השמות", en: "Names wall" },
+    meta: { he: "כל השמות על המודל", en: "All names on the model" },
+    cue: WALL_CUE,
+  },
+  {
+    id: "layers",
+    title: { he: COPY.he.layersTitle, en: COPY.en.layersTitle },
+    meta: { he: COPY.he.layersMeta, en: COPY.en.layersMeta },
   },
 ];

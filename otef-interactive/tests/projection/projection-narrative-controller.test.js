@@ -103,10 +103,10 @@ describe("projection Segev narrative focus", () => {
     expect(map.beginCameraTravel).not.toHaveBeenCalled();
   });
 
-  test("Hostages applies the captivity filter without moving the projection camera", () => {
+  test("all-hostages applies the captivity filter without moving the projection camera", () => {
     const { map, controller } = setup();
 
-    controller.apply({ id: "hostages", transition: "enter", revision: 1 });
+    controller.apply({ id: "hostages_all", transition: "enter", revision: 1 });
     expect(map.setFilter).toHaveBeenCalledWith("nli-people", HOSTAGES_PEOPLE_FILTER);
     expect(map.flyTo).not.toHaveBeenCalled();
     expect(map.fitBounds).not.toHaveBeenCalled();

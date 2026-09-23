@@ -10,38 +10,21 @@ import {
 import {
   createNliNarrativePresentationController,
 } from "./nli-narrative-controls.js";
+import { consumeNliNovaEscapeClick, nliNovaEscapeTogglesHtml } from "./nli-nova-escape-toggles.js";
+import { createCueRunner } from "./nli-staff-cues.js";
 import { createPeopleSearchRuntime } from "./remote-people-search.js";
 import {
   createRemotePeopleArchiveController,
   waitForInvestigationClockIdle,
 } from "./remote-people-archive-controller.js";
-import { createRemoteZoomController } from "./remote-zoom-controls.js";
-import {
-  createRemoteDpadController,
-  createRemoteJoystickController,
-} from "./remote-joystick-controls.js";
 import { createStaffPackMenus } from "./nli-staff-pack-menus.js";
 import { labelForPlace, placeIsWithinRemoteBounds } from "./remote-place-navigation.js";
 import { applyServerLocale, bindLocaleButtons, getLocale, t, LOCALE_EVENT } from "./remote-locale.js";
-import { COPY, NARRATIVES, SCENES } from "./nli-staff-script.js";
+import { COPY, NARRATIVES, SCENES, SCRIPTS, SHOW } from "./nli-staff-script.js";
+import { nextAction, prevAction, slideIndexes } from "./nli-staff-flow.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
 
-export const SETTLEMENT_LAYER_IDS = [
-  "projector_base.שמות_יישובים",
-  "projector_base.Locations_Lines",
-  "projector_base.ישובים",
-];
-const ROAD_LAYER_IDS = ["nli.ציר_232"];
-export const PEOPLE_NAMES_LAYER_IDS = ["nli.people_names"];
-export const OPENING_LAYER_IDS = [
-  ...SETTLEMENT_LAYER_IDS,
-  ...ROAD_LAYER_IDS,
-  "projector_base.רקע_שחור",
-];
-export const WALL_LAYER_IDS = [
-  ...PEOPLE_NAMES_LAYER_IDS,
-  "projector_base.רקע_שחור",
-];
+const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false });
 
 const $ = (id) => document.getElementById(id);
 
@@ -60,8 +43,10 @@ export function initNliStaffRemote(dataContext) {
 
   const state = {
     screen: "home",
-    narrativeId: null,
+    scriptId: null,
     step: 0,
+    returnTo: null,
+    cueStatus: null,
     connected: false,
     connectionStatus: "disconnected",
     scene: null,
@@ -72,10 +57,7 @@ export function initNliStaffRemote(dataContext) {
   let lastPlaces = [];
   let archiveUiReady = false;
   let peopleArchive = null;
-  let viewerAngleDeg = 0;
   let packMenus = null;
-  let joystickController = null;
-  let joystickMountFrame = 0;
 
   const presentation = createNliNarrativePresentationController({
     dataContext,
@@ -116,6 +98,11 @@ export function initNliStaffRemote(dataContext) {
     },
   );
 
+  const escapeHost = {
+    setEscapeOverlay: (patch) =>
+      dataContext?.setEscapeOverlay?.({ ...NO_ESCAPE, ...dataContext.getEscapeOverlay?.(), ...patch }),
+  };
+
   const loc = (value) => (value ? value[getLocale()] || value.he || "" : "");
   const txt = (key, vars) => {
     let value = COPY[getLocale()]?.[key] || COPY.he[key] || "";
@@ -126,9 +113,13 @@ export function initNliStaffRemote(dataContext) {
     }
     return value;
   };
-  const narrative = () => NARRATIVES.find((item) => item.id === state.narrativeId);
-  const currentStep = () => narrative()?.steps[state.step] || null;
+  const script = () => SCRIPTS.find((item) => item.id === state.scriptId);
+  const currentStep = () => (state.screen === "player" ? script()?.steps[state.step] : null) || null;
   const stepKits = (step) => (Array.isArray(step?.kit) ? step.kit : []);
+  const presentationId = () => {
+    const id = script()?.narrative;
+    return getNliNarrative(id)?.presentationUrl ? id : null;
+  };
 
   async function setLayerSet(ids, enabled) {
     if (typeof dataContext?.setLayersEnabled !== "function" || !ids.length) return;
@@ -171,8 +162,6 @@ export function initNliStaffRemote(dataContext) {
     return [...ids];
   }
 
-  let sceneApplyQueue = Promise.resolve();
-
   async function commitSceneLayers(enabledIds) {
     const want = [...new Set(enabledIds)];
     const wantSet = new Set(want);
@@ -181,7 +170,30 @@ export function initNliStaffRemote(dataContext) {
     if (want.length) await setLayerSet(want, true);
   }
 
-  async function applyScene(id, options = {}) {
+  async function ensureClockIdle() {
+    try {
+      await waitForInvestigationClockIdle(dataContext);
+    } catch {
+      return;
+    }
+  }
+
+  const cues = createCueRunner({
+    dataContext,
+    commitLayers: commitSceneLayers,
+    stopClock: ensureClockIdle,
+    playClock: async (window, live) => {
+      await waitForNliCache();
+      if (live()) await timelineHost.handleNliTimelinePlay({ loop: false, ...window });
+    },
+    onStatus: (status) => {
+      state.cueStatus = status;
+      renderCueStatus();
+    },
+  });
+  const applyCue = (cue, narrativeId) => cues.apply(cue, narrativeId);
+
+  function applyScene(id) {
     const scene = SCENES.find((item) => item.id === id);
     if (!scene) return;
     if (id === "layers") {
@@ -191,76 +203,12 @@ export function initNliStaffRemote(dataContext) {
       return;
     }
     packMenus?.close({ silent: true });
-    const turningOff = !options.force && state.scene === id;
-    const target = turningOff ? null : id;
-    state.scene = target;
+    const turningOff = state.scene === id;
+    state.scene = turningOff ? null : id;
     state.freeError = null;
+    state.placeName = null;
     renderFree();
-
-    const run = async () => {
-      if (state.scene !== target) return;
-      try {
-        await ensureClockIdle();
-        if (state.scene !== target) return;
-        if (target === null) {
-          await commitSceneLayers([]);
-          return;
-        }
-        if (target === "open") {
-          if (typeof dataContext?.setNarrative === "function") {
-            try {
-              await dataContext.setNarrative(null);
-            } catch {
-              try {
-                await dataContext.setBasemap?.("dark");
-              } catch {
-                // Opening still applies layers even if the camera scene is unavailable.
-              }
-            }
-          }
-          if (state.scene !== target) return;
-          await commitSceneLayers(OPENING_LAYER_IDS);
-        } else if (target === "hour") {
-          await commitSceneLayers(NLI_PLAYABLE_IDS);
-          if (state.scene !== target) return;
-          await waitForNliCache();
-          if (state.scene !== target) return;
-          await timelineHost.handleNliTimelinePlay?.();
-        } else if (target === "wall") {
-          if (typeof dataContext?.setNarrative === "function") {
-            try {
-              await dataContext.setNarrative(null);
-            } catch {
-              // Names still apply if the camera scene cannot be cleared.
-            }
-          }
-          if (typeof dataContext?.clearPerson === "function") {
-            try {
-              await dataContext.clearPerson();
-            } catch {
-              // Keep the wall even if a leftover person selection cannot be cleared.
-            }
-          }
-          if (state.scene !== target) return;
-          await commitSceneLayers(WALL_LAYER_IDS);
-        }
-      } catch {
-        if (state.scene === target) state.freeError = txt("disconnected");
-      } finally {
-        if (state.scene === target) renderFree();
-      }
-    };
-
-    sceneApplyQueue = sceneApplyQueue.then(run, run);
-    return sceneApplyQueue;
-  }
-
-  async function ensureClockIdle() {
-    try {
-      await waitForInvestigationClockIdle(dataContext);
-    } catch {
-      return;
-    }
+    return applyCue(turningOff ? { layers: [], clock: "idle" } : scene.cue);
   }
 
   function applyChrome() {
@@ -292,24 +240,6 @@ export function initNliStaffRemote(dataContext) {
     el.classList.toggle("is-on", state.connected);
   }
 
-  function liveViewport() {
-    const viewport = dataContext?.getViewport?.();
-    return viewport?.bbox ? viewport : null;
-  }
-
-  function mountJoystick() {
-    if (joystickMountFrame) cancelAnimationFrame(joystickMountFrame);
-    let attempts = 0;
-    const tryInit = () => {
-      joystickMountFrame = 0;
-      if (joystickController?.init()) return;
-      if (attempts >= 12) return;
-      attempts += 1;
-      joystickMountFrame = requestAnimationFrame(tryInit);
-    };
-    tryInit();
-  }
-
   function showScreen(name) {
     state.screen = name;
     document.querySelectorAll(".screen").forEach((el) => {
@@ -319,23 +249,23 @@ export function initNliStaffRemote(dataContext) {
     });
     $("homeBtn").hidden = name === "home";
     if (name !== "free") packMenus?.close({ silent: true });
-    if (name !== "player") paintTimelineMounts();
-    if (name === "free") mountJoystick();
-    else joystickController?.destroy();
   }
 
-  function renderHome() {
-    $("narrativeList").innerHTML =
-      NARRATIVES.map(
-        (item) => `
-            <button type="button" class="nav-card" data-open="${item.id}">
+  function navCard(item, variant) {
+    return `
+            <button type="button" class="nav-card nav-card--${variant}" data-open="${item.id}">
               <span class="nav-card-copy">
                 <span class="nav-card-title">${loc(item.title)}</span>
                 <span class="nav-card-meta">${loc(item.meta)} · ${item.steps.length} ${txt("steps")}</span>
               </span>
-              <span class="nav-card-index">${item.index}</span>
-            </button>`,
-      ).join("") +
+              <span class="nav-card-index">${item.index || ""}</span>
+            </button>`;
+  }
+
+  function renderHome() {
+    $("narrativeList").innerHTML =
+      navCard(SHOW, "primary") +
+      `<div class="nav-row">${NARRATIVES.map((item) => navCard(item, "narrative")).join("")}</div>` +
       `
           <button type="button" class="nav-card nav-card--quiet" data-open-free="1">
             <span class="nav-card-copy">
@@ -373,57 +303,90 @@ export function initNliStaffRemote(dataContext) {
       cache,
       presentation.getState()?.phase === "open",
     );
-    ["kitTimeline", "freeTimeline"].forEach((id) => {
-      const mount = $(id);
-      if (!mount) return;
-      mount.innerHTML = html;
-    });
-    timelineHost.sheet = state.screen === "free" ? $("freeTimeline") : $("kitTimeline");
+    $("kitTimeline").innerHTML = html;
     timelineHost._syncNliPlayheadTicker?.(clock);
     timelineHost._syncNliEndedTimer?.(clock);
   }
 
   function renderPlayer() {
-    const item = narrative();
+    const item = script();
     if (!item) return;
     const step = item.steps[state.step];
-    const total = item.steps.length;
-    $("stepCount").textContent = `${state.step + 1} ${txt("of")} ${total}`;
-    $("ticks").innerHTML = item.steps
-      .map((_, index) => {
+    const slides = slideIndexes(item);
+    $("playerScript").textContent = loc(item.title);
+    $("stepCount").textContent = `${slides.indexOf(state.step) + 1} ${txt("of")} ${slides.length}`;
+    $("ticks").innerHTML = slides
+      .map((index, n) => {
         const cls = index < state.step ? "is-done" : index === state.step ? "is-current" : "";
-        return `<span class="${cls}"></span>`;
+        const current = index === state.step ? ' aria-current="step"' : "";
+        return `<button type="button" class="${cls}" data-step="${index}"${current} aria-label="${txt("stepAria", { n: n + 1 })}"></button>`;
       })
       .join("");
-    $("stepClock").textContent = step.clock && !String(step.clock).includes("x") ? step.clock : "";
+    $("stepClock").textContent = step.clock || "";
     $("stepTitle").textContent = loc(step.title);
     $("stepNote").textContent = loc(step.note);
     $("stepNote").classList.toggle("draft-note", Boolean(step.draft));
     $("stepGis").textContent = loc(step.gis);
     $("stepModel").textContent = loc(step.model);
-    $("prevBtn").disabled = state.step === 0;
-    $("nextBtn").textContent = state.step === total - 1 ? txt("done") : txt("next");
+    renderDock();
     renderKit();
+  }
+
+  function renderDock() {
+    const next = nextAction(state);
+    const choices = next.kind === "choose";
+    $("prevBtn").disabled = !prevAction(state);
+    $("nextBtn").hidden = choices;
+    $("nextBtn").textContent = txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next");
+    $("nextChoices").hidden = !choices;
+    $("nextChoices").innerHTML = !choices ? "" : next.ids
+      .map((id) => {
+        const item = NARRATIVES.find((narrative) => narrative.id === id);
+        const title = next.ids.length === 1 ? txt("startStory", { title: loc(item.title) }) : loc(item.title);
+        return `<button type="button" class="branch-btn" data-branch="${id}">
+              <span class="branch-btn-title">${title}</span>
+              <span class="branch-btn-meta">${loc(item.meta)} · ${item.steps.length} ${txt("steps")}</span>
+            </button>`;
+      })
+      .join("");
+  }
+
+  function renderCueStatus() {
+    const key = { applying: "cueApplying", ready: "cueReady", failed: "cueFailed" }[state.cueStatus];
+    ["cueStatus", "freeCueStatus"].forEach((id) => {
+      const el = $(id);
+      el.textContent = key ? txt(key) : "";
+      el.dataset.status = state.cueStatus || "";
+    });
   }
 
   function renderKit() {
     const step = currentStep();
     const kits = stepKits(step);
-    const hasTimeline = kits.includes("timeline");
-    const hasPresentation = kits.includes("presentation");
-    const hasArchive = kits.includes("archive");
-    $("kitTimeline").hidden = !hasTimeline;
-    $("kitPresentation").hidden = !hasPresentation;
-    $("kitArchive").hidden = !hasArchive;
-    $("kitIdle").hidden = kits.length > 0;
+    const show = {
+      kitTimeline: kits.includes("timeline"),
+      kitPresentation: kits.includes("presentation") && !!presentationId(),
+      kitArchive: kits.includes("archive"),
+      kitSearch: kits.includes("search"),
+      kitEscape: kits.includes("escape"),
+    };
+    Object.entries(show).forEach(([id, on]) => {
+      $(id).hidden = !on;
+    });
+    $("kitIdle").hidden = Object.values(show).some(Boolean);
     $("kitIdle").textContent = txt("kitIdle");
-    const clockLabel = step?.clock && !String(step.clock).includes("x") ? step.clock : "";
-    $("kitReset").textContent = clockLabel ? txt("kitReset", { clock: clockLabel }) : txt("kitResetOpen");
-    if (hasTimeline) {
+    renderCueStatus();
+    if (show.kitTimeline) {
       void timelineHost._ensureNliFeatureCache?.();
       paintTimelineMounts();
     }
-    if (hasPresentation) {
+    if (show.kitEscape) {
+      $("kitEscape").innerHTML = nliNovaEscapeTogglesHtml(
+        dataContext?.getNarrativeState?.(),
+        dataContext?.getEscapeOverlay?.(),
+      );
+    }
+    if (show.kitPresentation) {
       const phase = presentation.getState()?.phase || "closed";
       const pending = phase === "opening" || phase === "closing";
       const open = phase === "open" || phase === "closing";
@@ -436,9 +399,9 @@ export function initNliStaffRemote(dataContext) {
             ? "nliNarrativePresentationClose"
             : "nliNarrativePresentationOpen",
       );
-      $("presentationBtn").disabled = !state.connected || pending || !getNliNarrative("segev")?.presentationUrl;
+      $("presentationBtn").disabled = !state.connected || pending;
     }
-    if (hasArchive) {
+    if (show.kitArchive) {
       const phase = peopleArchive?.getArchivePhase?.() || "closed";
       const pending = phase === "opening" || phase === "closing";
       const open = phase === "open" || phase === "closing";
@@ -509,20 +472,7 @@ export function initNliStaffRemote(dataContext) {
     status.append(document.createTextNode(message));
   }
 
-  function renderFree() {
-    paintTimelineMounts();
-    const list = $("sceneList");
-    if (list) {
-      list.innerHTML = SCENES.map((scene) => {
-        const active = scene.id === "layers" ? packMenus?.isOpen() : state.scene === scene.id;
-        return `
-            <button type="button" class="scene-btn${active ? " is-active" : ""}" data-scene="${scene.id}">
-              <span class="scene-btn-title">${loc(scene.title)}</span>
-              <span class="scene-btn-meta">${loc(scene.meta)}</span>
-            </button>`;
-      }).join("");
-    }
-    packMenus?.render();
+  function renderSearchStatus() {
     const archivePerson = peopleArchive?.getAcknowledgedPerson?.();
     if (state.freeError) {
       paintFreeStatus(state.freeError, false);
@@ -530,12 +480,22 @@ export function initNliStaffRemote(dataContext) {
       paintFreeStatus(`${txt("nowShowing")}: ${archivePerson.name}`, true);
     } else if (state.placeName) {
       paintFreeStatus(`${txt("nowShowing")}: ${state.placeName}`, true);
-    } else if (state.scene) {
-      const scene = SCENES.find((item) => item.id === state.scene);
-      paintFreeStatus(scene ? `${txt("nowShowing")}: ${loc(scene.title)}` : "", true);
     } else {
       paintFreeStatus("", false);
     }
+  }
+
+  function renderFree() {
+    $("sceneList").innerHTML = SCENES.map((scene) => {
+      const active = scene.id === "layers" ? packMenus?.isOpen() : state.scene === scene.id;
+      return `
+            <button type="button" class="scene-btn${active ? " is-active" : ""}" data-scene="${scene.id}">
+              <span class="scene-btn-title">${loc(scene.title)}</span>
+              <span class="scene-btn-meta">${loc(scene.meta)}</span>
+            </button>`;
+    }).join("");
+    packMenus?.render();
+    renderCueStatus();
   }
 
   function render() {
@@ -545,27 +505,49 @@ export function initNliStaffRemote(dataContext) {
     if (state.screen === "free") renderFree();
   }
 
-  async function enterNarrative(id) {
-    state.narrativeId = id;
-    state.step = 0;
-    if (dataContext?.setNarrative && ["segev", "nova"].includes(id)) {
-      try {
-        await dataContext.setNarrative(id);
-      } catch {
-        // Keep the staff script even if the map narrative is unavailable.
-      }
+  function resetSearch() {
+    $("searchInput").value = "";
+    renderResults("");
+    state.freeError = null;
+    state.placeName = null;
+  }
+
+  function goToStep(index) {
+    const item = script();
+    if (!item) return;
+    state.step = Math.max(0, Math.min(index, item.steps.length - 1));
+    const step = item.steps[state.step];
+    const open = presentation.getState();
+    if (open?.phase === "open" && !stepKits(step).includes("presentation")) {
+      void presentation.run("close", open.id);
     }
-    showScreen("player");
+    resetSearch();
     renderPlayer();
+    void applyCue(step.cue, item.narrative);
+  }
+
+  function enterScript(id, { step = 0, returnTo = null } = {}) {
+    state.scriptId = id;
+    state.returnTo = returnTo;
+    showScreen("player");
+    goToStep(step);
     void timelineHost._ensureNliFeatureCache?.();
   }
 
-  async function exitNarrative() {
-    state.narrativeId = null;
+  async function exitToHome() {
+    cues.cancel();
+    state.scriptId = null;
     state.step = 0;
+    state.returnTo = null;
     state.scene = null;
-    state.placeName = null;
-    state.freeError = null;
+    state.cueStatus = null;
+    resetSearch();
+    if (peopleArchive?.getArchivePhase?.() === "open") {
+      void peopleArchive.closeArchive();
+    }
+    presentation.reset(null);
+    showScreen("home");
+    renderHome();
     if (dataContext?.setNarrative) {
       try {
         await dataContext.setNarrative(null);
@@ -573,12 +555,6 @@ export function initNliStaffRemote(dataContext) {
         // ignore
       }
     }
-    if (peopleArchive?.getArchivePhase?.() === "open") {
-      void peopleArchive.closeArchive();
-    }
-    presentation.reset(null);
-    showScreen("home");
-    renderHome();
   }
 
   function findPerson(query) {
@@ -610,45 +586,6 @@ export function initNliStaffRemote(dataContext) {
     await peopleArchive.openArchive(person);
   }
 
-  const zoomController = createRemoteZoomController({
-    slider: $("zoomSlider"),
-    zoomIn: $("zoomIn"),
-    zoomOut: $("zoomOut"),
-    zoomValue: $("zoomValue"),
-    getViewport: liveViewport,
-    zoom: (level) => dataContext?.zoom?.(level),
-    isConnected: () => state.connected,
-  });
-  zoomController.init();
-
-  if (typeof dataContext?.getViewerAngleDeg === "function") {
-    const angle = dataContext.getViewerAngleDeg();
-    if (typeof angle === "number" && !Number.isNaN(angle)) viewerAngleDeg = angle;
-  }
-
-  const dpadController = createRemoteDpadController({
-    root: $("free") || document,
-    isConnected: () => state.connected,
-    getViewport: liveViewport,
-    getViewerAngleDeg: () => viewerAngleDeg,
-    sendVelocity: (dx, dy) => dataContext?.sendVelocity?.(dx, dy),
-  });
-  dpadController.init();
-
-  joystickController = createRemoteJoystickController({
-    zone: $("joystickZone"),
-    nipplejs: typeof globalThis.nipplejs !== "undefined" ? globalThis.nipplejs : null,
-    isConnected: () => state.connected,
-    getViewport: liveViewport,
-    getViewerAngleDeg: () => viewerAngleDeg,
-    sendVelocity: (dx, dy) => dataContext?.sendVelocity?.(dx, dy),
-    onStart: () => dpadController.setEnabled(false),
-    onEnd: () => dpadController.setEnabled(true),
-    size: 100,
-    color: "#1a1a1a",
-    restOpacity: 0.6,
-  });
-
   packMenus = createStaffPackMenus({
     root: $("staffPackMenus"),
     getGroups: () => timelineHost.getEffectiveGroupsForView(),
@@ -666,10 +603,10 @@ export function initNliStaffRemote(dataContext) {
   });
 
   peopleArchive = createRemotePeopleArchiveController({
-    root: $("free"),
+    root: document.querySelector(".app"),
     input: $("searchInput"),
     list: $("searchResults"),
-    navigationSection: $("free"),
+    navigationSection: $("searchKit"),
     archiveButton: $("freeArchiveBtn"),
     dataContext,
     peopleRuntime: peopleSearch,
@@ -678,7 +615,7 @@ export function initNliStaffRemote(dataContext) {
     renderSuggestions: () => renderResults(""),
     setStatus: (message) => {
       state.freeError = message || null;
-      if (state.screen === "free") renderFree();
+      renderSearchStatus();
     },
     setRootClass: () => {},
     setHidden: () => {},
@@ -688,7 +625,7 @@ export function initNliStaffRemote(dataContext) {
     onStateChange: () => {
       if (!archiveUiReady) return;
       renderKit();
-      if (state.screen === "free") renderFree();
+      renderSearchStatus();
     },
   });
   archiveUiReady = true;
@@ -702,36 +639,48 @@ export function initNliStaffRemote(dataContext) {
       return;
     }
     const card = event.target.closest("[data-open]");
-    if (card) void enterNarrative(card.dataset.open);
+    if (card) enterScript(card.dataset.open);
   });
 
   $("homeBtn").addEventListener("click", () => {
-    $("searchInput").value = "";
-    renderResults("");
-    void exitNarrative();
+    void exitToHome();
+  });
+
+  $("ticks").addEventListener("click", (event) => {
+    const tick = event.target.closest("[data-step]");
+    if (tick) goToStep(Number(tick.dataset.step));
   });
 
   $("prevBtn").addEventListener("click", () => {
-    if (state.step === 0) return;
-    state.step -= 1;
-    renderPlayer();
+    const prev = prevAction(state);
+    if (!prev) return;
+    if (prev.scriptId === state.scriptId) goToStep(prev.step);
+    else enterScript(prev.scriptId, prev);
   });
 
   $("nextBtn").addEventListener("click", () => {
-    const item = narrative();
-    if (!item) return;
-    if (state.step >= item.steps.length - 1) {
-      void exitNarrative();
-      return;
-    }
-    state.step += 1;
-    renderPlayer();
+    const next = nextAction(state);
+    if (next.kind === "step") goToStep(next.step);
+    else if (next.kind === "resume") enterScript(next.scriptId, { step: next.step });
+    else if (next.kind === "finish") void exitToHome();
+  });
+
+  $("nextChoices").addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-branch]");
+    const next = nextAction(state);
+    if (!btn || next.kind !== "choose") return;
+    enterScript(btn.dataset.branch, { returnTo: { id: next.scriptId, step: next.junction } });
+  });
+
+  $("kitEscape").addEventListener("click", (event) => {
+    consumeNliNovaEscapeClick(event, escapeHost);
   });
 
   $("presentationBtn").addEventListener("click", () => {
+    const id = presentationId();
+    if (!id) return;
     const phase = presentation.getState()?.phase || "closed";
-    const action = phase === "open" ? "close" : "open";
-    void presentation.run(action, "segev");
+    void presentation.run(phase === "open" ? "close" : "open", id);
   });
 
   $("archiveBtn").addEventListener("click", () => {
@@ -757,15 +706,15 @@ export function initNliStaffRemote(dataContext) {
       if (!place) return;
       if (placeIsWithinRemoteBounds(place, dataContext) === false) {
         state.freeError = t("placeSearchEmpty");
-        renderFree();
+        renderSearchStatus();
         return;
       }
       state.placeName = name;
       state.freeError = null;
-      renderFree();
+      renderSearchStatus();
       void dataContext?.navigateToPlace?.(place).catch(() => {
         state.freeError = t("placeSearchFailed");
-        renderFree();
+        renderSearchStatus();
       });
       return;
     }
@@ -781,7 +730,7 @@ export function initNliStaffRemote(dataContext) {
     state.freeError = null;
     $("searchInput").value = person.name;
     renderResults("");
-    renderFree();
+    renderSearchStatus();
     void peopleArchive.selectPerson(person);
   });
 
@@ -793,7 +742,7 @@ export function initNliStaffRemote(dataContext) {
   initNliStaffLocaleControls(dataContext, {
     onFailure: () => {
       state.freeError = t("statusError");
-      renderFree();
+      renderSearchStatus();
     },
   });
   dataContext?.subscribe?.("legendSettings", (settings) => {
@@ -808,18 +757,14 @@ export function initNliStaffRemote(dataContext) {
   timelineRoot.addEventListener("click", (event) => {
     consumeNliTimelineButtonClick(event, timelineHost);
   });
-  $("freeTimeline").addEventListener("click", (event) => {
-    consumeNliTimelineButtonClick(event, timelineHost);
-  });
   bindNliTimelinePointerListeners(timelineRoot, timelineHost);
-  bindNliTimelinePointerListeners($("freeTimeline"), timelineHost);
 
   dataContext?.subscribe?.("connection", (isConnected) => {
     state.connected = !!isConnected;
     renderConnection();
     peopleArchive.syncArchiveButton();
     renderKit();
-    renderFree();
+    if (state.screen === "free") renderFree();
   });
   dataContext?.subscribe?.("connectionStatus", (status) => {
     state.connectionStatus = status;
@@ -832,16 +777,12 @@ export function initNliStaffRemote(dataContext) {
   dataContext?.subscribe?.("narrativeState", () => {
     renderKit();
   });
+  dataContext?.subscribe?.("escapeOverlay", () => {
+    renderKit();
+  });
   dataContext?.subscribe?.("layerGroups", () => {
     if (state.screen === "free") renderFree();
   });
-  dataContext?.subscribe?.("orientation", (angle) => {
-    if (typeof angle === "number" && !Number.isNaN(angle)) viewerAngleDeg = angle;
-  });
-  dataContext?.subscribe?.("viewport", (viewport) => {
-    zoomController.syncFromViewport(viewport);
-  });
-
   state.connected = dataContext?.isConnected?.() !== false;
   render();
   void timelineHost._ensureNliFeatureCache?.();

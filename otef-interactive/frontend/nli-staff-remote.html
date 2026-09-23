@@ -41,10 +41,6 @@
         --pad: clamp(16px, 2.4vw, 32px);
         --gap: clamp(6px, 1.1vh, 12px);
         --space: clamp(8px, 1.5vh, 20px);
-        --map-scale: 1.25;
-        --dpad-size: calc(200px * var(--map-scale));
-        --map-control-pad: calc(12px * var(--map-scale));
-        --zoom-btn: calc(44px * var(--map-scale));
       }
 
       * { box-sizing: border-box; }
@@ -179,9 +175,6 @@
       }
       .screen.is-active { display: flex; }
       .screen[hidden] { display: none !important; }
-      #free.screen {
-        padding-bottom: max(clamp(32px, 5vh, 64px), env(safe-area-inset-bottom));
-      }
 
       .kicker {
         font-size: var(--text-kicker);
@@ -205,8 +198,13 @@
         flex: 1;
         min-height: 0;
         display: grid;
-        grid-template-columns: 1fr;
-        grid-template-rows: repeat(6, minmax(0, 1fr));
+        grid-template-rows: minmax(0, 2fr) minmax(0, 3fr) minmax(0, 1fr);
+        gap: var(--gap);
+      }
+      .nav-row {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
         gap: var(--gap);
       }
       .nav-card {
@@ -226,6 +224,11 @@
         background: transparent;
         border-color: var(--nli-line);
       }
+      .nav-card--primary {
+        background: var(--nli-ink);
+        color: var(--nli-paper);
+      }
+      .nav-card--primary .nav-card-meta { color: #d9d0c8; }
       .nav-card-index {
         font-size: var(--text-status);
         font-weight: 300;
@@ -236,6 +239,23 @@
         text-align: end;
       }
       .nav-card-copy { flex: 1; min-width: 0; }
+      .nav-card--narrative {
+        flex-direction: column;
+        align-items: stretch;
+        padding-block: clamp(12px, 2vh, 20px);
+      }
+      .nav-card--narrative .nav-card-index {
+        order: -1;
+        width: auto;
+        text-align: start;
+      }
+      .nav-card--narrative .nav-card-copy {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+      }
+      .nav-card--narrative .nav-card-title,
+      .nav-card--narrative .nav-card-meta { white-space: normal; }
       .nav-card-title,
       .nav-card-meta,
       .result-name,
@@ -291,17 +311,26 @@
       .ticks {
         display: flex;
         gap: 6px;
-        margin: 10px 0 var(--space);
+        margin: 2px 0 var(--space);
         flex-shrink: 0;
       }
-      .ticks span {
+      .ticks button {
         flex: 1;
+        height: 28px;
+        position: relative;
+      }
+      .ticks button::after {
+        content: "";
+        position: absolute;
+        inset-inline: 0;
+        top: 50%;
         height: 2px;
+        margin-top: -1px;
         background: var(--nli-line);
       }
-      .ticks span.is-done,
-      .ticks span.is-current { background: var(--nli-ink); }
-      .ticks span.is-current { height: 3px; }
+      .ticks button.is-done::after,
+      .ticks button.is-current::after { background: var(--nli-ink); }
+      .ticks button.is-current::after { height: 4px; margin-top: -2px; }
 
       .clock {
         font-size: var(--text-status);
@@ -337,11 +366,85 @@
         gap: 8px;
         margin-top: var(--space);
       }
-      .kit-reset {
+      .cue-status {
         margin: 0;
         font-size: var(--text-meta);
         color: var(--nli-gray-2);
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
+      .cue-status:empty { display: none; }
+      .cue-status::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        flex-shrink: 0;
+        border-radius: 50%;
+        background: var(--nli-line);
+      }
+      .cue-status[data-status="ready"] { color: var(--nli-ink); }
+      .cue-status[data-status="ready"]::before { background: var(--nli-yellow); }
+      .cue-status[data-status="failed"] { color: #b3261e; }
+      .cue-status[data-status="failed"]::before { background: #b3261e; }
+
+      .dock-choices {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(0, 1fr);
+        gap: 8px;
+      }
+      .dock-choices[hidden] { display: none; }
+      .branch-btn {
+        min-height: var(--tap);
+        padding: 6px 16px;
+        text-align: start;
+        background: var(--nli-ink);
+        color: var(--nli-paper);
+        border: 1px solid var(--nli-ink);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 2px;
+      }
+      .branch-btn-title {
+        font-size: var(--text-ui);
+        font-weight: 600;
+        line-height: 1.2;
+      }
+      .branch-btn-meta {
+        font-size: var(--text-meta);
+        color: #d9d0c8;
+      }
+
+      .nli-nova-escape-toggles {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: var(--gap);
+      }
+      .nli-nova-escape-toggle {
+        min-height: var(--tap);
+        padding: 8px 12px;
+        border: 1px solid var(--nli-line);
+        font-size: var(--text-meta);
+        font-weight: 600;
+      }
+      .nli-nova-escape-toggle.is-active {
+        background: var(--nli-ink);
+        border-color: var(--nli-ink);
+        color: var(--nli-paper);
+      }
+
+      #freeArchiveBtn {
+        width: 100%;
+        margin-bottom: var(--gap);
+      }
+      #kitSearch .results {
+        top: auto;
+        bottom: calc(100% - 1px);
+      }
+      #kitSearch .search { margin-bottom: 0; }
+      #kitSearch .free-status { margin: var(--gap) 0 0; }
       .kit-idle {
         margin: 0;
         font-size: var(--text-meta);
@@ -552,13 +655,6 @@
         border: 5px solid transparent;
         border-top-color: var(--nli-yellow);
       }
-      .free-bottom {
-        display: flex;
-        flex-direction: column;
-        gap: var(--space);
-        flex-shrink: 0;
-      }
-
       .screens {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -694,24 +790,19 @@
       }
 
       .scene-list {
-        flex: 0 1 auto;
-        min-height: 112px;
+        flex: 1;
+        min-height: 0;
         display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        grid-template-rows: repeat(2, minmax(0, 1fr));
+        grid-template-columns: 1fr;
+        grid-auto-rows: minmax(0, 1fr);
         gap: var(--gap);
       }
-      @media (min-width: 720px) {
-        .scene-list {
-          grid-template-columns: repeat(4, 1fr);
-          grid-template-rows: minmax(0, 1fr);
-        }
-      }
+      .free-cue-status { margin-bottom: var(--gap); }
       .scene-btn {
         width: 100%;
         height: 100%;
-        min-height: 112px;
-        padding: 16px 14px;
+        min-height: 0;
+        padding: 16px clamp(14px, 2vw, 24px);
         text-align: start;
         border: 1px solid var(--nli-line);
         background: transparent;
@@ -740,219 +831,6 @@
         line-height: 1.35;
       }
       .scene-btn.is-active .scene-btn-meta { color: #d9d0c8; }
-
-      .free-deck {
-        flex: 1 1 auto;
-        min-height: 0;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        position: relative;
-        z-index: 2;
-      }
-      .free-navigate {
-        display: flex;
-        justify-content: center;
-        width: 100%;
-        direction: ltr;
-        unicode-bidi: isolate;
-      }
-      .map-controls {
-        display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        gap: calc(10px * var(--map-scale));
-        width: calc(var(--dpad-size) + (var(--map-control-pad) * 2));
-        padding: var(--map-control-pad);
-        border: calc(1px * var(--map-scale)) solid var(--nli-line);
-        background: var(--nli-paper);
-      }
-      .dpad-container {
-        display: flex;
-        justify-content: center;
-        direction: ltr;
-        unicode-bidi: isolate;
-      }
-      .dpad {
-        position: relative;
-        width: var(--dpad-size);
-        height: var(--dpad-size);
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        grid-template-rows: repeat(3, 1fr);
-        gap: calc(4px * var(--map-scale));
-        direction: ltr;
-        unicode-bidi: isolate;
-      }
-      .dpad-button {
-        width: var(--zoom-btn);
-        height: var(--zoom-btn);
-        min-width: var(--zoom-btn);
-        min-height: var(--zoom-btn);
-        background: var(--nli-cream);
-        border: calc(2px * var(--map-scale)) solid var(--nli-line);
-        color: var(--nli-ink);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        touch-action: none;
-        user-select: none;
-      }
-      .dpad-button:active,
-      .dpad-button.active {
-        background: var(--nli-ink);
-        border-color: var(--nli-ink);
-        color: var(--nli-paper);
-      }
-      .dpad-button svg {
-        width: calc(24px * var(--map-scale));
-        height: calc(24px * var(--map-scale));
-        stroke-width: calc(2.5 * var(--map-scale));
-      }
-      .dpad-up { grid-column: 2; grid-row: 1; align-self: start; justify-self: center; }
-      .dpad-left { grid-column: 1; grid-row: 2; align-self: center; justify-self: start; }
-      .dpad-right { grid-column: 3; grid-row: 2; align-self: center; justify-self: end; }
-      .dpad-down { grid-column: 2; grid-row: 3; align-self: end; justify-self: center; }
-      .joystick-container,
-      .joystick-zone {
-        grid-column: 2;
-        grid-row: 2;
-        position: relative;
-        width: calc(var(--dpad-size) * 0.5);
-        height: calc(var(--dpad-size) * 0.5);
-        min-width: calc(var(--dpad-size) * 0.5);
-        min-height: calc(var(--dpad-size) * 0.5);
-        justify-self: center;
-        align-self: center;
-        z-index: 2;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        touch-action: none;
-        user-select: none;
-        direction: ltr;
-        unicode-bidi: isolate;
-      }
-      #joystickZone .nipple {
-        right: auto !important;
-      }
-      .joystick-base {
-        width: calc(50px * var(--map-scale));
-        height: calc(50px * var(--map-scale));
-        border: calc(2px * var(--map-scale)) solid var(--nli-line);
-        border-radius: 50%;
-        pointer-events: none;
-        opacity: 0.6;
-      }
-      .joystick-zone.active .joystick-base {
-        border-color: var(--nli-ink);
-        opacity: 1;
-      }
-      #joystickZone .back {
-        background: var(--nli-cream) !important;
-        border: calc(2px * var(--map-scale)) solid var(--nli-line) !important;
-      }
-      #joystickZone .front {
-        background: var(--nli-ink) !important;
-        border: calc(1px * var(--map-scale)) solid rgba(26, 26, 26, 0.35) !important;
-      }
-      #joystickZone.active .back {
-        border-color: var(--nli-ink) !important;
-      }
-      .zoom-controls {
-        display: flex;
-        flex-direction: column;
-        gap: calc(6px * var(--map-scale));
-        padding-top: calc(10px * var(--map-scale));
-        border-top: calc(1px * var(--map-scale)) solid var(--nli-line);
-      }
-      .zoom-display {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        font-size: calc(var(--text-meta) * var(--map-scale));
-      }
-      html[dir="rtl"] .zoom-display { direction: rtl; }
-      html[dir="ltr"] .zoom-display { direction: ltr; }
-      .zoom-label { color: var(--nli-gray-2); }
-      .zoom-value {
-        color: var(--nli-ink);
-        font-weight: 600;
-        font-variant-numeric: tabular-nums;
-        min-width: 2ch;
-        text-align: end;
-      }
-      .zoom-slider-container {
-        display: flex;
-        align-items: center;
-        gap: calc(6px * var(--map-scale));
-        direction: ltr;
-        unicode-bidi: isolate;
-      }
-      .zoom-slider {
-        flex: 1;
-        min-width: 0;
-        height: var(--zoom-btn);
-        margin: 0;
-        background: linear-gradient(var(--nli-line), var(--nli-line)) no-repeat center / 100% calc(6px * var(--map-scale));
-        outline: none;
-        -webkit-appearance: none;
-        appearance: none;
-        cursor: pointer;
-        direction: ltr;
-      }
-      .zoom-slider::-webkit-slider-runnable-track {
-        height: calc(6px * var(--map-scale));
-        background: var(--nli-line);
-      }
-      .zoom-slider::-moz-range-track {
-        height: calc(6px * var(--map-scale));
-        background: var(--nli-line);
-        border: 0;
-      }
-      .zoom-slider::-webkit-slider-thumb {
-        -webkit-appearance: none;
-        appearance: none;
-        width: calc(18px * var(--map-scale));
-        height: calc(18px * var(--map-scale));
-        margin-top: calc(-6px * var(--map-scale));
-        background: var(--nli-ink);
-        border: calc(1px * var(--map-scale)) solid var(--nli-ink);
-        border-radius: 50%;
-        cursor: pointer;
-      }
-      .zoom-slider::-moz-range-thumb {
-        width: calc(18px * var(--map-scale));
-        height: calc(18px * var(--map-scale));
-        background: var(--nli-ink);
-        border: calc(1px * var(--map-scale)) solid var(--nli-ink);
-        border-radius: 50%;
-        cursor: pointer;
-      }
-      .zoom-button {
-        width: var(--zoom-btn);
-        height: var(--zoom-btn);
-        flex-shrink: 0;
-        border: calc(2px * var(--map-scale)) solid var(--nli-line);
-        background: var(--nli-cream);
-        color: var(--nli-ink);
-        font-size: calc(22px * var(--map-scale));
-        font-weight: 300;
-        line-height: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      .zoom-button:active {
-        background: var(--nli-ink);
-        border-color: var(--nli-ink);
-        color: var(--nli-paper);
-      }
-      #freeTimeline {
-        flex-shrink: 0;
-      }
 
       .layer-sheet {
         position: fixed;
@@ -1112,10 +990,6 @@
       }
 
       @media (min-width: 600px) {
-        .nav-list {
-          grid-template-columns: 1fr 1fr;
-          grid-template-rows: repeat(3, minmax(0, 1fr));
-        }
         .step-note { -webkit-line-clamp: 5; }
         .screen-copy { -webkit-line-clamp: 4; }
       }
@@ -1134,15 +1008,11 @@
           --pad: 32px;
           --gap: 12px;
           --space: 20px;
-          --dpad-size: calc(200px * var(--map-scale));
-          --zoom-btn: calc(48px * var(--map-scale));
         }
         .locale button {
           min-width: 48px;
         }
         .nav-card { padding-inline: 24px; }
-        .scene-list { min-height: 220px; }
-        .scene-btn { min-height: 220px; padding: 22px 18px; }
         .step-note,
         .screen-copy {
           display: block;
@@ -1165,9 +1035,6 @@
           --pad: 28px;
           --gap: 10px;
           --space: 12px;
-          --dpad-size: calc(152px * var(--map-scale));
-          --map-control-pad: calc(10px * var(--map-scale));
-          --zoom-btn: calc(44px * var(--map-scale));
         }
         .kicker,
         .lede,
@@ -1176,18 +1043,9 @@
         .locale button {
           min-width: 44px;
         }
-        .nav-list {
-          grid-template-columns: repeat(3, 1fr);
-          grid-template-rows: repeat(2, minmax(0, 1fr));
-        }
         .nav-card { padding-inline: 20px; }
         .lede { max-width: 52ch; }
-        .scene-list {
-          min-height: 96px;
-          grid-template-columns: repeat(4, 1fr);
-          grid-template-rows: minmax(0, 1fr);
-        }
-        .scene-btn { min-height: 96px; padding: 14px 16px; }
+        .scene-list { grid-template-columns: repeat(5, 1fr); }
         .player-body {
           display: grid;
           grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
@@ -1253,7 +1111,7 @@
         .screen-copy { -webkit-line-clamp: 2; }
         .nli-tl-hours { display: none; }
         .nli-tl-scrub-row { padding-top: 8px; }
-        .kit-reset { display: none; }
+        .cue-status { display: none; }
       }
 
     </style>
@@ -1294,15 +1152,31 @@
         <section class="screen" id="player" data-screen="player" hidden>
           <div class="player-body">
             <div class="player-top">
-              <span class="badge-live" data-i18n="live">שידור</span>
+              <span class="badge-live" id="playerScript"></span>
               <span class="step-count" id="stepCount"></span>
             </div>
-            <div class="ticks" id="ticks" aria-hidden="true"></div>
+            <div class="ticks" id="ticks"></div>
             <div class="clock" id="stepClock"></div>
             <h1 class="step-title" id="stepTitle"></h1>
             <p class="step-note" id="stepNote"></p>
             <div class="kit" id="playerKit">
-              <p class="kit-reset" id="kitReset"></p>
+              <p class="cue-status" id="cueStatus" role="status"></p>
+              <div class="kit-block" id="kitSearch" hidden>
+                <div class="search-kit" id="searchKit">
+                  <div class="search">
+                    <svg class="search-icon icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" aria-hidden="true">
+                      <circle cx="11" cy="11" r="7"></circle>
+                      <path d="m20 20-3.5-3.5"></path>
+                    </svg>
+                    <label class="visually-hidden" for="searchInput" data-i18n="searchLabel">חיפוש שם או מקום</label>
+                    <input id="searchInput" type="search" autocomplete="off" data-i18n-placeholder="searchPlaceholder" placeholder="חיפוש שם או מקום" />
+                    <ul class="results" id="searchResults"></ul>
+                  </div>
+                  <p class="free-status" id="freeStatus"></p>
+                  <button type="button" class="btn" id="freeArchiveBtn" hidden>פתיחת ארכיון הספרייה</button>
+                </div>
+              </div>
+              <div class="kit-block" id="kitEscape" hidden></div>
               <div class="kit-block" id="kitTimeline" hidden></div>
               <div class="kit-block kit-action" id="kitPresentation" hidden>
                 <button type="button" class="btn" id="presentationBtn">פתיחת מצגת</button>
@@ -1326,92 +1200,19 @@
           <div class="dock">
             <button type="button" class="btn btn--outline" id="prevBtn" data-i18n="prev">הקודם</button>
             <button type="button" class="btn" id="nextBtn" data-i18n="next">הבא</button>
+            <div class="dock-choices" id="nextChoices" hidden></div>
           </div>
         </section>
 
         <section class="screen" id="free" data-screen="free" hidden>
-          <div class="search">
-            <svg class="search-icon icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="square" aria-hidden="true">
-              <circle cx="11" cy="11" r="7"></circle>
-              <path d="m20 20-3.5-3.5"></path>
-            </svg>
-            <label class="visually-hidden" for="searchInput" data-i18n="searchLabel">חיפוש שם או מקום</label>
-            <input id="searchInput" type="search" autocomplete="off" data-i18n-placeholder="searchPlaceholder" placeholder="חיפוש שם או מקום" />
-            <ul class="results" id="searchResults"></ul>
-          </div>
-          <p class="free-status" id="freeStatus"></p>
+          <p class="cue-status free-cue-status" id="freeCueStatus" role="status"></p>
           <div class="scene-list" id="sceneList"></div>
-          <div class="free-deck">
-            <div class="free-navigate" dir="ltr">
-              <div class="map-controls">
-                <div class="dpad-container" dir="ltr">
-                  <div class="dpad" dir="ltr">
-                    <button type="button" class="dpad-button dpad-up" id="panNorth" data-i18n-aria="panNorth" aria-label="הזזה צפונה">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <polyline points="18 15 12 9 6 15"></polyline>
-                      </svg>
-                    </button>
-                    <button type="button" class="dpad-button dpad-left" id="panWest" data-i18n-aria="panWest" aria-label="הזזה מערבה">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <polyline points="15 18 9 12 15 6"></polyline>
-                      </svg>
-                    </button>
-                    <button type="button" class="dpad-button dpad-right" id="panEast" data-i18n-aria="panEast" aria-label="הזזה מזרחה">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <polyline points="9 18 15 12 9 6"></polyline>
-                      </svg>
-                    </button>
-                    <button type="button" class="dpad-button dpad-down" id="panSouth" data-i18n-aria="panSouth" aria-label="הזזה דרומה">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <polyline points="6 9 12 15 18 9"></polyline>
-                      </svg>
-                    </button>
-                    <div
-                      class="joystick-container joystick-zone"
-                      id="joystickZone"
-                      dir="ltr"
-                      data-i18n-aria="joystickAria"
-                      aria-label="מוט כיוון לגרירת המפה"
-                    >
-                      <div class="joystick-base" aria-hidden="true"></div>
-                    </div>
-                  </div>
-                </div>
-                <div class="zoom-controls">
-                  <div class="zoom-display">
-                    <span class="zoom-label" data-i18n="zoomLabel">זום:</span>
-                    <span class="zoom-value" id="zoomValue">—</span>
-                  </div>
-                  <div class="zoom-slider-container">
-                    <button type="button" class="zoom-button zoom-out" id="zoomOut" data-i18n-aria="zoomOutAria" aria-label="התרחקות">−</button>
-                    <input
-                      type="range"
-                      id="zoomSlider"
-                      class="zoom-slider"
-                      min="10"
-                      max="19"
-                      value="15"
-                      step="1"
-                      data-i18n-aria="zoomLevelAria"
-                      aria-label="רמת מיקוד"
-                    />
-                    <button type="button" class="zoom-button zoom-in" id="zoomIn" data-i18n-aria="zoomInAria" aria-label="התקרבות">+</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="free-bottom">
-            <button type="button" class="btn" id="freeArchiveBtn" hidden>פתיחת ארכיון הספרייה</button>
-            <div id="freeTimeline"></div>
-          </div>
         </section>
       </main>
       <div class="layer-sheet" id="staffPackMenus" hidden></div>
       <div id="table-switcher" hidden></div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.2/dist/nipplejs.min.js"></script>
     <script type="module" src="./src/entries/nli-staff-remote-main.js"></script>
   </body>
 </html>

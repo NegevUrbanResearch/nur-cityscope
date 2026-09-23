@@ -222,6 +222,25 @@ describe("NLI archive window controller", () => {
     expect(controller.close).toHaveBeenCalledTimes(1);
   });
 
+  test("opens the selected person's archive from the GIS bubble and closes it on selection change", () => {
+    const controller = { navigate: vi.fn(() => ({ ok: true })), close: vi.fn(() => ({ ok: true })) };
+    let selection = { personId: "1", datasetVersion: "v1" };
+    const bridge = createNliArchiveCommandBridge({
+      windowController: controller,
+      resolvePerson: async () => null,
+      getPersonSelection: () => selection,
+    });
+    const url = "https://www.nli.org.il/he/authorities/1";
+    expect(bridge.openSelected({ pid: "2", nliUrl: url })).toBe(false);
+    expect(bridge.openSelected({ pid: "1" })).toBe(false);
+    expect(controller.navigate).not.toHaveBeenCalled();
+    expect(bridge.openSelected({ pid: "1", nliUrl: url })).toBe(true);
+    expect(controller.navigate).toHaveBeenCalledWith(url);
+    selection = { personId: "2", datasetVersion: "v1" };
+    bridge.handlePersonSelection(selection);
+    expect(controller.close).toHaveBeenCalledTimes(1);
+  });
+
   test("does not open after selection changes during asynchronous resolution", async () => {
     let resolvePerson;
     let selection = { personId: "1", datasetVersion: "v1" };

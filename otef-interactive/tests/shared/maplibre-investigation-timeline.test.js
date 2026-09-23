@@ -1469,7 +1469,7 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
-  it("Segev idle clock-only caption paints 06:29", async () => {
+  it("Segev idle clock-only caption paints 06:41", async () => {
     const injected = { className: "", hidden: true, innerHTML: "", textContent: "", setAttribute() {} };
     const map = makeMap();
     await syncInvestigationTimelineToMap(map, idleNliClock(), [{ id: "nli", layers: [] }], {
@@ -1482,7 +1482,7 @@ describe("syncInvestigationTimelineToMap", () => {
       now: () => 0,
     });
     expect(injected.hidden).toBe(false);
-    expect(injected.innerHTML).toContain("06:29");
+    expect(injected.innerHTML).toContain("06:41");
     expect(injected.innerHTML).not.toContain("nli-tl-row");
     disposeInvestigationTimelineForMap(map);
   });
@@ -1672,7 +1672,7 @@ describe("syncInvestigationTimelineToMap", () => {
   it("only recognized narratives or explicit debug make an empty-group clock-only caption relevant", async () => {
     const cases = [
       { name: "unknown", narrativeFocus: { id: "unknown" }, visible: false, clock: null },
-      { name: "Segev", narrativeFocus: { id: "segev" }, visible: true, clock: "06:29" },
+      { name: "Segev", narrativeFocus: { id: "segev" }, visible: true, clock: "06:41" },
       { name: "Nova", narrativeFocus: { id: "nova" }, visible: true, clock: "08:03" },
       { name: "debug", narrativeFocus: null, explainerDebugVisible: true, visible: true, clock: "07:00" },
     ];
@@ -1829,7 +1829,7 @@ describe("syncInvestigationTimelineToMap", () => {
   it("stop after deferred playback keeps the recognized idle clock immediately and after resolution", async () => {
     const narratives = [
       { name: "ordinary", narrativeFocus: null, expected: "06:29" },
-      { name: "Segev", narrativeFocus: { id: "segev" }, expected: "06:29" },
+      { name: "Segev", narrativeFocus: { id: "segev" }, expected: "06:41" },
       { name: "Nova", narrativeFocus: { id: "nova" }, expected: "08:03" },
     ];
     for (const narrative of narratives) {

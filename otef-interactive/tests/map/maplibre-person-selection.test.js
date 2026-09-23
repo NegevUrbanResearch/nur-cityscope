@@ -130,6 +130,22 @@ describe("GIS person selection visual", () => {
     expect(d.bubble.setHTML.mock.calls[0][0]).not.toMatch(/nli_url|button|archive/i);
   });
 
+  test("clicking the bubble hands the person with an archive record to onBubbleClick", async () => {
+    const classes = new Set();
+    const element = { onclick: null, classList: { toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)) } };
+    const onBubbleClick = vi.fn();
+    const d = setup(undefined, undefined, { onBubbleClick });
+    d.bubble.getElement = () => element;
+    d.visual.show({ pid: "11", coordinates: [30, 20], name: "Ada", nliUrl: "https://www.nli.org.il/he/authorities/11" });
+    expect(classes.has("gis-person-bubble-popup--link")).toBe(true);
+    element.onclick();
+    expect(onBubbleClick).toHaveBeenCalledWith(expect.objectContaining({ pid: "11" }));
+
+    d.visual.show({ pid: "12", coordinates: [30, 20], name: "Bo" });
+    expect(classes.has("gis-person-bubble-popup--link")).toBe(false);
+    expect(element.onclick).toBeNull();
+  });
+
   test("focus uses camera and delays popup until idle, while hide permits remount", async () => {
     const beginCameraTravel = vi.fn();
     const d = setup(undefined, undefined, { beginCameraTravel });

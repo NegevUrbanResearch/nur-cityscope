@@ -387,6 +387,7 @@ async function bootstrapMapRuntime() {
       map,
       maplibregl,
       beginCameraTravel: viewportSync.beginCameraTravel,
+      onBubbleClick: (person) => archiveBridge.openSelected(person),
     });
     const archiveWindow = createNliArchiveWindowController();
     const narrativePresentation = createNarrativePresentation(mapContainer, {

@@ -665,15 +665,20 @@ export const nliTimelineHostMethods = {
     }
   },
 
-  async handleNliTimelinePlay() {
+  /** `from` starts playback at that minute; `to` drops later beats; a boolean `loop` sets looping. All apply only when arming from idle. */
+  async handleNliTimelinePlay({ from, to, loop } = {}) {
     if (this._isNliControlDisabled()) return;
     const clock = this._liveNliClock();
     const now = nliNowMs();
     const vis = evaluateClock(clock, now);
     const narrativeId = nliNarrativeId();
-    const leadInMinutes = narrativeId === "nova" ? NLI_NARRATIVES.nova.playStartMinutes : undefined;
+    const leadInMinutes = Number.isFinite(from)
+      ? from
+      : narrativeId === "nova" ? NLI_NARRATIVES.nova.playStartMinutes : undefined;
     if (clock.phase === "ended" || vis.phase === "ended") {
-      await this._patchNliClock(replayNliClock(clock, now, { leadInMinutes }));
+      await this._patchNliClock(replayNliClock(clock, now, {
+        leadInMinutes: clock.leadInMinutes ?? leadInMinutes,
+      }));
       return;
     }
     if (clock.phase === "playing") {
@@ -690,9 +695,11 @@ export const nliTimelineHostMethods = {
       await this._ensureNliFeatureCache();
       if (!this._nliCacheReady(membership)) return;
     }
-    const beats = beatsForMembership(membership, nliFeatureBagsFromCache(this._nliFeatureCache));
+    const beats = beatsForMembership(membership, nliFeatureBagsFromCache(this._nliFeatureCache))
+      .filter((minutes) => !Number.isFinite(to) || minutes <= to);
     if (!beats.length) return;
-    await this._patchNliClock(playNliClock(clock, membership, beats, now, { leadInMinutes }));
+    const armed = typeof loop === "boolean" ? setNliLoop(clock, loop) : clock;
+    await this._patchNliClock(playNliClock(armed, membership, beats, now, { leadInMinutes }));
   },
 
   async handleNliTimelineStop() {

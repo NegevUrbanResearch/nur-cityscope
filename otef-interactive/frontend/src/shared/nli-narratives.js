@@ -2,9 +2,10 @@ const SEGEV_CENTER = Object.freeze([34.48647925700004, 31.422958191000077]);
 
 const SEGEV_NARRATIVE = Object.freeze({
   id: "segev",
-  label: "משפחת שגב",
+  label: "בית משפחת שגב",
   center: SEGEV_CENTER,
   zoom: 18,
+  idleClockMinutes: 401,
   basemap: "satellite_bw",
   focusSettlement: "בארי",
   focusSettlementOutlineId: 19,
@@ -49,7 +50,7 @@ const HOSTAGES_MARKER = Object.freeze([34.40026099200003, 31.31130147400006]);
 
 const HOSTAGES_NARRATIVE = Object.freeze({
   id: "hostages",
-  label: "משפחת פרי",
+  label: "בית משפחת פרי",
   center: HOSTAGES_CENTER,
   zoom: 15,
   marker: HOSTAGES_MARKER,
@@ -58,11 +59,19 @@ const HOSTAGES_NARRATIVE = Object.freeze({
   focusSettlementOutlineId: 14,
 });
 
+const HOSTAGES_ALL_NARRATIVE = Object.freeze({
+  id: "hostages_all",
+  center: Object.freeze([34.5, 31.4]),
+  zoom: 10,
+  basemap: "satellite_bw",
+});
+
 export const NLI_NARRATIVES = Object.freeze({
   segev: SEGEV_NARRATIVE,
   nova: NOVA_NARRATIVE,
   sderot: SDEROT_NARRATIVE,
   hostages: HOSTAGES_NARRATIVE,
+  hostages_all: HOSTAGES_ALL_NARRATIVE,
 });
 
 export const NLI_NARRATIVE_EXIT_SCENE = Object.freeze({

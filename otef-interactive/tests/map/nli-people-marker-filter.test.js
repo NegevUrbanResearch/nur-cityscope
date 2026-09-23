@@ -6,6 +6,7 @@ import {
   KIDNAP_SURVIVOR_STATUS,
   EXCLUDE_SURVIVOR_FILTER,
   HOSTAGES_PEOPLE_FILTER,
+  NIR_OZ_PEOPLE_FILTER,
   NOVA_PEOPLE_FILTER,
 } from "../../frontend/src/map/nli-people-marker-filter.js";
 
@@ -32,17 +33,22 @@ describe("narrative people marker filter", () => {
     const map = createMap([{ id: "nli-people", source: "nli.people" }]);
     applyNarrativePeopleFilter(map, "nova");
     applyNarrativePeopleFilter(map, "hostages");
-    expect(map.setFilter).toHaveBeenLastCalledWith("nli-people", HOSTAGES_PEOPLE_FILTER);
+    expect(map.setFilter).toHaveBeenLastCalledWith("nli-people", NIR_OZ_PEOPLE_FILTER);
     applyNarrativePeopleFilter(map, "sderot");
     expect(map.setFilter).toHaveBeenLastCalledWith("nli-people", EXCLUDE_SURVIVOR_FILTER);
-    applyNarrativePeopleFilter(map, "hostages");
+    applyNarrativePeopleFilter(map, "hostages_all");
     expect(map.setFilter).toHaveBeenLastCalledWith("nli-people", HOSTAGES_PEOPLE_FILTER);
     applyNarrativePeopleFilter(map, "nova");
     expect(map.setFilter).toHaveBeenLastCalledWith("nli-people", NOVA_PEOPLE_FILTER);
   });
 
-  test("hostages shows kidnap survivors and people murdered in captivity", () => {
-    expect(peopleFilterForNarrative("hostages")).toEqual(HOSTAGES_PEOPLE_FILTER);
+  test("hostages shows every Nir Oz person", () => {
+    expect(peopleFilterForNarrative("hostages")).toEqual(NIR_OZ_PEOPLE_FILTER);
+    expect(NIR_OZ_PEOPLE_FILTER).toEqual(["==", ["get", "location"], "Nir Oz"]);
+  });
+
+  test("all-hostages shows kidnap survivors and people murdered in captivity", () => {
+    expect(peopleFilterForNarrative("hostages_all")).toEqual(HOSTAGES_PEOPLE_FILTER);
     expect(HOSTAGES_PEOPLE_FILTER).toEqual([
       "any",
       ["==", ["get", "status"], "Kidnap survivor"],
@@ -50,13 +56,9 @@ describe("narrative people marker filter", () => {
     ]);
   });
 
-  test("nova unions Nova location with kidnap survivors", () => {
+  test("nova shows every Nova person", () => {
     expect(peopleFilterForNarrative("nova")).toEqual(NOVA_PEOPLE_FILTER);
-    expect(NOVA_PEOPLE_FILTER).toEqual([
-      "any",
-      ["==", ["get", "location"], "Nova"],
-      ["==", ["get", "status"], "Kidnap survivor"],
-    ]);
+    expect(NOVA_PEOPLE_FILTER).toEqual(["==", ["get", "location"], "Nova"]);
   });
 
   test("filters only current nli.people layers", () => {
@@ -65,7 +67,7 @@ describe("narrative people marker filter", () => {
       { id: "nli-people-names", source: "nli.people_names" },
       { id: "unrelated", source: "other" },
     ]);
-    expect(applyNarrativePeopleFilter(map, "hostages")).toBe(1);
+    expect(applyNarrativePeopleFilter(map, "hostages_all")).toBe(1);
     expect(map.setFilter).toHaveBeenCalledTimes(1);
     expect(map.setFilter).toHaveBeenCalledWith("nli-people", HOSTAGES_PEOPLE_FILTER);
   });
@@ -102,7 +104,8 @@ describe("narrative people marker filter", () => {
       "Killed on duty",
       "Murdered in captivity",
     ]);
-    expect(statuses.filter((status) => peopleLegendClassVisible("hostages", status))).toEqual([
+    expect(statuses.filter((status) => peopleLegendClassVisible("hostages", status))).toEqual(statuses);
+    expect(statuses.filter((status) => peopleLegendClassVisible("hostages_all", status))).toEqual([
       "Kidnap survivor",
       "Murdered in captivity",
     ]);

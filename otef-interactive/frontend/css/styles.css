@@ -410,6 +410,8 @@ body {
 }
 
 .gis-person-bubble { direction: auto; line-height: 1.35; }
+.gis-person-bubble-popup--link { cursor: pointer; }
+.gis-person-bubble-popup--link .gis-person-bubble__name { text-decoration: underline; }
 .gis-person-bubble__name,
 .gis-person-bubble__location {
   display: -webkit-box;

@@ -3,7 +3,7 @@ import { createNarrativeFocusRenderer, NARRATIVE_FOCUS_RENDERER_IDS } from "../.
 import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 
 const segev = Object.freeze({
-  label: "משפחת שגב",
+  label: "בית משפחת שגב",
   center: [34.48647925700004, 31.422958191000077],
 });
 
@@ -28,7 +28,7 @@ describe("MapLibre narrative focus renderer", () => {
     });
     expect(renderedFocus(map)).toEqual({
       type: "Feature",
-      properties: { label: "משפחת שגב" },
+      properties: { label: "בית משפחת שגב" },
       geometry: { type: "Point", coordinates: [34.48647925700004, 31.422958191000077] },
     });
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.halo).paint["circle-radius"]).toBe(haloRadius);
@@ -51,7 +51,7 @@ describe("MapLibre narrative focus renderer", () => {
 
     map.wipeStyle();
     renderer.onStyleLoad();
-    expect(renderedFocus(map)?.properties.label).toBe("משפחת שגב");
+    expect(renderedFocus(map)?.properties.label).toBe("בית משפחת שגב");
     expect(map.getLayer(NARRATIVE_FOCUS_RENDERER_IDS.halo)).toBeTruthy();
     expect(map.calls.some((call) => String(call.id || "").includes("otef-person-selection"))).toBe(false);
   });
@@ -103,13 +103,13 @@ describe("MapLibre narrative focus renderer", () => {
     const map = createFakeMapLibreMap();
     const renderer = createNarrativeFocusRenderer(map, { profile: "gis" });
     renderer.show({
-      label: "משפחת פרי",
+      label: "בית משפחת פרי",
       center: [34.40244, 31.312639],
       marker: [34.41, 31.32],
     });
     expect(renderedFocus(map)).toEqual({
       type: "Feature",
-      properties: { label: "משפחת פרי" },
+      properties: { label: "בית משפחת פרי" },
       geometry: { type: "Point", coordinates: [34.41, 31.32] },
     });
   });

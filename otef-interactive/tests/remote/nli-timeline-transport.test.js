@@ -645,6 +645,44 @@ describe("nli timeline transport", () => {
     expect(patched.leadInMinutes).toBe(483);
   });
 
+  test("idle play with a window trims later beats and starts at the window", async () => {
+    const ctx = stubContext();
+    const c = makeController({
+      _nliFeatureCache: {
+        [LINES_ID]: [389, 395, 400, 410, 740].map((m) => ({ properties: { timeline_minutes: m } })),
+      },
+    });
+    await c.handleNliTimelinePlay({ to: 401 });
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].beats).toEqual([389, 395, 400]);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].leadInMinutes).toBeUndefined();
+
+    await c.handleNliTimelinePlay({ from: 401 });
+    const rest = ctx.patchInvestigationClock.mock.calls[1][0];
+    expect(rest.beats).toEqual([389, 395, 400, 410, 740]);
+    expect(rest.leadInMinutes).toBe(401);
+  });
+
+  test("idle play with a loop flag arms the clock with that loop setting", async () => {
+    const ctx = stubContext({ getInvestigationClock: () => ({ ...idleNliClock(), loop: true }) });
+    const c = makeController({
+      _nliFeatureCache: {
+        [LINES_ID]: [389, 400].map((m) => ({ properties: { timeline_minutes: m } })),
+      },
+    });
+    await c.handleNliTimelinePlay({ loop: false });
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].loop).toBe(false);
+    await c.handleNliTimelinePlay();
+    expect(ctx.patchInvestigationClock.mock.calls[1][0].loop).toBe(true);
+  });
+
+  test("replay keeps the lead-in of the ended window", async () => {
+    const played = playNliClock(idleNliClock(), [LINES_ID], [400, 740], 0, { leadInMinutes: 401 });
+    const ctx = stubContext({ getInvestigationClock: () => endNliClock(played) });
+    const c = makeController();
+    await c.handleNliTimelinePlay();
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].leadInMinutes).toBe(401);
+  });
+
   test("play uses replay when evaluateClock already ended", async () => {
     const playing = playNliClock(idleNliClock(), [LINES_ID], [400], 0);
     const ctx = stubContext({

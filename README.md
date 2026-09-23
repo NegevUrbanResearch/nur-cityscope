@@ -106,6 +106,7 @@ The **Curation** page (linked from the Remote Controller) lets you manage curate
 
 | Service | URL |
 |---------|-----|
+| OTEF Launcher | http://localhost/otef-interactive/launcher.html (also http://localhost/) |
 | Dashboard | http://localhost/dashboard/ |
 | OTEF Interactive | http://localhost/otef-interactive/ |
 | Projection Display | http://localhost/projection/ |
