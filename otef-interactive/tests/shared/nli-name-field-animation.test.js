@@ -13,7 +13,7 @@ describe('memorial name animation', () => {
     animation.show();
     expect(apply.mock.lastCall[0].selectedOpacity).toBe(1);
     expect(apply.mock.lastCall[0].baseOpacity).not.toBe(1);
-    expect(apply.mock.lastCall[0].baseOpacity.at(-2)).toBe(800);
+    expect(apply.mock.lastCall[0].baseOpacity.at(-2)).toBe(1600);
     animation.dispose();
     vi.useRealTimers();
   });
@@ -26,19 +26,17 @@ describe('memorial name animation', () => {
     expect(times(first)).toEqual(times(second));
     expect(first.features.map(f=>f.id)).toEqual(source.features.map(f=>f.id));
     expect(new Set(Object.values(times(first))).size).toBe(20);
-    expect(Math.max(...Object.values(times(first)))).toBe(3600);
+    expect(Math.max(...Object.values(times(first)))).toBe(7200);
     expect(source.features[0].properties.reveal_delay).toBeUndefined();
   });
-  it('keeps the staggered entrance running past the previous 2.6s window', () => {
+  it('keeps the staggered entrance running until the last name finishes', () => {
     vi.useFakeTimers();
     const apply = vi.fn();
     const animation = createNameFieldAnimation({ apply, now: () => Date.now() });
     animation.show();
-    vi.advanceTimersByTime(2700);
+    vi.advanceTimersByTime(4400);
     expect(apply.mock.lastCall[0].baseOpacity).not.toBe(1);
-    vi.advanceTimersByTime(1400);
-    expect(apply.mock.lastCall[0].baseOpacity).not.toBe(1);
-    vi.advanceTimersByTime(400);
+    vi.advanceTimersByTime(NAME_FIELD_MOTION.spreadMs + NAME_FIELD_MOTION.revealMs - 4400 + 100);
     expect(apply.mock.lastCall[0].baseOpacity).toBe(1);
     animation.dispose();
     vi.useRealTimers();

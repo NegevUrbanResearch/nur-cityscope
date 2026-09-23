@@ -30,6 +30,7 @@ import { resolveMotionMode } from "../shared/reduced-motion.js";
 import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
 import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
+import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
 import { installProjectionPreviewBridge } from "../projection/projection-preview-bridge.js";
 import { createProjectionConfigClient } from "../shared/projection-config-client.js";
 import { createProjectionConfigRuntime } from "../projection/projection-config-runtime.js";
@@ -95,14 +96,14 @@ import {
 import { installLegendLayout } from "../projection/legend-layout.js";
 
 function getEffectiveProjectionLayerGroups() {
-  if (
+  const groups = (
     typeof window !== "undefined" &&
     window.LayerStateHelper &&
     typeof window.LayerStateHelper.getEffectiveLayerGroups === "function"
-  ) {
-    return window.LayerStateHelper.getEffectiveLayerGroups();
-  }
-  return OTEFDataContext.getLayerGroups();
+  )
+    ? window.LayerStateHelper.getEffectiveLayerGroups()
+    : OTEFDataContext.getLayerGroups();
+  return isolateLayersWhileVictimNamesShown(groups);
 }
 
 function applyStoredNliLabelHeading(map) {
@@ -607,7 +608,7 @@ async function bootstrapProjectionRuntime() {
           typeof slideshowRuntime?.getCommittedGroups === "function"
             ? slideshowRuntime.getCommittedGroups()
             : null,
-        liveGroups: rawAsArray,
+        liveGroups: isolateLayersWhileVictimNamesShown(rawAsArray),
         keepSettlementNames: MapProjectionConfig.PROJECTION_SLIDESHOW?.keepSettlementNames === true,
         excludedPresentationPackIds:
           MapProjectionConfig.PROJECTION_SLIDESHOW?.excludedPresentationPackIds,

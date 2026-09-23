@@ -12,6 +12,7 @@ import {
   parseLayerNameWithGeometrySuffix,
 } from "../shared/layer-name-utils.js";
 import { shouldShowLayerOnGisMap } from "../shared/gis-layer-filter.js";
+import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
 import { resolvedColorsToLegendFill } from "../shared/nli-investigation-legend.js";
 import { projectionHatchRasterParams } from "../shared/hatch-projection-presentation.js";
 import {
@@ -866,7 +867,7 @@ async function buildLegendModel(options = {}) {
     throw new Error("legend registry is required");
   }
 
-  const layerGroups = ctx.getLayerGroups() || [];
+  const layerGroups = isolateLayersWhileVictimNamesShown(ctx.getLayerGroups() || []);
 
   if (registry && !registry._initialized) {
     await registry.init();

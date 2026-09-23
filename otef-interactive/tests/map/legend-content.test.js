@@ -106,6 +106,40 @@ describe("legend content model", () => {
     ]);
   });
 
+  it("lists only victim names while that layer is on", async () => {
+    const lineStyle = {
+      renderer: "simple",
+      defaultSymbol: {
+        symbolLayers: [{ type: "stroke", color: "#123456", width: 2 }],
+      },
+    };
+    const layers = [
+      { id: "lines", enabled: true },
+      { id: "people_names", enabled: true },
+    ];
+    const configs = new Map([
+      ["nli.lines", { id: "lines", name: "lines", geometryType: "line", style: lineStyle }],
+      ["nli.people_names", { id: "people_names", name: "people_names", geometryType: "point", style: lineStyle }],
+    ]);
+    const groups = [{ id: "nli", layers }];
+    const registry = {
+      _initialized: true,
+      getGroups: () => groups,
+      getLayerConfig: (id) => configs.get(id),
+      getPackStyleJsonForLayer: (id) => configs.get(id)?.style,
+    };
+    const model = await buildLegendModel({
+      dataContext: { getLayerGroups: () => groups },
+      registry,
+      language: "en",
+      surface: "projection",
+    });
+    expect(model.packs.flatMap((pack) => pack.layers.map((layer) => layer.name))).toEqual([
+      "People names",
+    ]);
+    expect(groups[0].layers.find((layer) => layer.id === "lines").enabled).toBe(true);
+  });
+
   it("uses inline bilingual NLI labels before glossary copy", () => {
     const layer = legendLayerFromConfig({
       id: "lines",

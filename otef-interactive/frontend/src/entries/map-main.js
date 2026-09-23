@@ -21,6 +21,7 @@ import {
   positionGisLegend,
 } from "../map/legend-integration.js";
 import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
+import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
 import layerRegistry from "../shared/layer-registry.js";
@@ -250,11 +251,12 @@ async function bootstrapMapRuntime() {
     window.addEventListener("resize", onGisClockResize);
     registerDisposer(() => window.removeEventListener("resize", onGisClockResize));
 
+    const gisDisplayGroups = (raw) => {
+      const groupsAsArray = Array.isArray(raw) ? raw : Object.values(raw || {});
+      return isolateLayersWhileVictimNamesShown(groupsAsArray);
+    };
     const gisOverlayGroups = () => {
-      const groupsRaw = OTEFDataContext.getLayerGroups();
-      const groupsAsArray = Array.isArray(groupsRaw)
-        ? groupsRaw
-        : Object.values(groupsRaw || {});
+      const groupsAsArray = gisDisplayGroups(OTEFDataContext.getLayerGroups());
       return {
         groupsAsArray,
         currentGroups: filterGroupsForGisMap(groupsAsArray),
@@ -372,7 +374,7 @@ async function bootstrapMapRuntime() {
     const rawInitialLayerGroups = Array.isArray(layerGroups)
       ? layerGroups
       : Object.values(layerGroups || {});
-    const initialGroups = filterGroupsForGisMap(rawInitialLayerGroups);
+    const initialGroups = filterGroupsForGisMap(gisDisplayGroups(rawInitialLayerGroups));
     const applyGisLayerGroups = (groups) => {
       applyLayerGroupsToMap(map, groups);
       applyNarrativePeopleFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
@@ -516,9 +518,7 @@ async function bootstrapMapRuntime() {
     const refreshCuratedLayers = async ({ affectedCuratedFullLayerIds, groupsOverride, syncFlow = true, isCurrent = () => true } = {}) => {
       if (!isCurrent()) return;
       const rawGroups = groupsOverride ?? OTEFDataContext.getLayerGroups();
-      const groupsAsArray = Array.isArray(rawGroups)
-        ? rawGroups
-        : Object.values(rawGroups || {});
+      const groupsAsArray = gisDisplayGroups(rawGroups);
       const currentGroups = filterGroupsForGisMap(groupsAsArray);
 
       // Apply non-curated layer changes via registry path.
@@ -646,11 +646,7 @@ async function bootstrapMapRuntime() {
             pullPayload: ev?.detail || {},
             reloadCuratedOnMap: refreshCuratedLayers,
             applyLayerGroupsState: (groups) => {
-              applyGisLayerGroups(
-                filterGroupsForGisMap(
-                  Array.isArray(groups) ? groups : Object.values(groups || {}),
-                ),
-              );
+              applyGisLayerGroups(filterGroupsForGisMap(gisDisplayGroups(groups)));
               applyStoredNliLabelHeading(map);
               syncContextFlowAnimations();
               legendLifecycle?.refresh();
