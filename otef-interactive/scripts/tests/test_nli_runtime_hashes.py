@@ -90,6 +90,19 @@ class NliRuntimeHashStampTests(unittest.TestCase):
             self.assertIsNotNone(result)
             self.assertFalse((output / "release-metadata.json").is_file())
 
+    def test_stamp_people_search_index_hash_overwrites_keepme(self):
+        from otef_layer_processing.nli_runtime_hashes import stamp_nli_runtime_artifact_hash
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / "people-search-index.json").write_text('{"people":[]}\n', encoding="utf-8")
+            (output / "release-metadata.json").write_text(
+                json.dumps({"datasetVersion": "v1", "runtimeArtifactHashes": {"people-search-index.json": "KEEPME"}}),
+                encoding="utf-8",
+            )
+            self.assertTrue(stamp_nli_runtime_artifact_hash(output, "people-search-index.json"))
+            hashes = json.loads((output / "release-metadata.json").read_text(encoding="utf-8"))["runtimeArtifactHashes"]
+            self.assertEqual(hashes["people-search-index.json"], _sha256_upper(output / "people-search-index.json"))
+
 
 if __name__ == "__main__":
     unittest.main()
