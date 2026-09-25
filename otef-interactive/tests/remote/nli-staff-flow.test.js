@@ -63,6 +63,17 @@ describe("NLI staff show flow", () => {
     expect(nextAction({ scriptId: "segev", step: 0, returnTo: null })).toEqual({ kind: "step", scriptId: "segev", step: 1 });
   });
 
+  test("closing the Hostages presentation advances through Nir Oz people to all hostages", () => {
+    const hostages = NARRATIVES.find((item) => item.id === "hostages");
+    const presentationIndex = hostages.steps.findIndex((step) => step.presentation);
+    const presentation = hostages.steps[presentationIndex];
+    expect(presentation.presentation).toEqual({ segmentId: "hostages", open: "manual", onClose: "next" });
+    expect(hostages.steps[presentationIndex + 1].title.en).toBe("Nir Oz victims and hostages");
+    expect(hostages.steps[presentationIndex + 1].cue.layers).toContain("nli.people");
+    expect(hostages.steps[presentationIndex + 2].title.en).toBe("All hostages");
+    expect(hostages.steps[presentationIndex + 2].cue.narrative).toBe("hostages_all");
+  });
+
   test("previous skips junctions and leaves a narrative for the slide before it", () => {
     expect(prevAction({ scriptId: "show", step: showIndex("The rest of the day"), returnTo: null })).toEqual({
       scriptId: "show",

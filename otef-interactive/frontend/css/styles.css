@@ -653,3 +653,36 @@ body {
   pointer-events: auto;
 }
 
+.nli-reveal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 11000;
+  background: #000;
+}
+.nli-reveal-overlay .reveal {
+  width: 100%;
+  height: 100%;
+}
+.nli-reveal-overlay .slides section {
+  width: 960px;
+  height: 540px;
+}
+.nli-presentation-frame {
+  position: absolute;
+  inset: 0;
+  width: 960px;
+  height: 540px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #000;
+}
+.nli-presentation-frame > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.nli-presentation-frame > video {
+  position: absolute;
+  object-fit: cover;
+}
+

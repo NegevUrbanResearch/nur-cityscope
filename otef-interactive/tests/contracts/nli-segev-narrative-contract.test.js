@@ -63,6 +63,7 @@ const projectionNarrativeController = readSource("../../frontend/src/projection/
 const focusRenderer = readSource("../../frontend/src/shared/maplibre-narrative-focus.js");
 const layerSheet = readSource("../../frontend/src/remote/layer-sheet-controller.js");
 const narrativeControls = readSource("../../frontend/src/remote/nli-narrative-controls.js");
+const styles = readSource("../../frontend/css/styles.css");
 const projectionImportGraph = collectImportGraph("entries/projection-main.js");
 const narrativeModules = {
   registry,
@@ -139,13 +140,26 @@ describe("NLI Segev narrative cross-surface contract", () => {
   test("removes Canva embed and its map and remote controls", () => {
     const mapImports = importDeclarations(mapEntry);
     expect(mapImports).not.toContain("../map/nli-narrative-presentation.js");
-    expect(stripComments(mapEntry)).not.toMatch(/narrativePresentation|createNarrativePresentation|handleNarrativePresentationCommand/);
+    expect(stripComments(mapEntry)).toMatch(/import\(["']\.\.\/map\/nli-reveal-presentation\.js["']\)/);
+    expect(stripComments(mapEntry)).toContain("createNliRevealPresentation");
+    expect(stripComments(mapEntry)).toContain('subscribe("narrativePresentation"');
+    expect(stripComments(mapEntry)).not.toMatch(/createNarrativePresentation|handleNarrativePresentationCommand/);
     expect([...projectionImportGraph.entries()].some(([filePath]) =>
-      filePath.endsWith(`${path.sep}nli-narrative-presentation.js`),
+      filePath.endsWith(`${path.sep}nli-narrative-presentation.js`) ||
+      filePath.endsWith(`${path.sep}nli-reveal-presentation.js`),
     )).toBe(false);
     expect(registry).not.toContain("canva.com");
     expect(narrativeControls).not.toMatch(/presentation|iframe|canva/i);
     expect(layerSheet).not.toMatch(/runNarrativePresentation|createNliNarrativePresentationController/);
+  });
+
+  test("stacks the local presentation above GIS controls and popup layers", () => {
+    const overlay = styles.match(/\.nli-reveal-overlay\s*\{[^}]*z-index:\s*(\d+)/s);
+    expect(overlay).not.toBeNull();
+    expect(Number(overlay[1])).toBeGreaterThan(10000);
+    expect(Number(overlay[1])).toBeGreaterThan(1110);
+    expect(styles).toMatch(/\.nli-reveal-overlay\s*\{[^}]*position:\s*absolute/s);
+    expect(styles).toMatch(/\.nli-presentation-frame\s*\{[^}]*aspect-ratio:\s*16\s*\/\s*9/s);
   });
 
   test("subscribes both surfaces to durable state while keeping NLI-sheet commands remote-owned", () => {

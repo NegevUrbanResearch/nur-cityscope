@@ -1,8 +1,22 @@
 export const NLI_PRESENTATION_MANIFEST_URL =
   "/otef-interactive/public/presentation/nli-presentation-manifest.json";
 
-const EXPECTED_DECK_PATH = "processed/presentations/nli/nur-model.pptx";
-const NARRATIVE_IDS = new Set(["segev", "nova", "sderot", "hostages"]);
+function isLocalRelativePath(value) {
+  return (
+    typeof value === "string" &&
+    value.startsWith("local/") &&
+    !value.includes("\\") &&
+    !value.split("/").some((part) => part === ".." || part === ".")
+  );
+}
+
+function freeze(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) freeze(child);
+  }
+  return value;
+}
 
 export function validateNliPresentationManifest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -13,57 +27,49 @@ export function validateNliPresentationManifest(value) {
   if (!deck || typeof deck !== "object" || Array.isArray(deck)) {
     throw new TypeError("presentation manifest deck must be an object");
   }
-  if (
-    typeof deck.path !== "string" ||
-    deck.path !== EXPECTED_DECK_PATH ||
-    deck.path.includes("..") ||
-    deck.path.startsWith("/")
-  ) {
-    throw new TypeError("invalid presentation deck path");
+  if (!Number.isInteger(deck.slideCount) || deck.slideCount <= 0) {
+    throw new TypeError("presentation deck slide count must be a positive integer");
   }
-  if (deck.slideCount !== 33) throw new TypeError("presentation deck must contain 33 slides");
-  if (deck.sha256 !== null && (typeof deck.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(deck.sha256))) {
-    throw new TypeError("invalid presentation deck SHA-256");
+  if (!isLocalRelativePath(deck.slidePathPattern)) {
+    throw new TypeError("invalid presentation slide path pattern");
   }
+  if (!Array.isArray(value.videos)) throw new TypeError("presentation videos must be an array");
+  const videos = value.videos.map((video) => {
+    if (!video || typeof video !== "object" || Array.isArray(video)) {
+      throw new TypeError("presentation video must be an object");
+    }
+    if (!isLocalRelativePath(video.path)) throw new TypeError("invalid presentation video path");
+    if (
+      !Array.isArray(video.rect) ||
+      video.rect.length !== 4 ||
+      !video.rect.every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate))
+    ) {
+      throw new TypeError("presentation video rectangle must contain four numbers");
+    }
+    return { ...video, rect: [...video.rect] };
+  });
   if (!Array.isArray(value.segments)) throw new TypeError("presentation segments must be an array");
-
-  const ids = new Set();
-  let previousEnd = 0;
   const segments = value.segments.map((segment) => {
     if (!segment || typeof segment !== "object" || Array.isArray(segment)) {
       throw new TypeError("presentation segment must be an object");
     }
-    if (typeof segment.id !== "string" || !segment.id || ids.has(segment.id)) {
-      throw new TypeError("presentation segment IDs must be unique nonempty strings");
+    if (typeof segment.id !== "string" || !segment.id.trim()) {
+      throw new TypeError("presentation segment ID must be a nonempty string");
     }
-    ids.add(segment.id);
-    if (segment.requiredNarrative !== null && !NARRATIVE_IDS.has(segment.requiredNarrative)) {
-      throw new TypeError("unsupported required presentation narrative");
+    if (segment.requiredNarrative !== null && typeof segment.requiredNarrative !== "string") {
+      throw new TypeError("presentation required narrative must be a string or null");
     }
     if (
       !Array.isArray(segment.range) ||
       segment.range.length !== 2 ||
-      !segment.range.every(Number.isInteger) ||
-      segment.range[0] < 1 ||
-      segment.range[1] > 33 ||
-      segment.range[0] > segment.range[1] ||
-      segment.range[0] <= previousEnd
+      !segment.range.every(Number.isInteger)
     ) {
-      throw new TypeError("presentation segment ranges must be ordered, valid, and non-overlapping");
+      throw new TypeError("presentation segment range must contain two integers");
     }
-    previousEnd = segment.range[1];
-    return Object.freeze({
-      id: segment.id,
-      requiredNarrative: segment.requiredNarrative,
-      range: Object.freeze([...segment.range]),
-    });
+    return { ...segment, range: [...segment.range] };
   });
 
-  return Object.freeze({
-    version: 1,
-    deck: Object.freeze({ path: deck.path, sha256: deck.sha256, slideCount: 33 }),
-    segments: Object.freeze(segments),
-  });
+  return freeze({ version: 1, deck: { ...deck }, videos, segments });
 }
 
 export async function loadNliPresentationManifest(fetchImpl = globalThis.fetch) {

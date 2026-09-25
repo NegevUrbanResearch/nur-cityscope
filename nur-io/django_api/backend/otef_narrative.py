@@ -3,7 +3,6 @@
 import copy
 import json
 import os
-import re
 from pathlib import Path
 
 from .otef_escape_overlay import (
@@ -26,7 +25,6 @@ PRESENTATION_MANIFEST_PATH = Path(
         "/app/public/presentation/nli-presentation-manifest.json",
     )
 )
-PRESENTATION_DECK_PATH = "processed/presentations/nli/nur-model.pptx"
 PRESENTATION_NARRATIVE_IDS = frozenset({"segev", "nova", "sderot", "hostages"})
 
 
@@ -35,39 +33,12 @@ def load_presentation_manifest(path=PRESENTATION_MANIFEST_PATH):
     with open(path, encoding="utf-8") as manifest_file:
         manifest = json.load(manifest_file)
 
-    if (
-        not isinstance(manifest, dict)
-        or type(manifest.get("version")) is not int
-        or manifest["version"] != 1
-    ):
-        raise ValueError("unsupported presentation manifest version")
-    deck = manifest.get("deck")
-    if not isinstance(deck, dict):
-        raise ValueError("presentation manifest deck must be an object")
-    deck_path = deck.get("path")
-    if (
-        not isinstance(deck_path, str)
-        or deck_path != PRESENTATION_DECK_PATH
-        or ".." in deck_path
-        or deck_path.startswith("/")
-    ):
-        raise ValueError("invalid presentation deck path")
-    if type(deck.get("slideCount")) is not int or deck["slideCount"] != 33:
-        raise ValueError("presentation deck must contain 33 slides")
-    if "sha256" not in deck:
-        raise ValueError("presentation deck must include a SHA-256 field")
-    sha256 = deck["sha256"]
-    if sha256 is not None and (
-        not isinstance(sha256, str)
-        or re.fullmatch(r"[0-9a-f]{64}", sha256) is None
-    ):
-        raise ValueError("invalid presentation deck SHA-256")
-
+    if not isinstance(manifest, dict):
+        raise ValueError("presentation manifest must be an object")
     segments = manifest.get("segments")
     if not isinstance(segments, list):
         raise ValueError("presentation segments must be an array")
     ids = set()
-    previous_end = 0
     for segment in segments:
         if not isinstance(segment, dict):
             raise ValueError("presentation segment must be an object")
@@ -83,18 +54,6 @@ def load_presentation_manifest(path=PRESENTATION_MANIFEST_PATH):
             or narrative not in PRESENTATION_NARRATIVE_IDS
         ):
             raise ValueError("unsupported required presentation narrative")
-        segment_range = segment.get("range")
-        if (
-            not isinstance(segment_range, list)
-            or len(segment_range) != 2
-            or any(type(value) is not int for value in segment_range)
-            or segment_range[0] < 1
-            or segment_range[1] > 33
-            or segment_range[0] > segment_range[1]
-            or segment_range[0] <= previous_end
-        ):
-            raise ValueError("presentation segment ranges must be ordered, valid, and non-overlapping")
-        previous_end = segment_range[1]
     return manifest
 
 

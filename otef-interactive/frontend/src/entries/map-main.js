@@ -10,6 +10,7 @@ import { createNliArchiveCommandBridge, createNliArchiveWindowController } from 
 import { createGisPersonController } from "../map/maplibre-gis-person-controller.js";
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
+import { loadNliPresentationManifest } from "../shared/nli-presentation-manifest.js";
 import { applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
@@ -206,6 +207,83 @@ async function bootstrapMapRuntime() {
 
   map.on("load", async () => {
     registerDisposer(() => disposeLayerManagerForMap(map));
+    let presentationViewer = null;
+    let presentationManifest = null;
+    let activePresentationSegmentId = null;
+    let activePresentationSessionId = null;
+    let activePresentationGeneration = 0;
+    let highestPresentationGeneration = 0;
+    let presentationBootstrapActive = true;
+    const emitUnavailablePresentation = (command, message = "Presentation is unavailable") => {
+      if (!command || typeof command !== "object") return;
+      void OTEFDataContext.narrativePresentationResult({
+        segmentId: command.segmentId,
+        presentationSessionId: command.presentationSessionId,
+        presentationGeneration: command.presentationGeneration,
+        sequence: command.sequence,
+        requestId: command.requestId,
+        outcome: "unavailable",
+        slide: null,
+        range: null,
+        message,
+      });
+    };
+    registerDisposer(() => {
+      presentationBootstrapActive = false;
+      presentationViewer?.dispose?.();
+      presentationViewer = null;
+    });
+    registerDisposer(OTEFDataContext.subscribe("narrativePresentation", (command) => {
+      if (!presentationViewer) {
+        emitUnavailablePresentation(command);
+        return;
+      }
+      if (command.presentationAction === "open") {
+        if (command.presentationGeneration > highestPresentationGeneration) {
+          highestPresentationGeneration = command.presentationGeneration;
+          activePresentationSegmentId = command.segmentId;
+          activePresentationSessionId = command.presentationSessionId;
+          activePresentationGeneration = command.presentationGeneration;
+        }
+      } else if (command.presentationAction === "close") {
+        if (command.presentationSessionId === activePresentationSessionId &&
+            command.presentationGeneration === activePresentationGeneration) {
+          activePresentationSegmentId = null;
+        }
+      }
+      void presentationViewer.handleCommand(command).catch((error) => {
+        console.error("[map-main] NLI presentation command failed", error);
+        emitUnavailablePresentation(command);
+      });
+    }));
+    registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => {
+      if (!activePresentationSegmentId || !presentationManifest || !presentationViewer) return;
+      const segment = presentationManifest.segments.find(
+        (candidate) => candidate.id === activePresentationSegmentId,
+      );
+      if (segment?.requiredNarrative && state?.id !== segment.requiredNarrative) {
+        presentationViewer.close();
+        activePresentationSegmentId = null;
+        activePresentationSessionId = null;
+        activePresentationGeneration = 0;
+      }
+    }));
+    void (async () => {
+      try {
+        const manifest = await loadNliPresentationManifest();
+        const { createNliRevealPresentation } = await import("../map/nli-reveal-presentation.js");
+        if (!presentationBootstrapActive) return;
+        const mapContainer =
+          typeof map.getContainer === "function" ? map.getContainer() : document.getElementById("map");
+        presentationManifest = manifest;
+        presentationViewer = createNliRevealPresentation(mapContainer, {
+          manifest,
+          emitResult: (result) => { void OTEFDataContext.narrativePresentationResult(result); },
+        });
+      } catch (error) {
+        console.error("[map-main] NLI presentation viewer failed to load", error);
+      }
+    })();
     const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "gis", motionMode: resolveMotionMode() });
     registerDisposer(() => nameFieldController.dispose());
     registerDisposer(() => {
