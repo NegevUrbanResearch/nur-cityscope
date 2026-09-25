@@ -36,6 +36,11 @@ const MESSAGES = {
     navLayers: "שכבות",
     navCuration: "הספרייה",
     navSlideshow: "מצגת",
+    presentationOpen: "פתיחת המצגת",
+    presentationPrevious: "הקודם",
+    presentationNext: "הבא",
+    presentationClose: "סגירת המצגת",
+    presentationUnavailable: "המצגת אינה זמינה",
     sectionNavigation: "ניווט",
     navPanGroupLabel: "",
     basemapControlTitle: "\u05de\u05e4\u05ea \u05e8\u05e7\u05e2",
@@ -227,6 +232,11 @@ const MESSAGES = {
     navLayers: "Layers",
     navCuration: "Library",
     navSlideshow: "Slideshow",
+    presentationOpen: "Open presentation",
+    presentationPrevious: "Previous",
+    presentationNext: "Next",
+    presentationClose: "Close presentation",
+    presentationUnavailable: "Presentation unavailable",
     sectionNavigation: "Navigation",
     navPanGroupLabel: "",
     basemapControlTitle: "Basemap",
@@ -639,6 +649,10 @@ export function t(key, vars = {}) {
     }
   }
   return text;
+}
+
+export function messageForLocale(locale, key) {
+  return MESSAGES[locale === "he" ? "he" : "en"]?.[key] || MESSAGES.en[key] || key;
 }
 
 /**

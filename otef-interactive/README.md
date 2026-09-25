@@ -215,11 +215,9 @@ revision 5. A second conflict remains visible to the presenter.
   `satellite_bw` basemap; GIS and projection render the same Hebrew focus
   label, while the projection camera continues to follow the ordinary viewport
   channel.
-- The old Canva iframe and its remote controls have been removed. Presentation
-  steps remain in the staff script, but they do not open slides yet. The
-  retained presentation manifest and command transport are awaiting the
-  Reveal.js viewer and revised slide mapping. See
-  [the prototype findings](docs/segev-reveal-prototype.md).
+- Staff presentation controls and exhibit setup are documented in the
+  [staff remote guide](docs/nli-staff-remote-steps.md) and
+  [NLI exhibit verification guide](docs/nli-exhibit-verification.md).
 - Ending the narrative returns GIS to the configured OTEF-bounds center at
   zoom `10` on the dark basemap. Refresh and reconnect restore the durable
   narrative scene.

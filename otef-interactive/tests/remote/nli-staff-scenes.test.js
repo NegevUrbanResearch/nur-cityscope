@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   NARRATIVES,
   HOME_SHOW_SHORTCUTS,
@@ -16,6 +16,10 @@ import {
 } from "../../frontend/src/remote/nli-staff-script.js";
 import { showStepIndex } from "../../frontend/src/remote/nli-staff-flow.js";
 import { getNliNarrative } from "../../frontend/src/shared/nli-narratives.js";
+import {
+  createNliStaffPresentationButtonHandler,
+  shouldAutoOpenNliPresentation,
+} from "../../frontend/src/remote/nli-staff-presentation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MANIFEST_ROOT = path.resolve(__dirname, "../../public/processed/layers");
@@ -31,6 +35,40 @@ test("names wall keeps people_names on the black model ground", () => {
   expect(PEOPLE_NAMES_LAYER_IDS).toEqual(["nli.people_names"]);
   expect(WALL_LAYER_IDS).toEqual(["nli.people_names"]);
   expect(WALL_LAYER_IDS).not.toEqual(OPENING_LAYER_IDS);
+});
+
+test("only a current explicit Hostages Close applies its special destination", async () => {
+  const step = { presentation: { segmentId: "hostages", open: "manual", onClose: "next" } };
+  let generation = 4;
+  let releaseClose;
+  const destinations = [];
+  const handle = createNliStaffPresentationButtonHandler({
+    getCurrentStep: () => step,
+    getNavigationGeneration: () => generation,
+    run: () => new Promise((resolve) => { releaseClose = () => resolve(true); }),
+    nextFromExplicitClose: () => destinations.push("next"),
+  });
+  const closing = handle("close");
+  await vi.waitFor(() => expect(releaseClose).toBeTypeOf("function"));
+  generation += 1;
+  releaseClose();
+  await closing;
+  expect(destinations).toEqual([]);
+});
+
+test("Shura auto-opens only after its current step cue succeeds", () => {
+  const item = SCRIPTS.find((script) => script.id === "shura");
+  const index = item.steps.findIndex((step) => step.presentation?.open === "auto");
+  expect(shouldAutoOpenNliPresentation({
+    item, index, currentScript: item, currentStep: item.steps[index], cueStatus: "ready",
+  })).toBe(true);
+  expect(shouldAutoOpenNliPresentation({
+    item, index, currentScript: item, currentStep: item.steps[index], cueStatus: "failed",
+  })).toBe(false);
+  expect(shouldAutoOpenNliPresentation({
+    item, index, currentScript: SCRIPTS.find((script) => script.id === "hostages"),
+    currentStep: item.steps[index], cueStatus: "ready",
+  })).toBe(false);
 });
 
 test("Home shortcuts target the canonical final show steps", () => {

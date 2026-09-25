@@ -1,12 +1,63 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { nextAction, prevAction, showStepIndex, slideIndexes } from "../../frontend/src/remote/nli-staff-flow.js";
 import { COPY, HOME_SHOW_SHORTCUTS, NARRATIVES, SHOW } from "../../frontend/src/remote/nli-staff-script.js";
+import { createNliStaffSearchEventHandlers } from "../../frontend/src/remote/nli-staff-remote.js";
 
 const showIndex = (title) => SHOW.steps.findIndex((step) => step.title.en === title);
 const lastOf = (id) => NARRATIVES.find((item) => item.id === id).steps.length - 1;
 const junction = (ids) => SHOW.steps.findIndex((step) => step.branch?.join() === ids.join());
 
 describe("NLI staff show flow", () => {
+  test("step transitions force-close before clearing and wait for the destination cue", async () => {
+    let generation = 0;
+    const events = [];
+    let releaseCue;
+    const transition = {
+      begin: () => ++generation,
+      isCurrent: (token) => token === generation,
+      clearAll: async () => { events.push("clear"); return true; },
+    };
+    const handlers = createNliStaffSearchEventHandlers({
+      transition,
+      beforeTransition: async () => { events.push("close"); },
+      setDestination: () => events.push("destination"),
+      renderDestination: () => events.push("render"),
+      applyDestinationCue: () => {
+        events.push("cue-start");
+        return new Promise((resolve) => { releaseCue = () => { events.push("cue-ready"); resolve(); }; });
+      },
+      afterDestinationCue: () => events.push("after-cue"),
+    });
+    const pending = handlers.transitionToStep({ steps: [{}] }, 0, null);
+    await vi.waitFor(() => expect(events).toContain("cue-start"));
+    expect(events).toEqual(["close", "clear", "destination", "render", "cue-start"]);
+    releaseCue();
+    await pending;
+    expect(events.at(-1)).toBe("after-cue");
+  });
+
+  test("a newer transition suppresses the Shura post-cue callback", async () => {
+    let generation = 0;
+    const events = [];
+    let releaseCue;
+    const transition = {
+      begin: () => ++generation,
+      isCurrent: (token) => token === generation,
+      clearAll: async () => true,
+    };
+    const handlers = createNliStaffSearchEventHandlers({
+      transition,
+      applyDestinationCue: () => new Promise((resolve) => { releaseCue = resolve; }),
+      afterDestinationCue: () => events.push("auto-open"),
+    });
+    const pending = handlers.transitionToStep({ steps: [{}] }, 0, null);
+    await vi.waitFor(() => expect(releaseCue).toBeTypeOf("function"));
+    transition.begin();
+    releaseCue();
+    await pending;
+    expect(events).toEqual([]);
+  });
+
   test("home search shortcuts point to canonical SHOW step IDs", () => {
     expect(HOME_SHOW_SHORTCUTS.every((item) => SHOW.steps[showStepIndex(item.id)]?.id === item.id)).toBe(true);
   });

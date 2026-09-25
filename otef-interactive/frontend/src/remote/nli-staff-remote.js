@@ -20,6 +20,12 @@ import { applyServerLocale, bindLocaleButtons, getLocale, t, LOCALE_EVENT } from
 import { COPY, HOME_SHOW_SHORTCUTS, NARRATIVES, SCENES, SCRIPTS, SHOW } from "./nli-staff-script.js";
 import { nextAction, prevAction, showStepIndex, slideIndexes } from "./nli-staff-flow.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
+import {
+  createNliStaffPresentationButtonHandler,
+  createNliStaffPresentationController,
+  presentationControlsHtml,
+  shouldAutoOpenNliPresentation,
+} from "./nli-staff-presentation.js";
 
 const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false });
 
@@ -79,6 +85,8 @@ export function createNliStaffSearchEventHandlers({
   setDestination = () => {},
   renderDestination = () => {},
   applyDestinationCue = () => {},
+  beforeTransition = () => {},
+  afterDestinationCue = () => {},
 } = {}) {
   function failClear(token) {
     if (!transition.isCurrent(token)) return false;
@@ -95,6 +103,9 @@ export function createNliStaffSearchEventHandlers({
     cancelCues();
     setPending(true);
     renderPending();
+    const before = beforeTransition();
+    if (before && typeof before.then === "function") await before;
+    if (!transition.isCurrent(token)) return false;
     const cleared = await transition.clearAll(token);
     if (!transition.isCurrent(token)) return false;
     if (!cleared) return failClear(token);
@@ -103,7 +114,9 @@ export function createNliStaffSearchEventHandlers({
     renderPending();
     setDestination(item, index, returnTo);
     renderDestination();
-    applyDestinationCue(item, index);
+    await applyDestinationCue(item, index);
+    if (!transition.isCurrent(token)) return false;
+    afterDestinationCue(item, index);
     return true;
   }
 
@@ -160,6 +173,7 @@ export function initNliStaffRemote(dataContext) {
     freeError: null,
     placeName: null,
     searchPending: false,
+    presentationClosePending: false,
   };
 
   let lastPlaces = [];
@@ -168,6 +182,8 @@ export function initNliStaffRemote(dataContext) {
   let searchTransition = null;
   let searchActions = null;
   let packMenus = null;
+  let presentation = null;
+  let navigationGeneration = 0;
 
   const timelineHost = Object.assign(
     {
@@ -450,10 +466,10 @@ export function initNliStaffRemote(dataContext) {
   function renderDock() {
     const next = nextAction(state);
     const choices = next.kind === "choose";
-    $("prevBtn").disabled = state.searchPending || !prevAction(state);
+    $("prevBtn").disabled = (state.searchPending && !state.presentationClosePending) || !prevAction(state);
     $("nextBtn").hidden = choices;
     $("nextBtn").textContent = txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next");
-    $("nextBtn").disabled = state.searchPending;
+    $("nextBtn").disabled = state.searchPending && !state.presentationClosePending;
     $("nextChoices").hidden = !choices;
     $("nextChoices").innerHTML = !choices ? "" : next.ids
       .map((id) => {
@@ -484,12 +500,18 @@ export function initNliStaffRemote(dataContext) {
       kitArchive: kits.includes("archive"),
       kitSearch: kits.includes("search"),
       kitEscape: kits.includes("escape"),
+      kitPresentation: Boolean(step?.presentation),
     };
     Object.entries(show).forEach(([id, on]) => {
       $(id).hidden = !on;
     });
     $("kitIdle").hidden = Object.values(show).some(Boolean);
     $("kitIdle").textContent = txt("kitIdle");
+    if (show.kitPresentation) {
+      $("kitPresentation").innerHTML = presentationControlsHtml(step, presentation?.getState(), getLocale());
+    } else {
+      $("kitPresentation").innerHTML = "";
+    }
     renderCueStatus();
     if (show.kitTimeline) {
       void timelineHost._ensureNliFeatureCache?.();
@@ -612,6 +634,7 @@ export function initNliStaffRemote(dataContext) {
   }
 
   function transitionToStep(item, index, { returnTo = state.returnTo } = {}) {
+    navigationGeneration += 1;
     return searchActions.transitionToStep(item, index, returnTo);
   }
 
@@ -691,10 +714,20 @@ export function initNliStaffRemote(dataContext) {
   }
 
   async function exitToHome() {
+    navigationGeneration += 1;
     const token = searchTransition.begin();
     cues.cancel();
     state.searchPending = true;
     renderKit();
+    state.presentationClosePending = true;
+    renderKit();
+    try {
+      await presentation?.closeForStepChange();
+    } finally {
+      state.presentationClosePending = false;
+      renderKit();
+    }
+    if (!searchTransition.isCurrent(token)) return false;
     const cleared = await searchTransition.clearAll(token);
     if (!searchTransition.isCurrent(token)) return false;
     if (!cleared) return failSearchClear(token);
@@ -801,6 +834,27 @@ export function initNliStaffRemote(dataContext) {
     waitForPlaceNavigation: () => placeFocusOwnership.waitForNavigation(),
     hasPlaceFocus: () => Boolean(state.placeName || placeFocusOwnership.hasFocus()),
   });
+  presentation = createNliStaffPresentationController({
+    dataContext,
+    onStateChange: () => {
+      if (archiveUiReady && state.screen === "player") renderKit();
+    },
+  });
+  const handlePresentationButton = createNliStaffPresentationButtonHandler({
+    getCurrentStep: currentStep,
+    getNavigationGeneration: () => navigationGeneration,
+    run: (action, segmentId) => presentation.run(action, segmentId),
+    nextFromExplicitClose: () => {
+      const next = nextAction(state);
+      if (next.kind === "step") goToStep(next.step);
+      else if (next.kind === "resume") enterScript(next.scriptId, { step: next.step });
+      else if (next.kind === "finish") void exitToHome();
+    },
+    resumeFromExplicitClose: () => {
+      const next = nextAction(state);
+      if (next.kind === "resume") enterScript(next.scriptId, { step: next.step });
+    },
+  });
   searchActions = createNliStaffSearchEventHandlers({
     transition: searchTransition,
     cancelCues: () => cues.cancel(),
@@ -813,6 +867,16 @@ export function initNliStaffRemote(dataContext) {
     restoreLiveSearchLabel,
     showClearFailed: () => { state.freeError = txt("searchClearFailed"); },
     clearSearchUi,
+    beforeTransition: async () => {
+      state.presentationClosePending = true;
+      if (state.screen === "player") renderPlayer();
+      try {
+        await presentation?.closeForStepChange();
+      } finally {
+        state.presentationClosePending = false;
+        if (state.screen === "player") renderPlayer();
+      }
+    },
     setDestination: (item, index, returnTo) => {
       const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
       const step = item.steps[nextIndex];
@@ -827,7 +891,15 @@ export function initNliStaffRemote(dataContext) {
     },
     applyDestinationCue: (item, index) => {
       const destination = item.steps[Math.max(0, Math.min(index, item.steps.length - 1))];
-      void applyCue(destination.cue, item.narrative);
+      return applyCue(destination.cue, item.narrative);
+    },
+    afterDestinationCue: (item, index) => {
+      const destination = item.steps[Math.max(0, Math.min(index, item.steps.length - 1))];
+      if (shouldAutoOpenNliPresentation({
+        item, index, currentScript: script(), currentStep: currentStep(), cueStatus: state.cueStatus,
+      })) {
+        void presentation.run("open", destination.presentation.segmentId);
+      }
     },
   });
   archiveUiReady = true;
@@ -861,7 +933,7 @@ export function initNliStaffRemote(dataContext) {
   });
 
   $("prevBtn").addEventListener("click", () => {
-    if (state.searchPending) return;
+    if (state.searchPending && !state.presentationClosePending) return;
     const prev = prevAction(state);
     if (!prev) return;
     if (prev.scriptId === state.scriptId) goToStep(prev.step);
@@ -869,7 +941,7 @@ export function initNliStaffRemote(dataContext) {
   });
 
   $("nextBtn").addEventListener("click", () => {
-    if (state.searchPending) return;
+    if (state.searchPending && !state.presentationClosePending) return;
     const next = nextAction(state);
     if (next.kind === "step") goToStep(next.step);
     else if (next.kind === "resume") enterScript(next.scriptId, { step: next.step });
@@ -877,11 +949,16 @@ export function initNliStaffRemote(dataContext) {
   });
 
   $("nextChoices").addEventListener("click", (event) => {
-    if (state.searchPending) return;
+    if (state.searchPending && !state.presentationClosePending) return;
     const btn = event.target.closest("[data-branch]");
     const next = nextAction(state);
     if (!btn || next.kind !== "choose") return;
     enterScript(btn.dataset.branch, { returnTo: { id: next.scriptId, step: next.junction } });
+  });
+
+  $("kitPresentation").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-presentation-action]");
+    if (button) void handlePresentationButton(button.dataset.presentationAction);
   });
 
   $("kitEscape").addEventListener("click", (event) => {

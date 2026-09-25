@@ -1,5 +1,52 @@
 # NLI exhibit verification
 
+## Local Reveal presentation setup and acceptance
+
+From an elevated PowerShell session on the GIS exhibit machine, install the
+local Chrome policies:
+
+```powershell
+cd C:\Users\owner\Desktop\city-scope\nur-cityscope\otef-interactive
+.\scripts\configure-chrome-popup-policy.ps1 -Mode Install
+.\scripts\configure-chrome-popup-policy.ps1 -Mode Status
+```
+
+Quit every Chrome process, then relaunch GIS from its normal shortcut so the
+autoplay allowlist is loaded. Check that the status output shows
+`http://localhost:80` under both the popup allowlist and autoplay allowlist.
+Use the staff remote for all slide navigation. Confirm all six segments open
+at their first slide and Previous/Next stop at the segment boundaries:
+Segev 1–8, Mor Levy 9–11, Nova memorial 12–16, Sderot 17–21, Shura 22–28,
+and Hostages 29–34.
+
+Check audible autoplay with the remote on video slides 2, 10, 18, 23, and 24.
+Confirm audio stops and rewinds when leaving each video slide or closing the
+presentation. Confirm Shura opens after its cue and its explicit Close resumes
+the parent choice; Hostages explicit Close advances to Nir Oz people, while
+Scene Next proceeds to all hostages. Scene Back, Scene Next, and Home must close
+the overlay without taking either special Close destination. Confirm that
+slides stay on GIS and do not appear on projection. Opening and closing must
+leave GIS mounted in place without reloading the map or switching applications.
+
+Repeat the checks with external network access disconnected. Record each
+hardware/browser result below; automated tests do not count as exhibit checks.
+
+| Check | Date | Operator | Browser / display | pass/fail | Notes |
+|---|---|---|---|---|---|
+| Six segment starts and boundary clamping |  |  |  | pending |  |
+| Slides remain on GIS, not projection |  |  |  | pending |  |
+| Open/close causes no GIS reload or application switch |  |  |  | pending |  |
+| Slides 2, 10, 18, 23, 24 autoplay audibly |  |  |  | pending |  |
+| Leaving a video slide or closing stops and rewinds audio |  |  |  | pending |  |
+| Shura and Hostages explicit Close destinations |  |  |  | pending |  |
+| Scene Back/Next and Home force-close without special destination |  |  |  | pending |  |
+| External network disconnected; fresh Chrome launch |  |  |  | pending |  |
+
+After the exhibit and when the source terms require removal, delete
+`otef-interactive/public/local/presentations/nli/` and the retained downloaded
+source files `C:\Users\owner\Downloads\מצגת מודל נור.pdf` and
+`C:\Users\owner\Downloads\מצגת מודל נור (2).pptx`.
+
 Use this checklist on the normal exhibit browser and physical display. Unit
 tests cannot prove popup permission, window placement, foreground focus,
 cross-origin page load, route-dash visibility, or label readability. No
