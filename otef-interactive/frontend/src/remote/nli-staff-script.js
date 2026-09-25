@@ -18,10 +18,13 @@ export const COPY = {
     stepAria: "מעבר לשלב {{n}}",
     showTitle: "מהלך ההקרנה",
     showMeta: "הרצף המלא, שלב אחר שלב",
+    namesHomeTitle: "מאגר הזהויות וקיר השמות",
+    namesHomeMeta: "קפיצה ישירה לשלבי החיפוש",
     freeTitle: "שליטה חופשית",
     searchLabel: "חיפוש שם או מקום",
     searchPlaceholder: "חיפוש שם או מקום",
-    nowShowing: "מוצג כעת",
+    searchClearing: "מנקה את החיפוש…",
+    searchClearFailed: "לא ניתן לנקות את החיפוש במפה. הבחירה הנוכחית נשמרה.",
     draft: "התוכן לשלב זה עדיין נכתב.",
     steps: "שלבים",
     freeMeta: "סצנות מוכנות ושכבות",
@@ -56,10 +59,13 @@ export const COPY = {
     stepAria: "Go to step {{n}}",
     showTitle: "Run of show",
     showMeta: "The full sequence, step by step",
+    namesHomeTitle: "Identity database and names wall",
+    namesHomeMeta: "Jump straight to either search step",
     freeTitle: "Free control",
     searchLabel: "Search a name or place",
     searchPlaceholder: "Search a name or place",
-    nowShowing: "Now showing",
+    searchClearing: "Clearing search…",
+    searchClearFailed: "Could not clear the map search. The current selection was kept.",
     draft: "This step is still being written.",
     steps: "steps",
     freeMeta: "Preset scenes and layers",
@@ -128,6 +134,11 @@ const TIMELINE_GIS = {
 };
 const PER_NARRATIVE = { he: "לפי טבלת הנרטיב", en: "Per the narrative table" };
 
+export const SHOW_STEP_IDS = Object.freeze({
+  IDENTITY: "identity-database",
+  WALL: "names-wall",
+});
+
 export const SHOW = {
   id: "show",
   narrative: null,
@@ -135,6 +146,7 @@ export const SHOW = {
   meta: { he: COPY.he.showMeta, en: COPY.en.showMeta },
   steps: [
     {
+      id: "opening",
       title: { he: "התחלה", en: "Opening" },
       gis: OPENING_COPY,
       model: OPENING_COPY,
@@ -142,6 +154,7 @@ export const SHOW = {
       kit: [],
     },
     {
+      id: "opening-minutes",
       clock: "06:29",
       title: { he: "הדקות הראשונות", en: "The opening minutes" },
       note: {
@@ -154,6 +167,7 @@ export const SHOW = {
       kit: ["timeline"],
     },
     {
+      id: "segev-family",
       title: { he: "משפחת שגב", en: "Segev family" },
       gis: PER_NARRATIVE,
       model: PER_NARRATIVE,
@@ -161,6 +175,7 @@ export const SHOW = {
       kit: [],
     },
     {
+      id: "rest-of-day",
       clock: "06:42",
       title: { he: "שאר היום", en: "The rest of the day" },
       note: {
@@ -173,6 +188,7 @@ export const SHOW = {
       kit: ["timeline"],
     },
     {
+      id: "nova-mor-levy",
       title: { he: "נובה ומור לוי", en: "Nova and Mor Levy" },
       gis: PER_NARRATIVE,
       model: PER_NARRATIVE,
@@ -180,6 +196,7 @@ export const SHOW = {
       kit: [],
     },
     {
+      id: "narratives",
       title: { he: "נרטיבים", en: "Narratives" },
       note: {
         he: "בחירה חופשית: שדרות, מחנה שורה, חטופים (חיים פרי מניר עוז).",
@@ -191,6 +208,7 @@ export const SHOW = {
       kit: [],
     },
     {
+      id: SHOW_STEP_IDS.IDENTITY,
       title: { he: "מאגר הזהויות", en: "Identity database" },
       note: {
         he: "חפשו שם — המפה מתמקדת בנקודה. מהשלט אפשר לפתוח את הרשומה בארכיון.",
@@ -208,6 +226,7 @@ export const SHOW = {
       kit: ["search"],
     },
     {
+      id: SHOW_STEP_IDS.WALL,
       title: { he: "קיר השמות", en: "Wall of names" },
       note: {
         he: "חפשו שם או מקום — השמות המשויכים מוארים, השאר מחשיכים, והמקום הנבחר מואר.",
@@ -222,6 +241,7 @@ export const SHOW = {
       kit: ["search"],
     },
     {
+      id: "back-to-start",
       title: { he: "בחזרה להתחלה", en: "Back to the start" },
       gis: OPENING_COPY,
       model: OPENING_COPY,
@@ -230,6 +250,19 @@ export const SHOW = {
     },
   ],
 };
+
+export const HOME_SHOW_SHORTCUTS = Object.freeze([
+  {
+    id: SHOW_STEP_IDS.IDENTITY,
+    title: { he: "מאגר הזהויות", en: "Identity database" },
+    meta: { he: "אנשים כנקודות וחיפוש", en: "People as points and search" },
+  },
+  {
+    id: SHOW_STEP_IDS.WALL,
+    title: { he: "קיר השמות", en: "Names wall" },
+    meta: { he: "כל השמות וחיפוש", en: "All names and search" },
+  },
+]);
 
 function slides(from, to) {
   return {
@@ -469,18 +502,6 @@ export const SCENES = [
     title: { he: "ציר זמן בלולאה", en: "Loop timeline" },
     meta: { he: "כל היום, מתנגן ברצף", en: "The whole day, playing on repeat" },
     cue: { layers: TIMELINE_LAYER_IDS, clock: { loop: true } },
-  },
-  {
-    id: "identity",
-    title: { he: "מאגר הזהויות", en: "Identity database" },
-    meta: { he: "אנשים כנקודות", en: "People as points" },
-    cue: IDENTITY_CUE,
-  },
-  {
-    id: "wall",
-    title: { he: "קיר השמות", en: "Names wall" },
-    meta: { he: "כל השמות על המודל", en: "All names on the model" },
-    cue: WALL_CUE,
   },
   {
     id: "layers",

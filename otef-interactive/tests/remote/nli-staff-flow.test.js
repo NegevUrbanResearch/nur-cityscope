@@ -1,12 +1,23 @@
 import { describe, expect, test } from "vitest";
-import { nextAction, prevAction, slideIndexes } from "../../frontend/src/remote/nli-staff-flow.js";
-import { NARRATIVES, SHOW } from "../../frontend/src/remote/nli-staff-script.js";
+import { nextAction, prevAction, showStepIndex, slideIndexes } from "../../frontend/src/remote/nli-staff-flow.js";
+import { COPY, HOME_SHOW_SHORTCUTS, NARRATIVES, SHOW } from "../../frontend/src/remote/nli-staff-script.js";
 
 const showIndex = (title) => SHOW.steps.findIndex((step) => step.title.en === title);
 const lastOf = (id) => NARRATIVES.find((item) => item.id === id).steps.length - 1;
 const junction = (ids) => SHOW.steps.findIndex((step) => step.branch?.join() === ids.join());
 
 describe("NLI staff show flow", () => {
+  test("home search shortcuts point to canonical SHOW step IDs", () => {
+    expect(HOME_SHOW_SHORTCUTS.every((item) => SHOW.steps[showStepIndex(item.id)]?.id === item.id)).toBe(true);
+  });
+
+  test("search status copy reports reset failures without a currently-shown label", () => {
+    expect(COPY.he.searchClearFailed).toBeTruthy();
+    expect(COPY.en.searchClearFailed).toBeTruthy();
+    expect(COPY.he).not.toHaveProperty("nowShowing");
+    expect(COPY.en).not.toHaveProperty("nowShowing");
+  });
+
   test("branch steps are junctions, not slides", () => {
     const slides = slideIndexes(SHOW).map((index) => SHOW.steps[index]);
     expect(slides.some((step) => step.branch)).toBe(false);

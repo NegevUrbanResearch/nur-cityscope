@@ -4,13 +4,16 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import {
   NARRATIVES,
+  HOME_SHOW_SHORTCUTS,
   OPENING_LAYER_IDS,
   PEOPLE_NAMES_LAYER_IDS,
   SCENES,
   SCRIPTS,
   SHOW,
+  SHOW_STEP_IDS,
   WALL_LAYER_IDS,
 } from "../../frontend/src/remote/nli-staff-script.js";
+import { showStepIndex } from "../../frontend/src/remote/nli-staff-flow.js";
 import { getNliNarrative } from "../../frontend/src/shared/nli-narratives.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,6 +30,22 @@ test("names wall keeps people_names on the black model ground", () => {
   expect(PEOPLE_NAMES_LAYER_IDS).toEqual(["nli.people_names"]);
   expect(WALL_LAYER_IDS).toEqual(["nli.people_names"]);
   expect(WALL_LAYER_IDS).not.toEqual(OPENING_LAYER_IDS);
+});
+
+test("Home shortcuts target the canonical final show steps", () => {
+  expect(new Set(SHOW.steps.map((step) => step.id)).size).toBe(SHOW.steps.length);
+  expect(HOME_SHOW_SHORTCUTS.map((item) => item.id)).toEqual([
+    SHOW_STEP_IDS.IDENTITY,
+    SHOW_STEP_IDS.WALL,
+  ]);
+  expect(SHOW.steps[showStepIndex(SHOW_STEP_IDS.IDENTITY)].kit).toContain("search");
+  expect(SHOW.steps[showStepIndex(SHOW_STEP_IDS.WALL)].kit).toContain("search");
+});
+
+test("Free control no longer duplicates identity and wall", () => {
+  expect(SCENES.map((scene) => scene.id)).not.toEqual(
+    expect.arrayContaining(["identity", "wall"]),
+  );
 });
 
 describe("NLI staff run of show", () => {

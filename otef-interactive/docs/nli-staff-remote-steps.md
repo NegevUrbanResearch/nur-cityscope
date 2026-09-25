@@ -36,6 +36,16 @@ Leaving a step that uses the presentation closes the presentation. Returning
 home cancels any pending cue, closes the archive and presentation, and exits
 the narrative.
 
+## Home shortcuts
+
+The Home screen links directly to the existing Identity Database and Names Wall
+steps. These links use the same cues and search controls as the run of show.
+Identity Database and Names Wall are no longer duplicated under Free control.
+
+Clearing the search field, returning Home, or moving between these two steps
+clears both person and place focus. The field is never empty while a search
+focus remains active. Search status text appears only for pending work or errors.
+
 ## What entering a narrative does
 
 These effects come from the server whenever the narrative changes:
