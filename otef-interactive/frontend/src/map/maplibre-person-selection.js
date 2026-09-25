@@ -123,6 +123,24 @@ const escapeHtml = (value) => clean(value).replace(/[&<>"']/g, (char) => ({ "&":
 const popupMarkup = (person) => `<div class="gis-person-bubble" dir="auto">${person.name ? `<div class="gis-person-bubble__name" dir="auto">${escapeHtml(person.name)}</div>` : ""}${person.location ? `<div class="gis-person-bubble__location" dir="auto">${escapeHtml(person.location)}</div>` : ""}</div>`;
 const motionReduced = (value) => value === true || value === "reduced";
 
+function readCamera(map) {
+  const center = map?.getCenter?.();
+  const zoom = map?.getZoom?.();
+  if (!Number.isFinite(zoom)) return null;
+  const lngLat = center && Number.isFinite(center.lng) && Number.isFinite(center.lat)
+    ? { lng: center.lng, lat: center.lat }
+    : Array.isArray(center) && center.length >= 2 && center.slice(0, 2).every(Number.isFinite)
+      ? { lng: center[0], lat: center[1] }
+      : null;
+  if (!lngLat) return null;
+  return {
+    center: lngLat,
+    zoom,
+    bearing: Number(map.getBearing?.()) || 0,
+    pitch: Number(map.getPitch?.()) || 0,
+  };
+}
+
 function coordinatesOf(person) {
   const coordinates = person?.coordinates || person?.geometry?.coordinates;
   return Array.isArray(coordinates) && coordinates.slice(0, 2).every(Number.isFinite) ? coordinates.slice(0, 2) : null;
@@ -197,7 +215,7 @@ export function syncPersonHaloPaint(map, { motionMode = "full", nowMs = 0 } = {}
 
 /** Own one reusable MapLibre halo and bubble. */
 export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl, beginCameraTravel, onBubbleClick } = {}) {
-  let disposed = false; let current = null; let renderToken = 0; let cameraListener = null;
+  let disposed = false; let current = null; let renderToken = 0; let cameraListener = null; let overviewCamera = null;
   const popup = typeof maplibregl?.Popup === "function" ? new maplibregl.Popup({ className: "gis-person-bubble-popup", closeButton: false, closeOnClick: false, maxWidth: "240px", offset: 14 }) : null;
   const runtimePromise = loadPeopleRuntime({ fetchJson: fetcher, hashBytes, peopleUrl, indexUrl, metadataUrl });
   const removeVisual = () => {
@@ -228,6 +246,7 @@ export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, 
     cancelCamera(); renderToken += 1; current = { ...person, coordinates }; removeVisual(); mount(current);
     const token = renderToken;
     if (focus && typeof map?.flyTo === "function") {
+      if (!overviewCamera) overviewCamera = readCamera(map);
       const duration = motionReduced(reducedMotion) ? 0 : 1600;
       beginCameraTravel?.(`person-fly-${token}`);
       if (duration === 0 || typeof map?.on !== "function") {
@@ -251,7 +270,17 @@ export function createGisPersonSelection({ map, maplibregl, fetchJson: fetcher, 
     load: () => runtimePromise,
     resolve: (personId, datasetVersion) => { const token = renderToken; return runtimePromise.then((runtime) => disposed || token !== renderToken ? null : runtime.resolve(personId, datasetVersion)); },
     bringToFront,
-    show, hide: () => { if (!disposed) { cancelCamera(); renderToken += 1; current = null; removeVisual(); } },
+    show, hide: (options = {}) => {
+      if (disposed) return;
+      cancelCamera(); renderToken += 1; current = null; removeVisual();
+      if (options.restoreCamera !== true || !overviewCamera || typeof map?.flyTo !== "function") return;
+      const camera = overviewCamera;
+      overviewCamera = null;
+      const duration = motionReduced(options.reducedMotion) ? 0 : 1600;
+      map.stop?.();
+      beginCameraTravel?.(`person-restore-${renderToken}`);
+      map.flyTo({ ...camera, essential: true, duration });
+    },
     isInsidePaddedViewport: (person, padding = 32) => { const point = coordinatesOf(person); if (!point || typeof map?.project !== "function") return false; const projected = map.project(point); const canvas = map.getCanvas?.() || {}; const width = Number(canvas.clientWidth || canvas.width) || 0; const height = Number(canvas.clientHeight || canvas.height) || 0; return projected.x >= -padding && projected.x <= width + padding && projected.y >= -padding && projected.y <= height + padding; },
     dispose: () => { if (!disposed) { disposed = true; renderToken += 1; cancelCamera(); map?.off?.("style.load", onStyleLoad); current = null; removeVisual(); } },
   };

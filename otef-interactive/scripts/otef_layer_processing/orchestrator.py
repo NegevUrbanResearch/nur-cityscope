@@ -16,6 +16,7 @@ from .styles import find_lyrx_file, parse_lyrx_style
 from .buffered_gradient import has_buffered_gradient, write_buffered_gradient_geojson
 from .tiling import generate_pmtiles_smart
 from .pmtiles_lifecycle import resolve_pmtiles_lifecycle
+from .nli_runtime_hashes import stamp_nli_runtime_artifact_hash
 
 logger = logging.getLogger(__name__)
 
@@ -864,6 +865,9 @@ class ProcessingOrchestrator:
             entry = _ResourceLayerEntry(**entry_kwargs, resources=resources)
         else:
             entry = LayerEntry(**entry_kwargs)
+
+        if pack_id == "nli" and layer_id == "people" and wgs84_file.is_file():
+            stamp_nli_runtime_artifact_hash(pack_output)
 
         return (
             entry,
