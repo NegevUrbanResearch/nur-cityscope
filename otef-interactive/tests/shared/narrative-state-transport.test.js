@@ -65,17 +65,26 @@ describe("narrative state transport", () => {
     await OTEF_API.setNarrative("otef", "segev", 3, { sourceId: "remote-a", timestamp: 10 });
     await OTEF_API.narrativePresentationCommand("otef", {
       presentationAction: "open",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "remote-a",
       timestamp: 11,
     });
     await OTEF_API.narrativePresentationResult("otef", {
       outcome: "opened",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "gis-a",
       timestamp: 12,
+      slide: 4,
+      range: [1, 8],
+      message: null,
     });
 
     expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({
@@ -88,18 +97,27 @@ describe("narrative state transport", () => {
     expect(JSON.parse(global.fetch.mock.calls[1][1].body)).toEqual({
       action: "narrative_presentation",
       presentationAction: "open",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "remote-a",
       timestamp: 11,
     });
     expect(JSON.parse(global.fetch.mock.calls[2][1].body)).toEqual({
       action: "narrative_presentation_result",
       outcome: "opened",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "gis-a",
       timestamp: 12,
+      slide: 4,
+      range: [1, 8],
+      message: null,
     });
   });
 
@@ -950,35 +968,55 @@ describe("narrative state transport", () => {
     context._wsClient.listeners.get("otef_narrative_presentation_command")({
       table: "otef",
       presentationAction: "open",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "remote-a",
       acknowledged: true,
+      extra: "discard",
       presentationUrl: "https://attacker.invalid/embed",
     });
     context._wsClient.listeners.get("otef_narrative_presentation_result")({
       table: "otef",
       outcome: "opened",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "gis-a",
       acknowledged: true,
+      slide: null,
+      range: [1, 8],
+      message: null,
+      extra: "discard",
       center: [0, 0],
     });
 
     expect(commands).toHaveBeenCalledWith({
       presentationAction: "open",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "remote-a",
       acknowledged: true,
     });
     expect(results).toHaveBeenCalledWith({
       outcome: "opened",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "gis-a",
       acknowledged: true,
+      slide: null,
+      range: [1, 8],
+      message: null,
     });
 
     stopCommands();
@@ -999,22 +1037,38 @@ describe("narrative state transport", () => {
     vi.spyOn(api.OTEF_API, "narrativePresentationCommand").mockResolvedValue({ status: "ok" });
     vi.spyOn(api.OTEF_API, "narrativePresentationResult").mockResolvedValue({ status: "ok" });
 
-    await context.narrativePresentationCommand("open", "segev", "request-1");
-    await context.narrativePresentationResult("opened", "segev", "request-1");
+    await context.narrativePresentationCommand({
+      presentationAction: "next", segmentId: "segev", presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000, sequence: 2, requestId: "request-b",
+    });
+    await context.narrativePresentationResult({
+      outcome: "ready", segmentId: "segev", presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000, sequence: 2, requestId: "request-b",
+      slide: null, range: null, message: null,
+    });
 
     expect(api.OTEF_API.narrativePresentationCommand).toHaveBeenCalledWith("otef", {
-      presentationAction: "open",
-      narrativeId: "segev",
-      requestId: "request-1",
+      presentationAction: "next",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 2,
+      requestId: "request-b",
       sourceId: context._clientId,
       timestamp: expect.any(Number),
     });
     expect(api.OTEF_API.narrativePresentationResult).toHaveBeenCalledWith("otef", {
-      outcome: "opened",
-      narrativeId: "segev",
-      requestId: "request-1",
+      outcome: "ready",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 2,
+      requestId: "request-b",
       sourceId: context._clientId,
       timestamp: expect.any(Number),
+      slide: null,
+      range: null,
+      message: null,
     });
   });
 });

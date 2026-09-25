@@ -61,7 +61,6 @@ const registry = readSource("../../frontend/src/shared/nli-narratives.js");
 const gisNarrativeController = readSource("../../frontend/src/map/nli-narrative-controller.js");
 const projectionNarrativeController = readSource("../../frontend/src/projection/projection-narrative-controller.js");
 const focusRenderer = readSource("../../frontend/src/shared/maplibre-narrative-focus.js");
-const presentation = readSource("../../frontend/src/map/nli-narrative-presentation.js");
 const layerSheet = readSource("../../frontend/src/remote/layer-sheet-controller.js");
 const narrativeControls = readSource("../../frontend/src/remote/nli-narrative-controls.js");
 const projectionImportGraph = collectImportGraph("entries/projection-main.js");
@@ -70,12 +69,11 @@ const narrativeModules = {
   gisNarrativeController,
   projectionNarrativeController,
   focusRenderer,
-  presentation,
   narrativeControls,
 };
 
 describe("NLI Segev narrative cross-surface contract", () => {
-  test("uses the approved house scene, exact Canva embed, and dark configured exit", () => {
+  test("uses the approved house scene and dark configured exit", () => {
     const segev = getNliNarrative("segev");
 
     expect(segev).toMatchObject({
@@ -86,8 +84,8 @@ describe("NLI Segev narrative cross-surface contract", () => {
       basemap: "satellite_bw",
       focusSettlement: "בארי",
       focusSettlementOutlineId: 19,
-      presentationUrl: "https://www.canva.com/design/DAHUaRcI6lI/Of1TuYlj0yaPV-r3UDQOKw/view?embed",
     });
+    expect(segev).not.toHaveProperty("presentationUrl");
     expect(GIS_BASEMAP_IDS).toContain("satellite_bw");
     expect(NLI_NARRATIVE_EXIT_SCENE).toMatchObject({
       center: "configured OTEF bounds center",
@@ -108,7 +106,6 @@ describe("NLI Segev narrative cross-surface contract", () => {
       "gisNarrativeController",
       "projectionNarrativeController",
       "focusRenderer",
-      "presentation",
       "narrativeControls",
     ]);
     for (const [name, source] of Object.entries(narrativeModules)) {
@@ -139,19 +136,16 @@ describe("NLI Segev narrative cross-surface contract", () => {
     )).toThrow();
   });
 
-  test("keeps the trusted Canva iframe and its command wiring GIS-only", () => {
+  test("removes Canva embed and its map and remote controls", () => {
     const mapImports = importDeclarations(mapEntry);
-    expect(mapImports).toContain("../map/nli-narrative-presentation.js");
-    expect(stripComments(mapEntry)).toMatch(/createNarrativePresentation\(mapContainer/);
-    expect(stripComments(mapEntry)).toMatch(/subscribe\("narrativePresentation",\s*\(command\)\s*=>\s*\{/);
-    expect(stripComments(mapEntry)).toMatch(/handleNarrativePresentationCommand\(\{/);
+    expect(mapImports).not.toContain("../map/nli-narrative-presentation.js");
+    expect(stripComments(mapEntry)).not.toMatch(/narrativePresentation|createNarrativePresentation|handleNarrativePresentationCommand/);
     expect([...projectionImportGraph.entries()].some(([filePath]) =>
       filePath.endsWith(`${path.sep}nli-narrative-presentation.js`),
     )).toBe(false);
-    expect(narrativeControls).not.toContain("createElement");
-    expect(stripComments(presentation)).toContain('document?.createElement?.("iframe")');
-    expect(stripComments(presentation)).toContain('iframe.setAttribute?.("referrerpolicy", "no-referrer")');
-    expect(stripComments(presentation)).toContain('if (event?.key !== "Escape" || !overlay) return;');
+    expect(registry).not.toContain("canva.com");
+    expect(narrativeControls).not.toMatch(/presentation|iframe|canva/i);
+    expect(layerSheet).not.toMatch(/runNarrativePresentation|createNliNarrativePresentationController/);
   });
 
   test("subscribes both surfaces to durable state while keeping NLI-sheet commands remote-owned", () => {
@@ -163,8 +157,8 @@ describe("NLI Segev narrative cross-surface contract", () => {
     expect(cleanProjectionEntry).toContain("projectionNarrativeController.apply(OTEFDataContext.getNarrativeState())");
     expect(layerSheet).toContain("nliNarrativeControlsHtml(");
     expect(layerSheet).toContain("consumeNliNarrativeButtonClick(e, this)");
-    expect(layerSheet).toContain("runNarrativePresentation(action, id)");
-    expect(narrativeControls).toContain("host?.runNarrativePresentation?.(action, id)");
+    expect(layerSheet).not.toContain("runNarrativePresentation(action, id)");
+    expect(narrativeControls).not.toContain("host?.runNarrativePresentation?.(action, id)");
     expect(cleanMapEntry).not.toMatch(/\b(runNarrativePresentation)\s*\(/);
     expect(cleanProjectionEntry).not.toMatch(/\b(runNarrativePresentation)\s*\(/);
   });

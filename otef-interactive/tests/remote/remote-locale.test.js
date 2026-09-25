@@ -325,8 +325,6 @@ describe("remote-locale", () => {
     expect(t("nliNarrativeSegev")).toBe("\u05de\u05e9\u05e4\u05d7\u05ea \u05e9\u05d2\u05d1");
     expect(t("nliNarrativeSderot")).toBe("\u05e9\u05d3\u05e8\u05d5\u05ea");
     expect(t("nliNarrativeHostages")).toBe("\u05d7\u05d8\u05d5\u05e4\u05d9\u05dd");
-    expect(t("nliNarrativePresentationOpen")).toBe("\u05e4\u05ea\u05d7 \u05de\u05e6\u05d2\u05ea");
-    expect(t("nliNarrativePresentationClose")).toBe("\u05e1\u05d2\u05d5\u05e8 \u05de\u05e6\u05d2\u05ea");
     expect(t("slideshowStartFailed")).toBe("\u05dc\u05d0 \u05e0\u05d9\u05ea\u05df \u05dc\u05d4\u05e4\u05e2\u05d9\u05dc \u05d0\u05ea \u05de\u05e6\u05d2\u05ea \u05d4\u05d4\u05e7\u05e8\u05e0\u05d4");
     expect(t("nliPackPaneLayers")).toBe("\u05e9\u05db\u05d1\u05d5\u05ea");
     expect(t("nliPackPaneTimeline")).toBe("\u05e6\u05d9\u05e8 \u05d6\u05de\u05df");
@@ -341,8 +339,6 @@ describe("remote-locale", () => {
     expect(t("nliNarrativeSegev")).toBe("Segev family");
     expect(t("nliNarrativeSderot")).toBe("Sderot");
     expect(t("nliNarrativeHostages")).toBe("Hostages");
-    expect(t("nliNarrativePresentationOpenAria")).toBe("Open Segev family presentation");
-    expect(t("nliNarrativePresentationCloseAria")).toBe("Close Segev family presentation");
     expect(t("slideshowStartFailed")).toBe("Could not start the projection slideshow");
     expect(t("nliPackPaneLayers")).toBe("Layers");
     expect(t("nliPackPaneTimeline")).toBe("Timeline");

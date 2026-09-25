@@ -574,21 +574,26 @@ class GroupingTests(unittest.TestCase):
         )
         self.assertEqual(rewrite_oct7_status("Murdered"), "Murdered")
         self.assertEqual(rewrite_oct7_status("Killed on duty"), "Killed on duty")
-        self.assertEqual(rewrite_oct7_status("Murdered then kidnapped"), "Murdered")
+        self.assertEqual(rewrite_oct7_status("Murdered then kidnapped"), "Murdered in captivity")
 
     def test_rewrite_nli_layer_properties_mutates_people_status(self):
         oct7 = {
             "features": [
                 _point(34.47, 31.40, status="Murdered in captivity (bibas)"),
                 _point(34.48, 31.41, status="Murdered"),
+                _point(34.55, 31.50, status="Murdered then kidnapped"),
             ]
         }
-        self.assertEqual(rewrite_nli_layer_properties("people", oct7), 1)
+        self.assertEqual(rewrite_nli_layer_properties("people", oct7), 2)
         self.assertEqual(
             oct7["features"][0]["properties"]["status"],
             "Murdered in captivity",
         )
         self.assertEqual(oct7["features"][1]["properties"]["status"], "Murdered")
+        self.assertEqual(
+            oct7["features"][2]["properties"]["status"],
+            "Murdered in captivity",
+        )
 
 
 class CatalogLinkTests(unittest.TestCase):

@@ -61,9 +61,9 @@ from .otef_nli_clock_layout import (
 from .otef_legend_settings import merge_legend_settings, normalize_legend_settings
 from .otef_narrative import (
     NARRATIVE_IDS,
-    NARRATIVE_PRESENTATION_IDS,
     StaleNarrativeRevision,
     normalize_narrative_state,
+    presentation_segment,
     transition_narrative_scene,
 )
 from .otef_investigation_clock import idle_investigation_clock
@@ -915,42 +915,42 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
     def _narrative_presentation_command(self, table, request):
         payload = request.data if isinstance(request.data, dict) else {}
         presentation_action = payload.get("presentationAction")
-        narrative_id = payload.get("narrativeId")
-        request_id, request_error = self._bounded_optional_string(payload, "requestId")
-        source_id, source_error = self._bounded_optional_string(payload, "sourceId")
-        if presentation_action not in ("open", "close"):
+        segment_id = payload.get("segmentId")
+        segment = presentation_segment(segment_id) if isinstance(segment_id, str) else None
+        if presentation_action not in ("open", "next", "previous", "close"):
             return Response(
-                {"error": "presentationAction must be open or close"},
+                {"error": "invalid presentationAction"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not isinstance(narrative_id, str) or narrative_id not in NARRATIVE_IDS:
+        if segment is None:
             return Response(
-                {"error": "unsupported narrativeId"},
+                {"error": "unsupported segmentId"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if narrative_id not in NARRATIVE_PRESENTATION_IDS:
-            return Response(
-                {"error": "narrative has no presentation"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if request_error or request_id is None or source_error:
-            return Response(
-                {"error": request_error or source_error or "requestId is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        for field in ("presentationSessionId", "requestId", "sourceId"):
+            value = payload.get(field)
+            if not isinstance(value, str) or not value.strip() or len(value) > 128:
+                return Response({"error": f"{field} must be a bounded nonempty string"}, status=status.HTTP_400_BAD_REQUEST)
+        for field in ("presentationGeneration", "sequence"):
+            value = payload.get(field)
+            if type(value) is not int or value <= 0:
+                return Response({"error": f"{field} must be a positive integer"}, status=status.HTTP_400_BAD_REQUEST)
 
         command = {
             "presentationAction": presentation_action,
-            "narrativeId": narrative_id,
-            "requestId": request_id,
-            "sourceId": source_id,
+            "segmentId": segment_id,
+            "presentationSessionId": payload["presentationSessionId"],
+            "presentationGeneration": payload["presentationGeneration"],
+            "sequence": payload["sequence"],
+            "requestId": payload["requestId"],
+            "sourceId": payload["sourceId"],
             "acknowledged": True,
         }
-        if presentation_action == "open":
+        if presentation_action != "close":
             with transaction.atomic():
                 locked = OTEFViewportState.objects.select_for_update().get(table=table)
                 active = normalize_narrative_state(locked.narrative_state)
-                if active["id"] != narrative_id:
+                if active["id"] != segment["requiredNarrative"]:
                     return Response(
                         {"error": "narrative presentation requires the active narrative"},
                         status=status.HTTP_409_CONFLICT,
@@ -974,7 +974,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             {
                 "status": "ok",
                 "action": "narrative_presentation",
-                "requestId": request_id,
+                "requestId": payload["requestId"],
                 "acknowledged": True,
             }
         )
@@ -982,31 +982,45 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
     def _narrative_presentation_result(self, table, request):
         payload = request.data if isinstance(request.data, dict) else {}
         outcome = payload.get("outcome")
-        narrative_id = payload.get("narrativeId")
-        request_id, request_error = self._bounded_optional_string(payload, "requestId")
-        source_id, source_error = self._bounded_optional_string(payload, "sourceId")
-        if outcome not in ("opened", "closed", "unavailable"):
+        if outcome not in ("opened", "ready", "closed", "unavailable", "ignored"):
             return Response(
                 {"error": "invalid narrative presentation outcome"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not isinstance(narrative_id, str) or narrative_id not in NARRATIVE_IDS:
-            return Response(
-                {"error": "unsupported narrativeId"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if request_error or request_id is None or source_error:
-            return Response(
-                {"error": request_error or source_error or "requestId is required"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        segment_id = payload.get("segmentId")
+        if not isinstance(segment_id, str) or presentation_segment(segment_id) is None:
+            return Response({"error": "unsupported segmentId"}, status=status.HTTP_400_BAD_REQUEST)
+        for field in ("presentationSessionId", "requestId", "sourceId"):
+            value = payload.get(field)
+            if not isinstance(value, str) or not value.strip() or len(value) > 128:
+                return Response({"error": f"{field} must be a bounded nonempty string"}, status=status.HTTP_400_BAD_REQUEST)
+        for field in ("presentationGeneration", "sequence"):
+            value = payload.get(field)
+            if type(value) is not int or value <= 0:
+                return Response({"error": f"{field} must be a positive integer"}, status=status.HTTP_400_BAD_REQUEST)
+        if "slide" in payload and payload["slide"] is not None and type(payload["slide"]) is not int:
+            return Response({"error": "slide must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+        if "range" in payload and payload["range"] is not None:
+            value = payload["range"]
+            if not isinstance(value, list) or len(value) != 2 or any(type(item) is not int for item in value):
+                return Response({"error": "range must contain two integers"}, status=status.HTTP_400_BAD_REQUEST)
+        if "message" in payload and payload["message"] is not None:
+            value = payload["message"]
+            if not isinstance(value, str) or len(value) > 512:
+                return Response({"error": "message must be a bounded string"}, status=status.HTTP_400_BAD_REQUEST)
         result = {
             "outcome": outcome,
-            "narrativeId": narrative_id,
-            "requestId": request_id,
-            "sourceId": source_id,
+            "segmentId": segment_id,
+            "presentationSessionId": payload["presentationSessionId"],
+            "presentationGeneration": payload["presentationGeneration"],
+            "sequence": payload["sequence"],
+            "requestId": payload["requestId"],
+            "sourceId": payload["sourceId"],
             "acknowledged": True,
         }
+        for field in ("slide", "range", "message"):
+            if field in payload:
+                result[field] = payload[field]
         transaction.on_commit(
             lambda: self._broadcast_narrative_presentation(
                 table.name,
@@ -1018,7 +1032,7 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
             {
                 "status": "ok",
                 "action": "narrative_presentation_result",
-                "requestId": request_id,
+                "requestId": payload["requestId"],
                 "acknowledged": True,
             }
         )

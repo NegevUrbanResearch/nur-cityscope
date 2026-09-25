@@ -16,7 +16,6 @@ function setup(options = {}) {
   map.fitBounds = vi.fn();
   map.stop = vi.fn();
   map.setFilter = vi.fn();
-  const presentation = { close: vi.fn(() => true) };
   const personVisual = { hide: vi.fn() };
   const viewportSync = { beginCameraTravel: vi.fn() };
   const closeArchive = vi.fn();
@@ -33,11 +32,11 @@ function setup(options = {}) {
     },
   };
   return import("../../frontend/src/map/nli-narrative-controller.js").then(({ createGisNarrativeController }) => ({
-    map, presentation, personVisual, viewportSync, closeArchive, listeners,
+    map, personVisual, viewportSync, closeArchive, listeners,
     syncTimeline,
     controller: createGisNarrativeController({
       map, dataContext, viewportSync, personVisual,
-      presentation, closeArchive, storage: options.storage ?? { getItem: () => null, setItem: vi.fn() }, syncTimeline,
+      closeArchive, storage: options.storage ?? { getItem: () => null, setItem: vi.fn() }, syncTimeline,
       onStyleLoadOverlay: options.onStyleLoadOverlay,
     }),
   }));
@@ -81,7 +80,6 @@ describe("GIS Segev narrative scene", () => {
     expect(d.map.flyTo).not.toHaveBeenCalled();
     d.controller.apply({ id: "segev", transition: "enter", revision: 1 });
     d.controller.apply({ id: null, transition: "exit", revision: 2 });
-    expect(d.presentation.close).toHaveBeenCalledTimes(2);
     expect(d.viewportSync.beginCameraTravel).toHaveBeenLastCalledWith("narrative-exit");
     expect(d.viewportSync.beginCameraTravel.mock.invocationCallOrder.at(-1))
       .toBeLessThan(d.map.flyTo.mock.invocationCallOrder.at(-1));
@@ -98,17 +96,6 @@ describe("GIS Segev narrative scene", () => {
     d.map.wipeStyle();
     d.controller.onStyleLoad();
     expect(d.map.getLayer("nli-narrative-focus-halo")).toBeNull();
-  });
-
-  test("presentation closure while active leaves the scene untouched", async () => {
-    const d = await setup();
-    d.controller.apply({ id: "segev", transition: "enter", revision: 1 });
-    d.map.flyTo.mockClear(); d.map.stop.mockClear(); d.personVisual.hide.mockClear();
-    d.presentation.close();
-    expect(d.map.flyTo).not.toHaveBeenCalled();
-    expect(d.map.stop).not.toHaveBeenCalled();
-    expect(d.personVisual.hide).not.toHaveBeenCalled();
-    expect(d.controller.isActive()).toBe(true);
   });
 
   test("an already handled active reconnect restores focus without reflying", async () => {
@@ -128,12 +115,11 @@ describe("GIS Segev narrative scene", () => {
     expect(d.controller.isActive()).toBe(true);
   });
 
-  test("idempotently closes the archive presentation on entry, replacement, and exit", async () => {
+  test("idempotently closes the archive on entry, replacement, and exit", async () => {
     const d = await setup();
     d.controller.apply({ id: "segev", transition: "enter", revision: 1 });
     d.controller.apply({ id: "segev", transition: "replace", revision: 2 });
     d.controller.apply({ id: null, transition: "exit", revision: 3 });
-    expect(d.presentation.close).toHaveBeenCalledTimes(3);
     expect(d.closeArchive).toHaveBeenCalledTimes(3);
   });
 
@@ -256,7 +242,6 @@ describe("GIS Segev narrative scene", () => {
     expect(d.controller.getDefinition()).toBeNull();
     expect(d.syncTimeline).toHaveBeenCalledTimes(1);
     expect(d.map.flyTo).not.toHaveBeenCalled();
-    expect(d.presentation.close).not.toHaveBeenCalled();
     expect(d.closeArchive).not.toHaveBeenCalled();
     expect(d.personVisual.hide).not.toHaveBeenCalled();
   });

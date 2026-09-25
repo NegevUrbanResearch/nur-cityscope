@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "deck": {
+    "path": "processed/presentations/nli/nur-model.pptx",
+    "sha256": null,
+    "slideCount": 33
+  },
+  "segments": [
+    { "id": "segev", "requiredNarrative": "segev", "range": [1, 8] },
+    { "id": "nova_mor", "requiredNarrative": "nova", "range": [9, 11] },
+    { "id": "nova_memorial", "requiredNarrative": "nova", "range": [12, 16] },
+    { "id": "sderot", "requiredNarrative": "sderot", "range": [17, 20] },
+    { "id": "shura", "requiredNarrative": null, "range": [21, 27] },
+    { "id": "hostages", "requiredNarrative": "hostages", "range": [28, 33] }
+  ]
+}

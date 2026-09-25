@@ -8,7 +8,7 @@ import {
 } from "../../frontend/src/shared/nli-narratives.js";
 
 describe("NLI narrative registry", () => {
-  test("contains the exact trusted Segev definition and frozen Nova sibling", () => {
+  test("contains the Segev GIS definition and frozen Nova sibling", () => {
     expect(NLI_NARRATIVES.segev).toEqual({
       id: "segev",
       label: "בית משפחת שגב",
@@ -18,16 +18,13 @@ describe("NLI narrative registry", () => {
       basemap: "satellite_bw",
       focusSettlement: "בארי",
       focusSettlementOutlineId: 19,
-      presentationUrl:
-        "https://www.canva.com/design/DAHUaRcI6lI/Of1TuYlj0yaPV-r3UDQOKw/view?embed",
     });
     expect(NLI_NARRATIVES.nova).toEqual({
       id: "nova",
       label: "נובה",
       center: [34.46975, 31.39851],
       zoom: 15,
-      argamaniCenter: [34.45065, 31.406265],
-      argamaniZoom: 14.5,
+      beat4Zoom: 13.2,
       idleClockMinutes: 483,
       basemap: "satellite_bw",
       focusInvestigationPolygonObjectId: 100,

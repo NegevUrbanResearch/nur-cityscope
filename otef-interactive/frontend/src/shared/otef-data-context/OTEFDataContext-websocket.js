@@ -3,7 +3,7 @@ import { isGisBasemapId, normalizeGisBasemap } from "../gis-basemap.js";
 import { OTEF_MESSAGE_TYPES } from "../message-protocol.js";
 import { normalizeEscapeOverlay } from "../nli-escape-overlay.js";
 import { normalizeNliClock } from "../nli-investigation-clock.js";
-import { getNliNarrative, normalizeNarrativeState } from "../nli-narratives.js";
+import { normalizeNarrativeState } from "../nli-narratives.js";
 import { normalizePersonSelection } from "../person-selection.js";
 import { OTEFWebSocketClient } from "../websocket-client.js";
 import { recordTraceEvent } from "../otef-trace.js";
@@ -435,12 +435,18 @@ function setupWebSocket(ctx) {
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_COMMAND, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
     if (msg.sourceId && msg.sourceId === ctx._clientId) return;
-    if (!getNliNarrative(msg.narrativeId)) return;
-    if (msg.presentationAction !== "open" && msg.presentationAction !== "close") return;
+    if (!["open", "next", "previous", "close"].includes(msg.presentationAction)) return;
+    if (typeof msg.segmentId !== "string" || !msg.segmentId.trim()) return;
+    if (typeof msg.presentationSessionId !== "string" || !msg.presentationSessionId.trim()) return;
+    if (!Number.isInteger(msg.presentationGeneration) || msg.presentationGeneration <= 0) return;
+    if (!Number.isInteger(msg.sequence) || msg.sequence <= 0) return;
     if (typeof msg.requestId !== "string" || !msg.requestId.trim()) return;
     ctx._notify("narrativePresentation", {
       presentationAction: msg.presentationAction,
-      narrativeId: msg.narrativeId,
+      segmentId: msg.segmentId,
+      presentationSessionId: msg.presentationSessionId,
+      presentationGeneration: msg.presentationGeneration,
+      sequence: msg.sequence,
       requestId: msg.requestId,
       sourceId: typeof msg.sourceId === "string" ? msg.sourceId : null,
       acknowledged: msg.acknowledged === true,
@@ -450,16 +456,28 @@ function setupWebSocket(ctx) {
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.NARRATIVE_PRESENTATION_RESULT, (msg = {}) => {
     if (msg.table && msg.table !== ctx._tableName) return;
     if (msg.sourceId && msg.sourceId === ctx._clientId) return;
-    if (!getNliNarrative(msg.narrativeId)) return;
-    if (!["opened", "closed", "unavailable"].includes(msg.outcome)) return;
+    if (typeof msg.segmentId !== "string" || !msg.segmentId.trim()) return;
+    if (typeof msg.presentationSessionId !== "string" || !msg.presentationSessionId.trim()) return;
+    if (!Number.isInteger(msg.presentationGeneration) || msg.presentationGeneration <= 0) return;
+    if (!Number.isInteger(msg.sequence) || msg.sequence <= 0) return;
+    if (!["opened", "ready", "closed", "unavailable", "ignored"].includes(msg.outcome)) return;
     if (typeof msg.requestId !== "string" || !msg.requestId.trim()) return;
-    ctx._notify("narrativePresentationResult", {
+    const result = {
       outcome: msg.outcome,
-      narrativeId: msg.narrativeId,
+      segmentId: msg.segmentId,
+      presentationSessionId: msg.presentationSessionId,
+      presentationGeneration: msg.presentationGeneration,
+      sequence: msg.sequence,
       requestId: msg.requestId,
       sourceId: typeof msg.sourceId === "string" ? msg.sourceId : null,
       acknowledged: msg.acknowledged === true,
-    });
+      slide: Number.isInteger(msg.slide) ? msg.slide : null,
+      range: Array.isArray(msg.range) && msg.range.length === 2 && msg.range.every(Number.isInteger)
+        ? [...msg.range]
+        : null,
+      message: typeof msg.message === "string" ? msg.message : null,
+    };
+    ctx._notify("narrativePresentationResult", result);
   });
 
   ctx._wsClient.on(OTEF_MESSAGE_TYPES.PLACE_NAVIGATION_COMMAND, (msg = {}) => {

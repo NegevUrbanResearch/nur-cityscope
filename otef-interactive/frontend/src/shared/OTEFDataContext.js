@@ -631,17 +631,17 @@ class OTEFDataContextClass {
       : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 
-  narrativePresentationCommand(action, id, requestId) {
+  narrativePresentationCommand(command) {
     const helper = OTEFDataContextInternals.actions?.narrativePresentationCommand;
     return typeof helper === "function"
-      ? helper(this, action, id, requestId)
+      ? helper(this, command)
       : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 
-  narrativePresentationResult(outcome, id, requestId) {
+  narrativePresentationResult(result) {
     const helper = OTEFDataContextInternals.actions?.narrativePresentationResult;
     return typeof helper === "function"
-      ? helper(this, outcome, id, requestId)
+      ? helper(this, result)
       : Promise.resolve({ ok: false, reason: "missing_action" });
   }
 

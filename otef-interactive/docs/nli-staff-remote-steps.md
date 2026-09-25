@@ -32,9 +32,9 @@ If you move to a new step while a cue is still being applied, the old cue is
 abandoned and only the latest one completes. The status line under the step
 shows *applying*, *ready*, or *failed*.
 
-Leaving a step that uses the presentation closes the presentation. Returning
-home cancels any pending cue, closes the archive and presentation, and exits
-the narrative.
+Presentation steps currently apply their GIS cues but have no slide controls;
+the old Canva integration was removed pending the Reveal.js viewer. Returning
+home cancels any pending cue, closes the archive, and exits the narrative.
 
 ## Home shortcuts
 
@@ -121,7 +121,7 @@ A narrative opened from the home screen ends with **Finish**.
 | # | Step | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- |
 | 1 | The house in Be'eri | Focus | Idle after entry (caption 06:41) | |
-| 2 | Presentation | Focus | No change | Presentation (Canva, slides 1–8) |
+| 2 | Presentation | Focus | No change | Slide viewer pending |
 
 ## Nova and Mor Levy (`nova`)
 
@@ -130,8 +130,8 @@ A narrative opened from the home screen ends with **Finish**.
 | 1 | The Nova site | Focus + open spaces | Stopped; previews beat 1 and shows 08:03 | All off | |
 | 2 | The Nova story | Nova timeline | Five authored beats, 4 seconds each (20 seconds total); play starts beat 1 at 0% | All off | Five-mark scrubber and beat navigation |
 | 3 | Escape routes | Nova timeline | No change | Individual routes on | Escape toggles |
-| 4 | Mor Levy | Nova timeline | No change | Mor's route only | Escape toggles, archive (מור לוי), presentation* |
-| 5 | Memorial | Focus + people (Nova people only) | No change | Individual routes on | Escape toggles, presentation* |
+| 4 | Mor Levy | Nova timeline | No change | Mor's route only | Escape toggles, archive (מור לוי); slide viewer pending |
+| 5 | Memorial | Focus + people (Nova people only) | No change | Individual routes on | Escape toggles; slide viewer pending |
 
 The Nova timeline uses five authored beats, not source-timestamp grouping:
 
@@ -156,7 +156,7 @@ pending source review and its source record is unchanged.
 | # | Step | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- |
 | 1 | Sderot | Focus | Idle after entry | |
-| 2 | Presentation | Focus | No change | Presentation* (slides 17–20) |
+| 2 | Presentation | Focus | No change | Slide viewer pending |
 
 ## Shura Camp (no narrative, draft)
 
@@ -166,14 +166,14 @@ overview camera).
 | # | Step | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- |
 | 1 | Shura Camp | Focus | No change | |
-| 2 | Presentation | Focus | No change | Presentation* (slides 21–27) |
+| 2 | Presentation | Focus | No change | Slide viewer pending |
 
 ## Hostages (`hostages`)
 
 | # | Step | Narrative | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- | :--- |
 | 1 | Nir Oz | `hostages` | Focus | Idle after entry | Archive (חיים פרי) |
-| 2 | Presentation | `hostages` | Focus | No change | Presentation* (slides 28–33) |
+| 2 | Presentation | `hostages` | Focus | No change | Slide viewer pending |
 | 3 | Nir Oz victims and hostages | `hostages` | Focus + people (Nir Oz people) | No change | |
 | 4 | All hostages | `hostages_all` | Focus + people (all hostages) | Idle after entry | |
 
@@ -181,9 +181,8 @@ Step 4 switches to `hostages_all`: the camera pulls back, Nir Oz dimming and
 the Peri marker go away, and only hostages are shown. Going back to step 3
 re-enters `hostages` and flies back to Nir Oz.
 
-\* The presentation button appears only when the narrative has a
-presentation link. Only Segev has one, so the other presentation steps show
-no presentation button yet.
+The presentation steps retain their place in the run of show. Their slide
+ranges are not final until the revised NLI deck is mapped and approved.
 
 ## Archive
 

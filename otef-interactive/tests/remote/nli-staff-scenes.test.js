@@ -18,7 +18,7 @@ import { getNliNarrative } from "../../frontend/src/shared/nli-narratives.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MANIFEST_ROOT = path.resolve(__dirname, "../../public/processed/layers");
-const KITS = new Set(["timeline", "presentation", "archive", "branch", "search", "escape"]);
+const KITS = new Set(["timeline", "archive", "branch", "search", "escape"]);
 
 const allSteps = () => SCRIPTS.flatMap((script) => script.steps.map((step) => ({ script, step })));
 const allCues = () => [

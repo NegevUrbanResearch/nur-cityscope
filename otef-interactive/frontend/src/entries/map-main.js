@@ -9,7 +9,6 @@ import { createGisPersonSelection } from "../map/maplibre-person-selection.js";
 import { createNliArchiveCommandBridge, createNliArchiveWindowController } from "../map/nli-archive-window.js";
 import { createGisPersonController } from "../map/maplibre-gis-person-controller.js";
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
-import { createNarrativePresentation, handleNarrativePresentationCommand } from "../map/nli-narrative-presentation.js";
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
 import { applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
@@ -398,19 +397,6 @@ async function bootstrapMapRuntime() {
       onBubbleClick: (person) => archiveBridge.openSelected(person),
     });
     const archiveWindow = createNliArchiveWindowController();
-    const narrativePresentation = createNarrativePresentation(mapContainer, {
-      onResult: (result) => {
-        void OTEFDataContext.narrativePresentationResult(
-          result.outcome,
-          result.narrativeId,
-          result.requestId,
-        );
-      },
-      onOpenChange: (open) => {
-        nliGisClockDebugApi?.setGisClockHotkeyAllowed?.(!open);
-        if (open) nliGisClockDebugApi?.setVisible?.(false);
-      },
-    });
     novaEscapeCoordinator = createNovaEscapeCoordinator({
       map,
       dataContext: OTEFDataContext,
@@ -429,7 +415,6 @@ async function bootstrapMapRuntime() {
       dataContext: OTEFDataContext,
       viewportSync,
       personVisual,
-      presentation: narrativePresentation,
       closeArchive: () => archiveWindow.close(),
       resolveExitCenter: () => resolveCenterFromBounds(OTEFDataContext.getBounds()) || DEFAULT_MAP_CENTER,
       syncTimeline: syncContextInvestigation,
@@ -439,26 +424,11 @@ async function bootstrapMapRuntime() {
       },
     });
     registerDisposer(() => narrativeController?.dispose?.());
-    registerDisposer(() => narrativePresentation.dispose());
     registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => narrativeController?.apply(state)));
     registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => {
       nliGisClockDebugApi?.setGisClockLayoutSlot?.(
         gisClockLayoutSlotId(state?.id ?? OTEFDataContext.getNarrativeState?.()?.id),
       );
-    }));
-    registerDisposer(OTEFDataContext.subscribe("narrativePresentation", (command) => {
-      handleNarrativePresentationCommand({
-        command,
-        definition: narrativeController?.getDefinition?.(),
-        presentation: narrativePresentation,
-        emitUnavailable: (failedCommand) => {
-          void OTEFDataContext.narrativePresentationResult(
-            "unavailable",
-            failedCommand?.narrativeId,
-            failedCommand?.requestId,
-          );
-        },
-      });
     }));
     const archiveBridge = createNliArchiveCommandBridge({
       windowController: archiveWindow,

@@ -11,8 +11,6 @@ const SEGEV_NARRATIVE = Object.freeze({
   basemap: "satellite_bw",
   focusSettlement: "בארי",
   focusSettlementOutlineId: 19,
-  presentationUrl:
-    "https://www.canva.com/design/DAHUaRcI6lI/Of1TuYlj0yaPV-r3UDQOKw/view?embed",
 });
 
 const NOVA_CENTER = Object.freeze([34.46975, 31.39851]);

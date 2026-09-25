@@ -192,10 +192,11 @@ Record the browser, operating mode, display arrangement, and result.
 ## NLI Segev narrative matrix (Task 8)
 
 Run this matrix in the normal kiosk Chrome and physical projection setup. The
-automated contract test covers the trusted registry, surface ownership, and
-subscription wiring; it cannot prove Canva availability, popup/login state,
-physical projection legibility, or the observed camera result. Leave every row
-unchecked until it has been observed and recorded by the exhibit operator.
+automated contract test covers the narrative registry and scene wiring; it
+cannot prove physical projection legibility or the observed camera result.
+The old Canva iframe has been removed. Slide playback needs a new acceptance
+matrix after the Reveal.js viewer and revised slide mapping are implemented.
+Leave every row unchecked until it has been observed by the exhibit operator.
 
 - [ ] From the NLI sheet, manually select **Satellite Color** and **Satellite
   B&W** and confirm the intended basemap appears on the GIS.
@@ -207,19 +208,13 @@ unchecked until it has been observed and recorded by the exhibit operator.
   projection.
 - [ ] Confirm Be'eri is bright while other settlement outlines remain dim.
 - [ ] Confirm the projection viewport highlight is centered on the house.
-- [ ] From the remote NLI sheet, open the Canva presentation and confirm it
-  loads in presentation mode without login, uses `no-referrer`, closes with
-  Escape, and keeps remote command/result correlation correct.
-- [ ] Close the Canva presentation from the remote and confirm the Segev
-  narrative map scene remains active.
-- [ ] While Segev is active and Canva is closed, Play/Pause/Stop/Loop/step/scrub
+- [ ] While Segev is active, Play/Pause/Stop/Loop/step/scrub
   the NLI timeline and confirm polygons, alarms, and routes develop around the
   house without the GIS leaving zoom 18.
-- [ ] Toggle the narrative off and confirm Canva closes and the GIS returns to
-  the dark configured OTEF-bounds center at zoom `10`.
+- [ ] Toggle the narrative off and confirm GIS returns to the dark configured
+  OTEF-bounds center at zoom `10`.
 - [ ] Refresh or reconnect with durable active and inactive narrative state;
-  confirm both GIS and projection converge, and confirm Canva intentionally
-  remains closed after reload.
+  confirm both GIS and projection converge.
 
 ### Result record
 
@@ -255,11 +250,9 @@ unchecked until it has been observed and recorded by the exhibit operator.
 - Segev GIS + projection Hebrew label: pass / fail
 - Segev Be'eri focus and dim other settlements: pass / fail
 - Segev projection house highlight: pass / fail
-- Segev Canva presentation/no-login/no-referrer/Escape/correlation: pass / fail
-- Segev remote close preserves narrative map scene: pass / fail
 - Segev house-locked timeline Play/Pause/Stop/Loop/step/scrub at zoom 18: pass / fail
-- Segev exit closes Canva and returns to dark bounds center zoom 10: pass / fail
-- Segev refresh/reconnect convergence and closed-after-reload Canva: pass / fail
+- Segev exit returns to dark bounds center zoom 10: pass / fail
+- Segev refresh/reconnect convergence: pass / fail
 - Notes:
 
 ## Later exhibit acceptance

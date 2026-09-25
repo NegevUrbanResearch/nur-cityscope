@@ -1,5 +1,4 @@
 import { getEffectiveLayerGroups } from "../shared/layer-state-helper.js";
-import { getNliNarrative } from "../shared/nli-narratives.js";
 import { NLI_PLAYABLE_IDS } from "../shared/nli-investigation-beats.js";
 import {
   bindNliTimelinePointerListeners,
@@ -7,9 +6,6 @@ import {
   nliTimelineHostMethods,
   nliTransportSheetHtml,
 } from "./nli-timeline-transport.js";
-import {
-  createNliNarrativePresentationController,
-} from "./nli-narrative-controls.js";
 import { consumeNliNovaEscapeClick, nliNovaEscapeTogglesHtml } from "./nli-nova-escape-toggles.js";
 import { createCueRunner } from "./nli-staff-cues.js";
 import { createNliStaffSearchTransition } from "./nli-staff-search-transition.js";
@@ -173,11 +169,6 @@ export function initNliStaffRemote(dataContext) {
   let searchActions = null;
   let packMenus = null;
 
-  const presentation = createNliNarrativePresentationController({
-    dataContext,
-    onStateChange: () => renderKit(),
-  });
-
   const timelineHost = Object.assign(
     {
       focusedGroupId: "nli",
@@ -230,11 +221,6 @@ export function initNliStaffRemote(dataContext) {
   const script = () => SCRIPTS.find((item) => item.id === state.scriptId);
   const currentStep = () => (state.screen === "player" ? script()?.steps[state.step] : null) || null;
   const stepKits = (step) => (Array.isArray(step?.kit) ? step.kit : []);
-  const presentationId = () => {
-    const id = script()?.narrative;
-    return getNliNarrative(id)?.presentationUrl ? id : null;
-  };
-
   async function setLayerSet(ids, enabled) {
     if (typeof dataContext?.setLayersEnabled !== "function" || !ids.length) return;
     try {
@@ -428,7 +414,7 @@ export function initNliStaffRemote(dataContext) {
       nliSelectedGroup(),
       clock,
       cache,
-      presentation.getState()?.phase === "open",
+      false,
       false,
       dataContext.getNarrativeState?.()?.id ?? null,
     );
@@ -495,7 +481,6 @@ export function initNliStaffRemote(dataContext) {
     const kits = stepKits(step);
     const show = {
       kitTimeline: kits.includes("timeline"),
-      kitPresentation: kits.includes("presentation") && !!presentationId(),
       kitArchive: kits.includes("archive"),
       kitSearch: kits.includes("search"),
       kitEscape: kits.includes("escape"),
@@ -515,21 +500,6 @@ export function initNliStaffRemote(dataContext) {
         dataContext?.getNarrativeState?.(),
         dataContext?.getEscapeOverlay?.(),
       );
-    }
-    if (show.kitPresentation) {
-      const phase = presentation.getState()?.phase || "closed";
-      const pending = phase === "opening" || phase === "closing";
-      const open = phase === "open" || phase === "closing";
-      $("presentationBtn").textContent = t(
-        pending
-          ? open
-            ? "nliNarrativePresentationClosing"
-            : "nliNarrativePresentationOpening"
-          : open
-            ? "nliNarrativePresentationClose"
-            : "nliNarrativePresentationOpen",
-      );
-      $("presentationBtn").disabled = !state.connected || pending;
     }
     if (show.kitArchive) {
       const phase = peopleArchive?.getArchivePhase?.() || "closed";
@@ -738,7 +708,6 @@ export function initNliStaffRemote(dataContext) {
     if (peopleArchive?.getArchivePhase?.() === "open") {
       void peopleArchive.closeArchive();
     }
-    presentation.reset(null);
     showScreen("home");
     renderHome();
     if (dataContext?.setNarrative) {
@@ -847,10 +816,6 @@ export function initNliStaffRemote(dataContext) {
     setDestination: (item, index, returnTo) => {
       const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
       const step = item.steps[nextIndex];
-      const open = presentation.getState();
-      if (open?.phase === "open" && !stepKits(step).includes("presentation")) {
-        void presentation.run("close", open.id);
-      }
       state.scriptId = item.id;
       state.step = nextIndex;
       state.returnTo = returnTo;
@@ -921,13 +886,6 @@ export function initNliStaffRemote(dataContext) {
 
   $("kitEscape").addEventListener("click", (event) => {
     consumeNliNovaEscapeClick(event, escapeHost);
-  });
-
-  $("presentationBtn").addEventListener("click", () => {
-    const id = presentationId();
-    if (!id) return;
-    const phase = presentation.getState()?.phase || "closed";
-    void presentation.run(phase === "open" ? "close" : "open", id);
   });
 
   $("archiveBtn").addEventListener("click", () => {

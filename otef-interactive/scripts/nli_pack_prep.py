@@ -174,14 +174,13 @@ ALARM_TIME_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$
 BIBAS_STATUS_VALUE = "Murdered in captivity (bibas)"
 CANONICAL_CAPTIVITY_STATUS = "Murdered in captivity"
 MURDERED_THEN_KIDNAPPED_STATUS = "Murdered then kidnapped"
-CANONICAL_MURDERED_STATUS = "Murdered"
 
 
 def rewrite_oct7_status(value: Any) -> Any:
     if value == BIBAS_STATUS_VALUE:
         return CANONICAL_CAPTIVITY_STATUS
     if value == MURDERED_THEN_KIDNAPPED_STATUS:
-        return CANONICAL_MURDERED_STATUS
+        return CANONICAL_CAPTIVITY_STATUS
     return value
 
 

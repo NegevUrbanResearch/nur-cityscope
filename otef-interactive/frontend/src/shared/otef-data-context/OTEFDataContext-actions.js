@@ -908,29 +908,41 @@ async function setLegendSettings(ctx, patch = {}) {
   return response;
 }
 
-async function narrativePresentationCommand(ctx, action, id, requestId) {
+function normalizePresentationCorrelation(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const { segmentId, presentationSessionId, presentationGeneration, sequence, requestId } = value;
+  if ([segmentId, presentationSessionId, requestId].some((item) => typeof item !== "string" || !item.trim())) return null;
+  if (!Number.isInteger(presentationGeneration) || presentationGeneration <= 0) return null;
+  if (!Number.isInteger(sequence) || sequence <= 0) return null;
+  return { segmentId, presentationSessionId, presentationGeneration, sequence, requestId };
+}
+
+async function narrativePresentationCommand(ctx, command) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
-  if ((action !== "open" && action !== "close") || !getNliNarrative(id)) {
+  const correlation = normalizePresentationCorrelation(command);
+  if (!correlation || !["open", "next", "previous", "close"].includes(command.presentationAction)) {
     return { ok: false, reason: "invalid_presentation_command" };
   }
   return OTEF_API.narrativePresentationCommand(ctx._tableName, {
-    presentationAction: action,
-    narrativeId: id,
-    requestId,
+    ...correlation,
+    presentationAction: command.presentationAction,
     sourceId: ctx._clientId,
     timestamp: Date.now(),
   });
 }
 
-async function narrativePresentationResult(ctx, outcome, id, requestId) {
+async function narrativePresentationResult(ctx, result) {
   if (!ctx._tableName) return { ok: false, reason: "missing_table" };
-  if (!["opened", "closed", "unavailable"].includes(outcome) || !getNliNarrative(id)) {
+  const correlation = normalizePresentationCorrelation(result);
+  if (!correlation || !["opened", "ready", "closed", "unavailable", "ignored"].includes(result.outcome)) {
     return { ok: false, reason: "invalid_presentation_result" };
   }
+  const normalized = { ...correlation, outcome: result.outcome };
+  for (const field of ["slide", "range", "message"]) {
+    if (field in result) normalized[field] = result[field];
+  }
   return OTEF_API.narrativePresentationResult(ctx._tableName, {
-    outcome,
-    narrativeId: id,
-    requestId,
+    ...normalized,
     sourceId: ctx._clientId,
     timestamp: Date.now(),
   });

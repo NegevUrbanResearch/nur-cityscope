@@ -38,13 +38,12 @@ function centerFromBounds(bounds) {
   return Math.abs(center[0]) <= 180 && Math.abs(center[1]) <= 90 ? center : null;
 }
 
-/** Coordinate the durable NLI GIS scene without coupling it to presentation commands. */
+/** Coordinate the durable NLI GIS scene. */
 export function createGisNarrativeController({
   map,
   dataContext,
   viewportSync,
   personVisual,
-  presentation,
   closeArchive = () => {},
   storage = typeof sessionStorage !== "undefined" ? sessionStorage : null,
   resolveExitCenter,
@@ -104,7 +103,6 @@ export function createGisNarrativeController({
     else restoreNovaCamera();
   };
   const activate = (definition) => {
-    presentation?.close?.();
     activeDefinition = definition;
     novaBeatIndex = 0;
     if (definition?.id === "nova") {
@@ -121,7 +119,6 @@ export function createGisNarrativeController({
     syncMorCamera();
   };
   const exit = () => {
-    presentation?.close?.();
     activeDefinition = null;
     morCameraActive = false;
     clearPeopleAndArchive();

@@ -577,7 +577,6 @@ describe("nli timeline transport", () => {
   test("LayerSheet destroy releases context, presentation, locale, and timer resources", () => {
     const disposeNarrative = vi.fn();
     const disposeClock = vi.fn();
-    const presentationDestroy = vi.fn();
     const removeEventListener = vi.fn();
     vi.stubGlobal("window", { removeEventListener });
     const ctx = stubContext({
@@ -585,7 +584,6 @@ describe("nli timeline transport", () => {
     });
     const c = makeController({
       _subscriptions: [],
-      _nliNarrativePresentationController: { destroy: presentationDestroy },
       _remoteLocaleHandler: vi.fn(),
       _nliEndTimer: setTimeout(() => {}, 10_000),
       _nliPlayheadTimer: setTimeout(() => {}, 10_000),
@@ -596,7 +594,6 @@ describe("nli timeline transport", () => {
     expect(ctx.subscribe).toHaveBeenCalledTimes(2);
     expect(disposeNarrative).toHaveBeenCalledTimes(1);
     expect(disposeClock).toHaveBeenCalledTimes(1);
-    expect(presentationDestroy).toHaveBeenCalledTimes(1);
     expect(removeEventListener).toHaveBeenCalledWith(LOCALE_EVENT, c._remoteLocaleHandler);
     expect(c._nliEndTimer).toBeNull();
     expect(c._nliPlayheadTimer).toBeNull();
