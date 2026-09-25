@@ -302,6 +302,8 @@ export function initNliStaffRemote(dataContext) {
       clock,
       cache,
       presentation.getState()?.phase === "open",
+      false,
+      dataContext.getNarrativeState?.()?.id ?? null,
     );
     $("kitTimeline").innerHTML = html;
     timelineHost._syncNliPlayheadTicker?.(clock);
@@ -775,6 +777,7 @@ export function initNliStaffRemote(dataContext) {
     if (state.screen === "free") packMenus?.render();
   });
   dataContext?.subscribe?.("narrativeState", () => {
+    timelineHost._clearNliScrubOnNarrativeChange?.();
     renderKit();
   });
   dataContext?.subscribe?.("escapeOverlay", () => {

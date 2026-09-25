@@ -147,11 +147,22 @@ describe("NLI Nova overlay remount contract", () => {
     );
   });
 
-  test("Nova retains the approved idle and play-start clock", () => {
+  test("Nova idle clock has one source in the authored story manifest", () => {
     const narratives = readSource("../../frontend/src/shared/nli-narratives.js");
     const nova = narratives.slice(narratives.indexOf('id: "nova"'));
-    expect(nova).toMatch(/idleClockMinutes:\s*483/);
-    expect(nova).toMatch(/playStartMinutes:\s*483/);
+    expect(nova).toMatch(/idleClockMinutes:\s*NLI_NOVA_STORY\.startMinutes/);
+    expect(narratives).not.toMatch(/playStartMinutes/);
+  });
+
+  test("Nova compounds step uses the exact documented five-beat operator copy without a static clock", () => {
+    const script = readSource("../../frontend/src/remote/nli-staff-script.js");
+    const compounds = script.slice(script.indexOf('title: { he: "המתחמים"'));
+    const step = compounds.slice(0, compounds.indexOf("\n      },"));
+    expect(step).toContain("פוליגוני הנובה עולים בחמישה ביטים בני ארבע שניות, לפי הרצף המתועד.");
+    expect(step).toContain("Nova polygons appear in five four-second beats, following the documented sequence.");
+    expect(step).toMatch(/clock:\s*\{\}/);
+    expect(step).not.toMatch(/clock:\s*"08:03"/);
+    expect(step).not.toMatch(/עד 5 ביטים|up to 5 beats/);
   });
 
   test("fleeing stems stay out of glossary, popup, playable lock, and six pack tiles", () => {

@@ -295,17 +295,16 @@ export const NARRATIVES = [
         kit: [],
       },
       {
-        clock: "08:03",
         title: { he: "המתחמים", en: "The compounds" },
         gis: {
           he: "זום־אין על אתר הנובה: חלוקה למתחמים ושמות.",
           en: "Zoom to the Nova site: its compounds and their names.",
         },
         model: {
-          he: "שכבת השטחים הפתוחים יורדת. פוליגוני הנובה עולים לפי סדר כרונולוגי והשעון מתקדם איתם (עד 5 ביטים).",
-          en: "The open-spaces layer is removed. Nova polygons appear chronologically and the clock advances with them (up to 5 beats).",
+          he: "פוליגוני הנובה עולים בחמישה ביטים בני ארבע שניות, לפי הרצף המתועד.",
+          en: "Nova polygons appear in five four-second beats, following the documented sequence.",
         },
-        cue: { layers: NOVA_TIMELINE_LAYER_IDS, clock: { from: 483 }, escape: {} },
+        cue: { layers: NOVA_TIMELINE_LAYER_IDS, clock: {}, escape: {} },
         kit: ["timeline"],
       },
       {

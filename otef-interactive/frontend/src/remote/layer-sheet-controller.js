@@ -479,6 +479,7 @@ class LayerSheetController {
       });
       this._subscribeDataContext("projectionSlideshow", () => this.render());
       this._subscribeDataContext("narrativeState", (state) => {
+        this._clearNliScrubOnNarrativeChange();
         this._nliNarrativeTransitionPending = false;
         this._nliNarrativeFeedback = "";
         this._nliNarrativePresentationController?.reset(
@@ -1022,6 +1023,8 @@ class LayerSheetController {
           clock,
           this._nliFeatureCache,
           presentationActive,
+          false,
+          this._readNarrativeState().id,
         )
       : "";
     const presentationState = this._nliNarrativePresentationController?.getState?.() || {

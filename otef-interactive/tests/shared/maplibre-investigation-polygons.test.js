@@ -242,6 +242,56 @@ describe("investigation polygon renderer", () => {
     expect(renderProgress(null)).toBe(0.55);
   });
 
+  it("reveals Nova category outlines with OBJECTID progress and keeps polygon 100 context outline separate", () => {
+    const map = makeMap();
+    map.layers.push({
+      id: "nli-nova-site-outline",
+      type: "line",
+      source: "nli-nova-site-context",
+      paint: { "line-opacity": 0.31 },
+    });
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const site = polygon(100, 483, "נובה", "מרחב לחימה - קרב");
+    const data = processedOverlayData([site]);
+    const renderProgress = (progress) => {
+      renderer.render(frame([], {
+        narrativeId: "nova",
+        achievedPolygonObjectIds: [100],
+        polygonObjectEntries: [{ objectIds: [100], progress }],
+        motionMode: "reduced",
+      }), data);
+      return evaluateObjectIdOpacity(
+        map.getPaintProperty("nli-investigation-polygon-category-line-battle", "line-opacity"),
+        100,
+      );
+    };
+
+    expect(renderProgress(0)).toBe(0);
+    expect(renderProgress(0.5)).toBeCloseTo(0.475);
+    expect(renderProgress(1)).toBe(0.95);
+    expect(map.getLayer("nli-nova-site-outline").paint["line-opacity"]).toBe(0.31);
+
+    renderer.render(frame([], {
+      narrativeId: "nova",
+      achievedPolygonObjectIds: [100],
+      polygonObjectEntries: [{ objectIds: [100], progress: 0.5 }],
+      projectionNovaDim: true,
+    }), data);
+    const reveal = [
+      "case",
+      ["in", ["to-number", ["get", "OBJECTID"]], ["literal", [100]]],
+      ["*", 0.95, 0.5],
+      0.95,
+    ];
+    expect(map.getPaintProperty("nli-investigation-polygon-category-line-battle", "line-opacity"))
+      .toEqual([
+        "case",
+        ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
+        reveal,
+        ["*", reveal, 0.28],
+      ]);
+  });
+
   it("selects Nova category polygons by OBJECTID rather than representative minutes", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});

@@ -1,3 +1,5 @@
+import { NLI_NOVA_STORY } from "./nli-nova-story.js";
+
 const SEGEV_CENTER = Object.freeze([34.48647925700004, 31.422958191000077]);
 
 const SEGEV_NARRATIVE = Object.freeze({
@@ -21,8 +23,7 @@ const NOVA_NARRATIVE = Object.freeze({
   center: NOVA_CENTER,
   zoom: 15,
   gisZoom: 15,
-  idleClockMinutes: 483,
-  playStartMinutes: 483,
+  idleClockMinutes: NLI_NOVA_STORY.startMinutes,
   basemap: "satellite_bw",
   focusInvestigationPolygonObjectId: 100,
   focusSettlement: "נובה",

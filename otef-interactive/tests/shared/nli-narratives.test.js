@@ -28,7 +28,6 @@ describe("NLI narrative registry", () => {
       zoom: 15,
       gisZoom: 15,
       idleClockMinutes: 483,
-      playStartMinutes: 483,
       basemap: "satellite_bw",
       focusInvestigationPolygonObjectId: 100,
       focusSettlement: "נובה",

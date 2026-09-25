@@ -787,13 +787,20 @@ export function createInvestigationPolygonRenderer(
     }
     const outlineChanged = state.lastProcessedOutlineDim !== projectionNovaDim
       || state.lastProcessedOutlineImpactKey !== impactKey;
-    if (outlineChanged) {
+    const novaObjectEntries = frame?.narrativeId === "nova"
+      && Array.isArray(frame?.polygonObjectEntries)
+      ? frame.polygonObjectEntries
+      : null;
+    if (outlineChanged || novaObjectEntries) {
       for (const spec of CATEGORY_SPECS) {
         const outlineOpacity = Number(state.processedPlan.classes[spec.notes]?.outline?.opacity);
         if (!Number.isFinite(outlineOpacity)) continue;
+        const revealOpacity = novaObjectEntries
+          ? entryPaintExpression(novaObjectEntries, null, 1, "opacity", outlineOpacity)
+          : outlineOpacity;
         setPaint(map, CATEGORY_LINE_LAYER_IDS[spec.suffix], "line-opacity", projectionNovaDim
-          ? parallelImpactOpacityExpression(impactIds, outlineOpacity)
-          : outlineOpacity);
+          ? parallelImpactOpacityExpression(impactIds, revealOpacity)
+          : revealOpacity);
       }
       state.lastProcessedOutlineDim = projectionNovaDim;
       state.lastProcessedOutlineImpactKey = impactKey;

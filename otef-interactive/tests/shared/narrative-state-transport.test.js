@@ -595,15 +595,15 @@ describe("narrative state transport", () => {
     expect(context._independentBasemapGeneration).toBe(generation + 1);
   });
 
-  test("a delayed clock response cannot regress a later narrative idle clock", async () => {
+  test("a delayed Nova clock response after exit cannot be reinterpreted as the next narrative clock", async () => {
     const api = await import("../../frontend/src/shared/api-client.js");
     const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    const { NLI_NOVA_STORY } = await import("../../frontend/src/shared/nli-nova-story.js");
     context._tableName = "otef";
     context._applyNarrativeScene({
       ...ACTIVE_SCENE,
       sceneRevision: 4,
-      narrativeState: { id: null, transition: "exit", revision: 4 },
-      basemap: "dark",
+      narrativeState: { id: "nova", transition: "enter", revision: 4 },
       investigationClock: { ...ACTIVE_SCENE.investigationClock, phase: "idle", revision: 7 },
     });
     let resolveClock;
@@ -614,8 +614,8 @@ describe("narrative state transport", () => {
     const playingClock = {
       ...ACTIVE_SCENE.investigationClock,
       phase: "playing",
-      membership: ["nli.lines"],
-      beats: [420],
+      membership: ["nli.investigation_polygons"],
+      beats: NLI_NOVA_STORY.representativeMinutes,
       positionMs: 0,
       anchorMs: 10,
     };
@@ -625,6 +625,7 @@ describe("narrative state transport", () => {
       ...ACTIVE_SCENE,
       sceneRevision: 5,
       narrativeState: { id: "segev", transition: "enter", revision: 5 },
+      basemap: "satellite_bw",
       investigationClock: { ...ACTIVE_SCENE.investigationClock, phase: "idle", revision: 9 },
     });
     resolveClock({ investigation_clock: { ...playingClock, revision: 9 } });
@@ -632,6 +633,50 @@ describe("narrative state transport", () => {
     await pending;
     expect(context.getNarrativeState()).toMatchObject({ id: "segev", revision: 5 });
     expect(context.getInvestigationClock()).toMatchObject({ phase: "idle", revision: 9 });
+  });
+
+  test("rapid Nova beat selections serialize and the final selection acknowledgement wins", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    const { seekNliClock } = await import("../../frontend/src/shared/nli-investigation-clock.js");
+    const { NLI_NOVA_STORY } = await import("../../frontend/src/shared/nli-nova-story.js");
+    context._tableName = "otef";
+    const initialClock = {
+      ...ACTIVE_SCENE.investigationClock,
+      phase: "paused",
+      membership: ["nli.investigation_polygons"],
+      beats: NLI_NOVA_STORY.representativeMinutes,
+      positionMs: 0,
+      anchorMs: null,
+      seekKind: "none",
+      revision: 7,
+    };
+    context._applyNarrativeScene({
+      ...ACTIVE_SCENE,
+      sceneRevision: 4,
+      narrativeState: { id: "nova", transition: "enter", revision: 4 },
+      investigationClock: initialClock,
+    });
+    const requests = [];
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockImplementation((_table, next) => new Promise((resolve) => {
+      requests.push({ next, resolve });
+    }));
+
+    const firstSelection = seekNliClock(initialClock, 1, 1000, undefined, { narrativeId: "nova" });
+    const finalSelection = seekNliClock(initialClock, 3, 1001, undefined, { narrativeId: "nova" });
+    const first = context.patchInvestigationClock(firstSelection);
+    const final = context.patchInvestigationClock(finalSelection);
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0].next.positionMs).toBe(4000);
+    expect(context._clockPatchQueue).toBeTruthy();
+
+    requests[0].resolve({ investigation_clock: { ...firstSelection, revision: 8 } });
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1].next.positionMs).toBe(12000);
+    requests[1].resolve({ investigation_clock: { ...finalSelection, revision: 9 } });
+    await Promise.all([first, final]);
+    expect(context.getNarrativeState()).toMatchObject({ id: "nova", revision: 4 });
+    expect(context.getInvestigationClock()).toMatchObject({ phase: "paused", positionMs: 12000, revision: 9 });
   });
 
   test("an ordinary clock response advances the acknowledged clock", async () => {
