@@ -114,9 +114,14 @@ describe("maplibre basemap switching", () => {
         }
         expect(layer.paint["text-opacity"][0]).toBe("case");
       } else {
-        expect(layer.layout["text-font"]).toEqual(["Noto Sans Regular"]);
+        expect(layer.layout["text-font"]).toEqual(["Arial"]);
       }
     }
+    expect(BASEMAP_STYLES.dark.glyphs).toBeUndefined();
+    expect(JSON.stringify(BASEMAP_STYLES.dark)).not.toContain("wood-pattern");
+    const woodland = BASEMAP_STYLES.dark.layers.find((layer) => layer.id === "landcover_wood");
+    expect(woodland.paint["fill-pattern"]).toBeUndefined();
+    expect(woodland.paint["fill-color"]).toBeTruthy();
     expect(BASEMAP_STYLES.dark["font-faces"]["Guttman Hatzvi"][0].url).toBe(
       "./fonts/Guttman-Hatzvi.ttf",
     );

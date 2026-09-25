@@ -218,7 +218,6 @@ export default {
           13,
           0.4
         ],
-        "fill-pattern": "wood-pattern",
         "fill-translate": [
           0,
           0

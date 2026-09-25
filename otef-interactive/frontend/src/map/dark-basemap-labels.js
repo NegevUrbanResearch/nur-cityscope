@@ -11,7 +11,7 @@ export const DARK_BASEMAP_TEXT_COLOR = "#ffffff";
 
 export const DARK_BASEMAP_PLACE_TEXT_FONT = Object.freeze([
   "Guttman Hatzvi",
-  "Noto Sans Regular",
+  "Arial",
 ]);
 
 export const DARK_BASEMAP_GUTTMAN_FONT_FACE_URL = "./fonts/Guttman-Hatzvi.ttf";
@@ -146,6 +146,7 @@ function knownPlaceNameMatch(knownPlaceNames) {
 export function applyDarkBasemapLabelPolicy(style, options = {}) {
   if (!style || !Array.isArray(style.layers)) return style;
   const next = cloneJson(style);
+  delete next.glyphs;
   const knownPlaceNames = Array.isArray(options.knownPlaceNames)
     ? options.knownPlaceNames.map((name) => String(name)).filter(Boolean)
     : collectKnownBasemapPlaceNames();
@@ -156,8 +157,12 @@ export function applyDarkBasemapLabelPolicy(style, options = {}) {
   };
 
   next.layers = next.layers.map((layer) => {
-    if (!shouldRewriteLabelLayer(layer)) return layer;
+    if (!layer || layer.type !== "symbol" || layer.layout?.["text-field"] == null) return layer;
     const layout = { ...(layer.layout || {}) };
+    layout["text-font"] = layer["source-layer"] === PLACE_SOURCE_LAYER
+      ? [...DARK_BASEMAP_PLACE_TEXT_FONT]
+      : ["Arial"];
+    if (!shouldRewriteLabelLayer(layer)) return { ...layer, layout };
     layout["text-field"] = cloneJson(DARK_BASEMAP_TEXT_FIELD);
     if (layout["text-transform"] === "uppercase") {
       delete layout["text-transform"];
@@ -165,7 +170,6 @@ export function applyDarkBasemapLabelPolicy(style, options = {}) {
     const paint = { ...(layer.paint || {}) };
     paint["text-color"] = DARK_BASEMAP_TEXT_COLOR;
     if (layer["source-layer"] === PLACE_SOURCE_LAYER) {
-      layout["text-font"] = [...DARK_BASEMAP_PLACE_TEXT_FONT];
       if (knownPlaceNames.length > 0) {
         const knownMatch = knownPlaceNameMatch(knownPlaceNames);
         layout["text-size"] = placeTextSizeExpression(layout["text-size"], knownMatch);

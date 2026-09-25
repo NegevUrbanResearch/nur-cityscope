@@ -2,7 +2,7 @@ import TableSwitcher from "../shared/table-switcher.js";
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import { createGISMap, setGISBasemap, maplibregl } from "../map/maplibre-map.js";
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
-import { applyLayerGroupsToMap, clearAllLayers, removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
+import { applyLayerGroupsToMap, clearAllLayers, disposeLayerManagerForMap, removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
 import { raiseDarkBasemapPlaceLabels } from "../map/dark-basemap-labels.js";
 import { attachGisFeaturePopups } from "../map/maplibre-gis-popups.js";
 import { createGisPersonSelection } from "../map/maplibre-person-selection.js";
@@ -206,6 +206,7 @@ async function bootstrapMapRuntime() {
   }
 
   map.on("load", async () => {
+    registerDisposer(() => disposeLayerManagerForMap(map));
     const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "gis", motionMode: resolveMotionMode() });
     registerDisposer(() => nameFieldController.dispose());
     registerDisposer(() => {

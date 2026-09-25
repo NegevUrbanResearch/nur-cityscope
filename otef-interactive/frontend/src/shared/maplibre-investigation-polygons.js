@@ -194,11 +194,13 @@ function notesEqualsFilter(notes) {
 }
 
 function setPaint(map, id, property, value) {
-  if (typeof map?.setPaintProperty !== "function") return;
+  if (!layerPresent(map, id) || typeof map?.setPaintProperty !== "function") return false;
   try {
     map.setPaintProperty(id, property, value);
+    return true;
   } catch (_) {
     // The base style can be replaced between collection and application.
+    return false;
   }
 }
 
@@ -220,8 +222,9 @@ function narrativeSettlementOutlinePaint(focusOutlineId) {
 function applyNarrativeSettlementOutlinePaint(map, state, frame) {
   const paint = narrativeSettlementOutlinePaint(frame?.narrativeFocusOutlineId);
   if (JSON.stringify(state.lastSettlementOutlinePaint) === JSON.stringify(paint)) return;
-  setPaint(map, SETTLEMENT_LAYER_ID, "line-color", paint);
-  state.lastSettlementOutlinePaint = paint;
+  if (setPaint(map, SETTLEMENT_LAYER_ID, "line-color", paint)) {
+    state.lastSettlementOutlinePaint = paint;
+  }
 }
 
 function setLayout(map, id, property, value) {

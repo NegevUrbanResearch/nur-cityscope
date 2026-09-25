@@ -1115,6 +1115,41 @@ describe("investigation polygon renderer", () => {
     ]);
   });
 
+  it("defers settlement paint across the host-style remount gap", () => {
+    const map = makeMap();
+    const hostLayers = [
+      ...map.layers.splice(0),
+      { id: "people-labels", type: "symbol", source: "host" },
+    ];
+    const renderer = createInvestigationPolygonRenderer(map, { beforeId: "people-labels" });
+    const focusedFrame = {
+      achievedPolygonBeats: [],
+      achievedSettlementOutlineIds: [32, 20],
+      narrativeFocusOutlineId: 32,
+      narrative: { phase: "idle" },
+    };
+    const data = {
+      settlementFeatures: [settlement(32), settlement(20)],
+      settlementFeaturesByOutlineId: { 32: settlement(32), 20: settlement(20) },
+    };
+
+    renderer.render(focusedFrame, data);
+    expect(map.setPaintProperty).not.toHaveBeenCalledWith(
+      "nli-investigation-settlement-impact-outline",
+      "line-color",
+      expect.anything(),
+    );
+
+    map.layers.push(...hostLayers);
+    renderer.render(focusedFrame, data);
+    expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeTruthy();
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      "nli-investigation-settlement-impact-outline",
+      "line-color",
+      expect.any(Array),
+    );
+  });
+
   it("restores red impact outlines when narrative focus outline is absent", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
