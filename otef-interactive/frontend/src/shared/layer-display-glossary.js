@@ -291,6 +291,10 @@ const LAYER_DISPLAY_LABELS = {
     he: "צירי חדירה",
     en: "Infiltration routes",
   },
+  "nli.lines.unconfirmed": {
+    he: "גישה לא מאומתת",
+    en: "Unconfirmed approach",
+  },
   "nli.alarms": {
     he: "אזעקות",
     en: "Alarms",

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { maplibreLineDashFromLeafletPx } from "../../frontend/src/shared/maplibre-line-dash.js";
 import {
   buildCompletedRouteFlowDasharray,
+  buildUnconfirmedLatticeDasharray,
+  buildUnconfirmedRouteDasharray,
   createInvestigationLineRenderer,
   orientInvestigationLineFeature,
 } from "../../frontend/src/shared/maplibre-investigation-lines.js";
@@ -78,6 +80,36 @@ describe("buildCompletedRouteFlowDasharray", () => {
   });
 });
 
+describe("unconfirmed phase-lattice dasharrays", () => {
+  const gisWidth = 2.4;
+
+  it("uses a dense 12px red period and a 6px counter-walking overlay", () => {
+    const red = buildUnconfirmedRouteDasharray({ progress: 0 }, "full", gisWidth);
+    const lattice = buildUnconfirmedLatticeDasharray({ progress: 0 }, "full", gisWidth * 0.46);
+    expect(red.reduce((sum, value) => sum + value, 0) * gisWidth).toBeCloseTo(12, 10);
+    expect(red[0] * gisWidth).toBeCloseTo(6, 10);
+    expect(lattice.reduce((sum, value) => sum + value, 0) * gisWidth * 0.46).toBeCloseTo(6, 10);
+  });
+
+  it("walks the overlay opposite the red dash", () => {
+    const red = buildUnconfirmedRouteDasharray({ progress: 0.25 }, "full", gisWidth);
+    const lattice = buildUnconfirmedLatticeDasharray({ progress: 0.25 }, "full", gisWidth * 0.46);
+    const redRest = buildUnconfirmedRouteDasharray({ progress: 0 }, "full", gisWidth);
+    expect(red).not.toEqual(redRest);
+    expect(lattice).not.toEqual(buildUnconfirmedLatticeDasharray({ progress: 0 }, "full", gisWidth * 0.46));
+    expect(JSON.stringify(red)).not.toEqual(JSON.stringify(lattice));
+  });
+
+  it("reuses a bounded set of overlay dasharrays", () => {
+    const keys = new Set();
+    for (let i = 0; i < 96; i += 1) {
+      keys.add(JSON.stringify(buildUnconfirmedLatticeDasharray({ progress: i / 96 }, "full", gisWidth * 0.46)));
+    }
+    expect(keys.size).toBeLessThanOrEqual(6);
+    expect(keys.size).toBeGreaterThan(1);
+  });
+});
+
 describe("investigation line renderer", () => {
   it("mounts stable future, carrier, flowing line, active, and head overlays", () => {
     const map = makeMap();
@@ -87,8 +119,11 @@ describe("investigation line renderer", () => {
 
     expect(map.addSource.mock.calls.map(([id]) => id)).toEqual([
       "nli-investigation-line-future",
+      "nli-investigation-line-unconfirmed-completed",
+      "nli-investigation-line-unconfirmed-active",
       "nli-investigation-line-completed-carrier",
       "nli-investigation-line-completed-motion",
+      "nli-investigation-line-composite-active",
       "nli-investigation-line-active",
       "nli-investigation-line-head",
     ]);
@@ -106,8 +141,13 @@ describe("investigation line renderer", () => {
     expect(futureLayer.paint["line-color"]).toBe("#c31f4f");
     expect(map.addLayer.mock.calls.map(([layer]) => layer.id)).toEqual([
       "nli-investigation-line-future-line",
+      "nli-investigation-line-unconfirmed-completed-line",
+      "nli-investigation-line-unconfirmed-completed-lattice",
+      "nli-investigation-line-unconfirmed-active-line",
+      "nli-investigation-line-unconfirmed-active-lattice",
       "nli-investigation-line-completed-carrier-line",
       "nli-investigation-line-completed-motion-line",
+      "nli-investigation-line-composite-active-line",
       "nli-investigation-line-active-line",
       "nli-investigation-line-head-circle",
     ]);
@@ -385,5 +425,99 @@ describe("investigation line renderer", () => {
     renderer.dispose();
     expect(map.sources.size).toBe(0);
     expect(map.layers).toHaveLength(0);
+  });
+
+  it("draws an unconfirmed Gaza tail into the confirmed parent as one head", () => {
+    const map = makeMap();
+    const renderer = createInvestigationLineRenderer(map, { lineWidthMultiplier: 1, routeScale: 1 });
+    const confirmed = line(10, 400, [[8, 0], [10, 0]]);
+    const unconfirmed = {
+      type: "Feature",
+      properties: {
+        OBJECTID: 1001,
+        timeline_minutes: 400,
+        flow_direction: "forward",
+        route_confidence: "unconfirmed",
+        parent_objectid: 10,
+      },
+      geometry: { type: "LineString", coordinates: [[0, 0], [8, 0]] },
+    };
+
+    renderer.render(
+      { activeProgress: 0.4, completedRouteFlow: { active: false, progress: 0 }, motionMode: "full" },
+      { futureFeatures: [], completedFeatures: [], activeFeatures: [confirmed, unconfirmed] },
+    );
+    const unconfirmedActive = map.sources.get("nli-investigation-line-unconfirmed-active")
+      .setData.mock.calls.at(-1)[0].features;
+    expect(unconfirmedActive).toHaveLength(1);
+    expect(unconfirmedActive[0].geometry.coordinates.at(-1)).toEqual([4, 0]);
+    expect(map.sources.get("nli-investigation-line-active").setData.mock.calls.at(-1)[0].features).toEqual([]);
+    expect(map.sources.get("nli-investigation-line-composite-active").setData.mock.calls.at(-1)[0].features).toEqual([]);
+    expect(map.sources.get("nli-investigation-line-head").setData.mock.calls.at(-1)[0].features[0].geometry.coordinates)
+      .toEqual([4, 0]);
+    expect(map.paints.get("nli-investigation-line-unconfirmed-active-line:line-color")).toBe("#c31f4f");
+    expect(map.paints.get("nli-investigation-line-unconfirmed-active-line:line-dasharray")).toEqual(expect.any(Array));
+
+    renderer.render(
+      { activeProgress: 0.9, completedRouteFlow: { active: false, progress: 0 }, motionMode: "full" },
+      { futureFeatures: [], completedFeatures: [], activeFeatures: [confirmed, unconfirmed] },
+    );
+    expect(map.sources.get("nli-investigation-line-unconfirmed-completed").setData.mock.calls.at(-1)[0].features)
+      .toHaveLength(1);
+    const clipped = map.sources.get("nli-investigation-line-composite-active").setData.mock.calls.at(-1)[0].features;
+    expect(clipped).toHaveLength(1);
+    expect(clipped[0].geometry.coordinates.at(-1)).toEqual([9, 0]);
+    expect(map.sources.get("nli-investigation-line-completed-motion").setData.mock.calls.at(-1)[0].features)
+      .toEqual([]);
+    expect(map.sources.get("nli-investigation-line-head").setData.mock.calls.at(-1)[0].features[0].geometry.coordinates)
+      .toEqual([9, 0]);
+  });
+
+  it("paints unconfirmed approaches as a full-opacity phase lattice, not a fade", () => {
+    const gis = makeMap();
+    createInvestigationLineRenderer(gis, "gis").mount();
+    const gisLayer = gis.addLayer.mock.calls.find(([layer]) => layer.id === "nli-investigation-line-unconfirmed-completed-line")[0];
+    const gisLattice = gis.addLayer.mock.calls.find(([layer]) => layer.id === "nli-investigation-line-unconfirmed-completed-lattice")[0];
+    expect(gisLayer.paint["line-opacity"]).toBe(0.95);
+    expect(gisLayer.paint["line-color"]).toBe("#c31f4f");
+    expect(gisLayer.paint["line-blur"]).toBeUndefined();
+    expect(gisLayer.layout["line-cap"]).toBe("round");
+    expect(gisLattice.source).toBe("nli-investigation-line-unconfirmed-completed");
+    expect(gisLattice.paint["line-color"]).toBe("#1a0a10");
+    expect(gisLattice.paint["line-opacity"]).toBe(0.62);
+    expect(gisLattice.paint["line-width"]).toBeLessThan(gisLayer.paint["line-width"]);
+
+    const projection = makeMap();
+    createInvestigationLineRenderer(projection, "projection").mount();
+    const projectionLayer = projection.addLayer.mock.calls.find(([layer]) => layer.id === "nli-investigation-line-unconfirmed-completed-line")[0];
+    expect(projectionLayer.paint["line-opacity"]).toBe(0.95);
+    expect(projectionLayer.paint["line-width"]).toBeGreaterThan(gisLayer.paint["line-width"]);
+  });
+
+  it("marks the unconfirmed prefix head as a comet until the join", () => {
+    const map = makeMap();
+    const renderer = createInvestigationLineRenderer(map, { lineWidthMultiplier: 1, routeScale: 1 });
+    const confirmed = line(10, 400, [[8, 0], [10, 0]]);
+    const unconfirmed = {
+      type: "Feature",
+      properties: {
+        OBJECTID: 1001,
+        timeline_minutes: 400,
+        flow_direction: "forward",
+        route_confidence: "unconfirmed",
+        parent_objectid: 10,
+      },
+      geometry: { type: "LineString", coordinates: [[0, 0], [8, 0]] },
+    };
+    renderer.render(
+      { activeProgress: 0.4, completedRouteFlow: { active: false, progress: 0.25 }, motionMode: "full" },
+      { futureFeatures: [], completedFeatures: [], activeFeatures: [confirmed, unconfirmed] },
+    );
+    const head = map.sources.get("nli-investigation-line-head").setData.mock.calls.at(-1)[0].features[0];
+    expect(head.properties.headKind).toBe("comet");
+    expect(map.paints.get("nli-investigation-line-unconfirmed-active-lattice:line-dasharray"))
+      .toEqual(expect.any(Array));
+    expect(map.paints.get("nli-investigation-line-unconfirmed-active-lattice:line-dasharray"))
+      .not.toEqual(map.paints.get("nli-investigation-line-unconfirmed-active-line:line-dasharray"));
   });
 });

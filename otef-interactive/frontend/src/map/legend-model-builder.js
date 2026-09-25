@@ -32,7 +32,7 @@ import {
 } from "../shared/legend-copy.js";
 import AdvancedStyleEngine from "../map-utils/advanced-style-engine.js";
 import { peopleLegendClassVisible } from "./nli-people-marker-filter.js";
-import { NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
+import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
 import {
   captivityBleedDataUrl,
   KIDNAP_SURVIVOR_STATUS,
@@ -388,9 +388,20 @@ function applyInvestigationRouteLegendPart(part) {
   return next;
 }
 
-function applyInvestigationRouteLegend(items, fullId) {
+function applyInvestigationRouteLegend(items, fullId, options) {
   if (fullId !== "nli.lines") return items;
-  return items.map((item) => applyInvestigationRouteLegendPart(item));
+  const confirmed = items.map((item) => applyInvestigationRouteLegendPart(item));
+  const locale = options?.language === "en" ? "en" : "he";
+  const profile = options?.surface === "projection" ? NLI_DISPLAY_PROFILES.projection : NLI_DISPLAY_PROFILES.gis;
+  const unconfirmed = {
+    id: `${fullId}:unconfirmed`,
+    shape: "line",
+    label: locale === "en" ? "Unconfirmed approach" : "גישה לא מאומתת",
+    stroke: NLI_VISUAL_TOKENS.incidentRed,
+    strokeOpacity: NLI_VISUAL_TOKENS.routeUnconfirmedOpacity * (Number(profile.unconfirmedOpacityMultiplier) || 1),
+    dash: { array: [...NLI_VISUAL_TOKENS.routeUnconfirmedDashPx] },
+  };
+  return [...confirmed, unconfirmed];
 }
 
 function applyAlarmShockwaveLegendPart(part) {
@@ -829,7 +840,7 @@ function legendLayerFromConfig(config, layer, options = {}) {
     items = summarizeItems(items, authoredSummaryLabel, fullId);
   }
 
-  items = applyInvestigationRouteLegend(items, fullId);
+  items = applyInvestigationRouteLegend(items, fullId, options);
   items = applyAlarmShockwaveLegend(items, fullId);
 
   return {

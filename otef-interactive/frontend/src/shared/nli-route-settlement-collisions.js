@@ -1,5 +1,7 @@
 /** Pure route-boundary collision indexing and settlement-state derivation. */
 
+import { isUnconfirmedRoute } from "./nli-unconfirmed-route-progress.js";
+
 const EPSILON = 1e-10;
 
 function finiteCoordinate(value) {
@@ -134,6 +136,7 @@ function outlineObjectId(feature) {
 export function buildRouteSettlementCollisionIndex(routeFeatures, settlementFeatures) {
   const index = new Map();
   for (const routeFeature of Array.isArray(routeFeatures) ? routeFeatures : []) {
+    if (isUnconfirmedRoute(routeFeature)) continue;
     const routeId = routeObjectId(routeFeature);
     if (routeId == null) continue;
     const parts = reviewedRouteParts(routeFeature);
