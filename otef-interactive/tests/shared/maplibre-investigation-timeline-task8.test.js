@@ -685,6 +685,45 @@ describe("Task 8 investigation timeline coordinator", () => {
     expect(after[0].properties.onset).toBe(false);
   });
 
+  it("retries focused settlement paint after the host layers return from a style reload", async () => {
+    const map = mapWithHostLayers();
+    const clock = idleNliClock();
+    const focusedSettlement = settlementFeature(42);
+    const deps = {
+      beforeId: "host__people_names",
+      featuresById: features,
+      settlementFeatures: [focusedSettlement],
+      settlementFeaturesByOutlineId: { 42: focusedSettlement },
+      narrativeFocus: { id: "nova", focusSettlement: "עיר א", focusSettlementOutlineId: 42 },
+      now: () => 0,
+    };
+
+    await syncInvestigationTimelineToMap(map, clock, groups, deps);
+    expect(map.getLayer("nli-investigation-settlement-impact-outline")).not.toBeNull();
+    expect(map.calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ method: "setPaintProperty", id: "nli-investigation-settlement-impact-outline" }),
+    ]));
+
+    prepareInvestigationTimelineForStyleReload(map);
+    map.wipeStyle();
+    map.emit("style.load");
+    const gapCallStart = map.calls.length;
+    await syncInvestigationTimelineToMap(map, clock, groups, deps);
+    expect(map.calls.slice(gapCallStart)).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ method: "setPaintProperty", id: "nli-investigation-settlement-impact-outline" }),
+    ]));
+
+    map.addLayer({ id: "host__people_names", type: "symbol", source: "host" });
+    map.addLayer({ id: "nli__investigation_polygons__fill__0", type: "fill", source: "nli__investigation_polygons" });
+    map.addLayer({ id: "nli__investigation_polygons__line__1", type: "line", source: "nli__investigation_polygons" });
+    const remountCallStart = map.calls.length;
+    await syncInvestigationTimelineToMap(map, clock, groups, deps);
+    expect(map.getLayer("nli-investigation-settlement-impact-outline")).not.toBeNull();
+    expect(map.calls.slice(remountCallStart)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ method: "setPaintProperty", id: "nli-investigation-settlement-impact-outline" }),
+    ]));
+  });
+
   it("keeps one alarm onset through manual RAF samples until 900ms, then ends it once", async () => {
     const map = mapWithHostLayers();
     let now = 0;

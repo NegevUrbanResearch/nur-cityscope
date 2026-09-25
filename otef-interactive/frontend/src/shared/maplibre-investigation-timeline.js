@@ -53,6 +53,7 @@ import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "./nli-investigation-the
 import { getNliNarrative } from "./nli-narratives.js";
 import { record as recordPerfSample } from "../map/perf-telemetry.js";
 import { deriveInvestigationFrame } from "./nli-investigation-visual-state.js";
+import { NLI_NOVA_STORY } from "./nli-nova-story.js";
 import { hasUsableBufferedGradient } from "./cim-buffered-gradient.js";
 import { novaVirtualMembership } from "./nli-nova-virtual-membership.js";
 import {
@@ -152,6 +153,14 @@ function isNovaIdle(state) {
   return isNovaNarrative(state) && (state?.clockPhase === "idle" || state?.clock?.phase === "idle");
 }
 
+function isNovaManifestClock(clock, narrativeId) {
+  return narrativeId === "nova" && (clock?.phase === "idle" || (
+    Array.isArray(clock?.beats) &&
+    clock.beats.length === NLI_NOVA_STORY.representativeMinutes.length &&
+    clock.beats.every((minute, index) => Number(minute) === NLI_NOVA_STORY.representativeMinutes[index])
+  ));
+}
+
 function effectiveMembership(clock, layerGroups, narrativeId) {
   const chips = nliPlayableIdsFromGroups(layerGroups);
   const visible = new Set(chips);
@@ -168,7 +177,7 @@ function effectiveMembership(clock, layerGroups, narrativeId) {
     lineOn: novaPlayback
       ? virtualSet.has(INVESTIGATION_LINES_FULL_ID)
       : semantic.has(INVESTIGATION_LINES_FULL_ID) && visible.has(INVESTIGATION_LINES_FULL_ID),
-    alarmPlay: semantic.has(INVESTIGATION_ALARMS_FULL_ID) && visible.has(INVESTIGATION_ALARMS_FULL_ID),
+    alarmPlay: !isNovaManifestClock(clock, narrativeId) && semantic.has(INVESTIGATION_ALARMS_FULL_ID) && visible.has(INVESTIGATION_ALARMS_FULL_ID),
     alarmVisible: visible.has(INVESTIGATION_ALARMS_FULL_ID),
   };
 }
@@ -408,9 +417,11 @@ function updateCaption(state, phase, _previousClock) {
       alarmPlay: state.alarmMode === "play",
     };
   }
+  const preserveWarmCaption = playbackOn && phase.mode === "hold" && state.lastCaption &&
+    !(state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY && state.clockPhase === "ended");
   const snap = liveBeat
     ? state.lastCaption
-    : playbackOn && phase.mode === "hold" && state.lastCaption
+    : preserveWarmCaption
       ? state.lastCaption
       : state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY && playbackOn && phase.mode === "hold"
         ? (() => {
@@ -977,6 +988,7 @@ function tick(map) {
   const clock = state.clock;
   const nowFn = state.now || (() => Date.now());
   const nowMs = nowFn();
+  state.rendererDeps?.onClockFrame?.(clock, nowMs);
   const started = state.monotonicNow();
   applyPersonGlow(state);
   const frame = deriveTimelineFrame(state, nowMs);
@@ -997,7 +1009,9 @@ function tick(map) {
     lineFrame?.completedFlowNeedsFrames === true
   );
   if (renderDue) {
-    const vis = evaluateClock(clock, nowMs);
+    const vis = evaluateClock(clock, nowMs, isNovaManifestClock(clock, state.narrativeFocus?.id)
+      ? { narrativeId: "nova" }
+      : undefined);
     if (
       clock.phase === "playing" ||
       clock.phase === "ended" ||
@@ -1112,6 +1126,7 @@ export function getInvestigationTimelineDiagnostics(map) {
  *   allowMapCaption?: boolean,
  *   explainerDebugVisible?: boolean,
  *   getPersonSelection?: () => { personId?: string|null, pid?: string|null, datasetVersion?: string|null } | null,
+ *   onClockFrame?: (clock: import('./nli-investigation-clock.js').NliInvestigationClock, nowMs: number) => void,
  * }} [deps]
  */
 export async function syncInvestigationTimelineToMap(map, clockInput, layerGroups, deps = {}) {
@@ -1218,7 +1233,9 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
       if (isStaleTimelineSyncRequest(map, syncRequest)) return;
     }
     const nowMs = nowFn();
-    const vis = evaluateClock(clock, nowMs);
+    const vis = evaluateClock(clock, nowMs, isNovaManifestClock(clock, state.narrativeFocus?.id)
+      ? { narrativeId: "nova" }
+      : undefined);
     const frame = deriveTimelineFrame(state, nowMs);
     const lineFrame = !isNovaIdle(state) && linesVisible ? deriveIdleLineFrame(state, nowMs) : null;
     applyPlayingVisuals(map, state, vis, frame, idleAlarmMode);
@@ -1231,7 +1248,9 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   }
 
   /** @type {'off' | 'idle' | 'play'} */
-  const alarmMode = nextMembership.alarmPlay
+  const alarmMode = isNovaManifestClock(clock, narrativeId)
+    ? "off"
+    : nextMembership.alarmPlay
     ? "play"
     : nextMembership.alarmVisible
       ? "idle"
@@ -1277,7 +1296,9 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
 
   const nowMs = nowFn();
   const semantic = membershipFromClock(clock);
-  const vis = evaluateClock(clock, nowMs);
+  const vis = evaluateClock(clock, nowMs, isNovaManifestClock(clock, narrativeId)
+    ? { narrativeId: "nova" }
+    : undefined);
   state.clock = clock;
   state.clockPhase = clock.phase;
   state.polygonOn = nextMembership.polygonOn;
@@ -1297,6 +1318,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
       {
         motionMode: state.motionMode,
         routeBeats: investigationRouteBeats(state.data),
+        narrativeId,
       },
     );
     state.polygonRenderer?.render(semanticFrame, {

@@ -65,17 +65,26 @@ describe("narrative state transport", () => {
     await OTEF_API.setNarrative("otef", "segev", 3, { sourceId: "remote-a", timestamp: 10 });
     await OTEF_API.narrativePresentationCommand("otef", {
       presentationAction: "open",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "remote-a",
       timestamp: 11,
     });
     await OTEF_API.narrativePresentationResult("otef", {
       outcome: "opened",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "gis-a",
       timestamp: 12,
+      slide: 4,
+      range: [1, 8],
+      message: null,
     });
 
     expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({
@@ -88,18 +97,27 @@ describe("narrative state transport", () => {
     expect(JSON.parse(global.fetch.mock.calls[1][1].body)).toEqual({
       action: "narrative_presentation",
       presentationAction: "open",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "remote-a",
       timestamp: 11,
     });
     expect(JSON.parse(global.fetch.mock.calls[2][1].body)).toEqual({
       action: "narrative_presentation_result",
       outcome: "opened",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "gis-a",
       timestamp: 12,
+      slide: 4,
+      range: [1, 8],
+      message: null,
     });
   });
 
@@ -595,15 +613,15 @@ describe("narrative state transport", () => {
     expect(context._independentBasemapGeneration).toBe(generation + 1);
   });
 
-  test("a delayed clock response cannot regress a later narrative idle clock", async () => {
+  test("a delayed Nova clock response after exit cannot be reinterpreted as the next narrative clock", async () => {
     const api = await import("../../frontend/src/shared/api-client.js");
     const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    const { NLI_NOVA_STORY } = await import("../../frontend/src/shared/nli-nova-story.js");
     context._tableName = "otef";
     context._applyNarrativeScene({
       ...ACTIVE_SCENE,
       sceneRevision: 4,
-      narrativeState: { id: null, transition: "exit", revision: 4 },
-      basemap: "dark",
+      narrativeState: { id: "nova", transition: "enter", revision: 4 },
       investigationClock: { ...ACTIVE_SCENE.investigationClock, phase: "idle", revision: 7 },
     });
     let resolveClock;
@@ -614,8 +632,8 @@ describe("narrative state transport", () => {
     const playingClock = {
       ...ACTIVE_SCENE.investigationClock,
       phase: "playing",
-      membership: ["nli.lines"],
-      beats: [420],
+      membership: ["nli.investigation_polygons"],
+      beats: NLI_NOVA_STORY.representativeMinutes,
       positionMs: 0,
       anchorMs: 10,
     };
@@ -625,6 +643,7 @@ describe("narrative state transport", () => {
       ...ACTIVE_SCENE,
       sceneRevision: 5,
       narrativeState: { id: "segev", transition: "enter", revision: 5 },
+      basemap: "satellite_bw",
       investigationClock: { ...ACTIVE_SCENE.investigationClock, phase: "idle", revision: 9 },
     });
     resolveClock({ investigation_clock: { ...playingClock, revision: 9 } });
@@ -632,6 +651,50 @@ describe("narrative state transport", () => {
     await pending;
     expect(context.getNarrativeState()).toMatchObject({ id: "segev", revision: 5 });
     expect(context.getInvestigationClock()).toMatchObject({ phase: "idle", revision: 9 });
+  });
+
+  test("rapid Nova beat selections serialize and the final selection acknowledgement wins", async () => {
+    const api = await import("../../frontend/src/shared/api-client.js");
+    const { default: context } = await import("../../frontend/src/shared/OTEFDataContext.js");
+    const { seekNliClock } = await import("../../frontend/src/shared/nli-investigation-clock.js");
+    const { NLI_NOVA_STORY } = await import("../../frontend/src/shared/nli-nova-story.js");
+    context._tableName = "otef";
+    const initialClock = {
+      ...ACTIVE_SCENE.investigationClock,
+      phase: "paused",
+      membership: ["nli.investigation_polygons"],
+      beats: NLI_NOVA_STORY.representativeMinutes,
+      positionMs: 0,
+      anchorMs: null,
+      seekKind: "none",
+      revision: 7,
+    };
+    context._applyNarrativeScene({
+      ...ACTIVE_SCENE,
+      sceneRevision: 4,
+      narrativeState: { id: "nova", transition: "enter", revision: 4 },
+      investigationClock: initialClock,
+    });
+    const requests = [];
+    vi.spyOn(api.OTEF_API, "updateInvestigationClock").mockImplementation((_table, next) => new Promise((resolve) => {
+      requests.push({ next, resolve });
+    }));
+
+    const firstSelection = seekNliClock(initialClock, 1, 1000, undefined, { narrativeId: "nova" });
+    const finalSelection = seekNliClock(initialClock, 3, 1001, undefined, { narrativeId: "nova" });
+    const first = context.patchInvestigationClock(firstSelection);
+    const final = context.patchInvestigationClock(finalSelection);
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0].next.positionMs).toBe(4000);
+    expect(context._clockPatchQueue).toBeTruthy();
+
+    requests[0].resolve({ investigation_clock: { ...firstSelection, revision: 8 } });
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1].next.positionMs).toBe(12000);
+    requests[1].resolve({ investigation_clock: { ...finalSelection, revision: 9 } });
+    await Promise.all([first, final]);
+    expect(context.getNarrativeState()).toMatchObject({ id: "nova", revision: 4 });
+    expect(context.getInvestigationClock()).toMatchObject({ phase: "paused", positionMs: 12000, revision: 9 });
   });
 
   test("an ordinary clock response advances the acknowledged clock", async () => {
@@ -905,35 +968,55 @@ describe("narrative state transport", () => {
     context._wsClient.listeners.get("otef_narrative_presentation_command")({
       table: "otef",
       presentationAction: "open",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "remote-a",
       acknowledged: true,
+      extra: "discard",
       presentationUrl: "https://attacker.invalid/embed",
     });
     context._wsClient.listeners.get("otef_narrative_presentation_result")({
       table: "otef",
       outcome: "opened",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "gis-a",
       acknowledged: true,
+      slide: null,
+      range: [1, 8],
+      message: null,
+      extra: "discard",
       center: [0, 0],
     });
 
     expect(commands).toHaveBeenCalledWith({
       presentationAction: "open",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "remote-a",
       acknowledged: true,
     });
     expect(results).toHaveBeenCalledWith({
       outcome: "opened",
-      narrativeId: "segev",
-      requestId: "request-1",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 1,
+      requestId: "request-a",
       sourceId: "gis-a",
       acknowledged: true,
+      slide: null,
+      range: [1, 8],
+      message: null,
     });
 
     stopCommands();
@@ -954,22 +1037,38 @@ describe("narrative state transport", () => {
     vi.spyOn(api.OTEF_API, "narrativePresentationCommand").mockResolvedValue({ status: "ok" });
     vi.spyOn(api.OTEF_API, "narrativePresentationResult").mockResolvedValue({ status: "ok" });
 
-    await context.narrativePresentationCommand("open", "segev", "request-1");
-    await context.narrativePresentationResult("opened", "segev", "request-1");
+    await context.narrativePresentationCommand({
+      presentationAction: "next", segmentId: "segev", presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000, sequence: 2, requestId: "request-b",
+    });
+    await context.narrativePresentationResult({
+      outcome: "ready", segmentId: "segev", presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000, sequence: 2, requestId: "request-b",
+      slide: null, range: null, message: null,
+    });
 
     expect(api.OTEF_API.narrativePresentationCommand).toHaveBeenCalledWith("otef", {
-      presentationAction: "open",
-      narrativeId: "segev",
-      requestId: "request-1",
+      presentationAction: "next",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 2,
+      requestId: "request-b",
       sourceId: context._clientId,
       timestamp: expect.any(Number),
     });
     expect(api.OTEF_API.narrativePresentationResult).toHaveBeenCalledWith("otef", {
-      outcome: "opened",
-      narrativeId: "segev",
-      requestId: "request-1",
+      outcome: "ready",
+      segmentId: "segev",
+      presentationSessionId: "session-a",
+      presentationGeneration: 1727190000000,
+      sequence: 2,
+      requestId: "request-b",
       sourceId: context._clientId,
       timestamp: expect.any(Number),
+      slide: null,
+      range: null,
+      message: null,
     });
   });
 });

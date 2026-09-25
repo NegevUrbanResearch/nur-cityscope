@@ -41,7 +41,6 @@ import {
 import { normalizeNarrativeState } from "../shared/nli-narratives.js";
 import {
   consumeNliNarrativeButtonClick,
-  createNliNarrativePresentationController,
   nliNarrativeControlsHtml,
 } from "./nli-narrative-controls.js";
 import {
@@ -430,7 +429,6 @@ class LayerSheetController {
     this._nliCacheFetchInflight = false;
     this._nliNarrativeTransitionPending = false;
     this._nliNarrativeFeedback = "";
-    this._nliNarrativePresentationController = null;
     this._subscriptions = [];
     this._remoteLocaleHandler = null;
 
@@ -465,10 +463,6 @@ class LayerSheetController {
     this.render();
 
     if (typeof OTEFDataContext !== "undefined") {
-      this._nliNarrativePresentationController = createNliNarrativePresentationController({
-        dataContext: OTEFDataContext,
-        onStateChange: () => this.render(),
-      });
       this._subscribeDataContext("layerGroups", () => this.render());
       this._subscribeDataContext("animations", () => this.render());
       this._subscribeDataContext("investigationClock", (clock) => {
@@ -479,11 +473,9 @@ class LayerSheetController {
       });
       this._subscribeDataContext("projectionSlideshow", () => this.render());
       this._subscribeDataContext("narrativeState", (state) => {
+        this._clearNliScrubOnNarrativeChange();
         this._nliNarrativeTransitionPending = false;
         this._nliNarrativeFeedback = "";
-        this._nliNarrativePresentationController?.reset(
-          normalizeNarrativeState(state).id,
-        );
         this.render();
       });
       this._subscribeDataContext("escapeOverlay", () => this.render());
@@ -513,7 +505,6 @@ class LayerSheetController {
     this._nliPlayheadTimer = null;
     this._nliScrub = null;
     this._nliScrubEl = null;
-    this._nliNarrativePresentationController?.destroy?.();
     for (const unsubscribe of this._subscriptions.splice(0)) unsubscribe();
     if (typeof window !== "undefined" && this._remoteLocaleHandler) {
       window.removeEventListener(LOCALE_EVENT, this._remoteLocaleHandler);
@@ -725,14 +716,6 @@ class LayerSheetController {
       overlap: patch?.overlap ?? current.overlap,
       mor: patch?.mor ?? current.mor,
     });
-  }
-
-  runNarrativePresentation(action, id) {
-    if (!this._isNarrativeActive() || this._nliNarrativeTransitionPending) {
-      return Promise.resolve({ outcome: "unavailable", narrativeId: id, requestId: null });
-    }
-    return this._nliNarrativePresentationController?.run(action, id) ||
-      Promise.resolve({ outcome: "unavailable", narrativeId: id, requestId: null });
   }
 
   async runLayerTileToggleFromElement(layerTile) {
@@ -1022,18 +1005,14 @@ class LayerSheetController {
           clock,
           this._nliFeatureCache,
           presentationActive,
+          false,
+          this._readNarrativeState().id,
         )
       : "";
-    const presentationState = this._nliNarrativePresentationController?.getState?.() || {
-      phase: "closed",
-      error: null,
-    };
     const narrativeState = {
       ...this._readNarrativeState(),
-      presentationPhase: presentationState.phase,
       transitionPending: this._nliNarrativeTransitionPending,
-      feedback: this._nliNarrativeFeedback ||
-        (presentationState.error ? t("nliNarrativePresentationUnavailable") : ""),
+      feedback: this._nliNarrativeFeedback,
     };
     const narrativeDisabledReason = presentationActive
       ? t("nliNarrativeSlideshowDisabled")

@@ -1,12 +1,74 @@
-import { describe, expect, test } from "vitest";
-import { nextAction, prevAction, slideIndexes } from "../../frontend/src/remote/nli-staff-flow.js";
-import { NARRATIVES, SHOW } from "../../frontend/src/remote/nli-staff-script.js";
+import { describe, expect, test, vi } from "vitest";
+import { nextAction, prevAction, showStepIndex, slideIndexes } from "../../frontend/src/remote/nli-staff-flow.js";
+import { COPY, HOME_SHOW_SHORTCUTS, NARRATIVES, SHOW } from "../../frontend/src/remote/nli-staff-script.js";
+import { createNliStaffSearchEventHandlers } from "../../frontend/src/remote/nli-staff-remote.js";
 
 const showIndex = (title) => SHOW.steps.findIndex((step) => step.title.en === title);
 const lastOf = (id) => NARRATIVES.find((item) => item.id === id).steps.length - 1;
 const junction = (ids) => SHOW.steps.findIndex((step) => step.branch?.join() === ids.join());
 
 describe("NLI staff show flow", () => {
+  test("step transitions force-close before clearing and wait for the destination cue", async () => {
+    let generation = 0;
+    const events = [];
+    let releaseCue;
+    const transition = {
+      begin: () => ++generation,
+      isCurrent: (token) => token === generation,
+      clearAll: async () => { events.push("clear"); return true; },
+    };
+    const handlers = createNliStaffSearchEventHandlers({
+      transition,
+      beforeTransition: async () => { events.push("close"); },
+      setDestination: () => events.push("destination"),
+      renderDestination: () => events.push("render"),
+      applyDestinationCue: () => {
+        events.push("cue-start");
+        return new Promise((resolve) => { releaseCue = () => { events.push("cue-ready"); resolve(); }; });
+      },
+      afterDestinationCue: () => events.push("after-cue"),
+    });
+    const pending = handlers.transitionToStep({ steps: [{}] }, 0, null);
+    await vi.waitFor(() => expect(events).toContain("cue-start"));
+    expect(events).toEqual(["close", "clear", "destination", "render", "cue-start"]);
+    releaseCue();
+    await pending;
+    expect(events.at(-1)).toBe("after-cue");
+  });
+
+  test("a newer transition suppresses the Shura post-cue callback", async () => {
+    let generation = 0;
+    const events = [];
+    let releaseCue;
+    const transition = {
+      begin: () => ++generation,
+      isCurrent: (token) => token === generation,
+      clearAll: async () => true,
+    };
+    const handlers = createNliStaffSearchEventHandlers({
+      transition,
+      applyDestinationCue: () => new Promise((resolve) => { releaseCue = resolve; }),
+      afterDestinationCue: () => events.push("auto-open"),
+    });
+    const pending = handlers.transitionToStep({ steps: [{}] }, 0, null);
+    await vi.waitFor(() => expect(releaseCue).toBeTypeOf("function"));
+    transition.begin();
+    releaseCue();
+    await pending;
+    expect(events).toEqual([]);
+  });
+
+  test("home search shortcuts point to canonical SHOW step IDs", () => {
+    expect(HOME_SHOW_SHORTCUTS.every((item) => SHOW.steps[showStepIndex(item.id)]?.id === item.id)).toBe(true);
+  });
+
+  test("search status copy reports reset failures without a currently-shown label", () => {
+    expect(COPY.he.searchClearFailed).toBeTruthy();
+    expect(COPY.en.searchClearFailed).toBeTruthy();
+    expect(COPY.he).not.toHaveProperty("nowShowing");
+    expect(COPY.en).not.toHaveProperty("nowShowing");
+  });
+
   test("branch steps are junctions, not slides", () => {
     const slides = slideIndexes(SHOW).map((index) => SHOW.steps[index]);
     expect(slides.some((step) => step.branch)).toBe(false);
@@ -50,6 +112,17 @@ describe("NLI staff show flow", () => {
   test("a narrative opened from home finishes at its last step", () => {
     expect(nextAction({ scriptId: "segev", step: lastOf("segev"), returnTo: null })).toEqual({ kind: "finish" });
     expect(nextAction({ scriptId: "segev", step: 0, returnTo: null })).toEqual({ kind: "step", scriptId: "segev", step: 1 });
+  });
+
+  test("closing the Hostages presentation advances through Nir Oz people to all hostages", () => {
+    const hostages = NARRATIVES.find((item) => item.id === "hostages");
+    const presentationIndex = hostages.steps.findIndex((step) => step.presentation);
+    const presentation = hostages.steps[presentationIndex];
+    expect(presentation.presentation).toEqual({ segmentId: "hostages", open: "manual", onClose: "next" });
+    expect(hostages.steps[presentationIndex + 1].title.en).toBe("Nir Oz victims and hostages");
+    expect(hostages.steps[presentationIndex + 1].cue.layers).toContain("nli.people");
+    expect(hostages.steps[presentationIndex + 2].title.en).toBe("All hostages");
+    expect(hostages.steps[presentationIndex + 2].cue.narrative).toBe("hostages_all");
   });
 
   test("previous skips junctions and leaves a narrative for the slide before it", () => {

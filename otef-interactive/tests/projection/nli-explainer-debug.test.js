@@ -11,7 +11,6 @@ import {
   NLI_EXPLAINER_LAYOUT_STORAGE_KEY,
   NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
 } from "../../frontend/src/projection/nli-explainer-overlay.js";
-import { createNarrativePresentation } from "../../frontend/src/map/nli-narrative-presentation.js";
 import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
 import {
   disposeInvestigationTimelineForMap,
@@ -1089,75 +1088,6 @@ describe("nli explainer debug editor", () => {
     expect(api.isVisible()).toBe(true);
     api.dispose();
     vi.unstubAllGlobals();
-  });
-
-  it("narrative transition close without emitResult re-enables GIS clock E", async () => {
-    const host = fakeEl();
-    const caption = fakeEl();
-    const storage = { getItem: () => null, setItem: vi.fn() };
-    const body = fakeEl();
-    const listeners = new Map();
-    const container = {
-      children: [],
-      appendChild(child) { this.children.push(child); child.parentNode = this; return child; },
-      removeChild(child) { this.children = this.children.filter((item) => item !== child); child.parentNode = null; },
-      querySelector(selector) {
-        for (const child of this.children) {
-          const match = child.querySelector?.(selector);
-          if (match) return match;
-        }
-        return null;
-      },
-    };
-    vi.stubGlobal("window", {
-      location: { search: "" },
-      localStorage: storage,
-      addEventListener() {},
-      removeEventListener() {},
-      requestAnimationFrame(cb) { cb(); return 1; },
-    });
-    vi.stubGlobal("document", {
-      body,
-      createElement(tagName) { return fakeEl({ tagName }); },
-      getElementById() { return null; },
-      addEventListener: vi.fn((type, handler) => listeners.set(type, handler)),
-      removeEventListener: vi.fn((type, handler) => {
-        if (listeners.get(type) === handler) listeners.delete(type);
-      }),
-    });
-    vi.stubGlobal("localStorage", storage);
-    try {
-      const api = installNliExplainerDebug({
-        host,
-        captionEl: caption,
-        registerDisposer() {},
-        storage,
-        storageKey: NLI_GIS_CLOCK_LAYOUT_STORAGE_KEY,
-        defaultLayout: GIS_CLOCK_DEFAULT_LAYOUT,
-        enableSpanGuards: false,
-        enableLayoutMapExport: false,
-        mergeProjectionLayout: false,
-        enableRotation: true,
-        initialVisible: false,
-      });
-      const presentation = createNarrativePresentation(container, {
-        onOpenChange: (open) => {
-          api.setGisClockHotkeyAllowed(!open);
-          if (open) api.setVisible(false);
-        },
-      });
-      presentation.open(NLI_NARRATIVES.segev, { narrativeId: "segev", requestId: "open-1" });
-      const event = { key: "e", defaultPrevented: false, repeat: false, target: { tagName: "BODY" } };
-      expect(api.handleGisClockHotkey(event)).toBe(false);
-      expect(api.isVisible()).toBe(false);
-      presentation.close();
-      expect(api.handleGisClockHotkey(event)).toBe(true);
-      expect(api.isVisible()).toBe(true);
-      presentation.dispose();
-      api.dispose();
-    } finally {
-      vi.unstubAllGlobals();
-    }
   });
 
   it("click on host or caption toggles editor chrome; E preventDefault when handled", () => {

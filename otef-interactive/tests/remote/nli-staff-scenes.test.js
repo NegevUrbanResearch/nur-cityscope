@@ -1,21 +1,29 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   NARRATIVES,
+  HOME_SHOW_SHORTCUTS,
   OPENING_LAYER_IDS,
   PEOPLE_NAMES_LAYER_IDS,
   SCENES,
   SCRIPTS,
   SHOW,
+  SHOW_STEP_IDS,
+  TIMELINE_LAYER_IDS,
   WALL_LAYER_IDS,
 } from "../../frontend/src/remote/nli-staff-script.js";
+import { showStepIndex } from "../../frontend/src/remote/nli-staff-flow.js";
 import { getNliNarrative } from "../../frontend/src/shared/nli-narratives.js";
+import {
+  createNliStaffPresentationButtonHandler,
+  shouldAutoOpenNliPresentation,
+} from "../../frontend/src/remote/nli-staff-presentation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MANIFEST_ROOT = path.resolve(__dirname, "../../public/processed/layers");
-const KITS = new Set(["timeline", "presentation", "archive", "branch", "search", "escape"]);
+const KITS = new Set(["timeline", "archive", "branch", "search", "escape", "presentation"]);
 
 const allSteps = () => SCRIPTS.flatMap((script) => script.steps.map((step) => ({ script, step })));
 const allCues = () => [
@@ -27,6 +35,56 @@ test("names wall keeps people_names on the black model ground", () => {
   expect(PEOPLE_NAMES_LAYER_IDS).toEqual(["nli.people_names"]);
   expect(WALL_LAYER_IDS).toEqual(["nli.people_names"]);
   expect(WALL_LAYER_IDS).not.toEqual(OPENING_LAYER_IDS);
+});
+
+test("only a current explicit Hostages Close applies its special destination", async () => {
+  const step = { presentation: { segmentId: "hostages", open: "manual", onClose: "next" } };
+  let generation = 4;
+  let releaseClose;
+  const destinations = [];
+  const handle = createNliStaffPresentationButtonHandler({
+    getCurrentStep: () => step,
+    getNavigationGeneration: () => generation,
+    run: () => new Promise((resolve) => { releaseClose = () => resolve(true); }),
+    nextFromExplicitClose: () => destinations.push("next"),
+  });
+  const closing = handle("close");
+  await vi.waitFor(() => expect(releaseClose).toBeTypeOf("function"));
+  generation += 1;
+  releaseClose();
+  await closing;
+  expect(destinations).toEqual([]);
+});
+
+test("Shura auto-opens only after its current step cue succeeds", () => {
+  const item = SCRIPTS.find((script) => script.id === "shura");
+  const index = item.steps.findIndex((step) => step.presentation?.open === "auto");
+  expect(shouldAutoOpenNliPresentation({
+    item, index, currentScript: item, currentStep: item.steps[index], cueStatus: "ready",
+  })).toBe(true);
+  expect(shouldAutoOpenNliPresentation({
+    item, index, currentScript: item, currentStep: item.steps[index], cueStatus: "failed",
+  })).toBe(false);
+  expect(shouldAutoOpenNliPresentation({
+    item, index, currentScript: SCRIPTS.find((script) => script.id === "hostages"),
+    currentStep: item.steps[index], cueStatus: "ready",
+  })).toBe(false);
+});
+
+test("Home shortcuts target the canonical final show steps", () => {
+  expect(new Set(SHOW.steps.map((step) => step.id)).size).toBe(SHOW.steps.length);
+  expect(HOME_SHOW_SHORTCUTS.map((item) => item.id)).toEqual([
+    SHOW_STEP_IDS.IDENTITY,
+    SHOW_STEP_IDS.WALL,
+  ]);
+  expect(SHOW.steps[showStepIndex(SHOW_STEP_IDS.IDENTITY)].kit).toContain("search");
+  expect(SHOW.steps[showStepIndex(SHOW_STEP_IDS.WALL)].kit).toContain("search");
+});
+
+test("Free control no longer duplicates identity and wall", () => {
+  expect(SCENES.map((scene) => scene.id)).not.toEqual(
+    expect.arrayContaining(["identity", "wall"]),
+  );
 });
 
 describe("NLI staff run of show", () => {
@@ -72,6 +130,38 @@ describe("NLI staff run of show", () => {
     const hostages = NARRATIVES.find((narrative) => narrative.id === "hostages");
     expect(hostages.steps[2].cue.narrative).toBeUndefined();
     expect(hostages.steps[3].cue.narrative).toBe("hostages_all");
+  });
+
+  test("presentation segments use the approved six-segment GIS mapping", () => {
+    const expected = [
+      ["segev", "manual", "stay"],
+      ["nova_mor", "manual", "stay"],
+      ["nova_memorial", "manual", "stay"],
+      ["sderot", "manual", "stay"],
+      ["shura", "auto", "resume"],
+      ["hostages", "manual", "next"],
+    ];
+    const presentationSteps = allSteps().filter(({ step }) => step.presentation);
+    expect(presentationSteps.map(({ step }) => [
+      step.presentation.segmentId,
+      step.presentation.open,
+      step.presentation.onClose,
+    ])).toEqual(expected);
+    expect(presentationSteps.every(({ step }) => step.kit.includes("presentation"))).toBe(true);
+    expect(presentationSteps.map(({ step }) => step.presentation.segmentId)).toEqual(
+      expect.arrayContaining(expected.map(([segmentId]) => segmentId)),
+    );
+  });
+
+  test("Sderot and Shura use the approved slides and single-step automatic projection", () => {
+    const sderot = NARRATIVES.find((narrative) => narrative.id === "sderot");
+    const shura = NARRATIVES.find((narrative) => narrative.id === "shura");
+    const shuraPresentation = shura.steps.find((step) => step.presentation);
+    expect(sderot.steps.find((step) => step.presentation).presentation.segmentId).toBe("sderot");
+    expect(sderot.steps.find((step) => step.presentation).gis.en).toContain("17–21");
+    expect(shura.steps).toHaveLength(1);
+    expect(shuraPresentation.cue).toEqual({ layers: TIMELINE_LAYER_IDS, clock: "idle" });
+    expect(shuraPresentation.presentation).toEqual({ segmentId: "shura", open: "auto", onClose: "resume" });
   });
 
   test("every step declares known kits and bilingual copy", () => {

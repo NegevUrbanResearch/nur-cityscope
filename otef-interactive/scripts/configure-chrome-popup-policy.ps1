@@ -3,9 +3,9 @@
     Configure Chrome for the local OTEF exhibit.
 
 .DESCRIPTION
-    Installs or removes one machine-level Chrome policy entry for the exact
-    exhibit origin http://localhost:80. Other popup settings and other numbered
-    allowlist entries remain unchanged.
+    Installs or removes the exact exhibit origin http://localhost:80 from the
+    popup and autoplay allowlists. Other numbered allowlist entries remain
+    unchanged.
 
     Install also adds --disable-features=CrossOriginOpenerPolicy to existing
     Google Chrome shortcuts so GIS can close the named NLI archive window.
@@ -13,14 +13,14 @@
     that flag) before the close path works.
 
     Install and Remove require an elevated Windows PowerShell session for the
-    HKLM popup policy. Shortcut updates use the current user when elevation
+    HKLM Chrome policies. Shortcut updates use the current user when elevation
     is unavailable. Status is read-only and does not need elevation.
 
 .PARAMETER Mode
-    Install adds the localhost origin to the first unused numbered value and
-    adds the Chrome launch flag to Google Chrome.lnk shortcuts.
-    Remove removes entries whose value is exactly http://localhost:80 and
-    removes the launch flag from those shortcuts.
+    Install adds the localhost origin to the first unused numbered value in
+    each allowlist and adds the Chrome launch flag to Google Chrome.lnk shortcuts.
+    Remove removes entries whose value is exactly http://localhost:80 from both
+    keys and removes the launch flag from those shortcuts.
     Status reports the current entries and shortcut flags without changing
     the registry.
 
@@ -43,7 +43,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$PolicyPath = 'HKLM:\Software\Policies\Google\Chrome\PopupsAllowedForUrls'
+$Policies = @(
+    [pscustomobject]@{ Name = 'popup'; Path = 'HKLM:\Software\Policies\Google\Chrome\PopupsAllowedForUrls' },
+    [pscustomobject]@{ Name = 'autoplay'; Path = 'HKLM:\Software\Policies\Google\Chrome\AutoplayAllowlist' }
+)
 $AllowedOrigin = 'http://localhost:80'
 $ChromeFeature = 'CrossOriginOpenerPolicy'
 $ChromeDisableFeatures = '--disable-features=CrossOriginOpenerPolicy'
@@ -65,11 +68,13 @@ function Assert-Administrator {
 }
 
 function Get-PolicyEntries {
-    if (-not (Test-Path -LiteralPath $PolicyPath)) {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
         return @()
     }
 
-    $key = Get-Item -LiteralPath $PolicyPath
+    $key = Get-Item -LiteralPath $Path
     $entries = foreach ($name in $key.GetValueNames()) {
         [pscustomobject]@{
             Name  = [string]$name
@@ -278,70 +283,75 @@ function Show-LaunchFlagStatus {
 }
 
 function Show-Status {
-    $entries = @(Get-PolicyEntries)
-    Write-Host "Chrome popup policy: $PolicyPath" -ForegroundColor Cyan
-    Write-Host "Allowed exhibit origin: $AllowedOrigin" -ForegroundColor Cyan
+    foreach ($policy in $Policies) {
+        $entries = @(Get-PolicyEntries -Path $policy.Path)
+        Write-Host "Chrome $($policy.Name) policy: $($policy.Path)" -ForegroundColor Cyan
+        Write-Host "Allowed exhibit origin: $AllowedOrigin" -ForegroundColor Cyan
 
-    if ($entries.Count -eq 0) {
-        Write-Host 'No policy entries found.' -ForegroundColor Yellow
-    } else {
-        Write-Host 'Current entries:' -ForegroundColor Gray
-        foreach ($entry in $entries) {
-            $marker = if ($entry.Value -eq $AllowedOrigin) { ' (exhibit origin)' } else { '' }
-            Write-Host "  $($entry.Name) = $($entry.Value)$marker"
-        }
-
-        $matchingEntries = @($entries | Where-Object { $_.Value -eq $AllowedOrigin })
-        if ($matchingEntries.Count -gt 0) {
-            Write-Host 'The exact localhost origin is configured.' -ForegroundColor Green
+        if ($entries.Count -eq 0) {
+            Write-Host 'No policy entries found.' -ForegroundColor Yellow
         } else {
-            Write-Host 'The exact localhost origin is not configured.' -ForegroundColor Yellow
+            Write-Host 'Current entries:' -ForegroundColor Gray
+            foreach ($entry in $entries) {
+                $marker = if ($entry.Value -eq $AllowedOrigin) { ' (exhibit origin)' } else { '' }
+                Write-Host "  $($entry.Name) = $($entry.Value)$marker"
+            }
+
+            $matchingEntries = @($entries | Where-Object { $_.Value -eq $AllowedOrigin })
+            if ($matchingEntries.Count -gt 0) {
+                Write-Host 'The exact localhost origin is configured.' -ForegroundColor Green
+            } else {
+                Write-Host 'The exact localhost origin is not configured.' -ForegroundColor Yellow
+            }
         }
     }
-
     Show-LaunchFlagStatus
 }
 
 function Install-Policy {
-    $entries = @(Get-PolicyEntries)
-    $matchingEntries = @($entries | Where-Object { $_.Value -eq $AllowedOrigin })
+    foreach ($policy in $Policies) {
+        $entries = @(Get-PolicyEntries -Path $policy.Path)
+        $matchingEntries = @($entries | Where-Object { $_.Value -eq $AllowedOrigin })
 
-    if ($matchingEntries.Count -gt 0) {
-        Write-Host 'The exact localhost origin is already configured; no registry changes were made.' -ForegroundColor Green
-        return
-    }
-
-    Assert-Administrator
-
-    if (-not (Test-Path -LiteralPath $PolicyPath)) {
-        if (-not $PSCmdlet.ShouldProcess($PolicyPath, 'Create Chrome popup allowlist key')) {
-            return
+        if ($matchingEntries.Count -gt 0) {
+            Write-Host "The exact localhost origin is already configured for $($policy.Name)." -ForegroundColor Green
+            continue
         }
-        New-Item -Path $PolicyPath -Force | Out-Null
-    }
 
-    $slot = Get-NextPolicySlot -Entries $entries
-    if ($PSCmdlet.ShouldProcess("$PolicyPath\$slot", "Allow $AllowedOrigin")) {
-        New-ItemProperty -LiteralPath $PolicyPath -Name $slot -Value $AllowedOrigin -PropertyType String | Out-Null
-        Write-Host "Added $AllowedOrigin as entry $slot." -ForegroundColor Green
-        Write-Host 'Restart Chrome if the policy is not applied to an existing tab immediately.' -ForegroundColor Yellow
+        Assert-Administrator
+
+        if (-not (Test-Path -LiteralPath $policy.Path)) {
+            if (-not $PSCmdlet.ShouldProcess($policy.Path, "Create Chrome $($policy.Name) allowlist key")) {
+                continue
+            }
+            New-Item -Path $policy.Path -Force | Out-Null
+        }
+
+        $slot = Get-NextPolicySlot -Entries $entries
+        if ($PSCmdlet.ShouldProcess("$($policy.Path)\$slot", "Allow $AllowedOrigin")) {
+            New-ItemProperty -LiteralPath $policy.Path -Name $slot -Value $AllowedOrigin -PropertyType String | Out-Null
+            Write-Host "Added $AllowedOrigin as $($policy.Name) entry $slot." -ForegroundColor Green
+            Write-Host 'Restart Chrome if the policy is not applied to an existing tab immediately.' -ForegroundColor Yellow
+        }
     }
 }
 
 function Remove-Policy {
     Assert-Administrator
-    $entries = @(Get-PolicyEntries)
-    $matchingEntries = @($entries | Where-Object { $_.Value -eq $AllowedOrigin })
+    foreach ($policy in $Policies) {
+        $entries = @(Get-PolicyEntries -Path $policy.Path)
+        $matchingEntries = @($entries | Where-Object { $_.Value -eq $AllowedOrigin })
 
-    if ($matchingEntries.Count -eq 0) {
-        Write-Host 'The exact localhost origin is not configured; no registry changes were made.' -ForegroundColor Yellow
-        return
-    }
+        if ($matchingEntries.Count -eq 0) {
+            Write-Host "The exact localhost origin is not configured for $($policy.Name)." -ForegroundColor Yellow
+            continue
+        }
 
-    foreach ($entry in $matchingEntries) {
-        if ($PSCmdlet.ShouldProcess("$PolicyPath\$($entry.Name)", "Remove $AllowedOrigin")) {
-            Remove-ItemProperty -LiteralPath $PolicyPath -Name $entry.Name
-            Write-Host "Removed entry $($entry.Name)." -ForegroundColor Green
+        foreach ($entry in $matchingEntries) {
+            if ($PSCmdlet.ShouldProcess("$($policy.Path)\$($entry.Name)", "Remove $AllowedOrigin")) {
+                Remove-ItemProperty -LiteralPath $policy.Path -Name $entry.Name
+                Write-Host "Removed $($policy.Name) entry $($entry.Name)." -ForegroundColor Green
+            }
         }
     }
 

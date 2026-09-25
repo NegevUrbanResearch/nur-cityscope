@@ -1,5 +1,7 @@
 import { createNarrativeFocusRenderer } from "../shared/maplibre-narrative-focus.js";
 import { getNliNarrative, normalizeNarrativeState } from "../shared/nli-narratives.js";
+import { NLI_NOVA_STORY } from "../shared/nli-nova-story.js";
+import { evaluateClock } from "../shared/nli-investigation-clock.js";
 import { applyNarrativePeopleFilter } from "./nli-people-marker-filter.js";
 
 const EXIT_CENTER = Object.freeze([34.5, 31.4]);
@@ -7,6 +9,14 @@ const EXIT_CENTER = Object.freeze([34.5, 31.4]);
 // visible while leaving the Nova label readable.
 const MOR_ROUTE_BOUNDS = Object.freeze([[34.466, 31.350], [34.499, 31.400]]);
 const SCENE_STORAGE_KEY = "otef.nliNarrativeSceneRevision";
+const NOVA_ARGAMANI_BEAT_INDEX = 3;
+
+function novaBeatIndexFromClock(clock, nowMs) {
+  const visual = evaluateClock(clock, nowMs, { narrativeId: "nova" });
+  return visual.phase === "idle" ? 0
+    : visual.phase === "ended" ? NLI_NOVA_STORY.beats.length - 1
+      : Math.max(0, visual.index);
+}
 
 function readHandledRevision(storage) {
   try {
@@ -28,13 +38,12 @@ function centerFromBounds(bounds) {
   return Math.abs(center[0]) <= 180 && Math.abs(center[1]) <= 90 ? center : null;
 }
 
-/** Coordinate the durable NLI GIS scene without coupling it to presentation commands. */
+/** Coordinate the durable NLI GIS scene. */
 export function createGisNarrativeController({
   map,
   dataContext,
   viewportSync,
   personVisual,
-  presentation,
   closeArchive = () => {},
   storage = typeof sessionStorage !== "undefined" ? sessionStorage : null,
   resolveExitCenter,
@@ -47,6 +56,7 @@ export function createGisNarrativeController({
   let activeDefinition = null;
   let escapeOverlay = dataContext?.getEscapeOverlay?.() || { mor: false };
   let morCameraActive = false;
+  let novaBeatIndex = 0;
   let handledRevision = readHandledRevision(storage);
   let styleGeneration = 0;
 
@@ -57,6 +67,18 @@ export function createGisNarrativeController({
   const exitCenter = () => {
     const resolved = typeof resolveExitCenter === "function" ? resolveExitCenter() : centerFromBounds(dataContext?.getBounds?.());
     return Array.isArray(resolved) && resolved.length === 2 && resolved.every(Number.isFinite) ? resolved : EXIT_CENTER;
+  };
+  const moveToNarrativeCamera = (definition, duration, argamaniView = false) => {
+    if (definition?.id === "nova") {
+      map?.flyTo?.({
+        center: definition.center,
+        zoom: argamaniView ? definition.beat4Zoom : definition.zoom,
+        essential: true,
+        duration,
+      });
+      return;
+    }
+    map?.flyTo?.({ center: definition.center, zoom: definition.zoom, essential: true, duration });
   };
   const fitMorRoute = () => {
     if (morCameraActive || activeDefinition?.id !== "nova") return;
@@ -70,7 +92,7 @@ export function createGisNarrativeController({
     morCameraActive = false;
     map?.stop?.();
     viewportSync?.beginCameraTravel?.("narrative-nova");
-    map?.flyTo?.({ center: activeDefinition.center, zoom: activeDefinition.zoom, essential: true, duration: 1000 });
+    moveToNarrativeCamera(activeDefinition, 1000, novaBeatIndex >= NOVA_ARGAMANI_BEAT_INDEX);
   };
   const syncMorCamera = () => {
     if (activeDefinition?.id !== "nova") {
@@ -81,18 +103,22 @@ export function createGisNarrativeController({
     else restoreNovaCamera();
   };
   const activate = (definition) => {
-    presentation?.close?.();
     activeDefinition = definition;
+    novaBeatIndex = 0;
+    if (definition?.id === "nova") {
+      const clock = dataContext?.getInvestigationClock?.();
+      const nowMs = dataContext?.correctedNow?.() ?? Date.now();
+      novaBeatIndex = novaBeatIndexFromClock(clock, nowMs);
+    }
     clearPeopleAndArchive();
     focus.show(definition);
     syncTimeline();
     map?.stop?.();
     viewportSync?.beginCameraTravel?.(`narrative-${definition.id}`);
-    map?.flyTo?.({ center: definition.center, zoom: definition.zoom, essential: true, duration: 1600 });
+    moveToNarrativeCamera(definition, 1600, novaBeatIndex >= NOVA_ARGAMANI_BEAT_INDEX);
     syncMorCamera();
   };
   const exit = () => {
-    presentation?.close?.();
     activeDefinition = null;
     morCameraActive = false;
     clearPeopleAndArchive();
@@ -131,6 +157,22 @@ export function createGisNarrativeController({
       styleGeneration += 1;
       if (definition) activate(definition);
       else if (normalized.transition === "exit") exit();
+      return true;
+    },
+    syncInvestigationClock(clock, nowMs = dataContext?.correctedNow?.() ?? Date.now()) {
+      if (disposed || activeDefinition?.id !== "nova") return false;
+      const nextBeatIndex = novaBeatIndexFromClock(clock, nowMs);
+      const wasArgamaniView = novaBeatIndex >= NOVA_ARGAMANI_BEAT_INDEX;
+      novaBeatIndex = nextBeatIndex;
+      const isArgamaniView = novaBeatIndex >= NOVA_ARGAMANI_BEAT_INDEX;
+      if (wasArgamaniView === isArgamaniView || morCameraActive) return false;
+      map?.stop?.();
+      viewportSync?.beginCameraTravel?.("narrative-nova");
+      if (isArgamaniView) {
+        map?.flyTo?.({ zoom: activeDefinition.beat4Zoom, essential: true, duration: 1000 });
+      } else {
+        moveToNarrativeCamera(activeDefinition, 1000);
+      }
       return true;
     },
     onStyleLoad() {

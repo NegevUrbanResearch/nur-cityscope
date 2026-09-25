@@ -1,5 +1,4 @@
 import { getEffectiveLayerGroups } from "../shared/layer-state-helper.js";
-import { getNliNarrative } from "../shared/nli-narratives.js";
 import { NLI_PLAYABLE_IDS } from "../shared/nli-investigation-beats.js";
 import {
   bindNliTimelinePointerListeners,
@@ -7,11 +6,9 @@ import {
   nliTimelineHostMethods,
   nliTransportSheetHtml,
 } from "./nli-timeline-transport.js";
-import {
-  createNliNarrativePresentationController,
-} from "./nli-narrative-controls.js";
 import { consumeNliNovaEscapeClick, nliNovaEscapeTogglesHtml } from "./nli-nova-escape-toggles.js";
 import { createCueRunner } from "./nli-staff-cues.js";
+import { createNliStaffSearchTransition } from "./nli-staff-search-transition.js";
 import { createPeopleSearchRuntime } from "./remote-people-search.js";
 import {
   createRemotePeopleArchiveController,
@@ -20,13 +17,136 @@ import {
 import { createStaffPackMenus } from "./nli-staff-pack-menus.js";
 import { labelForPlace, placeIsWithinRemoteBounds } from "./remote-place-navigation.js";
 import { applyServerLocale, bindLocaleButtons, getLocale, t, LOCALE_EVENT } from "./remote-locale.js";
-import { COPY, NARRATIVES, SCENES, SCRIPTS, SHOW } from "./nli-staff-script.js";
-import { nextAction, prevAction, slideIndexes } from "./nli-staff-flow.js";
+import { COPY, HOME_SHOW_SHORTCUTS, NARRATIVES, SCENES, SCRIPTS, SHOW } from "./nli-staff-script.js";
+import { nextAction, prevAction, showStepIndex, slideIndexes } from "./nli-staff-flow.js";
 import { searchPlaces } from "../shared/place-navigation/place-catalog.js";
+import {
+  createNliStaffPresentationButtonHandler,
+  createNliStaffPresentationController,
+  presentationControlsHtml,
+  shouldAutoOpenNliPresentation,
+} from "./nli-staff-presentation.js";
 
 const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false });
+const STAFF_PEOPLE_SEARCH_OPTIONS = { excludeStatuses: ["Kidnap survivor"] };
 
 const $ = (id) => document.getElementById(id);
+
+export function createNliStaffPlaceFocusOwnership() {
+  let owner = null;
+  let cancellationTail = Promise.resolve();
+  const isAcknowledged = (result) => result?.ok === true || result?.status === "ok";
+
+  return {
+    start(name, navigate) {
+      const request = { name, pending: true, settled: null };
+      owner = request;
+      request.settled = cancellationTail.catch(() => undefined).then(() => navigate()).finally(() => {
+        request.pending = false;
+      });
+      return request;
+    },
+    release(request) {
+      if (owner !== request) return false;
+      owner = null;
+      return true;
+    },
+    async waitForNavigation() {
+      const request = owner;
+      if (request?.pending) await request.settled.then(() => undefined, () => undefined);
+    },
+    hasFocus() {
+      return Boolean(owner);
+    },
+    getName() {
+      return owner?.name || null;
+    },
+    cancel(cancelNavigationFocus) {
+      const ownerAtStart = owner;
+      const cancellation = cancellationTail.catch(() => undefined).then(async () => {
+        const result = await cancelNavigationFocus?.();
+        if (isAcknowledged(result) && owner === ownerAtStart) owner = null;
+        return result;
+      });
+      cancellationTail = cancellation;
+      return cancellation;
+    },
+  };
+}
+
+export function createNliStaffSearchEventHandlers({
+  transition,
+  cancelCues = () => {},
+  isPending = () => false,
+  setPending = () => {},
+  renderPending = () => {},
+  restoreLiveSearchLabel = () => {},
+  showClearFailed = () => {},
+  clearSearchUi = () => {},
+  setDestination = () => {},
+  renderDestination = () => {},
+  applyDestinationCue = () => {},
+  beforeTransition = () => {},
+  afterDestinationCue = () => {},
+} = {}) {
+  function failClear(token) {
+    if (!transition.isCurrent(token)) return false;
+    setPending(false);
+    restoreLiveSearchLabel();
+    showClearFailed();
+    renderPending();
+    return false;
+  }
+
+  async function transitionToStep(item, index, returnTo) {
+    if (!item) return false;
+    const token = transition.begin();
+    cancelCues();
+    setPending(true);
+    renderPending();
+    const before = beforeTransition();
+    if (before && typeof before.then === "function") await before;
+    if (!transition.isCurrent(token)) return false;
+    const cleared = await transition.clearAll(token);
+    if (!transition.isCurrent(token)) return false;
+    if (!cleared) return failClear(token);
+    clearSearchUi();
+    setPending(false);
+    renderPending();
+    setDestination(item, index, returnTo);
+    renderDestination();
+    await applyDestinationCue(item, index);
+    if (!transition.isCurrent(token)) return false;
+    afterDestinationCue(item, index);
+    return true;
+  }
+
+  async function selectWithClear(kind, value, action) {
+    if (isPending()) return false;
+    const token = transition.begin();
+    setPending(true);
+    renderPending();
+    const cleared = await transition[kind](token);
+    if (!transition.isCurrent(token)) return false;
+    if (!cleared) return failClear(token);
+    let result;
+    try {
+      result = await action(value, token);
+    } finally {
+      if (transition.isCurrent(token)) {
+        setPending(false);
+        renderPending();
+      }
+    }
+    return transition.isCurrent(token) ? result : false;
+  }
+
+  return {
+    transitionToStep,
+    selectPerson: (person, action) => selectWithClear("beforePerson", person, action),
+    selectPlace: (place, action) => selectWithClear("beforePlace", place, action),
+  };
+}
 
 export function initNliStaffLocaleControls(dataContext, { onFailure } = {}) {
   return bindLocaleButtons({
@@ -39,6 +159,7 @@ export function initNliStaffLocaleControls(dataContext, { onFailure } = {}) {
 
 export function initNliStaffRemote(dataContext) {
   const peopleSearch = createPeopleSearchRuntime();
+  const placeFocusOwnership = createNliStaffPlaceFocusOwnership();
   void peopleSearch.load().catch(() => {});
 
   const state = {
@@ -52,17 +173,18 @@ export function initNliStaffRemote(dataContext) {
     scene: null,
     freeError: null,
     placeName: null,
+    searchPending: false,
+    presentationClosePending: false,
   };
 
   let lastPlaces = [];
   let archiveUiReady = false;
   let peopleArchive = null;
+  let searchTransition = null;
+  let searchActions = null;
   let packMenus = null;
-
-  const presentation = createNliNarrativePresentationController({
-    dataContext,
-    onStateChange: () => renderKit(),
-  });
+  let presentation = null;
+  let navigationGeneration = 0;
 
   const timelineHost = Object.assign(
     {
@@ -116,11 +238,6 @@ export function initNliStaffRemote(dataContext) {
   const script = () => SCRIPTS.find((item) => item.id === state.scriptId);
   const currentStep = () => (state.screen === "player" ? script()?.steps[state.step] : null) || null;
   const stepKits = (step) => (Array.isArray(step?.kit) ? step.kit : []);
-  const presentationId = () => {
-    const id = script()?.narrative;
-    return getNliNarrative(id)?.presentationUrl ? id : null;
-  };
-
   async function setLayerSet(ids, enabled) {
     if (typeof dataContext?.setLayersEnabled !== "function" || !ids.length) return;
     try {
@@ -253,7 +370,7 @@ export function initNliStaffRemote(dataContext) {
 
   function navCard(item, variant) {
     return `
-            <button type="button" class="nav-card nav-card--${variant}" data-open="${item.id}">
+            <button type="button" class="nav-card nav-card--${variant}" data-open="${item.id}"${state.searchPending ? " disabled" : ""}>
               <span class="nav-card-copy">
                 <span class="nav-card-title">${loc(item.title)}</span>
                 <span class="nav-card-meta">${loc(item.meta)} · ${item.steps.length} ${txt("steps")}</span>
@@ -263,11 +380,24 @@ export function initNliStaffRemote(dataContext) {
   }
 
   function renderHome() {
+    const shortcutButtons = HOME_SHOW_SHORTCUTS.map((item) => `
+          <button type="button" class="home-show-shortcut" data-show-step="${item.id}"${state.searchPending ? " disabled" : ""}>
+            <span class="nav-card-title">${loc(item.title)}</span>
+            <span class="nav-card-meta">${loc(item.meta)}</span>
+          </button>`).join("");
     $("narrativeList").innerHTML =
       navCard(SHOW, "primary") +
       `<div class="nav-row">${NARRATIVES.map((item) => navCard(item, "narrative")).join("")}</div>` +
       `
-          <button type="button" class="nav-card nav-card--quiet" data-open-free="1">
+          <section class="home-show-block" aria-labelledby="homeNamesTitle">
+            <div class="home-show-block-copy">
+              <h2 id="homeNamesTitle">${txt("namesHomeTitle")}</h2>
+              <p>${txt("namesHomeMeta")}</p>
+            </div>
+            <div class="home-show-actions">${shortcutButtons}</div>
+          </section>` +
+      `
+          <button type="button" class="nav-card nav-card--quiet" data-open-free="1"${state.searchPending ? " disabled" : ""}>
             <span class="nav-card-copy">
               <span class="nav-card-title">${txt("freeTitle")}</span>
               <span class="nav-card-meta">${txt("freeMeta")}</span>
@@ -301,7 +431,9 @@ export function initNliStaffRemote(dataContext) {
       nliSelectedGroup(),
       clock,
       cache,
-      presentation.getState()?.phase === "open",
+      false,
+      false,
+      dataContext.getNarrativeState?.()?.id ?? null,
     );
     $("kitTimeline").innerHTML = html;
     timelineHost._syncNliPlayheadTicker?.(clock);
@@ -319,7 +451,7 @@ export function initNliStaffRemote(dataContext) {
       .map((index, n) => {
         const cls = index < state.step ? "is-done" : index === state.step ? "is-current" : "";
         const current = index === state.step ? ' aria-current="step"' : "";
-        return `<button type="button" class="${cls}" data-step="${index}"${current} aria-label="${txt("stepAria", { n: n + 1 })}"></button>`;
+        return `<button type="button" class="${cls}" data-step="${index}"${current}${state.searchPending ? " disabled" : ""} aria-label="${txt("stepAria", { n: n + 1 })}"></button>`;
       })
       .join("");
     $("stepClock").textContent = step.clock || "";
@@ -335,15 +467,16 @@ export function initNliStaffRemote(dataContext) {
   function renderDock() {
     const next = nextAction(state);
     const choices = next.kind === "choose";
-    $("prevBtn").disabled = !prevAction(state);
+    $("prevBtn").disabled = (state.searchPending && !state.presentationClosePending) || !prevAction(state);
     $("nextBtn").hidden = choices;
     $("nextBtn").textContent = txt({ step: "next", resume: "backToShow", finish: "done" }[next.kind] || "next");
+    $("nextBtn").disabled = state.searchPending && !state.presentationClosePending;
     $("nextChoices").hidden = !choices;
     $("nextChoices").innerHTML = !choices ? "" : next.ids
       .map((id) => {
         const item = NARRATIVES.find((narrative) => narrative.id === id);
         const title = next.ids.length === 1 ? txt("startStory", { title: loc(item.title) }) : loc(item.title);
-        return `<button type="button" class="branch-btn" data-branch="${id}">
+        return `<button type="button" class="branch-btn" data-branch="${id}"${state.searchPending ? " disabled" : ""}>
               <span class="branch-btn-title">${title}</span>
               <span class="branch-btn-meta">${loc(item.meta)} · ${item.steps.length} ${txt("steps")}</span>
             </button>`;
@@ -365,16 +498,21 @@ export function initNliStaffRemote(dataContext) {
     const kits = stepKits(step);
     const show = {
       kitTimeline: kits.includes("timeline"),
-      kitPresentation: kits.includes("presentation") && !!presentationId(),
       kitArchive: kits.includes("archive"),
       kitSearch: kits.includes("search"),
       kitEscape: kits.includes("escape"),
+      kitPresentation: Boolean(step?.presentation),
     };
     Object.entries(show).forEach(([id, on]) => {
       $(id).hidden = !on;
     });
     $("kitIdle").hidden = Object.values(show).some(Boolean);
     $("kitIdle").textContent = txt("kitIdle");
+    if (show.kitPresentation) {
+      $("kitPresentation").innerHTML = presentationControlsHtml(step, presentation?.getState(), getLocale());
+    } else {
+      $("kitPresentation").innerHTML = "";
+    }
     renderCueStatus();
     if (show.kitTimeline) {
       void timelineHost._ensureNliFeatureCache?.();
@@ -385,21 +523,6 @@ export function initNliStaffRemote(dataContext) {
         dataContext?.getNarrativeState?.(),
         dataContext?.getEscapeOverlay?.(),
       );
-    }
-    if (show.kitPresentation) {
-      const phase = presentation.getState()?.phase || "closed";
-      const pending = phase === "opening" || phase === "closing";
-      const open = phase === "open" || phase === "closing";
-      $("presentationBtn").textContent = t(
-        pending
-          ? open
-            ? "nliNarrativePresentationClosing"
-            : "nliNarrativePresentationOpening"
-          : open
-            ? "nliNarrativePresentationClose"
-            : "nliNarrativePresentationOpen",
-      );
-      $("presentationBtn").disabled = !state.connected || pending;
     }
     if (show.kitArchive) {
       const phase = peopleArchive?.getArchivePhase?.() || "closed";
@@ -414,8 +537,14 @@ export function initNliStaffRemote(dataContext) {
               ? "backToMap"
               : "openNliRecord",
       );
-      $("archiveBtn").disabled = !state.connected || pending;
+      $("archiveBtn").disabled = state.searchPending || !state.connected || pending;
     }
+    const archivePhase = peopleArchive?.getArchivePhase?.() || "closed";
+    $("freeArchiveBtn").disabled = state.searchPending || !state.connected || archivePhase === "opening" || archivePhase === "closing";
+    $("searchInput").disabled = state.searchPending;
+    $("searchResults").querySelectorAll("button").forEach((button) => { button.disabled = state.searchPending; });
+    $("narrativeList").querySelectorAll("button").forEach((button) => { button.disabled = state.searchPending; });
+    renderSearchStatus();
   }
 
   function renderResults(query) {
@@ -427,7 +556,7 @@ export function initNliStaffRemote(dataContext) {
       lastPlaces = [];
       return;
     }
-    const people = peopleSearch.search(q, getLocale(), 6);
+    const people = peopleSearch.search(q, getLocale(), 6, STAFF_PEOPLE_SEARCH_OPTIONS);
     lastPlaces = searchPlaces(q, {
       limit: 6,
       canNavigateToPlace: (place) => placeIsWithinRemoteBounds(place, dataContext),
@@ -435,7 +564,7 @@ export function initNliStaffRemote(dataContext) {
     const peopleHtml = people.map(
       (person) => `
               <li>
-                <button type="button" data-kind="person" data-pid="${person.pid}" data-version="${person.datasetVersion}" data-archive="${person.hasArchiveRecord ? "1" : "0"}">
+                <button type="button" data-kind="person" data-pid="${person.pid}" data-version="${person.datasetVersion}" data-archive="${person.hasArchiveRecord ? "1" : "0"}"${state.searchPending ? " disabled" : ""}>
                   <span class="result-name">${person.name}</span>
                   <span class="result-place">${person.location || ""}</span>
                 </button>
@@ -446,7 +575,7 @@ export function initNliStaffRemote(dataContext) {
         const name = labelForPlace(place);
         return `
               <li>
-                <button type="button" data-kind="place" data-place-id="${place.id}">
+                <button type="button" data-kind="place" data-place-id="${place.id}"${state.searchPending ? " disabled" : ""}>
                   <span class="result-name">${name}</span>
                   <span class="result-place">${place.type === "settlement" ? txt("placeTypeSettlement") : ""}</span>
                 </button>
@@ -458,31 +587,17 @@ export function initNliStaffRemote(dataContext) {
     box.innerHTML = html;
   }
 
-  function paintFreeStatus(message, live) {
+  function paintFreeStatus(message) {
     const status = $("freeStatus");
     if (!status) return;
     status.replaceChildren();
-    status.classList.toggle("is-live", !!live && !!message);
+    status.hidden = !message;
     if (!message) return;
-    if (live) {
-      const dot = document.createElement("span");
-      dot.className = "live-dot";
-      status.append(dot);
-    }
     status.append(document.createTextNode(message));
   }
 
   function renderSearchStatus() {
-    const archivePerson = peopleArchive?.getAcknowledgedPerson?.();
-    if (state.freeError) {
-      paintFreeStatus(state.freeError, false);
-    } else if (archivePerson?.name) {
-      paintFreeStatus(`${txt("nowShowing")}: ${archivePerson.name}`, true);
-    } else if (state.placeName) {
-      paintFreeStatus(`${txt("nowShowing")}: ${state.placeName}`, true);
-    } else {
-      paintFreeStatus("", false);
-    }
+    paintFreeStatus(state.searchPending ? txt("searchClearing") : state.freeError || "");
   }
 
   function renderFree() {
@@ -505,47 +620,128 @@ export function initNliStaffRemote(dataContext) {
     if (state.screen === "free") renderFree();
   }
 
-  function resetSearch() {
+  function clearSearchUi() {
     $("searchInput").value = "";
     renderResults("");
     state.freeError = null;
     state.placeName = null;
   }
 
+  function restoreLiveSearchLabel() {
+    const personName = peopleArchive?.getAcknowledgedPerson?.()?.name;
+    $("searchInput").value = personName || placeFocusOwnership.getName() || state.placeName || "";
+    renderResults("");
+    renderSearchStatus();
+  }
+
+  function transitionToStep(item, index, { returnTo = state.returnTo } = {}) {
+    navigationGeneration += 1;
+    return searchActions.transitionToStep(item, index, returnTo);
+  }
+
   function goToStep(index) {
     const item = script();
-    if (!item) return;
-    state.step = Math.max(0, Math.min(index, item.steps.length - 1));
-    const step = item.steps[state.step];
-    const open = presentation.getState();
-    if (open?.phase === "open" && !stepKits(step).includes("presentation")) {
-      void presentation.run("close", open.id);
-    }
-    resetSearch();
-    renderPlayer();
-    void applyCue(step.cue, item.narrative);
+    if (item) void transitionToStep(item, index, { returnTo: state.returnTo });
   }
 
   function enterScript(id, { step = 0, returnTo = null } = {}) {
-    state.scriptId = id;
-    state.returnTo = returnTo;
-    showScreen("player");
-    goToStep(step);
-    void timelineHost._ensureNliFeatureCache?.();
+    const item = SCRIPTS.find((entry) => entry.id === id);
+    if (item) void transitionToStep(item, step, { returnTo });
+  }
+
+  function failSearchClear(token) {
+    if (!searchTransition.isCurrent(token)) return false;
+    state.searchPending = false;
+    restoreLiveSearchLabel();
+    state.freeError = txt("searchClearFailed");
+    if (state.screen === "player") renderPlayer();
+    else renderKit();
+    return false;
+  }
+
+  async function clearSearchFocus() {
+    if (state.searchPending) return;
+    const token = searchTransition.begin();
+    state.searchPending = true;
+    renderKit();
+    const cleared = await searchTransition.clearAll(token);
+    if (!searchTransition.isCurrent(token)) return;
+    if (!cleared) {
+      failSearchClear(token);
+      return;
+    }
+    state.searchPending = false;
+    state.placeName = null;
+    state.freeError = null;
+    renderResults("");
+    if (state.screen === "player") renderPlayer();
+    else renderKit();
+  }
+
+  function selectPersonResult(person) {
+    return searchActions.selectPerson(person, async (selectedPerson) => {
+      state.placeName = null;
+      state.freeError = null;
+      $("searchInput").value = selectedPerson.name;
+      renderResults("");
+      const selected = await peopleArchive.selectPerson(selectedPerson);
+      if (!selected) restoreLiveSearchLabel();
+      return selected;
+    });
+  }
+
+  function selectPlaceResult(place, name) {
+    return searchActions.selectPlace(place, async (selectedPlace, token) => {
+      state.freeError = null;
+      $("searchInput").value = name;
+      renderResults("");
+      let request;
+      try {
+        if (typeof dataContext?.navigateToPlace !== "function") throw new Error("place navigation unavailable");
+        request = placeFocusOwnership.start(name, () => dataContext.navigateToPlace(selectedPlace));
+        const result = await request.settled;
+        if (result?.ok === false || (result?.status && result.status !== "ok")) throw new Error("place navigation rejected");
+        if (!searchTransition.isCurrent(token)) return false;
+        state.placeName = name;
+        return true;
+      } catch {
+        if (!searchTransition.isCurrent(token)) return false;
+        if (request) placeFocusOwnership.release(request);
+        restoreLiveSearchLabel();
+        state.freeError = t("placeSearchFailed");
+        return false;
+      }
+    });
   }
 
   async function exitToHome() {
+    navigationGeneration += 1;
+    const token = searchTransition.begin();
     cues.cancel();
+    state.searchPending = true;
+    renderKit();
+    state.presentationClosePending = true;
+    renderKit();
+    try {
+      await presentation?.closeForStepChange();
+    } finally {
+      state.presentationClosePending = false;
+      renderKit();
+    }
+    if (!searchTransition.isCurrent(token)) return false;
+    const cleared = await searchTransition.clearAll(token);
+    if (!searchTransition.isCurrent(token)) return false;
+    if (!cleared) return failSearchClear(token);
     state.scriptId = null;
     state.step = 0;
     state.returnTo = null;
     state.scene = null;
     state.cueStatus = null;
-    resetSearch();
+    state.searchPending = false;
+    clearSearchUi();
     if (peopleArchive?.getArchivePhase?.() === "open") {
       void peopleArchive.closeArchive();
     }
-    presentation.reset(null);
     showScreen("home");
     renderHome();
     if (dataContext?.setNarrative) {
@@ -555,18 +751,12 @@ export function initNliStaffRemote(dataContext) {
         // ignore
       }
     }
+    return true;
   }
 
   function findPerson(query) {
-    const variants = [query];
-    const parts = String(query || "").trim().split(/\s+/).filter(Boolean);
-    if (parts.length === 2) variants.push(`${parts[1]} ${parts[0]}`);
-    for (const variant of variants) {
-      const hits = peopleSearch.search(variant, getLocale(), 8);
-      const person = hits.find((row) => row.hasArchiveRecord) || hits[0];
-      if (person) return person;
-    }
-    return null;
+    const hits = peopleSearch.search(query, getLocale(), 8, STAFF_PEOPLE_SEARCH_OPTIONS);
+    return hits.find((row) => row.hasArchiveRecord) || hits[0] || null;
   }
 
   async function selectAndOpenArchive(query) {
@@ -628,9 +818,93 @@ export function initNliStaffRemote(dataContext) {
       renderSearchStatus();
     },
   });
+  searchTransition = createNliStaffSearchTransition({
+    clearPersonSelection: () => peopleArchive.clearPersonSelection(),
+    cancelPlaceFocus: async () => {
+      const result = await placeFocusOwnership.cancel(() => dataContext?.cancelNavigationFocus?.());
+      if (result?.ok === true || result?.status === "ok") state.placeName = placeFocusOwnership.getName();
+      return result;
+    },
+    waitForPlaceNavigation: () => placeFocusOwnership.waitForNavigation(),
+    hasPlaceFocus: () => Boolean(state.placeName || placeFocusOwnership.hasFocus()),
+  });
+  presentation = createNliStaffPresentationController({
+    dataContext,
+    onStateChange: () => {
+      if (archiveUiReady && state.screen === "player") renderKit();
+    },
+  });
+  const handlePresentationButton = createNliStaffPresentationButtonHandler({
+    getCurrentStep: currentStep,
+    getNavigationGeneration: () => navigationGeneration,
+    run: (action, segmentId) => presentation.run(action, segmentId),
+    nextFromExplicitClose: () => {
+      const next = nextAction(state);
+      if (next.kind === "step") goToStep(next.step);
+      else if (next.kind === "resume") enterScript(next.scriptId, { step: next.step });
+      else if (next.kind === "finish") void exitToHome();
+    },
+    resumeFromExplicitClose: () => {
+      const next = nextAction(state);
+      if (next.kind === "resume") enterScript(next.scriptId, { step: next.step });
+    },
+  });
+  searchActions = createNliStaffSearchEventHandlers({
+    transition: searchTransition,
+    cancelCues: () => cues.cancel(),
+    isPending: () => state.searchPending,
+    setPending: (pending) => { state.searchPending = pending; },
+    renderPending: () => {
+      if (state.screen === "player") renderPlayer();
+      else renderKit();
+    },
+    restoreLiveSearchLabel,
+    showClearFailed: () => { state.freeError = txt("searchClearFailed"); },
+    clearSearchUi,
+    beforeTransition: async () => {
+      state.presentationClosePending = true;
+      if (state.screen === "player") renderPlayer();
+      try {
+        await presentation?.closeForStepChange();
+      } finally {
+        state.presentationClosePending = false;
+        if (state.screen === "player") renderPlayer();
+      }
+    },
+    setDestination: (item, index, returnTo) => {
+      const nextIndex = Math.max(0, Math.min(index, item.steps.length - 1));
+      const step = item.steps[nextIndex];
+      state.scriptId = item.id;
+      state.step = nextIndex;
+      state.returnTo = returnTo;
+      showScreen("player");
+    },
+    renderDestination: () => {
+      renderPlayer();
+      void timelineHost._ensureNliFeatureCache?.();
+    },
+    applyDestinationCue: (item, index) => {
+      const destination = item.steps[Math.max(0, Math.min(index, item.steps.length - 1))];
+      return applyCue(destination.cue, item.narrative);
+    },
+    afterDestinationCue: (item, index) => {
+      const destination = item.steps[Math.max(0, Math.min(index, item.steps.length - 1))];
+      if (shouldAutoOpenNliPresentation({
+        item, index, currentScript: script(), currentStep: currentStep(), cueStatus: state.cueStatus,
+      })) {
+        void presentation.run("open", destination.presentation.segmentId);
+      }
+    },
+  });
   archiveUiReady = true;
 
   $("narrativeList").addEventListener("click", (event) => {
+    if (state.searchPending) return;
+    const shortcut = event.target.closest("[data-show-step]");
+    if (shortcut) {
+      enterScript(SHOW.id, { step: showStepIndex(shortcut.dataset.showStep) });
+      return;
+    }
     const free = event.target.closest("[data-open-free]");
     if (free) {
       showScreen("free");
@@ -647,11 +921,13 @@ export function initNliStaffRemote(dataContext) {
   });
 
   $("ticks").addEventListener("click", (event) => {
+    if (state.searchPending) return;
     const tick = event.target.closest("[data-step]");
     if (tick) goToStep(Number(tick.dataset.step));
   });
 
   $("prevBtn").addEventListener("click", () => {
+    if (state.searchPending && !state.presentationClosePending) return;
     const prev = prevAction(state);
     if (!prev) return;
     if (prev.scriptId === state.scriptId) goToStep(prev.step);
@@ -659,6 +935,7 @@ export function initNliStaffRemote(dataContext) {
   });
 
   $("nextBtn").addEventListener("click", () => {
+    if (state.searchPending && !state.presentationClosePending) return;
     const next = nextAction(state);
     if (next.kind === "step") goToStep(next.step);
     else if (next.kind === "resume") enterScript(next.scriptId, { step: next.step });
@@ -666,21 +943,20 @@ export function initNliStaffRemote(dataContext) {
   });
 
   $("nextChoices").addEventListener("click", (event) => {
+    if (state.searchPending && !state.presentationClosePending) return;
     const btn = event.target.closest("[data-branch]");
     const next = nextAction(state);
     if (!btn || next.kind !== "choose") return;
     enterScript(btn.dataset.branch, { returnTo: { id: next.scriptId, step: next.junction } });
   });
 
-  $("kitEscape").addEventListener("click", (event) => {
-    consumeNliNovaEscapeClick(event, escapeHost);
+  $("kitPresentation").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-presentation-action]");
+    if (button) void handlePresentationButton(button.dataset.presentationAction);
   });
 
-  $("presentationBtn").addEventListener("click", () => {
-    const id = presentationId();
-    if (!id) return;
-    const phase = presentation.getState()?.phase || "closed";
-    void presentation.run(phase === "open" ? "close" : "open", id);
+  $("kitEscape").addEventListener("click", (event) => {
+    consumeNliNovaEscapeClick(event, escapeHost);
   });
 
   $("archiveBtn").addEventListener("click", () => {
@@ -693,10 +969,17 @@ export function initNliStaffRemote(dataContext) {
   });
 
   $("searchInput").addEventListener("input", (event) => {
+    if (state.searchPending) return;
+    if (!event.target.value.trim()) {
+      renderResults("");
+      void clearSearchFocus();
+      return;
+    }
     renderResults(event.target.value);
   });
 
   $("searchResults").addEventListener("click", (event) => {
+    if (state.searchPending) return;
     const placeBtn = event.target.closest("[data-kind='place']");
     if (placeBtn) {
       const place = lastPlaces.find((item) => item.id === placeBtn.dataset.placeId);
@@ -709,13 +992,7 @@ export function initNliStaffRemote(dataContext) {
         renderSearchStatus();
         return;
       }
-      state.placeName = name;
-      state.freeError = null;
-      renderSearchStatus();
-      void dataContext?.navigateToPlace?.(place).catch(() => {
-        state.freeError = t("placeSearchFailed");
-        renderSearchStatus();
-      });
+      void selectPlaceResult(place, name);
       return;
     }
     const btn = event.target.closest("[data-kind='person']");
@@ -726,12 +1003,7 @@ export function initNliStaffRemote(dataContext) {
       name: btn.querySelector(".result-name")?.textContent || "",
       hasArchiveRecord: btn.dataset.archive !== "0",
     };
-    state.placeName = null;
-    state.freeError = null;
-    $("searchInput").value = person.name;
-    renderResults("");
-    renderSearchStatus();
-    void peopleArchive.selectPerson(person);
+    void selectPersonResult(person);
   });
 
   $("sceneList")?.addEventListener("click", (event) => {
@@ -775,6 +1047,7 @@ export function initNliStaffRemote(dataContext) {
     if (state.screen === "free") packMenus?.render();
   });
   dataContext?.subscribe?.("narrativeState", () => {
+    timelineHost._clearNliScrubOnNarrativeChange?.();
     renderKit();
   });
   dataContext?.subscribe?.("escapeOverlay", () => {

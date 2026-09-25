@@ -1,5 +1,52 @@
 # NLI exhibit verification
 
+## Local Reveal presentation setup and acceptance
+
+From an elevated PowerShell session on the GIS exhibit machine, install the
+local Chrome policies:
+
+```powershell
+cd C:\Users\owner\Desktop\city-scope\nur-cityscope\otef-interactive
+.\scripts\configure-chrome-popup-policy.ps1 -Mode Install
+.\scripts\configure-chrome-popup-policy.ps1 -Mode Status
+```
+
+Quit every Chrome process, then relaunch GIS from its normal shortcut so the
+autoplay allowlist is loaded. Check that the status output shows
+`http://localhost:80` under both the popup allowlist and autoplay allowlist.
+Use the staff remote for all slide navigation. Confirm all six segments open
+at their first slide and Previous/Next stop at the segment boundaries:
+Segev 1–8, Mor Levy 9–11, Nova memorial 12–16, Sderot 17–21, Shura 22–28,
+and Hostages 29–34.
+
+Check audible autoplay with the remote on video slides 2, 10, 18, 23, and 24.
+Confirm audio stops and rewinds when leaving each video slide or closing the
+presentation. Confirm Shura opens after its cue and its explicit Close resumes
+the parent choice; Hostages explicit Close advances to Nir Oz people, while
+Scene Next proceeds to all hostages. Scene Back, Scene Next, and Home must close
+the overlay without taking either special Close destination. Confirm that
+slides stay on GIS and do not appear on projection. Opening and closing must
+leave GIS mounted in place without reloading the map or switching applications.
+
+Repeat the checks with external network access disconnected. Record each
+hardware/browser result below; automated tests do not count as exhibit checks.
+
+| Check | Date | Operator | Browser / display | pass/fail | Notes |
+|---|---|---|---|---|---|
+| Six segment starts and boundary clamping |  |  |  | pending |  |
+| Slides remain on GIS, not projection |  |  |  | pending |  |
+| Open/close causes no GIS reload or application switch |  |  |  | pending |  |
+| Slides 2, 10, 18, 23, 24 autoplay audibly |  |  |  | pending |  |
+| Leaving a video slide or closing stops and rewinds audio |  |  |  | pending |  |
+| Shura and Hostages explicit Close destinations |  |  |  | pending |  |
+| Scene Back/Next and Home force-close without special destination |  |  |  | pending |  |
+| External network disconnected; fresh Chrome launch |  |  |  | pending |  |
+
+After the exhibit and when the source terms require removal, delete
+`otef-interactive/public/local/presentations/nli/` and the retained downloaded
+source files `C:\Users\owner\Downloads\מצגת מודל נור.pdf` and
+`C:\Users\owner\Downloads\מצגת מודל נור (2).pptx`.
+
 Use this checklist on the normal exhibit browser and physical display. Unit
 tests cannot prove popup permission, window placement, foreground focus,
 cross-origin page load, route-dash visibility, or label readability. No
@@ -137,7 +184,7 @@ marked GIS-only.
 | `nli.investigation_polygons` only | [ ] | [ ] | Clock present; outside Nova, Stop is `06:29`. |
 | Victims names / `nli.people_names` alone | [ ] | [ ] | Clock absent. |
 | Another unrelated NLI layer only | [ ] | [ ] | Clock absent. |
-| Segev or Nova with relevant chips off | [ ] | [ ] | Clock remains visible: Segev idle/Stop is `06:29`; Nova idle/Stop and play lead-in are `08:03`. |
+| Segev or Nova with relevant chips off | [ ] | [ ] | Clock remains visible: Segev idle/Stop is `06:29`; Nova idle/Stop is `08:03`, while Play starts beat 1 at zero reveal without an `08:03` lead-in. |
 | Projection slideshow warmup/crossfade (projection only) | N/A | [ ] | Warmup/staging do not change relevance; visibility changes only at reveal. Right span is blank. |
 | GIS zoomed-out view, press `e`, edit/move the clock, then refresh | [ ] | N/A | Edit/move survives refresh; the `start` layout is used when zoomed out. |
 
@@ -192,10 +239,11 @@ Record the browser, operating mode, display arrangement, and result.
 ## NLI Segev narrative matrix (Task 8)
 
 Run this matrix in the normal kiosk Chrome and physical projection setup. The
-automated contract test covers the trusted registry, surface ownership, and
-subscription wiring; it cannot prove Canva availability, popup/login state,
-physical projection legibility, or the observed camera result. Leave every row
-unchecked until it has been observed and recorded by the exhibit operator.
+automated contract test covers the narrative registry and scene wiring; it
+cannot prove physical projection legibility or the observed camera result.
+The old Canva iframe has been removed. Slide playback needs a new acceptance
+matrix after the Reveal.js viewer and revised slide mapping are implemented.
+Leave every row unchecked until it has been observed by the exhibit operator.
 
 - [ ] From the NLI sheet, manually select **Satellite Color** and **Satellite
   B&W** and confirm the intended basemap appears on the GIS.
@@ -207,19 +255,13 @@ unchecked until it has been observed and recorded by the exhibit operator.
   projection.
 - [ ] Confirm Be'eri is bright while other settlement outlines remain dim.
 - [ ] Confirm the projection viewport highlight is centered on the house.
-- [ ] From the remote NLI sheet, open the Canva presentation and confirm it
-  loads in presentation mode without login, uses `no-referrer`, closes with
-  Escape, and keeps remote command/result correlation correct.
-- [ ] Close the Canva presentation from the remote and confirm the Segev
-  narrative map scene remains active.
-- [ ] While Segev is active and Canva is closed, Play/Pause/Stop/Loop/step/scrub
+- [ ] While Segev is active, Play/Pause/Stop/Loop/step/scrub
   the NLI timeline and confirm polygons, alarms, and routes develop around the
   house without the GIS leaving zoom 18.
-- [ ] Toggle the narrative off and confirm Canva closes and the GIS returns to
-  the dark configured OTEF-bounds center at zoom `10`.
+- [ ] Toggle the narrative off and confirm GIS returns to the dark configured
+  OTEF-bounds center at zoom `10`.
 - [ ] Refresh or reconnect with durable active and inactive narrative state;
-  confirm both GIS and projection converge, and confirm Canva intentionally
-  remains closed after reload.
+  confirm both GIS and projection converge.
 
 ### Result record
 
@@ -255,11 +297,9 @@ unchecked until it has been observed and recorded by the exhibit operator.
 - Segev GIS + projection Hebrew label: pass / fail
 - Segev Be'eri focus and dim other settlements: pass / fail
 - Segev projection house highlight: pass / fail
-- Segev Canva presentation/no-login/no-referrer/Escape/correlation: pass / fail
-- Segev remote close preserves narrative map scene: pass / fail
 - Segev house-locked timeline Play/Pause/Stop/Loop/step/scrub at zoom 18: pass / fail
-- Segev exit closes Canva and returns to dark bounds center zoom 10: pass / fail
-- Segev refresh/reconnect convergence and closed-after-reload Canva: pass / fail
+- Segev exit returns to dark bounds center zoom 10: pass / fail
+- Segev refresh/reconnect convergence: pass / fail
 - Notes:
 
 ## Later exhibit acceptance

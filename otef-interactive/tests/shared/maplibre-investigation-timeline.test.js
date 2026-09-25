@@ -42,6 +42,7 @@ import {
   seekNliClock,
   stopNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
+import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
 
 const INVESTIGATION_FEATURES = [
   { properties: { OBJECTID: 1, Name: "מרחב כניסה לקיבוץ", timeline: "local 07:15", timeline_minutes: 435 } },
@@ -279,6 +280,148 @@ describe("syncInvestigationTimelineToMap", () => {
       },
     ];
   }
+
+  it("suppresses national line and alarm rows throughout Nova playback when all chips are enabled", async () => {
+    const map = makeMap();
+    const groups = [{ id: "nli", layers: [
+      { id: "investigation_polygons", enabled: true },
+      { id: "lines", enabled: true },
+      { id: "alarms", enabled: true },
+    ] }];
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID, INVESTIGATION_LINES_FULL_ID, INVESTIGATION_ALARMS_FULL_ID],
+      NLI_NOVA_STORY.representativeMinutes,
+      0,
+      { narrativeId: "nova" },
+    );
+    const deps = withProcessedPolygons({
+      featuresById: {
+        [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A, STORY_POLYGON_B],
+        [INVESTIGATION_LINES_FULL_ID]: LINE_FEATURES,
+        [INVESTIGATION_ALARMS_FULL_ID]: [{
+          type: "Feature",
+          properties: { city: "City A", alarm_minutes: [492, 506, 540], alarm_count_total: 3 },
+          geometry: { type: "Point", coordinates: [34.4, 31.4] },
+        }],
+      },
+      narrativeFocus: { id: "nova" },
+      captionEl: { hidden: true, innerHTML: "", setAttribute: vi.fn() },
+      now: () => 0,
+    });
+
+    for (let index = 0; index < NLI_NOVA_STORY.beats.length; index += 1) {
+      await syncInvestigationTimelineToMap(map, {
+        ...playing,
+        phase: "paused",
+        positionMs: index * NLI_NOVA_STORY.beatDurationMs + 1500,
+      }, groups, deps);
+      const lineRows = map.getSource("nli-investigation-line-completed-carrier")
+        ?.setData?.mock?.calls?.at(-1)?.[0]?.features || [];
+      const activeLineRows = map.getSource("nli-investigation-line-active")
+        ?.setData?.mock?.calls?.at(-1)?.[0]?.features || [];
+      const alarmRows = map.getSource("nli-investigation-alarm-points")
+        ?.setData?.mock?.calls?.at(-1)?.[0]?.features || [];
+      expect(lineRows).toEqual([]);
+      expect(activeLineRows).toEqual([]);
+      expect(alarmRows).toEqual([]);
+      expect(deps.captionEl.innerHTML).not.toContain("nli-tl-row--alarms");
+    }
+
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("resolves a cold ended Nova clock-only caption to beat five", async () => {
+    const map = makeMap();
+    const captionEl = { hidden: true, innerHTML: "", setAttribute: vi.fn() };
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      NLI_NOVA_STORY.representativeMinutes,
+      0,
+      { narrativeId: "nova" },
+    );
+    await syncInvestigationTimelineToMap(map, endNliClock(playing), polygonOnlyGroups(), withProcessedPolygons({
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      narrativeFocus: { id: "nova" },
+      captionEl,
+      nliCaptionMode: "clock-only",
+      now: () => 0,
+    }));
+
+    expect(captionEl.hidden).toBe(false);
+    expect(captionEl.innerHTML).toContain("12:00");
+    expect(captionEl.innerHTML).not.toContain("00:00");
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("replaces a stale warm Nova caption with beat five when the clock ends", async () => {
+    const map = makeMap();
+    const captionEl = { hidden: true, innerHTML: "", setAttribute: vi.fn() };
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      NLI_NOVA_STORY.representativeMinutes,
+      0,
+      { narrativeId: "nova" },
+    );
+    const deps = withProcessedPolygons({
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      narrativeFocus: { id: "nova" },
+      captionEl,
+      nliCaptionMode: "clock-only",
+      now: () => 13_500,
+    });
+    await syncInvestigationTimelineToMap(map, {
+      ...playing,
+      phase: "paused",
+      positionMs: 12_000,
+      anchorMs: 13_500,
+      seekKind: "jump",
+    }, polygonOnlyGroups(), deps);
+    expect(captionEl.innerHTML).toContain("10:30");
+
+    await syncInvestigationTimelineToMap(map, endNliClock(playing), polygonOnlyGroups(), deps);
+
+    expect(captionEl.innerHTML).toContain("12:00");
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("advances a live Nova clock-only caption into beat five without a clock patch", async () => {
+    const map = makeMap();
+    const captionEl = { hidden: true, innerHTML: "", setAttribute: vi.fn() };
+    const callbacks = [];
+    let nowMs = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      NLI_NOVA_STORY.representativeMinutes,
+      0,
+      { narrativeId: "nova" },
+    );
+    await syncInvestigationTimelineToMap(map, playing, polygonOnlyGroups(), withProcessedPolygons({
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      narrativeFocus: { id: "nova" },
+      captionEl,
+      nliCaptionMode: "clock-only",
+      now: () => nowMs,
+    }));
+
+    expect(captionEl.innerHTML).toContain("08:12");
+    for (nowMs = 100; nowMs <= 17_500; nowMs += 100) {
+      const callback = callbacks.shift();
+      expect(callback, `scheduled frame at ${nowMs}ms`).toBeTypeOf("function");
+      callback();
+      await Promise.resolve();
+    }
+
+    expect(captionEl.innerHTML).toContain("12:00");
+    disposeInvestigationTimelineForMap(map);
+  });
 
   function playClock(membership, beats, nowMs = 0) {
     return playNliClock(idleNliClock(), membership, beats, nowMs);

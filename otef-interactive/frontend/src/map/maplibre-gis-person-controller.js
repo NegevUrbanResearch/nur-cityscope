@@ -84,7 +84,7 @@ export function createGisPersonController({
     activePerson = null;
     if (!snapshot.personId) {
       cameraGuard = false;
-      visual?.hide?.();
+      visual?.hide?.({ restoreCamera: true, reducedMotion });
       return;
     }
     clearRevision = null;

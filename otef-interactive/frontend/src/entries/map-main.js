@@ -2,15 +2,15 @@ import TableSwitcher from "../shared/table-switcher.js";
 import TableSwitcherPopup from "../shared/table-switcher-popup.js";
 import { createGISMap, setGISBasemap, maplibregl } from "../map/maplibre-map.js";
 import { setupViewportSync } from "../map/maplibre-viewport-sync.js";
-import { applyLayerGroupsToMap, clearAllLayers, removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
+import { applyLayerGroupsToMap, clearAllLayers, disposeLayerManagerForMap, removeCuratedLayersByPrefix } from "../map/maplibre-layer-manager.js";
 import { raiseDarkBasemapPlaceLabels } from "../map/dark-basemap-labels.js";
 import { attachGisFeaturePopups } from "../map/maplibre-gis-popups.js";
 import { createGisPersonSelection } from "../map/maplibre-person-selection.js";
 import { createNliArchiveCommandBridge, createNliArchiveWindowController } from "../map/nli-archive-window.js";
 import { createGisPersonController } from "../map/maplibre-gis-person-controller.js";
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
-import { createNarrativePresentation, handleNarrativePresentationCommand } from "../map/nli-narrative-presentation.js";
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
+import { loadNliPresentationManifest } from "../shared/nli-presentation-manifest.js";
 import { applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
@@ -206,6 +206,84 @@ async function bootstrapMapRuntime() {
   }
 
   map.on("load", async () => {
+    registerDisposer(() => disposeLayerManagerForMap(map));
+    let presentationViewer = null;
+    let presentationManifest = null;
+    let activePresentationSegmentId = null;
+    let activePresentationSessionId = null;
+    let activePresentationGeneration = 0;
+    let highestPresentationGeneration = 0;
+    let presentationBootstrapActive = true;
+    const emitUnavailablePresentation = (command, message = "Presentation is unavailable") => {
+      if (!command || typeof command !== "object") return;
+      void OTEFDataContext.narrativePresentationResult({
+        segmentId: command.segmentId,
+        presentationSessionId: command.presentationSessionId,
+        presentationGeneration: command.presentationGeneration,
+        sequence: command.sequence,
+        requestId: command.requestId,
+        outcome: "unavailable",
+        slide: null,
+        range: null,
+        message,
+      });
+    };
+    registerDisposer(() => {
+      presentationBootstrapActive = false;
+      presentationViewer?.dispose?.();
+      presentationViewer = null;
+    });
+    registerDisposer(OTEFDataContext.subscribe("narrativePresentation", (command) => {
+      if (!presentationViewer) {
+        emitUnavailablePresentation(command);
+        return;
+      }
+      if (command.presentationAction === "open") {
+        if (command.presentationGeneration > highestPresentationGeneration) {
+          highestPresentationGeneration = command.presentationGeneration;
+          activePresentationSegmentId = command.segmentId;
+          activePresentationSessionId = command.presentationSessionId;
+          activePresentationGeneration = command.presentationGeneration;
+        }
+      } else if (command.presentationAction === "close") {
+        if (command.presentationSessionId === activePresentationSessionId &&
+            command.presentationGeneration === activePresentationGeneration) {
+          activePresentationSegmentId = null;
+        }
+      }
+      void presentationViewer.handleCommand(command).catch((error) => {
+        console.error("[map-main] NLI presentation command failed", error);
+        emitUnavailablePresentation(command);
+      });
+    }));
+    registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => {
+      if (!activePresentationSegmentId || !presentationManifest || !presentationViewer) return;
+      const segment = presentationManifest.segments.find(
+        (candidate) => candidate.id === activePresentationSegmentId,
+      );
+      if (segment?.requiredNarrative && state?.id !== segment.requiredNarrative) {
+        presentationViewer.close();
+        activePresentationSegmentId = null;
+        activePresentationSessionId = null;
+        activePresentationGeneration = 0;
+      }
+    }));
+    void (async () => {
+      try {
+        const manifest = await loadNliPresentationManifest();
+        const { createNliRevealPresentation } = await import("../map/nli-reveal-presentation.js");
+        if (!presentationBootstrapActive) return;
+        const mapContainer =
+          typeof map.getContainer === "function" ? map.getContainer() : document.getElementById("map");
+        presentationManifest = manifest;
+        presentationViewer = createNliRevealPresentation(mapContainer, {
+          manifest,
+          emitResult: (result) => { void OTEFDataContext.narrativePresentationResult(result); },
+        });
+      } catch (error) {
+        console.error("[map-main] NLI presentation viewer failed to load", error);
+      }
+    })();
     const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "gis", motionMode: resolveMotionMode() });
     registerDisposer(() => nameFieldController.dispose());
     registerDisposer(() => {
@@ -281,6 +359,11 @@ async function bootstrapMapRuntime() {
         typeof OTEFDataContext.getInvestigationClock === "function"
           ? OTEFDataContext.getInvestigationClock()
           : idleNliClock();
+      const correctedNow =
+        typeof OTEFDataContext.correctedNow === "function"
+          ? OTEFDataContext.correctedNow()
+          : Date.now();
+      narrativeController?.syncInvestigationClock?.(clock, correctedNow);
       void syncInvestigationTimelineToMap(map, clock, currentGroups, {
         visibilityLayerGroups: groupsAsArray,
         displayProfile: "gis",
@@ -293,6 +376,8 @@ async function bootstrapMapRuntime() {
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()
             : Date.now(),
+        onClockFrame: (frameClock, frameNow) =>
+          narrativeController?.syncInvestigationClock?.(frameClock, frameNow),
         getPersonSelection: () => OTEFDataContext.getPersonSelection(),
         narrativeFocus: narrativeController?.getDefinition?.() || null,
       }).finally(() => raiseDarkBasemapPlaceLabels(map));
@@ -390,19 +475,6 @@ async function bootstrapMapRuntime() {
       onBubbleClick: (person) => archiveBridge.openSelected(person),
     });
     const archiveWindow = createNliArchiveWindowController();
-    const narrativePresentation = createNarrativePresentation(mapContainer, {
-      onResult: (result) => {
-        void OTEFDataContext.narrativePresentationResult(
-          result.outcome,
-          result.narrativeId,
-          result.requestId,
-        );
-      },
-      onOpenChange: (open) => {
-        nliGisClockDebugApi?.setGisClockHotkeyAllowed?.(!open);
-        if (open) nliGisClockDebugApi?.setVisible?.(false);
-      },
-    });
     novaEscapeCoordinator = createNovaEscapeCoordinator({
       map,
       dataContext: OTEFDataContext,
@@ -421,7 +493,6 @@ async function bootstrapMapRuntime() {
       dataContext: OTEFDataContext,
       viewportSync,
       personVisual,
-      presentation: narrativePresentation,
       closeArchive: () => archiveWindow.close(),
       resolveExitCenter: () => resolveCenterFromBounds(OTEFDataContext.getBounds()) || DEFAULT_MAP_CENTER,
       syncTimeline: syncContextInvestigation,
@@ -431,26 +502,11 @@ async function bootstrapMapRuntime() {
       },
     });
     registerDisposer(() => narrativeController?.dispose?.());
-    registerDisposer(() => narrativePresentation.dispose());
     registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => narrativeController?.apply(state)));
     registerDisposer(OTEFDataContext.subscribe("narrativeState", (state) => {
       nliGisClockDebugApi?.setGisClockLayoutSlot?.(
         gisClockLayoutSlotId(state?.id ?? OTEFDataContext.getNarrativeState?.()?.id),
       );
-    }));
-    registerDisposer(OTEFDataContext.subscribe("narrativePresentation", (command) => {
-      handleNarrativePresentationCommand({
-        command,
-        definition: narrativeController?.getDefinition?.(),
-        presentation: narrativePresentation,
-        emitUnavailable: (failedCommand) => {
-          void OTEFDataContext.narrativePresentationResult(
-            "unavailable",
-            failedCommand?.narrativeId,
-            failedCommand?.requestId,
-          );
-        },
-      });
     }));
     const archiveBridge = createNliArchiveCommandBridge({
       windowController: archiveWindow,

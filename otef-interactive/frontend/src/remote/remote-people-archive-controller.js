@@ -86,6 +86,7 @@ export function createRemotePeopleArchiveController(options = {}) {
     person: { acknowledged: null, pending: null, revision: -1, generation: 0, requestToken: 0 },
     archive: { phase: "closed", person: null, requestId: null, lastRequestId: null, closedAppliedRequestId: null, generation: 0, timeoutId: null },
   };
+  let pendingSelectionTask = null;
 
   const archiveButton = options.archiveButton || document.createElement("button");
   if (!options.archiveButton) {
@@ -281,7 +282,7 @@ export function createRemotePeopleArchiveController(options = {}) {
     );
   }
 
-  async function selectPerson(person) {
+  async function performSelectPerson(person) {
     if (!isAlive() || isNarrativeActive()) {
       setStatus(t("peopleNarrativeDisabled"));
       return false;
@@ -351,6 +352,38 @@ export function createRemotePeopleArchiveController(options = {}) {
       }
     }
     return false;
+  }
+
+  function selectPerson(person) {
+    const task = performSelectPerson(person);
+    pendingSelectionTask = task;
+    const clearPending = () => {
+      if (pendingSelectionTask === task) pendingSelectionTask = null;
+    };
+    void task.then(clearPending, clearPending);
+    return task;
+  }
+
+  async function clearPersonSelection() {
+    const pending = pendingSelectionTask;
+    if (pending) await pending.catch(() => false);
+    const baseline = snapshotFrom(dataContext?.getPersonSelection?.());
+    const baselineRevision = Math.max(revisionOf(baseline), state.person.revision);
+    if (!baseline?.personId && !state.person.acknowledged) {
+      cancelArchivePresentation();
+      return true;
+    }
+    try {
+      const result = await dataContext?.clearPerson?.();
+      const snapshot = [snapshotFrom(result), snapshotFrom(dataContext?.getPersonSelection?.())]
+        .filter((candidate) => revisionOf(candidate) >= 0)
+        .sort((a, b) => revisionOf(b) - revisionOf(a))[0];
+      if (!snapshot || snapshot.personId || revisionOf(snapshot) <= baselineRevision) return false;
+      await applySnapshot(snapshot);
+      return state.person.acknowledged === null;
+    } catch {
+      return false;
+    }
   }
 
   async function applySnapshot(snapshot) {
@@ -493,6 +526,7 @@ export function createRemotePeopleArchiveController(options = {}) {
   return {
     archiveButton,
     selectPerson,
+    clearPersonSelection,
     openArchive,
     closeArchive,
     getArchivePhase: () => state.archive.phase,

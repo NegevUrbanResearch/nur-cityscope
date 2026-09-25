@@ -12,6 +12,12 @@ export function slideIndexes(script) {
   return script.steps.flatMap((step, index) => (isJunction(step) ? [] : [index]));
 }
 
+export function showStepIndex(id) {
+  const index = scriptById("show")?.steps.findIndex((step) => step.id === id) ?? -1;
+  if (index < 0) throw new Error(`Unknown show step: ${id}`);
+  return index;
+}
+
 function landing(script, index, kind) {
   const step = script?.steps[index];
   if (!step) return { kind: "finish" };

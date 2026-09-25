@@ -25,6 +25,7 @@ import {
   buildPmtilesUrl,
   clearAllLayers,
   commitSlideshowReveal,
+  disposeLayerManagerForMap,
   fadeOutAndRemoveEnabledFullIds,
   getVectorSourceLayerName,
   registerCuratedLayerIds,
@@ -40,6 +41,8 @@ function createMapMock() {
   const paintByLayerId = new Map();
   /** @type {Map<string, Record<string, unknown>>} */
   const layoutByLayerId = new Map();
+  const listenersByEvent = new Map();
+  const mutations = [];
 
   const map = {
     addSource: vi.fn((sourceId) => {
@@ -57,12 +60,14 @@ function createMapMock() {
     hasImage: vi.fn((imageId) => images.has(imageId)),
     addImage: vi.fn((imageId) => {
       images.add(imageId);
+      mutations.push({ type: "image", id: imageId });
     }),
     removeImage: vi.fn((imageId) => {
       images.delete(imageId);
     }),
     addLayer: vi.fn((layerDef) => {
       layers.add(layerDef.id);
+      mutations.push({ type: "layer", id: layerDef.id });
       layoutByLayerId.set(layerDef.id, { ...(layerDef.layout || {}) });
     }),
     getLayer: vi.fn((layerId) => (layers.has(layerId) ? { id: layerId } : undefined)),
@@ -84,10 +89,22 @@ function createMapMock() {
       paintByLayerId.get(layerId)[name] = value;
     }),
     getPaintProperty: vi.fn((layerId, name) => paintByLayerId.get(layerId)?.[name]),
+    on: vi.fn((event, listener) => {
+      if (!listenersByEvent.has(event)) listenersByEvent.set(event, new Set());
+      listenersByEvent.get(event).add(listener);
+    }),
+    off: vi.fn((event, listener) => listenersByEvent.get(event)?.delete(listener)),
+    emit(event, payload) {
+      for (const listener of listenersByEvent.get(event) || []) listener(payload);
+    },
+    listenerCount(event) {
+      return listenersByEvent.get(event)?.size || 0;
+    },
     _layers: layers,
     _images: images,
     _paintByLayerId: paintByLayerId,
     _layoutByLayerId: layoutByLayerId,
+    _mutations: mutations,
   };
 
   return map;
@@ -108,6 +125,10 @@ function withCanvasStub(run) {
     moveTo: vi.fn(),
     lineTo: vi.fn(),
     stroke: vi.fn(),
+    arc: vi.fn(),
+    fill: vi.fn(),
+    clip: vi.fn(),
+    createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
     fillRect: vi.fn(),
     strokeRect: vi.fn(),
     getImageData: (x, y, w, h) => ({
@@ -147,6 +168,161 @@ describe("maplibre-layer-manager", () => {
 
     registryMock.getLayerConfig.mockReturnValue({ format: "geojson" });
     registryMock.getLayerDataUrl.mockReturnValue("/data/layer.geojson");
+  });
+
+  it("recovers a missing owned captivity image from its registered spec", () => {
+    const map = createMapMock();
+    const spec = { imageId: "otef_captivity_bleed_test", radius: 12 };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: "group_a.layer_1-captivity",
+        type: "symbol",
+        layout: { "icon-image": spec.imageId },
+        _captivityBleedPattern: spec,
+      },
+    ]);
+
+    withCanvasStub(() => {
+      applyLayerGroupsToMap(map, enabledGroups);
+      map._images.delete(spec.imageId);
+      map.emit("styleimagemissing", { id: spec.imageId });
+    });
+
+    expect(map.hasImage(spec.imageId)).toBe(true);
+  });
+
+  it("recovers missing owned hatch and marker-square images from their specs", () => {
+    const map = createMapMock();
+    const hatchSpec = {
+      patternId: "hatch_#f00_0_8_1",
+      color: "#f00",
+      rotation: 0,
+      separation: 8,
+      width: 1,
+    };
+    const markerSpec = {
+      imageId: "otef_mlsq_v1_#f00_#0f0_5_1_9",
+      size: 5,
+      fill: "#f00",
+      stroke: "#0f0",
+      strokeWidth: 1,
+      side: 9,
+    };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: "group_a.layer_1-hatch",
+        type: "fill",
+        paint: { "fill-pattern": hatchSpec.patternId },
+        _hatchPattern: hatchSpec,
+      },
+      {
+        id: "group_a.layer_1-marker",
+        type: "symbol",
+        layout: { "icon-image": markerSpec.imageId },
+        _markerLineSquarePattern: markerSpec,
+      },
+    ]);
+
+    withCanvasStub(() => {
+      applyLayerGroupsToMap(map, enabledGroups);
+      map._images.delete(hatchSpec.patternId);
+      map._images.delete(markerSpec.imageId);
+      map.emit("styleimagemissing", { id: hatchSpec.patternId });
+      map.emit("styleimagemissing", { id: markerSpec.imageId });
+    });
+
+    expect(map.hasImage(hatchSpec.patternId)).toBe(true);
+    expect(map.hasImage(markerSpec.imageId)).toBe(true);
+  });
+
+  it("preserves hatch pixelRatio when recovering a missing owned image", () => {
+    const map = createMapMock();
+    const spec = {
+      patternId: "hatch_#f00_0_8_1@2x",
+      color: "#f00",
+      rotation: 0,
+      separation: 8,
+      width: 1,
+      pixelRatio: 2,
+    };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: "group_a.layer_1-hatch",
+        type: "fill",
+        paint: { "fill-pattern": spec.patternId },
+        _hatchPattern: spec,
+      },
+    ]);
+
+    withCanvasStub(() => {
+      applyLayerGroupsToMap(map, enabledGroups);
+      map._images.delete(spec.patternId);
+      map.emit("styleimagemissing", { id: spec.patternId });
+    });
+
+    const imageCalls = map.addImage.mock.calls.filter(([imageId]) => imageId === spec.patternId);
+    expect(imageCalls).toHaveLength(2);
+    expect(imageCalls[0][2]).toEqual({ pixelRatio: 2 });
+    expect(imageCalls[1][2]).toEqual({ pixelRatio: 2 });
+  });
+
+  it("does not intercept an unrelated missing sprite", () => {
+    const map = createMapMock();
+    bridgeMock.irToMapLibreLayers.mockReturnValue([]);
+    applyLayerGroupsToMap(map, enabledGroups);
+    map.emit("styleimagemissing", { id: "wood-pattern" });
+    expect(map.hasImage("wood-pattern")).toBe(false);
+  });
+
+  it("dispose removes the owned-image listener", () => {
+    const map = createMapMock();
+    bridgeMock.irToMapLibreLayers.mockReturnValue([]);
+    applyLayerGroupsToMap(map, enabledGroups);
+    expect(map.listenerCount("styleimagemissing")).toBe(1);
+    disposeLayerManagerForMap(map);
+    expect(map.listenerCount("styleimagemissing")).toBe(0);
+  });
+
+  it("does not recreate an image after its last owner is removed", () => {
+    const map = createMapMock();
+    const spec = { imageId: "otef_captivity_bleed_test", radius: 12 };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: "group_a.layer_1-captivity",
+        type: "symbol",
+        layout: { "icon-image": spec.imageId },
+        _captivityBleedPattern: spec,
+      },
+    ]);
+    withCanvasStub(() => {
+      applyLayerGroupsToMap(map, enabledGroups);
+      clearAllLayers(map);
+      map.emit("styleimagemissing", { id: spec.imageId });
+    });
+    expect(map.hasImage(spec.imageId)).toBe(false);
+  });
+
+  it("registers captivity images before adding their dependent layer", () => {
+    const map = createMapMock();
+    const spec = { imageId: "otef_captivity_bleed_test", radius: 12 };
+    bridgeMock.irToMapLibreLayers.mockReturnValue([
+      {
+        id: "group_a.layer_1-captivity",
+        type: "symbol",
+        layout: { "icon-image": spec.imageId },
+        _captivityBleedPattern: spec,
+      },
+    ]);
+    withCanvasStub(() => applyLayerGroupsToMap(map, enabledGroups));
+
+    const imageMutation = map._mutations.findIndex(
+      (mutation) => mutation.type === "image" && mutation.id === spec.imageId,
+    );
+    const layerMutation = map._mutations.findIndex(
+      (mutation) => mutation.type === "layer" && mutation.id.endsWith("-captivity"),
+    );
+    expect(imageMutation).toBeGreaterThanOrEqual(0);
+    expect(layerMutation).toBeGreaterThan(imageMutation);
   });
 
   it("rolls back source and retries when no style layer is added", () => {

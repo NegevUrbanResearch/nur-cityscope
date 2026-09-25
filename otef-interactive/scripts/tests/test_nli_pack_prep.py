@@ -574,21 +574,26 @@ class GroupingTests(unittest.TestCase):
         )
         self.assertEqual(rewrite_oct7_status("Murdered"), "Murdered")
         self.assertEqual(rewrite_oct7_status("Killed on duty"), "Killed on duty")
-        self.assertEqual(rewrite_oct7_status("Murdered then kidnapped"), "Murdered")
+        self.assertEqual(rewrite_oct7_status("Murdered then kidnapped"), "Murdered in captivity")
 
     def test_rewrite_nli_layer_properties_mutates_people_status(self):
         oct7 = {
             "features": [
                 _point(34.47, 31.40, status="Murdered in captivity (bibas)"),
                 _point(34.48, 31.41, status="Murdered"),
+                _point(34.55, 31.50, status="Murdered then kidnapped"),
             ]
         }
-        self.assertEqual(rewrite_nli_layer_properties("people", oct7), 1)
+        self.assertEqual(rewrite_nli_layer_properties("people", oct7), 2)
         self.assertEqual(
             oct7["features"][0]["properties"]["status"],
             "Murdered in captivity",
         )
         self.assertEqual(oct7["features"][1]["properties"]["status"], "Murdered")
+        self.assertEqual(
+            oct7["features"][2]["properties"]["status"],
+            "Murdered in captivity",
+        )
 
 
 class CatalogLinkTests(unittest.TestCase):
@@ -1360,6 +1365,7 @@ class PeopleSourceOverlayTests(unittest.TestCase):
             pack_dir,
             authorities_path=tmp / "missing.json",
             people_overlay_path=overlay_path,
+            mazal_records={},
         )
         out = json.loads((pack_dir / "gis" / "people.geojson").read_text(encoding="utf-8"))
         props = out["features"][0]["properties"]
@@ -1370,6 +1376,78 @@ class PeopleSourceOverlayTests(unittest.TestCase):
         expression = lyrx["layerDefinitions"][0]["labelClasses"][0]["expression"]
         self.assertIn("hebrew_name", expression)
         self.assertEqual(summary["layers"]["people"]["overlay"]["hebrew_name"], 1)
+
+    def test_prepare_applies_mazal_records_after_people_overlay(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = tmp / "nli.zip"
+        people = {
+            "type": "FeatureCollection",
+            "features": [
+                _point(
+                    34.55,
+                    31.50,
+                    pid=801,
+                    name="Shani Louk",
+                    hebrew_name="לא ידוע",
+                    mms_id="987012794276905171",
+                ),
+            ],
+        }
+        empty = {"type": "FeatureCollection", "features": []}
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("geojson/people_7_10.json", json.dumps(people))
+            archive.writestr("geojson/polygons_7_10.geojson", json.dumps(empty))
+            archive.writestr("geojson/lines_7_10.geojson", json.dumps(empty))
+        overlay_path = tmp / "people_overlay.geojson"
+        overlay_path.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "properties": {
+                                "pid": 801,
+                                "name": "Shani Louk",
+                                "hebrew_nam": "שני לוק",
+                                "mms_id": "987012794276905171",
+                            },
+                            "geometry": {
+                                "type": "Point",
+                                "coordinates": [34.559255847, 31.505946785],
+                            },
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        pack_dir = tmp / "nli"
+        mazal_records = {
+            "987012794276905171": {
+                "he100": "$$aלוק, שני ניקול,$$d2001-2023$$9heb",
+                "en100": "$$aLouk, Shani,$$d2001-2023$$9lat",
+                "see400": "$$aLouk, Shani Nicole",
+                "ar100": "",
+                "ru100": "",
+                "gender375": "$$afemale",
+                "dates046": "$$f2001-02-07$$g2023-10-07",
+            },
+        }
+        summary = prepare_nli_pack(
+            zip_path,
+            pack_dir,
+            authorities_path=tmp / "missing.json",
+            people_overlay_path=overlay_path,
+            mazal_records=mazal_records,
+        )
+        out = json.loads((pack_dir / "gis" / "people.geojson").read_text(encoding="utf-8"))
+        props = out["features"][0]["properties"]
+        self.assertEqual(props["hebrew_name"], "שני ניקול לוק")
+        self.assertAlmostEqual(props["source_lon"], 34.559255847)
+        self.assertAlmostEqual(props["source_lat"], 31.505946785)
+        self.assertEqual(summary["layers"]["people"]["overlay"]["hebrew_name"], 1)
+        self.assertEqual(summary["nli_person_fields"]["updated"], 1)
 
 
 NOVA_SITE_POLYGON = {

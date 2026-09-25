@@ -1,21 +1,28 @@
 # NLI Remote Run of Show
 
-This document is an English translation of the NLI-authored Hebrew run of show
-received on 2026-09-22. It records the intended exhibit sequence and notes
-where current NLI remote behavior already supports parts of it. The tables
-describe the intended sequence, including steps still to be implemented.
+This document began as an English translation of the NLI-authored Hebrew run
+of show received on 2026-09-22. It now also incorporates the exhibit owner's
+2026-09-24 decisions about the revised 34-slide deck, presentation controls,
+and Shura. The tables describe intended behavior, including steps still to be
+implemented; they do not claim that the application already behaves this way.
 
-Blank cells, question marks, and incomplete steps are preserved from the source.
-The [NLI exhibit verification guide](nli-exhibit-verification.md) remains the
-source of truth for current acceptance status.
+Empty placeholder rows from the source have been removed. Cells without content
+remain only where the source specifies no additional screen behavior. The
+[NLI exhibit verification guide](nli-exhibit-verification.md) remains the source
+of truth for current acceptance status. The original presentation ranges have
+been replaced by the revised deck mapping below.
 
-Current code defines Segev, Nova, Sderot, and Hostages narrative entry scenes.
-Selecting any of them centers and zooms the GIS map, selects the black-and-white
-satellite basemap, and applies the narrative focus. Segev has a separately
-controlled presentation; Nova has an 08:03 clock and escape-route controls.
-These existing scene elements are starting points for the longer sequences below.
+The narrative entry scenes use black-and-white satellite imagery and narrative
+focus. Nova fits the reviewed GIS extent, shows 08:03 before playback, and has
+five authored timeline beats plus escape-route controls. This run of show
+includes their presenter behavior alongside the broader exhibit sequence.
 
 [Presentation](https://nli-my.sharepoint.com/:p:/g/personal/uri_ayalon_nli_org_il/IQD47nUGojhWS7-q5GSJVUNBAXiA-LABDwC7s_zZgZ_A1ns?rtime=AdOhnb8Y30g)
+
+The revised deck has 34 slides, grouped into six independent presentation
+segments: Segev 1–8, Mor Levy 9–11, Nova memorial 12–16, Sderot 17–21,
+Shura 22–28, and Hostages 29–34. Slide numbers below are one-based and
+inclusive. Presentation Previous/Next stays within the active segment.
 
 ## Projection sequence and screen content
 
@@ -38,12 +45,7 @@ These existing scene elements are starting points for the longer sequences below
 | Notes | GIS screen | Projection / model | Order |
 | :--- | :--- | :--- | :---: |
 |  | Zoom in on the Segev family home in black-and-white aerial imagery. Show the clock at 06:41. Mark the house with a pink/red square and the label “Segev family home.” | Focus on Be'eri. Dim the other settlements. Only Be'eri remains prominent, with a square of light and a halo around it. | 1 |
-|  | Replace the map with the presentation and advance through slides 1–8. | Same | 2 |
-|  |  |  | 3 |
-|  |  |  | 4 |
-|  |  |  | 5 |
-|  |  |  | 6 |
-|  |  |  | 7 |
+| Open the presentation from the staff remote. | Cover the GIS map with the presentation and advance through slides 1–8. | Keep the Be'eri-focused model view from step 1; do not show slides on the projection. | 2 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
 
@@ -51,13 +53,11 @@ These existing scene elements are starting points for the longer sequences below
 
 | Notes | GIS screen | Projection / model | Order |
 | :--- | :--- | :--- | :---: |
-|  | Zoom in on the Nova site in black-and-white aerial imagery. Show the clock at 08:03. | Dim the model and focus on the Nova site at 08:03. Dim the other settlements. Only Nova remains prominent, with a square of light and a halo around it. Show the open-spaces layer in the background. | 1 |
-|  | Zoom in on the Nova site and show its division into areas, with names. | Remove the open-spaces layer. Show the Nova polygons over time, in chronological order. Advance the clock with them. Use no more than five timeline events. | 2 |
+|  | Fit the reviewed Nova extent in black-and-white aerial imagery. Before play, show the 08:03 exhibit clock and preview beat 1. | Dim the model and focus on the Nova site at 08:03. Dim the other settlements. Only Nova remains prominent, with a square of light and a halo around it. Show the open-spaces layer in the background. | 1 |
+| The GIS map stays framed on the Nova site during the beats. | Remove the open-spaces layer. Play five authored beats in order, four seconds each (20 seconds total). Show only the active beat's time, title, and presenter copy; animate its polygons as they appear. | Show the Nova polygons in chronological order. The five scrubber marks run from 0% to 100%. Play begins at beat 1; natural completion holds beat 5 at 100%. Back/forward and scrub selection clamp at the first and last beat. | 2 |
 | The first part describes what happened collectively. Now move to Mor Levy's individual story. |  | Show the escape routes taken by people from Nova. Settlements light up when the escape routes intersect them. | 3 |
-| Begin Mor's story. The guide describes her background and the route she took. | Replace the map with the presentation and show slides 9–11. | Show Mor's route on the model: Nova, one of the lemon groves, and then the Midburn staging site. | 4 |
-|  | Show slides 12–16: images from the Nova site archive with memorial points. | Dim the model except for the settlements and settlement names intersected by Nova escape routes. Show points for people murdered at Nova only, as well as people kidnapped and murdered or kidnapped and returned alive. | 5 |
-|  |  |  | 6 |
-|  |  |  | 7 |
+| Begin Mor's story. The guide describes her background and the route she took. Open the presentation from the staff remote. | Cover the GIS map with slides 9–11. | Show Mor's route on the model: Nova, one of the lemon groves, and then the Midburn staging site. | 4 |
+| Open the presentation from the staff remote. | Cover the GIS map with slides 12–16: images from the Nova site archive with memorial points. | Dim the model except for the settlements and settlement names intersected by Nova escape routes. Show points for people murdered at Nova only, as well as people kidnapped and murdered or kidnapped and returned alive. | 5 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
 
@@ -66,12 +66,7 @@ These existing scene elements are starting points for the longer sequences below
 | Notes | GIS screen | Projection / model | Order |
 | :--- | :--- | :--- | :---: |
 |  | Zoom in on Sderot in black-and-white aerial imagery. Place a point on the Sderot police station. | Dim the model and focus on Sderot. Dim the other settlements. Only Sderot remains prominent, with a square of light and a halo around it. | 1 |
-|  | Replace the map with the presentation and show slides 17–20. | Same | 2 |
-|  |  |  | 3 |
-|  |  |  | 4 |
-|  |  |  | 5 |
-|  |  |  | 6 |
-|  |  |  | 7 |
+| Open the presentation from the staff remote. | Cover the GIS map with slides 17–21. | Keep the Sderot-focused model view from step 1; do not show slides on the projection. | 2 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
 
@@ -80,12 +75,9 @@ These existing scene elements are starting points for the longer sequences below
 | Notes | GIS screen | Projection / model | Order |
 | :--- | :--- | :--- | :---: |
 |  | Zoom in on Nir Oz in black-and-white aerial imagery. Place a point on the Peri family home and show the label “Peri family home.” | Dim the model and focus on Nir Oz. Dim the other settlements. Only Nir Oz remains prominent, with a square of light and a halo around it. | 1 |
-|  | Replace the map with the presentation and show slides 28–33. | Same | 2 |
-|  | Determine which presentation content belongs here. | Same, with points for people murdered in Nir Oz only, as well as people kidnapped and murdered or kidnapped and returned alive. | 3 |
-|  | Determine which presentation content belongs here. | Stop dimming the model and remove the focus from Nir Oz. Show points only for all hostages, including people kidnapped and murdered and people kidnapped and returned alive. | 4 |
-|  |  |  | 5 |
-|  |  |  | 6 |
-|  |  |  | 7 |
+| Open the presentation from the staff remote. | Cover the GIS map with slides 29–34. | Keep the Nir Oz-focused model view from step 1; do not show slides on the projection. | 2 |
+| Closing the presentation automatically advances to this step. | Return to the Nir Oz map view. Show points for people murdered in Nir Oz, people kidnapped and murdered, and people kidnapped and returned alive. | Keep the Nir Oz-focused model view and show the same Nir Oz people. | 3 |
+|  | Remove the Nir Oz focus and show points for all hostages, including people kidnapped and murdered and people kidnapped and returned alive. | Stop dimming the model, remove the focus from Nir Oz, and show the same all-hostages view. | 4 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
 
@@ -93,21 +85,48 @@ These existing scene elements are starting points for the longer sequences below
 
 | Notes | GIS screen | Projection / model | Order |
 | :--- | :--- | :--- | :---: |
-|  | ? | ? | 1 |
-|  | Replace the map with the presentation and show slides 21–27. | ? | 2 |
-|  |  |  | 3 |
-|  |  |  | 4 |
-|  |  |  | 5 |
-|  |  |  | 6 |
-|  |  |  | 7 |
+| Select Shura from the free-choice narratives. There is no separate entry scene or Open button. | Automatically cover the GIS map with slides 22–28. Closing the presentation returns to the narrative-choice sequence. | Show the completed idle NLI overview: alarms, investigation polygons, and infiltration lines enabled, with the normal completed-line flow. No Shura-specific model scene. | 1 |
 
 [Return to the sequence](#projection-sequence-and-screen-content)
 
 ## Translation and implementation notes
 
+- The presentation is a full-screen overlay on the GIS page; the GIS map stays
+  open underneath. Opening and closing it must not visibly minimize or switch
+  the GIS window. The presenter uses only the staff remote, never GIS directly.
+  Except for Shura, the presentation opens only when the presenter chooses
+  **Open presentation** at the indicated narrative step. Presentation slides
+  and videos appear on GIS only; the projection continues showing its model
+  content as specified in the table.
+- Remote slide Previous/Next and Close are distinct from scene Back/Next.
+  The remote shows a counter relative to the current segment (for example,
+  slide 2 of 8 for Segev), not the absolute deck slide number. Opening a
+  segment starts at its first slide; slide navigation does not leave the
+  segment. Reopening starts at its first slide again.
+- Closing Segev, Mor Levy, Nova memorial, or Sderot reveals the GIS map and
+  keeps the remote on the current run-of-show step. Closing Hostages both
+  reveals the map and advances immediately to the Nir Oz people step. Closing
+  Shura returns directly to the narrative-choice step.
+- Videos on slides 2, 10, 18, 23, and 24 are intended to start automatically
+  with sound on entering the slide. Leaving the slide or closing the
+  presentation stops and rewinds its video. Video completion does not advance
+  the slide. No Play button or normal-playback indicator is part of the default
+  remote controls; a fault should instead be visible on the remote.
 - `SEA` and `Gaza roads` are layer names. The source's “range sites” in the Nova
-  sequence is understood to refer to the Nova polygons; confirm the exact
-  polygon selection when implementing that step.
-- “Beats” means timeline events. The NLI sequence calls for no more than five
-  Nova events in that step; the current Nova timeline has 12 beats and needs
-  consolidation to meet that request.
+  sequence is understood to refer to the Nova polygons. The implemented Nova
+  beat membership is explicit in the shared manifest.
+- “Beats” means timeline events. Nova uses the following authored sequence;
+  each beat runs for four seconds, independently of its event-time label:
+
+  | Beat | Event time | Title |
+  | :---: | :--- | :--- |
+  | 1 | 08:12–08:23 | Highway 232 and the Nova site |
+  | 2 | 08:26–08:40 | The fighting expands |
+  | 3 | 09:00–09:15 | Abductions and parking areas |
+  | 4 | 10:30 | Noa Argamani and Avinatan Or |
+  | 5 | 12:00–13:00 | Abductions during the afternoon |
+- The 08:03 clock is the stopped pre-play and post-Stop exhibit label. Play
+  starts beat 1 at 0% reveal. Natural completion holds beat 5 at 100%; manual
+  navigation and scrubbing do not wrap at either endpoint.
+- Polygon 107 is excluded from the Nova beat set pending source review. Its
+  source data has not been deleted or changed.

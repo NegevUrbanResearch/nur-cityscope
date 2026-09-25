@@ -8,7 +8,7 @@ import {
 } from "../../frontend/src/shared/nli-narratives.js";
 
 describe("NLI narrative registry", () => {
-  test("contains the exact trusted Segev definition and frozen Nova sibling", () => {
+  test("contains the Segev GIS definition and frozen Nova sibling", () => {
     expect(NLI_NARRATIVES.segev).toEqual({
       id: "segev",
       label: "בית משפחת שגב",
@@ -18,17 +18,14 @@ describe("NLI narrative registry", () => {
       basemap: "satellite_bw",
       focusSettlement: "בארי",
       focusSettlementOutlineId: 19,
-      presentationUrl:
-        "https://www.canva.com/design/DAHUaRcI6lI/Of1TuYlj0yaPV-r3UDQOKw/view?embed",
     });
     expect(NLI_NARRATIVES.nova).toEqual({
       id: "nova",
       label: "נובה",
       center: [34.46975, 31.39851],
       zoom: 15,
-      gisZoom: 15,
+      beat4Zoom: 13.2,
       idleClockMinutes: 483,
-      playStartMinutes: 483,
       basemap: "satellite_bw",
       focusInvestigationPolygonObjectId: 100,
       focusSettlement: "נובה",
@@ -69,8 +66,6 @@ describe("NLI narrative registry", () => {
       zoom: 10,
       basemap: "satellite_bw",
     });
-    expect(NLI_NARRATIVES.nova).not.toHaveProperty("fitBounds");
-    expect(NLI_NARRATIVES.nova).not.toHaveProperty("fitBoundsPadding");
     expect(NLI_NARRATIVES.nova).not.toHaveProperty("presentationUrl");
     expect(NLI_NARRATIVES.nova).not.toHaveProperty("escapeOverlay");
     expect(NLI_NARRATIVES.sderot).not.toHaveProperty("presentationUrl");
@@ -79,6 +74,7 @@ describe("NLI narrative registry", () => {
     expect(NLI_NARRATIVES.hostages).not.toHaveProperty("hasEscapeOverlay");
     expect(Object.isFrozen(NLI_NARRATIVES.nova)).toBe(true);
     expect(Object.isFrozen(NLI_NARRATIVES.nova.center)).toBe(true);
+    expect(Object.isFrozen(NLI_NARRATIVES.nova.argamaniCenter)).toBe(true);
     expect(Object.isFrozen(NLI_NARRATIVES.sderot)).toBe(true);
     expect(Object.isFrozen(NLI_NARRATIVES.hostages)).toBe(true);
     expect(Object.isFrozen(NLI_NARRATIVES.sderot.center)).toBe(true);

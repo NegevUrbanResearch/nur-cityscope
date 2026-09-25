@@ -81,7 +81,7 @@ describe("applyDarkBasemapLabelPolicy", () => {
 
     const next = applyDarkBasemapLabelPolicy(style, { knownPlaceNames: ["בארי"] });
 
-    expect(DARK_BASEMAP_PLACE_TEXT_FONT).toEqual(["Guttman Hatzvi", "Noto Sans Regular"]);
+    expect(DARK_BASEMAP_PLACE_TEXT_FONT).toEqual(["Guttman Hatzvi", "Arial"]);
     expect(next.layers[0].layout["text-font"]).toEqual(DARK_BASEMAP_PLACE_TEXT_FONT);
     expect(next["font-faces"]["Guttman Hatzvi"]).toEqual([
       { url: DARK_BASEMAP_GUTTMAN_FONT_FACE_URL },
@@ -90,7 +90,7 @@ describe("applyDarkBasemapLabelPolicy", () => {
     expect(style["font-faces"]).toBeUndefined();
   });
 
-  it("keeps road-name labels on Noto so OpenFreeMap glyphs still serve them", () => {
+  it("uses the local Arial stack for road-name labels", () => {
     const style = {
       version: 8,
       layers: [
@@ -108,7 +108,7 @@ describe("applyDarkBasemapLabelPolicy", () => {
 
     const next = applyDarkBasemapLabelPolicy(style, { knownPlaceNames: ["בארי"] });
 
-    expect(next.layers[0].layout["text-font"]).toEqual(["Noto Sans Regular"]);
+    expect(next.layers[0].layout["text-font"]).toEqual(["Arial"]);
     expect(next.layers[0].layout["text-size"]).toBe(10);
     expect(next.layers[0].paint["text-opacity"]).toBeUndefined();
   });
@@ -254,7 +254,7 @@ describe("applyDarkBasemapLabelPolicy", () => {
     expect(next.layers[0].layout["text-transform"]).toBeUndefined();
   });
 
-  it("leaves motorway route numbers, water names, and non-symbol layers alone", () => {
+  it("uses local fonts for every text-bearing symbol, including references and water names", () => {
     const motorway = layer("highway_name_motorway", {
       "source-layer": "transportation_name",
       layout: { "text-field": ["to-string", ["get", "ref"]] },
@@ -271,13 +271,52 @@ describe("applyDarkBasemapLabelPolicy", () => {
       source: "openmaptiles",
       paint: { "fill-color": "rgb(10,10,10)" },
     };
-    const style = { version: 8, layers: [motorway, water, fill] };
+    const iconOnly = layer("icon_only", { layout: { "icon-image": "station" } });
+    const style = {
+      version: 8,
+      glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
+      layers: [motorway, water, fill, iconOnly],
+    };
 
     const next = applyDarkBasemapLabelPolicy(style);
 
-    expect(next.layers[0]).toEqual(motorway);
-    expect(next.layers[1]).toEqual(water);
+    expect(next.glyphs).toBeUndefined();
+    expect(next.layers[0].layout["text-field"]).toEqual(motorway.layout["text-field"]);
+    expect(next.layers[0].layout["text-font"]).toEqual(["Arial"]);
+    expect(next.layers[1].layout["text-font"]).toEqual(["Arial"]);
+    expect(next.layers[1].layout["text-field"]).toEqual(water.layout["text-field"]);
     expect(next.layers[2]).toEqual(fill);
+    expect(next.layers[3]).toEqual(iconOnly);
+  });
+
+  it("uses local glyph generation and explicit local stacks on the actual dark style", async () => {
+    globalThis.maplibregl = {
+      addProtocol: () => {},
+      Map: function Map() {},
+      getRTLTextPluginStatus: () => "unavailable",
+      setRTLTextPlugin: () => {},
+    };
+    globalThis.pmtiles = {
+      Protocol: function Protocol() {
+        this.tile = () => {};
+      },
+    };
+    const { BASEMAP_STYLES } = await import("../../frontend/src/map/maplibre-map.js");
+
+    expect(BASEMAP_STYLES.dark.glyphs).toBeUndefined();
+    expect(BASEMAP_STYLES.dark["font-faces"]["Guttman Hatzvi"]).toEqual([
+      { url: "./fonts/Guttman-Hatzvi.ttf" },
+    ]);
+    const textLayers = BASEMAP_STYLES.dark.layers.filter(
+      (candidate) => candidate.type === "symbol" && candidate.layout?.["text-field"] != null,
+    );
+    expect(textLayers.length).toBeGreaterThan(0);
+    for (const candidate of textLayers) {
+      expect(candidate.layout["text-font"]).toEqual(
+        candidate["source-layer"] === "place" ? ["Guttman Hatzvi", "Arial"] : ["Arial"],
+      );
+      expect(JSON.stringify(candidate.layout["text-font"])).not.toContain("Noto");
+    }
   });
 });
 

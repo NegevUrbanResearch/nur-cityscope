@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createElement, installDom } from "./remote-navigation-fixtures.js";
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 describe("remote People and archive controller", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -9,6 +15,85 @@ describe("remote People and archive controller", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  test("clear waits for an in-flight selection and then clears its acknowledged revision", async () => {
+    const { createRemotePeopleArchiveController } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    const person = { pid: "11", name: "Ada", hasArchiveRecord: true, datasetVersion: "v1" };
+    let selection = { personId: null, datasetVersion: null, revision: 0 };
+    const selectResponse = deferred();
+    const dataContext = {
+      getInvestigationClock: () => ({ phase: "idle" }),
+      getPersonSelection: () => selection,
+      selectPerson: vi.fn(() => selectResponse.promise.then((result) => {
+        selection = result.person_selection;
+        return result;
+      })),
+      clearPerson: vi.fn(async () => {
+        selection = { personId: null, datasetVersion: null, revision: 5 };
+        return { person_selection: selection };
+      }),
+    };
+    const root = document.getElementById("placeSearchGroup");
+    const controller = createRemotePeopleArchiveController({
+      root,
+      input: document.getElementById("placeSearchInput"),
+      clear: document.getElementById("placeSearchClear"),
+      list: document.getElementById("placeSuggestions"),
+      status: document.getElementById("placeSearchStatus"),
+      navigationSection: root,
+      dataContext,
+      peopleRuntime: { load: vi.fn(), resolve: vi.fn(() => person) },
+      getMode: () => "people",
+      setMode: vi.fn(), renderSuggestions: vi.fn(), setStatus: vi.fn(),
+      setRootClass: vi.fn(), setHidden: vi.fn(), syncInputDirection: vi.fn(),
+    });
+
+    const select = controller.selectPerson(person);
+    const clear = controller.clearPersonSelection();
+    expect(dataContext.clearPerson).not.toHaveBeenCalled();
+    selectResponse.resolve({
+      person_selection: { personId: "11", datasetVersion: "v1", revision: 4 },
+    });
+    await select;
+    await expect(clear).resolves.toBe(true);
+    expect(dataContext.clearPerson).toHaveBeenCalledOnce();
+    expect(controller.getAcknowledgedPerson()).toBeNull();
+  });
+
+  test("clear rejects an unacknowledged or non-empty response", async () => {
+    const { createRemotePeopleArchiveController } = await import(
+      "../../frontend/src/remote/remote-people-archive-controller.js"
+    );
+    const person = { pid: "11", name: "Ada", hasArchiveRecord: true, datasetVersion: "v1" };
+    let selection = { personId: null, datasetVersion: null, revision: 0 };
+    const dataContext = {
+      getInvestigationClock: () => ({ phase: "idle" }),
+      getPersonSelection: () => selection,
+      selectPerson: vi.fn(),
+      clearPerson: vi.fn(async () => ({
+        person_selection: { revision: 4, personId: "p1", datasetVersion: "v1" },
+      })),
+    };
+    const root = document.getElementById("placeSearchGroup");
+    const controller = createRemotePeopleArchiveController({
+      root,
+      input: document.getElementById("placeSearchInput"),
+      clear: document.getElementById("placeSearchClear"),
+      list: document.getElementById("placeSuggestions"),
+      status: document.getElementById("placeSearchStatus"),
+      navigationSection: root,
+      dataContext,
+      peopleRuntime: { load: vi.fn(), resolve: vi.fn(() => person) },
+      getMode: () => "people",
+      setMode: vi.fn(), renderSuggestions: vi.fn(), setStatus: vi.fn(),
+      setRootClass: vi.fn(), setHidden: vi.fn(), syncInputDirection: vi.fn(),
+    });
+    controller.handlePersonSnapshot({ personId: "11", datasetVersion: "v1", revision: 4 });
+    await Promise.resolve();
+    await expect(controller.clearPersonSelection()).resolves.toBe(false);
   });
 
   test("acknowledged people selection keeps the name, closes suggestions, and does not reopen them from focus", async () => {

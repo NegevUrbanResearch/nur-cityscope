@@ -19,6 +19,11 @@ describe("Chrome popup policy setup script", () => {
     expect(source).toContain("$AllowedOrigin = 'http://localhost:80'");
     expect(source).not.toContain("$AllowedOrigin = '*'");
     expect(source).not.toContain("DefaultPopupsSetting");
+    expect(source).toContain("HKLM:\\Software\\Policies\\Google\\Chrome\\AutoplayAllowlist");
+    expect(source).toContain("http://localhost:80");
+    expect(source).toMatch(/Install-Policy[^]*foreach[^]*\$Policies/);
+    expect(source).toMatch(/Remove-Policy[^]*foreach[^]*\$Policies/);
+    expect(source).toMatch(/Show-Status[^]*foreach[^]*\$Policies/);
   });
 
   test("installs the CrossOriginOpenerPolicy Chrome launch flag on existing shortcuts", () => {

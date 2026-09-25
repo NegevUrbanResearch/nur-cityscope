@@ -13,6 +13,8 @@ import {
   nliBeatIndexFromPointer,
   nliBeatPctOccupiedHour,
   isNliRouteFlowActive,
+  bindNliTimelinePointerListeners,
+  consumeNliTimelineButtonClick,
 } from "../../frontend/src/remote/nli-timeline-transport.js";
 import { LOCALE_EVENT } from "../../frontend/src/remote/remote-locale.js";
 import {
@@ -32,6 +34,7 @@ import {
   INVESTIGATION_POLYGONS_FULL_ID,
 } from "../../frontend/src/shared/nli-investigation-beats.js";
 import { NLI_NARRATIVES } from "../../frontend/src/shared/nli-narratives.js";
+import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LINES_ID = "nli.lines";
@@ -574,7 +577,6 @@ describe("nli timeline transport", () => {
   test("LayerSheet destroy releases context, presentation, locale, and timer resources", () => {
     const disposeNarrative = vi.fn();
     const disposeClock = vi.fn();
-    const presentationDestroy = vi.fn();
     const removeEventListener = vi.fn();
     vi.stubGlobal("window", { removeEventListener });
     const ctx = stubContext({
@@ -582,7 +584,6 @@ describe("nli timeline transport", () => {
     });
     const c = makeController({
       _subscriptions: [],
-      _nliNarrativePresentationController: { destroy: presentationDestroy },
       _remoteLocaleHandler: vi.fn(),
       _nliEndTimer: setTimeout(() => {}, 10_000),
       _nliPlayheadTimer: setTimeout(() => {}, 10_000),
@@ -593,7 +594,6 @@ describe("nli timeline transport", () => {
     expect(ctx.subscribe).toHaveBeenCalledTimes(2);
     expect(disposeNarrative).toHaveBeenCalledTimes(1);
     expect(disposeClock).toHaveBeenCalledTimes(1);
-    expect(presentationDestroy).toHaveBeenCalledTimes(1);
     expect(removeEventListener).toHaveBeenCalledWith(LOCALE_EVENT, c._remoteLocaleHandler);
     expect(c._nliEndTimer).toBeNull();
     expect(c._nliPlayheadTimer).toBeNull();
@@ -625,7 +625,214 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock.mock.calls[3][0].positionMs).toBe(0);
   });
 
-  test("nova idle play patches virtual membership and leadInMinutes 483", async () => {
+  test("Nova idle transport previews beat one at 08:03 with five uniform accessible marks", () => {
+    const html = renderNliTimelineTransport(idleNliClock(), {
+      narrativeId: "nova",
+      displayBeats: NLI_NOVA_STORY.representativeMinutes,
+    });
+    expect(html).toContain(NLI_NOVA_STORY.beats[0].presenterText.he);
+    expect(html).toMatch(/class="nli-tl-clock"[^>]*>08:03</);
+    expect([...html.matchAll(/<i[^>]*nli-tl-nova-mark[^>]*style="left:([0-9.]+)%"/g)].map((m) => Number(m[1])))
+      .toEqual([0, 25, 50, 75, 100]);
+    for (const beat of NLI_NOVA_STORY.beats) {
+      expect(html).toContain(beat.eventTime.he);
+      expect(html).toContain(beat.title.he);
+      expect(html).toContain(`aria-label="${beat.eventTime.he}: ${beat.title.he}"`);
+    }
+    expect(html).toContain('tabindex="0"');
+    expect(html).toMatch(/data-nli-tl-step-back[^>]* disabled/);
+  });
+
+  test("Nova playhead and copy settle on beat five at natural completion", () => {
+    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], NLI_NOVA_STORY.representativeMinutes, 1000);
+    const ended = endNliClock(playing, { narrativeId: "nova" });
+    const html = renderNliTimelineTransport(ended, {
+      narrativeId: "nova",
+      displayBeats: NLI_NOVA_STORY.representativeMinutes,
+    });
+    expect(html).toContain(NLI_NOVA_STORY.beats[4].presenterText.he);
+    expect(html).toMatch(/class="nli-tl-clock"[^>]*>12:00</);
+    expect(html).toMatch(/aria-valuenow="4"/);
+    expect(html).toContain('style="left:100%"');
+    expect(html).not.toContain("00:00");
+    expect(html).toMatch(/data-nli-tl-step-forward[^>]* disabled/);
+  });
+
+  test("disabled Nova slider is omitted from the tab order", () => {
+    const html = renderNliTimelineTransport(idleNliClock(), {
+      narrativeId: "nova",
+      displayBeats: NLI_NOVA_STORY.representativeMinutes,
+      stepScrubDisabled: true,
+    });
+    const slider = html.match(/<div class="nli-tl-track[^>]*data-nli-tl-scrub[^>]*>/)?.[0] || "";
+    expect(slider).toContain('aria-disabled="true"');
+    expect(slider).not.toContain("tabindex");
+  });
+
+  test("Nova pointer positions use nearest uniformly spaced beat", () => {
+    const track = mockScrubTrack({ left: 0, width: 100 });
+    const pct = [0, 12.5, 25, 62.5, 100];
+    expect(pct.map((value) => nliBeatIndexFromPointer(track, value, NLI_NOVA_STORY.representativeMinutes, { narrativeId: "nova" })))
+      .toEqual([0, 1, 1, 3, 4]);
+  });
+
+  test("Nova pointer, keyboard, and step controls converge on the shared beat selector", async () => {
+    const ctx = stubContext({ getNarrativeState: () => ({ id: "nova" }) });
+    const c = makeController({
+      _nliFeatureCache: Object.fromEntries([LINES_ID, INVESTIGATION_POLYGONS_FULL_ID].map((id) => [id, [{}]])),
+    });
+    const select = vi.spyOn(c, "handleNliTimelineSelectBeat").mockResolvedValue(undefined);
+    const fakeElement = class FakeElement {};
+    vi.stubGlobal("Element", fakeElement);
+    const track = new fakeElement();
+    track.getAttribute = (name) => name === "aria-valuenow" ? "2" : null;
+    track.closest = () => track;
+    const contentListeners = {};
+    bindNliTimelinePointerListeners({ addEventListener: (name, listener) => { contentListeners[name] = listener; } }, c);
+    const key = (value, index = 2) => {
+      track.getAttribute = (name) => name === "aria-valuenow" ? String(index) : null;
+      const event = { target: track, key: value, preventDefault: vi.fn() };
+      contentListeners.keydown(event);
+      return event;
+    };
+    for (const [pressed, index] of [["ArrowRight", 3], ["ArrowLeft", 1], ["Home", 0], ["End", 4]]) {
+      const event = key(pressed);
+      expect(event.preventDefault).toHaveBeenCalledOnce();
+      expect(select).toHaveBeenLastCalledWith(index);
+    }
+    const leftAtStart = key("ArrowLeft", 0);
+    expect(leftAtStart.preventDefault).toHaveBeenCalledOnce();
+    expect(select).toHaveBeenLastCalledWith(4);
+    const rightAtEnd = key("ArrowRight", 4);
+    expect(rightAtEnd.preventDefault).toHaveBeenCalledOnce();
+    expect(select).toHaveBeenLastCalledWith(4);
+    const unhandled = key("PageDown", 2);
+    expect(unhandled.preventDefault).not.toHaveBeenCalled();
+
+    await c.handleNliTimelineScrubPointerUp(4);
+    expect(select).toHaveBeenLastCalledWith(4);
+
+    const forward = {};
+    const click = {
+      target: { closest: (selector) => selector === "[data-nli-tl-step-forward]" ? forward : null },
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    };
+    consumeNliTimelineButtonClick(click, c);
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(select).toHaveBeenLastCalledWith(0);
+  });
+
+  test("Nova selection and scrub use virtual playable membership when every raw chip is off", async () => {
+    const ctx = stubContext({ getNarrativeState: () => ({ id: "nova", revision: 4 }) });
+    const offGroups = [{ id: "nli", layers: [
+      { id: "lines", enabled: false },
+      { id: "investigation_polygons", enabled: false },
+      { id: "alarms", enabled: false },
+    ] }];
+    const cachedIds = [];
+    const makeNovaController = () => makeController({
+      getEffectiveGroupsForView: () => offGroups,
+      _nliCacheReady: (ids) => { cachedIds.push([...ids]); return true; },
+    });
+
+    const forward = makeNovaController();
+    await forward.handleNliTimelineStep(1);
+    expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({ phase: "paused", positionMs: 0 });
+
+    const select = makeNovaController();
+    await select.handleNliTimelineSelectBeat(2);
+    expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(2);
+    expect(ctx.patchInvestigationClock.mock.calls[1][0]).toMatchObject({
+      phase: "paused",
+      positionMs: 2 * NLI_NOVA_STORY.beatDurationMs,
+    });
+
+    const scrub = makeNovaController();
+    scrub.handleNliTimelineScrubPointerDown();
+    expect(scrub._nliScrub).toBeTruthy();
+    await scrub.handleNliTimelineScrubPointerUp(3);
+    expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(3);
+    expect(ctx.patchInvestigationClock.mock.calls[2][0]).toMatchObject({
+      phase: "paused",
+      positionMs: 3 * NLI_NOVA_STORY.beatDurationMs,
+    });
+    expect(cachedIds).toEqual([
+      [INVESTIGATION_POLYGONS_FULL_ID, LINES_ID],
+      [INVESTIGATION_POLYGONS_FULL_ID, LINES_ID],
+      [INVESTIGATION_POLYGONS_FULL_ID, LINES_ID],
+      [INVESTIGATION_POLYGONS_FULL_ID, LINES_ID],
+    ]);
+  });
+
+  test("Nova scrub cancel after a narrative reset discards the saved clock", async () => {
+    let narrative = { id: "nova", transition: "enter", revision: 8 };
+    const ctx = stubContext({ getNarrativeState: () => narrative });
+    const c = makeController({
+      _nliCacheReady: () => true,
+    });
+
+    c.handleNliTimelineScrubPointerDown();
+    expect(c._nliScrub?.restoreClock?.phase).toBe("paused");
+    narrative = { id: "segev", transition: "replace", revision: 9 };
+    await c.handleNliTimelineScrubPointerCancel();
+
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
+    expect(c._nliScrub).toBeNull();
+    expect(c._nliOptimisticClock).toBeNull();
+  });
+
+  test("Nova Play drops its pending command when narrative exits during cache load", async () => {
+    let narrative = { id: "nova", transition: "enter", revision: 12 };
+    const ctx = stubContext({ getNarrativeState: () => narrative });
+    let resolveCache;
+    let cacheReady = false;
+    const cacheLoad = new Promise((resolve) => { resolveCache = resolve; });
+    const c = makeController({
+      _nliCacheReady: () => cacheReady,
+      _ensureNliFeatureCache: async () => {
+        await cacheLoad;
+        cacheReady = true;
+      },
+    });
+
+    const pendingPlay = c.handleNliTimelinePlay();
+    await Promise.resolve();
+    expect(cacheReady).toBe(false);
+    narrative = { id: null, transition: "exit", revision: 13 };
+    resolveCache();
+    await pendingPlay;
+
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
+  });
+
+  test("Nova beat selection drops its pending command when narrative switches during cache load", async () => {
+    let narrative = { id: "nova", transition: "enter", revision: 20 };
+    const ctx = stubContext({ getNarrativeState: () => narrative });
+    let resolveCache;
+    let cacheReady = false;
+    const cacheLoad = new Promise((resolve) => { resolveCache = resolve; });
+    const c = makeController({
+      _nliCacheReady: () => cacheReady,
+      _ensureNliFeatureCache: async () => {
+        await cacheLoad;
+        cacheReady = true;
+      },
+    });
+
+    const pendingSelection = c.handleNliTimelineSelectBeat(3);
+    await Promise.resolve();
+    expect(cacheReady).toBe(false);
+    narrative = { id: "segev", transition: "replace", revision: 21 };
+    resolveCache();
+    await pendingSelection;
+
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
+  });
+
+  test("Nova idle play arms manifest beats at position zero without a lead-in", async () => {
     const ctx = stubContext({
       getNarrativeState: () => ({ id: "nova" }),
       getLayerGroups: () => nliGroups(),
@@ -643,8 +850,32 @@ describe("nli timeline transport", () => {
     expect(patched.membership).toEqual(
       expect.arrayContaining([INVESTIGATION_POLYGONS_FULL_ID, LINES_ID]),
     );
-    expect(patched.leadInMinutes).toBe(NLI_NARRATIVES.nova.playStartMinutes);
-    expect(patched.leadInMinutes).toBe(483);
+    expect(patched.beats).toEqual([492, 506, 540, 630, 720]);
+    expect(patched.positionMs).toBe(0);
+    expect(patched).not.toHaveProperty("leadInMinutes");
+  });
+
+  test("Nova Play from ended replays beat one and Stop restores the 08:03 preview", async () => {
+    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], NLI_NOVA_STORY.representativeMinutes, 0);
+    const ended = endNliClock(playing, { narrativeId: "nova" });
+    const ctx = stubContext({
+      getNarrativeState: () => ({ id: "nova" }),
+      getInvestigationClock: () => ended,
+      correctedNow: () => 21000,
+    });
+    const c = makeController();
+    await c.handleNliTimelinePlay();
+    expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({ phase: "playing", positionMs: 0 });
+    expect(ctx.patchInvestigationClock.mock.calls[0][0]).not.toHaveProperty("leadInMinutes");
+    await c.handleNliTimelineStop();
+    const stopped = ctx.patchInvestigationClock.mock.calls[1][0];
+    const html = renderNliTimelineTransport(stopped, {
+      narrativeId: "nova",
+      displayBeats: NLI_NOVA_STORY.representativeMinutes,
+    });
+    expect(stopped.phase).toBe("idle");
+    expect(html).toContain(NLI_NOVA_STORY.beats[0].presenterText.he);
+    expect(html).toMatch(/class="nli-tl-clock"[^>]*>08:03</);
   });
 
   test("lead-in remote clock matches the map minute instead of the last beat", () => {
@@ -998,34 +1229,70 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock.mock.calls[0][0].phase).toBe("ended");
   });
 
-  test("_syncNliEndedTimer with Nova lead-in includes lead-in duration", async () => {
+  test("Nova end timer uses an exact twenty-second duration", async () => {
     vi.useFakeTimers();
-    const novaBeats = [400, 480, 492, 500];
-    const playing = playNliClock(
-      idleNliClock(),
-      [INVESTIGATION_POLYGONS_FULL_ID],
-      novaBeats,
-      1000,
-      { leadInMinutes: 483 },
-    );
+    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], NLI_NOVA_STORY.representativeMinutes, 1000);
     const now = 1000;
     const ctx = stubContext({
       getInvestigationClock: () => playing,
+      getNarrativeState: () => ({ id: "nova" }),
       correctedNow: () => now,
     });
     const c = makeController();
     c._syncNliEndedTimer(playing);
-    const withoutLeadIn = clockStoryDurationMs(novaBeats);
-    const withLeadIn = clockStoryDurationMs(novaBeats, playing);
-    expect(withLeadIn).toBe(
-      timelineBeatDurationMs(483) + timelineSpanMs([492, 500]) + TIMELINE_HOLD_MS,
-    );
-    expect(withLeadIn).toBeLessThan(withoutLeadIn);
-    const delay = Math.max(0, withLeadIn - clockPositionMs(playing, now));
-    await vi.advanceTimersByTimeAsync(delay - 1);
+    await vi.advanceTimersByTimeAsync(19999);
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(ctx.patchInvestigationClock.mock.calls[0][0].phase).toBe("ended");
+    expect(ctx.patchInvestigationClock.mock.calls[0][0].positionMs).toBe(20000);
+  });
+
+  test("Nova scrub cancel restores the exact pointer-down position and stays paused", async () => {
+    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], NLI_NOVA_STORY.representativeMinutes, 1000);
+    const ctx = stubContext({
+      getNarrativeState: () => ({ id: "nova" }),
+      getInvestigationClock: () => playing,
+      correctedNow: () => 4750,
+    });
+    const c = makeController({ _nliFeatureCache: { [INVESTIGATION_POLYGONS_FULL_ID]: [{}] } });
+    c._liveNliClock = () => playing;
+    c.handleNliTimelineScrubPointerDown();
+    const pausedAtDown = c._nliScrub.restoreClock;
+    await c.handleNliTimelineScrubPointerCancel();
+    expect(ctx.patchInvestigationClock).toHaveBeenLastCalledWith(pausedAtDown);
+    expect(ctx.patchInvestigationClock.mock.calls.at(-1)[0]).toMatchObject({ phase: "paused", positionMs: 3750 });
+  });
+
+  test("Nova idle scrub cancel restores the armed paused beat-one snapshot", async () => {
+    const ctx = stubContext({
+      getNarrativeState: () => ({ id: "nova" }),
+      correctedNow: () => 9000,
+    });
+    const track = mockScrubTrack({ left: 0, width: 100, beatMax: 4 });
+    const c = makeController({
+      _nliFeatureCache: {
+        [LINES_ID]: [{}],
+        [INVESTIGATION_POLYGONS_FULL_ID]: [{}],
+      },
+      _nliScrubEl: track,
+    });
+    c.handleNliTimelineScrubPointerDown(75);
+    const pausedStart = c._nliScrub.restoreClock;
+    expect(pausedStart).toMatchObject({
+      phase: "paused",
+      beats: NLI_NOVA_STORY.representativeMinutes,
+      positionMs: 0,
+    });
+    expect(track.attrs["aria-valuenow"]).toBe("3");
+
+    await c.handleNliTimelineScrubPointerCancel();
+    expect(ctx.patchInvestigationClock).toHaveBeenCalledTimes(1);
+    expect(ctx.patchInvestigationClock).toHaveBeenCalledWith(pausedStart);
+    expect(ctx.patchInvestigationClock.mock.calls[0][0]).toMatchObject({
+      phase: "paused",
+      beats: NLI_NOVA_STORY.representativeMinutes,
+      positionMs: 0,
+    });
   });
 
   test("_syncNliEndedTimer does not schedule when loop is on", () => {
@@ -1132,6 +1399,61 @@ describe("nli timeline transport", () => {
     expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
     expect(c.render).not.toHaveBeenCalled();
     expect(content.innerHTML).toBe("KEEP");
+  });
+
+  test("Nova local ticker updates copy, marks, and playhead at each four-second beat", async () => {
+    vi.useFakeTimers();
+    const playing = playNliClock(idleNliClock(), [INVESTIGATION_POLYGONS_FULL_ID], NLI_NOVA_STORY.representativeMinutes, 1000);
+    let now = 1000;
+    const ctx = stubContext({
+      getNarrativeState: () => ({ id: "nova" }),
+      getInvestigationClock: () => playing,
+      correctedNow: () => now,
+    });
+    const track = mockScrubTrack({ beatMax: 4 });
+    const clockEl = { textContent: "" };
+    const time = { textContent: "" };
+    const title = { textContent: "" };
+    const presenter = { textContent: "" };
+    const stepBack = { disabled: true };
+    const stepForward = { disabled: false };
+    const marks = NLI_NOVA_STORY.beats.map((_, beatIndex) => ({
+      dataset: { beatIndex: String(beatIndex) },
+      classList: { toggle: vi.fn() },
+    }));
+    const content = {
+      querySelector: (sel) => ({
+        "[data-nli-tl-scrub]": track,
+        ".nli-tl-clock": clockEl,
+        ".nli-tl-nova-time": time,
+        ".nli-tl-nova-title": title,
+        ".nli-tl-nova-presenter": presenter,
+        "[data-nli-tl-step-back]": stepBack,
+        "[data-nli-tl-step-forward]": stepForward,
+      }[sel] || null),
+      querySelectorAll: () => marks,
+    };
+    const c = makeController({
+      sheet: { querySelector: () => content },
+      _nliArmPayload: () => ({ beats: NLI_NOVA_STORY.representativeMinutes, visibleMembership: [INVESTIGATION_POLYGONS_FULL_ID] }),
+    });
+    c._syncNliPlayheadTicker(playing);
+    expect(stepBack.disabled).toBe(true);
+    expect(stepForward.disabled).toBe(false);
+    for (let index = 1; index < NLI_NOVA_STORY.beats.length; index += 1) {
+      now = 1000 + index * NLI_NOVA_STORY.beatDurationMs;
+      await vi.advanceTimersByTimeAsync(NLI_NOVA_STORY.beatDurationMs);
+      const beat = NLI_NOVA_STORY.beats[index];
+      expect(presenter.textContent).toBe(beat.presenterText.he);
+      expect(time.textContent).toBe(beat.eventTime.he);
+      expect(title.textContent).toBe(beat.title.he);
+      expect(track.thumb.style.left).toBe(`${index * 25}%`);
+      expect(marks[index].classList.toggle).toHaveBeenLastCalledWith("is-active", true);
+      expect(stepBack.disabled).toBe(false);
+      expect(stepForward.disabled).toBe(index === NLI_NOVA_STORY.beats.length - 1);
+    }
+    expect(ctx.patchInvestigationClock).not.toHaveBeenCalled();
+    expect(c.render).not.toHaveBeenCalled();
   });
 
   test("_syncNliPlayheadTicker skips paint while _nliScrub", async () => {

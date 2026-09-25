@@ -278,6 +278,7 @@ function releaseHatchPatternsForFullId(map, fullId, state) {
     const nextCount = prevCount - 1;
     if (nextCount <= 0) {
       state.hatchPatternRefCounts.delete(patternId);
+      state.ownedImageFactories.delete(patternId);
       if (typeof map.removeImage === "function" && map.hasImage(patternId)) {
         map.removeImage(patternId);
       }
@@ -287,6 +288,25 @@ function releaseHatchPatternsForFullId(map, fullId, state) {
   }
 
   state.hatchPatternIdsByFullId.delete(fullId);
+}
+
+function rememberOwnedImage(state, imageId, create, options = null) {
+  state.ownedImageFactories.set(imageId, { create, options });
+}
+
+function ensureOwnedImageRecovery(map, state) {
+  if (state.missingImageListener || typeof map?.on !== "function") return;
+  state.missingImageListener = (event) => {
+    const imageId = event?.id;
+    const ownedImage = state.ownedImageFactories.get(imageId);
+    if (!ownedImage || map.hasImage?.(imageId)) return;
+    if (ownedImage.options) {
+      map.addImage(imageId, ownedImage.create(), ownedImage.options);
+    } else {
+      map.addImage(imageId, ownedImage.create());
+    }
+  };
+  map.on("styleimagemissing", state.missingImageListener);
 }
 
 function registerHatchPatternImages(map, styleLayer, state, trackedPatternIds) {
@@ -302,14 +322,19 @@ function registerHatchPatternImages(map, styleLayer, state, trackedPatternIds) {
   for (const spec of specs) {
     if (!spec?.patternId) continue;
     if (trackedPatternIds.has(spec.patternId)) continue;
+    const create = () => createHatchImageDataFromSpec(spec);
+    const options = spec.pixelRatio && spec.pixelRatio !== 1
+      ? { pixelRatio: spec.pixelRatio }
+      : null;
     if (!map.hasImage(spec.patternId)) {
-      const image = createHatchImageDataFromSpec(spec);
-      if (spec.pixelRatio && spec.pixelRatio !== 1) {
-        map.addImage(spec.patternId, image, { pixelRatio: spec.pixelRatio });
+      const image = create();
+      if (options) {
+        map.addImage(spec.patternId, image, options);
       } else {
         map.addImage(spec.patternId, image);
       }
     }
+    rememberOwnedImage(state, spec.patternId, create, options);
     trackedPatternIds.add(spec.patternId);
     const currentRefCount = state.hatchPatternRefCounts.get(spec.patternId) || 0;
     state.hatchPatternRefCounts.set(spec.patternId, currentRefCount + 1);
@@ -328,10 +353,12 @@ function registerHatchPatternImages(map, styleLayer, state, trackedPatternIds) {
     const imageId = spec?.imageId;
     if (!imageId) continue;
     if (trackedPatternIds.has(imageId)) continue;
+    const create = () => createMarkerLineSquareImageData(spec);
     if (!map.hasImage(imageId)) {
-      const image = createMarkerLineSquareImageData(spec);
+      const image = create();
       map.addImage(imageId, image);
     }
+    rememberOwnedImage(state, imageId, create);
     trackedPatternIds.add(imageId);
     const currentRefCount = state.hatchPatternRefCounts.get(imageId) || 0;
     state.hatchPatternRefCounts.set(imageId, currentRefCount + 1);
@@ -350,10 +377,12 @@ function registerHatchPatternImages(map, styleLayer, state, trackedPatternIds) {
     const imageId = spec?.imageId;
     if (!imageId) continue;
     if (trackedPatternIds.has(imageId)) continue;
+    const create = () => createCaptivityBleedImageData(spec);
     if (!map.hasImage(imageId)) {
-      const image = createCaptivityBleedImageData(spec);
+      const image = create();
       map.addImage(imageId, image);
     }
+    rememberOwnedImage(state, imageId, create);
     trackedPatternIds.add(imageId);
     const currentRefCount = state.hatchPatternRefCounts.get(imageId) || 0;
     state.hatchPatternRefCounts.set(imageId, currentRefCount + 1);
@@ -374,9 +403,12 @@ function getOrCreateMapState(map) {
       retainedHiddenFullIds: new Map(), // fullId -> true, insertion order tracks hide age
       hatchPatternIdsByFullId: new Map(), // fullId -> string[]
       hatchPatternRefCounts: new Map(), // patternId -> number
+      ownedImageFactories: new Map(), // imageId -> { create, options }
+      missingImageListener: null,
     };
     mapStateByMap.set(map, state);
   }
+  ensureOwnedImageRecovery(map, state);
   return state;
 }
 
@@ -1053,4 +1085,15 @@ export function clearAllLayers(map) {
   state.retainedHiddenFullIds.clear();
   state.hatchPatternIdsByFullId.clear();
   state.hatchPatternRefCounts.clear();
+}
+
+export function disposeLayerManagerForMap(map) {
+  const state = mapStateByMap.get(map);
+  if (!state) return;
+  clearAllLayers(map);
+  if (state.missingImageListener) {
+    map.off?.("styleimagemissing", state.missingImageListener);
+  }
+  state.ownedImageFactories.clear();
+  mapStateByMap.delete(map);
 }

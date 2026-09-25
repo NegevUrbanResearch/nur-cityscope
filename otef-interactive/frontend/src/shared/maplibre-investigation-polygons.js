@@ -173,6 +173,14 @@ function outlineFeaturesFromPolygons(features) {
 }
 
 function achievedPolygonFeatures(features, frame) {
+  if (frame?.narrativeId === "nova" && Array.isArray(frame?.achievedPolygonObjectIds)) {
+    const achievedObjectIds = new Set(
+      frame.achievedPolygonObjectIds.map(Number).filter(Number.isFinite),
+    );
+    return asArray(features).filter((feature) =>
+      achievedObjectIds.has(Number(feature?.properties?.OBJECTID)),
+    );
+  }
   const achieved = new Set(
     asArray(frame?.achievedPolygonBeats).map(Number).filter(Number.isFinite),
   );
@@ -186,11 +194,13 @@ function notesEqualsFilter(notes) {
 }
 
 function setPaint(map, id, property, value) {
-  if (typeof map?.setPaintProperty !== "function") return;
+  if (!layerPresent(map, id) || typeof map?.setPaintProperty !== "function") return false;
   try {
     map.setPaintProperty(id, property, value);
+    return true;
   } catch (_) {
     // The base style can be replaced between collection and application.
+    return false;
   }
 }
 
@@ -212,8 +222,9 @@ function narrativeSettlementOutlinePaint(focusOutlineId) {
 function applyNarrativeSettlementOutlinePaint(map, state, frame) {
   const paint = narrativeSettlementOutlinePaint(frame?.narrativeFocusOutlineId);
   if (JSON.stringify(state.lastSettlementOutlinePaint) === JSON.stringify(paint)) return;
-  setPaint(map, SETTLEMENT_LAYER_ID, "line-color", paint);
-  state.lastSettlementOutlinePaint = paint;
+  if (setPaint(map, SETTLEMENT_LAYER_ID, "line-color", paint)) {
+    state.lastSettlementOutlinePaint = paint;
+  }
 }
 
 function setLayout(map, id, property, value) {
@@ -231,6 +242,10 @@ function normalizeProfile(profile) {
 }
 
 function achievedKey(frame) {
+  if (frame?.narrativeId === "nova" && Array.isArray(frame?.achievedPolygonObjectIds)) {
+    const ids = frame.achievedPolygonObjectIds.map(Number).filter(Number.isFinite);
+    return `objectids:${[...new Set(ids)].sort((a, b) => a - b).join(",")}`;
+  }
   const beats = asArray(frame?.achievedPolygonBeats);
   return [...new Set(beats.map(Number).filter(Number.isFinite))].sort((a, b) => a - b).join(",");
 }
@@ -660,7 +675,8 @@ export function createInvestigationPolygonRenderer(
   function updateCategorySources(frame, data) {
     const achieved = achievedPolygonFeatures(state.polygonFeatures, frame);
     warnUnmatchedNotes(achieved);
-    const categoryFeatures = novaNarrativeActive(frame, data)
+    const novaObjectIdMode = frame?.narrativeId === "nova" && Array.isArray(frame?.achievedPolygonObjectIds);
+    const categoryFeatures = novaNarrativeActive(frame, data) && !novaObjectIdMode
       ? achieved.filter((feature) => Number(feature?.properties?.OBJECTID) !== NOVA_SITE_OBJECT_ID)
       : achieved;
     const fillSource = map?.getSource?.(CATEGORY_SOURCE_ID);
@@ -674,7 +690,8 @@ export function createInvestigationPolygonRenderer(
     if (state.processedStyleActive) {
       const gradientSource = map?.getSource?.(BUFFERED_GRADIENT_SOURCE_ID);
       const gradientAchieved = achievedPolygonFeatures(state.bufferedGradientFeatures, frame)
-        .filter((feature) => !novaNarrativeActive(frame, data) || Number(feature?.properties?.OBJECTID) !== NOVA_SITE_OBJECT_ID);
+        .filter((feature) => novaObjectIdMode || !novaNarrativeActive(frame, data)
+          || Number(feature?.properties?.OBJECTID) !== NOVA_SITE_OBJECT_ID);
       if (gradientSource && typeof gradientSource.setData === "function") {
         gradientSource.setData(featureCollection(gradientAchieved));
       }
@@ -704,15 +721,18 @@ export function createInvestigationPolygonRenderer(
     if (!Array.isArray(entries) || entries.length === 0) return fallback;
     const expression = ["case"];
     for (const entry of entries) {
-      const beat = Number(entry?.beat);
       const progress = Number(entry?.progress);
-      if (!Number.isFinite(beat) || !Number.isFinite(progress)) continue;
-      expression.push(
-        ["==", ["to-number", ["get", "timeline_minutes"]], beat],
-      );
+      const objectIds = asArray(entry?.objectIds).map(Number).filter(Number.isFinite);
+      const beat = Number(entry?.beat);
+      if (!Number.isFinite(progress)) continue;
+      if (objectIds.length > 0) {
+        expression.push(["in", ["to-number", ["get", "OBJECTID"]], ["literal", objectIds]]);
+      } else if (Number.isFinite(beat)) {
+        expression.push(["==", ["to-number", ["get", "timeline_minutes"]], beat]);
+      } else continue;
       expression.push(property === "color"
         ? fallback
-        : ["*", fallback, polygonEntryBandFactor(band.ordinal, bandCount, progress)]);
+        : ["*", fallback, polygonEntryBandFactor(band?.ordinal ?? 0, bandCount, progress)]);
     }
     expression.push(fallback);
     return expression.length > 2 ? expression : fallback;
@@ -727,7 +747,9 @@ export function createInvestigationPolygonRenderer(
     const impactKey = impactIds.join(",");
     const sidecarReady = state.bufferedGradientSidecarStatus === "ready";
     const phase = motionMode === "full" ? polygonGradientPhase(nowMs) : null;
-    const entries = phase == null ? [] : asArray(frame?.polygonEntries);
+    const entries = frame?.narrativeId === "nova" && Array.isArray(frame?.polygonObjectEntries)
+      ? asArray(frame.polygonObjectEntries)
+      : phase == null ? [] : asArray(frame?.polygonEntries);
     const animated = sidecarReady && phase != null;
     for (const spec of CATEGORY_SPECS) {
       const classPlan = state.processedPlan.classes[spec.notes];
@@ -749,9 +771,17 @@ export function createInvestigationPolygonRenderer(
         const color = conveyor
           ? entryPaintExpression(entries, band, classPlan.bands.length, "color", conveyor.color)
           : staticColor;
-        const baseOpacity = conveyor
-          ? entryPaintExpression(entries, band, classPlan.bands.length, "opacity", conveyor.opacity)
-          : (sidecarReady || !isGradient ? opacity : 0);
+        const authoredOpacity = sidecarReady || !isGradient ? opacity : 0;
+        const opacityFallback = conveyor?.opacity ?? authoredOpacity;
+        const baseOpacity = entries.length > 0
+          ? entryPaintExpression(
+            entries,
+            band,
+            isGradient ? classPlan.bands.length : 1,
+            "opacity",
+            opacityFallback,
+          )
+          : opacityFallback;
         if (color != null) setPaint(map, id, "fill-color", color);
         setPaint(map, id, "fill-opacity", projectionNovaDim && (sidecarReady || !isGradient)
           ? parallelImpactOpacityExpression(impactIds, baseOpacity)
@@ -760,13 +790,20 @@ export function createInvestigationPolygonRenderer(
     }
     const outlineChanged = state.lastProcessedOutlineDim !== projectionNovaDim
       || state.lastProcessedOutlineImpactKey !== impactKey;
-    if (outlineChanged) {
+    const novaObjectEntries = frame?.narrativeId === "nova"
+      && Array.isArray(frame?.polygonObjectEntries)
+      ? frame.polygonObjectEntries
+      : null;
+    if (outlineChanged || novaObjectEntries) {
       for (const spec of CATEGORY_SPECS) {
         const outlineOpacity = Number(state.processedPlan.classes[spec.notes]?.outline?.opacity);
         if (!Number.isFinite(outlineOpacity)) continue;
+        const revealOpacity = novaObjectEntries
+          ? entryPaintExpression(novaObjectEntries, null, 1, "opacity", outlineOpacity)
+          : outlineOpacity;
         setPaint(map, CATEGORY_LINE_LAYER_IDS[spec.suffix], "line-opacity", projectionNovaDim
-          ? parallelImpactOpacityExpression(impactIds, outlineOpacity)
-          : outlineOpacity);
+          ? parallelImpactOpacityExpression(impactIds, revealOpacity)
+          : revealOpacity);
       }
       state.lastProcessedOutlineDim = projectionNovaDim;
       state.lastProcessedOutlineImpactKey = impactKey;
@@ -826,9 +863,7 @@ export function createInvestigationPolygonRenderer(
     state.currentFrame = frame;
     mount({ settlementOnly: !renderPolygons });
     applyNarrativeSettlementOutlinePaint(map, state, frame);
-    const achieved = asArray(frame.achievedPolygonBeats)
-      .map(Number)
-      .filter(Number.isFinite);
+    const achieved = asArray(frame.achievedPolygonBeats).map(Number).filter(Number.isFinite);
     const polygonKey = achievedKey(frame);
     const settlementKey = achievedSettlementKey(frame);
     const key = `${polygonKey}|${settlementKey}`;

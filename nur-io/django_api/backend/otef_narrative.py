@@ -1,6 +1,9 @@
 """Validation and transitions for the persistent OTEF narrative state."""
 
 import copy
+import json
+import os
+from pathlib import Path
 
 from .otef_escape_overlay import (
     EMPTY_ESCAPE_OVERLAY,
@@ -15,8 +18,48 @@ from .otef_investigation_clock import idle_investigation_clock
 
 
 NARRATIVE_IDS = frozenset({"segev", "nova", "sderot", "hostages", "hostages_all"})
-NARRATIVE_PRESENTATION_IDS = frozenset({"segev"})
 NARRATIVE_TRANSITIONS = frozenset({"initial", "enter", "replace", "exit"})
+PRESENTATION_MANIFEST_PATH = Path(
+    os.environ.get(
+        "OTEF_NLI_PRESENTATION_MANIFEST",
+        "/app/public/presentation/nli-presentation-manifest.json",
+    )
+)
+PRESENTATION_NARRATIVE_IDS = frozenset({"segev", "nova", "sderot", "hostages"})
+
+
+def load_presentation_manifest(path=PRESENTATION_MANIFEST_PATH):
+    """Load and validate the shared NLI presentation manifest."""
+    with open(path, encoding="utf-8") as manifest_file:
+        manifest = json.load(manifest_file)
+
+    if not isinstance(manifest, dict):
+        raise ValueError("presentation manifest must be an object")
+    segments = manifest.get("segments")
+    if not isinstance(segments, list):
+        raise ValueError("presentation segments must be an array")
+    ids = set()
+    for segment in segments:
+        if not isinstance(segment, dict):
+            raise ValueError("presentation segment must be an object")
+        segment_id = segment.get("id")
+        if not isinstance(segment_id, str) or not segment_id or segment_id in ids:
+            raise ValueError("presentation segment IDs must be unique nonempty strings")
+        ids.add(segment_id)
+        if "requiredNarrative" not in segment:
+            raise ValueError("presentation segment must include a requiredNarrative field")
+        narrative = segment["requiredNarrative"]
+        if narrative is not None and (
+            not isinstance(narrative, str)
+            or narrative not in PRESENTATION_NARRATIVE_IDS
+        ):
+            raise ValueError("unsupported required presentation narrative")
+    return manifest
+
+
+def presentation_segment(segment_id, path=PRESENTATION_MANIFEST_PATH):
+    manifest = load_presentation_manifest(path)
+    return next((item for item in manifest["segments"] if item["id"] == segment_id), None)
 
 
 class StaleNarrativeRevision(ValueError):

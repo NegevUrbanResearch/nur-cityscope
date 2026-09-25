@@ -79,13 +79,12 @@ class NarrativeStateNormalizationTests(SimpleTestCase):
                 self.assertEqual(normalize_narrative_state(raw), initial)
 
     def test_nova_is_an_allowed_narrative_id(self):
-        from backend.otef_narrative import NARRATIVE_IDS, NARRATIVE_PRESENTATION_IDS
+        from backend.otef_narrative import NARRATIVE_IDS
 
         self.assertEqual(
             NARRATIVE_IDS,
             frozenset({"segev", "nova", "sderot", "hostages", "hostages_all"}),
         )
-        self.assertEqual(NARRATIVE_PRESENTATION_IDS, frozenset({"segev"}))
 
     def test_sderot_and_hostages_normalize(self):
         self.assertEqual(
@@ -397,23 +396,38 @@ class OTEFNarrativeApiTests(TestCase):
         self.state.save(update_fields=["narrative_state"])
         original = dict(self.state.narrative_state)
 
-        for presentation_action in ("open", "close"):
+        command = {
+            "segmentId": "segev",
+            "presentationSessionId": "session-a",
+            "presentationGeneration": 1727190000000,
+            "sequence": 1,
+            "requestId": "request-a",
+            "sourceId": "remote-a",
+        }
+        for presentation_action in ("open", "next", "previous", "close"):
             response = self.command(
                 "narrative_presentation",
+                **command,
                 presentationAction=presentation_action,
-                narrativeId="segev",
-                requestId=f"request-{presentation_action}",
-                sourceId="remote-a",
             )
             self.assertEqual(response.status_code, 200)
             self.assertTrue(response.json()["acknowledged"])
 
+        result_payload = {
+            "outcome": "opened",
+            "segmentId": "segev",
+            "presentationSessionId": "session-a",
+            "presentationGeneration": 1727190000000,
+            "sequence": 1,
+            "requestId": "request-a",
+            "sourceId": "gis-a",
+            "slide": 4,
+            "range": [1, 8],
+            "message": "Opening slide 4",
+        }
         result = self.command(
             "narrative_presentation_result",
-            outcome="opened",
-            narrativeId="segev",
-            requestId="request-open",
-            sourceId="gis-a",
+            **result_payload,
         )
         self.assertEqual(result.status_code, 200)
         self.assertTrue(result.json()["acknowledged"])
@@ -427,55 +441,132 @@ class OTEFNarrativeApiTests(TestCase):
             [
                 "otef_narrative_presentation_command",
                 "otef_narrative_presentation_command",
+                "otef_narrative_presentation_command",
+                "otef_narrative_presentation_command",
                 "otef_narrative_presentation_result",
             ],
         )
         self.assertEqual(messages[0]["presentationAction"], "open")
-        self.assertEqual(messages[0]["narrativeId"], "segev")
-        self.assertEqual(messages[0]["requestId"], "request-open")
-        self.assertEqual(messages[2]["outcome"], "opened")
-        self.assertEqual(messages[2]["requestId"], "request-open")
+        self.assertEqual(
+            {key: messages[0][key] for key in command},
+            command,
+        )
+        self.assertTrue(messages[0]["acknowledged"])
+        self.assertEqual(messages[-1]["outcome"], "opened")
+        self.assertEqual(messages[-1]["slide"], 4)
+        self.assertEqual(messages[-1]["range"], [1, 8])
+        self.assertEqual(messages[-1]["message"], "Opening slide 4")
         self.state.refresh_from_db()
         self.assertEqual(self.state.narrative_state, original)
 
     @patch("channels.layers.get_channel_layer")
     def test_presentation_validation_and_open_active_match(self, get_layer):
         get_layer.return_value.group_send = AsyncMock()
+        base = {
+            "segmentId": "segev",
+            "presentationSessionId": "session-a",
+            "presentationGeneration": 1727190000000,
+            "sequence": 1,
+            "requestId": "request-1",
+            "sourceId": "remote-a",
+        }
         self.assertEqual(
             self.command(
                 "narrative_presentation",
                 presentationAction="open",
-                narrativeId="segev",
-                requestId="request-1",
+                **base,
             ).status_code,
             409,
         )
+        for segment_id in ("nova_mor", "nova_memorial"):
+            self.state.narrative_state = {"id": "nova", "transition": "enter", "revision": 4}
+            self.state.save(update_fields=["narrative_state"])
+            self.assertEqual(self.command("narrative_presentation", **{
+                **base, "segmentId": segment_id, "presentationAction": "open",
+            }).status_code, 200)
+        self.assertEqual(self.command("narrative_presentation", **{
+            **base, "presentationAction": "close",
+        }).status_code, 200)
+        self.state.narrative_state = {"id": None, "transition": "exit", "revision": 5}
+        self.state.save(update_fields=["narrative_state"])
+        self.assertEqual(self.command("narrative_presentation", **{
+            **base, "segmentId": "shura", "presentationAction": "open",
+        }).status_code, 200)
+        self.state.narrative_state = {"id": "nova", "transition": "enter", "revision": 6}
+        self.state.save(update_fields=["narrative_state"])
+        self.assertEqual(self.command("narrative_presentation", **{
+            **base, "segmentId": "shura", "presentationAction": "open",
+        }).status_code, 409)
+        self.state.narrative_state = {"id": None, "transition": "exit", "revision": 7}
+        self.state.save(update_fields=["narrative_state"])
+        self.assertEqual(self.command("narrative_presentation", **{
+            **base, "presentationAction": "close",
+        }).status_code, 200)
+        get_layer.return_value.group_send.reset_mock()
         malformed = (
             (
                 "narrative_presentation",
-                {"presentationAction": "launch", "narrativeId": "segev", "requestId": "r"},
+                {**base, "presentationAction": "launch"},
             ),
             (
                 "narrative_presentation",
-                {"presentationAction": "close", "narrativeId": "unknown", "requestId": "r"},
+                {**base, "presentationAction": "close", "segmentId": "unknown"},
             ),
             (
                 "narrative_presentation",
-                {"presentationAction": "close", "narrativeId": [], "requestId": "r"},
+                {**base, "presentationAction": "close", "segmentId": []},
             ),
             (
                 "narrative_presentation_result",
-                {"outcome": "loaded", "narrativeId": "segev", "requestId": "r"},
+                {**base, "outcome": "loaded"},
             ),
             (
                 "narrative_presentation_result",
-                {"outcome": "closed", "narrativeId": "segev", "requestId": "x" * 129},
+                {**base, "outcome": "closed", "requestId": "x" * 129},
             ),
+            ("narrative_presentation", {**base, "presentationAction": "close", "presentationSessionId": " "}),
+            ("narrative_presentation", {**base, "presentationAction": "close", "presentationGeneration": True}),
+            ("narrative_presentation", {**base, "presentationAction": "close", "sequence": 0}),
+            ("narrative_presentation", {**base, "presentationAction": "close", "sourceId": ""}),
+            ("narrative_presentation", {**base, "presentationAction": "close", "requestId": " "}),
+            ("narrative_presentation", {**base, "presentationAction": "close", "presentationSessionId": "x" * 129}),
+            ("narrative_presentation_result", {**base, "outcome": "closed", "range": [1]}),
+            ("narrative_presentation_result", {**base, "outcome": "closed", "slide": True}),
         )
         for action, payload in malformed:
             with self.subTest(action=action, payload=payload):
                 self.assertEqual(self.command(action, **payload).status_code, 400)
         get_layer.return_value.group_send.assert_not_called()
+
+    @patch("channels.layers.get_channel_layer")
+    def test_all_presentation_result_outcomes_are_forwarded(self, get_layer):
+        get_layer.return_value.group_send = AsyncMock()
+        command = {
+            "segmentId": "segev",
+            "presentationSessionId": "session-a",
+            "presentationGeneration": 1727190000000,
+            "sequence": 1,
+            "requestId": "request-a",
+            "sourceId": "gis-a",
+            "slide": None,
+            "range": None,
+            "message": None,
+        }
+        for outcome in ("opened", "ready", "closed", "unavailable", "ignored"):
+            response = self.command(
+                "narrative_presentation_result", **command, outcome=outcome
+            )
+            self.assertEqual(response.status_code, 200)
+        messages = [
+            call.args[1]["message"]
+            for call in get_layer.return_value.group_send.call_args_list
+        ]
+        self.assertEqual([message["outcome"] for message in messages], [
+            "opened", "ready", "closed", "unavailable", "ignored",
+        ])
+        self.assertEqual(messages[0]["slide"], None)
+        self.assertEqual(messages[0]["range"], None)
+        self.assertEqual(messages[0]["message"], None)
 
     def test_set_rejects_unknown_missing_and_stale_revision_with_current_state(self):
         unknown = self.command(

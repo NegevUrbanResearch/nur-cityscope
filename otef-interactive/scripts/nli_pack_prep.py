@@ -174,14 +174,13 @@ ALARM_TIME_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})$
 BIBAS_STATUS_VALUE = "Murdered in captivity (bibas)"
 CANONICAL_CAPTIVITY_STATUS = "Murdered in captivity"
 MURDERED_THEN_KIDNAPPED_STATUS = "Murdered then kidnapped"
-CANONICAL_MURDERED_STATUS = "Murdered"
 
 
 def rewrite_oct7_status(value: Any) -> Any:
     if value == BIBAS_STATUS_VALUE:
         return CANONICAL_CAPTIVITY_STATUS
     if value == MURDERED_THEN_KIDNAPPED_STATUS:
-        return CANONICAL_MURDERED_STATUS
+        return CANONICAL_CAPTIVITY_STATUS
     return value
 
 
@@ -1711,6 +1710,8 @@ def prepare_nli_pack(
     mor_route_zip: Optional[Path] = None,
     mor_route_sha256: Optional[str] = None,
     investigation_polygons_lyrx: Optional[Path] = None,
+    mazal_records: Optional[Dict[str, dict]] = None,
+    mazal_xlsx: Optional[Path] = None,
 ) -> Dict[str, Any]:
     authored_polygon_lyrx = Path(investigation_polygons_lyrx) if investigation_polygons_lyrx is not None else None
     if authored_polygon_lyrx is not None and not authored_polygon_lyrx.is_file():
@@ -1742,6 +1743,7 @@ def prepare_nli_pack(
             if stem in TIMELINE_STEMS:
                 apply_timeline_minutes(collection)
             overlay_stats: Optional[Dict[str, int]] = None
+            aliases_by_pid: Dict[str, List[str]] = {}
             if stem == "people" and people_overlay_path and Path(people_overlay_path).is_file():
                 overlay = json.loads(Path(people_overlay_path).read_text(encoding="utf-8"))
                 overlay_stats = apply_people_source_overlay(collection, overlay)
@@ -1750,11 +1752,48 @@ def prepare_nli_pack(
                     collection, authorities, catalog_features, pid_mms_ids
                 )
             if stem == "people":
+                from nli_people_refresh import apply_nli_person_fields, load_mazal_records
+
+                records = mazal_records
+                if records is None:
+                    workbook = Path(mazal_xlsx) if mazal_xlsx is not None else (
+                        Path.home() / "Downloads" / "NLI-MAZAL-710_ALL_20260726.xlsx"
+                    )
+                    if workbook.is_file():
+                        records = load_mazal_records(workbook)
+                if records:
+                    field_stats = apply_nli_person_fields(collection, records)
+                    summary["nli_person_fields"] = {
+                        "updated": field_stats["updated"],
+                        "skipped_unmatched": field_stats["skipped_unmatched"],
+                    }
+                    aliases_by_pid = field_stats["aliases_by_pid"]
                 moved = jitter_coincident_points(collection.get("features") or [])
             _write_json(gis_dir / f"{stem}.geojson", collection)
             if stem == "people":
                 apply_people_name_offsets(collection.get("features") or [])
                 _write_json(gis_dir / "people_names.geojson", collection)
+                from nli_people_refresh import write_people_search_index
+                from otef_layer_processing.nli_runtime_hashes import stamp_nli_runtime_artifact_hash
+
+                sidecar = (
+                    Path(processed_layers_dir)
+                    if processed_layers_dir is not None
+                    else default_processed_nli_layers_dir(pack_dir)
+                )
+                meta_path = sidecar / "release-metadata.json"
+                if meta_path.is_file():
+                    dataset_version = (
+                        json.loads(meta_path.read_text(encoding="utf-8")).get("datasetVersion") or ""
+                    )
+                    if dataset_version:
+                        write_people_search_index(
+                            collection,
+                            dataset_version,
+                            sidecar / "people-search-index.json",
+                            aliases_by_pid,
+                        )
+                        stamp_nli_runtime_artifact_hash(sidecar, "people-search-index.json")
             layer_summary: Dict[str, Any] = {
                 "features": len(collection.get("features") or []),
                 "dropped_null_geometry": dropped,

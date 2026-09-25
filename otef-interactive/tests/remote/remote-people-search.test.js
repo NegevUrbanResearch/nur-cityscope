@@ -7,6 +7,10 @@ const index = {
     { pid: "2", nameForms: ["לא ידוע", "David Cohen"], location: "Be'eri", sublocation: "North", hasArchiveRecord: false },
     { pid: "1", nameForms: ["דוד כהן", "David Cohen"], location: "Alumim", sublocation: "South", hasArchiveRecord: true },
     { pid: "3", nameForms: ["Dana"], location: "Be'eri", sublocation: "Old road" },
+    { pid: "801", nameForms: ["לוק שני", "Shani Louk"], location: "Nova", status: "Murdered in captivity", hasArchiveRecord: true },
+    { pid: "744", nameForms: ["אליקים שפירא ענר", "Aner Elyakim Shapira"], location: "Nova", status: "Murdered", hasArchiveRecord: true },
+    { pid: "509", nameForms: ["לוקר אורי", "Ori Locker"], location: "Netiv HaAsara", status: "Murdered", hasArchiveRecord: true },
+    { pid: "90", nameForms: ["חנה קציר", "Hanna Katzir"], location: "Nir Oz", status: "Kidnap survivor", hasArchiveRecord: true },
   ],
 };
 const metadata = { datasetVersion: "v1", runtimeArtifactHashes: { "people-search-index.json": "hash" } };
@@ -70,6 +74,35 @@ describe("remote people search", () => {
     expect(runtime.resolve("2", "v1")).toMatchObject({ pid: "2", name: "David Cohen", location: "Be'eri", hasArchiveRecord: false });
     expect(runtime.resolve("2", "v2")).toBeNull();
     expect(runtime.search("", "en")).toEqual([]);
+  });
+
+  test("matches name tokens in any order and ranks exact tokens over prefixes", async () => {
+    const { createPeopleSearchRuntime } = await import("../../frontend/src/remote/remote-people-search.js");
+    const runtime = createPeopleSearchRuntime({ fetchJson: fetcher, hashBytes: async () => "hash" });
+    await runtime.load();
+    expect(runtime.search("שני לוק", "he").map((row) => row.pid)).toContain("801");
+    expect(runtime.search("לוק שני", "he")[0].pid).toBe("801");
+    expect(runtime.search("שני לו", "he").map((row) => row.pid)).toContain("801");
+    expect(runtime.search("ענר", "he").map((row) => row.pid)).toContain("744");
+    expect(runtime.search("אליקים", "he").map((row) => row.pid)).toContain("744");
+    expect(runtime.search("שפירא", "he").map((row) => row.pid)).toContain("744");
+    expect(runtime.search("ענר אליקים שפירא", "he").map((row) => row.pid)).toContain("744");
+    expect(runtime.search("לוק", "he")[0].pid).toBe("801");
+    expect(runtime.search("Shani Louk", "en")[0].pid).toBe("801");
+    expect(runtime.search("Louk Shani", "en")[0].pid).toBe("801");
+  });
+
+  test("keeps location as a whole-string fallback and omits excluded statuses", async () => {
+    const { createPeopleSearchRuntime } = await import("../../frontend/src/remote/remote-people-search.js");
+    const runtime = createPeopleSearchRuntime({ fetchJson: fetcher, hashBytes: async () => "hash" });
+    await runtime.load();
+    expect(runtime.search("Nova", "en").some((row) => row.pid === "801")).toBe(true);
+    expect(runtime.search("", "en")).toEqual([]);
+    const staff = runtime.search("חנה", "he", 8, { excludeStatuses: ["Kidnap survivor"] });
+    expect(staff.map((row) => row.pid)).not.toContain("90");
+    expect(runtime.search("חנה", "he").map((row) => row.pid)).toContain("90");
+    const captivity = runtime.search("שני", "he", 8, { excludeStatuses: ["Kidnap survivor"] });
+    expect(captivity.map((row) => row.pid)).toContain("801");
   });
 
   test("supports acknowledged selection and clears before returning to settlements", async () => {

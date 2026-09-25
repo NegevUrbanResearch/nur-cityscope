@@ -27,6 +27,7 @@ import {
   setNliLoop,
   stopNliClock,
 } from "../../frontend/src/shared/nli-investigation-clock.js";
+import { NLI_NOVA_STORY } from "../../frontend/src/shared/nli-nova-story.js";
 
 const enabled = [
   INVESTIGATION_POLYGONS_FULL_ID,
@@ -83,6 +84,47 @@ describe("nli-investigation-theme", () => {
 });
 
 describe("deriveInvestigationFrame", () => {
+  it("derives Nova polygon OBJECTIDs on its four-second beats and 320ms manual jumps", () => {
+    const novaOptions = { narrativeId: "nova" };
+    const novaClock = playNliClock(
+      idleNliClock(),
+      enabled,
+      NLI_NOVA_STORY.representativeMinutes,
+      0,
+      novaOptions,
+    );
+    const idle = deriveInvestigationFrame(idleNliClock(), 0, enabled, novaOptions);
+    const midBeat = deriveInvestigationFrame(novaClock, 2000, enabled, novaOptions);
+    const secondBeat = deriveInvestigationFrame(novaClock, 4000, enabled, novaOptions);
+    const jumped = seekNliClock(novaClock, 2, 5000, undefined, novaOptions);
+    const jumpBefore = deriveInvestigationFrame(jumped, 5319, enabled, novaOptions);
+    const jumpSettled = deriveInvestigationFrame(jumped, 5320, enabled, novaOptions);
+    const ended = deriveInvestigationFrame(endNliClock(novaClock), 20000, enabled, novaOptions);
+
+    expect(idle.achievedPolygonObjectIds).toEqual([]);
+    expect(midBeat.achievedPolygonObjectIds).toEqual([97, 100, 104]);
+    expect(midBeat.polygonObjectEntries).toEqual([
+      { objectIds: [97, 100, 104], progress: 0.5 },
+    ]);
+    expect(midBeat.completedBeats).toEqual([]);
+    expect(midBeat.activeBeat).toBeNull();
+    expect(midBeat.alarmOnset).toBeNull();
+    expect(midBeat.completedRouteFlow.active).toBe(false);
+    expect(midBeat.rippleNeedsFrames).toBe(false);
+    expect(secondBeat.achievedPolygonObjectIds).toEqual([97, 100, 104, 98, 99, 186]);
+    expect(jumpBefore.activeProgress).toBeLessThan(1);
+    expect(jumpSettled.activeProgress).toBe(1);
+    expect(ended.achievedPolygonObjectIds).toHaveLength(14);
+    expect(ended.activeProgress).toBe(1);
+    expect(ended.completedBeats).toEqual([]);
+    expect(ended.activeBeat).toBeNull();
+
+    const naturallyEnded = deriveInvestigationFrame(novaClock, 20_000, enabled, novaOptions);
+    expect(naturallyEnded.achievedPolygonObjectIds).toHaveLength(14);
+    expect(naturallyEnded.activeProgress).toBe(1);
+    expect(naturallyEnded.completedBeats).toEqual([]);
+  });
+
   it("derives a polygon-only current entry from beat elapsed time", () => {
     const clock = playNliClock(idleNliClock(), membership, [400], 0);
     const frame = deriveInvestigationFrame(clock, timelineBeatDurationMs(400) / 2, enabled, {

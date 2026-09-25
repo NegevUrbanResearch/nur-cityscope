@@ -34,10 +34,11 @@ import {
   stopNliClock,
 } from "../shared/nli-investigation-clock.js";
 import { completedInvestigationBeats } from "../shared/nli-investigation-visual-state.js";
-import { NLI_NARRATIVES } from "../shared/nli-narratives.js";
+import { NLI_NOVA_STORY, novaBeatIndexFromPercent, novaBeatPercent } from "../shared/nli-nova-story.js";
 import { novaVirtualMembership } from "../shared/nli-nova-virtual-membership.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
 import { materialIcon } from "./nli-staff-icons.js";
+import { getLocale } from "./remote-locale.js";
 
 const NLI_ICON_PLAY = materialIcon("play", 20);
 const NLI_ICON_PAUSE = materialIcon("pause", 20);
@@ -64,6 +65,30 @@ function nliNarrativeId() {
   return typeof OTEFDataContext !== "undefined"
     ? OTEFDataContext.getNarrativeState?.()?.id
     : null;
+}
+
+function nliNarrativeBoundary() {
+  const state = typeof OTEFDataContext !== "undefined"
+    ? OTEFDataContext.getNarrativeState?.()
+    : null;
+  return {
+    id: state?.id ?? null,
+    revision: Number.isInteger(state?.revision) ? state.revision : null,
+  };
+}
+
+function sameNarrativeBoundary(left, right) {
+  return left?.id === right?.id && left?.revision === right?.revision;
+}
+
+function nliCacheIdsForTransport(visible, clock, narrativeId, arm) {
+  if (narrativeId === "nova") {
+    if (clock.phase === "idle") return arm?.visibleMembership || [];
+    return clock.membership?.length
+      ? clock.membership
+      : novaVirtualMembership(visible, narrativeId, { phase: clock.phase });
+  }
+  return clock.phase === "idle" ? visible : clock.membership?.length ? clock.membership : visible;
 }
 
 function nliFiniteBeatMinutes(beats) {
@@ -232,7 +257,7 @@ function nliStoryClockLabel(clock, displayBeats) {
   return formatMinutesAsLocalClock(beats[index]);
 }
 
-export function nliBeatIndexFromPointer(el, clientX, beats) {
+export function nliBeatIndexFromPointer(el, clientX, beats, options = {}) {
   const list = nliFiniteBeatMinutes(beats);
   const n = list.length;
   if (n <= 1) return 0;
@@ -240,26 +265,67 @@ export function nliBeatIndexFromPointer(el, clientX, beats) {
   const width = rect.width || 1;
   const t = (Number(clientX) - rect.left) / width;
   const clamped = Math.max(0, Math.min(1, t));
-  return nliBeatIndexFromOccupiedHourPct(clamped, list);
+  return options.narrativeId === "nova"
+    ? novaBeatIndexFromPercent(clamped * 100)
+    : nliBeatIndexFromOccupiedHourPct(clamped, list);
 }
 
-export function paintNliTransportPlayhead(root, clock, beats) {
+function novaClockIndex(clock, beats, nowMs) {
+  if (!clock || clock.phase === "idle") return 0;
+  if (clock.phase === "ended") return NLI_NOVA_STORY.beats.length - 1;
+  const vis = evaluateClock(clock, nowMs, { narrativeId: "nova" });
+  return vis.phase === "ended" ? NLI_NOVA_STORY.beats.length - 1 : Math.max(0, vis.index);
+}
+
+function paintNovaCopy(root, index) {
   if (!root || typeof root.querySelector !== "function") return;
-  const displayBeats = nliDisplayBeats(clock, beats);
-  const index = nliThumbIndex(clock, displayBeats);
-  paintNliScrubPreview(root.querySelector("[data-nli-tl-scrub]"), index, displayBeats);
-  const clockEl = root.querySelector(".nli-tl-clock");
-  if (clockEl) {
-    clockEl.textContent = nliStoryClockLabel(clock, displayBeats);
+  const beat = NLI_NOVA_STORY.beats[Math.max(0, Math.min(NLI_NOVA_STORY.beats.length - 1, index))];
+  const locale = getLocale();
+  const time = root.querySelector(".nli-tl-nova-time");
+  const title = root.querySelector(".nli-tl-nova-title");
+  const copy = root.querySelector(".nli-tl-nova-presenter");
+  if (time) time.textContent = beat.eventTime[locale];
+  if (title) title.textContent = beat.title[locale];
+  if (copy) copy.textContent = beat.presenterText[locale];
+  for (const mark of root.querySelectorAll?.(".nli-tl-nova-mark") || []) {
+    const markIndex = Number(mark.dataset?.beatIndex);
+    mark.classList?.toggle("is-active", markIndex === index);
   }
 }
 
-export function paintNliScrubPreview(track, index, beats) {
+export function paintNliTransportPlayhead(root, clock, beats, options = {}) {
+  if (!root || typeof root.querySelector !== "function") return;
+  const displayBeats = nliDisplayBeats(clock, beats);
+  const isNova = options.narrativeId === "nova";
+  const now = options.nowMs ?? nliNowMs();
+  const index = isNova ? novaClockIndex(clock, displayBeats, now) : nliThumbIndex(clock, displayBeats);
+  paintNliScrubPreview(root.querySelector("[data-nli-tl-scrub]"), index, displayBeats, options);
+  if (isNova) {
+    paintNovaCopy(root, index);
+    const slider = root.querySelector("[data-nli-tl-scrub]");
+    const controlsDisabled = slider?.getAttribute?.("aria-disabled") === "true";
+    const back = root.querySelector("[data-nli-tl-step-back]");
+    const forward = root.querySelector("[data-nli-tl-step-forward]");
+    if (back) back.disabled = controlsDisabled || index <= 0;
+    if (forward) forward.disabled = controlsDisabled || index >= NLI_NOVA_STORY.beats.length - 1;
+  }
+  const clockEl = root.querySelector(".nli-tl-clock");
+  if (clockEl) {
+    const vis = clock && clock.phase !== "idle" ? evaluateClock(clock, now, { narrativeId: "nova" }) : null;
+    clockEl.textContent = isNova
+      ? clock?.phase === "idle" ? formatMinutesAsLocalClock(NLI_NOVA_STORY.startMinutes)
+        : formatMinutesAsLocalClock(vis?.clock != null && Number.isFinite(Number(vis.clock)) ? Number(vis.clock) : NLI_NOVA_STORY.representativeMinutes[index])
+      : nliStoryClockLabel(clock, displayBeats);
+  }
+}
+
+export function paintNliScrubPreview(track, index, beats, options = {}) {
   if (!track || typeof track.querySelector !== "function") return;
   const list = Array.isArray(beats) ? beats : [];
   const n = list.length;
   const i = n === 0 ? 0 : Math.max(0, Math.min(n - 1, Number(index) || 0));
-  const pct = nliBeatPctOccupiedHour(i, list);
+  const isNova = options.narrativeId === "nova";
+  const pct = isNova ? novaBeatPercent(i) : nliBeatPctOccupiedHour(i, list);
   const label = formatMinutesAsLocalClock(n ? list[i] : NaN);
   const thumb = track.querySelector(".nli-tl-thumb");
   const fill = track.querySelector(".nli-tl-track-fill");
@@ -284,6 +350,7 @@ export function paintNliScrubPreview(track, index, beats) {
   if (typeof track.setAttribute === "function") {
     track.setAttribute("aria-valuenow", String(i));
   }
+  if (isNova) paintNovaCopy(track.closest?.(".nli-tl-sheet") || track.parentElement, i);
 }
 
 export function isNliPlayableLayerLocked(clock, fullLayerIds) {
@@ -345,13 +412,28 @@ export function renderNliTimelineTransport(clock, options = {}) {
   const allOff = presentationActive;
   const playOff = allOff || playDisabled;
   const stepOff = allOff || stepScrubDisabled;
-  const vis = evaluateClock(src, nliNowMs());
+  const isNova = options.narrativeId === "nova";
+  const locale = getLocale();
+  const nowMs = options.nowMs ?? nliNowMs();
+  const vis = evaluateClock(src, nowMs, isNova ? { narrativeId: "nova" } : {});
   const isPlaying = src.phase === "playing" && vis.phase !== "ended";
-  const story = nliStoryClockLabel(src, displayBeats);
+  const story = isNova
+    ? src.phase === "idle" ? formatMinutesAsLocalClock(NLI_NOVA_STORY.startMinutes)
+      : formatMinutesAsLocalClock(vis.clock != null && Number.isFinite(Number(vis.clock)) ? Number(vis.clock) : NLI_NOVA_STORY.representativeMinutes[novaClockIndex(src, displayBeats, nowMs)])
+    : nliStoryClockLabel(src, displayBeats);
   const beats = nliDisplayBeats(src, displayBeats);
-  const { ticks } = nliAxisMarksFromBeats(beats);
-  const index = nliThumbIndex(src, displayBeats);
-  const pct = nliBeatPctOccupiedHour(index, beats);
+  const index = isNova ? novaClockIndex(src, beats, nowMs) : nliThumbIndex(src, displayBeats);
+  const { ticks } = isNova
+    ? { ticks: NLI_NOVA_STORY.beats.map((beat, beatIndex) => ({
+        index: beatIndex,
+        pct: novaBeatPercent(beatIndex),
+        label: beat.eventTime[locale],
+        title: beat.title[locale],
+        kind: "nova",
+      })) }
+    : nliAxisMarksFromBeats(beats);
+  const pct = isNova ? novaBeatPercent(index) : nliBeatPctOccupiedHour(index, beats);
+  const activeNovaBeat = isNova ? NLI_NOVA_STORY.beats[index] : null;
   const showBubble = src.phase !== "idle" && story;
   const loopOn = !!src.loop;
   const playAria = isPlaying ? "ariaNliTimelinePause" : "ariaNliTimelinePlay";
@@ -360,26 +442,36 @@ export function renderNliTimelineTransport(clock, options = {}) {
   const tickHtml = ticks
     .map((mark) => {
       const hourClass = mark.kind === "hour" ? " nli-tl-tick--hour" : "";
-      return `<i class="nli-tl-tick${hourClass}" style="left:${mark.pct}%"></i>`;
+      const novaMark = isNova ? ` nli-tl-nova-mark${mark.index === index ? " is-active" : ""}` : "";
+      const novaAttrs = isNova
+        ? ` data-beat-index="${mark.index}" role="img" aria-label="${escapeHtmlSafe(`${mark.label}: ${mark.title}`)}" title="${escapeHtmlSafe(`${mark.label}: ${mark.title}`)}"`
+        : "";
+      return `<i class="nli-tl-tick${hourClass}${novaMark}"${novaAttrs} style="left:${mark.pct}%"></i>`;
     })
     .join("");
   const hourHtml = ticks
     .filter((mark) => mark.label)
     .map(
       (mark) =>
-        `<span style="left:${mark.pct}%">${escapeHtmlSafe(mark.label)}</span>`,
+        `<span${isNova ? ` class="nli-tl-nova-mark-label" data-beat-index="${mark.index}"` : ""} style="left:${mark.pct}%">${escapeHtmlSafe(mark.label)}</span>`,
     )
     .join("");
-  return `<div class="nli-tl-sheet" aria-disabled="${allOff ? "true" : "false"}">
+  const novaCopy = isNova ? `<div class="nli-tl-nova-copy" aria-live="polite">
+    <div class="nli-tl-nova-event"><span class="nli-tl-nova-time">${escapeHtmlSafe(activeNovaBeat.eventTime[locale])}</span> <span class="nli-tl-nova-title">${escapeHtmlSafe(activeNovaBeat.title[locale])}</span></div>
+    <p class="nli-tl-nova-presenter">${escapeHtmlSafe(activeNovaBeat.presenterText[locale])}</p>
+  </div>` : "";
+  const beatDisabled = (target) => isNova && (target < 0 || target >= NLI_NOVA_STORY.beats.length);
+  return `<div class="nli-tl-sheet" aria-disabled="${allOff ? "true" : "false"}"${isNova ? ' data-narrative-id="nova"' : ""}>
   <div class="nli-tl-clock" dir="ltr">${escapeHtmlSafe(story)}</div>
+  ${novaCopy}
   <div class="nli-tl-dock">
     <button type="button" class="nli-tl-btn" data-nli-tl-stop data-i18n-aria="ariaNliTimelineStop" aria-label="${escapeHtmlSafe(t("ariaNliTimelineStop"))}"${disabledAttr(allOff)}>${NLI_ICON_STOP}</button>
     <button type="button" class="nli-tl-btn nli-tl-btn--play" data-nli-tl-play data-i18n-aria="${playAria}" aria-label="${escapeHtmlSafe(t(playAria))}"${disabledAttr(playOff)}>${playIcon}</button>
     <button type="button" class="nli-tl-btn nli-tl-loop${loopOn ? " nli-tl-loop--on" : ""}" data-nli-tl-loop data-i18n-aria="ariaNliTimelineLoop" aria-label="${escapeHtmlSafe(t("ariaNliTimelineLoop"))}" aria-pressed="${loopOn ? "true" : "false"}"${disabledAttr(allOff)}>${NLI_ICON_LOOP}</button>
   </div>
   <div class="nli-tl-scrub-row">
-    <button type="button" class="nli-tl-step" data-nli-tl-step-back data-i18n-aria="ariaNliTimelineStepBack" aria-label="${escapeHtmlSafe(t("ariaNliTimelineStepBack"))}"${disabledAttr(stepOff)}>${NLI_ICON_BACK}</button>
-    <div class="nli-tl-track${src.phase === "idle" ? " nli-tl-track--idle" : ""}" data-nli-tl-scrub dir="ltr" data-i18n-aria="ariaNliTimelineScrub" aria-label="${escapeHtmlSafe(t("ariaNliTimelineScrub"))}" role="slider" aria-valuemin="0" aria-valuemax="${Math.max(0, beats.length - 1)}" aria-valuenow="${index}"${stepOff ? ' aria-disabled="true"' : ""}>
+    <button type="button" class="nli-tl-step" data-nli-tl-step-back data-i18n-aria="ariaNliTimelineStepBack" aria-label="${escapeHtmlSafe(t("ariaNliTimelineStepBack"))}"${disabledAttr(stepOff || beatDisabled(index - 1))}>${NLI_ICON_BACK}</button>
+    <div class="nli-tl-track${src.phase === "idle" ? " nli-tl-track--idle" : ""}" data-nli-tl-scrub${isNova ? ' data-narrative-id="nova"' : ""} dir="ltr" data-i18n-aria="ariaNliTimelineScrub" aria-label="${escapeHtmlSafe(t("ariaNliTimelineScrub"))}" role="slider" aria-valuemin="0" aria-valuemax="${Math.max(0, beats.length - 1)}" aria-valuenow="${index}"${stepOff ? ' aria-disabled="true"' : isNova ? ' tabindex="0"' : ""}>
       ${showBubble ? `<div class="nli-tl-bubble" dir="ltr" style="left:${pct}%">${escapeHtmlSafe(story)}</div>` : ""}
       <div class="nli-tl-track-line"></div>
       <div class="nli-tl-track-fill" style="width:${src.phase === "idle" ? 0 : pct}%"></div>
@@ -387,7 +479,7 @@ export function renderNliTimelineTransport(clock, options = {}) {
       <div class="nli-tl-hours">${hourHtml}</div>
       <div class="nli-tl-thumb" style="left:${pct}%"></div>
     </div>
-    <button type="button" class="nli-tl-step" data-nli-tl-step-forward data-i18n-aria="ariaNliTimelineStepForward" aria-label="${escapeHtmlSafe(t("ariaNliTimelineStepForward"))}"${disabledAttr(stepOff)}>${NLI_ICON_FWD}</button>
+    <button type="button" class="nli-tl-step" data-nli-tl-step-forward data-i18n-aria="ariaNliTimelineStepForward" aria-label="${escapeHtmlSafe(t("ariaNliTimelineStepForward"))}"${disabledAttr(stepOff || beatDisabled(index + 1))}>${NLI_ICON_FWD}</button>
   </div>
 </div>`;
 }
@@ -398,12 +490,17 @@ export function nliTransportSheetHtml(
   cache,
   presentationActive,
   narrativeActive = false,
+  narrativeId = null,
 ) {
   if (!selected || selected.id !== "nli") return "";
-  const visible = nliPlayableIdsFromGroups([selected]);
+  const isNova = narrativeId === "nova";
+  const visible = isNova
+    ? novaVirtualMembership(nliPlayableIdsFromGroups([selected]), narrativeId, { phase: "paused" })
+    : nliPlayableIdsFromGroups([selected]);
   const cacheReady = nliCacheReadyForIds(cache, visible);
   const displayBeats =
-    clock && clock.phase !== "idle" && Array.isArray(clock.beats) && clock.beats.length > 0
+    isNova ? NLI_NOVA_STORY.representativeMinutes
+    : clock && clock.phase !== "idle" && Array.isArray(clock.beats) && clock.beats.length > 0
       ? clock.beats
       : beatsForMembership(visible, nliFeatureBagsFromCache(cache));
   const controlsOff = presentationActive || visible.length === 0 || !cacheReady;
@@ -415,6 +512,7 @@ export function nliTransportSheetHtml(
     visibleMembership: visible,
     lineFeatures: nliFeatureBagsFromCache(cache).lineFeatures,
     motionMode: resolveMotionMode(),
+    narrativeId,
   });
 }
 
@@ -496,7 +594,9 @@ export function bindNliTimelinePointerListeners(content, host) {
     const beats = nliDisplayBeats(clock, fallbackBeats);
     const index = Number.isFinite(preview)
       ? preview
-      : nliBeatIndexFromPointer(scrub, e.clientX, beats);
+      : nliBeatIndexFromPointer(scrub, e.clientX, beats, {
+          narrativeId: scrub.getAttribute?.("data-narrative-id") ?? null,
+        });
     host._nliScrubEl = null;
     void host.handleNliTimelineScrubPointerUp(index);
   });
@@ -504,6 +604,21 @@ export function bindNliTimelinePointerListeners(content, host) {
   content.addEventListener("pointercancel", () => {
     host._nliScrubEl = null;
     void host.handleNliTimelineScrubPointerCancel();
+  });
+
+  content.addEventListener("keydown", (e) => {
+    const slider = e.target instanceof Element ? e.target.closest('[data-nli-tl-scrub][data-narrative-id="nova"]') : null;
+    if (!slider) return;
+    const index = Number(slider.getAttribute("aria-valuenow")) || 0;
+    const next = e.key === "ArrowLeft" ? index - 1
+      : e.key === "ArrowRight" ? index + 1
+        : e.key === "Home" ? 0
+          : e.key === "End" ? NLI_NOVA_STORY.beats.length - 1
+            : null;
+    if (next == null) return;
+    e.preventDefault();
+    const clamped = Math.max(0, Math.min(NLI_NOVA_STORY.beats.length - 1, next));
+    if (clamped !== index) void host.handleNliTimelineSelectBeat(clamped);
   });
 }
 
@@ -542,6 +657,16 @@ export const nliTimelineHostMethods = {
     return this._isPresentationActive();
   },
 
+  _clearNliScrubOnNarrativeChange() {
+    if (!this._nliScrub || sameNarrativeBoundary(this._nliScrub.narrativeBoundary, nliNarrativeBoundary())) {
+      return false;
+    }
+    this._nliScrub = null;
+    this._nliScrubEl = null;
+    this._nliOptimisticClock = null;
+    return true;
+  },
+
   _visibleNliPlayableIds() {
     return nliPlayableIdsFromGroups(this.getEffectiveGroupsForView());
   },
@@ -552,10 +677,13 @@ export const nliTimelineHostMethods = {
 
   _nliArmPayload() {
     const chips = this._visibleNliPlayableIds();
-    const visibleMembership = novaVirtualMembership(chips, nliNarrativeId(), { phase: "paused" });
+    const narrativeId = nliNarrativeId();
+    const visibleMembership = novaVirtualMembership(chips, narrativeId, { phase: "paused" });
     return {
       visibleMembership,
-      beats: beatsForMembership(visibleMembership, nliFeatureBagsFromCache(this._nliFeatureCache)),
+      beats: narrativeId === "nova"
+        ? NLI_NOVA_STORY.representativeMinutes
+        : beatsForMembership(visibleMembership, nliFeatureBagsFromCache(this._nliFeatureCache)),
     };
   },
 
@@ -583,17 +711,19 @@ export const nliTimelineHostMethods = {
     const content = sheet?.querySelector(".sheet-content") || sheet;
     if (!content) return;
     const fallbackBeats = this._nliArmPayload().beats;
-    paintNliTransportPlayhead(content, clock, fallbackBeats);
+    paintNliTransportPlayhead(content, clock, fallbackBeats, { narrativeId: nliNarrativeId() });
   },
 
   _syncNliPlayheadTicker(clock) {
     this._clearNliPlayheadTicker();
     if (this._nliScrub) return;
     if (!clock || clock.phase !== "playing") return;
-    const vis = evaluateClock(clock, nliNowMs());
+    const narrativeId = nliNarrativeId();
+    const clockOptions = narrativeId === "nova" ? { narrativeId } : {};
+    const vis = evaluateClock(clock, nliNowMs(), clockOptions);
     if (vis.phase === "ended") return;
     const elapsed = Number(vis.beatElapsedMs);
-    const beatMs = Number.isFinite(Number(vis.clock))
+    const beatMs = narrativeId === "nova" ? NLI_NOVA_STORY.beatDurationMs : Number.isFinite(Number(vis.clock))
       ? timelineBeatDurationMs(vis.clock)
       : TIMELINE_BEAT_MS;
     const delay = Math.max(0, beatMs - (Number.isFinite(elapsed) ? elapsed : 0));
@@ -601,7 +731,7 @@ export const nliTimelineHostMethods = {
       this._nliPlayheadTimer = null;
       if (this._nliScrub) return;
       if (!clock || clock.phase !== "playing") return;
-      const visNow = evaluateClock(clock, nliNowMs());
+      const visNow = evaluateClock(clock, nliNowMs(), clockOptions);
       if (visNow.phase === "ended") return;
       this._paintNliPlayhead(clock);
       this._syncNliPlayheadTicker(clock);
@@ -615,7 +745,9 @@ export const nliTimelineHostMethods = {
     }
     if (!clock || clock.loop || clock.phase !== "playing") return;
     const now = nliNowMs();
-    const dur = clockStoryDurationMs(clock.beats, clock);
+    const narrativeId = nliNarrativeId();
+    const clockOptions = narrativeId === "nova" ? { narrativeId } : {};
+    const dur = clockStoryDurationMs(clock.beats, clock, clockOptions);
     const delay = Math.max(0, dur - clockPositionMs(clock, now));
     const revision = clock.revision;
     this._nliEndTimer = setTimeout(() => {
@@ -626,7 +758,7 @@ export const nliTimelineHostMethods = {
           ? OTEFDataContext.getInvestigationClock()
           : null;
       if (!current || current.revision !== revision) return;
-      void OTEFDataContext.patchInvestigationClock(endNliClock(current));
+      void OTEFDataContext.patchInvestigationClock(endNliClock(current, clockOptions));
     }, delay);
   },
 
@@ -680,38 +812,47 @@ export const nliTimelineHostMethods = {
   /** `from` starts playback at that minute; `to` drops later beats; a boolean `loop` sets looping. All apply only when arming from idle. */
   async handleNliTimelinePlay({ from, to, loop } = {}) {
     if (this._isNliControlDisabled()) return;
-    const clock = this._liveNliClock();
+    const clock = this._nliOptimisticClock || this._liveNliClock();
     const now = nliNowMs();
-    const vis = evaluateClock(clock, now);
     const narrativeId = nliNarrativeId();
+    const narrativeBoundary = nliNarrativeBoundary();
+    const clockOptions = narrativeId === "nova" ? { narrativeId } : {};
+    const vis = evaluateClock(clock, now, clockOptions);
     const leadInMinutes = Number.isFinite(from)
       ? from
-      : narrativeId === "nova" ? NLI_NARRATIVES.nova.playStartMinutes : undefined;
+      : undefined;
     if (clock.phase === "ended" || vis.phase === "ended") {
       await this._patchNliClock(replayNliClock(clock, now, {
-        leadInMinutes: clock.leadInMinutes ?? leadInMinutes,
+        ...clockOptions,
+        ...(!clockOptions.narrativeId && { leadInMinutes: clock.leadInMinutes ?? leadInMinutes }),
       }));
       return;
     }
     if (clock.phase === "playing") {
-      await this._patchNliClock(pauseNliClock(clock, now));
+      await this._patchNliClock(pauseNliClock(clock, now, clockOptions));
       return;
     }
     if (clock.phase === "paused") {
       await this._patchNliClock(resumeNliClock(clock, now));
       return;
     }
-    const chips = this._visibleNliPlayableIds();
-    const membership = novaVirtualMembership(chips, narrativeId, { phase: "playing" });
+    const arm = this._nliArmPayload();
+    const membership = arm.visibleMembership;
     if (!this._nliCacheReady(membership)) {
       await this._ensureNliFeatureCache();
+      if (narrativeId === "nova"
+          && (nliNarrativeId() !== narrativeId
+            || !sameNarrativeBoundary(narrativeBoundary, nliNarrativeBoundary()))) return;
       if (!this._nliCacheReady(membership)) return;
     }
-    const beats = beatsForMembership(membership, nliFeatureBagsFromCache(this._nliFeatureCache))
-      .filter((minutes) => !Number.isFinite(to) || minutes <= to);
+    const beats = (narrativeId === "nova" ? arm.beats : beatsForMembership(membership, nliFeatureBagsFromCache(this._nliFeatureCache)))
+      .filter((minutes) => narrativeId === "nova" || !Number.isFinite(to) || minutes <= to);
     if (!beats.length) return;
     const armed = typeof loop === "boolean" ? setNliLoop(clock, loop) : clock;
-    await this._patchNliClock(playNliClock(armed, membership, beats, now, { leadInMinutes }));
+    await this._patchNliClock(playNliClock(armed, membership, beats, now, {
+      ...clockOptions,
+      ...(!clockOptions.narrativeId && { leadInMinutes }),
+    }));
   },
 
   async handleNliTimelineStop() {
@@ -727,6 +868,16 @@ export const nliTimelineHostMethods = {
 
   async handleNliTimelineStep(delta) {
     if (this._isNliControlDisabled()) return;
+    if (nliNarrativeId() === "nova") {
+      const clock = this._liveNliClock();
+      const vis = evaluateClock(clock, nliNowMs(), { narrativeId: "nova" });
+      const current = clock.phase === "idle" ? -1
+        : clock.phase === "ended" || vis.phase === "ended" ? NLI_NOVA_STORY.beats.length - 1
+          : Math.max(0, vis.index);
+      const index = current < 0 ? (delta > 0 ? 0 : -1) : current + Math.trunc(Number(delta) || 0);
+      if (index < 0 || index >= NLI_NOVA_STORY.beats.length) return;
+      return this.handleNliTimelineSelectBeat(index);
+    }
     const clock = this._liveNliClock();
     const visible = this._visibleNliPlayableIds();
     if (visible.length === 0) return;
@@ -742,15 +893,41 @@ export const nliTimelineHostMethods = {
     await this._patchNliClock(next);
   },
 
+  async handleNliTimelineSelectBeat(index) {
+    const narrativeId = nliNarrativeId();
+    if (this._isNliControlDisabled() || narrativeId !== "nova") return;
+    const narrativeBoundary = nliNarrativeBoundary();
+    const clock = this._nliOptimisticClock || this._liveNliClock();
+    const visible = this._visibleNliPlayableIds();
+    const arm = clock.phase === "idle" ? this._nliArmPayload() : undefined;
+    const cacheIds = nliCacheIdsForTransport(visible, clock, "nova", arm);
+    if (cacheIds.length === 0 || !this._nliCacheReady(cacheIds)) {
+      await this._ensureNliFeatureCache();
+      if (nliNarrativeId() !== narrativeId
+          || !sameNarrativeBoundary(narrativeBoundary, nliNarrativeBoundary())) return;
+      if (cacheIds.length === 0 || !this._nliCacheReady(cacheIds)) return;
+    }
+    if (clock.phase === "idle" && (!arm.beats || arm.beats.length === 0)) return;
+    const next = seekNliClock(clock, index, nliNowMs(), arm, { narrativeId: "nova" });
+    if (next.phase === "idle") return;
+    this._nliScrub = null;
+    this._nliOptimisticClock = null;
+    await this._patchNliClock(next);
+  },
+
   handleNliTimelineScrubPointerDown(clientX) {
     if (this._isNliControlDisabled()) return;
     const clock = this._liveNliClock();
     const visible = this._visibleNliPlayableIds();
-    const cacheIds = clock.phase === "idle" ? visible : clock.membership.length ? clock.membership : visible;
-    if (visible.length === 0 || !this._nliCacheReady(cacheIds)) return;
-    this._nliScrub = { fromPlaying: clock.phase === "playing" };
+    const narrativeId = nliNarrativeId();
+    const clockOptions = narrativeId === "nova" ? { narrativeId } : {};
+    const arm = narrativeId === "nova" && clock.phase === "idle" ? this._nliArmPayload() : undefined;
+    const cacheIds = nliCacheIdsForTransport(visible, clock, narrativeId, arm);
+    if (cacheIds.length === 0 || !this._nliCacheReady(cacheIds)) return;
+    let restoreClock = clock;
     if (clock.phase === "playing") {
-      this._nliOptimisticClock = pauseNliClock(clock, nliNowMs());
+      this._nliOptimisticClock = pauseNliClock(clock, nliNowMs(), clockOptions);
+      restoreClock = this._nliOptimisticClock;
       this._syncNliEndedTimer(this._nliOptimisticClock);
       if (
         typeof OTEFDataContext !== "undefined" &&
@@ -758,25 +935,44 @@ export const nliTimelineHostMethods = {
       ) {
         void OTEFDataContext.patchInvestigationClock(this._nliOptimisticClock);
       }
+    } else if (narrativeId === "nova" && clock.phase === "idle") {
+      restoreClock = seekNliClock(clock, 0, nliNowMs(), arm, clockOptions);
+      this._nliOptimisticClock = restoreClock;
+    } else if (narrativeId === "nova") {
+      restoreClock = clock;
+      this._nliOptimisticClock = clock;
     }
+    this._nliScrub = {
+      fromPlaying: clock.phase === "playing",
+      restoreClock,
+      narrativeId,
+      narrativeBoundary: nliNarrativeBoundary(),
+    };
     if (typeof clientX === "number") {
       this.handleNliTimelineScrubPointerMove(clientX);
     }
   },
 
   handleNliTimelineScrubPointerMove(clientX) {
+    if (this._clearNliScrubOnNarrativeChange()) return;
     if (this._isNliControlDisabled()) return;
     const track = this._nliScrubEl;
     if (!track || !this._nliScrub) return;
     const clock = this._readNliClock();
     const beats = nliDisplayBeats(clock, this._nliArmPayload().beats);
-    const index = nliBeatIndexFromPointer(track, clientX, beats);
+    const narrativeId = nliNarrativeId();
+    const index = nliBeatIndexFromPointer(track, clientX, beats, { narrativeId });
     this._nliScrub.previewIndex = index;
-    paintNliScrubPreview(track, index, beats);
+    paintNliScrubPreview(track, index, beats, { narrativeId });
   },
 
   async handleNliTimelineScrubPointerUp(beatIndex) {
+    if (this._clearNliScrubOnNarrativeChange()) return;
     if (this._isNliControlDisabled()) return;
+    if (nliNarrativeId() === "nova") {
+      const index = Math.max(0, Math.min(NLI_NOVA_STORY.beats.length - 1, Math.trunc(Number(beatIndex) || 0)));
+      return this.handleNliTimelineSelectBeat(index);
+    }
     const clock = this._liveNliClock();
     const visible = this._visibleNliPlayableIds();
     const cacheIds = clock.phase === "idle" ? visible : clock.membership.length ? clock.membership : visible;
@@ -802,10 +998,20 @@ export const nliTimelineHostMethods = {
   },
 
   async handleNliTimelineScrubPointerCancel() {
+    if (this._clearNliScrubOnNarrativeChange()) return;
     if (this._isNliControlDisabled()) return;
     const scrub = this._nliScrub;
     this._nliScrub = null;
-    if (!scrub || !scrub.fromPlaying) {
+    if (!scrub) {
+      this._nliOptimisticClock = null;
+      return;
+    }
+    if (scrub.narrativeId === "nova") {
+      this._nliOptimisticClock = null;
+      if (scrub.restoreClock?.phase !== "idle") await this._patchNliClock(scrub.restoreClock);
+      return;
+    }
+    if (!scrub.fromPlaying) {
       this._nliOptimisticClock = null;
       return;
     }

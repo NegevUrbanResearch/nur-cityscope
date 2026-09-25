@@ -164,6 +164,31 @@ describe("GIS person selection visual", () => {
     expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID)).toBeTruthy();
   });
 
+  test("clearing a focused person flies back to the pre-focus camera", async () => {
+    const beginCameraTravel = vi.fn();
+    const d = setup(undefined, undefined, { beginCameraTravel });
+    d.map.getCenter = vi.fn(() => ({ lng: 34.4, lat: 31.3 }));
+    d.map.getZoom = vi.fn(() => 10);
+    d.map.getBearing = vi.fn(() => 12);
+    d.map.getPitch = vi.fn(() => 0);
+    const person = await d.visual.resolve("11", "v1");
+    d.visual.show(person, { focus: true });
+    d.map.flyTo.mockClear();
+    beginCameraTravel.mockClear();
+    d.visual.hide();
+    expect(d.map.flyTo).not.toHaveBeenCalled();
+    d.visual.hide({ restoreCamera: true });
+    expect(beginCameraTravel).toHaveBeenCalled();
+    expect(d.map.flyTo).toHaveBeenCalledWith(expect.objectContaining({
+      center: { lng: 34.4, lat: 31.3 },
+      zoom: 10,
+      bearing: 12,
+      pitch: 0,
+      duration: 1600,
+      essential: true,
+    }));
+  });
+
   test("viewport helper uses projected point and 32px padding", async () => {
     const d = setup();
     const person = await d.visual.resolve("11", "v1");

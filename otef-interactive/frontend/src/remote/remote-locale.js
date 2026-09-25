@@ -36,6 +36,11 @@ const MESSAGES = {
     navLayers: "שכבות",
     navCuration: "הספרייה",
     navSlideshow: "מצגת",
+    presentationOpen: "פתיחת המצגת",
+    presentationPrevious: "הקודם",
+    presentationNext: "הבא",
+    presentationClose: "סגירת המצגת",
+    presentationUnavailable: "המצגת אינה זמינה",
     sectionNavigation: "ניווט",
     navPanGroupLabel: "",
     basemapControlTitle: "\u05de\u05e4\u05ea \u05e8\u05e7\u05e2",
@@ -55,17 +60,10 @@ const MESSAGES = {
     nliNarrativeSderotAria: "הפעלה או סיום של נרטיב שדרות",
     nliNarrativeHostages: "חטופים",
     nliNarrativeHostagesAria: "הפעלה או סיום של נרטיב חטופים",
-    nliNarrativePresentationOpen: "\u05e4\u05ea\u05d7 \u05de\u05e6\u05d2\u05ea",
-    nliNarrativePresentationClose: "\u05e1\u05d2\u05d5\u05e8 \u05de\u05e6\u05d2\u05ea",
-    nliNarrativePresentationOpening: "\u05e4\u05d5\u05ea\u05d7 \u05de\u05e6\u05d2\u05ea\u2026",
-    nliNarrativePresentationClosing: "\u05e1\u05d5\u05d2\u05e8 \u05de\u05e6\u05d2\u05ea\u2026",
-    nliNarrativePresentationOpenAria: "\u05e4\u05ea\u05d9\u05d7\u05ea \u05de\u05e6\u05d2\u05ea \u05de\u05e9\u05e4\u05d7\u05ea \u05e9\u05d2\u05d1",
-    nliNarrativePresentationCloseAria: "\u05e1\u05d2\u05d9\u05e8\u05ea \u05de\u05e6\u05d2\u05ea \u05de\u05e9\u05e4\u05d7\u05ea \u05e9\u05d2\u05d1",
     nliNarrativeSlideshowDisabled: "\u05d4\u05e0\u05e8\u05d8\u05d9\u05d1\u05d9\u05dd \u05d0\u05d9\u05e0\u05dd \u05d6\u05de\u05d9\u05e0\u05d9\u05dd \u05d1\u05d6\u05de\u05df \u05de\u05e6\u05d2\u05ea \u05d4\u05d4\u05e7\u05e8\u05e0\u05d4",
     slideshowNarrativeDisabled: "\u05de\u05e6\u05d2\u05ea \u05d4\u05d4\u05e7\u05e8\u05e0\u05d4 \u05d0\u05d9\u05e0\u05d4 \u05d6\u05de\u05d9\u05e0\u05d4 \u05d1\u05d6\u05de\u05df \u05e0\u05e8\u05d8\u05d9\u05d1",
     slideshowStartFailed: "\u05dc\u05d0 \u05e0\u05d9\u05ea\u05df \u05dc\u05d4\u05e4\u05e2\u05d9\u05dc \u05d0\u05ea \u05de\u05e6\u05d2\u05ea \u05d4\u05d4\u05e7\u05e8\u05e0\u05d4",
     nliNarrativeTransitionFailed: "\u05dc\u05d0 \u05e0\u05d9\u05ea\u05df \u05dc\u05e9\u05e0\u05d5\u05ea \u05d0\u05ea \u05d4\u05e0\u05e8\u05d8\u05d9\u05d1",
-    nliNarrativePresentationUnavailable: "\u05d4\u05de\u05e6\u05d2\u05ea \u05d0\u05d9\u05e0\u05d4 \u05d6\u05de\u05d9\u05e0\u05d4",
     nliPackPaneLayers: "\u05e9\u05db\u05d1\u05d5\u05ea",
     nliPackPaneTimeline: "\u05e6\u05d9\u05e8 \u05d6\u05de\u05df",
     nliPackPaneAria:
@@ -234,6 +232,11 @@ const MESSAGES = {
     navLayers: "Layers",
     navCuration: "Library",
     navSlideshow: "Slideshow",
+    presentationOpen: "Open presentation",
+    presentationPrevious: "Previous",
+    presentationNext: "Next",
+    presentationClose: "Close presentation",
+    presentationUnavailable: "Presentation unavailable",
     sectionNavigation: "Navigation",
     navPanGroupLabel: "",
     basemapControlTitle: "Basemap",
@@ -253,17 +256,10 @@ const MESSAGES = {
     nliNarrativeSderotAria: "Activate or end the Sderot narrative",
     nliNarrativeHostages: "Hostages",
     nliNarrativeHostagesAria: "Activate or end the Hostages narrative",
-    nliNarrativePresentationOpen: "Open presentation",
-    nliNarrativePresentationClose: "Close presentation",
-    nliNarrativePresentationOpening: "Opening presentation\u2026",
-    nliNarrativePresentationClosing: "Closing presentation\u2026",
-    nliNarrativePresentationOpenAria: "Open Segev family presentation",
-    nliNarrativePresentationCloseAria: "Close Segev family presentation",
     nliNarrativeSlideshowDisabled: "Narratives are unavailable while the projection slideshow is active",
     slideshowNarrativeDisabled: "Projection slideshow is unavailable while a narrative is active",
     slideshowStartFailed: "Could not start the projection slideshow",
     nliNarrativeTransitionFailed: "Could not change the narrative",
-    nliNarrativePresentationUnavailable: "Presentation is unavailable",
     nliPackPaneLayers: "Layers",
     nliPackPaneTimeline: "Timeline",
     nliPackPaneAria: "National Library pack view",
@@ -653,6 +649,10 @@ export function t(key, vars = {}) {
     }
   }
   return text;
+}
+
+export function messageForLocale(locale, key) {
+  return MESSAGES[locale === "he" ? "he" : "en"]?.[key] || MESSAGES.en[key] || key;
 }
 
 /**

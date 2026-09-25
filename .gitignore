@@ -167,3 +167,6 @@ nur-colab-map
 otef-interactive/public/projection-calibration/td-baselines/*-raw.json
 otef-interactive/public/projection-calibration/td-baselines/*-evaluated-mesh.json
 otef-interactive/public/projection-calibration/td-baselines/capture-fingerprints.json
+
+# Local licensed exhibit presentation; never release or commit.
+otef-interactive/public/local/

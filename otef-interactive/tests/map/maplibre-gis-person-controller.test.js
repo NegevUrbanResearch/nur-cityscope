@@ -97,6 +97,15 @@ describe("GIS person controller", () => {
     expect(d.visual.show).toHaveBeenCalledWith(expect.objectContaining({ pid: "p-2" }), expect.objectContaining({ focus: true }));
   });
 
+  test("clearing the acknowledged person restores the camera that the fly-in used", async () => {
+    const d = setup();
+    d.emit("personSelection", { personId: "p-1", datasetVersion: "v1", revision: 1 });
+    await Promise.resolve();
+    d.visual.hide.mockClear();
+    d.emit("personSelection", { personId: null, datasetVersion: null, revision: 2 });
+    expect(d.visual.hide).toHaveBeenCalledWith(expect.objectContaining({ restoreCamera: true }));
+  });
+
   test("empty space and another feature hide immediately and clear the acknowledged state", () => {
     const d = setup({ snapshot: { personId: "p-1", datasetVersion: "v1", revision: 2 } });
     d.map.queryRenderedFeatures.mockReturnValue([{ source: "fixture.catalog", properties: {} }]);

@@ -32,9 +32,22 @@ If you move to a new step while a cue is still being applied, the old cue is
 abandoned and only the latest one completes. The status line under the step
 shows *applying*, *ready*, or *failed*.
 
-Leaving a step that uses the presentation closes the presentation. Returning
-home cancels any pending cue, closes the archive and presentation, and exits
-the narrative.
+Presentation steps show GIS slide controls in the staff remote. Use Previous
+and Next for slides and the separate Close button to leave the presentation.
+Scene Back, Scene Next, and Home close the presentation before changing the
+run-of-show step. Only the presentation Close button runs a special destination:
+Shura resumes the parent choice, and Hostages advances to Nir Oz people.
+Returning Home also cancels any pending cue and closes the archive.
+
+## Home shortcuts
+
+The Home screen links directly to the existing Identity Database and Names Wall
+steps. These links use the same cues and search controls as the run of show.
+Identity Database and Names Wall are no longer duplicated under Free control.
+
+Clearing the search field, returning Home, or moving between these two steps
+clears both person and place focus. The field is never empty while a search
+focus remains active. Search status text appears only for pending work or errors.
 
 ## What entering a narrative does
 
@@ -53,10 +66,15 @@ settlements dim and it gets the focus outline. If it has a label, a red point
 marker is placed with that label. Both screens also apply the narrative's
 people filter.
 
+Nova is the GIS camera exception: entry fits the reviewed Nova extent with 48
+px padding. The extent stays fixed while the five timeline beats change. The
+Mor route may move the GIS camera; turning the route off restores the Nova
+extent.
+
 | Narrative | Camera | Focus settlement | Marker label | People shown | Idle clock caption |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `segev` | Segev home, zoom 18 | בארי | בית משפחת שגב (at the camera center) | Everyone except survivors | 06:41 |
-| `nova` | Nova site, zoom 15 | נובה (and polygon 100 highlighted) | נובה (at the camera center) | Everyone with location Nova | 08:03 |
+| `nova` | Reviewed Nova extent, 48 px padding | נובה (and polygon 100 highlighted) | נובה | Everyone with location Nova | 08:03 |
 | `sderot` | Sderot, zoom 15 | שדרות | תחנת המשטרה (police station) | Everyone except survivors | 06:29 |
 | `hostages` | Nir Oz, zoom 15 | ניר עוז | בית משפחת פרי (Peri home) | Everyone with location Nir Oz | 06:29 |
 | `hostages_all` | Regional overview `[34.5, 31.4]`, zoom 10 | None (no dimming) | None | Kidnap survivors and murdered in captivity, from all locations | 06:29 |
@@ -106,44 +124,55 @@ A narrative opened from the home screen ends with **Finish**.
 | # | Step | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- |
 | 1 | The house in Be'eri | Focus | Idle after entry (caption 06:41) | |
-| 2 | Presentation | Focus | No change | Presentation (Canva, slides 1–8) |
+| 2 | Presentation | Focus | No change | Open the Segev slides from the remote; Close stays on this step. |
 
 ## Nova and Mor Levy (`nova`)
 
 | # | Step | Layers | Clock | Escape routes | Remote controls |
 | :---: | :--- | :--- | :--- | :--- | :--- |
-| 1 | The Nova site | Focus + open spaces | Stopped (idle, caption 08:03) | All off | |
-| 2 | The compounds | Nova timeline | Plays from 08:03 | All off | Timeline |
+| 1 | The Nova site | Focus + open spaces | Stopped; previews beat 1 and shows 08:03 | All off | |
+| 2 | The Nova story | Nova timeline | Five authored beats, 4 seconds each (20 seconds total); play starts beat 1 at 0% | All off | Five-mark scrubber and beat navigation |
 | 3 | Escape routes | Nova timeline | No change | Individual routes on | Escape toggles |
-| 4 | Mor Levy | Nova timeline | No change | Mor's route only | Escape toggles, archive (מור לוי), presentation* |
-| 5 | Memorial | Focus + people (Nova people only) | No change | Individual routes on | Escape toggles, presentation* |
+| 4 | Mor Levy | Nova timeline | No change | Mor's route only | Escape toggles, archive (מור לוי), and Mor Levy slides; Close stays on this step. |
+| 5 | Memorial | Focus + people (Nova people only) | No change | Individual routes on | Escape toggles and Nova memorial slides; Close stays on this step. |
 
-Not done yet: the step 2 compound names (not drawn on the map) and the
-five-event limit (the full Nova timeline plays).
+The Nova timeline uses five authored beats, not source-timestamp grouping:
+
+| Beat | Event time | Presenter title |
+| :---: | :--- | :--- |
+| 1 | 08:12–08:23 | Highway 232 and the Nova site |
+| 2 | 08:26–08:40 | The fighting expands |
+| 3 | 09:00–09:15 | Abductions and parking areas |
+| 4 | 10:30 | Noa Argamani and Avinatan Or |
+| 5 | 12:00–13:00 | Abductions during the afternoon |
+
+The remote shows only the active beat's event time, title, and presenter
+paragraph. The exhibit clock reads 08:03 before playback and after Stop; Play
+begins beat 1 at zero reveal. Each automatic beat lasts four seconds. Natural
+completion holds beat 5 and 100% progress. Back, forward, pointer selection,
+and Left/Right, Home, and End keyboard controls select a beat without wrapping;
+the first and last marks sit at the scrubber ends. Polygon 107 is excluded
+pending source review and its source record is unchanged.
 
 ## Sderot (`sderot`)
 
 | # | Step | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- |
 | 1 | Sderot | Focus | Idle after entry | |
-| 2 | Presentation | Focus | No change | Presentation* (slides 17–20) |
+| 2 | Presentation | Focus | No change | Open the Sderot slides from the remote; Close stays on this step. |
 
-## Shura Camp (no narrative, draft)
-
-Both steps are drafts. Opening Shura exits any narrative (dark basemap,
-overview camera).
+## Shura Camp (`shura`; no separate entry scene)
 
 | # | Step | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- |
-| 1 | Shura Camp | Focus | No change | |
-| 2 | Presentation | Focus | No change | Presentation* (slides 21–27) |
+| 1 | Shura Camp | Timeline layers | Idle | Slides 22–28 open automatically after the cue succeeds; there is no manual Open button. Explicit Close resumes the parent choice. |
 
 ## Hostages (`hostages`)
 
 | # | Step | Narrative | Layers | Clock | Remote controls |
 | :---: | :--- | :--- | :--- | :--- | :--- |
 | 1 | Nir Oz | `hostages` | Focus | Idle after entry | Archive (חיים פרי) |
-| 2 | Presentation | `hostages` | Focus | No change | Presentation* (slides 28–33) |
+| 2 | Presentation | `hostages` | Focus | No change | Close advances to Nir Oz people; Scene Next continues to all hostages. |
 | 3 | Nir Oz victims and hostages | `hostages` | Focus + people (Nir Oz people) | No change | |
 | 4 | All hostages | `hostages_all` | Focus + people (all hostages) | Idle after entry | |
 
@@ -151,9 +180,8 @@ Step 4 switches to `hostages_all`: the camera pulls back, Nir Oz dimming and
 the Peri marker go away, and only hostages are shown. Going back to step 3
 re-enters `hostages` and flies back to Nir Oz.
 
-\* The presentation button appears only when the narrative has a
-presentation link. Only Segev has one, so the other presentation steps show
-no presentation button yet.
+The presentation steps retain their place in the run of show. Slides stay on
+GIS; the projection continues to show the narrative scene.
 
 ## Archive
 

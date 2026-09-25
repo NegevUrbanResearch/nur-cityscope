@@ -1,3 +1,5 @@
+import { NLI_NOVA_STORY } from "./nli-nova-story.js";
+
 const SEGEV_CENTER = Object.freeze([34.48647925700004, 31.422958191000077]);
 
 const SEGEV_NARRATIVE = Object.freeze({
@@ -9,8 +11,6 @@ const SEGEV_NARRATIVE = Object.freeze({
   basemap: "satellite_bw",
   focusSettlement: "בארי",
   focusSettlementOutlineId: 19,
-  presentationUrl:
-    "https://www.canva.com/design/DAHUaRcI6lI/Of1TuYlj0yaPV-r3UDQOKw/view?embed",
 });
 
 const NOVA_CENTER = Object.freeze([34.46975, 31.39851]);
@@ -20,9 +20,8 @@ const NOVA_NARRATIVE = Object.freeze({
   label: "נובה",
   center: NOVA_CENTER,
   zoom: 15,
-  gisZoom: 15,
-  idleClockMinutes: 483,
-  playStartMinutes: 483,
+  beat4Zoom: 13.2,
+  idleClockMinutes: NLI_NOVA_STORY.startMinutes,
   basemap: "satellite_bw",
   focusInvestigationPolygonObjectId: 100,
   focusSettlement: "נובה",
