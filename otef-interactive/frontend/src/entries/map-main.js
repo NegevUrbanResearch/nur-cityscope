@@ -281,6 +281,11 @@ async function bootstrapMapRuntime() {
         typeof OTEFDataContext.getInvestigationClock === "function"
           ? OTEFDataContext.getInvestigationClock()
           : idleNliClock();
+      const correctedNow =
+        typeof OTEFDataContext.correctedNow === "function"
+          ? OTEFDataContext.correctedNow()
+          : Date.now();
+      narrativeController?.syncInvestigationClock?.(clock, correctedNow);
       void syncInvestigationTimelineToMap(map, clock, currentGroups, {
         visibilityLayerGroups: groupsAsArray,
         displayProfile: "gis",
@@ -293,6 +298,8 @@ async function bootstrapMapRuntime() {
           typeof OTEFDataContext.correctedNow === "function"
             ? OTEFDataContext.correctedNow()
             : Date.now(),
+        onClockFrame: (frameClock, frameNow) =>
+          narrativeController?.syncInvestigationClock?.(frameClock, frameNow),
         getPersonSelection: () => OTEFDataContext.getPersonSelection(),
         narrativeFocus: narrativeController?.getDefinition?.() || null,
       }).finally(() => raiseDarkBasemapPlaceLabels(map));

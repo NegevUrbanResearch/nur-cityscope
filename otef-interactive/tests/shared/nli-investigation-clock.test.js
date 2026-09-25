@@ -340,6 +340,10 @@ describe("Nova fixed-duration clock", () => {
     });
     expect(evaluateClock(playing, 4_999, options)).toMatchObject({ index: 0, clock: 492 });
     expect(evaluateClock(playing, 5_000, options)).toMatchObject({ index: 1, clock: 506 });
+    expect(evaluateClock(playing, 13_000, options)).toMatchObject({ index: 3, clock: 630 });
+    expect(evaluateClock(playing, 16_999, options)).toMatchObject({ index: 3, clock: 630 });
+    expect(evaluateClock(playing, 17_000, options)).toMatchObject({ index: 4, clock: 720 });
+    expect(evaluateClock(playing, 20_999, options)).toMatchObject({ index: 4, clock: 720 });
     expect(clockStoryDurationMs(novaBeats, playing, options)).toBe(20_000);
     expect(evaluateClock(playing, 21_000, options)).toMatchObject({
       phase: "ended", mode: "hold", index: -1,

@@ -22,7 +22,7 @@ const NOVA_NARRATIVE = Object.freeze({
   label: "נובה",
   center: NOVA_CENTER,
   zoom: 15,
-  gisZoom: 15,
+  beat4Zoom: 13.2,
   idleClockMinutes: NLI_NOVA_STORY.startMinutes,
   basemap: "satellite_bw",
   focusInvestigationPolygonObjectId: 100,

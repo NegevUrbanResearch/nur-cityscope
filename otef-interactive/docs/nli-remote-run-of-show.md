@@ -10,10 +10,11 @@ The [NLI exhibit verification guide](nli-exhibit-verification.md) remains the
 source of truth for current acceptance status.
 
 Current code defines Segev, Nova, Sderot, and Hostages narrative entry scenes.
-Selecting any of them centers and zooms the GIS map, selects the black-and-white
-satellite basemap, and applies the narrative focus. Segev has a separately
-controlled presentation; Nova has an 08:03 clock and escape-route controls.
-These existing scene elements are starting points for the longer sequences below.
+Selecting one applies the black-and-white satellite basemap and narrative
+focus. Nova fits the reviewed GIS extent, shows 08:03 before playback, and has
+five authored timeline beats plus escape-route controls. Segev has a separately
+controlled presentation. This run of show includes the implemented Nova
+timing and presenter behavior alongside the broader exhibit sequence.
 
 [Presentation](https://nli-my.sharepoint.com/:p:/g/personal/uri_ayalon_nli_org_il/IQD47nUGojhWS7-q5GSJVUNBAXiA-LABDwC7s_zZgZ_A1ns?rtime=AdOhnb8Y30g)
 
@@ -51,8 +52,8 @@ These existing scene elements are starting points for the longer sequences below
 
 | Notes | GIS screen | Projection / model | Order |
 | :--- | :--- | :--- | :---: |
-|  | Zoom in on the Nova site in black-and-white aerial imagery. Show the clock at 08:03. | Dim the model and focus on the Nova site at 08:03. Dim the other settlements. Only Nova remains prominent, with a square of light and a halo around it. Show the open-spaces layer in the background. | 1 |
-|  | Zoom in on the Nova site and show its division into areas, with names. | Remove the open-spaces layer. Show the Nova polygons over time, in chronological order. Advance the clock with them. Use no more than five timeline events. | 2 |
+|  | Fit the reviewed Nova extent in black-and-white aerial imagery. Before play, show the 08:03 exhibit clock and preview beat 1. | Dim the model and focus on the Nova site at 08:03. Dim the other settlements. Only Nova remains prominent, with a square of light and a halo around it. Show the open-spaces layer in the background. | 1 |
+| The GIS map stays framed on the Nova site during the beats. | Remove the open-spaces layer. Play five authored beats in order, four seconds each (20 seconds total). Show only the active beat's time, title, and presenter copy; animate its polygons as they appear. | Show the Nova polygons in chronological order. The five scrubber marks run from 0% to 100%. Play begins at beat 1; natural completion holds beat 5 at 100%. Back/forward and scrub selection clamp at the first and last beat. | 2 |
 | The first part describes what happened collectively. Now move to Mor Levy's individual story. |  | Show the escape routes taken by people from Nova. Settlements light up when the escape routes intersect them. | 3 |
 | Begin Mor's story. The guide describes her background and the route she took. | Replace the map with the presentation and show slides 9–11. | Show Mor's route on the model: Nova, one of the lemon groves, and then the Midburn staging site. | 4 |
 |  | Show slides 12–16: images from the Nova site archive with memorial points. | Dim the model except for the settlements and settlement names intersected by Nova escape routes. Show points for people murdered at Nova only, as well as people kidnapped and murdered or kidnapped and returned alive. | 5 |
@@ -106,8 +107,20 @@ These existing scene elements are starting points for the longer sequences below
 ## Translation and implementation notes
 
 - `SEA` and `Gaza roads` are layer names. The source's “range sites” in the Nova
-  sequence is understood to refer to the Nova polygons; confirm the exact
-  polygon selection when implementing that step.
-- “Beats” means timeline events. The NLI sequence calls for no more than five
-  Nova events in that step; the current Nova timeline has 12 beats and needs
-  consolidation to meet that request.
+  sequence is understood to refer to the Nova polygons. The implemented Nova
+  beat membership is explicit in the shared manifest.
+- “Beats” means timeline events. Nova uses the following authored sequence;
+  each beat runs for four seconds, independently of its event-time label:
+
+  | Beat | Event time | Title |
+  | :---: | :--- | :--- |
+  | 1 | 08:12–08:23 | Highway 232 and the Nova site |
+  | 2 | 08:26–08:40 | The fighting expands |
+  | 3 | 09:00–09:15 | Abductions and parking areas |
+  | 4 | 10:30 | Noa Argamani and Avinatan Or |
+  | 5 | 12:00–13:00 | Abductions during the afternoon |
+- The 08:03 clock is the stopped pre-play and post-Stop exhibit label. Play
+  starts beat 1 at 0% reveal. Natural completion holds beat 5 at 100%; manual
+  navigation and scrubbing do not wrap at either endpoint.
+- Polygon 107 is excluded from the Nova beat set pending source review. Its
+  source data has not been deleted or changed.

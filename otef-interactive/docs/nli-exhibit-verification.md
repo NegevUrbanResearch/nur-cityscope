@@ -137,7 +137,7 @@ marked GIS-only.
 | `nli.investigation_polygons` only | [ ] | [ ] | Clock present; outside Nova, Stop is `06:29`. |
 | Victims names / `nli.people_names` alone | [ ] | [ ] | Clock absent. |
 | Another unrelated NLI layer only | [ ] | [ ] | Clock absent. |
-| Segev or Nova with relevant chips off | [ ] | [ ] | Clock remains visible: Segev idle/Stop is `06:29`; Nova idle/Stop and play lead-in are `08:03`. |
+| Segev or Nova with relevant chips off | [ ] | [ ] | Clock remains visible: Segev idle/Stop is `06:29`; Nova idle/Stop is `08:03`, while Play starts beat 1 at zero reveal without an `08:03` lead-in. |
 | Projection slideshow warmup/crossfade (projection only) | N/A | [ ] | Warmup/staging do not change relevance; visibility changes only at reveal. Right span is blank. |
 | GIS zoomed-out view, press `e`, edit/move the clock, then refresh | [ ] | N/A | Edit/move survives refresh; the `start` layout is used when zoomed out. |
 

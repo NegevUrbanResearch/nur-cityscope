@@ -53,10 +53,15 @@ settlements dim and it gets the focus outline. If it has a label, a red point
 marker is placed with that label. Both screens also apply the narrative's
 people filter.
 
+Nova is the GIS camera exception: entry fits the reviewed Nova extent with 48
+px padding. The extent stays fixed while the five timeline beats change. The
+Mor route may move the GIS camera; turning the route off restores the Nova
+extent.
+
 | Narrative | Camera | Focus settlement | Marker label | People shown | Idle clock caption |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `segev` | Segev home, zoom 18 | בארי | בית משפחת שגב (at the camera center) | Everyone except survivors | 06:41 |
-| `nova` | Nova site, zoom 15 | נובה (and polygon 100 highlighted) | נובה (at the camera center) | Everyone with location Nova | 08:03 |
+| `nova` | Reviewed Nova extent, 48 px padding | נובה (and polygon 100 highlighted) | נובה | Everyone with location Nova | 08:03 |
 | `sderot` | Sderot, zoom 15 | שדרות | תחנת המשטרה (police station) | Everyone except survivors | 06:29 |
 | `hostages` | Nir Oz, zoom 15 | ניר עוז | בית משפחת פרי (Peri home) | Everyone with location Nir Oz | 06:29 |
 | `hostages_all` | Regional overview `[34.5, 31.4]`, zoom 10 | None (no dimming) | None | Kidnap survivors and murdered in captivity, from all locations | 06:29 |
@@ -112,14 +117,29 @@ A narrative opened from the home screen ends with **Finish**.
 
 | # | Step | Layers | Clock | Escape routes | Remote controls |
 | :---: | :--- | :--- | :--- | :--- | :--- |
-| 1 | The Nova site | Focus + open spaces | Stopped (idle, caption 08:03) | All off | |
-| 2 | The compounds | Nova timeline | Plays from 08:03 | All off | Timeline |
+| 1 | The Nova site | Focus + open spaces | Stopped; previews beat 1 and shows 08:03 | All off | |
+| 2 | The Nova story | Nova timeline | Five authored beats, 4 seconds each (20 seconds total); play starts beat 1 at 0% | All off | Five-mark scrubber and beat navigation |
 | 3 | Escape routes | Nova timeline | No change | Individual routes on | Escape toggles |
 | 4 | Mor Levy | Nova timeline | No change | Mor's route only | Escape toggles, archive (מור לוי), presentation* |
 | 5 | Memorial | Focus + people (Nova people only) | No change | Individual routes on | Escape toggles, presentation* |
 
-Not done yet: the step 2 compound names (not drawn on the map) and the
-five-event limit (the full Nova timeline plays).
+The Nova timeline uses five authored beats, not source-timestamp grouping:
+
+| Beat | Event time | Presenter title |
+| :---: | :--- | :--- |
+| 1 | 08:12–08:23 | Highway 232 and the Nova site |
+| 2 | 08:26–08:40 | The fighting expands |
+| 3 | 09:00–09:15 | Abductions and parking areas |
+| 4 | 10:30 | Noa Argamani and Avinatan Or |
+| 5 | 12:00–13:00 | Abductions during the afternoon |
+
+The remote shows only the active beat's event time, title, and presenter
+paragraph. The exhibit clock reads 08:03 before playback and after Stop; Play
+begins beat 1 at zero reveal. Each automatic beat lasts four seconds. Natural
+completion holds beat 5 and 100% progress. Back, forward, pointer selection,
+and Left/Right, Home, and End keyboard controls select a beat without wrapping;
+the first and last marks sit at the scrubber ends. Polygon 107 is excluded
+pending source review and its source record is unchanged.
 
 ## Sderot (`sderot`)
 

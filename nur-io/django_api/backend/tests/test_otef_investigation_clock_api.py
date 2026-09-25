@@ -79,6 +79,41 @@ class OTEFInvestigationClockApiTests(TestCase):
                 )
                 self.assertEqual(response.status_code, 400)
 
+    def test_active_nova_rejects_an_early_ended_clock(self):
+        state = OTEFViewportState.objects.get(table=self.table)
+        state.narrative_state = {"id": "nova", "transition": "enter", "revision": 1}
+        state.save(update_fields=["narrative_state"])
+        clock = self.canonical_clock(
+            phase="ended",
+            membership=["nli.investigation_polygons", "nli.lines", "nli.alarms"],
+            beats=[492, 506, 540, 630, 720],
+            positionMs=13_500,
+            anchorMs=None,
+        )
+
+        response = self.client.patch(
+            "/api/otef_viewport/by-table/otef/",
+            data=json.dumps({"investigation_clock": clock}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["error"],
+            "Nova clock cannot end before its final beat has completed",
+        )
+        state.refresh_from_db()
+        self.assertEqual(state.investigation_clock, {})
+
+        clock["positionMs"] = 20_000
+        response = self.client.patch(
+            "/api/otef_viewport/by-table/otef/",
+            data=json.dumps({"investigation_clock": clock}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["investigation_clock"]["positionMs"], 20_000)
+
     def test_get_by_table_includes_investigation_clock(self):
         res = self.client.get("/api/otef_viewport/by-table/otef/")
         self.assertEqual(res.status_code, 200)

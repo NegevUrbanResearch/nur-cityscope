@@ -143,6 +143,8 @@ _NLI_PLAYABLE_IDS = frozenset(
 )
 _INVESTIGATION_CLOCK_PHASES = ("idle", "playing", "paused", "ended")
 _INVESTIGATION_CLOCK_SEEK_KINDS = ("none", "jump")
+_NOVA_STORY_BEATS = (492, 506, 540, 630, 720)
+_NOVA_STORY_DURATION_MS = 20_000
 
 
 def _stamp_investigation_clock_server_now(clock):
@@ -1398,6 +1400,16 @@ class OTEFViewportStateViewSet(viewsets.ModelViewSet):
                     return err
 
             narrative = normalize_narrative_state(state.narrative_state)
+            if (
+                narrative["id"] == "nova"
+                and validated_clock is not None
+                and validated_clock.get("phase") == "ended"
+                and validated_clock.get("beats") == list(_NOVA_STORY_BEATS)
+                and validated_clock.get("positionMs", 0) < _NOVA_STORY_DURATION_MS
+            ):
+                return _clock_patch_error(
+                    "Nova clock cannot end before its final beat has completed"
+                )
             if narrative["id"] is not None:
                 conflict = (
                     'basemap' in request.data

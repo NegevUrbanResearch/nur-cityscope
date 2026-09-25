@@ -417,9 +417,11 @@ function updateCaption(state, phase, _previousClock) {
       alarmPlay: state.alarmMode === "play",
     };
   }
+  const preserveWarmCaption = playbackOn && phase.mode === "hold" && state.lastCaption &&
+    !(state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY && state.clockPhase === "ended");
   const snap = liveBeat
     ? state.lastCaption
-    : playbackOn && phase.mode === "hold" && state.lastCaption
+    : preserveWarmCaption
       ? state.lastCaption
       : state.nliCaptionMode === NLI_CAPTION_MODE_CLOCK_ONLY && playbackOn && phase.mode === "hold"
         ? (() => {
@@ -986,6 +988,7 @@ function tick(map) {
   const clock = state.clock;
   const nowFn = state.now || (() => Date.now());
   const nowMs = nowFn();
+  state.rendererDeps?.onClockFrame?.(clock, nowMs);
   const started = state.monotonicNow();
   applyPersonGlow(state);
   const frame = deriveTimelineFrame(state, nowMs);
@@ -1123,6 +1126,7 @@ export function getInvestigationTimelineDiagnostics(map) {
  *   allowMapCaption?: boolean,
  *   explainerDebugVisible?: boolean,
  *   getPersonSelection?: () => { personId?: string|null, pid?: string|null, datasetVersion?: string|null } | null,
+ *   onClockFrame?: (clock: import('./nli-investigation-clock.js').NliInvestigationClock, nowMs: number) => void,
  * }} [deps]
  */
 export async function syncInvestigationTimelineToMap(map, clockInput, layerGroups, deps = {}) {

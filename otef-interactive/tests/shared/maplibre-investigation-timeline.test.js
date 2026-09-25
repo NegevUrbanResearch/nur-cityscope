@@ -355,6 +355,74 @@ describe("syncInvestigationTimelineToMap", () => {
     disposeInvestigationTimelineForMap(map);
   });
 
+  it("replaces a stale warm Nova caption with beat five when the clock ends", async () => {
+    const map = makeMap();
+    const captionEl = { hidden: true, innerHTML: "", setAttribute: vi.fn() };
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      NLI_NOVA_STORY.representativeMinutes,
+      0,
+      { narrativeId: "nova" },
+    );
+    const deps = withProcessedPolygons({
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      narrativeFocus: { id: "nova" },
+      captionEl,
+      nliCaptionMode: "clock-only",
+      now: () => 13_500,
+    });
+    await syncInvestigationTimelineToMap(map, {
+      ...playing,
+      phase: "paused",
+      positionMs: 12_000,
+      anchorMs: 13_500,
+      seekKind: "jump",
+    }, polygonOnlyGroups(), deps);
+    expect(captionEl.innerHTML).toContain("10:30");
+
+    await syncInvestigationTimelineToMap(map, endNliClock(playing), polygonOnlyGroups(), deps);
+
+    expect(captionEl.innerHTML).toContain("12:00");
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("advances a live Nova clock-only caption into beat five without a clock patch", async () => {
+    const map = makeMap();
+    const captionEl = { hidden: true, innerHTML: "", setAttribute: vi.fn() };
+    const callbacks = [];
+    let nowMs = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    const playing = playNliClock(
+      idleNliClock(),
+      [INVESTIGATION_POLYGONS_FULL_ID],
+      NLI_NOVA_STORY.representativeMinutes,
+      0,
+      { narrativeId: "nova" },
+    );
+    await syncInvestigationTimelineToMap(map, playing, polygonOnlyGroups(), withProcessedPolygons({
+      featuresById: { [INVESTIGATION_POLYGONS_FULL_ID]: [STORY_POLYGON_A] },
+      narrativeFocus: { id: "nova" },
+      captionEl,
+      nliCaptionMode: "clock-only",
+      now: () => nowMs,
+    }));
+
+    expect(captionEl.innerHTML).toContain("08:12");
+    for (nowMs = 100; nowMs <= 17_500; nowMs += 100) {
+      const callback = callbacks.shift();
+      expect(callback, `scheduled frame at ${nowMs}ms`).toBeTypeOf("function");
+      callback();
+      await Promise.resolve();
+    }
+
+    expect(captionEl.innerHTML).toContain("12:00");
+    disposeInvestigationTimelineForMap(map);
+  });
+
   function playClock(membership, beats, nowMs = 0) {
     return playNliClock(idleNliClock(), membership, beats, nowMs);
   }
