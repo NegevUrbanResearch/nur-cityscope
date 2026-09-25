@@ -162,7 +162,147 @@ function evaluatePaintForTimeline(expression, timelineMinutes) {
   return expression;
 }
 
+function evaluateObjectIdOpacity(expression, objectId) {
+  if (!Array.isArray(expression) || expression[0] !== "case") return Number(expression);
+  for (let index = 1; index < expression.length - 1; index += 2) {
+    const condition = expression[index];
+    const ids = condition?.[0] === "in" && condition[1]?.[0] === "to-number"
+      && condition[1][1]?.[0] === "get" && condition[1][1][1] === "OBJECTID"
+      ? condition[2]?.[0] === "literal" ? condition[2][1] : []
+      : [];
+    if (!ids.map(Number).includes(Number(objectId))) continue;
+    const value = expression[index + 1];
+    return value?.[0] === "*" ? Number(value[1]) * Number(value[2]) : Number(value);
+  }
+  return Number(expression.at(-1));
+}
+
 describe("investigation polygon renderer", () => {
+  it("keeps Nova polygon 100 in the processed beat fill source and preserves its context outline", () => {
+    const map = makeMap();
+    map.layers.push({ id: "nli-nova-site-outline", type: "line", source: "nli-nova-site-context" });
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const site = polygon(100, 483, "נובה", "מרחב לחימה - קרב");
+    const bufferedSite = {
+      ...site,
+      properties: { ...site.properties, __cim_gradient_band: 0 },
+    };
+    renderer.render(frame([], {
+      narrativeId: "nova",
+      achievedPolygonObjectIds: [97, 100, 104],
+      polygonObjectEntries: [{ objectIds: [97, 100, 104], progress: 0.5 }],
+      motionMode: "full",
+      nowMs: 100,
+      correctedNowValid: true,
+    }), {
+      polygonFeatures: [site],
+      bufferedGradientFeatures: [bufferedSite],
+      bufferedGradientSidecarStatus: "ready",
+      polygonStyle: processedNotesStyle(),
+    });
+
+    const gradient = map.sources.get("nli-investigation-polygon-buffered-gradient");
+    expect(gradient.setData.mock.calls.at(-1)[0].features.map((feature) => feature.properties.OBJECTID))
+      .toEqual([100]);
+    expect(map.getLayer("nli-nova-site-outline")).toBeTruthy();
+  });
+
+  it("reveals a solid Nova fill from zero through intermediate opacity to its authored opacity", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const active = polygon(104, 9000, "נובה", "מוקד חטיפה");
+    const style = processedNotesStyle();
+    const kidnapClass = style.uniqueValues.classes.find(({ value }) => value === "מוקד חטיפה");
+    kidnapClass.symbol.symbolLayers[0] = {
+      type: "fill", fillType: "solid", color: "#ffff73", opacity: 0.55,
+    };
+    const data = {
+      polygonFeatures: [active],
+      polygonStyle: style,
+      bufferedGradientSidecarStatus: "ready",
+    };
+    const renderProgress = (progress) => {
+      renderer.render(frame([], {
+        narrativeId: "nova",
+        achievedPolygonObjectIds: [104],
+        polygonObjectEntries: progress == null ? [] : [{ objectIds: [104], progress }],
+        motionMode: "full",
+        nowMs: 100,
+        correctedNowValid: true,
+      }), data);
+      return evaluateObjectIdOpacity(
+        map.getPaintProperty("nli-investigation-polygon-category-fill-kidnap", "fill-opacity"),
+        104,
+      );
+    };
+
+    expect(renderProgress(0)).toBe(0);
+    expect(renderProgress(0.5)).toBeCloseTo(0.275);
+    expect(renderProgress(1)).toBe(0.55);
+    expect(renderProgress(null)).toBe(0.55);
+  });
+
+  it("selects Nova category polygons by OBJECTID rather than representative minutes", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const features = [
+      polygon(97, 100, "נובה", "מרחב לחימה - קרב"),
+      polygon(100, 200, "נובה", "מרחב לחימה - קרב"),
+      polygon(104, 300, "נובה", "מוקד חטיפה"),
+    ];
+    renderer.render(frame([], {
+      narrativeId: "nova",
+      achievedPolygonObjectIds: [97, 100],
+      polygonObjectEntries: [{ objectIds: [100], progress: 0.5 }],
+      motionMode: "full",
+      nowMs: 100,
+      correctedNowValid: true,
+    }), processedOverlayData(features));
+
+    const overlay = map.sources.get("nli-investigation-polygon-category");
+    expect(overlay.setData.mock.calls.at(-1)[0].features.map((feature) => feature.properties.OBJECTID))
+      .toEqual([97, 100]);
+    const opacity = map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity");
+    expect(JSON.stringify(opacity)).toContain('"OBJECTID"');
+    expect(JSON.stringify(opacity)).not.toContain('"timeline_minutes"');
+  });
+
+  it("keeps Nova polygon 100 unfilled at idle while retaining its context outline", () => {
+    const map = makeMap();
+    map.layers.push({ id: "nli-nova-site-outline", type: "line", source: "nli-nova-site-context" });
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const site = polygon(100, 500, "נובה", "מרחב לחימה - קרב");
+    renderer.render(frame([], {
+      narrativeId: "nova",
+      achievedPolygonObjectIds: [],
+      polygonObjectEntries: [],
+    }), processedOverlayData([site]));
+
+    expect(map.sources.get("nli-investigation-polygon-category").setData.mock.calls.at(-1)[0].features)
+      .toEqual([]);
+    expect(map.getLayer("nli-nova-site-outline")).toBeTruthy();
+  });
+
+  it("restores a settled Nova OBJECTID selection after a renderer remount", () => {
+    const map = makeMap();
+    const renderer = createInvestigationPolygonRenderer(map, {});
+    const features = [polygon(97, 100), polygon(98, 200)];
+    const selected = frame([], {
+      narrativeId: "nova",
+      achievedPolygonObjectIds: [97],
+      polygonObjectEntries: [],
+      motionMode: "reduced",
+    });
+    const data = processedOverlayData(features);
+    renderer.render(selected, data);
+    renderer.reset({ preserveBasePaints: true });
+    renderer.mount();
+    renderer.render(selected, data);
+
+    expect(map.sources.get("nli-investigation-polygon-category").setData.mock.calls.at(-1)[0].features)
+      .toEqual([features[0]]);
+  });
+
   it("animates processed gradient paints at valid full-motion timestamps", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});

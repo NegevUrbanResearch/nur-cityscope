@@ -17,6 +17,7 @@ import {
 } from "./nli-investigation-beats.js";
 import { clockPositionMs, evaluateClock } from "./nli-investigation-clock.js";
 import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
+import { NLI_NOVA_STORY } from "./nli-nova-story.js";
 
 const MOTION_MODES = new Set(["full", "reduced"]);
 
@@ -53,13 +54,21 @@ function uniqueFiniteStoryBeats(value) {
   return out;
 }
 
+function isNovaManifestClock(clock, narrativeId) {
+  return narrativeId === "nova" && (clock?.phase === "idle" || (
+    Array.isArray(clock?.beats) &&
+    clock.beats.length === NLI_NOVA_STORY.representativeMinutes.length &&
+    clock.beats.every((minute, index) => Number(minute) === NLI_NOVA_STORY.representativeMinutes[index])
+  ));
+}
+
 function isIdleOrEndedVisualPhase(src, phase) {
   return src.phase === "idle" || phase.phase === "ended" || phase.phase === "idle";
 }
 
-function positionInfo(clock, nowMs, beats) {
+function positionInfo(clock, nowMs, beats, options) {
   const absoluteMs = clockPositionMs(clock, nowMs);
-  const mapping = mapClockStoryPosition(beats, clock, absoluteMs);
+  const mapping = mapClockStoryPosition(beats, clock, absoluteMs, options);
   return {
     absoluteMs,
     durationMs: mapping.durationMs,
@@ -92,7 +101,19 @@ export function completedInvestigationBeats(phase, clock, beats, activeProgress)
   return completed;
 }
 
-function activeProgressFor(phase, clock, nowMs) {
+function activeProgressFor(phase, clock, nowMs, narrativeId) {
+  if (narrativeId === "nova") {
+    if (clock?.phase === "paused" && clock.seekKind === "jump") {
+      const anchor = Number(clock.anchorMs);
+      return Number.isFinite(anchor)
+        ? Math.min(1, Math.max(0, (finiteNumber(nowMs) - anchor) / NLI_NOVA_STORY.manualRevealMs))
+        : 1;
+    }
+    if (phase.phase === "ended") return 1;
+    return phase.mode === "beat"
+      ? Math.min(1, Math.max(0, finiteNumber(phase.beatElapsedMs) / NLI_NOVA_STORY.beatDurationMs))
+      : 0;
+  }
   const duration = timelineBeatDurationMs(phase.clock);
   if (clock?.phase === "paused" && clock.seekKind === "jump") {
     const anchor = Number(clock.anchorMs);
@@ -186,22 +207,38 @@ export function deriveInvestigationFrame(
   const enabled = normalizedEnabledIds(effectiveEnabledIds);
   const routeBeats = normalizedRouteBeats(options?.routeBeats);
   const beats = Array.isArray(src.beats) ? src.beats.slice() : [];
-  const phase = evaluateClock(src, nowMs);
-  const polygonEntries = polygonEntriesFor(phase, beats, routeBeats, src.seekKind);
-  const activeProgress = activeProgressFor(phase, src, nowMs);
-  const completedBeats = completedInvestigationBeats(
+  const narrativeId = options?.narrativeId ?? null;
+  const novaStory = isNovaManifestClock(src, narrativeId);
+  const clockOptions = novaStory ? { narrativeId } : undefined;
+  const phase = evaluateClock(src, nowMs, clockOptions);
+  const polygonEntries = novaStory ? [] : polygonEntriesFor(phase, beats, routeBeats, src.seekKind);
+  const activeProgress = activeProgressFor(phase, src, nowMs, novaStory ? "nova" : null);
+  const completedBeats = novaStory ? [] : completedInvestigationBeats(
     phase,
     src,
     beats,
     activeProgress,
   );
-  const position = positionInfo(src, nowMs, beats);
+  const position = positionInfo(src, nowMs, beats, clockOptions);
   const cycleKey = src.phase === "idle" ? "idle" : String(position.cycleOrdinal);
   const polygonEnabled = enabled.has(INVESTIGATION_POLYGONS_FULL_ID);
   const linesEnabled = enabled.has(INVESTIGATION_LINES_FULL_ID);
   const alarmEnabled = enabled.has(INVESTIGATION_ALARMS_FULL_ID);
   const storyBeats = uniqueFiniteStoryBeats(options?.storyBeats);
   const suppressNovaIdleStory = options?.narrativeId === "nova" && src.phase === "idle";
+  const novaBeatIndex = phase.mode === "beat" && Number.isInteger(phase.index)
+    ? phase.index
+    : -1;
+  const achievedPolygonObjectIds = novaStory
+    ? phase.phase === "ended"
+      ? NLI_NOVA_STORY.beats.flatMap((beat) => beat.polygonObjectIds)
+      : novaBeatIndex >= 0
+        ? NLI_NOVA_STORY.beats.slice(0, novaBeatIndex + 1).flatMap((beat) => beat.polygonObjectIds)
+        : []
+    : undefined;
+  const polygonObjectEntries = novaStory && novaBeatIndex >= 0 && activeProgress < 1
+    ? [{ objectIds: [...NLI_NOVA_STORY.beats[novaBeatIndex].polygonObjectIds], progress: activeProgress }]
+    : [];
   let achievedPolygonBeats = [];
   if (polygonEnabled && suppressNovaIdleStory) {
     achievedPolygonBeats = [];
@@ -222,7 +259,7 @@ export function deriveInvestigationFrame(
       achievedPolygonBeats.push(phase.clock);
     }
   }
-  const completedRouteActive = linesEnabled && completedBeats.some(
+  const completedRouteActive = !novaStory && linesEnabled && completedBeats.some(
     (beat) => routeBeats == null || routeBeats.has(Number(beat)),
   );
   const flowPatternSteps = NLI_VISUAL_TOKENS.flowPatternSteps;
@@ -238,7 +275,7 @@ export function deriveInvestigationFrame(
       ? ((nowMs * NLI_VISUAL_TOKENS.routeFlowSpeed) % 1 + 1) % 1
       : 0,
   };
-  const alarmOnset = alarmOnsetFor(
+  const alarmOnset = novaStory ? null : alarmOnsetFor(
     src,
     phase,
     nowMs,
@@ -246,7 +283,7 @@ export function deriveInvestigationFrame(
     beats,
     position,
   );
-  const rippleNeedsFrames = alarmEnabled && motionMode === "full";
+  const rippleNeedsFrames = !novaStory && alarmEnabled && motionMode === "full";
   const narrativeAdvances =
     (src.phase === "playing" && phase.phase !== "ended") ||
     (src.phase === "paused" && src.seekKind === "jump" && activeProgress < 1);
@@ -267,20 +304,22 @@ export function deriveInvestigationFrame(
     narrative: {
       phase: phase.phase,
       mode: phase.mode,
-      activeBeat: phase.mode === "beat" ? phase.clock : null,
+      activeBeat: !novaStory && phase.mode === "beat" ? phase.clock : null,
       activeIndex: phase.mode === "beat" ? phase.index : -1,
       activeProgress,
       beatElapsedMs: phase.beatElapsedMs,
       completedBeats,
       advances: narrativeAdvances,
     },
-    activeBeat: phase.mode === "beat" ? phase.clock : null,
+    activeBeat: !novaStory && phase.mode === "beat" ? phase.clock : null,
     activeProgress,
     completedBeats,
-    achievedPolygonBeats,
+    achievedPolygonBeats: novaStory ? [] : achievedPolygonBeats,
+    achievedPolygonObjectIds,
+    polygonObjectEntries,
     polygonEntries,
     completedPolygonAmbientActive,
-    completedRouteFlow,
+    completedRouteFlow: novaStory ? { ...completedRouteFlow, active: false, progress: 0 } : completedRouteFlow,
     alarmOnset,
     alarmOnsetId: alarmOnset?.id ?? null,
     alarmOnsetOriginMs: alarmOnset?.originMs ?? null,
