@@ -28,12 +28,35 @@ function toRow(row, datasetVersion, locale) {
   const location = clean(row?.location) || clean(row?.sublocation);
   return { pid: clean(row?.pid), name: displayName(row, locale), location, hasArchiveRecord: row?.hasArchiveRecord === true, datasetVersion };
 }
+const splitTokens = (value) => normalize(value).split(/[\s,\-\u05be/]+/).filter(Boolean);
+
+function assignTokens(queryTokens, hayTokens) {
+  const used = new Set();
+  let usedPrefix = false;
+  for (const query of queryTokens) {
+    let exact = -1;
+    let prefix = -1;
+    for (let i = 0; i < hayTokens.length; i += 1) {
+      if (used.has(i)) continue;
+      if (hayTokens[i] === query) { exact = i; break; }
+      if (prefix < 0 && hayTokens[i].startsWith(query)) prefix = i;
+    }
+    const hit = exact >= 0 ? exact : prefix;
+    if (hit < 0) return Infinity;
+    if (exact < 0) usedPrefix = true;
+    used.add(hit);
+  }
+  return usedPrefix ? 1 : 0;
+}
+
 function scoreRow(row, query) {
   if (!query) return Infinity;
-  const fields = [...(row.nameForms || []), row.location, row.sublocation].map(normalize).filter(Boolean);
-  if (fields.some((field) => field === query)) return 0;
-  if (fields.some((field) => field.startsWith(query))) return 1;
-  if (fields.some((field) => field.includes(query))) return 2;
+  const queryTokens = splitTokens(query);
+  const nameTokens = (row.nameForms || []).flatMap(splitTokens);
+  const nameScore = queryTokens.length ? assignTokens(queryTokens, nameTokens) : Infinity;
+  if (nameScore !== Infinity) return nameScore;
+  const places = [row.location, row.sublocation].map(normalize).filter(Boolean);
+  if (places.some((field) => field === query || field.startsWith(query) || field.includes(query))) return 2;
   return Infinity;
 }
 const promotedHash = (metadata) => clean(metadata?.runtimeArtifactHashes?.["people-search-index.json"])
@@ -60,7 +83,7 @@ export function createPeopleSearchRuntime(options = {}) {
         if (!Array.isArray(index?.people)) throw new Error("Malformed people search index");
         const seen = new Set();
         rows = index.people.map((row) => {
-          const normalized = { pid: clean(row?.pid), nameForms: Array.isArray(row?.nameForms) ? row.nameForms.map(clean).filter(Boolean) : [], location: clean(row?.location), sublocation: clean(row?.sublocation), hasArchiveRecord: row?.hasArchiveRecord === true };
+          const normalized = { pid: clean(row?.pid), nameForms: Array.isArray(row?.nameForms) ? row.nameForms.map(clean).filter(Boolean) : [], location: clean(row?.location), sublocation: clean(row?.sublocation), status: clean(row?.status), hasArchiveRecord: row?.hasArchiveRecord === true };
           if (!normalized.pid || seen.has(normalized.pid)) throw new Error("Invalid people search PID");
           seen.add(normalized.pid);
           return normalized;
@@ -75,10 +98,13 @@ export function createPeopleSearchRuntime(options = {}) {
   const api = {
     load,
     datasetVersion: () => version,
-    search(query, locale = getLocale(), limit = 8) {
+    search(query, locale = getLocale(), limit = 8, options = {}) {
       const normalizedQuery = normalize(query);
       if (!normalizedQuery) return [];
-      return rows.map((row) => ({ row, score: scoreRow(row, normalizedQuery) }))
+      const excluded = new Set((options.excludeStatuses || []).map(clean).filter(Boolean));
+      return rows
+        .filter((row) => !excluded.has(row.status))
+        .map((row) => ({ row, score: scoreRow(row, normalizedQuery) }))
         .filter((entry) => entry.score !== Infinity)
         .sort((a, b) => a.score - b.score || a.row.pid.localeCompare(b.row.pid, "en", { numeric: true }))
         .slice(0, Math.min(8, Math.max(0, Number(limit) || 8)))

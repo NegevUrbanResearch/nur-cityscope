@@ -28,6 +28,7 @@ import {
 } from "./nli-staff-presentation.js";
 
 const NO_ESCAPE = Object.freeze({ individual: false, overlap: false, mor: false });
+const STAFF_PEOPLE_SEARCH_OPTIONS = { excludeStatuses: ["Kidnap survivor"] };
 
 const $ = (id) => document.getElementById(id);
 
@@ -555,7 +556,7 @@ export function initNliStaffRemote(dataContext) {
       lastPlaces = [];
       return;
     }
-    const people = peopleSearch.search(q, getLocale(), 6);
+    const people = peopleSearch.search(q, getLocale(), 6, STAFF_PEOPLE_SEARCH_OPTIONS);
     lastPlaces = searchPlaces(q, {
       limit: 6,
       canNavigateToPlace: (place) => placeIsWithinRemoteBounds(place, dataContext),
@@ -754,15 +755,8 @@ export function initNliStaffRemote(dataContext) {
   }
 
   function findPerson(query) {
-    const variants = [query];
-    const parts = String(query || "").trim().split(/\s+/).filter(Boolean);
-    if (parts.length === 2) variants.push(`${parts[1]} ${parts[0]}`);
-    for (const variant of variants) {
-      const hits = peopleSearch.search(variant, getLocale(), 8);
-      const person = hits.find((row) => row.hasArchiveRecord) || hits[0];
-      if (person) return person;
-    }
-    return null;
+    const hits = peopleSearch.search(query, getLocale(), 8, STAFF_PEOPLE_SEARCH_OPTIONS);
+    return hits.find((row) => row.hasArchiveRecord) || hits[0] || null;
   }
 
   async function selectAndOpenArchive(query) {
