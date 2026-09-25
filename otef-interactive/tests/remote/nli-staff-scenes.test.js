@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   NARRATIVES,
   HOME_SHOW_SHORTCUTS,
+  FOCUS_LAYER_IDS,
   OPENING_LAYER_IDS,
   PEOPLE_NAMES_LAYER_IDS,
   SCENES,
@@ -99,6 +100,8 @@ describe("NLI staff run of show", () => {
   });
 
   test("opening shows SEA and Gaza roads; the identity database hides Gaza roads", () => {
+    expect(FOCUS_LAYER_IDS).toContain("nli.narrative_polygon");
+    expect(OPENING_LAYER_IDS).toContain("nli.narrative_polygon");
     expect(OPENING_LAYER_IDS).toEqual(expect.arrayContaining(["projector_base.SEA", "gaza.Gaza_Roads"]));
     const identity = SHOW.steps[6].cue.layers;
     expect(identity).toContain("nli.people");

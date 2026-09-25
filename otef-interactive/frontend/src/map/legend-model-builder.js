@@ -618,8 +618,11 @@ function groupLayersByFamily(layers, packId) {
 function shouldIncludeLayerInLegend(groupId, layerId, surface = "gis") {
   switch (surface) {
     case "projection":
-      return groupId !== "projector_base" && !(groupId === "gaza" && layerId === "Gaza_Roads");
+      return groupId !== "projector_base"
+        && !(groupId === "gaza" && layerId === "Gaza_Roads")
+        && !(groupId === "nli" && layerId === "narrative_polygon");
     case "gis":
+      if (groupId === "nli" && layerId === "narrative_polygon") return false;
       if (groupId === "projector_base") return false;
       if (groupId === "gaza" && layerId === "Gaza_Roads") return false;
       return typeof shouldShowLayerOnGisMap !== "function" || shouldShowLayerOnGisMap(groupId, layerId);

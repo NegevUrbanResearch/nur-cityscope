@@ -14,6 +14,11 @@ describe("shouldIncludeLayerInLegend", () => {
     expect(shouldIncludeLayerInLegend("nli", "investigation_polygons", "projection")).toBe(true);
   });
 
+  it("strips NLI narrative house outlines from both legend surfaces", () => {
+    expect(shouldIncludeLayerInLegend("nli", "narrative_polygon", "gis")).toBe(false);
+    expect(shouldIncludeLayerInLegend("nli", "narrative_polygon", "projection")).toBe(false);
+  });
+
   it("strips Gaza roads from both legend surfaces", () => {
     expect(shouldIncludeLayerInLegend("gaza", "Gaza_Roads", "gis")).toBe(false);
     expect(shouldIncludeLayerInLegend("gaza", "Gaza_Roads", "projection")).toBe(false);

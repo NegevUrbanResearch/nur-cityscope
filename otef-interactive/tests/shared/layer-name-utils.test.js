@@ -130,6 +130,25 @@ describe("getLayerDisplayLabel", () => {
     ).toBe("Highway 232");
   });
 
+  test("glossary for nli narrative house outlines", () => {
+    expect(
+      getLayerDisplayLabel(
+        "nli.narrative_polygon",
+        "he",
+        "narrative_polygon",
+        ["nli.narrative_polygon"],
+      ),
+    ).toBe("קווי מתאר של בתים");
+    expect(
+      getLayerDisplayLabel(
+        "nli.narrative_polygon",
+        "en",
+        "narrative_polygon",
+        ["nli.narrative_polygon"],
+      ),
+    ).toBe("House outlines");
+  });
+
   test("glossary for workshop pink line companion", () => {
     expect(
       getLayerDisplayLabel(

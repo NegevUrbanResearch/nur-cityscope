@@ -21,6 +21,9 @@ from nli_pack_prep import (
     NOVA_FLEEING_ENVELOPE,
     OCT7_STATUS_CLASSES,
     NLI_KEEP_STEMS,
+    NARRATIVE_POLYGON_STEM,
+    NARRATIVE_POLYGON_STROKE_COLOR,
+    OCT7_STRUGGLE_LINE_COLOR,
     ROUTE_232_STEM,
     ROUTE_232_LABEL_FILL,
     ROUTE_232_STROKE_ALPHA,
@@ -30,6 +33,7 @@ from nli_pack_prep import (
     emphasize_copied_line_lyrx,
     generate_nova_escape_index,
     install_nli_fleeing_overlays,
+    install_nli_narrative_polygon_overlay,
     install_nli_route_232_overlay,
     reverse_fleeing_individuals,
     reverse_fleeing_overlap,
@@ -736,6 +740,14 @@ class PreparePackTests(unittest.TestCase):
             data["nli"]["layers"][ROUTE_232_STEM]["legendLabel"],
             "Highway 232",
         )
+        self.assertEqual(
+            data["nli"]["layers"][NARRATIVE_POLYGON_STEM]["legendLabel"],
+            "House outlines",
+        )
+        self.assertEqual(
+            data["nli"]["layers"][NARRATIVE_POLYGON_STEM]["titleField"],
+            "note",
+        )
 
     def test_alarms_popup_is_city_and_count(self):
         tmp = Path(tempfile.mkdtemp())
@@ -793,6 +805,11 @@ class PreparePackTests(unittest.TestCase):
     def test_keep_stems_include_route_232_overlay(self):
         self.assertIn(ROUTE_232_STEM, NLI_KEEP_STEMS)
         self.assertNotIn(ROUTE_232_STEM, ZIP_LAYER_MAP.values())
+
+    def test_keep_stems_include_narrative_polygon_overlay(self):
+        self.assertIn(NARRATIVE_POLYGON_STEM, NLI_KEEP_STEMS)
+        self.assertNotIn(NARRATIVE_POLYGON_STEM, ZIP_LAYER_MAP.values())
+        self.assertEqual(NARRATIVE_POLYGON_STROKE_COLOR, OCT7_STRUGGLE_LINE_COLOR)
 
     def test_keep_stems_exclude_investigation_settlements_sidecar(self):
         self.assertNotIn("investigation_settlements", NLI_KEEP_STEMS)
@@ -1020,6 +1037,7 @@ class Route232OverlayTests(unittest.TestCase):
             zip_path, pack_dir, authorities_path=tmp / "missing.json", overlay_source_root=tmp
         )
         self.assertFalse(skipped["overlays"]["route_232"]["installed"])
+        self.assertFalse(skipped["overlays"]["narrative_polygon"]["installed"])
 
         src_gis = tmp / "future_development" / "gis"
         src_styles = tmp / "future_development" / "styles"
@@ -1057,6 +1075,158 @@ class Route232OverlayTests(unittest.TestCase):
         self.assertLess(ids.index(ROUTE_232_STEM), ids.index("lines"))
         self.assertLess(ids.index(ROUTE_232_STEM), ids.index("people"))
         self.assertGreater(ids.index(ROUTE_232_STEM), ids.index("investigation_polygons"))
+
+
+def _narrative_polygon_fixture_lyrx():
+    return {
+        "type": "CIMLayerDocument",
+        "layerDefinitions": [
+            {
+                "type": "CIMFeatureLayer",
+                "name": "narrative_polygon",
+                "renderer": {
+                    "type": "CIMSimpleRenderer",
+                    "symbol": {
+                        "type": "CIMSymbolReference",
+                        "symbol": {
+                            "type": "CIMPolygonSymbol",
+                            "symbolLayers": [
+                                {
+                                    "type": "CIMSolidStroke",
+                                    "enable": True,
+                                    "width": 0.7,
+                                    "color": {
+                                        "type": "CIMRGBColor",
+                                        "values": [255, 0, 0, 100],
+                                    },
+                                },
+                                {
+                                    "type": "CIMSolidFill",
+                                    "enable": False,
+                                    "color": {
+                                        "type": "CIMRGBColor",
+                                        "values": [255, 0, 0, 50],
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                },
+            }
+        ],
+    }
+
+
+def _narrative_polygon_fixture_geojson():
+    return {
+        "type": "FeatureCollection",
+        "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+        "features": [
+            {
+                "type": "Feature",
+                "id": 2,
+                "properties": {
+                    "OBJECTID": 2,
+                    "note": "בית משפחת שגב",
+                },
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [3839002.1266, 3687805.4023],
+                        [3839037.6163, 3687805.4023],
+                        [3839037.6163, 3687817.5467],
+                        [3839002.1266, 3687817.5467],
+                        [3839002.1266, 3687805.4023],
+                    ]],
+                },
+            }
+        ],
+    }
+
+
+class NarrativePolygonOverlayTests(unittest.TestCase):
+    def test_install_skips_when_source_files_are_missing(self):
+        tmp = Path(tempfile.mkdtemp())
+        result = install_nli_narrative_polygon_overlay(
+            tmp / "nli",
+            geojson_path=tmp / "missing.geojson",
+            lyrx_path=tmp / "missing.lyrx",
+        )
+        self.assertFalse(result["installed"])
+        self.assertEqual(result["reason"], "missing_source")
+
+    def test_install_reprojects_and_retints_to_settlement_red(self):
+        tmp = Path(tempfile.mkdtemp())
+        geojson_path = tmp / "narrative_polygon.geojson"
+        lyrx_path = tmp / "narrative_polygon.lyrx"
+        geojson_path.write_text(
+            json.dumps(_narrative_polygon_fixture_geojson()), encoding="utf-8"
+        )
+        lyrx_path.write_text(
+            json.dumps(_narrative_polygon_fixture_lyrx()), encoding="utf-8"
+        )
+        pack_dir = tmp / "nli"
+        result = install_nli_narrative_polygon_overlay(
+            pack_dir, geojson_path=geojson_path, lyrx_path=lyrx_path
+        )
+        self.assertTrue(result["installed"])
+        dest_geo = pack_dir / "gis" / f"{NARRATIVE_POLYGON_STEM}.geojson"
+        dest_lyrx = pack_dir / "styles" / f"{NARRATIVE_POLYGON_STEM}.lyrx"
+        collection = json.loads(dest_geo.read_text(encoding="utf-8"))
+        self.assertNotIn("crs", collection)
+        lon, lat = collection["features"][0]["geometry"]["coordinates"][0][0]
+        self.assertTrue(34.4 < lon < 34.6)
+        self.assertTrue(31.3 < lat < 31.5)
+        parsed = parse_lyrx_style(dest_lyrx)
+        strokes = [
+            layer
+            for layer in parsed.to_dict()["defaultSymbol"]["symbolLayers"]
+            if layer.get("type") == "stroke"
+        ]
+        fills = [
+            layer
+            for layer in parsed.to_dict()["defaultSymbol"]["symbolLayers"]
+            if layer.get("type") == "fill"
+        ]
+        self.assertEqual(strokes[0]["color"], "#c31f4f")
+        self.assertAlmostEqual(strokes[0]["width"], 1.5 * (96 / 72))
+        self.assertTrue(not fills or fills[0].get("opacity") == 0)
+
+    def test_prepare_installs_narrative_polygon_overlay(self):
+        tmp = Path(tempfile.mkdtemp())
+        zip_path = tmp / "nli.zip"
+        people = {
+            "type": "FeatureCollection",
+            "features": [_point(34.47, 31.40, name="Ada", oct7_pid=1)],
+        }
+        empty = {"type": "FeatureCollection", "features": []}
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("geojson/people_7_10.json", json.dumps(people))
+            archive.writestr("geojson/polygons_7_10.geojson", json.dumps(empty))
+            archive.writestr("geojson/lines_7_10.geojson", json.dumps(empty))
+        geojson_path = tmp / "narrative_polygon.geojson"
+        lyrx_path = tmp / "narrative_polygon.lyrx"
+        geojson_path.write_text(
+            json.dumps(_narrative_polygon_fixture_geojson()), encoding="utf-8"
+        )
+        lyrx_path.write_text(
+            json.dumps(_narrative_polygon_fixture_lyrx()), encoding="utf-8"
+        )
+        pack_dir = tmp / "nli"
+        summary = prepare_nli_pack(
+            zip_path,
+            pack_dir,
+            authorities_path=tmp / "missing.json",
+            overlay_source_root=tmp,
+            narrative_polygon_geojson=geojson_path,
+            narrative_polygon_lyrx=lyrx_path,
+        )
+        self.assertTrue(summary["overlays"]["narrative_polygon"]["installed"])
+        self.assertTrue((pack_dir / "gis" / f"{NARRATIVE_POLYGON_STEM}.geojson").is_file())
+        self.assertTrue((pack_dir / "styles" / f"{NARRATIVE_POLYGON_STEM}.lyrx").is_file())
+        removed = summary.get("removed_obsolete") or []
+        self.assertNotIn(f"{NARRATIVE_POLYGON_STEM}.geojson", removed)
+        self.assertNotIn(f"{NARRATIVE_POLYGON_STEM}.lyrx", removed)
 
 
 INVESTIGATION_TIMELINE_FIXTURE = [

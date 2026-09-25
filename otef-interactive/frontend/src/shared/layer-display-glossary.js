@@ -303,6 +303,10 @@ const LAYER_DISPLAY_LABELS = {
     he: "כביש 232",
     en: "Highway 232",
   },
+  "nli.narrative_polygon": {
+    he: "קווי מתאר של בתים",
+    en: "House outlines",
+  },
 };
 
 /**
