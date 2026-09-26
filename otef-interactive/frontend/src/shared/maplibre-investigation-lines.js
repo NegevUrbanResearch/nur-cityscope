@@ -39,9 +39,7 @@ export const INVESTIGATION_LINE_SOURCE_IDS = Object.freeze({
 export const INVESTIGATION_LINE_LAYER_IDS = Object.freeze({
   future: "nli-investigation-line-future-line",
   unconfirmedCompleted: "nli-investigation-line-unconfirmed-completed-line",
-  unconfirmedCompletedLattice: "nli-investigation-line-unconfirmed-completed-lattice",
   unconfirmedActive: "nli-investigation-line-unconfirmed-active-line",
-  unconfirmedActiveLattice: "nli-investigation-line-unconfirmed-active-lattice",
   completedCarrier: "nli-investigation-line-completed-carrier-line",
   completedMotion: "nli-investigation-line-completed-motion-line",
   compositeActive: "nli-investigation-line-composite-active-line",
@@ -74,11 +72,6 @@ const OVERLAY = new Set([
   INVESTIGATION_LINE_LAYER_IDS.completedMotion,
   INVESTIGATION_LINE_LAYER_IDS.completedCarrier,
   INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted,
-]);
-
-const LATTICE_LAYER_IDS = Object.freeze([
-  INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompletedLattice,
-  INVESTIGATION_LINE_LAYER_IDS.unconfirmedActiveLattice,
 ]);
 
 const COMPLETED_OPACITY = 1;
@@ -233,17 +226,9 @@ function profileValue(profile, key, fallback) {
 function unconfirmedRoutePaint(profile, width, routeScale, carrierWidth) {
   const widthScale = profileValue(profile, "unconfirmedWidthScale", NLI_VISUAL_TOKENS.routeUnconfirmedWidthScale || 1);
   const lineWidth = carrierWidth * width * routeScale * widthScale;
-  const latticeScale = profileValue(
-    profile,
-    "unconfirmedLatticeWidthScale",
-    NLI_VISUAL_TOKENS.routeUnconfirmedLatticeWidthScale,
-  );
   return {
     lineWidth,
     opacity: NLI_VISUAL_TOKENS.routeUnconfirmedOpacity * profileValue(profile, "unconfirmedOpacityMultiplier", 1),
-    latticeWidth: lineWidth * latticeScale,
-    latticeOpacity: NLI_VISUAL_TOKENS.routeUnconfirmedLatticeOpacity,
-    latticeColor: NLI_VISUAL_TOKENS.routeUnconfirmedLatticeColor,
   };
 }
 
@@ -273,14 +258,6 @@ function removeLayerAndSource(map, layerId, sourceId) {
     if (safelyGetSource(map, sourceId) && typeof map.removeSource === "function") map.removeSource(sourceId);
   } catch (_) {
     // Style reload can remove a handle between getSource and removeSource.
-  }
-}
-
-function removeLayerOnly(map, layerId) {
-  try {
-    if (safelyGetLayer(map, layerId) && typeof map.removeLayer === "function") map.removeLayer(layerId);
-  } catch (_) {
-    // Style reload can remove a handle between getLayer and removeLayer.
   }
 }
 
@@ -364,24 +341,9 @@ export function buildCompletedRouteFlowDasharray(flow, motionMode, lineWidthPx) 
   return maplibreLineDashFromLeafletPx(lineWidthPx, [dashPx, gapPx], -pixelStep);
 }
 
-export function buildUnconfirmedRouteDasharray(flow, motionMode, lineWidthPx) {
-  const parts = NLI_VISUAL_TOKENS.routeUnconfirmedDashPx;
-  const periodPx = Number(parts[0]) + Number(parts[1]);
-  const progress = flowProgress(flow, motionMode);
-  const pixelStep = motionMode === "reduced"
-    ? 0
-    : ((Math.round(progress * periodPx) % periodPx) + periodPx) % periodPx;
-  return maplibreLineDashFromLeafletPx(lineWidthPx, [parts[0], parts[1]], -pixelStep);
-}
-
-export function buildUnconfirmedLatticeDasharray(flow, motionMode, lineWidthPx) {
-  const parts = NLI_VISUAL_TOKENS.routeUnconfirmedLatticeDashPx;
-  const periodPx = Number(parts[0]) + Number(parts[1]);
-  const progress = flowProgress(flow, motionMode);
-  const pixelStep = motionMode === "reduced"
-    ? 0
-    : ((Math.round(progress * periodPx * 1.15) % periodPx) + periodPx) % periodPx;
-  return maplibreLineDashFromLeafletPx(lineWidthPx, [parts[0], parts[1]], pixelStep);
+// Confidence is encoded by stationary gaps, independently of the narrative reveal.
+export function buildUnconfirmedRouteDasharray(_flow, _motionMode, lineWidthPx) {
+  return maplibreLineDashFromLeafletPx(lineWidthPx, NLI_VISUAL_TOKENS.routeUnconfirmedDashPx);
 }
 
 export function buildDirectionalFlowGradient(
@@ -450,30 +412,16 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     }
     const unconfirmed = unconfirmedRoutePaint(resolvedProfile, width, routeScale, carrierWidth);
     const unconfirmedDash = buildUnconfirmedRouteDasharray({}, "full", unconfirmed.lineWidth);
-    const latticeDash = buildUnconfirmedLatticeDasharray({}, "full", unconfirmed.latticeWidth);
     addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted, {
       id: INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted,
       type: "line",
       source: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted,
-      layout: { "line-cap": "round", "line-join": "round" },
+      layout: { "line-cap": "butt", "line-join": "round" },
       paint: {
         "line-color": NLI_VISUAL_TOKENS.incidentRed,
         "line-opacity": unconfirmed.opacity,
         "line-width": unconfirmed.lineWidth,
         "line-dasharray": unconfirmedDash,
-        "line-dasharray-transition": { duration: 0, delay: 0 },
-      },
-    }, { type: "geojson", data: featureCollection([]) }, beforeId);
-    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted, {
-      id: INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompletedLattice,
-      type: "line",
-      source: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedCompleted,
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": unconfirmed.latticeColor,
-        "line-opacity": unconfirmed.latticeOpacity,
-        "line-width": unconfirmed.latticeWidth,
-        "line-dasharray": latticeDash,
         "line-dasharray-transition": { duration: 0, delay: 0 },
       },
     }, { type: "geojson", data: featureCollection([]) }, beforeId);
@@ -481,25 +429,12 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       id: INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive,
       type: "line",
       source: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedActive,
-      layout: { "line-cap": "round", "line-join": "round" },
+      layout: { "line-cap": "butt", "line-join": "round" },
       paint: {
         "line-color": NLI_VISUAL_TOKENS.incidentRed,
         "line-opacity": unconfirmed.opacity,
         "line-width": unconfirmed.lineWidth,
         "line-dasharray": unconfirmedDash,
-        "line-dasharray-transition": { duration: 0, delay: 0 },
-      },
-    }, { type: "geojson", data: featureCollection([]) }, beforeId);
-    addSourceAndLayer(map, INVESTIGATION_LINE_SOURCE_IDS.unconfirmedActive, {
-      id: INVESTIGATION_LINE_LAYER_IDS.unconfirmedActiveLattice,
-      type: "line",
-      source: INVESTIGATION_LINE_SOURCE_IDS.unconfirmedActive,
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": unconfirmed.latticeColor,
-        "line-opacity": unconfirmed.latticeOpacity,
-        "line-width": unconfirmed.latticeWidth,
-        "line-dasharray": latticeDash,
         "line-dasharray-transition": { duration: 0, delay: 0 },
       },
     }, { type: "geojson", data: featureCollection([]) }, beforeId);
@@ -545,16 +480,11 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
       type: "circle",
       source: INVESTIGATION_LINE_SOURCE_IDS.head,
       paint: {
-        "circle-color": NLI_VISUAL_TOKENS.routeReveal,
-        "circle-radius": [
-          "case",
-          ["==", ["get", "headKind"], "comet"],
-          Math.max(2.25, HEAD_RADIUS * width * 1.35),
-          Math.max(2.25, HEAD_RADIUS * width),
-        ],
+        "circle-color": ["case", ["==", ["get", "headKind"], "comet"], "rgba(0, 0, 0, 0)", NLI_VISUAL_TOKENS.routeReveal],
+        "circle-radius": Math.max(2.25, HEAD_RADIUS * width),
         "circle-opacity": 0.95,
-        "circle-stroke-color": NLI_VISUAL_TOKENS.annotationInk,
-        "circle-stroke-width": ["case", ["==", ["get", "headKind"], "comet"], 0, 1.1],
+        "circle-stroke-color": ["case", ["==", ["get", "headKind"], "comet"], NLI_VISUAL_TOKENS.incidentRed, NLI_VISUAL_TOKENS.annotationInk],
+        "circle-stroke-width": ["case", ["==", ["get", "headKind"], "comet"], 2, 1.1],
       },
     }, { type: "geojson", data: pointsFeatureCollection([]) }, beforeId);
     mounted = true;
@@ -671,9 +601,6 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
     const unconfirmedOpacity = projectionNovaDim
       ? ["case", unconfirmedImpactMatch, unconfirmed.opacity, NOVA_PARALLEL_DIM_OPACITY]
       : unconfirmed.opacity;
-    const latticeOpacity = projectionNovaDim
-      ? ["case", unconfirmedImpactMatch, unconfirmed.latticeOpacity, NOVA_PARALLEL_DIM_OPACITY]
-      : unconfirmed.latticeOpacity;
     try {
       if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.future) && typeof map.setPaintProperty === "function") {
         map.setPaintProperty(INVESTIGATION_LINE_LAYER_IDS.future, "line-color", NLI_VISUAL_TOKENS.incidentRed);
@@ -695,46 +622,12 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
           );
         }
       }
-      const unconfirmedPairs = [
-        {
-          lineId: INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted,
-          latticeId: INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompletedLattice,
-          staticChanged: staticPaintChanged,
-          flowChanged: flowPaintChanged && split.unconfirmedCompleted.length > 0,
-        },
-        {
-          lineId: INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive,
-          latticeId: INVESTIGATION_LINE_LAYER_IDS.unconfirmedActiveLattice,
-          staticChanged: staticPaintChanged || changed.unconfirmedActive,
-          flowChanged: (flowPaintChanged || changed.unconfirmedActive) && split.unconfirmedActive.length > 0,
-        },
-      ];
-      for (const pair of unconfirmedPairs) {
-        if (safelyGetLayer(map, pair.lineId) && typeof map.setPaintProperty === "function") {
-          if (pair.staticChanged) {
-            map.setPaintProperty(pair.lineId, "line-color", NLI_VISUAL_TOKENS.incidentRed);
-            map.setPaintProperty(pair.lineId, "line-width", unconfirmed.lineWidth);
-          }
-          if (pair.flowChanged) {
-            map.setPaintProperty(
-              pair.lineId,
-              "line-dasharray",
-              buildUnconfirmedRouteDasharray(motion, motionMode, unconfirmed.lineWidth),
-            );
-          }
-        }
-        if (safelyGetLayer(map, pair.latticeId) && typeof map.setPaintProperty === "function") {
-          if (pair.staticChanged) {
-            map.setPaintProperty(pair.latticeId, "line-color", unconfirmed.latticeColor);
-            map.setPaintProperty(pair.latticeId, "line-width", unconfirmed.latticeWidth);
-          }
-          if (pair.flowChanged) {
-            map.setPaintProperty(
-              pair.latticeId,
-              "line-dasharray",
-              buildUnconfirmedLatticeDasharray(motion, motionMode, unconfirmed.latticeWidth),
-            );
-          }
+      if (staticPaintChanged && typeof map.setPaintProperty === "function") {
+        for (const lineId of [INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompleted, INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive]) {
+          if (!safelyGetLayer(map, lineId)) continue;
+          map.setPaintProperty(lineId, "line-color", NLI_VISUAL_TOKENS.incidentRed);
+          map.setPaintProperty(lineId, "line-width", unconfirmed.lineWidth);
+          map.setPaintProperty(lineId, "line-dasharray", buildUnconfirmedRouteDasharray(null, null, unconfirmed.lineWidth));
         }
       }
       if (staticPaintChanged && safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.compositeActive) && typeof map.setPaintProperty === "function") {
@@ -774,25 +667,11 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
             unconfirmedOpacity,
           );
         }
-        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompletedLattice)) {
-          map.setPaintProperty(
-            INVESTIGATION_LINE_LAYER_IDS.unconfirmedCompletedLattice,
-            "line-opacity",
-            latticeOpacity,
-          );
-        }
         if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive)) {
           map.setPaintProperty(
             INVESTIGATION_LINE_LAYER_IDS.unconfirmedActive,
             "line-opacity",
             unconfirmedOpacity,
-          );
-        }
-        if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.unconfirmedActiveLattice)) {
-          map.setPaintProperty(
-            INVESTIGATION_LINE_LAYER_IDS.unconfirmedActiveLattice,
-            "line-opacity",
-            latticeOpacity,
           );
         }
         if (safelyGetLayer(map, INVESTIGATION_LINE_LAYER_IDS.active)) {
@@ -807,6 +686,11 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
             INVESTIGATION_LINE_LAYER_IDS.head,
             "circle-opacity",
             parallelOpacity ?? 0.95,
+          );
+          map.setPaintProperty(
+            INVESTIGATION_LINE_LAYER_IDS.head,
+            "circle-stroke-opacity",
+            ["case", ["==", ["get", "headKind"], "comet"], parallelOpacity ?? 1, 1],
           );
         }
       }
@@ -831,7 +715,6 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
 
   function reset({ preserveBasePaints = false } = {}) {
     if (disposed) return;
-    for (const layerId of LATTICE_LAYER_IDS) removeLayerOnly(map, layerId);
     for (const [layerId, sourceId] of OWNED) {
       if (OVERLAY.has(layerId)) removeLayerAndSource(map, layerId, sourceId);
     }
@@ -864,7 +747,6 @@ export function createInvestigationLineRenderer(map, profile = NLI_DISPLAY_PROFI
   function dispose() {
     if (disposed) return;
     disposed = true;
-    for (const layerId of LATTICE_LAYER_IDS) removeLayerOnly(map, layerId);
     for (const [layerId, sourceId] of OWNED) removeLayerAndSource(map, layerId, sourceId);
     signatures.clear();
     collectionCache.clear();
