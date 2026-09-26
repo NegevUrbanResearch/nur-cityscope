@@ -12,7 +12,7 @@ from .models import OTEFProjectionCalibration, Table, projection_config_defaults
 from .projection_config_schema import validate_projection_config
 from .projection_warp_assets import load_trusted_projection_asset
 from .projection_warp_geometry import evaluate_warp_mesh
-from .projection_warp_schema import validate_projection_config_v2
+from .projection_warp_schema import validate_projection_config_v2, validate_projection_config_v3, validate_projection_config_v4, migrate_projection_config_to_v4
 
 
 class ProjectionConfigError(Exception):
@@ -43,7 +43,7 @@ def validate_projection_config_for_persistence(config):
     errors = validate_projection_config(config)
     if errors:
         return errors
-    if config.get('schemaVersion') != 2:
+    if config.get('schemaVersion') not in (2, 3, 4):
         return {}
     manifest = None
     for side in ('left', 'right'):
@@ -58,7 +58,8 @@ def validate_projection_config_for_persistence(config):
             except (OSError, ValueError, TypeError) as error:
                 return {f'outputs.{side}.warp.baseline': str(error)}
         if baseline['type'] == 'tdMesh':
-            errors = validate_projection_config_v2(config, trusted_manifest=manifest)
+            validator = {2: validate_projection_config_v2, 3: validate_projection_config_v3, 4: validate_projection_config_v4}[config['schemaVersion']]
+            errors = validator(config, trusted_manifest=manifest)
             if errors:
                 return errors
         try:
@@ -152,6 +153,7 @@ def mutate_projection_state(table_name, base_revision, action, source_id, **payl
             config_errors = validate_projection_config_for_persistence(config)
             if config_errors:
                 raise ProjectionConfigError("invalid", config_errors)
+            config = migrate_projection_config_to_v4(config)
             if action == "preview":
                 changed = config != row.working_config
                 row.working_config = copy.deepcopy(config)
@@ -191,7 +193,7 @@ def mutate_projection_state(table_name, base_revision, action, source_id, **payl
             target = next((p for p in presets if p["id"] == preset_id), None)
             if target is None:
                 raise ProjectionConfigError("invalid", {"presetId": "preset not found"})
-            row.working_config = copy.deepcopy(target["config"])
+            row.working_config = migrate_projection_config_to_v4(target["config"])
             config_errors = validate_projection_config_for_persistence(row.working_config)
             if config_errors:
                 raise ProjectionConfigError("invalid", config_errors)
@@ -201,7 +203,7 @@ def mutate_projection_state(table_name, base_revision, action, source_id, **payl
             target = next((p for p in presets if p["id"] == row.selected_preset_id), None)
             if target is None:
                 raise ProjectionConfigError("invalid", {"selectedPresetId": "preset not found"})
-            row.working_config = copy.deepcopy(target["config"])
+            row.working_config = migrate_projection_config_to_v4(target["config"])
             config_errors = validate_projection_config_for_persistence(row.working_config)
             if config_errors:
                 raise ProjectionConfigError("invalid", config_errors)

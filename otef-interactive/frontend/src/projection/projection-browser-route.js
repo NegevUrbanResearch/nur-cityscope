@@ -1,8 +1,10 @@
 import { createProjectionSurfaceCompositor } from "./projection-surface-compositor.js";
 import { createProjectionWarpRenderer } from "./projection-warp-renderer.js";
 import { evaluateWarpMesh } from "../shared/projection-warp-geometry.js";
+import { createProjectionNameCanvasAdapter } from "./projection-name-canvas-adapter.js";
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
 import { migrateProjectionConfigToV2 } from "../shared/projection-warp-schema.js";
+import { migrateNamesWallToV4 } from "../shared/nli-name-wall-config.js";
 import { validateProjectionBaselineMesh } from "../shared/projection-warp-assets.js";
 import {
   DEFAULT_PROJECTION_BASELINE,
@@ -130,6 +132,7 @@ export async function createProjectionBrowserSurface({
   signal,
   rendererFactory = (options) => createProjectionWarpRenderer(options),
   initialConfig = null,
+  search = globalThis.location?.search || '',
   onError,
   onContextLost: onContextLostCallback,
   onContextRestored: onContextRestoredCallback,
@@ -143,16 +146,20 @@ export async function createProjectionBrowserSurface({
   let statusElement = null;
   let onContextLost;
   let onContextRestored;
+  let nameAdapter;
+  let peerBaselineMesh;
+  let activeMesh;
+  let previousPair = null;
   try {
     try {
       baseline = await loadCapturedProjectionFraming({ fetchImpl, signal });
     } catch (error) {
-      const fallbackWarp = initialConfig?.schemaVersion === 2 ? initialConfig.outputs?.[spanId]?.warp : null;
+      const fallbackWarp = [2, 3, 4].includes(initialConfig?.schemaVersion) ? initialConfig.outputs?.[spanId]?.warp : null;
       if (error?.name === "AbortError" || !fallbackWarp || (fallbackWarp.enabled !== false && fallbackWarp.baseline?.type !== "identity")) throw error;
       baseline = { manifest: { width: 1920, height: 1080, assets: {}, framing: {} }, framing: initialConfig };
     }
-    const initialV2 = initialConfig?.schemaVersion === 1 ? migrateProjectionConfigToV2(initialConfig) : initialConfig;
-    const startupConfig = initialV2 || (baseline.framing?.schemaVersion === 1 ? migrateProjectionConfigToV2(baseline.framing) : baseline.framing);
+    const initialV4 = initialConfig ? migrateNamesWallToV4(initialConfig) : null;
+    const startupConfig = initialV4 || (baseline.framing ? migrateNamesWallToV4(baseline.framing) : null);
     const initialWarp = startupConfig?.outputs?.[spanId]?.warp;
     try {
       baseline = await loadCapturedProjectionAsset({ fetchImpl, spanId, captured: baseline, signal });
@@ -177,18 +184,19 @@ export async function createProjectionBrowserSurface({
     const baseScene = {};
     if (image && !getScene) baseScene.image = { source: image };
     if (mapCanvas && !getScene) baseScene.map = { source: mapCanvas };
-    const readScene = () => ({ ...baseScene, ...(typeof getScene === "function" ? getScene() : scene) });
+    const readScene = () => ({ ...baseScene, ...(typeof getScene === "function" ? getScene() : scene),
+      ...(nameAdapter?.descriptor() ? { names: nameAdapter.descriptor() } : {}),
+      });
     const initialMesh = initialWarp?.baseline?.type === "identity" || initialWarp?.enabled === false
       ? evaluateWarpMesh(null, initialWarp)
       : (baseline.mesh || evaluateWarpMesh(null, migrateProjectionConfigToV2(baseline.framing).outputs[spanId].warp));
     const renderer = rendererFactory({ canvas, mesh: initialMesh });
+    activeMesh = initialMesh;
     compositor = createProjectionSurfaceCompositor({ renderer, sources: readScene() });
-    let activeConfig = initialConfig?.schemaVersion === 1
-      ? migrateProjectionConfigToV2(initialConfig)
-      : (initialConfig || migrateProjectionConfigToV2(baseline.framing));
+    let activeConfig = initialConfig ? migrateNamesWallToV4(initialConfig) : migrateNamesWallToV4(baseline.framing);
     const prepareConfig = (candidate) => {
       if (Object.keys(validateProjectionConfig(candidate)).length) throw new Error("Invalid projection calibration");
-      const config = candidate.schemaVersion === 1 ? migrateProjectionConfigToV2(candidate) : candidate;
+      const config = migrateNamesWallToV4(candidate);
       const warp = config.outputs?.[spanId]?.warp;
       if (!warp) throw new Error(`Projection calibration has no ${spanId} warp`);
       let sourceMesh = null;
@@ -200,9 +208,28 @@ export async function createProjectionBrowserSurface({
       const mesh = evaluateWarpMesh(sourceMesh, warp);
       return { config, mesh };
     };
+    const preparePair = async (candidate) => {
+      const prepared = prepareConfig(candidate);
+      const meshes = { [spanId]: prepared.mesh };
+      const peer = spanId === 'left' ? 'right' : 'left';
+      const peerWarp = prepared.config.outputs[peer].warp;
+      if (peerWarp.enabled !== false && peerWarp.baseline?.type === 'tdMesh' && !peerBaselineMesh) {
+        const loaded = await loadCapturedProjectionAsset({ fetchImpl, spanId: peer, captured: baseline, signal });
+        peerBaselineMesh = loaded.mesh;
+      }
+      let source = peerWarp.enabled !== false && peerWarp.baseline?.type === 'tdMesh' ? peerBaselineMesh : null;
+      if (source) {
+        const errors = validateProjectionBaselineMesh(source, { side: peer, manifest: baseline.manifest, baseline: peerWarp.baseline });
+        if (Object.keys(errors).length) throw new Error(`Projection peer baseline rejected: ${Object.entries(errors).map(([path, message]) => `${path} ${message}`).join('; ')}`);
+      }
+      meshes[peer] = evaluateWarpMesh(source, peerWarp);
+      return { ...prepared, meshes };
+    };
+    nameAdapter = createProjectionNameCanvasAdapter({ document: doc, output: spanId });
     const applyConfig = (candidate) => {
       const prepared = prepareConfig(candidate);
       renderer.setMesh(prepared.mesh);
+      activeMesh = prepared.mesh;
       activeConfig = prepared.config;
       return true;
     };
@@ -249,6 +276,27 @@ export async function createProjectionBrowserSurface({
       baseline,
       draw,
       prepareConfig,
+      preparePair,
+      getNameAdapter: () => nameAdapter,
+      commitPair(prepared) {
+        previousPair = { candidate: prepared, config: activeConfig, mesh: activeMesh };
+        renderer.setMesh(prepared.mesh);
+        activeMesh = prepared.mesh;
+        activeConfig = prepared.config;
+      },
+      rollbackPair(prepared) {
+        if (!previousPair || previousPair.candidate !== prepared) return false;
+        renderer.setMesh(previousPair.mesh);
+        activeMesh = previousPair.mesh;
+        activeConfig = previousPair.config;
+        previousPair = null;
+        return true;
+      },
+      finalizePair(prepared) {
+        if (previousPair?.candidate !== prepared) return false;
+        previousPair = null;
+        return true;
+      },
       applyConfig,
       getConfig: () => activeConfig,
       getBaselineIdentity: baselineIdentity,
@@ -259,6 +307,7 @@ export async function createProjectionBrowserSurface({
         canvas?.removeEventListener?.("webglcontextlost", onContextLost);
         canvas?.removeEventListener?.("webglcontextrestored", onContextRestored);
         statusElement?.remove?.();
+        nameAdapter?.dispose();
         compositor?.dispose?.();
         canvas?.remove?.();
       },

@@ -79,6 +79,45 @@ describe('selected NLI place overlay', () => {
     overlay.dispose();
   });
 
+  it('hides and reverses both circle fills and strokes with Canvas opacity', async () => {
+    const map = createFakeMapLibreMap();
+    const overlay = createNameGroupOverlay({ map, field, motionMode: 'reduced',
+      loadOutlines: () => Promise.resolve(outlines) });
+    overlay.update('nova');
+    for (const id of ['nli-name-place-selection-halo', 'nli-name-place-selection-point']) {
+      expect(map.getPaintProperty(id, 'circle-stroke-opacity') ?? 1).toBe(1);
+    }
+    overlay.setOpacity(0);
+    for (const id of ['nli-name-place-selection-halo', 'nli-name-place-selection-point']) {
+      expect(map.getPaintProperty(id, 'circle-opacity')).toBe(0);
+      expect(map.getPaintProperty(id, 'circle-stroke-opacity')).toBe(0);
+    }
+    overlay.setOpacity(0.5);
+    expect(map.getPaintProperty('nli-name-place-selection-halo', 'circle-opacity')).toBe(0.08);
+    expect(map.getPaintProperty('nli-name-place-selection-point', 'circle-opacity')).toBe(0.5);
+    for (const id of ['nli-name-place-selection-halo', 'nli-name-place-selection-point']) {
+      expect(map.getPaintProperty(id, 'circle-stroke-opacity')).toBe(0.5);
+    }
+    overlay.setOpacity(1);
+    for (const id of ['nli-name-place-selection-halo', 'nli-name-place-selection-point']) {
+      expect(map.getPaintProperty(id, 'circle-stroke-opacity')).toBe(1);
+    }
+    overlay.dispose();
+  });
+
+  it('restores selected circle strokes when focus begins after the reveal', async () => {
+    const map = createFakeMapLibreMap();
+    const overlay = createNameGroupOverlay({ map, field, motionMode: 'reduced',
+      loadOutlines: () => Promise.resolve(outlines) });
+    overlay.setOpacity(0);
+    overlay.setOpacity(1);
+    overlay.update('nova');
+    for (const id of ['nli-name-place-selection-halo', 'nli-name-place-selection-point']) {
+      expect(map.getPaintProperty(id, 'circle-stroke-opacity')).toBe(1);
+    }
+    overlay.dispose();
+  });
+
   it('removes partially mounted resources if map styling fails', () => {
     const map = createFakeMapLibreMap();
     const add = map.addLayer.bind(map);

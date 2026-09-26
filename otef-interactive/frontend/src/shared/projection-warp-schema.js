@@ -1,3 +1,5 @@
+import { validateNamesWall, validateNamesWallV3 } from './nli-name-wall-config.js';
+
 const SIDES = Object.freeze({ left: { columns: 7, rows: 7 }, right: { columns: 8, rows: 7 } });
 const SAFETY_MIN = -1;
 const SAFETY_MAX = 2;
@@ -104,6 +106,24 @@ export function validateProjectionConfigV2(value, options = {}) {
   if (!ownKeys(value, ['schemaVersion', 'pre', 'outputs'], '', errors)) return errors;
   if (value.schemaVersion !== 2 || typeof value.schemaVersion !== 'number') errors.schemaVersion = 'must equal 2';
   legacyFields(value, errors, options);
+  return errors;
+}
+
+export function validateProjectionConfigV3(value, options = {}) {
+  const errors = {};
+  if (!ownKeys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors)) return errors;
+  if (value.schemaVersion !== 3 || typeof value.schemaVersion !== 'number') errors.schemaVersion = 'must equal 3';
+  legacyFields(value, errors, options);
+  validateNamesWallV3(value.namesWall, 'namesWall', errors);
+  return errors;
+}
+
+export function validateProjectionConfigV4(value, options = {}) {
+  const errors = {};
+  if (!ownKeys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors)) return errors;
+  if (value.schemaVersion !== 4 || typeof value.schemaVersion !== 'number') errors.schemaVersion = 'must equal 4';
+  legacyFields(value, errors, options);
+  validateNamesWall(value.namesWall, 'namesWall', errors);
   return errors;
 }
 

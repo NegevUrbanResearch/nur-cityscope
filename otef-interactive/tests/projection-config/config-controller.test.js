@@ -2,9 +2,11 @@ import { describe, expect, test, vi } from "vitest";
 import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from "../../frontend/src/shared/projection-config-schema.js";
 import {
   FIELD_DESCRIPTORS,
+  NAMES_WALL_DESCRIPTORS,
   fieldValueFromInput,
   fineStepFor,
   mountProjectionConfig,
+  projectionAppliedStatus,
   statusText,
 } from "../../frontend/src/projection-config/config-controller.js";
 
@@ -51,9 +53,12 @@ function fakeClient(initialSnapshot) {
   const savedDrafts = [];
   const notify = () => listeners.forEach((listener) => listener({ ...state, snapshot: clone(state.snapshot), draft: clone(state.draft) }));
   if (initialSnapshot === null) state = { ...state, snapshot: null, draft: null };
+  let validateCandidate;
   return {
     state,
     savedDrafts,
+    setValidateCandidate(handler) { validateCandidate = handler; },
+    validateCandidate(args) { return validateCandidate(args); },
     hydrate(snapshot) { state = { ...state, snapshot: clone(snapshot), draft: clone(snapshot.config) }; notify(); },
     report(changes) { state = { ...state, ...changes }; notify(); },
     subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
@@ -77,6 +82,107 @@ function fakeClient(initialSnapshot) {
 }
 
 describe("projection config controller", () => {
+  test("saved wall preview failures remain unconfirmed and mutation preflight is fresh", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const status = find(root, (node) => node.className === "names-wall-status");
+    await vi.waitFor(() => expect(status.textContent).toContain("Building"));
+    expect(status.textContent).not.toContain("Invalid");
+    expect(status.textContent).not.toContain("Draft is unsaved");
+    expect(status.textContent).not.toContain("retain their previous complete wall");
+
+    const config = clone(client.getState().draft);
+    const identity = JSON.stringify(config);
+    const first = await client.validateCandidate({ config, identity, generation: 1, revision: 3 });
+    const second = await client.validateCandidate({ config, identity, generation: 2, revision: 4 });
+    expect(first).not.toBe(second);
+    expect(second.reason).toBe("final output previews unavailable");
+    api.dispose(); globalThis.document = previousDocument;
+  });
+  test.each(["load-before-ready", "ready-before-load"])("a reloaded final preview retries after %s startup ordering", async (order) => {
+    const previousDocument = globalThis.document;
+    const messages = new Map();
+    const doc = documentStub();
+    doc.defaultView.location = { origin: "http://localhost" };
+    doc.defaultView.addEventListener = (name, handler) => messages.set(name, handler);
+    doc.defaultView.removeEventListener = (name) => messages.delete(name);
+    doc.createElement = (tag) => {
+      const node = element(tag);
+      if (tag === "iframe") node.contentWindow = { postMessage: vi.fn() };
+      return node;
+    };
+    globalThis.document = doc;
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const frames = [];
+    const collect = (node) => { if (node.className === "active-preview-frame") frames.push(node); for (const child of node.children || []) collect(child); };
+    collect(root);
+    const pair = frames.filter((frame) => frame.src.includes("outputMode=browser"));
+    expect(pair).toHaveLength(2);
+    const outputFor = (frame) => frame.src.includes("span=right") ? "right" : "left";
+    const status = find(root, (node) => node.className === "names-wall-status");
+    const ready = () => { for (const frame of pair) messages.get("message")({
+      source: frame.contentWindow, origin: "http://localhost", data: { type: "otef_projection_preview_ready", output: outputFor(frame) },
+    }); };
+    const requests = () => pair.map((frame) => frame.contentWindow.postMessage.mock.calls.map(([message]) => message).filter((message) => message.type === "otef_projection_preview_validate").at(-1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (order === "ready-before-load") {
+      ready();
+      await vi.waitFor(() => expect(requests().every(Boolean)).toBe(true));
+    }
+    const firstRequestIds = requests().map((request) => request?.requestId || 0);
+    pair[0].dispatch("load");
+    if (order === "ready-before-load") pair[1].dispatch("load");
+    if (order === "load-before-ready") await vi.waitFor(() => expect(status.textContent).toContain("Preview unavailable"));
+    expect(status.dataset.state).toBe("building");
+    if (order === "load-before-ready") ready();
+    await vi.waitFor(() => expect(requests().every((request, index) => request?.requestId > firstRequestIds[index])).toBe(true));
+    const wall = { datasetVersion: "test-data", mode: "wall", digest: "a".repeat(64), expected: 1228, placed: 1228 };
+    const diagnostics = { state: "valid", datasetVersion: "test-data", mode: "wall", requestedFontPx: 12, effectiveFontPx: 12, minimumFontPx: 8, expected: 1228, placed: 1228 };
+    for (const [index, frame] of pair.entries()) {
+      const request = requests()[index];
+      messages.get("message")({ source: frame.contentWindow, origin: "http://localhost", data: {
+        type: "otef_projection_preview_validated", output: outputFor(frame), requestId: request.requestId,
+        identity: request.identity, valid: true, wall, diagnostics,
+      } });
+    }
+    await vi.waitFor(() => expect(status.textContent).toContain("Valid"));
+    expect(status.textContent).toContain("1228 of 1228");
+    api.dispose(); globalThis.document = previousDocument;
+  });
+  test('paired wall status requires matching revision, digest, dataset, and all duplicate instances', () => {
+    const wall = { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228 };
+    const left = { output: 'left', instanceId: 'left-a', revision: 8, success: true, wall };
+    const right = { output: 'right', instanceId: 'right-a', revision: 8, success: true, wall };
+    expect(projectionAppliedStatus([left], 8)).toBe('Pending');
+    expect(projectionAppliedStatus([left, right], 8)).toBe('Applied');
+    expect(projectionAppliedStatus([left, { ...right, wall: { ...wall, digest: 'b'.repeat(64) } }], 8)).toBe('Unconfirmed');
+    expect(projectionAppliedStatus([left, right, { ...left, instanceId: 'left-b', wall: { ...wall, datasetVersion: 'other' } }], 8)).toBe('Unconfirmed');
+    expect(projectionAppliedStatus([left, { ...right, revision: 7 }], 8)).toBe('Pending');
+    expect(projectionAppliedStatus([left, { ...right, success: false, error: 'draw failed' }], 8)).toBe('Failed');
+    expect(projectionAppliedStatus([{ ...left, wall: undefined }, { ...right, wall: undefined }], 8)).toBe('Renderer applied');
+  });
+  test('editor clears paired wall Applied on duplicate conflict and reconnect', () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element('main'); const listeners = new Map();
+    const socket = { on: (event, handler) => listeners.set(event, handler), off: (event) => listeners.delete(event), send: vi.fn(), getConnected: () => true };
+    const api = mountProjectionConfig(root, { client: fakeClient(), socket });
+    const wall = { datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228 };
+    const ack = (output, instanceId, nextWall = wall) => listeners.get('otef_projection_applied')({ table: 'otef', output, instanceId, revision: 2, success: true, route: 'browser', baseline: { type: 'identity' }, wall: nextWall });
+    ack('left', 'left-a'); ack('right', 'right-a');
+    expect(find(root, (node) => node.className === 'applied-summary').textContent).toBe('Applied');
+    ack('left', 'left-b', { ...wall, digest: 'b'.repeat(64) });
+    expect(api.getStatusRows()).toHaveLength(3);
+    expect(find(root, (node) => node.className === 'applied-summary').textContent).toBe('Unconfirmed');
+    listeners.get('disconnect')();
+    expect(find(root, (node) => node.className === 'applied-summary').textContent).toBe('Pending');
+    api.dispose(); globalThis.document = previousDocument;
+  });
   test("shows hydration failure with a retry action and automatic preview errors", async () => {
     const previousDocument = globalThis.document;
     globalThis.document = documentStub();
@@ -230,7 +336,7 @@ describe("projection config controller", () => {
     const api = mountProjectionConfig(root, { client, onImport: async () => ({ name: "Legacy checkpoint", config: legacy }) });
     const importedInput = find(root, (node) => node.attributes?.["aria-label"] === "Import calibration");
     importedInput.files = [{}]; importedInput.dispatch("change");
-    await vi.waitFor(() => expect(client.getState().draft.schemaVersion).toBe(2));
+    await vi.waitFor(() => expect(client.getState().draft.schemaVersion).toBe(4));
     expect(client.getState().draft.pre).toEqual(legacy.pre);
     expect(client.getState().draft.outputs.left.warp.baseline.type).toBe("identity");
     expect(client.getState().draft.outputs.right.warp.grid.offsets).toHaveLength(56);
@@ -421,6 +527,103 @@ describe("projection config controller", () => {
     action("output-close-both").dispatch("click");
     expect(outputController.closeBoth).toHaveBeenCalledTimes(1);
     api.dispose(); expect(outputController.dispose).toHaveBeenCalledTimes(1); globalThis.document = previousDocument;
+  });
+
+  test('import reports a nonzero historical seam gap conversion notice', async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element('main'); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client, onImport: async () => ({
+      name: 'Old wall', config: clone(DEFAULTS), warnings: ['The wall seam gap needs readjustment in final-output pixels.'],
+    }) });
+    const importedInput = find(root, (node) => node.attributes?.['aria-label'] === 'Import calibration');
+    importedInput.files = [{}]; importedInput.dispatch('change');
+    const notice = find(root, (node) => node.className === 'conflict-banner');
+    await vi.waitFor(() => expect(notice.textContent).toContain('seam gap needs readjustment'));
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test('hydration presents a historical seam-gap readjustment notice', () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element('main'); const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    client.report({ migrationWarnings: ['The wall seam gap needs readjustment in final-output pixels.'] });
+    const notice = find(root, (node) => node.className === 'conflict-banner');
+    expect(notice.textContent).toContain('seam gap needs readjustment');
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("Names wall edits the active profile and preserves the other profile", () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main");
+    const client = fakeClient();
+    const api = mountProjectionConfig(root, { client });
+    const node = find(root, (item) => item.dataset?.node === "names-wall");
+    expect(node).not.toBeNull();
+    const mode = find(node, (item) => item.attributes?.["aria-label"] === "Names wall profile");
+    mode.value = "model";
+    mode.dispatch("change");
+    expect(client.getState().draft.namesWall.activeMode).toBe("model");
+    const inset = find(node, (item) => item.dataset?.field === "namesWall.innerEdgeInsetPx.left" && item.dataset.input === "number");
+    inset.value = "60";
+    inset.dispatch("blur");
+    const font = find(node, (item) => item.dataset?.field === "namesWall.requestedFontPx" && item.dataset.input === "number");
+    font.value = "6";
+    font.dispatch("blur");
+    expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(6);
+    expect(client.getState().draft.namesWall.profiles.wall.requestedFontPx).toBe(12);
+    expect(client.getState().draft.namesWall.innerEdgeInsetPx.left).toBe(60);
+    const spacing = find(node, (item) => item.dataset?.field === "namesWall.spacingPx" && item.dataset.input === "number");
+    spacing.value = "1";
+    spacing.dispatch("blur");
+    expect(client.getState().draft.namesWall.profiles.model.spacingPx).toBe(1);
+    expect(client.getState().draft.namesWall.profiles.wall.spacingPx).toBe(2);
+    api.dispose(); globalThis.document = previousDocument;
+  });
+
+  test("Names wall numeric descriptors use the shared integer bounds", () => {
+    expect(NAMES_WALL_DESCRIPTORS.map(({ path, min, max, step }) => [path, min, max, step])).toEqual([
+      ["namesWall.requestedFontPx", 1, 48, 1],
+      ["namesWall.spacingPx", 0, 32, 1], ["namesWall.edgeInsetPx", 0, 256, 1],
+      ["namesWall.innerEdgeInsetPx.left", 0, 960, 1], ["namesWall.innerEdgeInsetPx.right", 0, 960, 1],
+    ]);
+  });
+
+  test("Names wall settings survive Live, preset, import, export, conflict, and Revert paths", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = documentStub();
+    const root = element("main"); const client = fakeClient(); const exported = vi.fn();
+    const api = mountProjectionConfig(root, { client, onExport: exported, onImport: async () => ({ name: "Wall profile", config: {
+      ...clone(DEFAULTS), namesWall: { ...clone(DEFAULTS.namesWall), activeMode: "model", profiles: {
+        wall: { ...clone(DEFAULTS.namesWall.profiles.wall) }, model: { ...clone(DEFAULTS.namesWall.profiles.model), requestedFontPx: 7, spacingPx: 1, edgeInsetPx: 12 },
+      } },
+    } }) });
+    const action = (name) => find(root, (item) => item.dataset?.action === name);
+    const node = find(root, (item) => item.dataset?.node === "names-wall");
+    const live = action("live"); live.checked = false; live.dispatch("change");
+    const mode = find(node, (item) => item.attributes?.["aria-label"] === "Names wall profile"); mode.value = "model"; mode.dispatch("change");
+    const setField = (path, value) => { const input = find(node, (item) => item.dataset?.field === path && item.dataset.input === "number"); input.value = String(value); input.dispatch("blur"); };
+    setField("namesWall.innerEdgeInsetPx.left", 60); setField("namesWall.requestedFontPx", 6); setField("namesWall.spacingPx", 1);
+    action("apply").dispatch("click");
+    await vi.waitFor(() => expect(client.apply).toHaveBeenCalledTimes(1));
+    action("export").dispatch("click");
+    const exportValue = JSON.parse(exported.mock.calls.at(-1)[0]);
+    expect(exportValue.config.namesWall.profiles.model).toMatchObject({ requestedFontPx: 6, spacingPx: 1 });
+    expect(exportValue.config.namesWall.innerEdgeInsetPx.left).toBe(60);
+    const name = find(root, (item) => item.attributes?.["aria-label"] === "Preset name"); name.value = "Wall profile";
+    action("save-new").dispatch("click");
+    await vi.waitFor(() => expect(client.savedDrafts.at(-1).namesWall.profiles.model.requestedFontPx).toBe(6));
+    const importInput = find(root, (item) => item.attributes?.["aria-label"] === "Import calibration"); importInput.files = [{}]; importInput.dispatch("change");
+    await vi.waitFor(() => expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(7));
+    expect(client.getState().draft.namesWall.profiles.model).toMatchObject({ spacingPx: 1, edgeInsetPx: 12 });
+    api.setConflict("Remote update");
+    expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(7);
+    action("revert").dispatch("click");
+    await vi.waitFor(() => expect(client.revert).toHaveBeenCalledTimes(1));
+    expect(client.getState().draft.namesWall).toEqual(client.getState().snapshot.config.namesWall);
+    api.dispose(); globalThis.document = previousDocument;
   });
 
   test("blocks local output actions on coarse or no-hover surfaces and shows workstation instructions", () => {

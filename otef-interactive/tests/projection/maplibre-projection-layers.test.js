@@ -34,6 +34,18 @@ import {
   syncProjectionLayers,
 } from "../../frontend/src/projection/maplibre-projection-layers.js";
 
+it('suppresses only projection name symbols after layer installation when Canvas is active', () => {
+  const visibility = new Map();
+  const map = { getLayer: (id) => ['nli__people_names__labels', 'nli-name-field-labels', 'nli-name-field-selected', 'other'].includes(id) ? { id } : null,
+    setLayoutProperty: (id, key, value) => visibility.set(id, [key, value]) };
+  syncProjectionLayers(map, [], { suppressCanvasNameSymbols: true });
+  expect([...visibility.keys()]).toEqual(['nli__people_names__labels', 'nli-name-field-labels', 'nli-name-field-selected']);
+  expect([...visibility.values()]).toEqual(Array(3).fill(['visibility', 'none']));
+  visibility.clear();
+  syncProjectionLayers(map, [], {});
+  expect(visibility.size).toBe(0);
+});
+
 const originalFetch = globalThis.fetch;
 
 /** Drain microtasks so async masked-WMTS paths complete in tests. */

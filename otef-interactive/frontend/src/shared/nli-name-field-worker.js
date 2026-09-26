@@ -1,7 +1,18 @@
 import { createNameFieldGeometry, buildNliNameField } from './nli-name-field-geometry.js';
+import { buildNamesWallLayout } from './nli-name-wall-layout.js';
+import { evaluateNameWallCoverage } from './nli-name-wall-coverage.js';
 
-self.onmessage = ({data}) => {
+self.onmessage = async ({data}) => {
   try {
+    if (data.profile === 'namesWall') {
+      const coverage = data.coverage || evaluateNameWallCoverage({ config: data.config,
+        meshes: data.meshes, compositorClips: data.compositorClips,
+        cameraMappings: data.cameraMappings, logicalPlane: data.logicalPlane });
+      const field = await buildNamesWallLayout({ ...data, coverage });
+      field.safeGeometry = coverage;
+      self.postMessage({ field });
+      return;
+    }
     const fieldGeometry = createNameFieldGeometry(data.geometry);
     const widths = new Map(data.widths);
     const field = buildNliNameField(data.collection, fieldGeometry, {

@@ -14,6 +14,7 @@ const DIM_TEXT_OPACITY = 0.35;
 const FULL_OPACITY = 1;
 const MEMORIAL_OPACITY = 0.18;
 const MEMORIAL_TRANSITION = { duration: 350, delay: 0 };
+const IMMEDIATE_TRANSITION = { duration: 0, delay: 0 };
 const paintStates = new WeakMap();
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -54,11 +55,17 @@ function paintTarget(map, target) {
   }
   const entry = rememberTarget(map, target);
   const memorial = state.memorial;
-  const value = memorial === null ? entry.value : target.role === "label" && memorial.placeName
+  const focused = target.role === "label" && memorial?.placeName
     ? ["case", ["==", ["get", "cityname"], memorial.placeName], FULL_OPACITY, MEMORIAL_OPACITY]
     : MEMORIAL_OPACITY;
+  const strength = memorial?.strength ?? 0;
+  const value = memorial === null ? entry.value : strength === 1 ? focused
+    : typeof entry.value === 'number' && typeof focused === 'number'
+      ? entry.value * (1 - strength) + focused * strength
+      : ['+', ['*', entry.value, 1 - strength], ['*', focused, strength]];
   const transitionKey = `${target.property}-transition`;
-  const transition = memorial === null ? entry.transition ?? null : MEMORIAL_TRANSITION;
+  const transition = memorial === null ? entry.transition ?? null
+    : strength === 1 ? MEMORIAL_TRANSITION : IMMEDIATE_TRANSITION;
   if (!equal(map.getPaintProperty?.(target.id, transitionKey) ?? null, transition)) {
     setPaint(map, target.id, transitionKey, transition);
   }
@@ -68,11 +75,12 @@ function paintTarget(map, target) {
 }
 
 /** Memorial presentation owns effective settlement opacity while mounted. */
-export function setMemorialSettlementFocus(map, { active = false, placeName = null } = {}) {
+export function setMemorialSettlementFocus(map, { active = false, placeName = null, strength = 1 } = {}) {
   if (!map) return;
+  if (!Number.isFinite(strength) || strength < 0 || strength > 1) throw new Error('invalid memorial focus strength');
   const state = paintState(map);
   pruneMissingTargets(map);
-  const next = active ? { placeName } : null;
+  const next = active ? { placeName, strength } : null;
   if (equal(state.memorial, next)) return;
   state.memorial = next;
   for (const target of collectOrientationTargets(map).layers) paintTarget(map, target);

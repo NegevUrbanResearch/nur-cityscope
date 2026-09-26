@@ -24,6 +24,52 @@ test("selects browser mode only for the explicit outputMode query", () => {
   expect(resolveProjectionOutputMode("?span=left&outputMode=browser")).toBe("browser");
 });
 
+test('production output ignores the seam-proof query', async () => {
+  vi.stubEnv('DEV', false);
+  const oldDocument = globalThis.document;
+  let nameCanvases = 0;
+  const draws = [];
+  globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {}, getContext() { nameCanvases++; return {}; } }; } };
+  try {
+    const surface = await createProjectionBrowserSurface({
+      host: { appendChild() {} }, spanId: 'left', search: '?outputMode=browser',
+      image: { complete: true, naturalWidth: 10, style: {} },
+      initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG),
+      fetchImpl: async () => ({ ok: false }),
+      rendererFactory: () => ({ draw(scene) { draws.push(scene); }, isContextLost: () => false, dispose() {} }),
+    });
+    expect(draws.at(-1).layers.some((layer) => layer.id === 'names')).toBe(false);
+    expect(nameCanvases).toBe(0);
+    surface.dispose();
+  } finally {
+    globalThis.document = oldDocument;
+    vi.unstubAllEnvs();
+  }
+});
+
+test('a stale local pair rollback cannot replace the newer browser mesh', async () => {
+  const oldDocument = globalThis.document;
+  globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
+  let currentMesh;
+  try {
+    const surface = await createProjectionBrowserSurface({
+      host: { appendChild() {} }, spanId: 'left', image: { complete: true, naturalWidth: 10, style: {} },
+      initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG), fetchImpl: async () => ({ ok: false }),
+      rendererFactory: ({ mesh }) => { currentMesh = mesh; return { draw: () => true, setMesh: (next) => { currentMesh = next; }, isContextLost: () => false, dispose() {} }; },
+    });
+    const first = { config: { first: true }, mesh: { tag: 'first' } };
+    const second = { config: { second: true }, mesh: { tag: 'second' } };
+    surface.commitPair(first); surface.finalizePair(first);
+    surface.commitPair(second);
+    surface.rollbackPair(first);
+    expect(currentMesh).toBe(second.mesh);
+    expect(surface.getConfig()).toBe(second.config);
+    surface.rollbackPair(second);
+    expect(currentMesh).toBe(first.mesh);
+    surface.dispose();
+  } finally { globalThis.document = oldDocument; }
+});
+
 test("uses geographic projective placement and viewport normalization for the image layer", () => {
   const map = {
     _otefProjectionImage: { corners: [[0, 0], [1, 0], [1, 1], [0, 1]], width: 800, height: 400 },
@@ -173,15 +219,21 @@ test("identity startup survives unavailable framing and manifest bytes", async (
   const image = { complete: true, naturalWidth: 10, style: { visibility: "visible" } };
   const oldDocument = globalThis.document;
   globalThis.document = { createElement() { return { style: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
-  let initialMesh;
-  const surface = await createProjectionBrowserSurface({
-    host, spanId: "left", image, initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG),
-    fetchImpl: async () => ({ ok: false }),
-    rendererFactory: ({ mesh }) => { initialMesh = mesh; return { draw: () => true, setMesh: vi.fn(), isContextLost: () => false, dispose() {} }; },
-  });
-  expect(initialMesh.vertices).toHaveLength(49);
-  expect(surface.getBaselineIdentity()).toEqual({ type: "identity" });
-  surface.dispose();
+  for (const disabled of [false, true]) {
+    let initialMesh;
+    const initialConfig = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    initialConfig.outputs.left.warp.enabled = !disabled;
+    expect(initialConfig.schemaVersion).toBe(4);
+    const surface = await createProjectionBrowserSurface({
+      host, spanId: "left", image, initialConfig,
+      fetchImpl: async () => ({ ok: false }),
+      rendererFactory: ({ mesh }) => { initialMesh = mesh; return { draw: () => true, setMesh: vi.fn(), isContextLost: () => false, dispose() {} }; },
+    });
+    expect(initialMesh.vertices.length).toBeGreaterThan(0);
+    expect(surface.getBaselineIdentity()).toEqual({ type: "identity" });
+    expect(surface.draw()).toBe(true);
+    surface.dispose();
+  }
   globalThis.document = oldDocument;
 });
 

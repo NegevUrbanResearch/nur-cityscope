@@ -1,6 +1,11 @@
 import { expect, test, vi } from "vitest";
 import { createProjectionSurfaceCompositor, resolveProjectionSceneLayers } from "../../frontend/src/projection/projection-surface-compositor.js";
 
+test('names render between map and upper caption/pattern/legend layers', () => {
+  expect(resolveProjectionSceneLayers({ legend: {}, names: {}, image: {}, caption: {}, map: {}, pattern: {} }).map((layer) => layer.id))
+    .toEqual(['image', 'map', 'names', 'caption', 'pattern', 'legend']);
+});
+
 test("resolves scene order and passes explicit descriptors without readback", () => {
   const draw = vi.fn();
   const renderer = { draw };

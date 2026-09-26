@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { createNodeCanvas, fitTransform, layoutNodePositions, zoomAt } from "../../frontend/src/projection-config/node-canvas.js";
 
-const ids = ["content", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"];
+const ids = ["content", "names-wall", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"];
 
 test("node layout separates every card and fit shows the complete graph", () => {
   const sizes = Object.fromEntries(ids.map((id) => [id, { width: 330, height: id.includes("crop") ? 430 : 300 }]));
@@ -19,6 +19,17 @@ test("node layout separates every card and fit shows the complete graph", () => 
   expect(fitted.y).toBeGreaterThanOrEqual(0);
   expect(fitted.x + bounds.width * fitted.scale).toBeLessThanOrEqual(900);
   expect(fitted.y + bounds.height * fitted.scale).toBeLessThanOrEqual(560);
+});
+
+test("Names wall sits beside Content without joining the transform path", () => {
+  const sizes = Object.fromEntries(ids.map((id) => [id, { width: 330, height: 300 }]));
+  const { positions } = layoutNodePositions(sizes);
+  const content = positions.content;
+  const names = positions["names-wall"];
+  expect(names.x).toBe(content.x);
+  expect(names.y).toBeGreaterThan(content.y);
+  expect(names.y - (content.y + sizes.content.height)).toBeGreaterThanOrEqual(32);
+  expect(positions.pre.x).toBeGreaterThan(content.x + sizes.content.width);
 });
 
 test("zoom stays anchored at the cursor and does not pan when scale is clamped", () => {

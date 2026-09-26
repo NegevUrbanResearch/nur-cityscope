@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest';
-import { createNliNameFocusPresentation, getNameFocusOpacity, getRelevantPlaceGroup } from '../../frontend/src/shared/nli-name-focus-presentation.js';
+import { createNliNameFocusPresentation, getNameFocusOpacity, getNameFocusAlpha, getRelevantPlaceGroup } from '../../frontend/src/shared/nli-name-focus-presentation.js';
 import { applySettlementOrientationPaint, collectOrientationTargets } from '../../frontend/src/shared/nli-settlement-orientation.js';
 
 const field = {
@@ -14,6 +14,14 @@ test('person and place focus retain relevant memorial names', () => {
   expect(getNameFocusOpacity({ selectedGroup: 'group-1', field })).toEqual(
     ['case', ['==', ['get', 'group_id'], 'group-1'], 1, 0.18]);
   expect(getNameFocusOpacity({ field })).toBe(1);
+});
+
+test('numeric Canvas focus matches person and group MapLibre focus policy', () => {
+  expect(getNameFocusAlpha({ selectedPid: 'person-1', field }, 'person-1')).toBe(1);
+  expect(getNameFocusAlpha({ selectedPid: 'person-1', field }, 'other')).toBe(.18);
+  expect(getNameFocusAlpha({ selectedGroup: 'group-1', field }, 'person-1')).toBe(1);
+  expect(getNameFocusAlpha({ selectedGroup: 'group-2', field }, 'person-1')).toBe(.18);
+  expect(getNameFocusAlpha({ field }, 'person-1')).toBe(1);
 });
 
 test('focus only changes settlement names and outlines and restores their original paint', () => {

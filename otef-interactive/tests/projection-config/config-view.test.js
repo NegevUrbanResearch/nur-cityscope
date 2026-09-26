@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { createProjectionConfigView } from "../../frontend/src/projection-config/config-view.js";
 import { DEFAULT_PROJECTION_CONFIG } from "../../frontend/src/shared/projection-config-schema.js";
-import { FIELD_DESCRIPTORS } from "../../frontend/src/projection-config/config-controller.js";
+import { FIELD_DESCRIPTORS, NAMES_WALL_DESCRIPTORS } from "../../frontend/src/projection-config/config-controller.js";
 import { createWarpEditor } from "../../frontend/src/projection-config/warp-editor.js";
 
 test("view renders draggable node workspace and preserves an existing focused input", () => {
@@ -20,7 +20,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   walk(root);
   expect(labels.join(" ")).toContain("Crop diagram");
   expect(labels.join(" ")).toContain("Drag headers to move nodes");
-  expect([...view.nodeMap.keys()]).toEqual(["content", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"]);
+  expect([...view.nodeMap.keys()]).toEqual(["content", "names-wall", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"]);
   const graphColumn = root.children[0].children.find((node) => node.tagName === "DIV" && node.className === "config-workspace").children[0];
   const inspector = root.children[0].children.find((node) => node.className === "config-workspace").children[1];
   expect(inspector.open).toBe(true);
@@ -30,6 +30,13 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(Number(graphSvg.attributes.viewBox.split(" ")[2])).toBeGreaterThan(1500);
   expect(graphSvg.children[0].attributes["vector-effect"]).toBe("non-scaling-stroke");
   expect(view.nodeMap.get("pre").children.some((node) => node.dataset?.port === "in")).toBe(true);
+  expect(view.nodeMap.get("names-wall").children.some((node) => node.dataset?.port === "in" || node.dataset?.port === "out")).toBe(false);
+  expect(view.nodeMap.get("names-wall").children.some((node) => node.className === "names-wall-status")).toBe(true);
+  const namesDraft = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  view.update({ state: { draft: namesDraft }, selectedNode: "names-wall", namesWallStatus: { state: "auto-reduced", requestedFontPx: 12, effectiveFontPx: 9, minimumFontPx: 8, expected: 1228, placed: 1228 } });
+  const wallStatus = view.nodeMap.get("names-wall").children.find((node) => node.className === "names-wall-status");
+  expect(wallStatus.textContent).toContain("Auto-reduced");
+  expect(wallStatus.textContent).toContain("using 9 px");
   const draft = JSON.parse(JSON.stringify(DEFAULT_PROJECTION_CONFIG));
   draft.outputs.right.crop.x0 = 0.4;
   draft.outputs.right.post.tx = 2;
@@ -99,5 +106,31 @@ test("view renders draggable node workspace and preserves an existing focused in
   fitCard.dispatch("keydown", { key: " ", target: view.fields.get("right-fit:outputs.right.post.scale").range, preventDefault });
   expect(onNode).toHaveBeenCalledTimes(2);
   expect(view.dispose).toBeTypeOf("function");
+  view.dispose();
+});
+
+test("Names wall keeps controls editable while showing pending and incomplete candidates", () => {
+  const make = (tag = "div") => ({ tagName: tag.toUpperCase(), children: [], dataset: {}, style: {}, attributes: {}, classList: { toggle() {} }, appendChild(child) { this.children.push(child); child.parentElement = this; return child; }, append(...children) { children.forEach((child) => this.appendChild(child)); }, prepend(...children) { this.children.unshift(...children); }, remove() {}, setAttribute(key, value) { this.attributes[key] = value; }, addEventListener(type, handler) { this.listeners ||= {}; (this.listeners[type] ||= []).push(handler); }, removeEventListener() {}, replaceChildren(...children) { this.children = children; } });
+  const root = make("main");
+  root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) } };
+  const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onField() {}, onNamesMode() {} });
+  const draft = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  view.update({ state: { draft }, selectedNode: "names-wall", namesWallStatus: { state: "building", requestedFontPx: 12, minimumFontPx: 8, expected: null, placed: null } });
+  const control = view.fields.get("names-wall:namesWall.requestedFontPx");
+  expect(control.number.disabled).not.toBe(true);
+  expect(view.nodeMap.get("names-wall").children.find((node) => node.className === "names-wall-status").dataset.state).toBe("building");
+  view.update({ state: { draft, snapshot: { config: structuredClone(draft) } }, selectedNode: "names-wall", namesWallStatus: { state: "invalid", requestedFontPx: 6, minimumFontPx: 6, expected: 1228, placed: 1201, reason: "invalid Tkuma ring" } });
+  const status = view.nodeMap.get("names-wall").children.find((node) => node.className === "names-wall-status");
+  expect(status.textContent).toContain("1201 of 1228");
+  expect(status.textContent).toContain("effective none");
+  expect(status.textContent).toContain("Saved calibration cannot display a complete names wall");
+  expect(status.textContent).not.toContain("cannot fit");
+  expect(status.textContent).not.toContain("Draft is unsaved");
+  view.update({ state: { draft, snapshot: { config: structuredClone(draft) }, hasLocalDraft: true }, selectedNode: "names-wall", namesWallStatus: { state: "invalid", requestedFontPx: 6, minimumFontPx: 6, expected: 1228, placed: 1201, reason: "capacity at minimum" } });
+  expect(status.textContent).toContain("Draft is unsaved");
+  expect(status.textContent).toContain("output state is unconfirmed");
+  expect(status.textContent).not.toContain("last complete wall");
+  expect(status.title).toContain("reference-plane pixels");
+  expect(control.number.disabled).not.toBe(true);
   view.dispose();
 });

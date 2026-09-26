@@ -1,6 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest';
-import { DEFAULT_PROJECTION_CONFIG as DEFAULTS } from '../../frontend/src/shared/projection-config-schema.js';
+import { DEFAULT_PROJECTION_CONFIG as DEFAULTS, LEGACY_DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
 import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
+import { migrateNamesWallToV3 } from '../../frontend/src/shared/nli-name-wall-config.js';
 import { createProjectionConfigClient, TD_MIGRATION_PRESET_ID, validateProjectionConfigSnapshot } from '../../frontend/src/shared/projection-config-client.js';
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -11,7 +12,7 @@ const stateFor = (revision, config = DEFAULTS) => ({
   selectedPresetId: 'original',
 });
 
-function harness({ revision = 0, config = DEFAULTS } = {}) {
+function harness({ revision = 0, config = DEFAULTS, validateCandidate } = {}) {
   let now = 0;
   let timerId = 0;
   const timers = new Map();
@@ -31,7 +32,7 @@ function harness({ revision = 0, config = DEFAULTS } = {}) {
     setTimeout: (callback, delay) => { const id = ++timerId; timers.set(id, { at: now + delay, callback }); return id; },
     clearTimeout: (id) => timers.delete(id),
   };
-  const client = createProjectionConfigClient({ fetchImpl, socket, clock, sourceId: '00000000-0000-4000-8000-00000000000a' });
+  const client = createProjectionConfigClient({ fetchImpl, socket, clock, validateCandidate, sourceId: '00000000-0000-4000-8000-00000000000a' });
   const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
   const advance = async (amount) => {
     now += amount;
@@ -70,6 +71,90 @@ function harness({ revision = 0, config = DEFAULTS } = {}) {
 
 beforeEach(() => vi.restoreAllMocks());
 
+test('hydration converts historical working and preset configs to V4', async () => {
+  const h = harness();
+  const historical = migrateNamesWallToV3(migrateProjectionConfigToV2(LEGACY_DEFAULT_PROJECTION_CONFIG));
+  historical.namesWall.profiles.wall.seamGapPx = 3;
+  const saved = stateFor(9, historical);
+  saved.presets.push({ id: '11111111-1111-4111-8111-111111111111', name: 'Old', config: clone(historical), readOnly: false });
+  const starting = h.client.start(); h.resolveNext(saved); await starting;
+  const state = h.client.getState();
+  expect(state.snapshot.revision).toBe(9);
+  expect(state.snapshot.config.schemaVersion).toBe(4);
+  expect(state.snapshot.presets[1].config.schemaVersion).toBe(4);
+  expect(state.draft.namesWall.innerEdgeInsetPx).toEqual({ left: 0, right: 0 });
+  expect(state.draft.namesWall.profiles.wall).not.toHaveProperty('seamGapPx');
+  expect(state.draft.pre).toEqual(historical.pre);
+  expect(state.migrationWarnings).toContain('The wall seam gap needs readjustment in final-output pixels.');
+  h.client.stop();
+});
+
+test.each(['live', 'apply', 'save', 'load', 'revert'])(
+  '%s waits for matching asynchronous wall preflight and never posts a newer draft under an older result', async (action) => {
+    const checks = [];
+    const h = harness({ validateCandidate: (candidate) => new Promise((resolve) => checks.push({ candidate, resolve })) });
+    const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;
+    const a = clone(DEFAULTS); a.pre.tx = 0.01;
+    const b = clone(DEFAULTS); b.pre.tx = 0.02;
+    const c = clone(DEFAULTS); c.pre.tx = 0.03;
+    if (action !== 'live') h.client.setLive(false);
+    if (action === 'load') {
+      h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000a', state: {
+        ...h.stateFor(1), presets: [...h.stateFor(1).presets, { id: '11111111-1111-4111-8111-111111111111', name: 'Candidate', config: a, readOnly: false }],
+      } });
+    } else if (action === 'revert') {
+      h.socket.emit({ type: 'otef_projection_config_changed', table: 'otef', sourceId: '00000000-0000-4000-8000-00000000000a', state: h.stateFor(1, a) });
+    }
+    if (action !== 'load' && action !== 'revert') h.client.setDraft(a);
+    const first = action === 'apply' ? h.client.apply() : action === 'save' ? h.client.save({ name: 'Draft' })
+      : action === 'load' ? h.client.load('11111111-1111-4111-8111-111111111111') : action === 'revert' ? h.client.revert() : null;
+    const firstResult = first?.catch((error) => error);
+    await h.advance(0);
+    await h.flushPromises();
+    expect(checks).toHaveLength(1);
+    h.client.setDraft(b);
+    checks[0].resolve({ identity: checks[0].candidate.identity, valid: true });
+    await h.flushPromises();
+    expect(h.pendingRequests()).toHaveLength(0);
+    if (firstResult) expect(await firstResult).toBeInstanceOf(Error);
+    if (action !== 'live') h.client.setLive(true);
+    await h.advance(0);
+    await h.flushPromises();
+    expect(checks).toHaveLength(2);
+    checks[1].resolve({ identity: checks[1].candidate.identity, valid: false, reason: 'incomplete wall' });
+    await h.flushPromises();
+    expect(h.pendingRequests()).toHaveLength(0);
+    expect(h.client.getState().draft).toEqual(b);
+    h.client.setDraft(c);
+    await h.advance(0);
+    await h.flushPromises();
+    expect(checks).toHaveLength(3);
+    checks[2].resolve({ identity: checks[2].candidate.identity, valid: true });
+    await h.flushPromises();
+    expect(JSON.parse(h.lastRequest().options.body).config).toEqual(c);
+    h.client.stop();
+  },
+);
+
+test('an abandoned wall check cannot block a newer valid Live edit', async () => {
+  const checks = [];
+  const h = harness({ validateCandidate: (candidate) => new Promise((resolve) => checks.push({ candidate, resolve })) });
+  const started = h.client.start(); h.resolveNext(h.stateFor(0)); await started;
+  const a = clone(DEFAULTS); a.pre.tx = 0.01;
+  const b = clone(DEFAULTS); b.pre.tx = 0.02;
+  h.client.setDraft(a); await h.advance(0); await h.flushPromises();
+  expect(checks).toHaveLength(1);
+  h.client.setDraft(b); await h.advance(0); await h.flushPromises();
+  expect(checks).toHaveLength(2);
+  checks[1].resolve({ identity: checks[1].candidate.identity, valid: true });
+  await h.flushPromises();
+  expect(JSON.parse(h.lastRequest().options.body).config).toEqual(b);
+  checks[0].resolve({ identity: checks[0].candidate.identity, valid: true });
+  await h.flushPromises();
+  expect(h.pendingRequests()).toHaveLength(1);
+  h.client.stop();
+});
+
 test('hydrates revision zero from a full snapshot', async () => {
   const h = harness();
   const started = h.client.start();
@@ -102,6 +187,22 @@ test('accepts a legacy Original alongside the v2 reserved TD migration preset', 
     selectedPresetId: 'original',
   };
   expect(validateProjectionConfigSnapshot(snapshot)).toBe(true);
+});
+
+test('accepts a historical V2 Original and rejects a modified V3 Original', () => {
+  const v2Original = migrateProjectionConfigToV2({
+    schemaVersion: 1,
+    pre: clone(DEFAULTS.pre),
+    outputs: Object.fromEntries(['left', 'right'].map((side) => [side, {
+      crop: clone(DEFAULTS.outputs[side].crop), post: clone(DEFAULTS.outputs[side].post),
+    }])),
+  });
+  const snapshot = stateFor(4);
+  snapshot.presets[0].config = v2Original;
+  expect(validateProjectionConfigSnapshot(snapshot)).toBe(true);
+  snapshot.presets[0].config = clone(DEFAULTS);
+  snapshot.presets[0].config.namesWall.profiles.wall.spacingPx = 3;
+  expect(validateProjectionConfigSnapshot(snapshot)).toBe(false);
 });
 
 test('failed initial GET keeps writes blocked until an explicit fresh retry succeeds', async () => {

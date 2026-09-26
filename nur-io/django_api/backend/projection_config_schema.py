@@ -2,6 +2,59 @@ import math
 import re
 
 
+def default_names_wall():
+    profile = {'requestedFontPx': 12, 'spacingPx': 2, 'edgeInsetPx': 0}
+    return {'activeMode': 'wall', 'innerEdgeInsetPx': {'left': 0, 'right': 0}, 'profiles': {'wall': profile.copy(), 'model': profile.copy()}}
+
+
+def legacy_names_wall():
+    profile = {'requestedFontPx': 12, 'minimumFontPx': 8, 'spacingPx': 2, 'edgeInsetPx': 0, 'seamGapPx': 0}
+    return {'activeMode': 'wall', 'profiles': {'wall': profile.copy(), 'model': profile.copy()}}
+
+
+def validate_names_wall(value, path='namesWall', errors=None):
+    if errors is None: errors = {}
+    if not _keys(value, ['activeMode', 'innerEdgeInsetPx', 'profiles'], path, errors): return errors
+    if value.get('activeMode') not in ('wall', 'model'): errors[f'{path}.activeMode'] = 'must equal wall or model'
+    insets = value.get('innerEdgeInsetPx')
+    if _keys(insets, ['left', 'right'], f'{path}.innerEdgeInsetPx', errors):
+        for side in ('left', 'right'):
+            number = insets.get(side)
+            if isinstance(number, bool) or not isinstance(number, int) or not 0 <= number <= 960:
+                errors[f'{path}.innerEdgeInsetPx.{side}'] = 'must be an integer between 0 and 960'
+    profiles = value.get('profiles')
+    if not _keys(profiles, ['wall', 'model'], f'{path}.profiles', errors): return errors
+    for mode in ('wall', 'model'):
+        branch = profiles.get(mode)
+        prefix = f'{path}.profiles.{mode}'
+        if not _keys(branch, ['requestedFontPx', 'spacingPx', 'edgeInsetPx'], prefix, errors): continue
+        for key, low, high in (('requestedFontPx', 1, 48), ('spacingPx', 0, 32), ('edgeInsetPx', 0, 256)):
+            number = branch.get(key)
+            if isinstance(number, bool) or not isinstance(number, int) or not low <= number <= high:
+                errors[f'{prefix}.{key}'] = f'must be an integer between {low} and {high}'
+    return errors
+
+
+def validate_names_wall_v3(value, path='namesWall', errors=None):
+    if errors is None: errors = {}
+    if not _keys(value, ['activeMode', 'profiles'], path, errors): return errors
+    if value.get('activeMode') not in ('wall', 'model'): errors[f'{path}.activeMode'] = 'must equal wall or model'
+    profiles = value.get('profiles')
+    if not _keys(profiles, ['wall', 'model'], f'{path}.profiles', errors): return errors
+    for mode in ('wall', 'model'):
+        branch = profiles.get(mode)
+        prefix = f'{path}.profiles.{mode}'
+        fields = ['requestedFontPx', 'minimumFontPx', 'spacingPx', 'edgeInsetPx', 'seamGapPx']
+        if not _keys(branch, fields, prefix, errors): continue
+        for key, low, high in (('requestedFontPx', 4, 48), ('minimumFontPx', 4, 48), ('spacingPx', 0, 32), ('edgeInsetPx', 0, 256), ('seamGapPx', 0, 256)):
+            number = branch.get(key)
+            if isinstance(number, bool) or not isinstance(number, int) or not low <= number <= high:
+                errors[f'{prefix}.{key}'] = f'must be an integer between {low} and {high}'
+        if f'{prefix}.requestedFontPx' not in errors and f'{prefix}.minimumFontPx' not in errors and branch['minimumFontPx'] > branch['requestedFontPx']:
+            errors[f'{prefix}.minimumFontPx'] = 'must not exceed requestedFontPx'
+    return errors
+
+
 def legacy_projection_config_defaults():
     return {
         'schemaVersion': 1,
@@ -37,6 +90,12 @@ def _number(value, path, low, high, errors):
 
 def validate_projection_config(value):
     outputs = value.get('outputs') if isinstance(value, dict) else None
+    if isinstance(value, dict) and value.get('schemaVersion') == 4 and not isinstance(value.get('schemaVersion'), bool):
+        from .projection_warp_schema import validate_projection_config_v4
+        return validate_projection_config_v4(value)
+    if isinstance(value, dict) and value.get('schemaVersion') == 3 and not isinstance(value.get('schemaVersion'), bool):
+        from .projection_warp_schema import validate_projection_config_v3
+        return validate_projection_config_v3(value)
     if isinstance(value, dict) and value.get('schemaVersion') == 2 and isinstance(outputs, dict) and isinstance(outputs.get('left'), dict) and isinstance(outputs.get('right'), dict) and outputs['left'].get('warp') and outputs['right'].get('warp'):
         from .projection_warp_schema import validate_projection_config_v2
         return validate_projection_config_v2(value)
@@ -83,9 +142,11 @@ def validate_projection_snapshot(value):
     if not isinstance(presets, list) or not 1 <= len(presets) <= 50:
         errors['presets'] = 'must contain 1-50 presets'
         presets = []
-    from .projection_warp_schema import TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, migrate_projection_config_to_v2
+    from .projection_warp_schema import TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, migrate_projection_config_to_v2, migrate_projection_config_to_v3, migrate_projection_config_to_v4
     original = legacy_projection_config_defaults()
     upgraded = migrate_projection_config_to_v2(original)
+    historical = migrate_projection_config_to_v3(upgraded)
+    current = migrate_projection_config_to_v4(upgraded)
     ids = set()
     original_count = 0
     uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', re.I)
@@ -105,7 +166,7 @@ def validate_projection_snapshot(value):
         if isinstance(preset_id, str): ids.add(preset_id)
         if preset_id == 'original':
             original_count += 1
-            if read_only is not True or name != 'Original calibration' or preset.get('config') not in (original, upgraded):
+            if read_only is not True or name != 'Original calibration' or preset.get('config') not in (original, upgraded, historical, current):
                 errors[f'{path}'] = 'must be the immutable Original calibration preset'
         elif preset_id == TD_MIGRATION_PRESET_ID:
             if read_only is not True or name != TD_MIGRATION_PRESET_NAME:

@@ -30,8 +30,10 @@ import { resolveMotionMode } from "../shared/reduced-motion.js";
 import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
 import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
 import { createNliNameFieldController } from "../shared/nli-name-field-controller.js";
+import { prepareProjectionNameWall, disposeProjectionNameWallPreparation } from "../shared/nli-name-field-data.js";
 import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
 import { installProjectionPreviewBridge } from "../projection/projection-preview-bridge.js";
+import { bindProjectionHeadingStorage } from "../projection/projection-heading-storage.js";
 import { createProjectionConfigClient } from "../shared/projection-config-client.js";
 import { createProjectionConfigRuntime } from "../projection/projection-config-runtime.js";
 import { createUuid } from "../shared/uuid.js";
@@ -78,7 +80,6 @@ import {
 } from "../projection/nli-explainer-debug.js";
 import {
   applyNliSharedTextHeading,
-  NLI_LABEL_HEADING_STORAGE_KEY,
   readNliLabelHeading,
 } from "../shared/nli-label-heading.js";
 import { createProjectionPattern } from "../projection/projection-pattern.js";
@@ -513,7 +514,8 @@ async function bootstrapProjectionRuntime() {
     if (captionAdapter) registerDisposer(() => captionAdapter.dispose());
     if (legendAdapter) registerDisposer(() => legendAdapter.dispose());
     if (patternAdapter) registerDisposer(() => patternAdapter.dispose());
-    const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "projection", projectionSpan: projectionSpanId, motionMode: resolveMotionMode() });
+    const nameFieldController = createNliNameFieldController({ map, context: OTEFDataContext, displayProfile: "projection", projectionSpan: projectionSpanId,
+      motionMode: resolveMotionMode() });
     registerDisposer(() => nameFieldController.dispose());
     if (projectionSpanId) nameFieldController.setProjectionConfig(effectiveProjectionConfig);
     else nameFieldController.setProjectionConfig(DEFAULT_PROJECTION_CONFIG);
@@ -762,13 +764,17 @@ async function bootstrapProjectionRuntime() {
       wakeInvestigationTimelinePersonGlow(map);
     };
     registerDisposer(OTEFDataContext.subscribe("personSelection", wakeProjectionPersonGlow));
-    const onNliLabelHeadingStorage = (event) => {
-      if (event.key !== NLI_LABEL_HEADING_STORAGE_KEY) return;
-      applyStoredNliLabelHeading(map);
-      nameFieldController.reload();
-    };
-    window.addEventListener("storage", onNliLabelHeadingStorage);
-    registerDisposer(() => window.removeEventListener("storage", onNliLabelHeadingStorage));
+    let applyPreviewProjectionConfig = null;
+    let previewApplySequence = 0;
+    registerDisposer(bindProjectionHeadingStorage({ win: window, browserMode, previewMode,
+      applyHeading: () => applyStoredNliLabelHeading(map), disposePreparation: disposeProjectionNameWallPreparation,
+      controller: nameFieldController,
+      reapplyRuntime: () => projectionRuntime?.reapply('name heading changed; rebuilding wall'),
+      repreparePreview: (signal) => applyPreviewProjectionConfig?.(browserSurface.getConfig(), { signal }),
+      onError: (error) => {
+        if (isRuntimeAlive() && error?.name !== 'AbortError') visibleProjectionBrowserError(displayContainer, error);
+      },
+    }));
 
     let activeCuratedIds = new Set();
 
@@ -963,6 +969,8 @@ async function bootstrapProjectionRuntime() {
           browserSurface = null;
           return;
         }
+        nameFieldController.installProjectionCanvas(browserSurface.getNameAdapter());
+        registerDisposer(disposeProjectionNameWallPreparation);
         const onMapRender = () => browserSurface?.draw?.();
         map.on?.("render", onMapRender);
         registerDisposer(() => map.off?.("render", onMapRender));
@@ -975,13 +983,69 @@ async function bootstrapProjectionRuntime() {
       }
     }
 
+    if (previewMode && browserMode) applyPreviewProjectionConfig = async (config, { signal }) => {
+        const generation = ++previewApplySequence;
+        const checkCurrent = () => {
+          if (signal.aborted || generation !== previewApplySequence)
+            throw Object.assign(new Error('Preview superseded'), { name: 'AbortError' });
+        };
+        checkCurrent();
+        const pair = await browserSurface.preparePair(config);
+        checkCurrent();
+        const field = await prepareProjectionNameWall({ config, meshes: pair.meshes,
+          datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined,
+          heading: readNliLabelHeading(window.localStorage), signal });
+        checkCurrent();
+        await nameFieldController.prepareProjectionCandidate({ generation, identity: JSON.stringify(config),
+          config, field, signal });
+        try { checkCurrent(); }
+        catch (error) { nameFieldController.rollbackProjectionCandidate(generation); throw error; }
+        const previous = browserSurface.getConfig();
+        browserSurface.commitPair(pair);
+        try {
+          if (map.setEffectiveProjectionConfig(config) === false) throw new Error('Projection camera rejected draft');
+          nameFieldController.commitProjectionCandidate(generation);
+          browserSurface.finalizePair(pair);
+          nameFieldController.finalizeProjectionCandidate(generation);
+          return { committed: true };
+        } catch (error) {
+          nameFieldController.rollbackProjectionCandidate(generation);
+          browserSurface.rollbackPair(pair);
+          map.setEffectiveProjectionConfig(previous);
+          throw error;
+        }
+      };
+
     if (previewMode) registerDisposer(installProjectionPreviewBridge({
       win: window,
       output: projectionSpanId,
       map,
       nameFieldController,
       syncContextInvestigation,
-      applyProjectionConfig: browserMode ? (config) => browserSurface?.applyConfig?.(config) !== false : null,
+      applyProjectionConfig: applyPreviewProjectionConfig,
+      validateWall: browserMode ? async (config, { revision, signal }) => {
+        const prepared = await browserSurface.preparePair(config);
+        if (signal?.aborted) throw new Error('Wall preview superseded');
+        const field = await prepareProjectionNameWall({ config, meshes: prepared.meshes,
+          datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined,
+          heading: readNliLabelHeading(window.localStorage), signal });
+        const diagnostics = field?.diagnostics;
+        const displayDiagnostics = {
+          state: diagnostics?.state === 'valid' && diagnostics.expected === diagnostics.placed && !diagnostics.missing &&
+            !diagnostics.extra && !diagnostics.duplicate && Boolean(field?.digest) ? 'valid' : 'invalid',
+          datasetVersion: String(field?.datasetVersion || '').slice(0, 128), mode: config.namesWall.activeMode,
+          requestedFontPx: diagnostics?.requestedFontPx ?? config.namesWall.profiles[config.namesWall.activeMode].requestedFontPx,
+          effectiveFontPx: Number.isSafeInteger(diagnostics?.effectiveFontPx) ? diagnostics.effectiveFontPx : null,
+          expected: Number.isSafeInteger(diagnostics?.expected) ? diagnostics.expected : 0,
+          placed: Number.isSafeInteger(diagnostics?.placed) ? diagnostics.placed : 0,
+          left: Number.isSafeInteger(diagnostics?.left) ? diagnostics.left : 0,
+          right: Number.isSafeInteger(diagnostics?.right) ? diagnostics.right : 0,
+          ...(diagnostics?.reason ? { reason: String(diagnostics.reason).slice(0, 240) } : {}),
+        };
+        if (displayDiagnostics.state !== 'valid') return { diagnostics: displayDiagnostics };
+        return { datasetVersion: field.datasetVersion, mode: config.namesWall.activeMode,
+          digest: field.digest, expected: diagnostics.expected, placed: diagnostics.placed, diagnostics: displayDiagnostics };
+      } : null,
     }));
 
     if (browserMode && !previewMode && OTEFDataContext._wsClient) {
@@ -1004,12 +1068,37 @@ async function bootstrapProjectionRuntime() {
         socket: OTEFDataContext._wsClient,
         instanceId: sourceId,
         applyConfig: applyBrowserConfig,
+        prepareCandidate: async (config, revision, generation, signal) => {
+          const surfacePair = await browserSurface.preparePair(config);
+          if (signal?.aborted) throw Object.assign(new Error('projection preparation cancelled'), { name: 'AbortError' });
+          const field = await prepareProjectionNameWall({ config, meshes: surfacePair.meshes,
+            datasetVersion: OTEFDataContext.getPersonSelection?.()?.datasetVersion || undefined,
+            heading: readNliLabelHeading(window.localStorage), signal });
+          const wall = await nameFieldController.prepareProjectionCandidate({ generation,
+            identity: JSON.stringify(config), config, field, revision, signal });
+          return { surfacePair, wall, generation };
+        },
+        commitCandidate: (pair, config, revision) => {
+          browserSurface.commitPair(pair.surfacePair);
+          if (projectionConfigBridge.setEffectiveConfig(config, revision) === false) throw new Error('projection camera rejected calibration');
+          nameFieldController.commitProjectionCandidate(pair.generation);
+          projectionPattern?.setConfig?.(config);
+        },
+        rollbackCandidate: (pair, previousConfig, revision) => {
+          nameFieldController.rollbackProjectionCandidate(pair.generation);
+          if (!browserSurface.rollbackPair(pair.surfacePair)) return;
+          projectionConfigBridge.setEffectiveConfig(previousConfig, revision);
+          projectionPattern?.setConfig?.(previousConfig);
+        },
+        finalizeCandidate: (pair) => { nameFieldController.finalizeProjectionCandidate(pair.generation); browserSurface.finalizePair(pair.surfacePair); },
         drawCompletion: () => browserSurface?.draw?.() === true,
+        getDatasetVersion: () => OTEFDataContext.getPersonSelection?.()?.datasetVersion || null,
         route: "browser",
         baseline: (config) => browserSurface?.getBaselineIdentity?.(config) || null,
       });
       registerDisposer(() => { projectionRuntime?.stop?.(); projectionRuntime = null; configClient.stop?.(); });
       await projectionRuntime.start();
+      registerDisposer(OTEFDataContext.subscribe('personSelection', () => projectionRuntime?.datasetChanged?.()));
     }
 
     try {
@@ -1032,7 +1121,7 @@ async function bootstrapProjectionRuntime() {
     }
 
     function syncProjectionLayersWithNarrative(targetMap, groups, options) {
-      syncProjectionLayers(targetMap, groups, options);
+      syncProjectionLayers(targetMap, groups, { ...options, suppressCanvasNameSymbols: Boolean(browserSurface?.getNameAdapter()) });
       applyNarrativePeopleFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
     }
 

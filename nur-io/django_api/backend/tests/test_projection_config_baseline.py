@@ -60,6 +60,8 @@ class ProjectionBaselineInstallerTests(TestCase):
         self.assertEqual(row.selected_preset_id, 'original')
         self.assertEqual(row.working_config, working)
         installed = next(p for p in row.presets if p['id'] == TD_MIGRATION_PRESET_ID)
+        self.assertEqual(installed['config']['schemaVersion'], 4)
+        self.assertEqual(installed['config']['namesWall'], row.working_config['namesWall'])
         call_command('install_otef_td_baseline', table='otef', asset_root=str(root))
         row.refresh_from_db()
         self.assertEqual(next(p for p in row.presets if p['id'] == TD_MIGRATION_PRESET_ID), installed)

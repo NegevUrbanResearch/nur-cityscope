@@ -1,0 +1,24 @@
+{
+  "valid": {
+    "activeMode": "wall",
+    "innerEdgeInsetPx": { "left": 0, "right": 0 },
+    "profiles": {
+      "wall": { "requestedFontPx": 12, "spacingPx": 2, "edgeInsetPx": 0 },
+      "model": { "requestedFontPx": 12, "spacingPx": 2, "edgeInsetPx": 0 }
+    }
+  },
+  "accepted": [
+    { "path": "profiles.wall.requestedFontPx", "value": 1 },
+    { "path": "profiles.wall.requestedFontPx", "value": 48 },
+    { "path": "innerEdgeInsetPx.left", "value": 960 },
+    { "path": "innerEdgeInsetPx.right", "value": 960 }
+  ],
+  "rejected": [
+    { "path": "profiles.wall.requestedFontPx", "value": 0, "error": "namesWall.profiles.wall.requestedFontPx" },
+    { "path": "profiles.wall.requestedFontPx", "value": 49, "error": "namesWall.profiles.wall.requestedFontPx" },
+    { "path": "innerEdgeInsetPx.left", "value": -1, "error": "namesWall.innerEdgeInsetPx.left" },
+    { "path": "innerEdgeInsetPx.right", "value": 961, "error": "namesWall.innerEdgeInsetPx.right" },
+    { "path": "profiles.model.minimumFontPx", "value": 8, "error": "namesWall.profiles.model.minimumFontPx" },
+    { "path": "profiles.wall.seamGapPx", "value": 1, "error": "namesWall.profiles.wall.seamGapPx" }
+  ]
+}

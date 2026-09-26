@@ -17,3 +17,15 @@ it('rejects capacity failure and cleans up',async()=>{
   await expect(promise).rejects.toThrow('capacity');
   expect(worker.terminate).toHaveBeenCalledOnce();
 });
+it('terminates an in-flight layout worker when its calibration is superseded', async () => {
+  let worker;
+  class FakeWorker { constructor() { worker = this; this.terminate = vi.fn(); } postMessage() {} }
+  const controller = new AbortController();
+  const outcome = runNameFieldWorker({}, FakeWorker, controller.signal).then(() => 'resolved', (error) => error);
+  controller.abort();
+  const terminatedAtAbort = worker.terminate.mock.calls.length;
+  if (!terminatedAtAbort) worker.onmessage({ data: { field: {} } });
+  expect(terminatedAtAbort).toBe(1);
+  expect(await outcome).toMatchObject({ name: 'AbortError' });
+  expect(worker.terminate).toHaveBeenCalledOnce();
+});

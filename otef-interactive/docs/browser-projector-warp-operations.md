@@ -40,6 +40,16 @@ Select a corner, grid point, row, column or edge, then drag or use the arrows. *
 
 With **Live** enabled, accepted edits reach the projectors. Turn Live off to try a local draft, then use **Apply once** when ready. **Undo/Redo** changes the selected output's warp. **Reset to imported TD baseline** clears browser corrections while retaining the imported mesh; **Revert** restores the loaded preset. Save a new preset to retain an adjustment without replacing the protected baseline.
 
+## Adjust the names wall
+
+Select **Names wall** in the calibration graph. Choose **Wall** or **Model**. The status shows the requested and effective font sizes and the total, left, and right name counts. Confirm that the placed count equals the expected count before using the browser outputs. Each included name is assigned wholly to one output in either mode.
+
+**Requested font** is the preferred maximum. The layout can reduce it to fit both outputs, down to a technical 1 px floor. Check the effective size on the actual projectors; a valid result does not establish physical readability. **Name spacing** and **Edge inset** use name-plane units. Edge inset also keeps model names inside the projected model boundary.
+
+**Left projector: right-edge inset** and **Right projector: left-edge inset** use final 1920×1080 output pixels. Increase each independently to move names away from that screen's inner edge. Inspect the physical seam on the installed projectors when adjusting these values. Browser previews verify the calculated safe placement, but cannot establish projector overlap or legibility on the surface.
+
+Changing the mode, font, spacing, or either inset prepares a new matching wall even while names are hidden. Wait for complete counts on both outputs before saving or relying on an edit. Showing or hiding prepared names fades the layer without repacking it. A saved V3 configuration with a nonzero seam gap reports that the gap needs readjustment after conversion to V4; the new inner insets start at zero.
+
 ## Workstation setup and recovery
 
 This exhibit uses Chrome's `AutomaticFullscreenAllowedForUrls` and `PopupsAllowedForUrls` policies for exactly `http://localhost:80`. Verify the permissions on a replacement workstation before relying on dual fullscreen launch. Do not use wildcard host or port rules.

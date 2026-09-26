@@ -35,6 +35,23 @@ function fakeGl() {
 function canvasFor(gl) { const listeners = {}; return { width: 1920, height: 1080, getContext: () => gl, addEventListener: (name, cb) => { listeners[name] = cb; }, removeEventListener: vi.fn(), listeners }; }
 
 describe("projection warp renderer", () => {
+  test('restores the names texture once and then reuses it', () => {
+    const gl = fakeGl(), canvas = canvasFor(gl);
+    const renderer = createProjectionWarpRenderer({ canvas, mesh });
+    const name = { id:'names', source:{}, contentVersion:1, opacity:1 };
+    const nameUploads = () => gl.texImage2D.mock.calls.filter((args) => args.at(-1) === name.source).length;
+    renderer.draw({ layers:[name] });
+    expect(nameUploads()).toBe(1);
+    renderer.draw({ layers:[{ ...name, opacity:0.5 }] });
+    expect(nameUploads()).toBe(1);
+    canvas.listeners.webglcontextlost({ preventDefault:vi.fn() });
+    canvas.listeners.webglcontextrestored();
+    expect(nameUploads()).toBe(2);
+    renderer.draw({ layers:[{ ...name, opacity:0.3 }] });
+    expect(nameUploads()).toBe(2);
+    renderer.dispose();
+    expect(gl.deleteTexture).toHaveBeenCalled();
+  });
   test("rejects invalid destination winding and out-of-range destination coordinates", () => {
     expect(() => validateProjectionMesh({ ...mesh, triangles: [0, 2, 1] })).toThrow(/triangle/i);
     expect(() => validateProjectionMesh({ ...mesh, vertices: mesh.vertices.map((v, i) => i === 3 ? { ...v, x: 2.1 } : v) })).toThrow(/destination/i);

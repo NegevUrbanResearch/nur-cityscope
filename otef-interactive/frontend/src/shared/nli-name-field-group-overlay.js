@@ -30,6 +30,7 @@ export function createNameGroupOverlay({ map, field, displayProfile = 'projectio
   let outlines = null;
   let outlineLoadPromise = null;
   let outlinedGroup = null;
+  let visibility = 1;
   const fadeTimers = new Set();
   const fade = (id, property, target) => {
     if (!map.getLayer(id)) return;
@@ -61,7 +62,7 @@ export function createNameGroupOverlay({ map, field, displayProfile = 'projectio
     const groupId = matching.length ? selected?.properties?.group_id : null;
     if (groupId !== outlinedGroup) {
       outlinedGroup = groupId;
-      if (groupId) fade(OUTLINE, 'line-opacity', 0.9);
+      if (groupId) fade(OUTLINE, 'line-opacity', 0.9 * visibility);
       else if (map.getLayer(OUTLINE)) map.setPaintProperty(OUTLINE, 'line-opacity', 0);
     }
   };
@@ -101,6 +102,17 @@ export function createNameGroupOverlay({ map, field, displayProfile = 'projectio
     }, paint: { 'text-color': '#ffffff', 'text-halo-color': '#000000', 'text-halo-width': 2 } });
   } catch (error) { dispose(); throw error; }
   return {
+    setOpacity(value) {
+      if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error('invalid place overlay opacity');
+      visibility = value;
+      cancelFades();
+      for (const [id, property, opacity] of [
+        [HALO, 'circle-opacity', 0.16], [POINT, 'circle-opacity', 1],
+        [HALO, 'circle-stroke-opacity', 1], [POINT, 'circle-stroke-opacity', 1],
+        [LABEL, 'text-opacity', 1], [OUTLINE, 'line-opacity', 0.9],
+      ]) if (map.getLayer(id)) map.setPaintProperty(id, property,
+        selected && (id !== OUTLINE || outlinedGroup) ? opacity * visibility : 0);
+    },
     groupForPlace(placeId) {
       return groups.find(feature => feature.properties?.place_ids?.includes(placeId))?.properties?.group_id || null;
     },
@@ -115,9 +127,11 @@ export function createNameGroupOverlay({ map, field, displayProfile = 'projectio
       }
       map.getSource(SOURCE)?.setData(selected ? { type: 'FeatureCollection', features: [selected] } : empty());
       if (nextGroup !== previousGroup && nextGroup) {
-        fade(HALO, 'circle-opacity', 0.16);
-        fade(POINT, 'circle-opacity', 1);
-        fade(LABEL, 'text-opacity', 1);
+        fade(HALO, 'circle-opacity', 0.16 * visibility);
+        fade(POINT, 'circle-opacity', visibility);
+        fade(HALO, 'circle-stroke-opacity', visibility);
+        fade(POINT, 'circle-stroke-opacity', visibility);
+        fade(LABEL, 'text-opacity', visibility);
       }
       syncOutline();
       if (selected && !outlines && !outlineLoadPromise) outlineLoadPromise = Promise.resolve().then(loadOutlines).then(data => {

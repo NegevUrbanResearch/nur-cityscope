@@ -76,7 +76,8 @@ function descriptor(item) {
   if (!Array.isArray(clip) || clip.length !== 4 || !clip.every(finite) || clip[0] < 0 || clip[1] < 0 || clip[2] > 1 || clip[3] > 1 || clip[2] <= clip[0] || clip[3] <= clip[1]) throw new Error("projection layer clip is invalid");
   const opacity = item.opacity == null ? 1 : item.opacity;
   if (!finite(opacity) || opacity < 0 || opacity > 1) throw new Error("projection layer opacity is invalid");
-  return { source, matrix: matrix9(item.matrix), clip: [...clip], opacity };
+  return { id: item.id, source, contentVersion: item.contentVersion,
+    matrix: matrix9(item.matrix), clip: [...clip], opacity };
 }
 
 function meshArrays(mesh) {
@@ -136,7 +137,7 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
   const release = () => {
     if (!resources) return;
     for (const key of ["quad", "position", "uv", "index"]) if (resources[key]) gl.deleteBuffer?.(resources[key]);
-    for (const key of ["composed", "sourceTexture"]) if (resources[key]) gl.deleteTexture?.(resources[key]);
+    for (const key of ["composed", "sourceTexture", "nameTexture"]) if (resources[key]) gl.deleteTexture?.(resources[key]);
     if (resources.framebuffer) gl.deleteFramebuffer?.(resources.framebuffer);
     for (const key of ["compose", "final"]) if (resources[key]) gl.deleteProgram?.(resources[key]);
     resources = null;
@@ -197,8 +198,23 @@ export function createProjectionWarpRenderer({ canvas, mesh, gl: suppliedGl } = 
     gl.uniform1i?.(gl.getUniformLocation?.(r.compose, "uSource"), 0);
     for (const layer of valid) {
       gl.activeTexture?.(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, r.sourceTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.source);
+      if (layer.id === 'names') {
+        if (r.nameSource !== layer.source) {
+          if (r.nameTexture) gl.deleteTexture?.(r.nameTexture);
+          r.nameTexture = gl.createTexture();
+          configureTexture(gl, r.nameTexture);
+          r.nameSource = layer.source;
+          r.nameVersion = null;
+        }
+        gl.bindTexture(gl.TEXTURE_2D, r.nameTexture);
+        if (r.nameVersion !== layer.contentVersion) {
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.source);
+          r.nameVersion = layer.contentVersion;
+        }
+      } else {
+        gl.bindTexture(gl.TEXTURE_2D, r.sourceTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, layer.source);
+      }
       gl.uniformMatrix3fv?.(gl.getUniformLocation?.(r.compose, "uMatrix"), false, new Float32Array(layer.matrix));
       gl.uniform4fv?.(gl.getUniformLocation?.(r.compose, "uClip"), new Float32Array(layer.clip));
       gl.uniform1f?.(gl.getUniformLocation?.(r.compose, "uOpacity"), layer.opacity);

@@ -37,6 +37,13 @@ function makeHarness(spanId = "left", instanceId = "11111111-1111-4111-8111-1111
       drawCompletion: options.drawCompletion,
       route: options.route,
       baseline: options.baseline,
+      prepareCandidate: options.prepareCandidate,
+      commitCandidate: options.commitCandidate,
+      rollbackCandidate: options.rollbackCandidate,
+      finalizeCandidate: options.finalizeCandidate,
+      isWallEnabled: options.isWallEnabled,
+      getDatasetVersion: options.getDatasetVersion,
+      clock: options.clock,
   });
   return {
     runtime,
@@ -93,6 +100,223 @@ function realSpanAndNames() {
 }
 
 describe("projection config runtime", () => {
+  test.each(['prepare', 'render'])('dataset replacement during %s rejects the old wall and applies the current one', async (phase) => {
+    let version = 'v1';
+    const pending = [];
+    const prepare = vi.fn(() => new Promise((resolve) => pending.push(resolve)));
+    const commit = vi.fn(); const rollback = vi.fn();
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: prepare, commitCandidate: commit, rollbackCandidate: rollback,
+      drawCompletion: () => true, getDatasetVersion: () => version,
+    });
+    const pair = (datasetVersion) => ({ wall: { datasetVersion, digest: datasetVersion === 'v1' ? 'a'.repeat(64) : 'b'.repeat(64), diagnostics: { expected: 1228, placed: 1228 } } });
+    await h.runtime.start(); h.state(8); h.frame();
+    if (phase === 'render') { pending[0](pair('v1')); await Promise.resolve(); await Promise.resolve(); h.frame(); expect(commit).toHaveBeenCalledOnce(); }
+    version = 'v2'; h.runtime.datasetChanged(); h.frame();
+    expect(prepare).toHaveBeenCalledTimes(2);
+    if (phase === 'prepare') { pending[0](pair('v1')); await Promise.resolve(); await Promise.resolve(); expect(commit).not.toHaveBeenCalled(); }
+    else expect(rollback).toHaveBeenCalled();
+    pending[1](pair('v2')); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
+    expect(h.sent().filter((item) => item.success && item.wall?.datasetVersion === 'v1')).toHaveLength(0);
+    expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 8, success: true, wall: expect.objectContaining({ datasetVersion: 'v2', digest: 'b'.repeat(64) }) }));
+    h.runtime.stop();
+  });
+  test('status retries retain an applied digest while the memorial layer is hidden', async () => {
+    let enabled = true;
+    const wall = { datasetVersion: 'release', digest: 'a'.repeat(64), diagnostics: { expected: 1228, placed: 1228 } };
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: () => Promise.resolve({ wall }), commitCandidate: vi.fn(), drawCompletion: () => true,
+      isWallEnabled: () => enabled,
+    });
+    await h.runtime.start(); h.state(8); h.frame(); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
+    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.digest).toBe(wall.digest);
+    enabled = false;
+    h.runtime.requestStatus(); h.render();
+    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1)).toMatchObject({ revision: 8, success: true });
+    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.digest).toBe(wall.digest);
+    h.runtime.stop();
+  });
+  test('a hidden renderer revision prepares and acknowledges the current wall', async () => {
+    let enabled = false;
+    const wall = { datasetVersion: 'release', digest: 'a'.repeat(64), diagnostics: { expected: 1228, placed: 1228 } };
+    const prepare = vi.fn(() => Promise.resolve({ wall }));
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: prepare, commitCandidate: vi.fn(), drawCompletion: () => true, isWallEnabled: () => enabled,
+    });
+    await h.runtime.start(); h.state(8); h.frame(); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
+    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.digest).toBe(wall.digest);
+    enabled = true; h.runtime.requestStatus(); h.render();
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.digest).toBe(wall.digest);
+    h.runtime.stop();
+  });
+  test('a changed dataset is rechecked when a pending preparation resolves even without a notification', async () => {
+    let version = 'v1'; const pending = [];
+    const prepare = vi.fn(() => new Promise((resolve) => pending.push(resolve)));
+    const commit = vi.fn();
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: prepare, commitCandidate: commit, drawCompletion: () => true, getDatasetVersion: () => version,
+    });
+    const pair = (datasetVersion) => ({ wall: { datasetVersion, digest: 'a'.repeat(64), diagnostics: { expected: 2, placed: 2 } } });
+    await h.runtime.start(); h.state(8); h.frame(); version = 'v2';
+    pending[0](pair('v1')); await Promise.resolve(); await Promise.resolve();
+    expect(commit).not.toHaveBeenCalled();
+    h.frame(); expect(prepare).toHaveBeenCalledTimes(2);
+    pending[1](pair('v2')); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
+    expect(h.sent().filter((item) => item.success && item.wall?.datasetVersion === 'v1')).toHaveLength(0);
+    expect(h.sent()).toContainEqual(expect.objectContaining({ success: true, wall: expect.objectContaining({ datasetVersion: 'v2' }) }));
+    h.runtime.stop();
+  });
+  test('a dataset update after Applied immediately replaces the old confirmation and retries', async () => {
+    let version = 'v1';
+    const wallForVersion = () => ({ datasetVersion: version, digest: version === 'v1' ? 'a'.repeat(64) : 'b'.repeat(64), diagnostics: { expected: 2, placed: 2 } });
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: () => Promise.resolve({ wall: wallForVersion() }), commitCandidate: vi.fn(),
+      drawCompletion: () => true, getDatasetVersion: () => version,
+    });
+    await h.runtime.start(); h.state(8); h.frame(); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
+    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.datasetVersion).toBe('v1');
+    version = 'v2'; h.runtime.datasetChanged();
+    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1)).toMatchObject({ success: false, error: expect.stringMatching(/dataset changed/) });
+    h.runtime.requestStatus();
+    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).success).toBe(false);
+    h.frame(); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
+    expect(h.sent().filter((item) => item.type === 'otef_projection_applied').at(-1).wall?.datasetVersion).toBe('v2');
+    h.runtime.stop();
+  });
+  test.each(['prepare', 'render'])('reconnect restarts the same first revision abandoned during %s', async (phase) => {
+    const pending = [];
+    const prepare = vi.fn(() => new Promise((resolve) => pending.push(resolve)));
+    const commit = vi.fn();
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: prepare, commitCandidate: commit, drawCompletion: () => true,
+    });
+    await h.runtime.start(); h.state(4); h.frame();
+    if (phase === 'render') { pending[0]({ wall: null }); await Promise.resolve(); await Promise.resolve(); h.frame(); expect(commit).toHaveBeenCalledOnce(); }
+    h.socketListeners.get('disconnect')();
+    h.socketListeners.get('connect')();
+    h.state(4); // Ordinary hydration may return the same revision.
+    h.frame();
+    expect(prepare).toHaveBeenCalledTimes(2);
+    pending[1]({ wall: null }); await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
+    expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 4, success: true }));
+    h.runtime.stop();
+  });
+  test('acknowledges the complete wall only after local draw and repeats that identity on status retry', async () => {
+    const timers = new Map(); let now = 0; let id = 0; let resolvePrepare;
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      clock: { setTimeout: (fn, ms) => { const key = ++id; timers.set(key, { fn, at: now + ms }); return key; }, clearTimeout: (key) => timers.delete(key) },
+      prepareCandidate: () => new Promise((resolve) => { resolvePrepare = resolve; }),
+      commitCandidate: vi.fn(), drawCompletion: () => true,
+    });
+    await h.runtime.start(); h.state(7); h.frame();
+    now = 1500;
+    for (const [key, timer] of [...timers]) if (timer.at <= now) { timers.delete(key); timer.fn(); }
+    expect(h.sent().filter((message) => message.type === 'otef_projection_applied')).toHaveLength(0);
+    resolvePrepare({ wall: { datasetVersion: 'release', digest: 'a'.repeat(64), diagnostics: { expected: 1228, placed: 1228 } } });
+    await Promise.resolve(); await Promise.resolve(); h.frame();
+    expect(h.sent().filter((message) => message.type === 'otef_projection_applied')).toHaveLength(0);
+    h.render();
+    expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 7, success: true, wall: {
+      datasetVersion: 'release', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228,
+    } }));
+    h.runtime.requestStatus(); h.render();
+    expect(h.sent().filter((message) => message.success && message.wall?.digest === 'a'.repeat(64))).toHaveLength(2);
+    h.runtime.stop();
+  });
+  test('prepares an asynchronous local renderer and wall pair before one frame commit, then finalizes after draw', async () => {
+    let resolve;
+    const prepare = vi.fn(() => new Promise((done) => { resolve = done; }));
+    const commit = vi.fn(); const rollback = vi.fn(); const finalize = vi.fn();
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: prepare, commitCandidate: commit, rollbackCandidate: rollback, finalizeCandidate: finalize,
+      drawCompletion: () => true,
+    });
+    await h.runtime.start(); h.state(8); h.frame();
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(commit).not.toHaveBeenCalled();
+    resolve({ digest: 'wall-8' }); await Promise.resolve(); await Promise.resolve();
+    h.frame();
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ digest: 'wall-8' }), DEFAULT_PROJECTION_CONFIG, 8);
+    h.render();
+    expect(finalize).toHaveBeenCalledOnce();
+    expect(rollback).not.toHaveBeenCalled();
+  });
+
+  test('stale preparation never commits and a failed draw rolls back the local pair', async () => {
+    const pending = new Map();
+    const prepare = vi.fn((_config, revision) => new Promise((resolve) => pending.set(revision, resolve)));
+    const commit = vi.fn(); const rollback = vi.fn();
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+      prepareCandidate: prepare, commitCandidate: commit, rollbackCandidate: rollback, drawCompletion: () => false,
+    });
+    await h.runtime.start(); h.state(1); h.frame(); h.state(2);
+    pending.get(1)({ digest: 'old' }); await Promise.resolve(); await Promise.resolve(); h.frame();
+    expect(commit).not.toHaveBeenCalled();
+    pending.get(2)({ digest: 'new' }); await Promise.resolve(); await Promise.resolve(); h.frame();
+    expect(commit).toHaveBeenCalledOnce();
+    h.error({ error: new Error('draw failed') });
+    expect(rollback).toHaveBeenCalledTimes(2);
+    expect(h.sent()).toContainEqual(expect.objectContaining({ revision: 2, success: false }));
+  });
+  test('stopping or invalidating a committed pending pair restores the previous wall', async () => {
+    for (const action of ['stop', 'invalidate']) {
+      let visibleWall = 'previous';
+      const rollback = vi.fn(() => { visibleWall = 'previous'; });
+      const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', {
+        prepareCandidate: () => Promise.resolve({ wall: 'candidate' }),
+        commitCandidate: () => { visibleWall = 'candidate'; },
+        rollbackCandidate: rollback,
+        drawCompletion: () => true,
+      });
+      await h.runtime.start(); h.state(4); h.frame();
+      await Promise.resolve(); await Promise.resolve(); h.frame();
+      expect(visibleWall).toBe('candidate');
+      h.runtime[action]();
+      expect(visibleWall).toBe('previous');
+      expect(rollback).toHaveBeenCalledOnce();
+    }
+  });
+
+  test('a status request during asynchronous preparation does not start the same revision twice', async () => {
+    const prepare = vi.fn((_config, revision) => revision === 1 ? Promise.resolve({ wall: 'previous' }) : new Promise(() => {}));
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', { prepareCandidate: prepare });
+    await h.runtime.start(); h.state(1); h.frame();
+    await Promise.resolve(); await Promise.resolve(); h.frame(); h.render();
+    h.state(7); h.frame();
+    h.runtime.requestStatus(); h.frame();
+    expect(prepare).toHaveBeenCalledTimes(2);
+    h.runtime.stop();
+  });
+  test('aborts an active local layout before starting the latest rapid Live revision', async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const jobs = [];
+    const prepareCandidate = vi.fn((_config, revision, _generation, signal) => new Promise((resolve, reject) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      let settled = false;
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        active -= 1;
+        if (error) reject(error); else resolve({ revision });
+      };
+      signal?.addEventListener('abort', () => finish(new Error('cancelled layout')), { once: true });
+      jobs.push({ finish });
+    }));
+    const h = makeHarness('left', '11111111-1111-4111-8111-111111111111', { prepareCandidate });
+    await h.runtime.start();
+    h.state(1); h.frame();
+    h.state(2); h.frame();
+    h.state(3); h.frame();
+    const observed = maximumActive;
+    jobs.forEach((job) => job.finish());
+    await Promise.resolve(); await Promise.resolve();
+    expect(observed).toBe(1);
+    expect(prepareCandidate).toHaveBeenCalledTimes(3);
+    h.runtime.stop();
+  });
   test("zoom-clamped revision rolls camera, mask, and image back and reports failure before recovery", async () => {
     const { map, controller, image, container, canvas, getCamera, getEffective } = realSpanAndNames();
     let listener;

@@ -1,5 +1,5 @@
 const COLUMNS = [
-  ["content"], ["pre"], ["left-crop", "right-crop"],
+  ["content", "names-wall"], ["pre"], ["left-crop", "right-crop"],
   ["left-fit", "right-fit"], ["left-keystone", "right-keystone"],
   ["left-grid", "right-grid"], ["left-output", "right-output"],
 ];
@@ -21,15 +21,20 @@ export function layoutNodePositions(sizes) {
   const heightOf = (id) => sizes[id]?.height || 300;
   const topHeight = Math.max(...["left-crop", "left-fit", "left-keystone", "left-grid", "left-output"].map(heightOf));
   const bottomHeight = Math.max(...["right-crop", "right-fit", "right-keystone", "right-grid", "right-output"].map(heightOf));
-  const height = PAD * 2 + topHeight + ROW_GAP + bottomHeight;
+  const pathHeight = topHeight + ROW_GAP + bottomHeight;
+  const contentColumnHeight = heightOf("content") + ROW_GAP + heightOf("names-wall");
+  const height = PAD * 2 + Math.max(pathHeight, contentColumnHeight);
   const positions = {};
   let x = PAD;
   for (const column of COLUMNS) {
+    let stackY = (height - contentColumnHeight) / 2;
     for (const id of column) {
       const y = id.startsWith("left-") ? PAD
         : id.startsWith("right-") ? PAD + topHeight + ROW_GAP
-          : (height - heightOf(id)) / 2;
+          : (id === "content" || id === "names-wall") ? stackY
+            : (height - heightOf(id)) / 2;
       positions[id] = { x, y };
+      if (id === "content" || id === "names-wall") stackY += heightOf(id) + ROW_GAP;
     }
     x += Math.max(...column.map(widthOf)) + COLUMN_GAP;
   }

@@ -3,7 +3,7 @@ import os
 from django.utils import timezone
 
 from .projection_config_schema import legacy_projection_config_defaults
-from .projection_warp_schema import migrate_projection_config_to_v2
+from .projection_warp_schema import migrate_projection_config_to_v4
 
 
 def indicator_media_path(instance, filename):
@@ -672,7 +672,7 @@ class LayerState(models.Model):
 
 
 def projection_config_defaults():
-    return migrate_projection_config_to_v2(legacy_projection_config_defaults())
+    return migrate_projection_config_to_v4(legacy_projection_config_defaults())
 
 
 def projection_presets_defaults():

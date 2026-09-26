@@ -7,6 +7,7 @@ import {
   validateProjectionConfig,
 } from '../../frontend/src/shared/projection-config-schema.js';
 import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
+import { migrateNamesWallToV3, migrateNamesWallToV4 } from '../../frontend/src/shared/nli-name-wall-config.js';
 
 const fixtureDocument = JSON.parse(readFileSync(new URL('../../../nur-io/django_api/backend/tests/fixtures/projection-config-v1.json', import.meta.url)));
 const fixture = fixtureDocument.valid;
@@ -14,8 +15,8 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 
 test('canonical fixture and defaults validate', () => {
   expect(validateProjectionConfig(fixture)).toEqual({});
-  expect(DEFAULT_PROJECTION_CONFIG).toEqual(migrateProjectionConfigToV2(fixture));
-  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(2);
+  expect(DEFAULT_PROJECTION_CONFIG).toEqual(migrateNamesWallToV4(fixture));
+  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(4);
   expect(Object.isFrozen(DEFAULT_PROJECTION_CONFIG)).toBe(true);
 });
 
@@ -63,13 +64,25 @@ test('accepts a .01 crop extent at nonzero bounds', () => {
 
 test('import trims names and enforces wrapper shape', () => {
   const parsed = parseProjectionImport(JSON.stringify({ schemaVersion: 1, name: '  Checkpoint  ', config: fixture }));
-  expect(parsed).toEqual({ name: 'Checkpoint', config: fixture });
+  expect(parsed).toEqual({ name: 'Checkpoint', config: migrateNamesWallToV4(fixture), warnings: [] });
   expect(() => parseProjectionImport(JSON.stringify({ schemaVersion: 2, name: 'x', config: fixture }))).toThrow(/schemaVersion/);
   expect(() => parseProjectionImport(JSON.stringify({ schemaVersion: 1, name: '', config: fixture }))).toThrow(/name/);
 });
 
 test('export emits only the versioned document', () => {
-  expect(JSON.parse(serializeProjectionExport('Original calibration', fixture))).toEqual({ schemaVersion: 1, name: 'Original calibration', config: fixture });
+  expect(JSON.parse(serializeProjectionExport('Original calibration', fixture))).toEqual({ schemaVersion: 4, name: 'Original calibration', config: migrateNamesWallToV4(fixture) });
+});
+
+test('V4 export and legacy import round trip without dropping either profile', () => {
+  const config = clone(DEFAULT_PROJECTION_CONFIG);
+  config.namesWall.activeMode = 'model';
+  config.namesWall.profiles.wall.requestedFontPx = 15;
+  config.namesWall.innerEdgeInsetPx.right = 60;
+  const document = JSON.parse(serializeProjectionExport('  Desk  ', config));
+  expect(document.schemaVersion).toBe(4);
+  expect(parseProjectionImport(JSON.stringify(document))).toEqual({ name: 'Desk', config, warnings: [] });
+  const v2 = migrateProjectionConfigToV2(fixture);
+  expect(parseProjectionImport(JSON.stringify({ schemaVersion: 2, name: 'Old', config: v2 })).config).toEqual(migrateNamesWallToV4(v2));
 });
 
 test('language-only non-finite numbers are rejected', () => {

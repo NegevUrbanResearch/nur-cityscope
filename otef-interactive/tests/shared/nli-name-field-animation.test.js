@@ -65,6 +65,23 @@ describe('memorial name animation', () => {
     animation.hide(removed); expect(removed).toHaveBeenCalledOnce();
     animation.dispose();
   });
+  it('publishes numeric per-PID reveal and focus without evaluating MapLibre expressions', () => {
+    vi.useFakeTimers();
+    const apply = vi.fn();
+    const animation = createNameFieldAnimation({ apply, now: () => Date.now() });
+    animation.show();
+    expect(apply.mock.lastCall[0].alphaFor('p1', 0)).toBe(0);
+    vi.advanceTimersByTime(800);
+    expect(apply.mock.lastCall[0].alphaFor('p1', 0)).toBeGreaterThan(0.48);
+    expect(apply.mock.lastCall[0].alphaFor('p2', 1000)).toBe(0);
+    animation.setFocus(['case', ['==', ['get', 'pid'], 'p1'], 1, .18], (pid) => pid === 'p1' ? 1 : .18);
+    vi.advanceTimersByTime(350);
+    expect(apply.mock.lastCall[0].alphaFor('p1', 0)).toBeGreaterThan(0.7);
+    expect(apply.mock.lastCall[0].alphaFor('p2', 0)).toBeCloseTo(.18 * (1150 / 1600), 1);
+    animation.hide(); vi.advanceTimersByTime(650);
+    expect(apply.mock.lastCall[0].alphaFor('p1', 0)).toBe(0);
+    animation.dispose(); vi.useRealTimers();
+  });
   it('keeps opacity expressions bounded during rapid repeated focus changes',()=>{
     vi.useFakeTimers();
     const apply=vi.fn();

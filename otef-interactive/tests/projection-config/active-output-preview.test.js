@@ -9,7 +9,7 @@ function element(width = 260, height = 0) {
     replaceChildren(...children) { this.children = []; children.forEach((child) => this.appendChild(child)); },
     contains(child) { return this.children.includes(child) || this.children.some((item) => item.contains?.(child)); },
     remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((child) => child !== this); },
-    addEventListener() {},
+    addEventListener(type, callback) { this.listeners ||= new Map(); this.listeners.set(type, callback); },
     setAttribute(key, value) { this.attributes ||= {}; this.attributes[key] = value; },
   };
 }
@@ -149,5 +149,119 @@ test("changing orientation closes the combined editor before moving its preview"
   expect(editor.parentElement).toBe(editorHome);
   expect(mobileHost.children).toHaveLength(1);
   expect(mobileHost.children[0]).toBe(surface);
+  preview.dispose();
+});
+
+test('only the final output frames can validate a matching complete wall pair', async () => {
+  const listeners = new Map();
+  const win = { location: { origin: 'http://localhost' }, addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener() {} };
+  const frames = [];
+  const document = { defaultView: win, createElement: (tag) => { const node = element(); if (tag === 'iframe') { node.contentWindow = { postMessage: vi.fn() }; frames.push(node); } return node; } };
+  const hosts = new Map(['content', 'left-output', 'right-output'].map((id) => [id, element()]));
+  const preview = createActiveOutputPreview({ document, nodeHosts: hosts });
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  preview.update(config);
+  for (const frame of frames) listeners.get('message')({ source: frame.contentWindow, origin: 'http://localhost', data: { type: 'otef_projection_preview_ready', output: frame.src.includes('span=right') ? 'right' : 'left' } });
+  const validating = preview.validateCandidate({ config, generation: 7, identity: JSON.stringify(config) });
+  const requests = frames.map((frame) => frame.contentWindow.postMessage.mock.calls.at(-1)?.[0]);
+  expect(requests[0].type).toBe('otef_projection_preview_config');
+  expect(requests.slice(1).map((item) => item.type)).toEqual(['otef_projection_preview_validate', 'otef_projection_preview_validate']);
+  const wall = { datasetVersion: 'nli-1', mode: 'wall', digest: 'a'.repeat(64), expected: 1228, placed: 1228 };
+  listeners.get('message')({ source: frames[1].contentWindow, origin: 'http://localhost', data: { type: 'otef_projection_preview_validated', output: 'left', requestId: requests[1].requestId, identity: requests[1].identity, valid: true, wall } });
+  listeners.get('message')({ source: frames[2].contentWindow, origin: 'http://localhost', data: { type: 'otef_projection_preview_validated', output: 'right', requestId: requests[2].requestId, identity: requests[2].identity, valid: true, wall } });
+  await expect(validating).resolves.toMatchObject({ valid: true, identity: JSON.stringify(config), wall });
+  const reloading = preview.validateCandidate({ config, generation: 8, identity: JSON.stringify(config) });
+  frames[1].listeners.get('load')();
+  await expect(reloading).resolves.toMatchObject({ valid: false, reason: 'final output preview reloaded' });
+  preview.dispose();
+});
+
+test('final preview readiness callback fires for each recovered ready pair', () => {
+  const listeners = new Map();
+  const win = { location: { origin: 'http://localhost' }, addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener() {} };
+  const frames = [];
+  const document = { defaultView: win, createElement: (tag) => { const node = element(); if (tag === 'iframe') { node.contentWindow = { postMessage: vi.fn() }; frames.push(node); } return node; } };
+  const preview = createActiveOutputPreview({ document, nodeHosts: new Map(['left-output', 'right-output'].map((id) => [id, element()])) });
+  const ready = vi.fn();
+  preview.onFinalOutputsReady(ready);
+  const handshake = (frame) => listeners.get('message')({ source: frame.contentWindow, origin: 'http://localhost', data: {
+    type: 'otef_projection_preview_ready', output: frame.src.includes('span=right') ? 'right' : 'left',
+  } });
+  handshake(frames[0]);
+  expect(ready).not.toHaveBeenCalled();
+  handshake(frames[1]);
+  expect(ready).toHaveBeenCalledTimes(1);
+  frames[0].listeners.get('load')();
+  expect(ready).toHaveBeenCalledTimes(1);
+  handshake(frames[0]);
+  expect(ready).toHaveBeenCalledTimes(2);
+  preview.dispose();
+});
+
+test('paired preview returns actual font and count diagnostics for valid and invalid candidates', async () => {
+  const listeners = new Map();
+  const win = { location: { origin: 'http://localhost' }, addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener() {} };
+  const frames = [];
+  const document = { defaultView: win, createElement: (tag) => { const node = element(); if (tag === 'iframe') { node.contentWindow = { postMessage: vi.fn() }; frames.push(node); } return node; } };
+  const preview = createActiveOutputPreview({ document, nodeHosts: new Map(['left-output', 'right-output'].map((id) => [id, element()])) });
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  preview.update(config);
+  for (const frame of frames) listeners.get('message')({ source: frame.contentWindow, origin: 'http://localhost', data: { type: 'otef_projection_preview_ready', output: frame.src.includes('span=right') ? 'right' : 'left' } });
+  const answerPair = (valid, diagnostics, reason = undefined) => {
+    const requestFrames = frames.slice(-2);
+    const requests = requestFrames.map((frame) => frame.contentWindow.postMessage.mock.calls.at(-1)[0]);
+    for (const [index, frame] of requestFrames.entries()) listeners.get('message')({
+      source: frame.contentWindow, origin: 'http://localhost', data: {
+        type: 'otef_projection_preview_validated', output: index ? 'right' : 'left',
+        requestId: requests[index].requestId, identity: requests[index].identity, valid,
+        diagnostics: { datasetVersion: 'nli-1', mode: 'wall', expected: 1228, ...diagnostics },
+        ...(valid ? { wall: { datasetVersion: 'nli-1', mode: 'wall', digest: 'b'.repeat(64), expected: 1228, placed: 1228 } } : {}),
+        ...(reason ? { error: reason } : {}),
+      },
+    });
+  };
+  const identity = JSON.stringify(config);
+  const reduced = preview.validateCandidate({ config, generation: 1, identity });
+  const reducedDiagnostics = { requestedFontPx: 12, effectiveFontPx: 9, placed: 1228, state: 'valid', left: 614, right: 614 };
+  answerPair(true, reducedDiagnostics);
+  await expect(reduced).resolves.toMatchObject({ valid: true, diagnostics: { ...reducedDiagnostics, datasetVersion: 'nli-1', mode: 'wall', expected: 1228 } });
+
+  config.namesWall.profiles.wall.edgeInsetPx = 4;
+  const invalidIdentity = JSON.stringify(config);
+  const invalid = preview.validateCandidate({ config, generation: 2, identity: invalidIdentity });
+  const invalidDiagnostics = { requestedFontPx: 12, effectiveFontPx: null, placed: 801, state: 'invalid', reason: 'capacity through 1px', left: 400, right: 401 };
+  answerPair(false, invalidDiagnostics, 'capacity through 1px');
+  await expect(invalid).resolves.toMatchObject({ valid: false, diagnostics: { ...invalidDiagnostics, datasetVersion: 'nli-1', mode: 'wall', expected: 1228 } });
+  preview.dispose();
+});
+
+test('stale paired-preview replies cannot validate a newer profile draft', async () => {
+  const listeners = new Map();
+  const win = { location: { origin: 'http://localhost' }, addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener() {} };
+  const frames = [];
+  const document = { defaultView: win, createElement: (tag) => { const node = element(); if (tag === 'iframe') { node.contentWindow = { postMessage: vi.fn() }; frames.push(node); } return node; } };
+  const preview = createActiveOutputPreview({ document, nodeHosts: new Map(['left-output', 'right-output'].map((id) => [id, element()])) });
+  const configA = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  preview.update(configA);
+  for (const frame of frames) listeners.get('message')({ source: frame.contentWindow, origin: 'http://localhost', data: { type: 'otef_projection_preview_ready', output: frame.src.includes('span=right') ? 'right' : 'left' } });
+  const identityA = JSON.stringify(configA);
+  const pendingA = preview.validateCandidate({ config: configA, generation: 1, identity: identityA });
+  const requestsA = frames.slice(-2).map((frame) => frame.contentWindow.postMessage.mock.calls.at(-1)[0]);
+  const configB = structuredClone(configA); configB.namesWall.activeMode = 'model';
+  const identityB = JSON.stringify(configB);
+  const pendingB = preview.validateCandidate({ config: configB, generation: 2, identity: identityB });
+  await expect(pendingA).resolves.toMatchObject({ valid: false, reason: 'superseded wall preview' });
+  const requestsB = frames.slice(-2).map((frame) => frame.contentWindow.postMessage.mock.calls.at(-1)[0]);
+  const late = { datasetVersion: 'nli-1', mode: 'wall', digest: 'c'.repeat(64), expected: 1228, placed: 1228 };
+  for (const [index, frame] of frames.slice(-2).entries()) listeners.get('message')({ source: frame.contentWindow, origin: 'http://localhost', data: {
+    type: 'otef_projection_preview_validated', output: index ? 'right' : 'left', requestId: requestsA[index].requestId,
+    identity: identityA, valid: true, wall: late,
+  } });
+  const modelWall = { ...late, mode: 'model', digest: 'd'.repeat(64) };
+  for (const [index, frame] of frames.slice(-2).entries()) listeners.get('message')({ source: frame.contentWindow, origin: 'http://localhost', data: {
+    type: 'otef_projection_preview_validated', output: index ? 'right' : 'left', requestId: requestsB[index].requestId,
+    identity: identityB, valid: true, wall: modelWall,
+  } });
+  await expect(pendingB).resolves.toMatchObject({ valid: true, identity: identityB, wall: modelWall });
   preview.dispose();
 });

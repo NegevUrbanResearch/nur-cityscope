@@ -7,6 +7,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:name-wall-exhibit": "node scripts/require-name-wall-exhibit-gate.mjs",
     "build:frontend": "vite build",
     "dev:frontend": "vite",
     "generate:place-catalog": "node scripts/place-navigation/generate-place-catalog.mjs",
