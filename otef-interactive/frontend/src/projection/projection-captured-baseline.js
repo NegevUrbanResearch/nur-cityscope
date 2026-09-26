@@ -68,7 +68,8 @@ function awaitWithSignal(promise, signal) {
 }
 
 function fetchOptions(signal) {
-  return signal ? { signal } : null;
+  // Calibration files have stable URLs and can be repaired or replaced locally.
+  return signal ? { signal, cache: "no-store" } : { cache: "no-store" };
 }
 
 function fetchWithSignal(fetchImpl, url, signal) {

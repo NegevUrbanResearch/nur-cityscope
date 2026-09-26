@@ -86,7 +86,7 @@ test("opens explicit browser URLs on selected display bounds and owns only this 
   const open = outputOpen(null, opened);
   const api = screenApi();
   const controller = createOutputWindowController({ open, screenApi: api, storage: storageStub(), sessionId: "session-a", location: "http://localhost:80/otef-interactive/projection.html" });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[1].key, right: screens[0].key });
 
   await controller.openBoth();
@@ -113,7 +113,7 @@ test("rejects a blocked screen permission before opening any popup", async () =>
   const screenApi = { permissions: { query: vi.fn(async () => ({ state: "denied" })) }, getScreenDetails: vi.fn() };
   const controller = createOutputWindowController({ open, screenApi, storage: storageStub() });
 
-  await expect(controller.identifyDisplays()).rejects.toThrow(/window-management permission/i);
+  await expect(controller.refreshDisplays()).rejects.toThrow(/window-management permission/i);
   await expect(controller.openBoth()).rejects.toThrow(/window-management permission/i);
   expect(open).not.toHaveBeenCalled();
 });
@@ -126,7 +126,7 @@ test("cleans up a partial popup attempt and closes only owned windows", async ()
     opened.push(win); return win;
   });
   const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
 
   await expect(controller.openBoth()).rejects.toThrow(/popup blocked/i);
@@ -141,12 +141,12 @@ test("requires explicit reassignment when saved labels or bounds are ambiguous o
   }));
   const duplicate = { ...displays[0] };
   const controller = createOutputWindowController({ open: vi.fn(), screenApi: screenApi([displays[0], duplicate, displays[1]]), storage });
-  await controller.identifyDisplays();
+  await controller.refreshDisplays();
   await expect(controller.openBoth()).rejects.toThrow(/ambiguous|reassign/i);
 
   const changed = { ...displays[0], left: 901 };
   const reconfigured = createOutputWindowController({ open: vi.fn(), screenApi: screenApi([changed, displays[1]]), storage });
-  await reconfigured.identifyDisplays();
+  await reconfigured.refreshDisplays();
   await expect(reconfigured.openBoth()).rejects.toThrow(/reconfigured|reassign/i);
 });
 
@@ -154,7 +154,7 @@ test("requests automatic fullscreen on each loaded child and waits for completio
   const opened = [];
   const open = outputOpen(null, opened, { swapDocument: true });
   const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub(), sessionId: "fullscreen" });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
   await controller.openBoth();
 
@@ -196,7 +196,7 @@ test("waits for the replacement document when the destination URL appears before
     return win;
   });
   const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
 
   await controller.openBoth();
@@ -213,7 +213,7 @@ test("reports listener registration failures through fullscreen readiness", asyn
     const opened = [];
     const open = outputOpen(null, opened, { registrationError: "fullscreenerror" });
     const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
-    const screens = await controller.identifyDisplays();
+    const screens = await controller.refreshDisplays();
     controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
     const pending = controller.openBoth();
     pending.catch(() => {});
@@ -231,7 +231,7 @@ test("does not fullscreen the initial about:blank document before projection loa
   const opened = [];
   const open = outputOpen(null, opened, { autoLoad: false });
   const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
   const pending = controller.openBoth();
   await vi.waitFor(() => expect(opened).toHaveLength(2));
@@ -250,7 +250,7 @@ test.each([
   const opened = [];
   const open = outputOpen(null, opened, options);
   const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
   await expect(controller.openBoth()).rejects.toThrow(error);
   expect(opened).toHaveLength(2);
@@ -265,7 +265,7 @@ test("times out an unconfirmed fullscreen launch and closes the attempt pair", a
     const opened = [];
     const open = outputOpen(null, opened, { fullscreen: "pending" });
     const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
-    const screens = await controller.identifyDisplays();
+    const screens = await controller.refreshDisplays();
     controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
     const pending = controller.openBoth();
     pending.catch(() => {});
@@ -283,7 +283,7 @@ test("reports a later fullscreen exit after a successful launch", async () => {
   const opened = [];
   const open = outputOpen(null, opened);
   const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
   await controller.openBoth();
   opened[0].win.document.fullscreenElement = null;
@@ -295,7 +295,7 @@ test("reports the remaining active output when one fullscreen output exits", asy
   const opened = [];
   const open = outputOpen(null, opened);
   const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
   await controller.openBoth();
 
@@ -313,7 +313,7 @@ test("close and reopen removes obsolete fullscreen callbacks", async () => {
     return win;
   });
   const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
 
   const first = controller.openBoth();
@@ -345,7 +345,7 @@ test("Close Both invalidates a pending Open Both before it can create windows", 
   const originalGet = api.getScreenDetails;
   const open = vi.fn((url) => popupFor(url, { autoLoad: false }));
   const controller = createOutputWindowController({ open, screenApi: api, storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
   api.getScreenDetails = vi.fn(() => gate.promise);
 
@@ -364,7 +364,7 @@ test("serializes overlapping Open Both clicks to one launch", async () => {
   const originalGet = api.getScreenDetails;
   const open = vi.fn((url) => popupFor(url));
   const controller = createOutputWindowController({ open, screenApi: api, storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
   api.getScreenDetails = vi.fn(() => gate.promise);
 
@@ -380,7 +380,7 @@ test("reports existing owned windows when validation fails", async () => {
   const api = screenApi();
   const open = vi.fn((url) => popupFor(url));
   const controller = createOutputWindowController({ open, screenApi: api, storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
   await controller.openBoth();
   api.getScreenDetails = vi.fn(async () => ({ screens: [{ ...displays[0], left: 901 }, displays[1]] }));
@@ -399,7 +399,7 @@ test("retains a window reference and gives manual-close instructions when close 
     return failing;
   });
   const controller = createOutputWindowController({ open, screenApi: screenApi(), storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
   await controller.openBoth();
 
@@ -412,7 +412,7 @@ test("retains a window reference and gives manual-close instructions when close 
 test("reports session-only assignment when local storage cannot persist", async () => {
   const storage = { getItem: vi.fn(() => null), setItem: vi.fn(() => { throw new Error("storage denied"); }) };
   const controller = createOutputWindowController({ open: vi.fn(), screenApi: screenApi(), storage });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
 
   expect(controller.getState().message).toMatch(/session-only|storage/i);
@@ -421,7 +421,7 @@ test("reports session-only assignment when local storage cannot persist", async 
 test("allows empty display labels when bounds make explicit selections distinct", async () => {
   const unlabeled = displays.map((display) => ({ ...display, label: "" }));
   const controller = createOutputWindowController({ open: vi.fn((url) => popupFor(url, { details: unlabeled })), screenApi: screenApi(unlabeled), storage: storageStub() });
-  const screens = await controller.identifyDisplays();
+  const screens = await controller.refreshDisplays();
   controller.assignDisplays({ left: screens[0].key, right: screens[1].key });
 
   await controller.openBoth();

@@ -165,7 +165,7 @@ export function createProjectionConfigView(root, {
   const rightLabel = make(doc, "label", { className: "output-display-label" }, "Right projector"); rightLabel.appendChild(controls.outputRightDisplay);
   outputToolbar.append(outputTitle, controls.outputIdentify, leftLabel, rightLabel, controls.outputAssign, controls.outputOpenBoth, controls.outputCloseBoth, controls.outputStatus, controls.outputHandoff);
   const outputAction = (action, value) => { if (!touchOnlySurface) onOutputAction(action, value); };
-  controls.outputIdentify.addEventListener("click", () => { outputSelection = { left: "", right: "" }; outputScreensSignature = null; outputAction("identify"); });
+  controls.outputIdentify.addEventListener("click", () => outputAction("identify"));
   controls.outputAssign.addEventListener("click", () => outputAction("assign", { left: controls.outputLeftDisplay.value, right: controls.outputRightDisplay.value }));
   controls.outputOpenBoth.addEventListener("click", () => outputAction("open"));
   controls.outputCloseBoth.addEventListener("click", () => outputAction("close"));
@@ -426,9 +426,10 @@ export function createProjectionConfigView(root, {
     controls.connectionStatus.textContent = state.hydrationError ? `Settings check failed: ${state.hydrationError}` : state.hydrating ? "Checking current settings…" : "";
     controls.connectionStatus.hidden = !state.hydrating && !state.hydrationError;
     controls.retryHydration.hidden = !state.hydrationError;
-    const screens = Array.isArray(outputState.screens) ? outputState.screens : [];
+    const screens = Array.isArray(outputState.screens) ? [...outputState.screens].sort((a, b) => a.displayNumber - b.displayNumber) : [];
     const assignments = outputState.assignments || {};
-    const optionFor = (screen) => make(doc, "option", { value: screen.key }, `${screen.label?.trim() || "Display"} · ${screen.left},${screen.top} · ${screen.width}×${screen.height}`);
+    const optionFor = (screen) => make(doc, "option", { value: screen.key }, `Display ${screen.displayNumber}`);
+    controls.outputIdentify.disabled = touchOnlySurface || screens.length === 0;
     const selectedKey = (assignment) => screens.find((screen) => assignment?.key === screen.key || (assignment?.label === screen.label && ["left", "top", "width", "height"].every((key) => Number(assignment?.bounds?.[key]) === Number(screen[key]))))?.key || "";
     const screensSignature = screens.map((screen) => screen.key).join("|");
     const assignmentsSignature = JSON.stringify(assignments);
@@ -470,7 +471,7 @@ export function createProjectionConfigView(root, {
   };
   setNode("pre");
   return {
-    update, controls, fields, nodeMap,
+    update, controls, fields, nodeMap, canManageDisplays: !touchOnlySurface,
     dispose() { mobileQuery?.removeEventListener?.("change", openOnPhone); doc.removeEventListener?.("keydown", onKeyDown); activePreview.dispose(); canvas.dispose(); },
   };
 }

@@ -286,6 +286,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   function requestStatus() { socket?.send?.({ type: "otef_projection_status_request", table: "otef", sourceId }); }
   const unsubscribe = client.subscribe(handleState);
   const unsubscribeOutput = outputController?.subscribe?.((nextState) => { outputState = nextState; refresh(); });
+  if (view.canManageDisplays) outputController?.refreshDisplays?.().catch(() => {});
   socket?.on?.("otef_projection_applied", statusMessage);
   const onConnect = () => { reconnectStatusRevision = expectedRevision; expectRevision(state, true); requestStatus(); if (activePattern.pattern !== "off") setPattern(activePattern); refresh(); };
   socket?.on?.("connect", onConnect);
@@ -298,7 +299,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
     sourceId,
     getStatusRows: () => [...statusRows.values()].map((row) => ({ ...row })),
     setConflict,
-    dispose() { disposed = true; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); unsubscribe?.(); unsubscribeOutput?.(); view.dispose(); client.stop?.(); },
+    dispose() { disposed = true; if (confirmationTimer !== null) clearTimeout(confirmationTimer); if (patternTimer !== null) clearInterval(patternTimer); socket?.send?.({ type: "otef_projection_pattern", table: "otef", output: activePattern.branch, pattern: "off", sourceId }); socket?.off?.("otef_projection_applied", statusMessage); socket?.off?.("connect", onConnect); socket?.off?.("disconnect", onDisconnect); unsubscribe?.(); unsubscribeOutput?.(); outputController?.dispose?.(); view.dispose(); client.stop?.(); },
   };
 }
 

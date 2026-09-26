@@ -4,7 +4,9 @@ TD remains available until the owner accepts browser alignment by eye and separa
 
 ## Switch between TD and browser output
 
-Use the workstation's `/otef-interactive/projection-config.html` page. **Identify displays**, assign the two projectors by name and position, and save the assignment. Phones and tablets edit calibration; launch output windows from the workstation.
+Use the workstation's `/otef-interactive/projection-config.html` page. Connected displays appear automatically as **Display 1**, **Display 2**, etc. **Identify displays** shows a large matching number on each screen for five seconds; Escape or Close dismisses a number early. Select the number for each projector and save the assignment. These are app numbers, not Windows display numbers. Phones and tablets edit calibration; launch output windows from the workstation.
+
+Display numbers follow desktop position and update when displays are connected or disconnected. Saved assignments retain their screen identity. If display access is denied, allow it in the browser's site settings and reload. If identification popups are blocked, allow popups for this site and press Identify displays again. The temporary number windows do not change calibration or switch TD/projector output on or off.
 
 For browser output:
 

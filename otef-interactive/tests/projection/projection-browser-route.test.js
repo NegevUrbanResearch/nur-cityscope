@@ -65,7 +65,8 @@ test("loads the captured 1920x1080 asset for the requested span", async () => {
   const manifest = { width: 1920, height: 1080, assets: { left: { path: "left.json", sha256: await sha256Hex(mesh) } }, framing: { path: "../td-source-config.json", sha256: await sha256Hex(framing) } };
   const fetchImpl = vi.fn(async (url) => ({ ok: true, async arrayBuffer() { return url.endsWith("manifest.json") ? new TextEncoder().encode(JSON.stringify(manifest)).buffer : (url.endsWith("td-source-config.json") ? framing : mesh).buffer; } }));
   const result = await loadCapturedProjectionBaseline({ fetchImpl, spanId: "left", base: "/baseline/" });
-  expect(result.manifest.width).toBe(1920); expect(fetchImpl).toHaveBeenLastCalledWith("/baseline/left.json");
+  expect(result.manifest.width).toBe(1920); expect(fetchImpl).toHaveBeenLastCalledWith("/baseline/left.json", { cache: "no-store" });
+  expect(fetchImpl.mock.calls.every(([, options]) => options.cache === "no-store")).toBe(true);
 });
 
 test("verifies the manifest-selected mesh and pinned framing bytes", async () => {
@@ -278,7 +279,7 @@ test("cancels pending baseline readiness before creating a browser surface", asy
     rendererFactory: vi.fn(),
   });
   await Promise.resolve();
-  expect(fetchImpl.mock.calls[0][1]).toEqual({ signal: controller.signal });
+  expect(fetchImpl.mock.calls[0][1]).toEqual({ signal: controller.signal, cache: "no-store" });
   controller.abort();
   resolveManifest({ ok: false });
   await expect(pending).rejects.toMatchObject({ name: "AbortError" });

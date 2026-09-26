@@ -1,3 +1,5 @@
+import { createDisplayIdentifier, numberDisplays } from "./display-identification.js";
+
 const ASSIGNMENTS_STORAGE_KEY = "otef.projection.display-assignments.v1";
 const OUTPUTS = ["left", "right"];
 const FULLSCREEN_TIMEOUT_MS = 10000;
@@ -65,8 +67,15 @@ export function createOutputWindowController({
   storage = (() => { try { return globalThis.localStorage; } catch { return null; } })(), sessionId,
 } = {}) {
   const owned = new Map(); const trackers = new Map(); const subscriptions = new Set(); const assignments = parseAssignments(storage); const id = makeSessionId(sessionId);
+  const identifier = createDisplayIdentifier({ open, location, sessionId: id });
+  let screenDetails = null;
+  let watchedScreens = [];
+  let disposed = false;
+  const onScreensChange = () => { identifier.close(); refreshDisplays().catch(() => {}); };
+  const onPageHide = () => identifier.close();
+  screenApi?.addEventListener?.("pagehide", onPageHide);
   let generation = 0; let operationToken = 0; let openingPromise = null;
-  let state = { screens: [], assignments, error: "", message: "Identify the two projector displays before opening browser outputs.", ownedSpans: [] };
+  let state = { screens: [], assignments, error: "", message: "Detecting connected displays…", ownedSpans: [] };
   function setState(patch) { state = { ...state, ...patch, ownedSpans: [...owned.keys()] }; subscriptions.forEach((listener) => listener(state)); return state; }
   function pruneOwned() {
     for (const [span, win] of owned) {
@@ -103,9 +112,18 @@ export function createOutputWindowController({
     }
     if (typeof screenApi?.getScreenDetails !== "function") throw new Error("window-management display API unavailable; use a supported workstation browser");
     const details = await screenApi.getScreenDetails();
+    if (disposed) throw new Error("Display discovery cancelled.");
+    if (screenDetails !== details) {
+      screenDetails?.removeEventListener?.("screenschange", onScreensChange);
+      screenDetails = details;
+      screenDetails?.addEventListener?.("screenschange", onScreensChange);
+    }
+    watchedScreens.forEach((screen) => screen.removeEventListener?.("change", onScreensChange));
+    watchedScreens = Array.from(details?.screens || []);
+    watchedScreens.forEach((screen) => screen.addEventListener?.("change", onScreensChange));
     const screens = Array.isArray(details?.screens) ? details.screens.map(normalizeDisplay) : [];
     if (!screens.length) throw new Error("window-management returned no displays");
-    return screens;
+    return numberDisplays(screens);
   }
   function assignmentScreens(screens) {
     const result = {};
@@ -118,9 +136,20 @@ export function createOutputWindowController({
     if (result.left.key === result.right.key) throw new Error("left and right display assignments must be distinct; identify displays and reassign");
     return result;
   }
-  async function identifyDisplays() {
-    try { const screens = await readScreens(); return setState({ screens, error: "", message: `${screens.length} displays identified. Select one display for each projector, then save the assignment.` }).screens; }
-    catch (error) { setState({ error: errorMessage(error), message: "Display identification failed." }); throw error; }
+  async function refreshDisplays() {
+    try { const screens = await readScreens(); return setState({ screens, error: "", message: `${screens.length} displays detected. Identify displays shows their numbers for 5 seconds.` }).screens; }
+    catch (error) {
+      if (!disposed) setState({ screens: [], error: `${errorMessage(error)}. Allow display access in browser site settings, then reload.`, message: "Display detection unavailable." });
+      throw error;
+    }
+  }
+  function identifyDisplays() {
+    try {
+      if (!state.screens.length) throw new Error("Display detection is unavailable. Allow display access in browser site settings, then reload.");
+      identifier.show(state.screens);
+      setState({ error: "", message: "Display numbers shown for 5 seconds. Match them to the numbered choices below." });
+      return state.screens;
+    } catch (error) { setState({ error: errorMessage(error) }); throw error; }
   }
   function assignDisplays(selected) {
     const screens = state.screens; if (!screens.length) throw new Error("identify displays before saving an assignment");
@@ -131,6 +160,7 @@ export function createOutputWindowController({
     return setState({ assignments: next, error: "", message: persisted ? "Display assignment saved. Re-identify after any display change." : "Display assignment is session-only because local storage is unavailable." });
   }
   function closeBoth() {
+    identifier.close();
     operationToken += 1;
     const failed = closeOwnedWindows();
     if (failed.length) return setState({ error: `Could not close ${failed.map(({ span }) => span).join(" and ")} browser output window${failed.length === 1 ? "" : "s"}.`, message: "Some browser output windows remain open; manually close them before reopening." });
@@ -247,6 +277,7 @@ export function createOutputWindowController({
     }
   }
   function openBoth() {
+    identifier.close();
     if (openingPromise) return openingPromise;
     const token = ++operationToken;
     const pending = performOpenBoth(token);
@@ -255,7 +286,15 @@ export function createOutputWindowController({
     return wrapped;
   }
   return {
-    identifyDisplays, assignDisplays, openBoth, closeBoth,
+    refreshDisplays, identifyDisplays, assignDisplays, openBoth, closeBoth,
+    dispose() {
+      disposed = true;
+      identifier.close();
+      screenDetails?.removeEventListener?.("screenschange", onScreensChange);
+      watchedScreens.forEach((screen) => screen.removeEventListener?.("change", onScreensChange));
+      screenApi?.removeEventListener?.("pagehide", onPageHide);
+      subscriptions.clear();
+    },
     getState: () => ({ ...state, screens: [...state.screens], assignments: { ...state.assignments }, ownedSpans: [...owned.keys()] }),
     getOwnedWindows: () => { pruneOwned(); return new Map(owned); },
     subscribe(listener) { subscriptions.add(listener); listener(state); return () => subscriptions.delete(listener); },

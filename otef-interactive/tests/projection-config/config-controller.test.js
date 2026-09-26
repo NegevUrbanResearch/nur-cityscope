@@ -383,13 +383,15 @@ describe("projection config controller", () => {
     globalThis.document = documentStub();
     const root = element("main");
     const screens = [
-      { key: "left-screen", label: "Left screen", left: -100, top: 0, width: 1920, height: 1080 },
-      { key: "right-screen", label: "Right screen", left: 1820, top: 0, width: 1920, height: 1080 },
+      { key: "left-screen", displayNumber: 1, label: "Left screen", left: -100, top: 0, width: 1920, height: 1080 },
+      { key: "right-screen", displayNumber: 2, label: "Right screen", left: 1820, top: 0, width: 1920, height: 1080 },
     ];
     let outputState = { screens: [], assignments: { left: null, right: null }, message: "Identify displays", error: "", ownedSpans: [] };
     const outputListeners = new Set();
     const outputController = {
-      identifyDisplays: vi.fn(async () => { outputState = { ...outputState, screens, message: "Displays identified" }; outputListeners.forEach((listener) => listener(outputState)); return screens; }),
+      refreshDisplays: vi.fn(async () => { outputState = { ...outputState, screens, message: "Displays detected" }; outputListeners.forEach((listener) => listener(outputState)); return screens; }),
+      identifyDisplays: vi.fn(() => { outputListeners.forEach((listener) => listener(outputState)); return screens; }),
+      dispose: vi.fn(),
       assignDisplays: vi.fn((selection) => { outputState = { ...outputState, assignments: selection, message: "Assignment saved" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
       openBoth: vi.fn(async () => { outputState = { ...outputState, ownedSpans: ["left", "right"], message: "Browser outputs opened" }; outputListeners.forEach((listener) => listener(outputState)); return outputState.ownedSpans; }),
       closeBoth: vi.fn(() => { outputState = { ...outputState, ownedSpans: [], message: "Browser outputs closed" }; outputListeners.forEach((listener) => listener(outputState)); return outputState; }),
@@ -399,13 +401,16 @@ describe("projection config controller", () => {
     const client = fakeClient();
     const api = mountProjectionConfig(root, { client, outputController });
     const action = (name) => find(root, (node) => node.dataset?.action === name);
+    await vi.waitFor(() => expect(outputController.refreshDisplays).toHaveBeenCalledTimes(1));
+    expect(outputController.identifyDisplays).not.toHaveBeenCalled();
     action("output-identify").dispatch("click");
     await vi.waitFor(() => expect(outputController.identifyDisplays).toHaveBeenCalledTimes(1));
     const left = find(root, (node) => node.dataset?.action === "output-left-display");
     const right = find(root, (node) => node.dataset?.action === "output-right-display");
-    expect(left.children.map((option) => option.textContent).join(" ")).toContain("-100,0");
-    expect(right.children.map((option) => option.textContent).join(" ")).toContain("1820,0");
+    expect(left.children.map((option) => option.textContent)).toEqual(["Display 1", "Display 2"]);
+    expect(right.children.map((option) => option.textContent)).toEqual(["Display 1", "Display 2"]);
     left.value = "left-screen"; right.value = "right-screen"; left.dispatch("change"); right.dispatch("change");
+    action("output-identify").dispatch("click");
     client.report({ previewError: "unrelated preview refresh" });
     expect(left.value).toBe("left-screen");
     expect(right.value).toBe("right-screen");
@@ -415,7 +420,7 @@ describe("projection config controller", () => {
     await vi.waitFor(() => expect(outputController.openBoth).toHaveBeenCalledTimes(1));
     action("output-close-both").dispatch("click");
     expect(outputController.closeBoth).toHaveBeenCalledTimes(1);
-    api.dispose(); globalThis.document = previousDocument;
+    api.dispose(); expect(outputController.dispose).toHaveBeenCalledTimes(1); globalThis.document = previousDocument;
   });
 
   test("blocks local output actions on coarse or no-hover surfaces and shows workstation instructions", () => {
