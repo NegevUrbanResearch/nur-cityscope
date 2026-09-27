@@ -19,7 +19,7 @@ class ProjectionConfigApiTests(TestCase):
         for legacy in (legacy_projection_config_defaults(), migrate_projection_config_to_v2(legacy_projection_config_defaults())):
             response = self.post_action('preview', revision=self.state()['revision'], config=legacy)
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json()['config']['schemaVersion'], 4)
+            self.assertEqual(response.json()['config']['schemaVersion'], 5)
             self.assertEqual(response.json()['config']['pre'], legacy['pre'])
             self.assertEqual(response.json()['config']['outputs']['left']['crop'], legacy['outputs']['left']['crop'])
             self.assertEqual(OTEFProjectionCalibration.objects.get(table__name='otef').working_config, response.json()['config'])

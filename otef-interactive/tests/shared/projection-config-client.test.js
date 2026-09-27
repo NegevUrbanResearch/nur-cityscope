@@ -80,8 +80,8 @@ test('hydration converts historical working and preset configs to V4', async () 
   const starting = h.client.start(); h.resolveNext(saved); await starting;
   const state = h.client.getState();
   expect(state.snapshot.revision).toBe(9);
-  expect(state.snapshot.config.schemaVersion).toBe(4);
-  expect(state.snapshot.presets[1].config.schemaVersion).toBe(4);
+  expect(state.snapshot.config.schemaVersion).toBe(5);
+  expect(state.snapshot.presets[1].config.schemaVersion).toBe(5);
   expect(state.draft.namesWall.innerEdgeInsetPx).toEqual({ left: 0, right: 0 });
   expect(state.draft.namesWall.profiles.wall).not.toHaveProperty('seamGapPx');
   expect(state.draft.pre).toEqual(historical.pre);

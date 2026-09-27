@@ -1,4 +1,4 @@
-import { validateNamesWall, validateNamesWallV3 } from './nli-name-wall-config.js';
+import { validateNamesWall, validateNamesWallV3, validateNamesWallV5 } from './nli-name-wall-config.js';
 
 const SIDES = Object.freeze({ left: { columns: 7, rows: 7 }, right: { columns: 8, rows: 7 } });
 const SAFETY_MIN = -1;
@@ -124,6 +124,15 @@ export function validateProjectionConfigV4(value, options = {}) {
   if (value.schemaVersion !== 4 || typeof value.schemaVersion !== 'number') errors.schemaVersion = 'must equal 4';
   legacyFields(value, errors, options);
   validateNamesWall(value.namesWall, 'namesWall', errors);
+  return errors;
+}
+
+export function validateProjectionConfigV5(value, options = {}) {
+  const errors = {};
+  if (!ownKeys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors)) return errors;
+  if (value.schemaVersion !== 5 || typeof value.schemaVersion !== 'number') errors.schemaVersion = 'must equal 5';
+  legacyFields(value, errors, options);
+  validateNamesWallV5(value.namesWall, 'namesWall', errors);
   return errors;
 }
 

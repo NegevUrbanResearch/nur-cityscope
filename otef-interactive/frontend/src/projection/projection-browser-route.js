@@ -4,7 +4,7 @@ import { evaluateWarpMesh } from "../shared/projection-warp-geometry.js";
 import { createProjectionNameCanvasAdapter } from "./projection-name-canvas-adapter.js";
 import { validateProjectionConfig } from "../shared/projection-config-schema.js";
 import { migrateProjectionConfigToV2 } from "../shared/projection-warp-schema.js";
-import { migrateNamesWallToV4 } from "../shared/nli-name-wall-config.js";
+import { migrateNamesWallToV5 } from "../shared/nli-name-wall-config.js";
 import { validateProjectionBaselineMesh } from "../shared/projection-warp-assets.js";
 import {
   DEFAULT_PROJECTION_BASELINE,
@@ -154,12 +154,12 @@ export async function createProjectionBrowserSurface({
     try {
       baseline = await loadCapturedProjectionFraming({ fetchImpl, signal });
     } catch (error) {
-      const fallbackWarp = [2, 3, 4].includes(initialConfig?.schemaVersion) ? initialConfig.outputs?.[spanId]?.warp : null;
+      const fallbackWarp = [2, 3, 4, 5].includes(initialConfig?.schemaVersion) ? initialConfig.outputs?.[spanId]?.warp : null;
       if (error?.name === "AbortError" || !fallbackWarp || (fallbackWarp.enabled !== false && fallbackWarp.baseline?.type !== "identity")) throw error;
       baseline = { manifest: { width: 1920, height: 1080, assets: {}, framing: {} }, framing: initialConfig };
     }
-    const initialV4 = initialConfig ? migrateNamesWallToV4(initialConfig) : null;
-    const startupConfig = initialV4 || (baseline.framing ? migrateNamesWallToV4(baseline.framing) : null);
+    const initialV5 = initialConfig ? migrateNamesWallToV5(initialConfig) : null;
+    const startupConfig = initialV5 || (baseline.framing ? migrateNamesWallToV5(baseline.framing) : null);
     const initialWarp = startupConfig?.outputs?.[spanId]?.warp;
     try {
       baseline = await loadCapturedProjectionAsset({ fetchImpl, spanId, captured: baseline, signal });
@@ -193,10 +193,10 @@ export async function createProjectionBrowserSurface({
     const renderer = rendererFactory({ canvas, mesh: initialMesh });
     activeMesh = initialMesh;
     compositor = createProjectionSurfaceCompositor({ renderer, sources: readScene() });
-    let activeConfig = initialConfig ? migrateNamesWallToV4(initialConfig) : migrateNamesWallToV4(baseline.framing);
+    let activeConfig = initialConfig ? migrateNamesWallToV5(initialConfig) : migrateNamesWallToV5(baseline.framing);
     const prepareConfig = (candidate) => {
       if (Object.keys(validateProjectionConfig(candidate)).length) throw new Error("Invalid projection calibration");
-      const config = migrateNamesWallToV4(candidate);
+      const config = migrateNamesWallToV5(candidate);
       const warp = config.outputs?.[spanId]?.warp;
       if (!warp) throw new Error(`Projection calibration has no ${spanId} warp`);
       let sourceMesh = null;

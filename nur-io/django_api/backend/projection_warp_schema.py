@@ -156,6 +156,16 @@ def validate_projection_config_v4(value, trusted_manifest=None):
     return errors
 
 
+def validate_projection_config_v5(value, trusted_manifest=None):
+    from .projection_config_schema import validate_names_wall_v5
+    errors = {}
+    if not _keys(value, ['schemaVersion', 'pre', 'outputs', 'namesWall'], '', errors): return errors
+    if value.get('schemaVersion') != 5 or isinstance(value.get('schemaVersion'), bool): errors['schemaVersion'] = 'must equal 5'
+    _legacy_fields(value, errors, trusted_manifest)
+    validate_names_wall_v5(value.get('namesWall'), 'namesWall', errors)
+    return errors
+
+
 def _identity_baseline(side, source):
     if not isinstance(source, dict) or not source.get('assetId'):
         return {'type': 'identity', 'width': 1920, 'height': 1080, 'origin': 'top-left'}
@@ -215,4 +225,14 @@ def migrate_projection_config_to_v4(config, warnings=None):
         'profiles': {mode: {key: names['profiles'][mode][key] for key in ('requestedFontPx', 'spacingPx', 'edgeInsetPx')} for mode in ('wall', 'model')},
     }
     result['schemaVersion'] = 4
+    return result
+
+
+def migrate_projection_config_to_v5(config, warnings=None):
+    if not isinstance(config, dict) or isinstance(config.get('schemaVersion'), bool) or config.get('schemaVersion') not in (1, 2, 3, 4, 5):
+        raise ValueError('projection config must be schema version 1, 2, 3, 4, or 5')
+    if config['schemaVersion'] == 5: return deepcopy(config)
+    result = migrate_projection_config_to_v4(config, warnings)
+    result['namesWall']['profiles']['wall']['inwardShiftPercent'] = 0
+    result['schemaVersion'] = 5
     return result

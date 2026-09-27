@@ -184,6 +184,36 @@ describe('versioned wall inputs', () => {
     expect(calls).toHaveLength(3);
   });
 
+  it('reuses model preparation and font metrics when only regular page spacing changes', async () => {
+    const { prepareProjectionNameWall } = await import('../../frontend/src/shared/nli-name-field-data.js');
+    const tkuma = { type: 'FeatureCollection', crs: { properties: { name: 'urn:ogc:def:crs:OGC:1.3:CRS84' } },
+      features: [{ geometry: { type: 'LineString', coordinates: [[34,31],[35,31],[35,32],[34,32],[34,31]] } }] };
+    const original = globalThis.fetch;
+    globalThis.fetch = vi.fn((url) => url.includes('Tkuma_Area')
+      ? Promise.resolve({ ok: true, json: () => Promise.resolve(tkuma) }) : original(url));
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    const meshes = { left: createFullFrameProjectionMesh({ side: 'left' }),
+      right: createFullFrameProjectionMesh({ side: 'right' }) };
+    const request = { config, meshes, datasetVersion: 'test-version', heading: 35 };
+    runNameFieldWorker.mockImplementation((payload) => Promise.resolve({
+      id: `${payload.namesWall.activeMode}:${payload.namesWall.profiles.wall.inwardShiftPercent}`,
+      datasetVersion: 'test-version',
+    }));
+    expect((await prepareProjectionNameWall(request)).id).toBe('wall:0');
+    await vi.waitFor(() => expect(runNameFieldWorker).toHaveBeenCalledTimes(2));
+    const measured = document.createElement().getContext().measureText;
+    const measureCount = measured.mock.calls.length;
+    const changed = structuredClone(config);
+    changed.namesWall.profiles.wall.inwardShiftPercent = 50;
+    expect((await prepareProjectionNameWall({ ...request, config: changed })).id).toBe('wall:50');
+    expect(runNameFieldWorker.mock.calls.map(([payload]) => payload.namesWall.activeMode)).toEqual(['wall', 'model', 'wall']);
+    expect(measured).toHaveBeenCalledTimes(measureCount);
+    const modelConfig = structuredClone(changed);
+    modelConfig.namesWall.activeMode = 'model';
+    expect((await prepareProjectionNameWall({ ...request, config: modelConfig })).id).toBe('model:0');
+    expect(runNameFieldWorker).toHaveBeenCalledTimes(3);
+  });
+
   it('reloads source and metadata for a new requested version and rejects mismatched metadata', async () => {
     const { loadNliNameField } = await import('../../frontend/src/shared/nli-name-field-data.js');
     await loadNliNameField({ datasetVersion: 'test-version' });

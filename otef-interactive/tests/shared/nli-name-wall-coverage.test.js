@@ -165,3 +165,17 @@ test('model containment rejects nonadjacent vertex contact and collinear overlap
   expect(ringContainsGuardedRect([[0, 0], [10, 0], [10, 10], [5, 5], [0, 10], [5, 5], [0, 0]], rect)).toBe(false);
   expect(ringContainsGuardedRect([[0, 0], [10, 0], [10, 10], [0, 10], [5, 10], [5, 0], [0, 0]], rect)).toBe(false);
 });
+
+test('exact coverage retains tiny positive-area clipped fragments but still rejects a real hole', () => {
+  const rect = { x: 0.55, y: 0.54995, width: 0.1, height: 0.1001 };
+  const complete = [
+    { polygon: [[0, 0], [1, 0], [0, 1]] },
+    { polygon: [[1, 0], [1, 1], [0, 1]] },
+  ];
+  expect(rectCoveredByPieces(rect, complete)).toBe(true);
+  const hole = [
+    { polygon: [[0, 0], [0.49995, 0], [0.49995, 1], [0, 1]] },
+    { polygon: [[0.50005, 0], [1, 0], [1, 1], [0.50005, 1]] },
+  ];
+  expect(rectCoveredByPieces({ x: 0.5, y: 0.5, width: 0.2, height: 0.2 }, hole)).toBe(false);
+});

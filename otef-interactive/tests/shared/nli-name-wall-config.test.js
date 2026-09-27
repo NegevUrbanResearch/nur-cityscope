@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { DEFAULT_NAMES_WALL, LEGACY_NAMES_WALL, validateNamesWall, validateNamesWallV3, migrateNamesWallToV3, migrateNamesWallToV4 } from '../../frontend/src/shared/nli-name-wall-config.js';
+import { DEFAULT_NAMES_WALL, DEFAULT_NAMES_WALL_V5, LEGACY_NAMES_WALL, validateNamesWall, validateNamesWallV3, validateNamesWallV5, migrateNamesWallToV3, migrateNamesWallToV4, migrateNamesWallToV5 } from '../../frontend/src/shared/nli-name-wall-config.js';
 import { DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG, validateProjectionConfig } from '../../frontend/src/shared/projection-config-schema.js';
 import { migrateProjectionConfigToV2 } from '../../frontend/src/shared/projection-warp-schema.js';
 
@@ -49,9 +49,9 @@ test('V4 preserves calibration and removes the old font floor', () => {
   expect(validateNamesWall(next.namesWall)).toEqual({});
 });
 
-test('V4 defaults contain two independent complete profiles', () => {
-  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(4);
-  expect(DEFAULT_PROJECTION_CONFIG.namesWall).toEqual(DEFAULT_NAMES_WALL);
+test('current defaults contain a wall-only closeness setting and independent profiles', () => {
+  expect(DEFAULT_PROJECTION_CONFIG.schemaVersion).toBe(5);
+  expect(DEFAULT_PROJECTION_CONFIG.namesWall).toEqual(DEFAULT_NAMES_WALL_V5);
   expect(DEFAULT_NAMES_WALL.profiles.wall).toEqual({ requestedFontPx: 12, spacingPx: 2, edgeInsetPx: 0 });
   expect(DEFAULT_NAMES_WALL.profiles.model).toEqual(DEFAULT_NAMES_WALL.profiles.wall);
   expect(validateProjectionConfig(DEFAULT_PROJECTION_CONFIG)).toEqual({});
@@ -89,4 +89,25 @@ test('V1 and V2 conversion preserves every calibration value and is idempotent f
   expect(migrateNamesWallToV3(upgraded)).toEqual(upgraded);
   const v1 = { schemaVersion: 1, pre: legacy.pre, outputs: Object.fromEntries(['left', 'right'].map((side) => [side, { crop: legacy.outputs[side].crop, post: legacy.outputs[side].post }])) };
   expect(migrateNamesWallToV3(v1)).toEqual(migrateNamesWallToV3(migrateProjectionConfigToV2(v1)));
+});
+
+test('V5 adds only regular page closeness and strictly validates it', () => {
+  const v4 = migrateNamesWallToV4(LEGACY_DEFAULT_PROJECTION_CONFIG);
+  const v5 = migrateNamesWallToV5(v4);
+  expect(v5.schemaVersion).toBe(5);
+  expect(v5.namesWall.profiles.wall).toEqual({ ...v4.namesWall.profiles.wall, inwardShiftPercent: 0 });
+  expect(v5.namesWall.profiles.model).toEqual(v4.namesWall.profiles.model);
+  expect(v5.pre).toEqual(v4.pre);
+  expect(v5.outputs).toEqual(v4.outputs);
+  expect(migrateNamesWallToV5(v5)).toEqual(v5);
+  for (const bad of [-1, 101, 1.5, '50', null]) {
+    const candidate = clone(v5.namesWall);
+    candidate.profiles.wall.inwardShiftPercent = bad;
+    expect(validateNamesWallV5(candidate)).toHaveProperty('namesWall.profiles.wall.inwardShiftPercent');
+  }
+  const wrongMode = clone(v5.namesWall);
+  wrongMode.profiles.model.inwardShiftPercent = 50;
+  expect(validateNamesWallV5(wrongMode)).toHaveProperty('namesWall.profiles.model.inwardShiftPercent');
+  expect(validateNamesWallV5(v5.namesWall)).toEqual({});
+  expect(validateNamesWall(v5.namesWall)).toHaveProperty('namesWall.profiles.wall.inwardShiftPercent');
 });

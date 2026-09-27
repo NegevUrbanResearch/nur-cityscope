@@ -9,7 +9,7 @@ import { createUuid } from "../shared/uuid.js";
 import { createProjectionConfigView } from "./config-view.js";
 import { createWarpEditor } from "./warp-editor.js";
 import { loadCapturedProjectionAsset } from "../projection/projection-captured-baseline.js";
-import { migrateNamesWallToV4 } from "../shared/nli-name-wall-config.js";
+import { migrateNamesWallToV5 } from "../shared/nli-name-wall-config.js";
 
 const FIELD_DESCRIPTORS = [
   { path: "pre.scale", node: "pre", label: "Scale", min: 0.1, max: 8, step: 0.01, fine: 0.001, unit: "×", decimals: 3 },
@@ -35,6 +35,7 @@ const NAMES_WALL_DESCRIPTORS = [
   { path: "namesWall.requestedFontPx", node: "names-wall", label: "Requested font", min: 1, max: 48, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.spacingPx", node: "names-wall", label: "Name spacing", min: 0, max: 32, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.edgeInsetPx", node: "names-wall", label: "Edge inset", min: 0, max: 256, step: 1, fine: 1, unit: "px" },
+  { path: "namesWall.inwardShiftPercent", node: "names-wall", label: "Bring pages together", min: 0, max: 100, step: 1, fine: 1, unit: "%", wallOnly: true, commitOnChange: true },
   { path: "namesWall.innerEdgeInsetPx.left", node: "names-wall", label: "Left projector: right-edge inset", min: 0, max: 960, step: 1, fine: 1, unit: "output px" },
   { path: "namesWall.innerEdgeInsetPx.right", node: "names-wall", label: "Right projector: left-edge inset", min: 0, max: 960, step: 1, fine: 1, unit: "output px" },
 ].map((descriptor) => ({ ...descriptor, integer: true, displayMin: descriptor.min, displayMax: descriptor.max, displayStep: 1 }));
@@ -52,10 +53,11 @@ function resolvedFieldPath(config, path) {
   const field = path.slice("namesWall.".length);
   if (field === "activeMode") return "namesWall.activeMode";
   if (field.startsWith("innerEdgeInsetPx.")) return path;
+  if (field === "inwardShiftPercent") return "namesWall.profiles.wall.inwardShiftPercent";
   return `namesWall.profiles.${config.namesWall.activeMode}.${field}`;
 }
-function readField(config, path) { return path.split(".").reduce((target, key) => target?.[key], path.startsWith("namesWall.") && !path.startsWith("namesWall.innerEdgeInsetPx.") ? { namesWall: config?.namesWall?.profiles?.[config?.namesWall?.activeMode] } : config); }
-function normalizeConfig(config) { return config && [1, 2, 3].includes(config.schemaVersion) ? migrateNamesWallToV4(config) : config; }
+function readField(config, path) { return path.split(".").reduce((target, key) => target?.[key], path.startsWith("namesWall.") && !path.startsWith("namesWall.innerEdgeInsetPx.") ? { namesWall: config?.namesWall?.profiles?.[path === "namesWall.inwardShiftPercent" ? "wall" : config?.namesWall?.activeMode] } : config); }
+function normalizeConfig(config) { return config && [1, 2, 3, 4].includes(config.schemaVersion) ? migrateNamesWallToV5(config) : config; }
 function normalizeState(value) {
   if (!value || typeof value !== "object") return value;
   const snapshot = value.snapshot && {
@@ -272,6 +274,7 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
   }
   function handleField(path, raw) {
     const descriptor = descriptorFor(path); if (!descriptor) return;
+    if (descriptor.wallOnly && state.draft?.namesWall?.activeMode !== "wall") return;
     if (!state.draft) { fieldErrors = { [path]: "Waiting for calibration settings" }; refresh(); return; }
     const value = fieldValueFromInput(descriptor, raw);
     const resolvedPath = resolvedFieldPath(state.draft, path);
@@ -335,8 +338,8 @@ export function mountProjectionConfig(root, { client, share, onExport, onImport,
       const imported = typeof onImport === "function" ? await onImport(file) : await file.text();
       const parsed = typeof imported === "string" ? parseProjectionImport(imported) : imported?.config ? imported : parseProjectionImport(String(imported));
       const warnings = [...(parsed?.warnings || [])];
-      const config = parsed?.config && [1, 2, 3].includes(parsed.config.schemaVersion)
-        ? migrateNamesWallToV4(parsed.config, warnings) : normalizeConfig(parsed?.config);
+      const config = parsed?.config && [1, 2, 3, 4].includes(parsed.config.schemaVersion)
+        ? migrateNamesWallToV5(parsed.config, warnings) : normalizeConfig(parsed?.config);
       const importErrors = validateProjectionConfig(config);
       if (Object.keys(importErrors).length) throw new Error(`invalid imported projection config: ${Object.entries(importErrors).map(([path, message]) => `${path} ${message}`).join("; ")}`);
       client.setLive(false); setClientDraft(config); view.controls.saveName.value = parsed.name || ""; fieldErrors = {}; conflict = [...new Set(warnings)].join(" "); refresh();

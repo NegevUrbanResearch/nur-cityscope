@@ -5,7 +5,7 @@ import {
   TD_MIGRATION_PRESET_NAME,
   validateProjectionConfig,
 } from './projection-config-schema.js';
-import { migrateNamesWallToV4 } from './nli-name-wall-config.js';
+import { migrateNamesWallToV5 } from './nli-name-wall-config.js';
 import { migrateProjectionConfigToV2 } from './projection-warp-schema.js';
 
 const API_URL = '/api/otef/projection-config/';
@@ -48,7 +48,7 @@ function validSnapshot(value) {
     ids.add(preset.id);
     if (preset.id === 'original') {
       originalCount += 1;
-      if (!preset.readOnly || preset.name !== 'Original calibration' || (![DEFAULT_PROJECTION_CONFIG, V2_DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG].some((baseline) => equal(migrateNamesWallToV4(preset.config), migrateNamesWallToV4(baseline))))) return false;
+      if (!preset.readOnly || preset.name !== 'Original calibration' || (![DEFAULT_PROJECTION_CONFIG, V2_DEFAULT_PROJECTION_CONFIG, LEGACY_DEFAULT_PROJECTION_CONFIG].some((baseline) => equal(migrateNamesWallToV5(preset.config), migrateNamesWallToV5(baseline))))) return false;
     } else if (preset.id === TD_MIGRATION_PRESET_ID) {
       if (!preset.readOnly || preset.name !== TD_MIGRATION_PRESET_NAME) return false;
     } else if (!isUuid(preset.id) || preset.readOnly) return false;
@@ -60,8 +60,8 @@ function validSnapshot(value) {
 function normalizeSnapshot(value, warnings = []) {
   return {
     ...clone(value),
-    config: migrateNamesWallToV4(value.config, warnings),
-    presets: value.presets.map((preset) => ({ ...clone(preset), config: migrateNamesWallToV4(preset.config, warnings) })),
+    config: migrateNamesWallToV5(value.config, warnings),
+    presets: value.presets.map((preset) => ({ ...clone(preset), config: migrateNamesWallToV5(preset.config, warnings) })),
   };
 }
 
@@ -317,7 +317,7 @@ export function createProjectionConfigClient({
       if (request.action === 'load' || request.action === 'revert') {
         const responseIsCurrent = equal(snapshot, normalizeSnapshot(bodyResponse));
         if ((adopted || responseIsCurrent) && conflictGeneration === request.conflictGeneration && draftVersion === sentVersion) {
-          draft = migrateNamesWallToV4(bodyResponse.config);
+          draft = migrateNamesWallToV5(bodyResponse.config);
           hasLocalDraft = false;
         }
       } else if (draftVersion === sentVersion && snapshot && equal(draft, snapshot.config)) {
@@ -435,7 +435,7 @@ export function createProjectionConfigClient({
   function setDraft(config) {
     if (!config || Object.keys(validateProjectionConfig(config)).length) throw new Error('invalid projection config');
     cancelPreflight('projection config operation superseded');
-    draft = migrateNamesWallToV4(config);
+    draft = migrateNamesWallToV5(config);
     draftVersion += 1;
     hasLocalDraft = !snapshot || !equal(draft, snapshot.config);
     if (live) schedulePreview();

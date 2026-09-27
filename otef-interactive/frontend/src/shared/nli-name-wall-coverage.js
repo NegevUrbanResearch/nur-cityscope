@@ -35,7 +35,7 @@ function indexedCandidates(pieces, box) {
 }
 const rotate = ([x, y], a) => [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a)];
 
-function clipHalf(polygon, signedDistance) {
+function clipHalf(polygon, signedDistance, minArea = EPS) {
   const result = [];
   for (let i = 0; i < polygon.length; i += 1) {
     const a = polygon[i], b = polygon[(i + 1) % polygon.length];
@@ -46,12 +46,12 @@ function clipHalf(polygon, signedDistance) {
       result.push(a.map((v, k) => v + t * (b[k] - v)));
     }
   }
-  return result.length >= 3 && Math.abs(area(result.map((p) => p.slice(0, 2)))) > EPS ? result : [];
+  return result.length >= 3 && Math.abs(area(result.map((p) => p.slice(0, 2)))) > minArea ? result : [];
 }
-function clipBox(polygon, box, xIndex = 0, yIndex = 1) {
+function clipBox(polygon, box, xIndex = 0, yIndex = 1, minArea = EPS) {
   let p = polygon;
   for (const [index, value, sign] of [[xIndex, box.x0, 1], [xIndex, box.x1, -1], [yIndex, box.y0, 1], [yIndex, box.y1, -1]]) {
-    p = clipHalf(p, (q) => sign * (q[index] - value));
+    p = clipHalf(p, (q) => sign * (q[index] - value), minArea);
     if (!p.length) return [];
   }
   return p;
@@ -72,7 +72,7 @@ export function rectCoveredByPieces(rect, pieces) {
   const clipped = [];
   for (const piece of indexedCandidates(pieces, box)) {
     if (!overlaps(box, piece.bounds || boundsOf(piece.polygon || piece))) continue;
-    const polygon = clipBox(piece.polygon || piece, box);
+    const polygon = clipBox(piece.polygon || piece, box, 0, 1, 0);
     if (polygon.length) clipped.push(polygon);
   }
   if (!clipped.length) return false;

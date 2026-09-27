@@ -336,7 +336,7 @@ describe("projection config controller", () => {
     const api = mountProjectionConfig(root, { client, onImport: async () => ({ name: "Legacy checkpoint", config: legacy }) });
     const importedInput = find(root, (node) => node.attributes?.["aria-label"] === "Import calibration");
     importedInput.files = [{}]; importedInput.dispatch("change");
-    await vi.waitFor(() => expect(client.getState().draft.schemaVersion).toBe(4));
+    await vi.waitFor(() => expect(client.getState().draft.schemaVersion).toBe(5));
     expect(client.getState().draft.pre).toEqual(legacy.pre);
     expect(client.getState().draft.outputs.left.warp.baseline.type).toBe("identity");
     expect(client.getState().draft.outputs.right.warp.grid.offsets).toHaveLength(56);
@@ -587,6 +587,7 @@ describe("projection config controller", () => {
     expect(NAMES_WALL_DESCRIPTORS.map(({ path, min, max, step }) => [path, min, max, step])).toEqual([
       ["namesWall.requestedFontPx", 1, 48, 1],
       ["namesWall.spacingPx", 0, 32, 1], ["namesWall.edgeInsetPx", 0, 256, 1],
+      ["namesWall.inwardShiftPercent", 0, 100, 1],
       ["namesWall.innerEdgeInsetPx.left", 0, 960, 1], ["namesWall.innerEdgeInsetPx.right", 0, 960, 1],
     ]);
   });
@@ -603,18 +604,21 @@ describe("projection config controller", () => {
     const action = (name) => find(root, (item) => item.dataset?.action === name);
     const node = find(root, (item) => item.dataset?.node === "names-wall");
     const live = action("live"); live.checked = false; live.dispatch("change");
-    const mode = find(node, (item) => item.attributes?.["aria-label"] === "Names wall profile"); mode.value = "model"; mode.dispatch("change");
     const setField = (path, value) => { const input = find(node, (item) => item.dataset?.field === path && item.dataset.input === "number"); input.value = String(value); input.dispatch("blur"); };
+    setField("namesWall.inwardShiftPercent", 50);
+    const mode = find(node, (item) => item.attributes?.["aria-label"] === "Names wall profile"); mode.value = "model"; mode.dispatch("change");
     setField("namesWall.innerEdgeInsetPx.left", 60); setField("namesWall.requestedFontPx", 6); setField("namesWall.spacingPx", 1);
     action("apply").dispatch("click");
     await vi.waitFor(() => expect(client.apply).toHaveBeenCalledTimes(1));
     action("export").dispatch("click");
     const exportValue = JSON.parse(exported.mock.calls.at(-1)[0]);
     expect(exportValue.config.namesWall.profiles.model).toMatchObject({ requestedFontPx: 6, spacingPx: 1 });
+    expect(exportValue.config.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
     expect(exportValue.config.namesWall.innerEdgeInsetPx.left).toBe(60);
     const name = find(root, (item) => item.attributes?.["aria-label"] === "Preset name"); name.value = "Wall profile";
     action("save-new").dispatch("click");
     await vi.waitFor(() => expect(client.savedDrafts.at(-1).namesWall.profiles.model.requestedFontPx).toBe(6));
+    expect(client.savedDrafts.at(-1).namesWall.profiles.wall.inwardShiftPercent).toBe(50);
     const importInput = find(root, (item) => item.attributes?.["aria-label"] === "Import calibration"); importInput.files = [{}]; importInput.dispatch("change");
     await vi.waitFor(() => expect(client.getState().draft.namesWall.profiles.model.requestedFontPx).toBe(7));
     expect(client.getState().draft.namesWall.profiles.model).toMatchObject({ spacingPx: 1, edgeInsetPx: 12 });
@@ -623,6 +627,7 @@ describe("projection config controller", () => {
     action("revert").dispatch("click");
     await vi.waitFor(() => expect(client.revert).toHaveBeenCalledTimes(1));
     expect(client.getState().draft.namesWall).toEqual(client.getState().snapshot.config.namesWall);
+    expect(client.getState().draft.namesWall.profiles.wall.inwardShiftPercent).toBe(50);
     api.dispose(); globalThis.document = previousDocument;
   });
 

@@ -13,8 +13,8 @@ from backend.projection_warp_schema import (
     TD_MIGRATION_PRESET_ID,
     TD_MIGRATION_PRESET_NAME,
     migrate_projection_config_to_v2,
-    migrate_projection_config_to_v4,
-    validate_projection_config_v4,
+    migrate_projection_config_to_v5,
+    validate_projection_config_v5,
 )
 
 
@@ -55,8 +55,8 @@ def build_td_baseline(root):
             'height': asset.get('height', 1080),
             'origin': asset.get('origin', 'top-left'),
         }
-    config = migrate_projection_config_to_v4(migrate_projection_config_to_v2(framing, baselines=baselines))
-    errors = validate_projection_config_v4(config, trusted_manifest=manifest)
+    config = migrate_projection_config_to_v5(migrate_projection_config_to_v2(framing, baselines=baselines))
+    errors = validate_projection_config_v5(config, trusted_manifest=manifest)
     if errors:
         raise CommandError('TD baseline config is invalid: ' + '; '.join(f'{path} {message}' for path, message in errors.items()))
     for side in ('left', 'right'):

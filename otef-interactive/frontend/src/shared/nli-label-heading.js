@@ -4,7 +4,7 @@
  */
 
 export const NLI_LABEL_HEADING_STORAGE_KEY = "otef.nliLabelHeading.v1";
-export const NLI_LABEL_HEADING_DEFAULT = 41;
+export const NLI_LABEL_HEADING_DEFAULT = 35;
 export const PEOPLE_NAMES_LABEL_LAYER_ID = "nli__people_names__labels";
 export const SHEMOT_LABEL_LAYER_ID = "projector_base__שמות_יישובים__labels";
 

@@ -6,6 +6,11 @@ export const DEFAULT_NAMES_WALL = Object.freeze({
   innerEdgeInsetPx: Object.freeze({ left: 0, right: 0 }),
   profiles: Object.freeze({ wall: profile(), model: profile() }),
 });
+export const DEFAULT_NAMES_WALL_V5 = Object.freeze({
+  activeMode: 'wall',
+  innerEdgeInsetPx: DEFAULT_NAMES_WALL.innerEdgeInsetPx,
+  profiles: Object.freeze({ wall: Object.freeze({ ...profile(), inwardShiftPercent: 0 }), model: profile() }),
+});
 export const LEGACY_NAMES_WALL = Object.freeze({ activeMode: 'wall', profiles: {
   wall: { requestedFontPx: 12, minimumFontPx: 8, spacingPx: 2, edgeInsetPx: 0, seamGapPx: 0 },
   model: { requestedFontPx: 12, minimumFontPx: 8, spacingPx: 2, edgeInsetPx: 0, seamGapPx: 0 },
@@ -36,6 +41,26 @@ export function validateNamesWall(value, path = 'namesWall', errors = {}) {
     integer(profile.requestedFontPx, `${profilePath}.requestedFontPx`, 1, 48, errors);
     integer(profile.spacingPx, `${profilePath}.spacingPx`, 0, 32, errors);
     integer(profile.edgeInsetPx, `${profilePath}.edgeInsetPx`, 0, 256, errors);
+  }
+  return errors;
+}
+
+export function validateNamesWallV5(value, path = 'namesWall', errors = {}) {
+  if (!keys(value, ['activeMode', 'innerEdgeInsetPx', 'profiles'], path, errors)) return errors;
+  if (value.activeMode !== 'wall' && value.activeMode !== 'model') errors[`${path}.activeMode`] = 'must equal wall or model';
+  if (keys(value.innerEdgeInsetPx, ['left', 'right'], `${path}.innerEdgeInsetPx`, errors)) {
+    for (const side of ['left', 'right']) integer(value.innerEdgeInsetPx[side], `${path}.innerEdgeInsetPx.${side}`, 0, 960, errors);
+  }
+  if (!keys(value.profiles, ['wall', 'model'], `${path}.profiles`, errors)) return errors;
+  for (const mode of ['wall', 'model']) {
+    const profilePath = `${path}.profiles.${mode}`;
+    const branch = value.profiles[mode];
+    if (!keys(branch, mode === 'wall' ? ['requestedFontPx', 'spacingPx', 'edgeInsetPx', 'inwardShiftPercent'] :
+      ['requestedFontPx', 'spacingPx', 'edgeInsetPx'], profilePath, errors)) continue;
+    integer(branch.requestedFontPx, `${profilePath}.requestedFontPx`, 1, 48, errors);
+    integer(branch.spacingPx, `${profilePath}.spacingPx`, 0, 32, errors);
+    integer(branch.edgeInsetPx, `${profilePath}.edgeInsetPx`, 0, 256, errors);
+    if (mode === 'wall') integer(branch.inwardShiftPercent, `${profilePath}.inwardShiftPercent`, 0, 100, errors);
   }
   return errors;
 }
@@ -83,5 +108,14 @@ export function migrateNamesWallToV4(config, warnings = []) {
     })),
   };
   result.schemaVersion = 4;
+  return result;
+}
+
+export function migrateNamesWallToV5(config, warnings = []) {
+  if (!config || ![1, 2, 3, 4, 5].includes(config.schemaVersion)) throw new Error('projection config must be schema version 1, 2, 3, 4, or 5');
+  if (config.schemaVersion === 5) return structuredClone(config);
+  const result = migrateNamesWallToV4(config, warnings);
+  result.namesWall.profiles.wall.inwardShiftPercent = 0;
+  result.schemaVersion = 5;
   return result;
 }

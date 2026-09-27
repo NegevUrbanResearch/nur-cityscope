@@ -10,7 +10,7 @@ test("view renders draggable node workspace and preserves an existing focused in
   root.ownerDocument = { createElement: make, createElementNS: (_ns, tag) => make(tag), defaultView: { location: { origin: "http://localhost" }, addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }) } };
   const onNode = vi.fn();
   const onField = vi.fn();
-  const view = createProjectionConfigView(root, { descriptors: FIELD_DESCRIPTORS, onAction() {}, onNode, onField });
+  const view = createProjectionConfigView(root, { descriptors: [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS], onAction() {}, onNode, onField });
   const labels = [];
   const walk = (node) => {
     if (!node) return;
@@ -34,9 +34,27 @@ test("view renders draggable node workspace and preserves an existing focused in
   expect(view.nodeMap.get("names-wall").children.some((node) => node.className === "names-wall-status")).toBe(true);
   const namesDraft = structuredClone(DEFAULT_PROJECTION_CONFIG);
   view.update({ state: { draft: namesDraft }, selectedNode: "names-wall", namesWallStatus: { state: "auto-reduced", requestedFontPx: 12, effectiveFontPx: 9, minimumFontPx: 8, expected: 1228, placed: 1228 } });
+  const closeness = view.fields.get("names-wall:namesWall.inwardShiftPercent");
+  expect(closeness.wrap.hidden).toBe(false);
+  closeness.range.value = "50";
+  closeness.range.dispatch("input");
+  expect(closeness.value.textContent).toBe("50");
+  expect(onField).not.toHaveBeenCalledWith("namesWall.inwardShiftPercent", "50", "range");
+  closeness.range.dispatch("change");
+  expect(onField).toHaveBeenCalledWith("namesWall.inwardShiftPercent", "50", "range");
+  onField.mockClear();
+  const resetPages = view.nodeMap.get("names-wall").children.find((node) => node.dataset?.action === "reset-page-spacing");
+  expect(resetPages.hidden).toBe(false);
+  resetPages.dispatch("click");
+  expect(onField).toHaveBeenCalledWith("namesWall.inwardShiftPercent", "0", "number");
+  onField.mockClear();
   const wallStatus = view.nodeMap.get("names-wall").children.find((node) => node.className === "names-wall-status");
   expect(wallStatus.textContent).toContain("Auto-reduced");
   expect(wallStatus.textContent).toContain("using 9 px");
+  namesDraft.namesWall.activeMode = "model";
+  view.update({ state: { draft: namesDraft }, selectedNode: "names-wall" });
+  expect(closeness.wrap.hidden).toBe(true);
+  expect(resetPages.hidden).toBe(true);
   const draft = JSON.parse(JSON.stringify(DEFAULT_PROJECTION_CONFIG));
   draft.outputs.right.crop.x0 = 0.4;
   draft.outputs.right.post.tx = 2;

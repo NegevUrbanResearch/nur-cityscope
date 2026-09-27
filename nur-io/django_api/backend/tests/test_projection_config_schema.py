@@ -4,11 +4,27 @@ from django.test import SimpleTestCase
 from backend.projection_config_schema import validate_projection_config, validate_projection_snapshot, legacy_projection_config_defaults
 from backend.models import projection_config_defaults
 from backend.projection_warp_schema import TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, migrate_projection_config_to_v2
-from backend.projection_warp_schema import migrate_projection_config_to_v3, migrate_projection_config_to_v4
-from backend.projection_config_schema import default_names_wall, legacy_names_wall, validate_names_wall, validate_names_wall_v3
+from backend.projection_warp_schema import migrate_projection_config_to_v3, migrate_projection_config_to_v4, migrate_projection_config_to_v5
+from backend.projection_config_schema import default_names_wall, legacy_names_wall, validate_names_wall, validate_names_wall_v3, validate_names_wall_v5
 
 
 class ProjectionConfigSchemaTests(SimpleTestCase):
+    def test_v5_regular_closeness_is_strict_and_v4_remains_historical(self):
+        v4 = migrate_projection_config_to_v4(legacy_projection_config_defaults())
+        v5 = migrate_projection_config_to_v5(v4)
+        self.assertEqual(v5['schemaVersion'], 5)
+        self.assertEqual(v5['namesWall']['profiles']['wall'], {**v4['namesWall']['profiles']['wall'], 'inwardShiftPercent': 0})
+        self.assertEqual(v5['namesWall']['profiles']['model'], v4['namesWall']['profiles']['model'])
+        self.assertEqual(migrate_projection_config_to_v5(v5), v5)
+        self.assertEqual(validate_projection_config(v5), {})
+        for bad in (-1, 101, 1.5, '50', None, True):
+            value = json.loads(json.dumps(v5['namesWall']))
+            value['profiles']['wall']['inwardShiftPercent'] = bad
+            self.assertIn('namesWall.profiles.wall.inwardShiftPercent', validate_names_wall_v5(value))
+        wrong_mode = json.loads(json.dumps(v5['namesWall']))
+        wrong_mode['profiles']['model']['inwardShiftPercent'] = 50
+        self.assertIn('namesWall.profiles.model.inwardShiftPercent', validate_names_wall_v5(wrong_mode))
+        self.assertIn('namesWall.profiles.wall.inwardShiftPercent', validate_names_wall(v5['namesWall']))
     def test_shared_v4_names_wall_fixture(self):
         fixture = json.loads((Path(__file__).parent / 'fixtures' / 'names-wall-v4.json').read_text())
         self.assertEqual(fixture['valid'], default_names_wall())
@@ -39,7 +55,7 @@ class ProjectionConfigSchemaTests(SimpleTestCase):
                 target[parts[-1]] = case['value']
                 self.assertIn(case['error'], validate_names_wall_v3(value))
     def test_v4_defaults_and_profile_validation(self):
-        defaults = projection_config_defaults()
+        defaults = migrate_projection_config_to_v4(legacy_projection_config_defaults())
         self.assertEqual(defaults['schemaVersion'], 4)
         self.assertEqual(defaults['namesWall'], default_names_wall())
         self.assertEqual(validate_projection_config(defaults), {})
@@ -64,9 +80,9 @@ class ProjectionConfigSchemaTests(SimpleTestCase):
         snapshot['presets'][0]['config'] = json.loads(json.dumps(defaults))
         snapshot['presets'][0]['config']['namesWall']['profiles']['wall']['spacingPx'] = 3
         self.assertIn('presets[0]', validate_projection_snapshot(snapshot))
-    def test_defaults_are_v4_identity_warp_without_changing_framing(self):
+    def test_defaults_are_v5_identity_warp_without_changing_framing(self):
         defaults = projection_config_defaults()
-        self.assertEqual(defaults['schemaVersion'], 4)
+        self.assertEqual(defaults['schemaVersion'], 5)
         self.assertEqual(defaults['pre'], {'scale': 1.41, 'rotateDeg': -50, 'tx': 0.01, 'ty': 0})
         for side, columns in (('left', 7), ('right', 8)):
             branch = defaults['outputs'][side]

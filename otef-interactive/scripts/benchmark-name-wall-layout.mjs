@@ -5,14 +5,15 @@ import { evaluateWarpMesh } from '../frontend/src/shared/projection-warp-geometr
 import { evaluateNameWallCoverage, rectCoveredByPieces } from '../frontend/src/shared/nli-name-wall-coverage.js';
 import { prepareMemorialNameRecords } from '../frontend/src/shared/nli-name-field-data.js';
 import { buildNamesWallLayout } from '../frontend/src/shared/nli-name-wall-layout.js';
-import { migrateNamesWallToV4 } from '../frontend/src/shared/nli-name-wall-config.js';
+import { migrateNamesWallToV5 } from '../frontend/src/shared/nli-name-wall-config.js';
+import { NLI_LABEL_HEADING_DEFAULT } from '../frontend/src/shared/nli-label-heading.js';
 import { sha256Hex } from '../frontend/src/shared/sha256-hex.js';
 
 proj4.defs('EPSG:2039', '+proj=tmerc +lat_0=31.73439361111111 +lon_0=35.20451694444445 +k=1.0000067 +x_0=219529.584 +y_0=626907.39 +ellps=GRS80 +towgs84=-24.0024,-17.1032,-17.8444,0.33077,-1.85269,1.66969,5.4248 +units=m +no_defs');
 const read = (path) => JSON.parse(readFileSync(path, 'utf8'));
 if (process.argv.length !== 5) throw new Error('usage: node scripts/benchmark-name-wall-layout.mjs <projection snapshot> <8-12px browser metrics> <4-8px browser metrics>');
 const saved = read(process.argv[2]);
-const config = migrateNamesWallToV4(saved.config || saved);
+const config = migrateNamesWallToV5(saved.config || saved);
 const captures = [read(process.argv[3]), read(process.argv[4])];
 const records = prepareMemorialNameRecords(read('public/processed/layers/nli/people_names.geojson'));
 for (const capture of captures) {
@@ -22,7 +23,7 @@ for (const capture of captures) {
 const meshes = Object.fromEntries(['left', 'right'].map((side) => [side, evaluateWarpMesh(
   read(`public/projection-calibration/td-baselines/${side}.json`), config.outputs[side].warp,
 )]));
-const logicalPlane = { heading: 41, planeScale: config.pre.scale * Math.min(config.outputs.left.post.scale, config.outputs.right.post.scale) };
+const logicalPlane = { heading: Number(process.env.NLI_NAME_WALL_HEADING ?? NLI_LABEL_HEADING_DEFAULT), planeScale: config.pre.scale * Math.min(config.outputs.left.post.scale, config.outputs.right.post.scale) };
 const coverageStart = performance.now();
 const coverage = evaluateNameWallCoverage({ config, meshes, logicalPlane });
 const coverageMs = Math.round(performance.now() - coverageStart);
@@ -48,7 +49,7 @@ for (const mode of ['wall', 'model']) {
   config.namesWall.activeMode = mode;
   config.namesWall.profiles[mode].requestedFontPx = Math.max(...metrics.map(([size]) => size));
   const start = performance.now();
-  const field = await buildNamesWallLayout({ records, metrics, coverage, namesWall: config.namesWall, ring, ringHash,
+  const field = await buildNamesWallLayout({ records, metrics, coverage, meshes, namesWall: config.namesWall, ring, ringHash,
     geometry: { bounds, projectionConfig: config }, logicalPlane, datasetVersion: metadata.datasetVersion });
   const layoutMs = Math.round(performance.now() - start);
   assert.equal(field.diagnostics.state, 'valid', `${mode}: ${field.diagnostics.reason}`);
@@ -62,7 +63,7 @@ for (const mode of ['wall', 'model']) {
   const currentOwnership = field.placements.map((p) => [p.id, p.output]);
   if (ownership) assert.deepEqual(currentOwnership, ownership, 'both modes must retain PID ownership');
   ownership = currentOwnership;
-  console.log(JSON.stringify({ mode, revision: saved.revision, included: records.length, coverageMs, layoutMs,
+  console.log(JSON.stringify({ mode, heading: logicalPlane.heading, revision: saved.revision, included: records.length, coverageMs, layoutMs,
     totalMs: coverageMs + layoutMs, state: field.diagnostics.state, effectiveFontPx: field.fontSize,
     left: field.diagnostics.left, right: field.diagnostics.right, packMs: Math.round(field.diagnostics.packMs),
     pages: field.pages && Object.fromEntries(Object.entries(field.pages).map(([side, page]) => [side,

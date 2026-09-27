@@ -6,7 +6,7 @@ import { evaluateNameWallCoverage, rectCoveredByPieces, ringContainsGuardedRect 
 import { createNameFieldGeometry } from '../../frontend/src/shared/nli-name-field-geometry.js';
 import { prepareMemorialNameRecords } from '../../frontend/src/shared/nli-name-field-data.js';
 import { buildNamesWallLayout } from '../../frontend/src/shared/nli-name-wall-layout.js';
-import { migrateNamesWallToV4 } from '../../frontend/src/shared/nli-name-wall-config.js';
+import { migrateNamesWallToV5 } from '../../frontend/src/shared/nli-name-wall-config.js';
 import { sha256Hex } from '../../frontend/src/shared/sha256-hex.js';
 
 const snapshotPath = '../.superpowers/sdd/memorial-wall-revision-699-snapshot.json';
@@ -21,11 +21,11 @@ const read = (path) => JSON.parse(readFileSync(path, 'utf8'));
 test('captured current wall keeps every PID whole, safe, and stable in both modes', async () => {
   proj4.defs('EPSG:2039', '+proj=tmerc +lat_0=31.73439361111111 +lon_0=35.20451694444445 +k=1.0000067 +x_0=219529.584 +y_0=626907.39 +ellps=GRS80 +towgs84=-24.0024,-17.1032,-17.8444,0.33077,-1.85269,1.66969,5.4248 +units=m +no_defs');
   const saved = read(snapshotPath);
-  const config = migrateNamesWallToV4(saved.config || saved);
+  const config = migrateNamesWallToV5(saved.config || saved);
   const meshes = Object.fromEntries(['left', 'right'].map((side) => [side, evaluateWarpMesh(
     read(`public/projection-calibration/td-baselines/${side}.json`), config.outputs[side].warp,
   )]));
-  const logicalPlane = { heading: 41, planeScale: config.pre.scale * Math.min(config.outputs.left.post.scale, config.outputs.right.post.scale) };
+  const logicalPlane = { heading: 35, planeScale: config.pre.scale * Math.min(config.outputs.left.post.scale, config.outputs.right.post.scale) };
   const coverageStart = performance.now();
   const coverage = evaluateNameWallCoverage({ config, meshes, logicalPlane });
   const coverageMs = Math.round(performance.now() - coverageStart);
@@ -51,7 +51,7 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
   const maxSize = Math.max(...metrics.map(([size]) => size));
   config.namesWall.activeMode = 'wall';
   config.namesWall.profiles.wall.requestedFontPx = maxSize;
-  const input = { records, metrics, coverage, namesWall: config.namesWall, geometry: { bounds, projectionConfig: config },
+  const input = { records, metrics, coverage, meshes, namesWall: config.namesWall, geometry: { bounds, projectionConfig: config },
     logicalPlane, datasetVersion: read(metadataPath).datasetVersion };
   const layoutStart = performance.now();
   const first = await buildNamesWallLayout(input);
@@ -94,6 +94,24 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
   };
   const ring = read('public/processed/layers/projector_base/Tkuma_Area_LIne.geojson').features[0].geometry.coordinates;
   assertComplete(first, 'wall');
+  const moved = [];
+  for (const percent of [50, 100]) {
+    const adjusted = structuredClone(config.namesWall);
+    adjusted.profiles.wall.inwardShiftPercent = percent;
+    const field = await buildNamesWallLayout({ ...input, namesWall: adjusted });
+    assertComplete(field, 'wall');
+    expect(field.fontSize).toBe(first.fontSize);
+    expect(field.placements.map((p) => [p.id, p.name, p.output, p.x, p.width, p.height]))
+      .toEqual(first.placements.map((p) => [p.id, p.name, p.output, p.x, p.width, p.height]));
+    for (let i = 0; i < field.placements.length; i++) {
+      const side = field.placements[i].output;
+      expect(field.placements[i].y - first.placements[i].y).toBeCloseTo(field.pages[side].inwardTravel * percent / 100, 6);
+    }
+    expect(field.pages.left.rowOrigin).toBe(first.pages.left.rowOrigin);
+    expect(field.pages.right.rowOrigin).toBeGreaterThan(first.pages.right.rowOrigin);
+    moved.push(field);
+  }
+  expect(new Set([first.digest, ...moved.map((field) => field.digest)]).size).toBe(3);
   const reordered = await buildNamesWallLayout({ ...input, records: records.slice().reverse() });
   expect(reordered.digest).toBe(first.digest);
   expect(reordered.placements).toEqual(first.placements);
@@ -107,6 +125,10 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
     packMs: Math.round(modeled.diagnostics.packMs), state: modeled.diagnostics.state,
     reason: modeled.diagnostics.reason, fontPx: modeled.fontSize, placed: modeled.diagnostics.placed });
   assertComplete(modeled, 'model');
+  const modelWithMovedWall = await buildNamesWallLayout({ ...input, namesWall: { ...modelWall,
+    profiles: { ...modelWall.profiles, wall: { ...modelWall.profiles.wall, inwardShiftPercent: 100 } } }, ring, ringHash });
+  expect(modelWithMovedWall.placements).toEqual(modeled.placements);
+  expect(modelWithMovedWall.digest).toBe(modeled.digest);
   expect(modeled.placements.map((p) => [p.id, p.output])).toEqual(first.placements.map((p) => [p.id, p.output]));
   const leftInsetConfig = structuredClone(config);
   leftInsetConfig.namesWall.innerEdgeInsetPx.left = 16;

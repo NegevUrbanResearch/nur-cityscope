@@ -7,6 +7,12 @@ def default_names_wall():
     return {'activeMode': 'wall', 'innerEdgeInsetPx': {'left': 0, 'right': 0}, 'profiles': {'wall': profile.copy(), 'model': profile.copy()}}
 
 
+def default_names_wall_v5():
+    result = default_names_wall()
+    result['profiles']['wall']['inwardShiftPercent'] = 0
+    return result
+
+
 def legacy_names_wall():
     profile = {'requestedFontPx': 12, 'minimumFontPx': 8, 'spacingPx': 2, 'edgeInsetPx': 0, 'seamGapPx': 0}
     return {'activeMode': 'wall', 'profiles': {'wall': profile.copy(), 'model': profile.copy()}}
@@ -32,6 +38,19 @@ def validate_names_wall(value, path='namesWall', errors=None):
             number = branch.get(key)
             if isinstance(number, bool) or not isinstance(number, int) or not low <= number <= high:
                 errors[f'{prefix}.{key}'] = f'must be an integer between {low} and {high}'
+    return errors
+
+
+def validate_names_wall_v5(value, path='namesWall', errors=None):
+    if errors is None: errors = {}
+    if not isinstance(value, dict) or not isinstance(value.get('profiles'), dict) or not isinstance(value['profiles'].get('wall'), dict):
+        return validate_names_wall(value, path, errors)
+    wall = value['profiles']['wall']
+    previous = {**value, 'profiles': {**value['profiles'], 'wall': {key: item for key, item in wall.items() if key != 'inwardShiftPercent'}}}
+    validate_names_wall(previous, path, errors)
+    percent = wall.get('inwardShiftPercent')
+    if isinstance(percent, bool) or not isinstance(percent, int) or not 0 <= percent <= 100:
+        errors[f'{path}.profiles.wall.inwardShiftPercent'] = 'must be an integer between 0 and 100'
     return errors
 
 
@@ -89,6 +108,9 @@ def _number(value, path, low, high, errors):
         errors[path] = f'must be between {low} and {high}'
 
 def validate_projection_config(value):
+    if isinstance(value, dict) and value.get('schemaVersion') == 5 and not isinstance(value.get('schemaVersion'), bool):
+        from .projection_warp_schema import validate_projection_config_v5
+        return validate_projection_config_v5(value)
     outputs = value.get('outputs') if isinstance(value, dict) else None
     if isinstance(value, dict) and value.get('schemaVersion') == 4 and not isinstance(value.get('schemaVersion'), bool):
         from .projection_warp_schema import validate_projection_config_v4
@@ -142,11 +164,12 @@ def validate_projection_snapshot(value):
     if not isinstance(presets, list) or not 1 <= len(presets) <= 50:
         errors['presets'] = 'must contain 1-50 presets'
         presets = []
-    from .projection_warp_schema import TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, migrate_projection_config_to_v2, migrate_projection_config_to_v3, migrate_projection_config_to_v4
+    from .projection_warp_schema import TD_MIGRATION_PRESET_ID, TD_MIGRATION_PRESET_NAME, migrate_projection_config_to_v2, migrate_projection_config_to_v3, migrate_projection_config_to_v4, migrate_projection_config_to_v5
     original = legacy_projection_config_defaults()
     upgraded = migrate_projection_config_to_v2(original)
     historical = migrate_projection_config_to_v3(upgraded)
-    current = migrate_projection_config_to_v4(upgraded)
+    previous = migrate_projection_config_to_v4(upgraded)
+    current = migrate_projection_config_to_v5(upgraded)
     ids = set()
     original_count = 0
     uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', re.I)
@@ -166,7 +189,7 @@ def validate_projection_snapshot(value):
         if isinstance(preset_id, str): ids.add(preset_id)
         if preset_id == 'original':
             original_count += 1
-            if read_only is not True or name != 'Original calibration' or preset.get('config') not in (original, upgraded, historical, current):
+            if read_only is not True or name != 'Original calibration' or preset.get('config') not in (original, upgraded, historical, previous, current):
                 errors[f'{path}'] = 'must be the immutable Original calibration preset'
         elif preset_id == TD_MIGRATION_PRESET_ID:
             if read_only is not True or name != TD_MIGRATION_PRESET_NAME:

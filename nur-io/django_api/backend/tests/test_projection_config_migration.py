@@ -5,13 +5,31 @@ from django.apps import apps
 from django.db import connection, transaction
 from django.test import SimpleTestCase, TestCase
 
-from backend.projection_config_migration import convert_projection_calibration_payload, convert_projection_calibration_payload_to_v3, convert_projection_calibration_payload_to_v4
+from backend.projection_config_migration import convert_projection_calibration_payload, convert_projection_calibration_payload_to_v3, convert_projection_calibration_payload_to_v4, convert_projection_calibration_payload_to_v5
 from backend.projection_config_schema import legacy_projection_config_defaults
 from backend.projection_warp_schema import migrate_projection_config_to_v2, migrate_projection_config_to_v3
 from backend.models import OTEFProjectionCalibration, Table
 
 
 class ProjectionConfigMigrationTests(SimpleTestCase):
+    def test_v5_conversion_preserves_envelope_and_historical_v4(self):
+        legacy = legacy_projection_config_defaults()
+        original = {'id': 'original', 'name': 'Original calibration', 'config': legacy, 'readOnly': True}
+        writable = {'id': '00000000-0000-4000-8000-000000000001', 'name': 'Desk',
+                    'config': migrate_projection_config_to_v2(legacy), 'readOnly': False}
+        working, presets = convert_projection_calibration_payload_to_v4(legacy, [original, writable], writable['id'], 17)
+        before = copy.deepcopy((working, presets))
+        converted, upgraded = convert_projection_calibration_payload_to_v5(working, presets, writable['id'], 17)
+        self.assertEqual((working, presets), before)
+        self.assertEqual(converted['schemaVersion'], 5)
+        self.assertEqual(converted['pre'], working['pre'])
+        self.assertEqual(converted['outputs'], working['outputs'])
+        self.assertEqual(converted['namesWall']['profiles']['wall']['inwardShiftPercent'], 0)
+        self.assertEqual([(p['id'], p['name'], p['readOnly']) for p in upgraded],
+                         [(p['id'], p['name'], p['readOnly']) for p in presets])
+        self.assertEqual(convert_projection_calibration_payload_to_v5(converted, upgraded, writable['id'], 17), (converted, upgraded))
+        self.assertEqual(convert_projection_calibration_payload_to_v4(working, presets, writable['id'], 17), before)
+
     def test_v4_conversion_preserves_envelope_and_reports_old_gap(self):
         legacy = legacy_projection_config_defaults()
         v3 = convert_projection_calibration_payload_to_v3(legacy, [
@@ -162,3 +180,31 @@ class ProjectionConfigV4InstalledMigrationTests(TestCase):
         self.assertEqual([preset['config']['schemaVersion'] for preset in row.presets], [4, 4])
         self.assertEqual([(preset['id'], preset['name'], preset['readOnly']) for preset in row.presets],
                          [(preset['id'], preset['name'], preset['readOnly']) for preset in presets])
+
+
+class ProjectionConfigV5InstalledMigrationTests(TestCase):
+    def test_v5_migration_converts_working_and_presets_without_revising_calibration(self):
+        migration = importlib.import_module('backend.migrations.0027_projection_config_v5')
+        self.assertEqual(migration.Migration.dependencies, [('backend', '0026_projection_config_v4')])
+        v4 = convert_projection_calibration_payload_to_v4(legacy_projection_config_defaults(), [
+            {'id': 'original', 'name': 'Original calibration', 'config': legacy_projection_config_defaults(), 'readOnly': True},
+            {'id': '00000000-0000-4000-8000-000000000001', 'name': 'Desk', 'config': migrate_projection_config_to_v2(legacy_projection_config_defaults()), 'readOnly': False},
+        ], '00000000-0000-4000-8000-000000000001', 17)
+        working, presets = copy.deepcopy(v4)
+        working['pre']['tx'] = .37
+        row = OTEFProjectionCalibration.objects.create(table=Table.objects.create(name='v5-row'),
+            working_config=working, presets=presets, selected_preset_id=presets[1]['id'], revision=17)
+        schema_editor = type('SchemaEditor', (), {'connection': connection})()
+        with transaction.atomic(): migration.migrate_projection_configs(apps, schema_editor)
+        row.refresh_from_db()
+        self.assertEqual((row.revision, row.selected_preset_id), (17, presets[1]['id']))
+        self.assertEqual(row.working_config['pre'], working['pre'])
+        self.assertEqual(row.working_config['outputs'], working['outputs'])
+        self.assertEqual(row.working_config['namesWall']['profiles']['wall']['inwardShiftPercent'], 0)
+        self.assertEqual([preset['config']['schemaVersion'] for preset in row.presets], [5, 5])
+        self.assertEqual([(p['id'], p['name'], p['readOnly']) for p in row.presets],
+                         [(p['id'], p['name'], p['readOnly']) for p in presets])
+        first = copy.deepcopy((row.working_config, row.presets))
+        with transaction.atomic(): migration.migrate_projection_configs(apps, schema_editor)
+        row.refresh_from_db()
+        self.assertEqual((row.working_config, row.presets), first)

@@ -2,6 +2,7 @@ import { createNameFieldGeometry } from './nli-name-field-geometry.js';
 import { resolveNliLocation } from './nli-name-field-places.js';
 import { nameWallRowSpans, rectCoveredByPieces, ringContainsGuardedRect, validNameWallRing } from './nli-name-wall-coverage.js';
 import { sha256Hex } from './sha256-hex.js';
+import { inwardPageTravel } from './nli-name-wall-inward-travel.js';
 
 const SIDES = ['left', 'right'];
 const finite = (value) => typeof value === 'number' && Number.isFinite(value);
@@ -56,7 +57,7 @@ function placeSide(items, output, dimensions, profile, coverage, ring, rowOrigin
   return index === items.length ? result : null;
 }
 
-const PAGE_ALGORITHM = 'fixed-pitch-page-minimax-v1';
+const PAGE_ALGORITHM = 'fixed-pitch-page-minimax-inward-v2';
 const PAGE_EPS = 1e-7;
 function intersectPageSpans(a, b) {
   const result = [];
@@ -156,15 +157,19 @@ function minimaxRegularLines(items, dimensions, width, spacing, availableRows) {
   return null;
 }
 
-function placeRegularSide(items, output, dimensions, profile, coverage, origin, yLimit) {
+function placeRegularSide(items, output, dimensions, profile, coverage, origin, yLimit, mapping) {
   if (!items.length) return { placements: [], page: null };
   const rowHeight = Math.max(...[...dimensions.values()].map((item) => item.height));
   const pitch = rowHeight + profile.spacingPx;
   const page = chooseRegularPage(items, output, dimensions, profile, coverage, origin, yLimit, rowHeight);
   if (!page) return null;
   const lines = page.lines;
-  const placements = [];
-  for (let row = 0; row < lines.length; row++) {
+  const travel = profile.inwardShiftPercent && mapping ? inwardPageTravel({ page, occupiedRows: lines.length,
+    pitch, output, ...mapping }) : 0;
+  let rowOrigin = page.y0 + travel * (profile.inwardShiftPercent || 0) / 100;
+  const position = () => {
+    const placements = [];
+    for (let row = 0; row < lines.length; row++) {
     const [start, end] = lines[row], count = end - start;
     const sum = items.slice(start, end).reduce((total, item) => total + dimensions.get(item.name).width, 0);
     const gap = count > 1 ? (page.width - sum) / (count - 1) : 0;
@@ -172,12 +177,20 @@ function placeRegularSide(items, output, dimensions, profile, coverage, origin, 
     for (let i = start; i < end; i++) {
       const item = items[i], measure = dimensions.get(item.name);
       placements.push({ id: item.pid, name: item.name, output, x: cursor - measure.width / 2,
-        y: page.y0 + row * pitch + rowHeight / 2, width: measure.width, height: measure.height });
+        y: rowOrigin + row * pitch + rowHeight / 2, width: measure.width, height: measure.height });
       cursor -= measure.width + gap;
     }
+    }
+    return placements;
+  };
+  let placements = position();
+  if (rowOrigin !== page.y0 && placements.some((item) => !rectCoveredByPieces({ ...item,
+    width: item.width + 2 * profile.edgeInsetPx, height: item.height + 2 * profile.edgeInsetPx }, coverage.pieces[output]))) {
+    rowOrigin = page.y0;
+    placements = position();
   }
   return { placements, page: { left: page.left, right: page.right, y0: page.y0, y1: page.y1,
-    singleton: items.length === 1, rows: lines.length, worstGap: Math.max(...lines.map(([i, j]) => j - i > 1
+    rowOrigin, inwardTravel: travel, singleton: items.length === 1, rows: lines.length, worstGap: Math.max(...lines.map(([i, j]) => j - i > 1
       ? (page.width - items.slice(i, j).reduce((sum, item) => sum + dimensions.get(item.name).width, 0)) / (j - i - 1) : 0)) } };
 }
 
@@ -232,7 +245,8 @@ export async function buildNamesWallLayout(payload) {
     let complete = true;
     for (const side of SIDES) {
       const regular = mode === 'wall' ? placeRegularSide(halves[side], side, dimensions, profile, coverage,
-        origin, boxes[side].y1 - profile.edgeInsetPx) : null;
+        origin, boxes[side].y1 - profile.edgeInsetPx, { config: payload.config || payload.geometry?.projectionConfig,
+          mesh: payload.meshes?.[side], logicalPlane }) : null;
       const sidePlacements = mode === 'wall' ? regular?.placements : placeSide(halves[side], side, dimensions,
         profile, coverage, ring, origin, boxes[side].y1 - profile.edgeInsetPx);
       if (!sidePlacements) { complete = false; break; }

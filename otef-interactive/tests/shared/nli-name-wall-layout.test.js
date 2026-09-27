@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import { buildNamesWallLayout } from '../../frontend/src/shared/nli-name-wall-layout.js';
 import { rectCoveredByPieces, ringContainsGuardedRect } from '../../frontend/src/shared/nli-name-wall-coverage.js';
 import { DEFAULT_PROJECTION_CONFIG } from '../../frontend/src/shared/projection-config-schema.js';
+import { createFullFrameProjectionMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
 
 const rectPiece = (x0, x1, y0 = 0, y1 = 80) => ({ polygon: [[x0,y0],[x1,y0],[x1,y1],[x0,y1]] });
 const coverage = { pieces: { left: [rectPiece(0, 50)], right: [rectPiece(50, 100)] }, outputIdentities: { left: 'l', right: 'r' } };
@@ -222,4 +223,44 @@ test('one regular-wall record leaves the unassigned right output empty', async (
   expect(result.pages.left.singleton).toBe(true);
   expect(result.pages.right).toBeNull();
   expect(result.placements[0].x - result.placements[0].width / 2).toBeGreaterThan(result.pages.left.left);
+});
+
+test('regular closeness moves only through safe inward slack at 0, 50 and 100 percent', async () => {
+  const ids = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+  const wide = { pieces: { left: [rectPiece(0, 100, 0, 100)], right: [rectPiece(100, 200, 0, 100)] },
+    outputIdentities: coverage.outputIdentities };
+  const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+  config.pre = { scale: 1, rotateDeg: 0, tx: 0, ty: 0 };
+  for (const side of ['left', 'right']) {
+    config.outputs[side].crop = { x0: 0, x1: 1, y0: 0, y1: 1 };
+    config.outputs[side].post = { scale: 1, tx: 0, ty: 0 };
+  }
+  const meshes = Object.fromEntries(['left', 'right'].map((side) => {
+    const mesh = createFullFrameProjectionMesh({ side });
+    for (const vertex of mesh.vertices) vertex.x = vertex.u + (side === 'left' ? 0.3 : -0.3) * vertex.v;
+    return [side, mesh];
+  }));
+  const run = (percent) => {
+    const wall = structuredClone(config.namesWall);
+    wall.profiles.wall = { requestedFontPx: 8, spacingPx: 2, edgeInsetPx: 0, inwardShiftPercent: percent };
+    return buildNamesWallLayout(payload({ records: records(ids), metrics: metrics(ids), coverage: wide,
+      namesWall: wall, meshes, geometry: { bounds: [[34, 31], [35, 32]], projectionConfig: config } }));
+  };
+  const [zero, half, full] = await Promise.all([run(0), run(50), run(100)]);
+  for (const result of [zero, half, full]) expect(result.diagnostics).toMatchObject({ state: 'valid', placed: 24, invalidCoverage: 0, overlap: 0, left: 12, right: 12 });
+  expect(new Set([zero.digest, half.digest, full.digest]).size).toBe(3);
+  for (const side of ['left', 'right']) {
+    const page = zero.pages[side];
+    const pitch = (zero.placements.find((p) => p.output === side).height + 2);
+    const slack = page.y1 - page.y0 - page.rows * pitch;
+    expect(slack).toBeGreaterThan(0);
+    expect(half.pages[side].left).toBe(page.left);
+    expect(full.pages[side].right).toBe(page.right);
+    const original = zero.placements.filter((p) => p.output === side);
+    for (const [result, fraction] of [[half, 0.5], [full, 1]]) {
+      const moved = result.placements.filter((p) => p.output === side);
+      expect(moved.map((p) => [p.id, p.name, p.x, p.width, p.height])).toEqual(original.map((p) => [p.id, p.name, p.x, p.width, p.height]));
+      moved.forEach((p, index) => expect(p.y - original[index].y).toBeCloseTo(slack * fraction, 6));
+    }
+  }
 });

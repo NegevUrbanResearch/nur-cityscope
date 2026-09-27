@@ -88,7 +88,8 @@ function renderField(doc, descriptor, onField, onNudge, compact = false) {
   wrap.appendChild(error);
   const onInput = (event) => onField(descriptor.path, event.currentTarget.value, event.currentTarget.dataset.input);
   const commitNumber = () => onField(descriptor.path, number.value, "number");
-  range.addEventListener("input", onInput);
+  range.addEventListener("input", descriptor.commitOnChange ? () => { value.textContent = range.value; } : onInput);
+  if (descriptor.commitOnChange) range.addEventListener("change", onInput);
   number?.addEventListener("input", () => { value.textContent = number.value; });
   number?.addEventListener("blur", commitNumber);
   number?.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); if (number.blur) number.blur(); else commitNumber(); } });
@@ -214,6 +215,16 @@ export function createProjectionConfigView(root, {
   const nodePreviewHosts = new Map();
   const namesModeControls = [];
   const namesStatusControls = [];
+  const pageSpacingResetControls = [];
+  function pageSpacingReset() {
+    const reset = button(doc, "Reset page spacing to 0%", "reset-page-spacing");
+    reset.addEventListener("click", (event) => {
+      event.stopPropagation?.();
+      onField("namesWall.inwardShiftPercent", "0", "number");
+    });
+    pageSpacingResetControls.push(reset);
+    return reset;
+  }
   function namesModeControl() {
     const label = make(doc, "label", { className: "names-wall-mode-label" }, "Profile");
     const select = make(doc, "select", { className: "names-wall-mode", ariaLabel: "Names wall profile" });
@@ -242,7 +253,7 @@ export function createProjectionConfigView(root, {
     }
     const nodeFields = descriptors.filter((item) => item.node === id);
     for (const descriptor of nodeFields) { const control = renderField(doc, descriptor, onField, onNudge, false); fields.set(`${id}:${descriptor.path}`, control); card.appendChild(control.wrap); }
-    if (id === "names-wall") card.append(namesStatus());
+    if (id === "names-wall") card.append(make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
     if (id.endsWith("-keystone") || id.endsWith("-grid")) card.appendChild(make(doc, "p", { className: "warp-node-summary" }, "Select to edit corners, points, and residuals."));
     const previewHost = id === "names-wall" || id.endsWith("-keystone") || id.endsWith("-grid") ? null : make(doc, "div", { className: "output-preview-host" });
     const previewButton = button(doc, "Enlarge preview", "preview-expand", "preview-button");
@@ -282,7 +293,7 @@ export function createProjectionConfigView(root, {
   const mobilePreviewHost = make(doc, "div", { className: "mobile-preview-host" });
   controls.inspectorFields = make(doc, "div", { className: "inspector-fields" });
   controls.namesWallInspector = make(doc, "section", { className: "names-wall-inspector", ariaLabel: "Names wall profile controls" });
-  controls.namesWallInspector.append(namesModeControl(), namesStatus());
+  controls.namesWallInspector.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
   for (const descriptor of descriptors) { const control = renderField(doc, descriptor, onField, onNudge); fields.set(`inspector:${descriptor.path}`, control); controls.inspectorFields.appendChild(control.wrap); }
   controls.warpPanel = make(doc, "section", { className: "warp-inspector", ariaLabel: "Warp editor" });
   controls.warpHeading = make(doc, "h3", {}, "Warp editor");
@@ -475,6 +486,7 @@ export function createProjectionConfigView(root, {
     controls.namesWallInspector.hidden = selectedNode !== "names-wall";
     const wallConfig = draft.namesWall;
     for (const select of namesModeControls) select.value = wallConfig?.activeMode || "wall";
+    for (const reset of pageSpacingResetControls) reset.hidden = wallConfig?.activeMode !== "wall";
     const wallStatus = namesWallStatus || { state: "building", expected: null, placed: null };
     const requested = wallStatus.requestedFontPx ?? wallConfig?.profiles?.[wallConfig?.activeMode]?.requestedFontPx ?? "—";
     const effective = wallStatus.effectiveFontPx;
@@ -506,16 +518,17 @@ export function createProjectionConfigView(root, {
     setDiagramRect(controls.cropSvg?.rightVisibleRect, right ? visibleT3Rect(right) : null);
     for (const descriptor of descriptors) {
       const value = descriptor.path.startsWith("namesWall.") && !descriptor.path.startsWith("namesWall.innerEdgeInsetPx.")
-        ? draft.namesWall?.profiles?.[draft.namesWall?.activeMode]?.[descriptor.path.slice("namesWall.".length)]
+        ? draft.namesWall?.profiles?.[descriptor.wallOnly ? "wall" : draft.namesWall?.activeMode]?.[descriptor.path.slice("namesWall.".length)]
         : readPath(draft, descriptor.path);
       for (const prefix of [descriptor.node, "inspector"]) {
         const control = fields.get(`${prefix}:${descriptor.path}`);
         if (!control) continue;
+        control.wrap.hidden = Boolean(descriptor.wallOnly && draft.namesWall?.activeMode !== "wall");
         const display = displayValue(descriptor, value);
         for (const input of [control.range, control.number]) if (input && doc.activeElement !== input) input.value = display;
         control.value.textContent = `${display}${descriptor.unit ? ` ${descriptor.unit}` : ""}`;
         const errorPath = descriptor.path.startsWith("namesWall.") && !descriptor.path.startsWith("namesWall.innerEdgeInsetPx.") && draft.namesWall?.activeMode
-          ? `namesWall.profiles.${draft.namesWall.activeMode}.${descriptor.path.slice("namesWall.".length)}`
+          ? `namesWall.profiles.${descriptor.wallOnly ? "wall" : draft.namesWall.activeMode}.${descriptor.path.slice("namesWall.".length)}`
           : descriptor.path;
         const fieldError = errors[errorPath] || Object.entries(errors).find(([key]) => errorPath.startsWith(`${key}.`))?.[1] || "";
         control.error.textContent = fieldError;
