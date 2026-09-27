@@ -1,4 +1,5 @@
 import { NLI_DISPLAY_PROFILES, NLI_VISUAL_TOKENS } from "../shared/nli-investigation-theme.js";
+import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-focus-presentation.js";
 
 export const PEOPLE_SOURCE_ID = "otef-person-selection";
 export const PEOPLE_HALO_LAYER_ID = "otef-person-selection-halo";
@@ -190,22 +191,28 @@ export function mountPersonHalo(map, person, { displayProfile } = {}) {
       source: PEOPLE_SOURCE_ID,
       paint: {
         "circle-radius": haloRadius(profile),
-        "circle-color": NLI_VISUAL_TOKENS.incidentRed,
+        "circle-color": NLI_VISUAL_TOKENS.personGlowFillColor,
         "circle-opacity": NLI_VISUAL_TOKENS.personGlowFillOpacity,
-        "circle-stroke-color": NLI_VISUAL_TOKENS.incidentRed,
+        "circle-stroke-color": NLI_VISUAL_TOKENS.personGlowFillColor,
         "circle-stroke-width": NLI_VISUAL_TOKENS.personGlowStrokeWidth,
-        "circle-stroke-opacity": 0.9,
+        "circle-stroke-opacity": 0,
       },
     });
   }
   if (map.getLayer?.(PEOPLE_HALO_LAYER_ID) && typeof map.moveLayer === "function") {
     try { map.moveLayer(PEOPLE_HALO_LAYER_ID); } catch {}
   }
+  if (map.getLayer?.(PEOPLE_HALO_LAYER_ID) && typeof map.setPaintProperty === "function") {
+    map.setPaintProperty(PEOPLE_HALO_LAYER_ID, "circle-color", NLI_VISUAL_TOKENS.personGlowFillColor);
+    map.setPaintProperty(PEOPLE_HALO_LAYER_ID, "circle-stroke-opacity", 0);
+  }
+  applyPeopleFocusDim(map, person.pid);
 }
 
 export function clearPersonHalo(map) {
   if (map?.getLayer?.(PEOPLE_HALO_LAYER_ID)) map.removeLayer(PEOPLE_HALO_LAYER_ID);
   if (map?.getSource?.(PEOPLE_SOURCE_ID)) map.removeSource(PEOPLE_SOURCE_ID);
+  clearPeopleFocusDim(map);
 }
 
 export function syncPersonHaloPaint(map, { motionMode = "full", nowMs = 0 } = {}) {

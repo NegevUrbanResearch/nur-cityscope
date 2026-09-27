@@ -77,6 +77,7 @@ describe("GIS person selection visual", () => {
   test("applies the selection text-size token to each bounded bubble line", () => {
     const css = readFileSync(new URL("../../frontend/css/styles.css", import.meta.url), "utf8");
     expect(css).toMatch(/\.gis-person-bubble__name,\s*\.gis-person-bubble__location\s*\{[\s\S]*font-size:\s*var\(--gis-person-selection-text-size\)/);
+    expect(css).toMatch(/--gis-person-selection-color:\s*#d4d4d4/);
   });
 
   test("normalizes exact PIDs and versions, and rejects malformed or duplicate runtime data", () => {
@@ -121,6 +122,8 @@ describe("GIS person selection visual", () => {
     d.visual.show(person);
     expect(d.map.getSource(PEOPLE_SOURCE_ID)).toBeTruthy();
     expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-opacity"]).toBe(0.25);
+    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-color"]).toBe("#ffffff");
+    expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-stroke-opacity"]).toBe(0);
     expect(d.map.getLayer(PEOPLE_HALO_LAYER_ID).paint["circle-radius"]).toBe(
       NLI_VISUAL_TOKENS.personGlowRadius * (NLI_DISPLAY_PROFILES.gis.radiusMultiplier || 1),
     );
@@ -128,6 +131,18 @@ describe("GIS person selection visual", () => {
     expect(d.bubble.setHTML.mock.calls[0][0]).toContain("Alumim");
     expect(d.bubble.setHTML.mock.calls[0][0].match(/dir="auto"/g)).toHaveLength(3);
     expect(d.bubble.setHTML.mock.calls[0][0]).not.toMatch(/nli_url|button|archive/i);
+  });
+
+  test("show dims other catalog people and hide restores them", async () => {
+    const d = setup();
+    const peopleLayer = { id: "nli__people__circle", type: "circle", source: "nli.people" };
+    d.map.addLayer(peopleLayer);
+    d.map.setPaintProperty("nli__people__circle", "circle-opacity", 1);
+    const person = await d.visual.resolve("11", "v1");
+    d.visual.show(person);
+    expect(d.map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
+    d.visual.hide();
+    expect(d.map.getPaintProperty("nli__people__circle", "circle-opacity")).toBe(1);
   });
 
   test("clicking the bubble hands the person with an archive record to onBubbleClick", async () => {

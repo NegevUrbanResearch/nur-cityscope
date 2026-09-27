@@ -382,7 +382,7 @@ body {
 }
 
 .gis-person-bubble-popup .maplibregl-popup-content {
-  --gis-person-selection-color: #c31f4f;
+  --gis-person-selection-color: #d4d4d4;
   --gis-person-selection-halo: 2px;
   --gis-person-selection-padding: 8px 10px;
   --gis-person-selection-contrast: #171717;

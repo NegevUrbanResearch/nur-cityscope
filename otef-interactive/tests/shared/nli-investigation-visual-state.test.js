@@ -67,6 +67,7 @@ describe("nli-investigation-theme", () => {
       highlightFillOpacity: 0.05,
       highlightLineColor: "rgba(255,255,255,0.35)",
       personGlowFillOpacity: 0.25,
+      personGlowFillColor: "#ffffff",
       personGlowRadius: 14,
       personGlowStrokeWidth: 2.5,
       personGlowPulseMs: 2400,

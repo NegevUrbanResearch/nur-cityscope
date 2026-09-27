@@ -6,7 +6,10 @@ import { createFakeMapLibreMap } from "../helpers/fake-maplibre-map.js";
 import { bindProjectionPersonHalo } from "../../frontend/src/projection/projection-person-halo.js";
 
 function createFakeMap() {
-  const map = createFakeMapLibreMap();
+  const map = createFakeMapLibreMap({
+    layers: [{ id: "nli__people__circle", type: "circle", source: "nli.people" }],
+  });
+  map.setPaintProperty("nli__people__circle", "circle-opacity", 1);
   map.flyTo = vi.fn();
   vi.spyOn(map, "addLayer");
   return map;
@@ -30,8 +33,10 @@ describe("bindProjectionPersonHalo", () => {
       expect(map.addLayer).toHaveBeenCalled();
     });
     expect(map.flyTo).not.toHaveBeenCalled();
+    expect(map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     map.emit("style.load");
     expect(map.addLayer.mock.calls.length).toBeGreaterThan(1);
+    expect(map.getPaintProperty("nli__people__circle", "circle-opacity")[0]).toBe("case");
     handler(null);
     dispose();
   });

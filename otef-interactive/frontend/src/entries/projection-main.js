@@ -10,6 +10,7 @@ import {
 import { installProjectionRenderDebugOverlay } from "../projection/projection-render-debug-overlay.js";
 import { syncProjectionLayers } from "../projection/maplibre-projection-layers.js";
 import { applyNarrativeHouseOutlineFilter, applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
+import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-focus-presentation.js";
 import {
   createCuratedDisplayGate,
   createProjectionCuratedRefresh,
@@ -1057,6 +1058,9 @@ async function bootstrapProjectionRuntime() {
     function syncProjectionLayersWithNarrative(targetMap, groups, options) {
       syncProjectionLayers(targetMap, groups, { ...options, suppressCanvasNameSymbols: Boolean(browserSurface?.getNameAdapter()) });
       applyNarrativePeopleFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
+      const selectedPid = OTEFDataContext.getPersonSelection?.()?.personId;
+      if (selectedPid) applyPeopleFocusDim(targetMap, selectedPid);
+      else clearPeopleFocusDim(targetMap);
       applyNarrativeHouseOutlineFilter(targetMap, OTEFDataContext.getNarrativeState?.()?.id ?? null);
     }
 

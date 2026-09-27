@@ -223,10 +223,13 @@ describe("narrative house outline filter", () => {
       const people = [...source.matchAll(/applyNarrativePeopleFilter\(([^;]*)\);/g)];
       const houses = [...source.matchAll(/applyNarrativeHouseOutlineFilter\(([^;]*)\);/g)];
       expect(houses.map((match) => match[1]), file).toEqual(people.map((match) => match[1]));
+      const isEntry = file.startsWith("entries/");
       for (const match of people) {
-        const after = source.slice(match.index, match.index + match[0].length + 160);
+        const after = source.slice(match.index, match.index + match[0].length + 280);
         expect(after, file).toMatch(
-          /applyNarrativePeopleFilter\([^;]*\);\s*applyNarrativeHouseOutlineFilter\(/,
+          isEntry
+            ? /applyNarrativePeopleFilter\([^;]*\);\s*const selectedPid = OTEFDataContext\.getPersonSelection\?\.\(\)\?\.personId;\s*if \(selectedPid\) applyPeopleFocusDim\([^,]+, selectedPid\);\s*else clearPeopleFocusDim\([^)]+\);\s*applyNarrativeHouseOutlineFilter\(/
+            : /applyNarrativePeopleFilter\([^;]*\);\s*applyNarrativeHouseOutlineFilter\(/,
         );
       }
       peopleCalls.push(...people);

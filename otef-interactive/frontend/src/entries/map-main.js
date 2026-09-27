@@ -12,6 +12,7 @@ import { createNliNameFieldController } from "../shared/nli-name-field-controlle
 import { createGisNarrativeController } from "../map/nli-narrative-controller.js";
 import { loadNliPresentationManifest } from "../shared/nli-presentation-manifest.js";
 import { applyNarrativeHouseOutlineFilter, applyNarrativePeopleFilter } from "../map/nli-people-marker-filter.js";
+import { applyPeopleFocusDim, clearPeopleFocusDim } from "../shared/nli-people-focus-presentation.js";
 import { createNovaEscapeCoordinator } from "../shared/nli-nova-escape-coordinator.js";
 import { createMorRouteCoordinator } from "../shared/nli-mor-route-coordinator.js";
 import { createGisBasemapStyleCoordinator } from "./map-main-style-lifecycle.js";
@@ -485,6 +486,9 @@ async function bootstrapMapRuntime() {
     const applyGisLayerGroups = (groups) => {
       applyLayerGroupsToMap(map, groups);
       applyNarrativePeopleFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
+      const selectedPid = OTEFDataContext.getPersonSelection?.()?.personId;
+      if (selectedPid) applyPeopleFocusDim(map, selectedPid);
+      else clearPeopleFocusDim(map);
       applyNarrativeHouseOutlineFilter(map, OTEFDataContext.getNarrativeState?.()?.id ?? null);
       raiseDarkBasemapPlaceLabels(map);
     };
