@@ -92,8 +92,8 @@ describe("nli explainer layout", () => {
     expect(MapProjectionConfig.NLI_EXPLAINER_LAYOUT).toEqual({
       full: { leftPct: 31.83, topPct: 48.95, widthPct: 16.7, heightPct: 19.75, fontPx: 12, rotateDeg: -48.5 },
       left: {
-        leftPct: 46.90416666666667,
-        topPct: 22.113809679110926,
+        leftPct: 22.100834647739227,
+        topPct: 31.61002744422372,
         widthPct: 8.886423224258024,
         heightPct: 8.323215088627478,
         fontPx: 56,
