@@ -95,7 +95,7 @@ The legend matches the people filter.
 
 | Set | Layers |
 | :--- | :--- |
-| Focus | Settlement names, settlement outlines, settlements, Route 232, black ground |
+| Focus | Settlement names, settlement outlines, settlements, Route 232 |
 | Opening | Focus + SEA + Gaza roads |
 | Timeline | Opening + investigation polygons, infiltration routes, alarms |
 | Nova timeline | Focus + investigation polygons, infiltration routes, alarms (no SEA, no Gaza roads) |

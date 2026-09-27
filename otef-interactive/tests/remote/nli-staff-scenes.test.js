@@ -32,10 +32,24 @@ const allCues = () => [
   ...allSteps().map(({ step }) => step.cue),
 ].filter(Boolean);
 
+const BLACK_BACKGROUND = "projector_base.רקע_שחור";
+
 test("names wall keeps people_names on the black model ground", () => {
   expect(PEOPLE_NAMES_LAYER_IDS).toEqual(["nli.people_names"]);
   expect(WALL_LAYER_IDS).toEqual(["nli.people_names"]);
   expect(WALL_LAYER_IDS).not.toEqual(OPENING_LAYER_IDS);
+});
+
+test("no NLI cue or layer set enables black background", () => {
+  expect(FOCUS_LAYER_IDS).not.toContain(BLACK_BACKGROUND);
+  expect(OPENING_LAYER_IDS).not.toContain(BLACK_BACKGROUND);
+  expect(TIMELINE_LAYER_IDS).not.toContain(BLACK_BACKGROUND);
+  expect(catalog.HOME_LAYER_IDS).not.toContain(BLACK_BACKGROUND);
+  expect(catalog.IDENTITY_LAYER_IDS).not.toContain(BLACK_BACKGROUND);
+  expect(WALL_LAYER_IDS).not.toContain(BLACK_BACKGROUND);
+  for (const cue of allCues()) {
+    expect(cue.layers || []).not.toContain(BLACK_BACKGROUND);
+  }
 });
 
 test("only a current explicit Hostages Close applies its special destination", async () => {

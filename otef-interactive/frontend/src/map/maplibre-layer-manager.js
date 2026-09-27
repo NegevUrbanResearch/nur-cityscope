@@ -424,20 +424,14 @@ function getOrCreateMapState(map) {
   return state;
 }
 
-const PROJECTOR_BLACK_GROUND_FULL_ID = "projector_base.רקע_שחור";
+const RETIRED_MAP_FULL_LAYER_IDS = new Set(["projector_base.רקע_שחור"]);
 
-/**
- * Black ground must sit under settlement outlines, name leaders, and Highway 232.
- * Pack order currently adds `nli` before `projector_base`, and `רקע_שחור` after `ישובים`.
- */
 export function orderMapFullLayerIdsForAdd(fullIds) {
   const ids = [];
   for (const id of fullIds || []) {
     if (id != null && String(id).trim() !== "") ids.push(String(id).trim());
   }
-  const background = ids.filter((id) => id === PROJECTOR_BLACK_GROUND_FULL_ID);
-  const rest = ids.filter((id) => id !== PROJECTOR_BLACK_GROUND_FULL_ID);
-  return [...background, ...rest];
+  return ids;
 }
 
 function raiseLoadedFullId(map, fullId, state) {
@@ -488,11 +482,13 @@ export function getEnabledMapFullLayerIds(layerGroups) {
       if (extra) {
         for (const fid of extra) {
           if (fid != null && String(fid).trim() !== "") {
-            enabled.add(String(fid).trim());
+            const fullId = String(fid).trim();
+            if (!RETIRED_MAP_FULL_LAYER_IDS.has(fullId)) enabled.add(fullId);
           }
         }
       } else {
-        enabled.add(`${groupId}.${layer.id}`);
+        const fullId = `${groupId}.${layer.id}`;
+        if (!RETIRED_MAP_FULL_LAYER_IDS.has(fullId)) enabled.add(fullId);
       }
     }
   }

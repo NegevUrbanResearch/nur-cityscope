@@ -82,7 +82,6 @@ const SETTLEMENT_LAYER_IDS = [
   "projector_base.Locations_Lines",
   "projector_base.ישובים",
 ];
-const BLACK_GROUND = "projector_base.רקע_שחור";
 const ROUTE_232 = "nli.ציר_232";
 const HOUSE_OUTLINES = "nli.narrative_polygon";
 const SEA = "projector_base.SEA";
@@ -91,7 +90,7 @@ const PEOPLE = "nli.people";
 const OPEN_SPACES = "land_use.שטחים_פתוחים";
 
 export const PEOPLE_NAMES_LAYER_IDS = ["nli.people_names"];
-export const FOCUS_LAYER_IDS = [...SETTLEMENT_LAYER_IDS, ROUTE_232, HOUSE_OUTLINES, BLACK_GROUND];
+export const FOCUS_LAYER_IDS = [...SETTLEMENT_LAYER_IDS, ROUTE_232, HOUSE_OUTLINES];
 export const OPENING_LAYER_IDS = [...FOCUS_LAYER_IDS, SEA, GAZA_ROADS];
 export const TIMELINE_LAYER_IDS = [...OPENING_LAYER_IDS, ...NLI_PLAYABLE_IDS];
 export const HOME_LAYER_IDS = [

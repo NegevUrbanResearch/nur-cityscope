@@ -50,7 +50,7 @@ function menusFor(root, extras = {}) {
       },
       {
         id: "projector_base",
-        layers: [{ id: "רקע_שחור", name: "Black", enabled: true }],
+        layers: [{ id: "SEA", name: "Sea", enabled: true }],
       },
     ],
     getClock: () => ({ phase: "idle" }),
@@ -78,15 +78,17 @@ describe("staff pack menus", () => {
           enabled: true,
           fullLayerIds: ["projector_base.שמות_יישובים", "projector_base.Locations_Lines"],
         },
-        { id: "רקע_שחור", name: "Black", enabled: false },
+        { id: "SEA", name: "Sea", enabled: false },
+        { id: "רקע_שחור", name: "Black", enabled: true },
       ],
     });
     expect(rows[0].fullLayerIds).toEqual([
       "projector_base.שמות_יישובים",
       "projector_base.Locations_Lines",
     ]);
-    expect(rows[1].fullLayerIds).toEqual(["projector_base.רקע_שחור"]);
-    expect(labelForPackRow(rows[1], "en")).toBe("Black background");
+    expect(rows.map((row) => row.id)).toEqual(["שמות_יישובים", "SEA"]);
+    expect(rows[1].fullLayerIds).toEqual(["projector_base.SEA"]);
+    expect(labelForPackRow(rows[1], "en")).toBe("Sea");
   });
 
   test("opens one popup with both packs and toggles a layer row", async () => {
@@ -157,7 +159,7 @@ describe("staff pack menus", () => {
         },
         {
           id: "projector_base",
-          layers: [{ id: "רקע_שחור", name: "Black", enabled: true }],
+          layers: [{ id: "SEA", name: "Sea", enabled: true }],
         },
       ],
       getClock: () => ({ phase: "playing" }),

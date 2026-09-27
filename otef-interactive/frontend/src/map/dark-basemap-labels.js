@@ -284,7 +284,7 @@ export function ensureGisNovaPlaceLabel(map) {
 }
 
 /**
- * Keep OSM / dark-basemap place names above pack fills (black ground, polygons)
+ * Keep OSM / dark-basemap place names above pack fills
  * so settlement labels stay readable. People-name and person-selection overlays
  * remain in front of those place labels.
  */

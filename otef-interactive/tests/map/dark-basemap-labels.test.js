@@ -327,7 +327,7 @@ describe("raiseDarkBasemapPlaceLabels", () => {
         { id: "place_village", type: "symbol", "source-layer": "place" },
         { id: "place_city", type: "symbol", "source-layer": "place" },
         { id: "highway_name_other", type: "symbol", "source-layer": "transportation_name" },
-        { id: "projector_base__רקע_שחור__fill__0", type: "fill" },
+        { id: "land_use__שטחים_פתוחים__fill__0", type: "fill" },
         { id: "projector_base__ישובים__0", type: "line" },
         { id: "nli__people_names__labels", type: "symbol" },
         { id: "otef-person-selection-halo", type: "circle" },
@@ -338,7 +338,7 @@ describe("raiseDarkBasemapPlaceLabels", () => {
 
     expect(map.getStyle().layers.map((layer) => layer.id)).toEqual([
       "highway_name_other",
-      "projector_base__רקע_שחור__fill__0",
+      "land_use__שטחים_פתוחים__fill__0",
       "projector_base__ישובים__0",
       "place_village",
       "place_city",

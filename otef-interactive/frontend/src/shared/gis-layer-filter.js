@@ -1,9 +1,8 @@
 /**
  * GIS-visible layer rule: single source of truth for which layers appear on the GIS map.
- * projector_base is projector-only except the GIS allowlist (Tkuma_Area_LIne, ישובים).
- * Settlement names (שמות_יישובים) and leaders (Locations_Lines) are temporarily muted on GIS;
- * projection keepSettlementNames is unchanged. Allowlist does not force a layer on if the remote
- * row is disabled.
+ * projector_base is projector-only except the GIS allowlist: Tkuma_Area_LIne and ישובים.
+ * Black background (רקע_שחור) is retired and stays excluded.
+ * The allowlist does not force a disabled remote row on and does not add these rows to the legend.
  */
 
 const PROJECTOR_BASE_GIS_LAYERS = new Set([

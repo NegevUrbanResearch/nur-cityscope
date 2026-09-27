@@ -36,10 +36,25 @@ describe("getEnabledMapFullLayerIds", () => {
     ]);
     expect(set.has("projector_base.model_base")).toBe(true);
   });
+
+  test("never enables black background even when the pack row is on", () => {
+    const set = getEnabledMapFullLayerIds([
+      {
+        id: "projector_base",
+        enabled: true,
+        layers: [
+          { id: "SEA", enabled: true },
+          { id: "רקע_שחור", enabled: true },
+        ],
+      },
+    ]);
+    expect(set.has("projector_base.SEA")).toBe(true);
+    expect(set.has("projector_base.רקע_שחור")).toBe(false);
+  });
 });
 
 describe("orderMapFullLayerIdsForAdd", () => {
-  test("draws projector black ground under settlement outlines, names, and Highway 232", () => {
+  test("keeps pack add order and does not special-case black background", () => {
     expect(
       orderMapFullLayerIdsForAdd([
         "nli.ציר_232",
@@ -48,9 +63,9 @@ describe("orderMapFullLayerIdsForAdd", () => {
         "projector_base.שמות_יישובים",
       ]),
     ).toEqual([
-      "projector_base.רקע_שחור",
       "nli.ציר_232",
       "projector_base.ישובים",
+      "projector_base.רקע_שחור",
       "projector_base.שמות_יישובים",
     ]);
   });
