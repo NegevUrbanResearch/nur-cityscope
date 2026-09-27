@@ -286,6 +286,58 @@ export function initNliStaffRemote(dataContext) {
     timelineHost._syncNliEndedTimer?.(clock);
   }
 
+  async function applyOpeningPreset() {
+    const turningOff = state.scene === "open";
+    navigationGeneration += 1;
+    const generation = navigationGeneration;
+    timelineHost.invalidateTransport();
+    packMenus?.close({ silent: true });
+    const token = searchTransition.begin();
+    cues.cancel();
+    state.searchPending = true;
+    const paintPending = () => {
+      if (state.screen === "player") renderPlayer();
+      else if (state.screen === "free") renderFree();
+    };
+    paintPending();
+    try {
+      state.presentationClosePending = true;
+      paintPending();
+      let closed = true;
+      try {
+        closed = await presentation?.closeForStepChange();
+      } finally {
+        state.presentationClosePending = false;
+        if (searchTransition.isCurrent(token)) paintPending();
+      }
+      if (!searchTransition.isCurrent(token) || generation !== navigationGeneration || closed === false) return false;
+      const cleared = await searchTransition.clearAll(token);
+      if (!searchTransition.isCurrent(token) || generation !== navigationGeneration) return false;
+      if (!cleared) return failSearchClear(token);
+      state.searchPending = false;
+      clearSearchUi();
+      if (peopleArchive?.getArchivePhase?.() === "open") void peopleArchive.closeArchive();
+      state.scene = turningOff ? null : "open";
+      state.freeError = null;
+      if (state.screen === "free") renderFree();
+      const result = await applyCue(HOME_CUE, null);
+      if (!searchTransition.isCurrent(token) || generation !== navigationGeneration) return false;
+      if (result?.status !== "ready") {
+        state.scene = turningOff ? "open" : null;
+        paintPending();
+        return false;
+      }
+      return true;
+    } finally {
+      if (searchTransition.isCurrent(token)) {
+        state.presentationClosePending = false;
+        state.searchPending = false;
+        paintPending();
+      }
+      if (generation === navigationGeneration) rearmTransport();
+    }
+  }
+
   function applyScene(id) {
     if (!manualMutationsOpen()) return;
     const scene = SCENES.find((item) => item.id === id);
@@ -296,6 +348,7 @@ export function initNliStaffRemote(dataContext) {
       renderFree();
       return;
     }
+    if (id === "open") return applyOpeningPreset();
     timelineHost.invalidateTransport();
     packMenus?.close({ silent: true });
     const turningOff = state.scene === id;
@@ -303,7 +356,6 @@ export function initNliStaffRemote(dataContext) {
     state.freeError = null;
     state.placeName = null;
     renderFree();
-    if (turningOff && id === "open") return applyCue(HOME_CUE, null);
     return applyCue(turningOff ? { layers: [], clock: "idle" } : scene.cue);
   }
 
@@ -431,6 +483,7 @@ export function initNliStaffRemote(dataContext) {
     const key = { applying: "cueApplying", ready: "cueReady", failed: "cueFailed" }[state.cueStatus];
     ["cueStatus", "freeCueStatus"].forEach((id) => {
       const el = $(id);
+      if (!el) return;
       el.textContent = key ? txt(key) : "";
       el.dataset.status = state.cueStatus || "";
     });
@@ -447,7 +500,8 @@ export function initNliStaffRemote(dataContext) {
       kitPresentation: Boolean(step?.presentation),
     };
     Object.entries(show).forEach(([id, on]) => {
-      $(id).hidden = !on;
+      const el = $(id);
+      if (el) el.hidden = !on;
     });
     if (show.kitPresentation) {
       $("kitPresentation").innerHTML = presentationControlsHtml(step, presentation?.getState(), getLocale());
@@ -576,10 +630,15 @@ export function initNliStaffRemote(dataContext) {
     renderSearchStatus();
   }
 
-  function transitionToStep(item, index, { returnTo = state.returnTo } = {}) {
+  async function transitionToStep(item, index, { returnTo = state.returnTo } = {}) {
     navigationGeneration += 1;
+    const generation = navigationGeneration;
     timelineHost.invalidateTransport();
-    return searchActions.transitionToStep(item, index, returnTo);
+    try {
+      return await searchActions.transitionToStep(item, index, returnTo);
+    } finally {
+      if (generation === navigationGeneration) rearmTransport();
+    }
   }
 
   function goToStep(index) {
@@ -598,6 +657,7 @@ export function initNliStaffRemote(dataContext) {
     restoreLiveSearchLabel();
     state.freeError = txt("searchClearFailed");
     if (state.screen === "player") renderPlayer();
+    else if (state.screen === "free") renderFree();
     else renderKit();
     return false;
   }

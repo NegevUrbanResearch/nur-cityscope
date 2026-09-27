@@ -1889,7 +1889,7 @@ describe("nli timeline transport", () => {
     };
     globalThis.window = { addEventListener() {}, removeEventListener() {} };
     for (const id of [
-      "localeHe", "localeEn", "kitTimeline", "staffConnection", "homeBtn", "narrativeList",
+      "localeHe", "localeEn", "kitTimeline", "kitArchive", "kitSearch", "staffConnection", "homeBtn", "narrativeList",
       "playerScript", "stepCount", "ticks", "stepClock", "stepTitle", "stepNote", "stepGis",
       "stepModel", "prevBtn", "nextBtn", "nextChoices", "kitIdle", "kitPresentation", "kitEscape",
       "archiveBtn", "freeArchiveBtn", "searchInput", "searchResults", "searchKit", "freeStatus",
@@ -1935,6 +1935,8 @@ describe("nli timeline transport", () => {
     await Promise.resolve();
     const pausedWrites = api.OTEF_API.updateInvestigationClock.mock.calls.filter((call) => call[1]?.phase === "paused");
     expect(pausedWrites).toHaveLength(1);
+    await vi.runAllTimersAsync();
+    for (let i = 0; i < 30; i += 1) await Promise.resolve();
     OTEFDataContext._tableName = null;
     delete globalThis.document;
     delete globalThis.window;

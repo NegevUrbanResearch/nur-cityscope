@@ -3,6 +3,7 @@
  */
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { COPY, HOME_CUE, HOME_LAYER_IDS } from "../../frontend/src/remote/nli-staff-script.js";
+import { nliTimelineHostMethods } from "../../frontend/src/remote/nli-timeline-transport.js";
 import { shouldCloseViewerForNarrative } from "../../frontend/src/map/nli-reveal-presentation.js";
 import { setLocale } from "../../frontend/src/remote/remote-locale.js";
 
@@ -404,6 +405,179 @@ describe("NLI staff Home transitions", () => {
     await vi.waitFor(() => expect(el("cueStatus").dataset.status).toBe("failed"));
     el("sceneList").querySelector('[data-scene="loop"]').click();
     await vi.waitFor(() => expect(h.layers.at(-1)).toEqual([]));
+  });
+
+  test("Free opening closes a known presentation and clears search before Home", async () => {
+    setLocale("en", { persist: false });
+    session = mount();
+    await bootRemote(session);
+    const { h } = session;
+
+    el("narrativeList").querySelector("[data-open-free]").click();
+    await vi.waitFor(() => expect(el("sceneList").querySelector('[data-scene="open"]')).toBeTruthy());
+    h.person = { personId: "ada", revision: 3, datasetVersion: "v" };
+    const layersBefore = h.layers.length;
+    const narrativesBefore = h.narratives.length;
+    h.clearPerson = vi.fn(async () => {
+      expect(h.layers).toHaveLength(layersBefore);
+      expect(h.narratives).toHaveLength(narrativesBefore);
+      h.person = { personId: null, revision: 4, datasetVersion: "v" };
+      return h.person;
+    });
+    el("sceneList").querySelector('[data-scene="open"]').click();
+    await vi.waitFor(() => expect(h.clearPerson).toHaveBeenCalled());
+    await vi.waitFor(() => expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]));
+    expect(h.narratives.at(-1)).toBeNull();
+    expect(activeScreen()).toBe("free");
+    expect(el("sceneList").querySelector('[data-scene="open"]').classList.contains("is-active")).toBe(true);
+
+    h.person = { personId: "bea", revision: 5, datasetVersion: "v" };
+    h.clearPerson = vi.fn(async () => ({ personId: "bea", revision: 5, datasetVersion: "v" }));
+    const layersAtFailure = h.layers.length;
+    const narrativesAtFailure = h.narratives.length;
+    el("sceneList").querySelector('[data-scene="open"]').click();
+    await vi.waitFor(() => expect(h.clearPerson).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.layers).toHaveLength(layersAtFailure);
+    expect(h.narratives).toHaveLength(narrativesAtFailure);
+    expect(h.person.personId).toBe("bea");
+    expect(activeScreen()).toBe("free");
+    expect(el("sceneList").querySelector('[data-scene="open"]').classList.contains("is-active")).toBe(true);
+
+    h.clearPerson = vi.fn(async () => {
+      h.person = { personId: null, revision: h.person.revision + 1, datasetVersion: "v" };
+      return h.person;
+    });
+    el("homeBtn").click();
+    await vi.waitFor(() => expect(activeScreen()).toBe("home"));
+    await h.openCard('[data-open="nova"]');
+    el("ticks").querySelector('[data-step="3"]').click();
+    await vi.waitFor(() => {
+      expect(el("stepTitle").textContent).toBe("Mor Levy");
+      expect(el("cueStatus").dataset.status).toBe("ready");
+    });
+    el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
+    h.emit("narrativePresentationResult", {
+      ...h.commands.at(-1),
+      outcome: "opened",
+      slide: 9,
+      range: [9, 11],
+    });
+    await vi.waitFor(() => expect(el("kitPresentation").innerHTML).toContain('data-presentation-action="close"'));
+
+    h.person = { personId: "ada", revision: 8, datasetVersion: "v" };
+    h.clearPerson = vi.fn(async () => {
+      h.person = { personId: null, revision: 9, datasetVersion: "v" };
+      return h.person;
+    });
+    const layersAtClose = h.layers.length;
+    const narrativesAtClose = h.narratives.length;
+    el("sceneList").querySelector('[data-scene="open"]').click();
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
+    expect(h.clearPerson).not.toHaveBeenCalled();
+    expect(h.layers).toHaveLength(layersAtClose);
+    expect(h.narratives).toHaveLength(narrativesAtClose);
+    h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "unavailable" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.clearPerson).not.toHaveBeenCalled();
+    expect(h.layers).toHaveLength(layersAtClose);
+    expect(h.narratives).toHaveLength(narrativesAtClose);
+    expect(activeScreen()).not.toBe("home");
+
+    el("sceneList").querySelector('[data-scene="open"]').click();
+    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
+    h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
+    await vi.waitFor(() => expect(h.layers.at(-1)).toEqual([...HOME_LAYER_IDS]));
+    expect(h.clearPerson).toHaveBeenCalled();
+    expect(h.narratives.at(-1)).toBeNull();
+    expect(activeScreen()).not.toBe("home");
+  });
+
+  test("a failed close or search clear on a junction rearms the end timer from the latest clock", async () => {
+    const synced = [];
+    const sync = vi.spyOn(nliTimelineHostMethods, "_syncNliEndedTimer").mockImplementation(function record(clock) {
+      synced.push(clock);
+    });
+    setLocale("en", { persist: false });
+    try {
+      session = mount();
+      await bootRemote(session);
+      const { h } = session;
+
+      el("narrativeList").querySelector('[data-open="nova"]').click();
+      await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("The Nova site"));
+      el("ticks").querySelector('[data-step="3"]').click();
+      await vi.waitFor(() => {
+        expect(el("stepTitle").textContent).toBe("Mor Levy");
+        expect(el("cueStatus").dataset.status).toBe("ready");
+      });
+      el("kitPresentation").querySelector('[data-presentation-action="open"]').click();
+      await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("open"));
+      h.emit("narrativePresentationResult", {
+        ...h.commands.at(-1),
+        outcome: "opened",
+        slide: 9,
+        range: [9, 11],
+      });
+      await vi.waitFor(() => expect(el("kitPresentation").innerHTML).toContain('data-presentation-action="close"'));
+
+      const playing = {
+        phase: "playing",
+        revision: 11,
+        loop: false,
+        beats: [400, 740],
+        membership: ["nli.lines"],
+        positionMs: 0,
+        anchorMs: 1,
+      };
+      h.clock = playing;
+      const patchesBeforeClose = h.patches.length;
+      const seenBeforeClose = synced.length;
+      el("nextBtn").click();
+      await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
+      const latestDuringClose = { ...playing, revision: 12 };
+      h.clock = latestDuringClose;
+      h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "unavailable" });
+      await vi.waitFor(() => expect(synced.length).toBeGreaterThan(seenBeforeClose));
+      expect(synced.at(-1)).toBe(latestDuringClose);
+      expect(synced.at(-1)).not.toBe(playing);
+      expect(h.patches).toHaveLength(patchesBeforeClose);
+      expect(el("stepTitle").textContent).toBe("Mor Levy");
+
+      el("homeBtn").click();
+      await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
+      h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "closed" });
+      await vi.waitFor(() => expect(activeScreen()).toBe("home"));
+      el("narrativeList").querySelector('[data-open="show"]').click();
+      await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("The opening minutes"));
+      await vi.waitFor(() => expect(el("cueStatus").dataset.status).not.toBe("applying"));
+      const junction = document.createElement("button");
+      junction.dataset.step = "1";
+      el("ticks").append(junction);
+      h.clock = { ...playing, revision: 20 };
+      junction.click();
+      await vi.waitFor(() => expect(el("stepTitle").textContent).toBe("Segev family"));
+      await vi.waitFor(() => expect(el("cueStatus").dataset.status).not.toBe("applying"));
+
+      const previousClock = h.clock;
+      const patchesBeforeClear = h.patches.length;
+      const seenBeforeClear = synced.length;
+      h.person = { personId: "ada", revision: 30, datasetVersion: "v" };
+      h.clearPerson = vi.fn(async () => {
+        h.clock = { ...previousClock, revision: previousClock.revision + 4 };
+        return { personId: "ada", revision: 30, datasetVersion: "v" };
+      });
+      el("nextBtn").click();
+      await vi.waitFor(() => expect(synced.length).toBeGreaterThan(seenBeforeClear));
+      expect(synced.at(-1)).toBe(h.clock);
+      expect(synced.at(-1)).not.toBe(previousClock);
+      expect(synced.at(-1).revision).toBe(previousClock.revision + 4);
+      expect(h.patches).toHaveLength(patchesBeforeClear);
+      expect(el("stepTitle").textContent).toBe("Segev family");
+    } finally {
+      sync.mockRestore();
+    }
   });
 
   test("staff escape buttons follow the step kinds, not whichever live overlay flags are on", async () => {

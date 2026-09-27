@@ -118,9 +118,14 @@ describe("NLI staff home renderer", () => {
       expect(block).not.toContain("-webkit-line-clamp: unset");
       expect(block).not.toContain("overflow: visible");
     }
-    expect(portrait).toContain("--tap: 60px");
-    expect(landscape).toContain("--tap: 54px");
+    expect(portrait).not.toMatch(/--tap\s*:/);
+    expect(portrait).not.toMatch(/--header-btn\s*:/);
+    expect(landscape).not.toMatch(/--tap\s*:/);
+    expect(landscape).not.toMatch(/--header-btn\s*:/);
+    expect(portrait).toContain("min-height: 72px");
+    expect(landscape).toContain("min-height: 56px");
     expect(page).toContain("--tap: clamp(44px, 6.4vh, 56px)");
+    expect(page).toContain("--header-btn: 48px");
     expect(page).toContain('-webkit-line-clamp: 2');
     expect(page).toContain("-webkit-box-orient: vertical");
     expect(landscape).toContain('"top kit"');
