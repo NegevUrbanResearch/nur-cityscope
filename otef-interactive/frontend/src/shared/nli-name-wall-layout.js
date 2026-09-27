@@ -34,27 +34,53 @@ function overlapCount(placements) {
   return count;
 }
 
-function placeSide(items, output, dimensions, profile, coverage, ring, rowOrigin, yLimit) {
-  if (!items.length) return [];
+const MODEL_ALGORITHM = 'ordered-shared-justified-v2';
+const MODEL_SEARCH_STEPS = 28;
+function modelScanSpans(dimensions, profile, coverage, ring, boxes, rowOrigin) {
   const rowHeight = Math.max(...[...dimensions.values()].map((item) => item.height));
   const pitch = rowHeight + profile.spacingPx, result = [];
+  for (const output of SIDES) {
+    const yLimit = boxes[output].y1 - profile.edgeInsetPx;
+    for (let y = rowOrigin + rowHeight / 2; y + rowHeight / 2 <= yLimit + 1e-7; y += pitch) {
+      const spans = nameWallRowSpans(coverage, { output, y0: y - rowHeight / 2, y1: y + rowHeight / 2,
+        inset: profile.edgeInsetPx, ring });
+      for (const [left, right] of spans.slice().reverse()) result.push({ output, y, left, right });
+    }
+  }
+  return result;
+}
+
+function packModelStream(items, dimensions, profile, spans, fraction, collect = false) {
+  const result = collect ? [] : null;
   let index = 0;
-  for (let y = rowOrigin + rowHeight / 2; y + rowHeight / 2 <= yLimit + 1e-7 && index < items.length; y += pitch) {
-    const spans = nameWallRowSpans(coverage, { output, y0: y - rowHeight / 2, y1: y + rowHeight / 2,
-      inset: profile.edgeInsetPx, ring });
-    for (const [left, right] of spans.slice().reverse()) {
-      let cursor = right;
-      while (index < items.length) {
-        const row = items[index], measure = dimensions.get(row.name);
-        if (cursor - measure.width < left - 1e-7) break;
+  let usedSpans = 0;
+  for (const { output, y, left, right } of spans) {
+    if (index === items.length) break;
+    const budget = fraction * (right - left);
+    let used = 0, count = 0;
+    const first = index;
+    while (index < items.length) {
+      const row = items[index], measure = dimensions.get(row.name);
+      const next = measure.width + (count ? profile.spacingPx : 0);
+      if (used + next > budget + 1e-7) break;
+      used += next;
+      count++; index++;
+    }
+    if (!count) continue;
+    usedSpans++;
+    if (collect) {
+      const widths = items.slice(first, index).map((row) => dimensions.get(row.name).width);
+      const gap = count > 1 ? (right - left - widths.reduce((sum, width) => sum + width, 0)) / (count - 1) : 0;
+      let cursor = count === 1 ? (left + right + widths[0]) / 2 : right;
+      for (let i = 0; i < count; i++) {
+        const row = items[first + i], measure = dimensions.get(row.name);
         result.push({ id: row.pid, name: row.name, output, x: cursor - measure.width / 2, y,
           width: measure.width, height: measure.height });
-        cursor -= measure.width + profile.spacingPx;
-        index++;
+        cursor -= measure.width + gap;
       }
     }
   }
-  return index === items.length ? result : null;
+  return index === items.length ? { placements: result, usedSpans } : null;
 }
 
 const PAGE_ALGORITHM = 'fixed-pitch-page-minimax-inward-v2';
@@ -234,33 +260,46 @@ export async function buildNamesWallLayout(payload) {
     ring = geometry ? payload.ring.map(geometry.project) : payload.ring;
     if (!validNameWallRing(ring)) return fail('invalid Tkuma ring');
   } else if (mode !== 'wall') return fail('invalid wall mode');
-  let chosen = null, effective = null, chosenPages = null;
+  let chosen = null, effective = null, chosenPages = null, chosenModel = null;
   for (let size = profile.requestedFontPx; size >= 1; size--) {
     const metrics = metricSets.get(size);
     if (!metrics || ordered.some((row) => !metrics.has(row.name))) return fail(`missing font metrics at ${size}px`);
     let dimensions;
     try { dimensions = new Map(ordered.map((row) => [row.name, metricRectangle(metrics.get(row.name), size)])); }
     catch (error) { return fail(error.message); }
-    const placed = [], pages = {};
-    let complete = true;
-    for (const side of SIDES) {
-      const regular = mode === 'wall' ? placeRegularSide(halves[side], side, dimensions, profile, coverage,
-        origin, boxes[side].y1 - profile.edgeInsetPx, { config: payload.config || payload.geometry?.projectionConfig,
-          mesh: payload.meshes?.[side], logicalPlane }) : null;
-      const sidePlacements = mode === 'wall' ? regular?.placements : placeSide(halves[side], side, dimensions,
-        profile, coverage, ring, origin, boxes[side].y1 - profile.edgeInsetPx);
-      if (!sidePlacements) { complete = false; break; }
-      if (regular) pages[side] = regular.page;
-      placed.push(...sidePlacements);
+    let placed = [], pages = {}, model = null;
+    if (mode === 'model') {
+      const spans = modelScanSpans(dimensions, profile, coverage, ring, boxes, origin);
+      if (!packModelStream(ordered, dimensions, profile, spans, 1)) continue;
+      let low = 0, high = 1;
+      for (let step = 0; step < MODEL_SEARCH_STEPS; step++) {
+        const middle = (low + high) / 2;
+        if (packModelStream(ordered, dimensions, profile, spans, middle)) high = middle;
+        else low = middle;
+      }
+      model = { fraction: high, safeSpans: spans.length,
+        ...packModelStream(ordered, dimensions, profile, spans, high, true) };
+      placed = model.placements;
+    } else {
+      let complete = true;
+      for (const side of SIDES) {
+        const regular = placeRegularSide(halves[side], side, dimensions, profile, coverage,
+          origin, boxes[side].y1 - profile.edgeInsetPx, { config: payload.config || payload.geometry?.projectionConfig,
+            mesh: payload.meshes?.[side], logicalPlane });
+        if (!regular) { complete = false; break; }
+        pages[side] = regular.page;
+        placed.push(...regular.placements);
+      }
+      if (!complete) continue;
     }
-    if (!complete) continue;
     const invalid = placed.some((p) => {
       const expanded = { ...p, width: p.width + 2 * profile.edgeInsetPx, height: p.height + 2 * profile.edgeInsetPx };
       return !rectCoveredByPieces(expanded, coverage.pieces[p.output]) ||
         (ring && !ringContainsGuardedRect(ring, p, profile.edgeInsetPx));
     });
     if (invalid || overlapCount(placed)) continue;
-    chosen = placed; effective = size; chosenPages = mode === 'wall' ? pages : null; break;
+    chosen = placed; effective = size; chosenPages = mode === 'wall' ? pages : null;
+    chosenModel = model; break;
   }
   diagnostics.packMs = performance.now() - started;
   if (!chosen) return fail('name field capacity or calibration at 1px');
@@ -298,10 +337,15 @@ export async function buildNamesWallLayout(payload) {
     coverageIdentity: payload.coverageIdentity || coverage.outputIdentities, fontIdentity: payload.fontIdentity,
     mode, profile, innerEdgeInsetPx: namesWall.innerEdgeInsetPx, effective,
     ringHash: mode === 'model' ? ringHash : null,
-    ...(mode === 'wall' ? { pageAlgorithm: PAGE_ALGORITHM, pages: chosenPages } : {}),
+    ...(mode === 'wall' ? { pageAlgorithm: PAGE_ALGORITHM, pages: chosenPages } : { modelAlgorithm: MODEL_ALGORITHM }),
     placements: chosen.map((p) => ({ ...p, x: round(p.x), y: round(p.y), width: round(p.width), height: round(p.height) })) });
   const digest = await sha256Hex(new TextEncoder().encode(JSON.stringify(digestInput)));
   diagnostics.state = 'valid'; diagnostics.reason = null; diagnostics.effectiveFontPx = effective;
+  if (chosenModel) {
+    diagnostics.modelUtilization = chosenModel.fraction;
+    diagnostics.modelSafeSpans = chosenModel.safeSpans;
+    diagnostics.modelUsedSpans = chosenModel.usedSpans;
+  }
   diagnostics.left = chosen.filter((p) => p.output === 'left').length;
   diagnostics.right = chosen.length - diagnostics.left;
   return { placements: chosen, ...(mode === 'wall' ? { pages: chosenPages } : {}), logicalPlane, geojson, groupGeojson, byPid, fontSize: effective,

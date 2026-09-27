@@ -20,6 +20,8 @@ test("view renders draggable node workspace and preserves an existing focused in
   walk(root);
   expect(labels.join(" ")).toContain("Crop diagram");
   expect(labels.join(" ")).toContain("Drag headers to move nodes");
+  expect(labels.join(" ")).toContain("Left inner-edge clearance");
+  expect(labels.join(" ")).toContain("Right inner-edge clearance");
   expect([...view.nodeMap.keys()]).toEqual(["content", "names-wall", "pre", "left-crop", "right-crop", "left-fit", "right-fit", "left-keystone", "right-keystone", "left-grid", "right-grid", "left-output", "right-output"]);
   const graphColumn = root.children[0].children.find((node) => node.tagName === "DIV" && node.className === "config-workspace").children[0];
   const inspector = root.children[0].children.find((node) => node.className === "config-workspace").children[1];

@@ -11,7 +11,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
   let opacity = 0, revealSeconds = 0, selectedPid = null;
   let presentation = { alphaFor: () => 1 }, version = 0;
   const paint = (entry) => {
-    const { canvas, ctx, placements, matrix, fontPx, fontFamily, color } = entry;
+    const { canvas, ctx, placements, matrix, fontPx, fontFamily, color, mode } = entry;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -21,7 +21,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
     ctx.font = `${fontPx}px "${fontFamily}"`;
     ctx.fillStyle = color;
     ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = mode === 'model' ? 1 : 3;
     ctx.lineJoin = 'round';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -73,7 +73,7 @@ export function createProjectionNameCanvasAdapter({ document = globalThis.docume
         }
         indexByPid.set(String(item.id), identity.index);
       }
-      pending = { canvas, ctx, placements: own, matrix, fontPx, fontFamily, color,
+      pending = { canvas, ctx, placements: own, matrix, fontPx, fontFamily, color, mode: config.namesWall?.activeMode,
         revealVertices: new Float32Array(vertices), indexByPid };
       paint(pending);
       return { source: canvas };

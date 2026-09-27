@@ -35,6 +35,19 @@ test('draws whole names only for the owned output with the exact logical plane',
   expect(new Set(Array.from({ length: 6 }, (_, i) => descriptor.revealVertices[i * 4 + 3])).size).toBe(1);
 });
 
+test('model text uses a thinner outline while wall text keeps its existing outline', () => {
+  const widths = [];
+  for (const mode of ['wall', 'model']) {
+    const f = fakeCanvas();
+    f.ctx.strokeText.mockImplementation(() => widths.push([mode, f.ctx.lineWidth]));
+    const config = structuredClone(DEFAULT_PROJECTION_CONFIG);
+    config.namesWall.activeMode = mode;
+    const adapter = createProjectionNameCanvasAdapter({ document: { createElement: () => f.canvas }, output: 'left' });
+    adapter.prepare({ config, placements, logicalPlane: plane });
+  }
+  expect(widths).toEqual([['wall', 3], ['model', 1]]);
+});
+
 test('global delays, selected bypass, and reveal clock change no painted pixels or static vertices', () => {
   const f = fakeCanvas();
   const adapter = createProjectionNameCanvasAdapter({ document: { createElement: () => f.canvas }, output: 'right' });

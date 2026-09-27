@@ -216,6 +216,7 @@ export function createProjectionConfigView(root, {
   const namesModeControls = [];
   const namesStatusControls = [];
   const pageSpacingResetControls = [];
+  const namesWallUnitsHelp = "Font, spacing, and edge inset use reference-plane pixels. Inner-edge clearances reserve final-output pixels in both modes and repack names.";
   function pageSpacingReset() {
     const reset = button(doc, "Reset page spacing to 0%", "reset-page-spacing");
     reset.addEventListener("click", (event) => {
@@ -249,7 +250,7 @@ export function createProjectionConfigView(root, {
     handle.append(make(doc, "span", { className: "node-grip", ariaHidden: "true" }, "⋮⋮"), make(doc, "span", {}, label));
     card.append(handle, make(doc, "p", { className: "node-description" }, description));
     if (id === "names-wall") {
-      card.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, "Settings use reference-plane pixels before output transforms."));
+      card.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp));
     }
     const nodeFields = descriptors.filter((item) => item.node === id);
     for (const descriptor of nodeFields) { const control = renderField(doc, descriptor, onField, onNudge, false); fields.set(`${id}:${descriptor.path}`, control); card.appendChild(control.wrap); }
@@ -293,7 +294,8 @@ export function createProjectionConfigView(root, {
   const mobilePreviewHost = make(doc, "div", { className: "mobile-preview-host" });
   controls.inspectorFields = make(doc, "div", { className: "inspector-fields" });
   controls.namesWallInspector = make(doc, "section", { className: "names-wall-inspector", ariaLabel: "Names wall profile controls" });
-  controls.namesWallInspector.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
+  controls.namesWallInspector.append(namesModeControl(), make(doc, "p", { className: "names-wall-units" }, namesWallUnitsHelp),
+    make(doc, "p", { className: "names-wall-units" }, "0 keeps the current positions. Increase to move the pages inward where space allows."), pageSpacingReset(), namesStatus());
   for (const descriptor of descriptors) { const control = renderField(doc, descriptor, onField, onNudge); fields.set(`inspector:${descriptor.path}`, control); controls.inspectorFields.appendChild(control.wrap); }
   controls.warpPanel = make(doc, "section", { className: "warp-inspector", ariaLabel: "Warp editor" });
   controls.warpHeading = make(doc, "h3", {}, "Warp editor");

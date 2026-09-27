@@ -36,8 +36,8 @@ const NAMES_WALL_DESCRIPTORS = [
   { path: "namesWall.spacingPx", node: "names-wall", label: "Name spacing", min: 0, max: 32, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.edgeInsetPx", node: "names-wall", label: "Edge inset", min: 0, max: 256, step: 1, fine: 1, unit: "px" },
   { path: "namesWall.inwardShiftPercent", node: "names-wall", label: "Bring pages together", min: 0, max: 100, step: 1, fine: 1, unit: "%", wallOnly: true, commitOnChange: true },
-  { path: "namesWall.innerEdgeInsetPx.left", node: "names-wall", label: "Left projector: right-edge inset", min: 0, max: 960, step: 1, fine: 1, unit: "output px" },
-  { path: "namesWall.innerEdgeInsetPx.right", node: "names-wall", label: "Right projector: left-edge inset", min: 0, max: 960, step: 1, fine: 1, unit: "output px" },
+  { path: "namesWall.innerEdgeInsetPx.left", node: "names-wall", label: "Left inner-edge clearance", min: 0, max: 960, step: 1, fine: 1, unit: "output px" },
+  { path: "namesWall.innerEdgeInsetPx.right", node: "names-wall", label: "Right inner-edge clearance", min: 0, max: 960, step: 1, fine: 1, unit: "output px" },
 ].map((descriptor) => ({ ...descriptor, integer: true, displayMin: descriptor.min, displayMax: descriptor.max, displayStep: 1 }));
 const ALL_FIELD_DESCRIPTORS = [...FIELD_DESCRIPTORS, ...NAMES_WALL_DESCRIPTORS];
 

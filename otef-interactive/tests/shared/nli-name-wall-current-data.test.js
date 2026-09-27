@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import proj4 from 'proj4';
 import { test, expect, vi } from 'vitest';
 import { evaluateWarpMesh } from '../../frontend/src/shared/projection-warp-geometry.js';
-import { evaluateNameWallCoverage, rectCoveredByPieces, ringContainsGuardedRect } from '../../frontend/src/shared/nli-name-wall-coverage.js';
+import { evaluateNameWallCoverage, nameWallRowSpans, rectCoveredByPieces, ringContainsGuardedRect } from '../../frontend/src/shared/nli-name-wall-coverage.js';
 import { createNameFieldGeometry } from '../../frontend/src/shared/nli-name-field-geometry.js';
 import { prepareMemorialNameRecords } from '../../frontend/src/shared/nli-name-field-data.js';
 import { buildNamesWallLayout } from '../../frontend/src/shared/nli-name-wall-layout.js';
@@ -63,12 +63,19 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
     reason: first.diagnostics.reason, fontPx: first.fontSize, placed: first.diagnostics.placed,
     left: first.diagnostics.left, right: first.diagnostics.right, digest: first.digest });
   const expectedIds = new Set(records.map((record) => record.pid));
+  const orderedIds = records.slice().sort((a, b) => a.orderKey.localeCompare(b.orderKey, 'he',
+    { sensitivity: 'base', numeric: true }) || a.pid.localeCompare(b.pid)).map((record) => record.pid);
   const assertComplete = (field, mode) => {
     expect(field.diagnostics.state).toBe('valid');
     expect(field.placements).toHaveLength(records.length);
     expect(new Set(field.placements.map((p) => p.id))).toEqual(expectedIds);
-    expect(field.placements.filter((p) => p.output === 'left')).toHaveLength(Math.ceil(records.length / 2));
-    expect(field.placements.filter((p) => p.output === 'right')).toHaveLength(Math.floor(records.length / 2));
+    expect(field.placements.map((p) => p.id)).toEqual(orderedIds);
+    if (mode === 'wall') {
+      expect(field.placements.filter((p) => p.output === 'left')).toHaveLength(Math.ceil(records.length / 2));
+      expect(field.placements.filter((p) => p.output === 'right')).toHaveLength(Math.floor(records.length / 2));
+    } else {
+      expect(field.diagnostics.modelUsedSpans).toBeGreaterThanOrEqual(field.diagnostics.modelSafeSpans - 2);
+    }
     expect(field.fontSize).toBeGreaterThanOrEqual(1);
     expect(field).not.toHaveProperty('drawPieces');
     expect(field.diagnostics).toMatchObject({ missing: 0, extra: 0, duplicate: 0, overlap: 0, invalidCoverage: 0 });
@@ -126,8 +133,48 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
   const modeled = await buildNamesWallLayout({ ...input, namesWall: modelWall, ring, ringHash });
   console.info('Current model wall', { layoutMs: Math.round(performance.now() - modelStart),
     packMs: Math.round(modeled.diagnostics.packMs), state: modeled.diagnostics.state,
-    reason: modeled.diagnostics.reason, fontPx: modeled.fontSize, placed: modeled.diagnostics.placed });
+    reason: modeled.diagnostics.reason, fontPx: modeled.fontSize, placed: modeled.diagnostics.placed,
+    left: modeled.diagnostics.left, right: modeled.diagnostics.right,
+    usedSpans: modeled.diagnostics.modelUsedSpans, safeSpans: modeled.diagnostics.modelSafeSpans,
+    utilization: modeled.diagnostics.modelUtilization });
   assertComplete(modeled, 'model');
+  expect(modeled).not.toHaveProperty('pages');
+  expect(modeled.fontSize).toBe(5);
+  expect(modeled.diagnostics).toMatchObject({ left: 524, right: 704, modelSafeSpans: 200, modelUsedSpans: 199 });
+  const tighterModel = structuredClone(modelWall);
+  tighterModel.profiles.model.spacingPx = 1;
+  const tighter = await buildNamesWallLayout({ ...input, namesWall: tighterModel, ring, ringHash });
+  assertComplete(tighter, 'model');
+  expect(tighter.fontSize).toBe(6);
+  expect(tighter.diagnostics.modelUsedSpans).toBeGreaterThanOrEqual(tighter.diagnostics.modelSafeSpans - 2);
+  expect(tighter.digest).not.toBe(modeled.digest);
+  const projectedRing = ring.map(createNameFieldGeometry({ bounds, projectionConfig: config,
+    heading: logicalPlane.heading }).project);
+  const rowHeight = Math.max(...tighter.placements.map((placement) => placement.height));
+  let checkedSpans = 0;
+  for (const output of ['left', 'right']) {
+    const rows = Map.groupBy(tighter.placements.filter((placement) => placement.output === output), (placement) => placement.y);
+    for (const [y, row] of rows) {
+      const spans = nameWallRowSpans(coverage, { output, y0: y - rowHeight / 2, y1: y + rowHeight / 2,
+        inset: tighterModel.profiles.model.edgeInsetPx, ring: projectedRing });
+      for (const [left, right] of spans) {
+        const names = row.filter((placement) => placement.x - placement.width / 2 >= left - 1e-4 &&
+          placement.x + placement.width / 2 <= right + 1e-4);
+        if (!names.length) continue;
+        checkedSpans++;
+        if (names.length === 1) expect(names[0].x).toBeCloseTo((left + right) / 2, 4);
+        else {
+          expect(Math.min(...names.map((placement) => placement.x - placement.width / 2))).toBeCloseTo(left, 4);
+          expect(Math.max(...names.map((placement) => placement.x + placement.width / 2))).toBeCloseTo(right, 4);
+        }
+      }
+    }
+  }
+  expect(checkedSpans).toBe(tighter.diagnostics.modelUsedSpans);
+  const reorderedModel = await buildNamesWallLayout({ ...input, records: records.slice().reverse(),
+    namesWall: modelWall, ring, ringHash });
+  expect(reorderedModel.digest).toBe(modeled.digest);
+  expect(reorderedModel.placements).toEqual(modeled.placements);
   const schedule = nameRevealSchedule(records.map((record) => record.pid));
   for (const field of [first, modeled]) for (const side of ['left', 'right']) {
     const ctx = { save: vi.fn(), restore: vi.fn(), setTransform: vi.fn(), clearRect: vi.fn(),
@@ -139,7 +186,7 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
     adapter.commit();
     const descriptor = adapter.descriptor();
     const own = field.placements.filter((placement) => placement.output === side);
-    expect(own).toHaveLength(614);
+    expect(own).toHaveLength(field.diagnostics[side]);
     expect(descriptor.revealVertices).toHaveLength(own.length * 24);
     expect(ctx.fillText).toHaveBeenCalledTimes(own.length);
     for (let index = 0; index < own.length; index++) {
@@ -164,7 +211,7 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
     profiles: { ...modelWall.profiles, wall: { ...modelWall.profiles.wall, inwardShiftPercent: 100 } } }, ring, ringHash });
   expect(modelWithMovedWall.placements).toEqual(modeled.placements);
   expect(modelWithMovedWall.digest).toBe(modeled.digest);
-  expect(modeled.placements.map((p) => [p.id, p.output])).toEqual(first.placements.map((p) => [p.id, p.output]));
+  expect(modeled.placements.map((p) => [p.id, p.output])).not.toEqual(first.placements.map((p) => [p.id, p.output]));
   const leftInsetConfig = structuredClone(config);
   leftInsetConfig.namesWall.innerEdgeInsetPx.left = 16;
   const leftInsetCoverage = evaluateNameWallCoverage({ config: leftInsetConfig, meshes, logicalPlane });
@@ -183,6 +230,22 @@ test('captured current wall keeps every PID whole, safe, and stable in both mode
       left: 614, right: 614, missing: 0, duplicate: 0, invalidCoverage: 0 });
     expect(new Set(insetField.placements.map((p) => p.id))).toEqual(expectedIds);
     for (const placement of insetField.placements)
+      expect(rectCoveredByPieces(placement, insetCoverage.pieces[placement.output])).toBe(true);
+  }
+  for (const [side, pixels] of [['left', 16], ['right', 24]]) {
+    const insetConfig = structuredClone(config);
+    insetConfig.namesWall.activeMode = 'model';
+    insetConfig.namesWall.profiles.model.requestedFontPx = maxSize;
+    insetConfig.namesWall.innerEdgeInsetPx[side] = pixels;
+    const insetCoverage = evaluateNameWallCoverage({ config: insetConfig, meshes, logicalPlane });
+    expect(insetCoverage.pieces[side]).not.toEqual(coverage.pieces[side]);
+    expect(insetCoverage.pieces[side === 'left' ? 'right' : 'left'])
+      .toEqual(coverage.pieces[side === 'left' ? 'right' : 'left']);
+    const field = await buildNamesWallLayout({ ...input, coverage: insetCoverage, namesWall: insetConfig.namesWall,
+      geometry: { bounds, projectionConfig: insetConfig }, ring, ringHash });
+    assertComplete(field, 'model');
+    expect(field.fontSize).toBe(5);
+    for (const placement of field.placements)
       expect(rectCoveredByPieces(placement, insetCoverage.pieces[placement.output])).toBe(true);
   }
 }, 180_000);

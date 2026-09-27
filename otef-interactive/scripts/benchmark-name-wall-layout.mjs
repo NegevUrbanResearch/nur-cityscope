@@ -44,7 +44,8 @@ const metrics = Object.entries(sizes).map(([size, values]) => {
 const ring = read('public/processed/layers/projector_base/Tkuma_Area_LIne.geojson').features[0].geometry.coordinates;
 const ringHash = await sha256Hex(new TextEncoder().encode(JSON.stringify(ring)));
 const expectedIds = new Set(records.map((record) => record.pid));
-let ownership = null;
+const orderedIds = records.slice().sort((a, b) => a.orderKey.localeCompare(b.orderKey, 'he',
+  { sensitivity: 'base', numeric: true }) || a.pid.localeCompare(b.pid)).map((record) => record.pid);
 for (const mode of ['wall', 'model']) {
   config.namesWall.activeMode = mode;
   config.namesWall.profiles[mode].requestedFontPx = Math.max(...metrics.map(([size]) => size));
@@ -55,14 +56,17 @@ for (const mode of ['wall', 'model']) {
   assert.equal(field.diagnostics.state, 'valid', `${mode}: ${field.diagnostics.reason}`);
   assert.equal(field.placements.length, records.length);
   assert.deepEqual(new Set(field.placements.map((p) => p.id)), expectedIds);
-  assert.equal(field.placements.filter((p) => p.output === 'left').length, Math.ceil(records.length / 2));
-  assert.equal(field.placements.filter((p) => p.output === 'right').length, Math.floor(records.length / 2));
+  assert.deepEqual(field.placements.map((p) => p.id), orderedIds, `${mode}: global scan order`);
+  if (mode === 'wall') {
+    assert.equal(field.diagnostics.left, Math.ceil(records.length / 2));
+    assert.equal(field.diagnostics.right, Math.floor(records.length / 2));
+  } else {
+    assert.ok(field.diagnostics.left > 0 && field.diagnostics.right > 0);
+    assert.ok(field.diagnostics.modelUsedSpans >= field.diagnostics.modelSafeSpans - 2);
+  }
   assert.ok(field.fontSize >= 1);
   assert.ok(!Object.hasOwn(field, 'drawPieces'));
   for (const placement of field.placements) assert.ok(rectCoveredByPieces(placement, coverage.pieces[placement.output]));
-  const currentOwnership = field.placements.map((p) => [p.id, p.output]);
-  if (ownership) assert.deepEqual(currentOwnership, ownership, 'both modes must retain PID ownership');
-  ownership = currentOwnership;
   console.log(JSON.stringify({ mode, heading: logicalPlane.heading, revision: saved.revision, included: records.length, coverageMs, layoutMs,
     totalMs: coverageMs + layoutMs, state: field.diagnostics.state, effectiveFontPx: field.fontSize,
     left: field.diagnostics.left, right: field.diagnostics.right, packMs: Math.round(field.diagnostics.packMs),

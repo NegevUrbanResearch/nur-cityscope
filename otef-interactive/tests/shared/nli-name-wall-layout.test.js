@@ -49,18 +49,89 @@ test('cold and prewarmed wall layouts have one digest despite originating mode a
   expect(second.digest).toBe(first.digest);
 });
 
-test('even split and both modes retain the same PID ownership', async () => {
+test('regular pages split evenly while model fills safe spans in one ordered stream', async () => {
   const ids = ['a','b','c','d'];
-  const input = payload({ records: records(ids), metrics: metrics(ids) });
+  const asymmetric = { pieces: { left: [rectPiece(0, 50, 0, 160)], right: [rectPiece(50, 100)] },
+    outputIdentities: coverage.outputIdentities };
+  const input = payload({ records: records(ids), metrics: metrics(ids), coverage: asymmetric });
   const wall = await buildNamesWallLayout(input);
   const model = await buildNamesWallLayout({ ...input, namesWall: { ...input.namesWall, activeMode: 'model' },
-    ring: [[0,0],[100,0],[100,80],[0,80],[0,0]], ringHash: 'square' });
+    ring: [[0,0],[100,0],[100,160],[0,160],[0,0]], ringHash: 'square' });
   expect(wall.diagnostics.state).toBe('valid');
   expect(model.diagnostics.state).toBe('valid');
   expect(model).not.toHaveProperty('pages');
   expect(model.fontSize).toBe(wall.fontSize);
-  expect(model.placements.map((p) => [p.id, p.output])).toEqual(wall.placements.map((p) => [p.id, p.output]));
-  expect(model.placements.filter((p) => p.output === 'left')).toHaveLength(2);
+  expect(wall.diagnostics).toMatchObject({ left: 2, right: 2 });
+  expect(model.diagnostics).toMatchObject({ left: 4, right: 0, placed: 4, missing: 0, duplicate: 0 });
+  expect(model.placements.map((p) => p.id)).toEqual(ids);
+  expect(model.placements.map((p) => p.output)).toEqual(['left', 'left', 'left', 'left']);
+  expect(model.geojson.features.map((feature) => feature.properties.visible_spans)).toEqual([
+    ['left'], ['left'], ['left'], ['left'],
+  ]);
+});
+
+test('model waits for a wider later span without dropping the next long name', async () => {
+  const ids = ['a', 'b', 'c'];
+  const narrowFirst = { pieces: { left: [rectPiece(0, 60, 0, 40), rectPiece(70, 90, 0, 40)],
+    right: [rectPiece(100, 160, 0, 40)] }, outputIdentities: coverage.outputIdentities };
+  const measured = [[8, ids.map((id) => [`שם ${id}`, { width: id === 'a' ? 14 : 4,
+    left: 0, right: id === 'a' ? 14 : 4, ascent: 7, descent: 2 }])]];
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  const result = await buildNamesWallLayout(payload({ records: records(ids), metrics: measured,
+    coverage: narrowFirst, namesWall: wall,
+    ring: [[0,0],[160,0],[160,40],[0,40],[0,0]], ringHash: 'wide-after-narrow' }));
+  expect(result.diagnostics).toMatchObject({ state: 'valid', placed: 3, missing: 0, duplicate: 0,
+    invalidCoverage: 0, overlap: 0 });
+  expect(result.placements.map((p) => p.id)).toEqual(ids);
+  expect(result.placements[0].output).toBe('left');
+  expect(result.placements[0].x + result.placements[0].width / 2).toBeLessThanOrEqual(60);
+  for (const p of result.placements) {
+    expect(rectCoveredByPieces(p, narrowFirst.pieces[p.output])).toBe(true);
+    expect(ringContainsGuardedRect([[0,0],[160,0],[160,40],[0,40],[0,0]], p)).toBe(true);
+  }
+});
+
+test('model tries the full span width before lowering the common font', async () => {
+  const ids = ['a', 'b', 'c', 'd'];
+  const oneRow = { pieces: { left: [rectPiece(0, 53, 0, 20)], right: [rectPiece(60, 113, 0, 20)] },
+    outputIdentities: coverage.outputIdentities };
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  const result = await buildNamesWallLayout(payload({ records: records(ids),
+    metrics: [...metrics(ids, 11, [8]), ...metrics(ids, 11, [7])], coverage: oneRow, namesWall: wall,
+    ring: [[0,0],[113,0],[113,20],[0,20],[0,0]], ringHash: 'one-row' }));
+  expect(result.diagnostics).toMatchObject({ state: 'valid', placed: 4, left: 2, right: 2,
+    missing: 0, duplicate: 0, invalidCoverage: 0 });
+  expect(result.fontSize).toBe(7);
+  expect(result.placements.map((p) => p.id)).toEqual(ids);
+});
+
+test('model distributes each populated row across its full safe span', async () => {
+  const ids = ['a', 'b', 'c', 'd'];
+  const twoSpans = { pieces: { left: [rectPiece(0, 60, 0, 20)], right: [rectPiece(60, 120, 0, 20)] },
+    outputIdentities: coverage.outputIdentities };
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  const result = await buildNamesWallLayout(payload({ records: records(ids), metrics: metrics(ids),
+    coverage: twoSpans, namesWall: wall,
+    ring: [[0,0],[120,0],[120,20],[0,20],[0,0]], ringHash: 'two-spans' }));
+  expect(result.diagnostics).toMatchObject({ state: 'valid', placed: 4, left: 2, right: 2,
+    invalidCoverage: 0, overlap: 0 });
+  for (const side of ['left', 'right']) {
+    const [first, second] = result.placements.filter((p) => p.output === side);
+    expect(first.y).toBe(second.y);
+    const [left, right] = side === 'left' ? [0, 60] : [60, 120];
+    expect(first.x + first.width / 2).toBeCloseTo(right, 5);
+    expect(second.x - second.width / 2).toBeCloseTo(left, 5);
+    expect(first.x - first.width / 2 - (second.x + second.width / 2)).toBeGreaterThanOrEqual(2);
+  }
+});
+
+test('model centers a single name in a safe span', async () => {
+  const wall = structuredClone(namesWall); wall.activeMode = 'model';
+  const result = await buildNamesWallLayout(payload({ records: records(['a']), metrics: metrics(['a']),
+    namesWall: wall, ring: [[0,0],[100,0],[100,80],[0,80],[0,0]], ringHash: 'single' }));
+  expect(result.diagnostics.state).toBe('valid');
+  expect(result.placements).toHaveLength(1);
+  expect(result.placements[0].x).toBeCloseTo(25, 5);
 });
 
 test('shrinks both outputs together below 8 px and never returns a partial field', async () => {
