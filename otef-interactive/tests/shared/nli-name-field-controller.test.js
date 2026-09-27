@@ -213,7 +213,7 @@ describe("createNliNameFieldController", () => {
     expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.18);
     disable(d); await vi.advanceTimersByTimeAsync(300);
     expect(adapter.getOpacity()).toBeCloseTo(0.5, 1);
-    expect(d.map.getPaintProperty('nli-name-field-connector-line', 'line-opacity')).toBeCloseTo(0.4, 1);
+    expect(d.map.getLayer('nli-name-field-connector-line')).toBeFalsy();
     expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBeGreaterThan(0.18);
     expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBeLessThan(0.8);
     enable(d); expect(adapter.getOpacity()).toBeCloseTo(0.5, 1);
@@ -247,19 +247,19 @@ describe("createNliNameFieldController", () => {
     d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
     expect(adapter.getOpacity()).toBe(0);
     expect(d.map.getSource('nli-name-field')).toBeTruthy();
-    expect(d.map.getSource('nli-name-field-connector')).toBeTruthy();
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
     const presentationCalls = adapter.setPresentation.mock.calls.length;
     d.map.remountStyle({ layers: [{ id: 'nli__people_names__labels', type: 'symbol',
       layout: { visibility: 'visible' } }] });
     expect(d.map.getLayoutProperty('nli__people_names__labels', 'visibility')).toBe('none');
     expect(d.map.getSource('nli-name-field')).toBeTruthy();
-    expect(d.map.getSource('nli-name-field-connector')).toBeTruthy();
-    expect(d.map.getLayer('nli-name-field-connector-line')).toBeTruthy();
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-field-connector-line")).toBeFalsy();
     expect(adapter.getOpacity()).toBe(0);
     expect(adapter.setPresentation).toHaveBeenCalledTimes(presentationCalls);
     enable(d);
     expect(adapter.getOpacity()).toBe(1);
-    expect(d.map.getSource('nli-name-field-connector').data.features).toHaveLength(1);
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
     expect(adapter.prepare).toHaveBeenCalledOnce();
     expect(adapter.setPresentation).toHaveBeenCalledTimes(presentationCalls);
     expect(loadNliNameField).not.toHaveBeenCalled();
@@ -271,13 +271,15 @@ describe("createNliNameFieldController", () => {
     await d.controller.prepareProjectionCandidate({ generation: 1, config: DEFAULTS, field: canvasField(), revision: 1 });
     d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
     d.emit('navigationCommand', { placeId: 'custom-reim-parking' });
-    expect(d.map.getSource('nli-name-place-selection').data.features).toHaveLength(1);
+    expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
+    expect(d.map.getLayer("nli-name-place-selection-point")).toBeFalsy();
     const presentationCalls = adapter.setPresentation.mock.calls.length;
     d.map.remountStyle({ layers: [{ id: 'nli__people_names__labels', type: 'symbol' }] });
-    expect(d.map.getSource('nli-name-place-selection').data.features).toHaveLength(1);
+    expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
+    expect(d.map.getLayer("nli-name-place-selection-halo")).toBeFalsy();
     expect(adapter.setPresentation).toHaveBeenCalledTimes(presentationCalls);
     enable(d);
-    expect(d.map.getSource('nli-name-place-selection').data.features).toHaveLength(1);
+    expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
     expect(adapter.prepare).toHaveBeenCalledOnce();
     d.controller.dispose();
   });
@@ -312,7 +314,7 @@ describe("createNliNameFieldController", () => {
     });
     d.controller.dispose();
   });
-  it('keeps selection, place focus and connector metadata through visibility', async () => {
+  it('keeps selection and place focus through visibility without connector chrome', async () => {
     const d = setup({ applyProjectionConfig: false, projectionSpan: 'left', snapshot: { personId: null, datasetVersion: 'v1' } });
     const settlement = 'projector_base__שמות_יישובים__labels';
     d.map.addLayer({ id: settlement, type: 'symbol', paint: { 'text-opacity': 0.8 } });
@@ -321,22 +323,16 @@ describe("createNliNameFieldController", () => {
     d.controller.commitProjectionCandidate(1); d.controller.finalizeProjectionCandidate(1);
     enable(d);
     d.emit('personSelection', { personId: 'p-1', datasetVersion: 'v1' });
-    expect(d.map.getSource('nli-name-field-connector').data.features).toHaveLength(1);
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-field-connector-line")).toBeFalsy();
     d.emit('navigationCommand', { placeId: 'custom-reim-parking' });
-    expect(d.map.getSource('nli-name-place-selection').data.features).toHaveLength(1);
+    expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
+    expect(d.map.getLayer("nli-name-place-selection-point")).toBeFalsy();
     disable(d);
-    expect(d.map.getPaintProperty('nli-name-field-connector-line', 'line-opacity')).toBe(0);
-    expect(d.map.getPaintProperty('nli-name-place-selection-point', 'circle-opacity')).toBe(0);
-    expect(d.map.getPaintProperty('nli-name-place-selection-halo', 'circle-stroke-opacity')).toBe(0);
-    expect(d.map.getPaintProperty('nli-name-place-selection-point', 'circle-stroke-opacity')).toBe(0);
     expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.8);
     enable(d);
-    expect(d.map.getPaintProperty('nli-name-field-connector-line', 'line-opacity')).toBe(0.8);
-    expect(d.map.getPaintProperty('nli-name-place-selection-point', 'circle-opacity')).toBe(1);
-    expect(d.map.getPaintProperty('nli-name-place-selection-halo', 'circle-stroke-opacity')).toBe(1);
-    expect(d.map.getPaintProperty('nli-name-place-selection-point', 'circle-stroke-opacity')).toBe(1);
     expect(adapter.prepare).toHaveBeenCalledTimes(1);
-    expect(d.map.getSource('nli-name-field-connector')).toBeTruthy();
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
     d.emit('navigationCommand', { cancelFocus: true });
     expect(adapter.setPresentation).toHaveBeenCalled();
     d.controller.dispose();
@@ -388,7 +384,7 @@ describe("createNliNameFieldController", () => {
     d.emit('navigationCommand',{placeId:'custom-reim-parking'});
     d.emit('navigationCommand',{cancelFocus:true});
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBeNull();
-    expect(d.map.getSource('nli-name-place-selection').data.features).toEqual([]);
+    expect(d.map.getLayer("nli-name-place-selection-point")).toBeFalsy();
   });
   it('returns the overlay group properties.name for a place, never group_id', async () => {
     loadNliNameField.mockResolvedValueOnce(groupedField());
@@ -606,12 +602,12 @@ describe("createNliNameFieldController", () => {
     await flush();
     expect(d.map.getLayer("nli-name-field-labels")).toBeNull();
     expect(d.map.getSource("nli-name-field")).toBeNull();
-    expect(d.map.getSource("nli-name-field-connector")).toBeNull();
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
     expect(d.map.getLayoutProperty("nli__people_names__labels", "visibility")).toBe("none");
     error.mockRestore();
   });
 
-  it("remounts on style load using cached geometry and restores selected connector", async () => {
+  it("remounts on style load using cached geometry without a connector", async () => {
     loadNliNameField.mockResolvedValueOnce(field());
     const d = setup({ projectionSpan: "right", snapshot: { personId: "p-2", datasetVersion: "v1" } });
     enable(d);
@@ -619,7 +615,8 @@ describe("createNliNameFieldController", () => {
     d.map.remountStyle({ layers: [{ id: "nli__people_names__labels", type: "symbol" }] });
     expect(loadNliNameField).toHaveBeenCalledTimes(1);
     expect(d.map.getSource("nli-name-field").data.features).toHaveLength(2);
-    expect(d.map.getSource("nli-name-field-connector").data.features[0].geometry.coordinates).toEqual([[30, 40], [3, 4]]);
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-field-connector-line")).toBeFalsy();
   });
 
   it("cleans a failed style-load mount and retries on the next sync", async () => {
@@ -680,14 +677,14 @@ describe("createNliNameFieldController", () => {
     expect(source.data.features[0].geometry.coordinates).toEqual([10, 20]);
   });
 
-  it("validates selection and draws an exact source connector", async () => {
+  it("validates selection and keeps projection span filters on name layers", async () => {
     loadNliNameField.mockResolvedValueOnce(field());
     const d = setup({ projectionSpan: "left", snapshot: { personId: "p-1", datasetVersion: "v1", revision: 1 } });
     enable(d);
     await flush();
     d.emit("personSelection", { personId: "p-1", datasetVersion: "v1", revision: 2 });
-    const connector = d.map.getSource("nli-name-field-connector");
-    expect(connector.data.features[0].geometry.coordinates).toEqual([[10, 20], [1, 2]]);
+    expect(d.map.getSource("nli-name-field-connector")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-field-connector-line")).toBeFalsy();
     const span = ["in", "left", ["get", "visible_spans"]];
     expect(d.map.getLayer("nli-name-field-labels").filter).toEqual(["all", span, ["!=", ["get", "pid"], "p-1"]]);
     expect(d.map.getLayer("nli-name-field-selected").filter).toEqual(["all", span, ["==", ["get", "pid"], "p-1"]]);
@@ -695,24 +692,9 @@ describe("createNliNameFieldController", () => {
     d.emit("personSelection", { personId: "unknown", datasetVersion: "v1", revision: 3 });
     expect(d.map.getLayer("nli-name-field-labels").filter).toEqual(span);
     expect(d.map.getLayer("nli-name-field-selected").filter).toEqual(["all", span, ["==", ["get", "pid"], "__none__"]]);
-    expect(connector.data.features).toHaveLength(0);
     expect(d.context.clearPerson).not.toHaveBeenCalled();
     d.emit("personSelection", { personId: "p-1", datasetVersion: "old", revision: 4 });
     expect(d.context.clearPerson).not.toHaveBeenCalled();
-  });
-
-  it("draws a connector only when the selected feature belongs to the projection span", async () => {
-    loadNliNameField.mockResolvedValue(field());
-    const left = setup({ projectionSpan: "left", applyProjectionConfig: true, snapshot: { personId: "p-2", datasetVersion: "v1" } });
-    const right = setup({ projectionSpan: "right", applyProjectionConfig: true, snapshot: { personId: "p-2", datasetVersion: "v1" } });
-    enable(left);
-    enable(right);
-    await flush();
-    expect(left.map.getSource("nli-name-field-connector").data.features).toHaveLength(0);
-    expect(right.map.getSource("nli-name-field-connector").data.features[0].geometry.coordinates).toEqual([[30, 40], [3, 4]]);
-    expect(right.controller.getProjectionNameDiagnostics().owners).toEqual({ "p-1": "left", "p-2": "right" });
-    left.controller.dispose();
-    right.controller.dispose();
   });
 
   it("keeps projection span filtering on base and selected labels through selection changes", async () => {
@@ -757,7 +739,10 @@ describe("createNliNameFieldController", () => {
     d.emit('navigationCommand', { placeId: 'custom-reim-parking' });
     finishLoad(groupedField());
     await flush();
-    expect(d.map.getSource('nli-name-place-selection').data.features[0].geometry.coordinates).toEqual([11, 21]);
+    expect(d.map.getLayer("nli-name-place-selection-point")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-place-selection-halo")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-place-selection-label")).toBeFalsy();
+    expect(d.map.getLayer("nli-name-place-outline-line")).toBeFalsy();
     expect(d.map.getLayer('nli-name-field-labels').paint['text-color']).toBe('#ffffff');
     expect(d.map.getPaintProperty('nli-name-field-labels', 'text-opacity')).toEqual([
       'case', ['==', ['get', 'group_id'], 'nova'], 1, 0.18,
@@ -765,15 +750,13 @@ describe("createNliNameFieldController", () => {
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
     d.emit('personSelection', { personId: null, datasetVersion: null, revision: 1 });
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBeNull();
-    expect(d.map.getSource('nli-name-place-selection').data.features).toEqual([]);
     d.emit('navigationCommand', { placeId: 'custom-reim-parking' });
     d.emit('personSelection', { personId: 'p-1', datasetVersion: 'v1' });
     expect(d.map.getLayer('nli-name-field-labels').paint['text-color']).toBe('#ffffff');
-    expect(d.map.getSource('nli-name-place-selection').data.features).toEqual([]);
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBeNull();
     d.controller.dispose();
-    expect(d.map.getLayer('nli-name-place-selection-label')).toBeNull();
-    expect(d.map.getSource('nli-name-place-selection')).toBeNull();
+    expect(d.map.getLayer('nli-name-place-selection-label')).toBeFalsy();
+    expect(d.map.getSource('nli-name-place-selection')).toBeFalsy();
     expect(d.context.subscribe).toHaveBeenCalledWith('navigationCommand', expect.any(Function));
   });
 
@@ -783,25 +766,6 @@ describe("createNliNameFieldController", () => {
     d.emit('navigationCommand', {placeId:'custom-reim-parking'});
     disable(d); enable(d);
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBeNull();
-  });
-
-  it('keeps the selected source marker while GIS names switch to detail geometry', async () => {
-    loadNliNameField.mockResolvedValueOnce(groupedField());
-    const d = setup({ profile: 'gis' });
-    d.map.getZoom = vi.fn(() => 10);
-    enable(d);
-    await flush();
-    d.emit('navigationCommand', { placeId: 'yeshuv-0399' });
-    expect(d.map.getSource('nli-name-place-selection').data.features).toHaveLength(1);
-    expect(d.map.getLayer('nli-name-place-selection-label').filter).toEqual([
-      '!', ['in', ['get', 'group_id'], ['literal', ['beeri']]],
-    ]);
-    d.map.getZoom.mockReturnValue(11);
-    d.map.emit('zoom');
-    expect(d.map.getSource('nli-name-place-selection').data.features).toHaveLength(1);
-    d.map.getZoom.mockReturnValue(9);
-    d.map.emit('zoom');
-    expect(d.map.getSource('nli-name-place-selection').data.features).toHaveLength(1);
   });
 
   it('does not start a projection build until a projection config is available', async () => {

@@ -10,8 +10,6 @@ const ORIGINAL_LABEL_ID = "nli__people_names__labels";
 const SOURCE_ID = "nli-name-field";
 const LABEL_ID = "nli-name-field-labels";
 const SELECTED_LABEL_ID = "nli-name-field-selected";
-const CONNECTOR_SOURCE_ID = "nli-name-field-connector";
-const CONNECTOR_LAYER_ID = "nli-name-field-connector-line";
 const DETAIL_ZOOM_DELTA = 0.5;
 const overviewTextSize = (field) => {
   const base = field.fontSize;
@@ -186,7 +184,6 @@ export function createNliNameFieldController({
   const setCanvasOpacity = (value) => {
     fadeOpacity = value;
     canvasAdapter?.setOpacity(value);
-    if (map.getLayer(CONNECTOR_LAYER_ID)) map.setPaintProperty(CONNECTOR_LAYER_ID, 'line-opacity', value * 0.8);
     groupOverlay?.setOpacity?.(value);
     if (focusPresentation) {
       if (value <= 0 && focusVisible) { focusPresentation.dispose(); focusVisible = false; }
@@ -293,12 +290,10 @@ export function createNliNameFieldController({
     focusVisible = false;
     groupOverlay?.dispose();
     groupOverlay = null;
-    for (const id of [CONNECTOR_LAYER_ID, SELECTED_LABEL_ID, LABEL_ID]) {
+    for (const id of [SELECTED_LABEL_ID, LABEL_ID]) {
       if (map.getLayer(id)) cleanup(map.removeLayer.bind(map), id);
     }
-    for (const id of [CONNECTOR_SOURCE_ID, SOURCE_ID]) {
-      if (map.getSource(id)) cleanup(map.removeSource.bind(map), id);
-    }
+    if (map.getSource(SOURCE_ID)) cleanup(map.removeSource.bind(map), SOURCE_ID);
   };
   const hideProjectionField = () => {
     removeOwned();
@@ -306,24 +301,6 @@ export function createNliNameFieldController({
     field = null;
     ready = false;
     useSourceGeometry = false;
-  };
-  const selectedFeature = () => field?.byPid?.get(String(selectedPid)) || null;
-  const updateConnector = () => {
-    const selected = selectedFeature();
-    const source = map.getSource(CONNECTOR_SOURCE_ID);
-    if (!source) return;
-    const display = selected?.feature;
-    const owners = selected?.feature?.properties?.visible_spans || [];
-    const ownsSelection = displayProfile !== "projection" || owners.includes(projectionSpan);
-    const coordinates = ownsSelection && !useSourceGeometry && selected && display?.geometry?.coordinates
-      && selected.sourceCoordinates
-      ? [display.geometry.coordinates, selected.sourceCoordinates]
-      : [];
-    source.setData(featureCollection(coordinates.length ? [{
-      type: "Feature",
-      properties: { pid: String(selectedPid) },
-      geometry: { type: "LineString", coordinates },
-    }] : []));
   };
   const applySelection = (snapshot = context.getPersonSelection(), { repaintCanvas = true } = {}) => {
     const pid = snapshot?.personId;
@@ -343,7 +320,6 @@ export function createNliNameFieldController({
     if (map.getLayer(SELECTED_LABEL_ID)) {
       map.setFilter(SELECTED_LABEL_ID, withSpan(["==", ["get", "pid"], selected]));
     }
-    updateConnector();
     updateGroupHighlight({ repaintCanvas });
     publishDiagnostics();
   };
@@ -388,7 +364,6 @@ export function createNliNameFieldController({
     try {
       useSourceGeometry = displayProfile === "gis" && map.getZoom() >= field.referenceZoom + DETAIL_ZOOM_DELTA;
       map.addSource(SOURCE_ID, { type: "geojson", data: geojsonAt(field, useSourceGeometry) });
-      map.addSource(CONNECTOR_SOURCE_ID, { type: "geojson", data: featureCollection() });
       const textSize = useSourceGeometry ? 14 : overviewTextSize(field);
       if (!canvasAdapter) {
         const baseLayer = textLayer(LABEL_ID, SOURCE_ID, field.heading, textSize);
@@ -403,13 +378,6 @@ export function createNliNameFieldController({
         selectedLayer.paint["text-halo-width"] = 2;
         map.addLayer(selectedLayer);
       }
-      map.addLayer({
-        id: CONNECTOR_LAYER_ID,
-        type: "line",
-        source: CONNECTOR_SOURCE_ID,
-        layout: { visibility: "visible" },
-        paint: { "line-color": "#ffffff", "line-width": 1.5, "line-opacity": 0.8 },
-      });
       groupOverlay = createNameGroupOverlay({ map, field, displayProfile, motionMode });
       focusPresentation = createNliNameFocusPresentation({ map, field });
       if (canvasAdapter) setCanvasOpacity(fadeOpacity);
@@ -417,10 +385,9 @@ export function createNliNameFieldController({
       if (map.getLayer(ORIGINAL_LABEL_ID)) map.setLayoutProperty(ORIGINAL_LABEL_ID, "visibility", "none");
       if (!canvasAdapter) animation = createNameFieldAnimation({
         motionMode,
-        apply: ({ baseOpacity, selectedOpacity, connectorOpacity, alphaFor }) => {
+        apply: ({ baseOpacity, selectedOpacity }) => {
           if (map.getLayer(LABEL_ID)) map.setPaintProperty(LABEL_ID, "text-opacity", baseOpacity);
           if (map.getLayer(SELECTED_LABEL_ID)) map.setPaintProperty(SELECTED_LABEL_ID, "text-opacity", selectedOpacity);
-          if (map.getLayer(CONNECTOR_LAYER_ID)) map.setPaintProperty(CONNECTOR_LAYER_ID, "line-opacity", connectorOpacity * 0.8);
         },
       });
       animation?.show();
@@ -489,7 +456,6 @@ export function createNliNameFieldController({
     if (map.getLayer(SELECTED_LABEL_ID)) {
       map.setLayoutProperty(SELECTED_LABEL_ID, "text-size", useSourceGeometry ? 16 : overviewTextSize(field));
     }
-    updateConnector();
     updateGroupHighlight();
     publishDiagnostics();
   };

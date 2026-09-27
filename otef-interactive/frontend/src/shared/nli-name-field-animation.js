@@ -88,7 +88,6 @@ export function createNameFieldAnimation({ apply, motionMode = 'full', now = () 
     apply({
       baseOpacity: product(alpha, blend(fromFocus, focus, focusMix)),
       selectedOpacity: visibility,
-      connectorOpacity: visibility,
       alphaFor,
     });
     if (targetVisibility === 0 && visibilityMix === 1 && onHidden) {
