@@ -13,6 +13,7 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
   let session = null;
   let priorGeneration = 0;
   let pending = null;
+  let openObservation = null;
   let forcedClosePromise = null;
   let destroyed = false;
   const unsubscribe = dataContext?.subscribe?.("narrativePresentationResult", onResult);
@@ -29,32 +30,63 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
       result?.sequence === command.sequence && result?.requestId === command.requestId;
   }
 
+  function rememberOpenedResponder(request, result) {
+    if (session?.id !== request.command.presentationSessionId ||
+        session.generation !== request.command.presentationGeneration) return;
+    const responderId = result.sourceId ?? null;
+    const newResponder = !session.responderIds.has(responderId);
+    session.responderIds.add(responderId);
+    if (pending?.command.presentationAction === "close" &&
+        pending.command.presentationSessionId === session.id &&
+        pending.closeRequiresKnownResponders && newResponder) {
+      pending.closeResponders.add(responderId);
+    }
+  }
+
   function onResult(result) {
-    if (!pending || !matches(result, pending.command)) return;
-    const request = pending;
-    pending = null;
-    clearTimeout(request.timer);
-    if (result.outcome === "unavailable") {
-      const retainSession = request.command.presentationAction === "close";
-      if (request.command.presentationAction === "open") state = { ...state, retryOpenSegmentId: request.command.segmentId };
-      if (!retainSession) session = null;
-      publish({
-        phase: "failed",
-        sessionId: retainSession ? session?.id ?? null : null,
-        segmentId: request.command.segmentId,
-        slide: null,
-        range: null,
-      });
-      request.resolve(false);
+    if (!pending || !matches(result, pending.command)) {
+      if (openObservation && matches(result, openObservation.command) && result.outcome === "opened") {
+        rememberOpenedResponder(openObservation, result);
+      }
       return;
     }
+    const request = pending;
     const successful = (request.command.presentationAction === "open" && result.outcome === "opened") ||
       (["next", "previous"].includes(request.command.presentationAction) && result.outcome === "ready") ||
       (request.command.presentationAction === "close" && result.outcome === "closed");
+    const responderId = result.sourceId ?? null;
+    const knownResponder = session?.responderIds?.has(responderId) === true;
+
+    // A GIS without this session can report `closed` as a no-op. It cannot
+    // confirm that a viewer which actually opened the session has closed.
+    if (request.command.presentationAction === "close" && successful) {
+      if (request.closeRequiresKnownResponders && !knownResponder) return;
+      if (request.closeRequiresKnownResponders) {
+        request.closeResponders.delete(responderId);
+        if (request.closeResponders.size > 0) return;
+      }
+    }
+
     if (!successful) {
-      publish({ phase: "failed", segmentId: request.command.segmentId, sessionId: null, slide: null, range: null });
-      request.resolve(false);
+      if (request.command.presentationAction === "close") {
+        if (request.closeRequiresKnownResponders && !knownResponder) return;
+        request.lastFailure = result;
+        return;
+      }
+      // Keep Open and navigation requests pending so a later correlated
+      // success from another GIS can win. The existing deadline settles a
+      // request that receives only unsuccessful replies.
+      request.lastFailure = result;
       return;
+    }
+
+    pending = null;
+    if (request.command.presentationAction === "open") {
+      rememberOpenedResponder(request, result);
+      openObservation = request;
+    } else {
+      clearTimeout(request.timer);
+      session?.responderIds?.add(responderId);
     }
     if (request.command.presentationAction === "close") {
       session = null;
@@ -70,6 +102,24 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
       });
     }
     request.resolve(true);
+  }
+
+  function finishWithResult(request) {
+    if (pending !== request) return;
+    pending = null;
+    clearTimeout(request.timer);
+    const action = request.command.presentationAction;
+    const retainSession = action !== "open";
+    if (action === "open") state = { ...state, retryOpenSegmentId: request.command.segmentId };
+    if (!retainSession) session = null;
+    publish({
+      phase: "failed",
+      segmentId: request.command.segmentId,
+      sessionId: retainSession ? session?.id ?? null : null,
+      slide: null,
+      range: null,
+    });
+    request.resolve(false);
   }
 
   function setFailed(retainSession = true) {
@@ -89,10 +139,12 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     }
     if (pending) return pending.promise;
     if (action === "open") {
+      if (openObservation) clearTimeout(openObservation.timer);
+      openObservation = null;
       const id = uuid();
       const generation = Math.max(Date.now(), priorGeneration + 1);
       priorGeneration = generation;
-      session = { id, generation, segmentId, sequence: 0 };
+      session = { id, generation, segmentId, sequence: 0, responderIds: new Set() };
     }
     if (!session || (segmentId && segmentId !== session.segmentId)) return Promise.resolve(false);
     const targetSegment = session.segmentId;
@@ -108,16 +160,30 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
     publish({ phase, segmentId: targetSegment, sessionId: session.id });
     let resolveRequest;
     const promise = new Promise((resolve) => { resolveRequest = resolve; });
-    const request = { command, promise, resolve: resolveRequest, timer: null };
+    const closeResponders = action === "close" ? new Set(session.responderIds) : null;
+    const request = {
+      command,
+      promise,
+      resolve: resolveRequest,
+      timer: null,
+      closeResponders,
+      closeRequiresKnownResponders: Boolean(closeResponders?.size),
+    };
     pending = request;
     request.timer = setTimeout(() => {
-      if (pending !== request) return;
-      pending = null;
-      if (request.command.presentationAction === "open") {
-        state = { ...state, retryOpenSegmentId: request.command.segmentId };
+      if (pending === request) {
+        if (request.lastFailure) {
+          finishWithResult(request);
+        } else {
+          pending = null;
+          if (request.command.presentationAction === "open") {
+            state = { ...state, retryOpenSegmentId: request.command.segmentId };
+          }
+          setFailed(true);
+          request.resolve(false);
+        }
       }
-      setFailed(true);
-      request.resolve(false);
+      if (openObservation === request) openObservation = null;
     }, COMMAND_TIMEOUT_MS);
     Promise.resolve(dataContext.narrativePresentationCommand(command)).catch(() => {
       if (pending !== request) return;
@@ -128,6 +194,7 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
       }
       setFailed(true);
       request.resolve(false);
+      if (openObservation === request) openObservation = null;
     });
     return promise;
   }
@@ -182,6 +249,8 @@ export function createNliStaffPresentationController({ dataContext, onStateChang
         pending.resolve(false);
         pending = null;
       }
+      if (openObservation) clearTimeout(openObservation.timer);
+      openObservation = null;
       session = null;
     },
   };

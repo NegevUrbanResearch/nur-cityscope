@@ -278,16 +278,21 @@ describe("NLI staff Home transitions", () => {
 
     const layersAtClose = h.layers.length;
     const narrativesAtClose = h.narratives.length;
+    vi.useFakeTimers();
     el("nextBtn").click();
-    await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
+    await Promise.resolve();
+    expect(h.commands.at(-1)?.presentationAction).toBe("close");
     await Promise.resolve();
     expect(h.layers.length).toBe(layersAtClose);
     expect(h.narratives.length).toBe(narrativesAtClose);
     expect(el("stepTitle").textContent).toBe("Mor Levy");
 
     h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "unavailable" });
-    await vi.waitFor(() => expect(el("kitPresentation").textContent).toContain("Presentation unavailable"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(el("kitPresentation").textContent).not.toContain("Presentation unavailable");
+    await vi.advanceTimersByTimeAsync(6000);
+    await Promise.resolve();
+    vi.useRealTimers();
+    expect(el("kitPresentation").textContent).toContain("Presentation unavailable");
     expect(h.layers.length).toBe(layersAtClose);
     expect(el("stepTitle").textContent).toBe("Mor Levy");
     expect(activeScreen()).toBe("player");
@@ -631,11 +636,17 @@ describe("NLI staff Home transitions", () => {
       h.clock = playing;
       const patchesBeforeClose = h.patches.length;
       const seenBeforeClose = synced.length;
+      vi.useFakeTimers();
       el("nextBtn").click();
-      await vi.waitFor(() => expect(h.commands.at(-1)?.presentationAction).toBe("close"));
+      await Promise.resolve();
+      expect(h.commands.at(-1)?.presentationAction).toBe("close");
       const latestDuringClose = { ...playing, revision: 12 };
       h.clock = latestDuringClose;
       h.emit("narrativePresentationResult", { ...h.commands.at(-1), outcome: "unavailable" });
+      expect(synced).toHaveLength(seenBeforeClose);
+      await vi.advanceTimersByTimeAsync(6000);
+      await Promise.resolve();
+      vi.useRealTimers();
       await vi.waitFor(() => expect(synced.length).toBeGreaterThan(seenBeforeClose));
       expect(synced.at(-1)).toBe(latestDuringClose);
       expect(synced.at(-1)).not.toBe(playing);

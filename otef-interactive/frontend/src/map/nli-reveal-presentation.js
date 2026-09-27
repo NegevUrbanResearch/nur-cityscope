@@ -67,6 +67,7 @@ export function createNliRevealPresentation(container, {
   manifest,
   RevealClass = Reveal,
   emitResult = () => {},
+  onVideoPlaybackChange = () => {},
 } = {}) {
   let highestGeneration = 0;
   let active = null;
@@ -129,12 +130,28 @@ export function createNliRevealPresentation(container, {
     if (!state) return;
     clearTimeout(state.deadlineTimer);
     cancelPending(state);
-    if (!mediaStopped) {
-      for (const video of state.overlay.querySelectorAll("video")) stopVideo(video);
-    }
+    for (const video of state.overlay.querySelectorAll("video")) stopStateVideo(state, video, { mediaStopped });
     try { state.reveal?.destroy?.(); } catch (_) { /* Keep GIS usable if Reveal teardown fails. */ }
     state.overlay.remove();
     if (active === state) active = null;
+  };
+
+  const setPlaybackActive = (state, nextActive) => {
+    if (state.playbackActive === nextActive) return;
+    state.playbackActive = nextActive;
+    try { onVideoPlaybackChange(nextActive); } catch (_) { /* Playback remains usable if state sync fails. */ }
+  };
+
+  const stopStateVideo = (state, video, { mediaStopped = false } = {}) => {
+    if (!video) return;
+    if (state.currentVideo === video) {
+      setPlaybackActive(state, false);
+      state.videoActivation += 1;
+      for (const [type, listener] of state.videoListeners || []) video.removeEventListener(type, listener);
+      state.videoListeners = null;
+      state.currentVideo = null;
+    }
+    if (!mediaStopped) stopVideo(video);
   };
 
   const fail = (command, state, token, message) => {
@@ -240,6 +257,23 @@ export function createNliRevealPresentation(container, {
   };
 
   const startVideo = (state, token, video) => {
+    if (state.currentVideo && state.currentVideo !== video) stopStateVideo(state, state.currentVideo);
+    state.currentVideo = video;
+    const activation = ++state.videoActivation;
+    setPlaybackActive(state, true);
+    const isCurrentVideo = () => !disposed && active === state &&
+      state.currentVideo === video && state.videoActivation === activation;
+    const listeners = [
+      ["play", () => { if (isCurrentVideo() && !video.paused && !video.ended) setPlaybackActive(state, true); }],
+      ["playing", () => { if (isCurrentVideo() && !video.paused && !video.ended) setPlaybackActive(state, true); }],
+      ["pause", () => { if (isCurrentVideo() && video.paused) setPlaybackActive(state, false); }],
+      ["ended", () => { if (isCurrentVideo()) setPlaybackActive(state, false); }],
+      ["error", () => { if (isCurrentVideo()) setPlaybackActive(state, false); }],
+      ["abort", () => { if (isCurrentVideo()) setPlaybackActive(state, false); }],
+      ["emptied", () => { if (isCurrentVideo()) setPlaybackActive(state, false); }],
+    ];
+    state.videoListeners = listeners;
+    for (const [type, listener] of listeners) video.addEventListener(type, listener);
     video.muted = false;
     let playback;
     try {
@@ -250,17 +284,21 @@ export function createNliRevealPresentation(container, {
     const settled = Promise.resolve(playback).then(() => true).catch(() => false);
     return new Promise((resolve) => {
       let done = false;
-      const finish = (ok) => {
+      const finish = (ok, { release = true } = {}) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
         drop();
+        if (release && isCurrentVideo() && (!ok || video.paused || video.ended)) setPlaybackActive(state, false);
         resolve(Boolean(ok) && isCurrent(state, token));
       };
       const timer = setTimeout(() => finish(false), VIDEO_START_MS);
       let drop = () => {};
-      drop = listen(state, token, () => finish(false));
-      settled.then((ok) => finish(ok));
+      drop = listen(state, token, () => finish(false, { release: false }));
+      settled.then((ok) => {
+        if (isCurrentVideo() && ok && !video.paused && !video.ended) setPlaybackActive(state, true);
+        finish(ok);
+      });
     });
   };
 
@@ -347,6 +385,10 @@ export function createNliRevealPresentation(container, {
       lastSequence: command.sequence,
       token: 0,
       deadlineTimer: null,
+      playbackActive: false,
+      currentVideo: null,
+      videoListeners: null,
+      videoActivation: 0,
     };
     active = state;
     const token = beginOperation(state);
@@ -401,7 +443,7 @@ export function createNliRevealPresentation(container, {
   };
 
   const hide = async (state, token) => {
-    for (const video of state.overlay.querySelectorAll("video")) stopVideo(video);
+    for (const video of state.overlay.querySelectorAll("video")) stopStateVideo(state, video);
     await fadeOverlay(state, token, 0);
     if (active === state && state.token === token && !disposed) removeState(state, { mediaStopped: true });
   };
@@ -462,7 +504,6 @@ export function createNliRevealPresentation(container, {
       emitOnce(command, "ignored", state);
       return;
     }
-    const token = beginOperation(state);
     const direction = command.presentationAction === "next" ? 1 : -1;
     const target = Math.max(state.segment.range[0], Math.min(
       state.segment.range[1], state.slide + direction,
@@ -471,7 +512,8 @@ export function createNliRevealPresentation(container, {
       emitOnce(command, "ready", state);
       return;
     }
-    stopVideo(state.sections.get(state.slide)?.querySelector("video"));
+    const token = beginOperation(state);
+    stopStateVideo(state, state.sections.get(state.slide)?.querySelector("video"));
     state.slide = target;
     state.reveal.slide(target - state.segment.range[0]);
     await activateSlide(command, state, token, target, "ready");

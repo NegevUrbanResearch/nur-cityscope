@@ -29,6 +29,7 @@ import {
   wakeInvestigationTimelinePersonGlow,
 } from "../shared/maplibre-investigation-timeline.js";
 import { idleNliClock } from "../shared/nli-investigation-clock.js";
+import { subscribeNliVideoPlayback } from "../shared/nli-video-playback-channel.js";
 import { resolveMotionMode } from "../shared/reduced-motion.js";
 import { loadPeopleRuntime } from "../map/maplibre-person-selection.js";
 import { bindProjectionPersonHalo } from "../projection/projection-person-halo.js";
@@ -649,7 +650,7 @@ async function bootstrapProjectionRuntime() {
       },
       onRenderSnapshot: (snapshot) => {
         legendAdapter?.sync(snapshot);
-        browserSurface?.draw?.();
+        browserSurface?.requestDraw?.();
       },
     });
     const refreshLegendAfterStyleLoad = createLegendStyleLoadRefresh(
@@ -731,7 +732,7 @@ async function bootstrapProjectionRuntime() {
           snapshot: getInvestigationTimelineRenderSnapshot(map),
           layout: currentCaptionLayout,
         });
-        browserSurface?.draw?.();
+        browserSurface?.requestDraw?.();
       });
     };
     try {
@@ -778,7 +779,7 @@ async function bootstrapProjectionRuntime() {
         spanId: projectionSpanId,
         onRenderSnapshot: (snapshot) => {
           patternAdapter?.sync(snapshot);
-          browserSurface?.draw?.();
+          browserSurface?.requestDraw?.();
         },
       });
       projectionPattern.setConfig(effectiveProjectionConfig);
@@ -990,7 +991,12 @@ async function bootstrapProjectionRuntime() {
         }
         nameFieldController.installProjectionCanvas(browserSurface.getNameAdapter());
         registerDisposer(disposeProjectionNameWallPreparation);
-        const onMapRender = () => browserSurface?.draw?.();
+        const unsubscribeVideoPlayback = subscribeNliVideoPlayback({
+          table: OTEFDataContext._tableName || "otef",
+          onChange: (active) => browserSurface?.setVideoPlaybackActive?.(active),
+        });
+        registerDisposer(unsubscribeVideoPlayback);
+        const onMapRender = () => browserSurface?.requestDraw?.();
         map.on?.("render", onMapRender);
         registerDisposer(() => map.off?.("render", onMapRender));
       } catch (error) {

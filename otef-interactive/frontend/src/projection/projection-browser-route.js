@@ -11,6 +11,7 @@ import {
 } from "./projection-captured-baseline.js";
 import { visibleProjectionBrowserError } from "./projection-browser-error.js";
 import { prepareProjectionPairMeshes, prepareProjectionSideMesh } from "./projection-candidate-validation.js";
+import { createProjectionDrawScheduler } from "./projection-draw-scheduler.js";
 
 export function resolveProjectionOutputMode(search = "") {
   const params = new URLSearchParams(String(search).replace(/^\?/, ""));
@@ -139,12 +140,15 @@ export async function createProjectionBrowserSurface({
   let baseline;
   let canvas;
   let compositor;
+  let drawScheduler;
   let restoreSources = () => {};
   let hidden = false;
   let disposed = false;
   let statusElement = null;
   let onContextLost;
   let onContextRestored;
+  let videoPlaybackActive = false;
+  let contextLost = false;
   let nameAdapter;
   let peerBaseline;
   let activeMesh;
@@ -219,19 +223,23 @@ export async function createProjectionBrowserSurface({
     };
     onContextLost = (event) => {
       event?.preventDefault?.();
+      contextLost = true;
+      drawScheduler?.cancel();
       onContextLostCallback?.();
       statusElement?.remove?.();
       statusElement = visibleError(host, new Error("WebGL context lost; restoring browser projection"));
     };
     onContextRestored = () => {
+      contextLost = false;
       onContextRestoredCallback?.();
       statusElement?.remove?.();
       statusElement = null;
+      drawScheduler?.drawNow();
     };
     canvas.addEventListener?.("webglcontextlost", onContextLost);
     canvas.addEventListener?.("webglcontextrestored", onContextRestored);
-    const draw = () => {
-      if (disposed || renderer.isContextLost?.()) return false;
+    const drawNow = () => {
+      if (disposed || contextLost || renderer.isContextLost?.()) return false;
       try {
         compositor.setScene(readScene());
         if (compositor.draw() === false) return false;
@@ -246,13 +254,27 @@ export async function createProjectionBrowserSurface({
       }
       return true;
     };
-    draw();
+    drawScheduler = createProjectionDrawScheduler({
+      draw: drawNow,
+      shouldThrottle: () => videoPlaybackActive,
+      shouldPause: () => contextLost,
+      maxFps: 20,
+    });
+    canvas.dataset ||= {};
+    canvas.dataset.videoPlaybackProtection = "inactive";
+    drawScheduler.drawNow();
     return {
       canvas,
       renderer,
       compositor,
       baseline,
-      draw,
+      draw: () => drawScheduler.drawNow(),
+      requestDraw: () => drawScheduler.requestDraw(),
+      setVideoPlaybackActive(active) {
+        videoPlaybackActive = active === true;
+        if (canvas?.dataset) canvas.dataset.videoPlaybackProtection = videoPlaybackActive ? "active" : "inactive";
+        if (!videoPlaybackActive) drawScheduler?.flush();
+      },
       prepareConfig,
       preparePair,
       getNameAdapter: () => nameAdapter,
@@ -281,6 +303,7 @@ export async function createProjectionBrowserSurface({
       dispose() {
         if (disposed) return;
         disposed = true;
+        drawScheduler?.dispose();
         restoreSources();
         canvas?.removeEventListener?.("webglcontextlost", onContextLost);
         canvas?.removeEventListener?.("webglcontextrestored", onContextRestored);

@@ -416,3 +416,68 @@ test("surfaces baseline failures before a renderer or canvas exists", async () =
   expect(children).toContain(errorElement);
   expect(errorElement.className).toBe("projection-browser-error");
 });
+
+test("browser surface exposes video protection state and schedules map redraws only while playback is active", async () => {
+  vi.useFakeTimers();
+  const oldDocument = globalThis.document;
+  const draws = [];
+  globalThis.document = { createElement() { return { style: {}, dataset: {}, setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {} }; } };
+  try {
+    const surface = await createProjectionBrowserSurface({
+      host: { appendChild() {} }, spanId: "left", image: { complete: true, naturalWidth: 10, style: {} },
+      initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG), fetchImpl: async () => ({ ok: false }),
+      rendererFactory: () => ({ draw(scene) { draws.push(scene); return true; }, isContextLost: () => false, dispose() {} }),
+    });
+    expect(surface.canvas.dataset.videoPlaybackProtection).toBe("inactive");
+    surface.setVideoPlaybackActive(true);
+    surface.requestDraw();
+    surface.requestDraw();
+    expect(draws).toHaveLength(1);
+    vi.advanceTimersByTime(49);
+    expect(draws).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(draws).toHaveLength(2);
+    expect(surface.canvas.dataset.videoPlaybackProtection).toBe("active");
+    surface.setVideoPlaybackActive(false);
+    surface.requestDraw();
+    expect(draws).toHaveLength(3);
+    expect(surface.canvas.dataset.videoPlaybackProtection).toBe("inactive");
+    surface.dispose();
+  } finally {
+    globalThis.document = oldDocument;
+    vi.useRealTimers();
+  }
+});
+
+test("cancels capped draws during context loss and redraws the latest scene on restoration", async () => {
+  vi.useFakeTimers();
+  const oldDocument = globalThis.document;
+  const listeners = new Map(); const draws = [];
+  let contextLost = false;
+  globalThis.document = { createElement() { return {
+    style: {}, dataset: {}, setAttribute() {}, remove() {},
+    addEventListener(type, callback) { listeners.set(type, callback); },
+    removeEventListener(type) { listeners.delete(type); },
+  }; } };
+  try {
+    const surface = await createProjectionBrowserSurface({
+      host: { appendChild() {} }, spanId: "left", image: { complete: true, naturalWidth: 10, style: {} },
+      initialConfig: structuredClone(DEFAULT_PROJECTION_CONFIG), fetchImpl: async () => ({ ok: false }),
+      rendererFactory: () => ({ draw(scene) { draws.push(scene); return true; }, isContextLost: () => contextLost, dispose() {} }),
+    });
+    surface.setVideoPlaybackActive(true);
+    surface.requestDraw();
+    contextLost = true;
+    listeners.get("webglcontextlost")?.({ preventDefault() {} });
+    surface.requestDraw();
+    vi.advanceTimersByTime(100);
+    expect(draws).toHaveLength(1);
+    contextLost = false;
+    listeners.get("webglcontextrestored")?.();
+    expect(draws).toHaveLength(2);
+    surface.dispose();
+  } finally {
+    globalThis.document = oldDocument;
+    vi.useRealTimers();
+  }
+});

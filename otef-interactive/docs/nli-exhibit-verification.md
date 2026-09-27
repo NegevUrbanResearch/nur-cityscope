@@ -1,5 +1,7 @@
 # NLI exhibit verification
 
+After moving the PC or changing projectors, complete the [video playback commissioning check](nli-video-playback-commissioning.md), including all five videos on the actual fullscreen displays. Laboratory playback results do not replace this check.
+
 ## Local Reveal presentation setup and acceptance
 
 From an elevated PowerShell session on the GIS exhibit machine, install the

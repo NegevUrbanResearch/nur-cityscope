@@ -87,7 +87,17 @@ export function createRemotePeopleArchiveController(options = {}) {
   const state = {
     destroyed: false,
     person: { acknowledged: null, pending: null, revision: -1, generation: 0, requestToken: 0 },
-    archive: { phase: "closed", person: null, requestId: null, lastRequestId: null, closedAppliedRequestId: null, generation: 0, timeoutId: null },
+    archive: {
+      phase: "closed",
+      person: null,
+      requestId: null,
+      requestAction: null,
+      lastRequestId: null,
+      recoverableOpenRequestId: null,
+      closedAppliedRequestId: null,
+      generation: 0,
+      timeoutId: null,
+    },
   };
   let pendingSelectionTask = null;
 
@@ -147,12 +157,19 @@ export function createRemotePeopleArchiveController(options = {}) {
     transition("archive", { timeoutId: null });
   }
 
+  function clearArchiveRecovery() {
+    transition("archive", { recoverableOpenRequestId: null });
+    if (state.archive.requestId === null) clearArchiveTimeout();
+  }
+
   function cancelArchivePresentation() {
     clearArchiveTimeout();
     transition("archive", {
       phase: "closed",
       person: null,
       requestId: null,
+      requestAction: null,
+      recoverableOpenRequestId: null,
       generation: state.archive.generation + 1,
     });
     if (!state.destroyed) {
@@ -167,13 +184,17 @@ export function createRemotePeopleArchiveController(options = {}) {
       ? Math.max(0, Number(options.archiveResultTimeoutMs))
       : 6000;
     const timeoutId = setTimeout(() => {
-      if (!isAlive(generation, "archive") || state.archive.requestId !== requestId) return;
+      const requestPending = state.archive.requestId === requestId;
+      const recoveryPending = state.archive.recoverableOpenRequestId === requestId;
+      if (!isAlive(generation, "archive") || (!requestPending && !recoveryPending)) return;
       const cancel = dataContext?.archiveWindowCommand?.("close", person.pid, person.datasetVersion, requestId);
       clearArchiveTimeout();
       transition("archive", {
         phase: "closed",
         person: null,
         requestId: null,
+        requestAction: null,
+        recoverableOpenRequestId: null,
         generation: state.archive.generation + 1,
       });
       setArchiveOpen(false);
@@ -191,7 +212,9 @@ export function createRemotePeopleArchiveController(options = {}) {
       phase: action === "open" ? "opening" : "closing",
       person,
       requestId,
+      requestAction: action,
       lastRequestId: requestId,
+      recoverableOpenRequestId: null,
       generation,
     });
     syncArchiveButton();
@@ -212,6 +235,8 @@ export function createRemotePeopleArchiveController(options = {}) {
         phase: "closed",
         person: null,
         requestId: null,
+        requestAction: null,
+        recoverableOpenRequestId: null,
         generation: generation + 1,
       });
       syncArchiveButton();
@@ -233,6 +258,9 @@ export function createRemotePeopleArchiveController(options = {}) {
     if (!isAlive()) return;
     const matchesCurrent = Boolean(archive.requestId && result.requestId === archive.requestId);
     const matchesLast = Boolean(archive.lastRequestId && result.requestId === archive.lastRequestId);
+    const matchesRecoverableOpen = Boolean(
+      archive.recoverableOpenRequestId && result.requestId === archive.recoverableOpenRequestId,
+    );
     if (result.outcome === "unavailable" && result.requestId === archive.closedAppliedRequestId) return;
     if (result.outcome === "closed" && (matchesCurrent || matchesLast)) {
       if (!samePerson(result, state.person.acknowledged)) return;
@@ -241,6 +269,8 @@ export function createRemotePeopleArchiveController(options = {}) {
         phase: "closed",
         person: null,
         requestId: null,
+        requestAction: null,
+        recoverableOpenRequestId: null,
         generation: archive.generation + 1,
         closedAppliedRequestId: result.requestId,
       });
@@ -249,17 +279,57 @@ export function createRemotePeopleArchiveController(options = {}) {
       syncArchiveButton();
       return;
     }
-    if (!matchesCurrent) return;
+    if (!matchesCurrent) {
+      // Every GIS tab receives the same open command. A tab without a usable
+      // popup can report unavailable before the tab that actually opened the
+      // archive reports success. Let that success settle the same request.
+      if (
+        result.outcome === "navigation_attempted" && matchesLast && matchesRecoverableOpen &&
+        archive.phase === "closed" && result.requestId !== archive.closedAppliedRequestId &&
+        samePerson(result, state.person.acknowledged)
+      ) {
+        clearArchiveTimeout();
+        transition("archive", {
+          phase: "open",
+          person: state.person.acknowledged,
+          requestId: null,
+          requestAction: null,
+          recoverableOpenRequestId: null,
+        });
+        navigationSection?.classList?.toggle?.("is-archive-open", true);
+        archiveButton.focus?.();
+        setStatus("");
+        syncArchiveButton();
+      }
+      return;
+    }
     if (!samePerson(result, state.person.acknowledged)) return;
-    clearArchiveTimeout();
+    const allowOpenRecovery = result.outcome === "unavailable" && archive.requestAction === "open";
+    if (!allowOpenRecovery) clearArchiveTimeout();
     const generation = archive.generation;
     if (result.outcome === "navigation_attempted") {
-      transition("archive", { phase: "open", person: state.person.acknowledged, requestId: null });
+      transition("archive", {
+        phase: "open",
+        person: state.person.acknowledged,
+        requestId: null,
+        requestAction: null,
+        recoverableOpenRequestId: null,
+      });
       navigationSection?.classList?.toggle?.("is-archive-open", true);
       archiveButton.focus?.();
       setStatus("");
     } else {
-      transition("archive", { phase: "closed", person: null, requestId: null, generation: generation + 1 });
+      const recoverableOpenRequestId = result.outcome === "unavailable" && archive.requestAction === "open"
+        ? result.requestId
+        : null;
+      transition("archive", {
+        phase: "closed",
+        person: null,
+        requestId: null,
+        requestAction: null,
+        recoverableOpenRequestId,
+        generation: allowOpenRecovery ? generation : generation + 1,
+      });
       navigationSection?.classList?.toggle?.("is-archive-open", false);
       setStatus(result.outcome === "closed" ? "" : t("nliArchiveUnavailable"));
     }
@@ -292,6 +362,8 @@ export function createRemotePeopleArchiveController(options = {}) {
     }
     const generation = state.person.generation + 1;
     const requestToken = state.person.requestToken + 1;
+    clearArchiveRecovery();
+    transition("archive", { requestAction: null });
     transition("person", {
       generation,
       requestToken,
@@ -433,6 +505,9 @@ export function createRemotePeopleArchiveController(options = {}) {
 
   function handlePersonSnapshot(snapshot) {
     if (!isAlive() || revisionOf(snapshot) <= state.person.revision) return;
+    if (state.archive.recoverableOpenRequestId && !samePerson(snapshot, state.person.acknowledged)) {
+      clearArchiveRecovery();
+    }
     if (state.archive.person && !samePerson(snapshot, state.archive.person)) cancelArchivePresentation();
     void applySnapshot(snapshot);
   }

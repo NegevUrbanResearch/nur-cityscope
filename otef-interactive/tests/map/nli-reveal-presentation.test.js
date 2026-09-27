@@ -382,10 +382,12 @@ describe("presentation open and close lifecycle", () => {
     }));
     const gates = deferDecode();
     const results = [];
+    const playback = [];
     const viewer = createNliRevealPresentation(root, {
       manifest: videoFirstManifest,
       RevealClass: FakeReveal,
       emitResult: (result) => results.push(result),
+      onVideoPlaybackChange: (active) => playback.push(active),
     });
     const opening = viewer.handleCommand(command("open", {
       segmentId: "clip", presentationGeneration: 12, presentationSessionId: "clip-session",
@@ -413,10 +415,12 @@ describe("presentation open and close lifecycle", () => {
     }));
     const gates = deferDecode();
     const results = [];
+    const playback = [];
     const viewer = createNliRevealPresentation(root, {
       manifest: videoFirstManifest,
       RevealClass: FakeReveal,
       emitResult: (result) => results.push(result),
+      onVideoPlaybackChange: (active) => playback.push(active),
     });
     const opening = viewer.handleCommand(command("open", {
       segmentId: "clip", presentationGeneration: 12, presentationSessionId: "clip-session",
@@ -430,6 +434,7 @@ describe("presentation open and close lifecycle", () => {
     await opening;
     expect(results.map((result) => result.outcome)).toEqual(["unavailable"]);
     expect(overlay()).toBeNull();
+    expect(playback).toEqual([true, false]);
 
     vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => new Promise(() => {}));
     const slowGates = deferDecode();
@@ -446,6 +451,7 @@ describe("presentation open and close lifecycle", () => {
     await slow;
     expect(results.at(-1).outcome).toBe("unavailable");
     expect(results.filter((result) => result.outcome === "opened")).toHaveLength(0);
+    expect(playback).toEqual([true, false, true, false]);
   });
 
   test("bounds the entire local open, including Reveal initialization, to 4500ms", async () => {
@@ -527,6 +533,149 @@ describe("presentation open and close lifecycle", () => {
     await closing;
     await vi.advanceTimersByTimeAsync(600);
     expect(h.results.filter((result) => result.outcome === "closed")).toHaveLength(0);
+  });
+
+  test("keeps playback active through startup and buffering, then follows pause, resume, end, and close", async () => {
+    vi.useFakeTimers();
+    const playback = [];
+    const order = [];
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(function play() {
+      Object.defineProperty(this, "paused", { configurable: true, value: false });
+      order.push("play");
+      return Promise.resolve();
+    });
+    const gates = deferDecode();
+    const viewer = createNliRevealPresentation(root, {
+      manifest: videoFirstManifest,
+      RevealClass: FakeReveal,
+      emitResult: () => {},
+      onVideoPlaybackChange: (active) => { playback.push(active); order.push(`active:${active}`); },
+    });
+    const opening = viewer.handleCommand(command("open", {
+      segmentId: "clip", presentationGeneration: 12, presentationSessionId: "clip-session",
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    gates[0].resolve();
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await vi.advanceTimersByTimeAsync(0);
+    const video = overlay().querySelector("video");
+    expect(order).toEqual(["active:true", "play"]);
+    for (const type of ["waiting", "stalled", "seeking"]) video.dispatchEvent(new Event(type));
+    expect(playback).toEqual([true]);
+    await opening;
+    Object.defineProperty(video, "paused", { configurable: true, value: true });
+    video.dispatchEvent(new Event("pause"));
+    expect(playback).toEqual([true, false]);
+    video.dispatchEvent(new Event("playing"));
+    expect(playback).toEqual([true, false]);
+    Object.defineProperty(video, "paused", { configurable: true, value: false });
+    video.dispatchEvent(new Event("play"));
+    expect(playback).toEqual([true, false, true]);
+    Object.defineProperty(video, "ended", { configurable: true, value: true });
+    video.dispatchEvent(new Event("ended"));
+    expect(playback).toEqual([true, false, true, false]);
+    video.dispatchEvent(new Event("playing"));
+    expect(playback).toEqual([true, false, true, false]);
+    const closing = viewer.close();
+    await vi.advanceTimersByTimeAsync(700);
+    await closing;
+    expect(playback.at(-1)).toBe(false);
+    viewer.dispose();
+  });
+
+  test("a clamped slide command leaves the active video lifecycle listener connected", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(function play() {
+      Object.defineProperty(this, "paused", { configurable: true, value: false });
+      return Promise.resolve();
+    });
+    const oneVideoSlide = {
+      ...videoFirstManifest,
+      segments: videoFirstManifest.segments.map((segment) => segment.id === "clip" ? { ...segment, range: [2, 2] } : segment),
+    };
+    const gates = deferDecode();
+    const playback = [];
+    const viewer = createNliRevealPresentation(root, {
+      manifest: oneVideoSlide,
+      RevealClass: FakeReveal,
+      onVideoPlaybackChange: (active) => playback.push(active),
+    });
+    const opening = viewer.handleCommand(command("open", {
+      segmentId: "clip", presentationGeneration: 12, presentationSessionId: "clip-session",
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    gates[0].resolve();
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await vi.advanceTimersByTimeAsync(0);
+    const video = overlay().querySelector("video");
+    await viewer.handleCommand(command("next", {
+      segmentId: "clip", presentationGeneration: 12, presentationSessionId: "clip-session", sequence: 2,
+    }));
+    Object.defineProperty(video, "ended", { configurable: true, value: true });
+    video.dispatchEvent(new Event("ended"));
+    expect(playback).toEqual([true, false]);
+    viewer.dispose();
+    await opening;
+  });
+
+  test("departure and close release pending playback, and stale play resolutions cannot affect a later activation", async () => {
+    vi.useFakeTimers();
+    const playResolvers = [];
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(function play() {
+      Object.defineProperty(this, "paused", { configurable: true, value: false });
+      return new Promise((resolve) => { playResolvers.push(resolve); });
+    });
+    const gates = deferDecode();
+    const playback = [];
+    const viewer = createNliRevealPresentation(root, {
+      manifest: videoFirstManifest,
+      RevealClass: FakeReveal,
+      onVideoPlaybackChange: (active) => playback.push(active),
+    });
+    const opening = viewer.handleCommand(command("open", {
+      segmentId: "clip", presentationGeneration: 12, presentationSessionId: "clip-session",
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    gates[0].resolve();
+    await vi.advanceTimersByTimeAsync(16);
+    endOpacityFade();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(playback).toEqual([true]);
+
+    const moving = viewer.handleCommand(command("next", {
+      segmentId: "clip", presentationGeneration: 12, presentationSessionId: "clip-session", sequence: 2,
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    gates[1].resolve();
+    await moving;
+    await opening;
+    expect(playback).toEqual([true, false]);
+
+    const returning = viewer.handleCommand(command("previous", {
+      segmentId: "clip", presentationGeneration: 12, presentationSessionId: "clip-session", sequence: 3,
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    gates[2].resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(playResolvers).toHaveLength(2);
+    expect(playback).toEqual([true, false, true]);
+    playResolvers[0]();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(playback).toEqual([true, false, true]);
+
+    const closing = viewer.close();
+    await vi.advanceTimersByTimeAsync(700);
+    await closing;
+    await returning;
+    expect(playback).toEqual([true, false, true, false]);
+    playResolvers[1]();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(playback).toEqual([true, false, true, false]);
+    viewer.dispose();
   });
 
   test("public close owns teardown through the fade and ignores later slide commands", async () => {

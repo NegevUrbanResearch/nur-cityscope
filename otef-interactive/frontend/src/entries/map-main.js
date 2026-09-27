@@ -25,6 +25,7 @@ import { filterGroupsForGisMap } from "../shared/gis-layer-filter.js";
 import { isolateLayersWhileVictimNamesShown } from "../shared/nli-victim-name-layer-isolation.js";
 import { normalizeGisBasemap } from "../shared/gis-basemap.js";
 import OTEFDataContext from "../shared/OTEFDataContext.js";
+import { createNliVideoPlaybackPublisher } from "../shared/nli-video-playback-channel.js";
 import layerRegistry from "../shared/layer-registry.js";
 import {
   createCuratedDisplayGate,
@@ -209,6 +210,9 @@ async function bootstrapMapRuntime() {
   map.on("load", async () => {
     registerDisposer(() => disposeLayerManagerForMap(map));
     let presentationViewer = null;
+    const videoPlaybackPublisher = createNliVideoPlaybackPublisher({
+      table: OTEFDataContext._tableName || "otef",
+    });
     let presentationManifest = null;
     let activePresentationSegmentId = null;
     let activePresentationSessionId = null;
@@ -233,6 +237,7 @@ async function bootstrapMapRuntime() {
       presentationBootstrapActive = false;
       presentationViewer?.dispose?.();
       presentationViewer = null;
+      videoPlaybackPublisher.dispose();
     });
     registerDisposer(OTEFDataContext.subscribe("narrativePresentation", (command) => {
       if (!presentationViewer) {
@@ -295,6 +300,7 @@ async function bootstrapMapRuntime() {
         presentationViewer = createNliRevealPresentation(mapContainer, {
           manifest,
           emitResult: (result) => { void OTEFDataContext.narrativePresentationResult(result); },
+          onVideoPlaybackChange: (playing) => videoPlaybackPublisher.setActive(playing),
         });
       } catch (error) {
         trackingNarrativeExits = true;

@@ -24,13 +24,14 @@ function makeControllerHarness() {
   };
   const controller = createNliStaffPresentationController({ dataContext, onStateChange: vi.fn() });
   const reply = (fields) => resultListener({ ...sent.at(-1), ...fields });
+  const replyTo = (command, fields) => resultListener({ ...command, ...fields });
   const openAndReply = async (segmentId) => {
     const pending = controller.run("open", segmentId);
     reply({ outcome: "opened", slide: segmentId === "hostages" ? 29 : 9,
       range: segmentId === "hostages" ? [29, 34] : [9, 11] });
     return pending;
   };
-  return { controller, sent, reply, openAndReply };
+  return { controller, sent, reply, replyTo, openAndReply };
 }
 
 afterEach(() => vi.useRealTimers());
@@ -81,9 +82,12 @@ describe("NLI staff presentation controller", () => {
   });
 
   test("failed auto-open clears the session and offers one manual open retry", async () => {
+    vi.useFakeTimers();
     const h = makeControllerHarness();
     const opening = h.controller.run("open", "shura");
     h.reply({ outcome: "unavailable" });
+    expect(h.controller.getState().phase).toBe("opening");
+    await vi.advanceTimersByTimeAsync(6000);
     await opening;
     const html = presentationControlsHtml(shuraStep, h.controller.getState(), "en");
     expect(html).toContain("Presentation unavailable");
@@ -102,9 +106,11 @@ describe("NLI staff presentation controller", () => {
   });
 
   test("forced cleanup clears an unavailable step so a later manual segment can open", async () => {
+    vi.useFakeTimers();
     const h = makeControllerHarness();
     const opening = h.controller.run("open", "shura");
     h.reply({ outcome: "unavailable" });
+    await vi.advanceTimersByTimeAsync(6000);
     await opening;
 
     const failedStepHtml = presentationControlsHtml(shuraStep, h.controller.getState(), "en");
@@ -122,6 +128,7 @@ describe("NLI staff presentation controller", () => {
   });
 
   test("failed close keeps the session and a close retry instead of resetting", async () => {
+    vi.useFakeTimers();
     const h = makeControllerHarness();
     await h.openAndReply("nova_mor");
 
@@ -129,6 +136,8 @@ describe("NLI staff presentation controller", () => {
     expect(h.sent.at(-1).presentationAction).toBe("close");
     const sessionId = h.sent.at(-1).presentationSessionId;
     h.reply({ outcome: "unavailable" });
+    expect(h.controller.getState().phase).toBe("closing");
+    await vi.advanceTimersByTimeAsync(6000);
     const failedStepHtml = presentationControlsHtml(step, h.controller.getState(), "en");
     expect(failedStepHtml).toContain("Presentation unavailable");
     expect(failedStepHtml).toContain('data-presentation-action="close"');
@@ -150,6 +159,7 @@ describe("NLI staff presentation controller", () => {
   });
 
   test("forced cleanup joining an explicit Close normalizes its unavailable result after settling", async () => {
+    vi.useFakeTimers();
     const h = makeControllerHarness();
     await h.openAndReply("nova_mor");
 
@@ -157,6 +167,8 @@ describe("NLI staff presentation controller", () => {
     const forcedClosing = h.controller.closeForStepChange();
     expect(h.sent.filter((command) => command.presentationAction === "close")).toHaveLength(1);
     h.reply({ outcome: "unavailable" });
+    expect(h.controller.getState().phase).toBe("closing");
+    await vi.advanceTimersByTimeAsync(6000);
 
     const failedStepHtml = presentationControlsHtml(step, h.controller.getState(), "en");
     expect(failedStepHtml).toContain("Presentation unavailable");
@@ -183,6 +195,119 @@ describe("NLI staff presentation controller", () => {
     });
     h.reply({ outcome: "closed" });
     await closing;
+  });
+
+  test("a secondary GIS failure and ignored reply do not block the successful open", async () => {
+    const h = makeControllerHarness();
+    const opening = h.controller.run("open", "shura");
+
+    h.reply({ outcome: "unavailable", sourceId: "gis-secondary" });
+    expect(h.controller.getState().phase).toBe("opening");
+    h.reply({ outcome: "ignored", sourceId: "gis-secondary" });
+    expect(h.controller.getState().phase).toBe("opening");
+
+    h.reply({ outcome: "opened", sourceId: "gis-active", slide: 9, range: [9, 11] });
+    await expect(opening).resolves.toBe(true);
+    expect(h.controller.getState()).toMatchObject({ phase: "open", segmentId: "shura", slide: 9 });
+  });
+
+  test("a non-owning GIS closed reply cannot confirm closure of the active viewer", async () => {
+    const h = makeControllerHarness();
+    const opening = h.controller.run("open", "nova_mor");
+    h.reply({ outcome: "opened", sourceId: "gis-active", slide: 9, range: [9, 11] });
+    await opening;
+
+    const closing = h.controller.run("close", "nova_mor");
+    h.reply({ outcome: "closed", sourceId: "gis-secondary" });
+    expect(h.controller.getState().phase).toBe("closing");
+    h.reply({ outcome: "closed", sourceId: "gis-active" });
+    await expect(closing).resolves.toBe(true);
+    expect(h.controller.getState().phase).toBe("closed");
+  });
+
+  test("an ignored Close keeps Close available for an honest retry", async () => {
+    vi.useFakeTimers();
+    const h = makeControllerHarness();
+    const opening = h.controller.run("open", "nova_mor");
+    h.reply({ outcome: "opened", sourceId: "gis-active", slide: 9, range: [9, 11] });
+    await opening;
+
+    const closing = h.controller.run("close", "nova_mor");
+    h.reply({ outcome: "ignored", sourceId: "gis-active" });
+    expect(h.controller.getState().phase).toBe("closing");
+    await vi.advanceTimersByTimeAsync(6000);
+    await expect(closing).resolves.toBe(false);
+    expect(h.controller.getState()).toMatchObject({ phase: "failed", sessionId: h.sent[0].presentationSessionId });
+    expect(presentationControlsHtml(step, h.controller.getState(), "en"))
+      .toContain('data-presentation-action="close"');
+  });
+
+  test("Close waits for every known viewer and accepts success after a negative reply", async () => {
+    vi.useFakeTimers();
+    const h = makeControllerHarness();
+    const opening = h.controller.run("open", "nova_mor");
+    h.reply({ outcome: "opened", sourceId: "gis-one", slide: 9, range: [9, 11] });
+    await opening;
+    // The second viewer can finish opening after the first one settled Open.
+    h.reply({ outcome: "opened", sourceId: "gis-two", slide: 9, range: [9, 11] });
+
+    const closing = h.controller.run("close", "nova_mor");
+    h.reply({ outcome: "unavailable", sourceId: "gis-one" });
+    expect(h.controller.getState().phase).toBe("closing");
+    h.reply({ outcome: "closed", sourceId: "gis-one" });
+    expect(h.controller.getState().phase).toBe("closing");
+    h.replyTo(h.sent[0], { outcome: "opened", sourceId: "gis-one", slide: 9, range: [9, 11] });
+    h.reply({ outcome: "closed", sourceId: "gis-two" });
+    await expect(closing).resolves.toBe(true);
+    expect(h.controller.getState().phase).toBe("closed");
+    await vi.advanceTimersByTimeAsync(6000);
+  });
+
+  test("a secondary navigation failure cannot override a correlated ready reply", async () => {
+    const h = makeControllerHarness();
+    const opening = h.controller.run("open", "nova_mor");
+    h.reply({ outcome: "opened", sourceId: "gis-active", slide: 9, range: [9, 11] });
+    await opening;
+
+    const moving = h.controller.run("next", "nova_mor");
+    h.reply({ outcome: "unavailable", sourceId: "gis-secondary" });
+    h.reply({ outcome: "ignored", sourceId: "gis-secondary" });
+    expect(h.controller.getState().phase).toBe("applying");
+    h.reply({ outcome: "ready", sourceId: "gis-active", slide: 10, range: [9, 11] });
+    await expect(moving).resolves.toBe(true);
+    expect(h.controller.getState()).toMatchObject({ phase: "open", slide: 10 });
+  });
+
+  test("a known GIS failure cannot override a later correlated navigation success", async () => {
+    const h = makeControllerHarness();
+    const opening = h.controller.run("open", "nova_mor");
+    h.reply({ outcome: "opened", sourceId: "gis-test", slide: 9, range: [9, 11] });
+    await opening;
+
+    const moving = h.controller.run("next", "nova_mor");
+    h.reply({ outcome: "unavailable", sourceId: "gis-test" });
+    expect(h.controller.getState().phase).toBe("applying");
+    h.reply({ outcome: "ready", sourceId: "gis-real", slide: 10, range: [9, 11] });
+    await expect(moving).resolves.toBe(true);
+    expect(h.controller.getState()).toMatchObject({ phase: "open", slide: 10 });
+  });
+
+  test("ignored navigation replies fail at the existing command deadline", async () => {
+    vi.useFakeTimers();
+    const h = makeControllerHarness();
+    const opening = h.controller.run("open", "nova_mor");
+    h.reply({ outcome: "opened", sourceId: "gis-active", slide: 9, range: [9, 11] });
+    await opening;
+
+    const moving = h.controller.run("next", "nova_mor");
+    h.reply({ outcome: "ignored", sourceId: "gis-active" });
+    expect(h.controller.getState().phase).toBe("applying");
+    await vi.advanceTimersByTimeAsync(6000);
+    await expect(moving).resolves.toBe(false);
+    const sessionId = h.sent[0].presentationSessionId;
+    expect(h.controller.getState()).toMatchObject({ phase: "failed", sessionId });
+    expect(presentationControlsHtml(step, h.controller.getState(), "en"))
+      .toContain('data-presentation-action="close"');
   });
 
   test("timed-out Nova memorial offers a manual Open after recovery Close", async () => {

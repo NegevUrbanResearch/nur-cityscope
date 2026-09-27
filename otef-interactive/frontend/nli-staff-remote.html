@@ -283,9 +283,9 @@
       /* Home */
       #home.screen { overflow-y: auto; overscroll-behavior: contain; }
       .nav-list {
-        flex: 0 0 auto;
+        flex: 1 0 auto;
         display: grid;
-        grid-template-rows: auto auto auto;
+        grid-template-rows: minmax(0, 1fr) minmax(0, 4fr);
         gap: var(--gap);
       }
       .home-lead {
@@ -300,11 +300,13 @@
         grid-auto-rows: minmax(132px, auto);
         gap: var(--gap);
       }
+      .nav-card--narrative:nth-child(5) { grid-column: 1 / -1; }
       .home-names {
         grid-column: 1 / -1;
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: var(--gap);
+        margin-block-start: var(--gap);
       }
       .nav-card {
         position: relative;
@@ -953,6 +955,7 @@
       }
       #kitSearch .search { margin-bottom: 0; }
       #kitSearch .search-status { margin: var(--gap) 0 0; }
+      #kitSearch #freeArchiveBtn { margin-block-start: var(--space); }
 
       .search-status {
         min-height: 1.2em;
@@ -1192,9 +1195,12 @@
       }
 
       @media (min-width: 900px) and (orientation: landscape) {
-        .nav-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-        .home-names { grid-column: span 2; }
         .home-lead { grid-auto-rows: minmax(124px, auto); }
+      }
+
+      @media (orientation: landscape) {
+        .nav-card { min-height: 112px; }
+        .nav-cards { grid-auto-rows: minmax(112px, auto); }
       }
 
       /* Tall tablet layouts */
