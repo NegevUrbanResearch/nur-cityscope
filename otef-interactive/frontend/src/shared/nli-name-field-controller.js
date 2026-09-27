@@ -365,6 +365,23 @@ export function createNliNameFieldController({
     updateGroupHighlight();
     publishDiagnostics();
   };
+  const groupIdForPlace = (placeId) => {
+    if (!placeId) return null;
+    if (groupOverlay) return groupOverlay.groupForPlace(placeId);
+    const features = field?.groupGeojson?.features || [];
+    return features.find((feature) => feature.properties?.place_ids?.includes(placeId))
+      ?.properties?.group_id || null;
+  };
+  const placeNameForPlace = (placeId) => {
+    const groupId = groupIdForPlace(placeId);
+    if (!groupId) return null;
+    const features = field?.groupGeojson?.features || [];
+    const name = features.find((feature) => feature.properties?.group_id === groupId)
+      ?.properties?.name;
+    if (typeof name !== "string") return null;
+    const trimmed = name.trim();
+    return trimmed || null;
+  };
   const mountInstalledField = ({ repaintCanvas = true } = {}) => {
     if (disposed || (!enabled && !canvasAdapter) || !ready || !field) return;
     removeOwned({ preserveFade: Boolean(canvasAdapter) });
@@ -562,6 +579,7 @@ export function createNliNameFieldController({
   const unsubscribeNavigation = context.subscribe("navigationCommand", onNavigation);
 
   const api = {
+    placeNameForPlace,
     isCanvasWallEnabled() { return Boolean(canvasAdapter && enabled); },
     installProjectionCanvas(adapter) {
       if (displayProfile !== 'projection' || !adapter?.prepare || !adapter?.commit || !adapter?.setOpacity) throw new Error('invalid projection Canvas adapter');

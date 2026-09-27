@@ -234,7 +234,12 @@ test("projection entry does not consume place catalog or navigation command inpu
   expect(src).not.toContain("place-catalog");
   expect(src).not.toContain("searchPlaces");
   expect(src).not.toContain("cameraHint");
-  expect(src).not.toContain("navigationCommand");
+  const highlightStart = src.indexOf("const syncProjectionHighlight = (viewport) => {");
+  const highlightSlice = highlightStart >= 0
+    ? src.slice(highlightStart, src.indexOf("};", highlightStart) + 2)
+    : "";
+  expect(highlightSlice).toContain("shouldShowProjectionViewportHighlight");
+  expect(highlightSlice).not.toContain("navigationCommand");
 });
 
 test("viewportToHighlightGeoJSON returns Polygon feature for bbox viewport", async () => {

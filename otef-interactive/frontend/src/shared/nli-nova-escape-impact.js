@@ -281,8 +281,8 @@ export function escapeImpactOutlineIds({
   return result;
 }
 
-export function shouldIncludeNarrativeSettlementOutline(narrativeFocus) {
-  return narrativeFocus?.id !== "nova";
+export function shouldIncludeNarrativeSettlementOutline(_narrativeFocus) {
+  return false;
 }
 
 function outlineIndexHas(index, id) {

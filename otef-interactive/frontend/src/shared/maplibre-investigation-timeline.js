@@ -687,6 +687,11 @@ function includeNarrativeSettlementOutline(outlineIds, state) {
   return merged;
 }
 
+function narrativeFocusOutlineActive(state) {
+  return shouldIncludeNarrativeSettlementOutline(state.narrativeFocus)
+    && narrativeSettlementOutlineId(state) != null;
+}
+
 function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = state.alarmMode) {
   const resolvedFrame = frame || deriveTimelineFrame(state, state.now?.() || 0);
   const nowMs = Number.isFinite(Number(resolvedFrame.nowMs)) ? Number(resolvedFrame.nowMs) : (state.now?.() || 0);
@@ -722,7 +727,7 @@ function applyPlayingVisuals(map, state, phase, frame = null, targetAlarmMode = 
   });
   let achievedSettlementOutlineIds = [];
   const novaSiteOverlay = isNovaNarrative(state);
-  if (state.polygonOn || state.lineOn || narrativeSettlementOutlineId(state) != null || novaSiteOverlay) {
+  if (state.polygonOn || state.lineOn || narrativeFocusOutlineActive(state) || novaSiteOverlay) {
     const lineData = state.lineOn && Array.isArray(state.data.lineFeatures)
       ? buildInvestigationLineFeaturesForFrame(state.data, lineFrame)
       : emptyLinePartition();

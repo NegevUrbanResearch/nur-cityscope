@@ -220,9 +220,9 @@ describe("Nova escape-impact outlines", () => {
       ...NLI_NARRATIVES.nova,
       focusSettlementOutlineId: 18,
     })).toBe(false);
-    expect(shouldIncludeNarrativeSettlementOutline(NLI_NARRATIVES.segev)).toBe(true);
-    expect(shouldIncludeNarrativeSettlementOutline(NLI_NARRATIVES.sderot)).toBe(true);
-    expect(shouldIncludeNarrativeSettlementOutline(NLI_NARRATIVES.hostages)).toBe(true);
+    expect(shouldIncludeNarrativeSettlementOutline(NLI_NARRATIVES.segev)).toBe(false);
+    expect(shouldIncludeNarrativeSettlementOutline(NLI_NARRATIVES.sderot)).toBe(false);
+    expect(shouldIncludeNarrativeSettlementOutline(NLI_NARRATIVES.hostages)).toBe(false);
   });
 
   test("layer id is not the infiltration impact overlay", () => {

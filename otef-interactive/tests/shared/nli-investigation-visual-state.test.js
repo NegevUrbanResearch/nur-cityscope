@@ -71,6 +71,13 @@ describe("nli-investigation-theme", () => {
       personGlowRadius: 14,
       personGlowStrokeWidth: 2.5,
       personGlowPulseMs: 2400,
+      settlementGlowFillOpacity: 0.04,
+      settlementGlowOuterWidth: 22,
+      settlementGlowOuterBlur: 12,
+      settlementGlowOuterOpacity: 0.22,
+      settlementGlowInnerWidth: 8,
+      settlementGlowInnerBlur: 3,
+      settlementGlowInnerOpacity: 0.4,
     });
     expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonCategories");
     expect(NLI_VISUAL_TOKENS).not.toHaveProperty("polygonFallbackFill");

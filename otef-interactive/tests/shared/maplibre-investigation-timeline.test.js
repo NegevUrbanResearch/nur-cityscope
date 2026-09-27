@@ -569,7 +569,7 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(mixedRaf).toHaveBeenCalled();
   });
 
-  it("keeps the authored Be'eri outline visible during narrative focus even when ordinary investigation layers are hidden", async () => {
+  it("does not inject a Segev Be'eri impact overlay when investigation polygons are off", async () => {
     const map = makeOrientationMap();
     const hidden = [{ id: "nli", layers: [
       { id: "investigation_polygons", enabled: false },
@@ -591,18 +591,14 @@ describe("syncInvestigationTimelineToMap", () => {
     };
     const deps = {
       settlementFeatures: [beeriOutline],
-      narrativeFocus: { focusSettlement: "בארי", focusSettlementOutlineId: 19 },
+      narrativeFocus: { id: "segev", focusSettlement: "בארי", focusSettlementOutlineId: 19 },
       now: () => 0,
     };
 
     await syncInvestigationTimelineToMap(map, idleNliClock(), hidden, deps);
 
-    expect(map.getSource("nli-investigation-settlement-impact")).toBeTruthy();
-    expect(map.getSource("nli-investigation-settlement-impact").setData.mock.calls.at(-1)[0]).toEqual({
-      type: "FeatureCollection",
-      features: [beeriOutline],
-    });
-    expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeTruthy();
+    expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
+    expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeFalsy();
     expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity")).toEqual(
       ["case", ["==", ["get", "OBJECTID"], 19], 1, 0.28],
     );
@@ -650,21 +646,11 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toBe("#c31f4f");
   });
 
-  it("paints Segev, Sderot, and Hostages place outlines white during narrative focus", async () => {
+  it("does not inject Segev, Sderot, and Hostages impact outlines during narrative focus when polygons are off", async () => {
     const hidden = [{ id: "nli", layers: [
       { id: "investigation_polygons", enabled: false },
       { id: "lines", enabled: false },
     ] }];
-    const whitePaint = (outlineId) => [
-      "case",
-      [
-        "any",
-        ["==", ["to-string", ["get", "outlineObjectId"]], String(outlineId)],
-        ["==", ["to-string", ["get", "OBJECTID"]], String(outlineId)],
-      ],
-      "#ffffff",
-      "#c31f4f",
-    ];
     for (const { focus, city, outlineId } of [
       { focus: NLI_NARRATIVES.segev, city: "בארי", outlineId: 19 },
       { focus: NLI_NARRATIVES.sderot, city: "שדרות", outlineId: 32 },
@@ -690,9 +676,8 @@ describe("syncInvestigationTimelineToMap", () => {
         narrativeFocus: focus,
         now: () => 0,
       });
-      expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toEqual(
-        whitePaint(outlineId),
-      );
+      expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
+      expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeFalsy();
     }
   });
 

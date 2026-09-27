@@ -50,6 +50,13 @@ export const NLI_VISUAL_TOKENS = Object.freeze({
   personGlowRadius: 14,
   personGlowStrokeWidth: 2.5,
   personGlowPulseMs: 2400,
+  settlementGlowFillOpacity: 0.04,
+  settlementGlowOuterWidth: 22,
+  settlementGlowOuterBlur: 12,
+  settlementGlowOuterOpacity: 0.22,
+  settlementGlowInnerWidth: 8,
+  settlementGlowInnerBlur: 3,
+  settlementGlowInnerOpacity: 0.4,
 });
 
 export const NLI_DISPLAY_PROFILES = Object.freeze({

@@ -1091,28 +1091,19 @@ describe("investigation polygon renderer", () => {
     fetchSpy.mockRestore();
   });
 
-  it("paints the narrative focus settlement outline white and leaves other impact outlines red", () => {
+  it("paints impact outlines red when the narrative focus outline is not injected", () => {
     const map = makeMap();
     const renderer = createInvestigationPolygonRenderer(map, {});
     renderer.render({
       achievedPolygonBeats: [],
       achievedSettlementOutlineIds: [32, 20],
-      narrativeFocusOutlineId: 32,
+      narrativeFocusOutlineId: null,
       narrative: { phase: "idle" },
     }, {
       settlementFeatures: [settlement(32), settlement(20)],
       settlementFeaturesByOutlineId: { 32: settlement(32), 20: settlement(20) },
     });
-    expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toEqual([
-      "case",
-      [
-        "any",
-        ["==", ["to-string", ["get", "outlineObjectId"]], "32"],
-        ["==", ["to-string", ["get", "OBJECTID"]], "32"],
-      ],
-      "#ffffff",
-      "#c31f4f",
-    ]);
+    expect(map.getPaintProperty("nli-investigation-settlement-impact-outline", "line-color")).toBe("#c31f4f");
   });
 
   it("defers settlement paint across the host-style remount gap", () => {

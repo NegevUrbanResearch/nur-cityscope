@@ -390,6 +390,16 @@ describe("createNliNameFieldController", () => {
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBeNull();
     expect(d.map.getSource('nli-name-place-selection').data.features).toEqual([]);
   });
+  it('returns the overlay group properties.name for a place, never group_id', async () => {
+    loadNliNameField.mockResolvedValueOnce(groupedField());
+    const d = setup();
+    enable(d);
+    await flush();
+    expect(d.controller.placeNameForPlace('custom-reim-parking')).toBe('נובה');
+    expect(d.controller.placeNameForPlace('custom-reim-parking')).not.toBe('nova');
+    expect(d.controller.placeNameForPlace('custom-reim-parking')).not.toBe('חניון רעים');
+    d.controller.dispose();
+  });
   it("loads once and never restores legacy overlapping labels", async () => {
     loadNliNameField.mockResolvedValueOnce(field());
     const d = setup();
