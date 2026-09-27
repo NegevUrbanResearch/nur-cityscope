@@ -422,12 +422,16 @@ describe("mountMapLegend", () => {
     mounted.dispose();
   });
 
-  it("uses non-breaking legend labels, pack-level projection columns, and Guttman type", () => {
+  it("uses non-breaking legend labels, projection wrap rows, and Guttman type", () => {
     const css = readFileSync(new URL("../../frontend/css/styles.css", import.meta.url), "utf8");
     expect(css).toMatch(/\.map-legend\s*\{[^}]*font(?:-family|):\s*"Guttman Hatzvi",\s*"Noto Sans Hebrew",\s*Arial,\s*sans-serif/s);
     expect(css).toMatch(/\.map-legend-label\s*\{[^}]*overflow-wrap:\s*normal[^}]*word-break:\s*keep-all/s);
-    expect(css).toMatch(/\.map-legend-projection \.map-legend-layers\s*\{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
+    expect(css).toMatch(/\.map-legend-projection \.map-legend-content\s*\{[^}]*display:\s*flex/s);
+    expect(css).toMatch(/\.map-legend-projection \.map-legend-layers\s*\{[^}]*display:\s*flex[^}]*flex-flow:\s*row wrap/s);
     expect(css).toMatch(/\.map-legend-projection \.map-legend-layer\s*\{[^}]*display:\s*contents/s);
+    expect(css).toMatch(/\.map-legend-projection \.map-legend-item\s*\{[^}]*flex:\s*0 0 auto/s);
+    expect(css).toMatch(/\.map-legend-projection \.map-legend-group \+ \.map-legend-group\s*\{[^}]*border-inline-start:/s);
+    expect(css).not.toMatch(/\.map-legend-projection \.map-legend-layers\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s);
     expect(css).toMatch(/\.map-legend-symbol--line\s*\{[^}]*box-shadow:\s*0 0 0 1px color-mix\(\s*in srgb,\s*var\(--legend-halo,\s*transparent\) 35%,\s*transparent\s*\)/s);
     expect(css).toMatch(/\.map-legend-symbol--alarm-shockwave::after\s*\{[^}]*border:\s*1(?:\.6)?px solid color-mix\(\s*in srgb,\s*var\(--legend-alarm-shockwave,\s*transparent\) 40%,\s*transparent\s*\)/s);
     expect(css).toMatch(/\.map-legend-symbol::before\s*\{[^}]*border-radius:\s*inherit/s);
@@ -437,6 +441,7 @@ describe("mountMapLegend", () => {
   it("renders only a quiet page count for multi-page projection legends", async () => {
     vi.useFakeTimers();
     const { element, pager } = setupWithDocument();
+    element.clientWidth = 240;
     element.clientHeight = 80;
     const mounted = mountMapLegend({
       element,
@@ -456,6 +461,7 @@ describe("mountMapLegend", () => {
   it("isolates page counts from RTL ordering", async () => {
     vi.useFakeTimers();
     const { element, pager } = setupWithDocument();
+    element.clientWidth = 240;
     element.clientHeight = 80;
     const mounted = mountMapLegend({
       element,
@@ -472,6 +478,7 @@ describe("mountMapLegend", () => {
   it("uses the active projection span dwell before the full-span fallback", async () => {
     vi.useFakeTimers();
     const { element, content } = setupWithDocument();
+    element.clientWidth = 240;
     element.clientHeight = 80;
     const mounted = mountMapLegend({
       element,
@@ -569,6 +576,7 @@ describe("mountMapLegend", () => {
   it("omits layer titles from split projection fragments", async () => {
     vi.useFakeTimers();
     const { element, content } = setupWithDocument();
+    element.clientWidth = 240;
     element.clientHeight = 80;
     const mounted = mountMapLegend({
       element,
@@ -595,6 +603,7 @@ describe("mountMapLegend", () => {
   it("omits Hebrew continuation markers from projection fragments", async () => {
     vi.useFakeTimers();
     const { element, content } = setupWithDocument();
+    element.clientWidth = 240;
     element.clientHeight = 80;
     const mounted = mountMapLegend({
       element,
@@ -632,5 +641,66 @@ describe("mountMapLegend", () => {
     expect(measurementStyles.every((style) => style.fontFamily === "Projection Sans")).toBe(true);
     mounted.dispose();
     vi.unstubAllGlobals();
+  });
+
+  it("omits the pack heading for NLI on GIS and projection", async () => {
+    const nliModel = {
+      packs: [{
+        id: "nli",
+        name: "October 7th",
+        layers: [{ id: "nli.people", name: "People", items: [{ id: "nli.people:a", label: "Murdered", shape: "point", fill: "#123" }] }],
+      }],
+    };
+    for (const surface of ["gis", "projection"]) {
+      const { element } = setup();
+      const mounted = mountMapLegend({ element, surface, buildModel: async () => nliModel });
+      await mounted.refresh();
+      expect(element.innerHTML).toContain("Murdered");
+      expect(element.innerHTML).toContain('data-legend-pack-id="nli"');
+      expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toBeNull();
+      expect(element.innerHTML).not.toContain("map-legend-group-title");
+      mounted.dispose();
+    }
+  });
+
+  it("keeps a six-item projection NLI pack on one page in a short wide rail", async () => {
+    const { element, pager } = setupWithDocument();
+    element.clientWidth = 800;
+    element.clientHeight = 80;
+    const items = Array.from({ length: 6 }, (_, index) => ({
+      id: `nli:${index}`,
+      label: `Class ${index}`,
+      shape: "point",
+      fill: "#123456",
+    }));
+    const mounted = mountMapLegend({
+      element,
+      surface: "projection",
+      buildModel: async () => ({
+        packs: [{ id: "nli", name: "October 7th", layers: [{ id: "nli.people", name: "People", items }] }],
+      }),
+    });
+    await mounted.refresh();
+    expect(pager().hidden).toBe(true);
+    expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toBeNull();
+    mounted.dispose();
+  });
+
+  it("keeps a non-NLI pack heading and titles only the other pack in a mixed legend", async () => {
+    const mixed = {
+      packs: [
+        { id: "nli", name: "October 7th", layers: [{ id: "nli.route", name: "Route", items: [{ id: "nli.route:a", label: "232", shape: "line", stroke: "#000" }] }] },
+        { id: "land_use", name: "Land use", layers: [{ id: "land_use.open", name: "Open", items: [{ id: "land_use.open:a", label: "Open space", shape: "polygon", fill: "#0f0" }] }] },
+      ],
+    };
+    for (const surface of ["gis", "projection"]) {
+      const { element } = setup();
+      const mounted = mountMapLegend({ element, surface, buildModel: async () => mixed });
+      await mounted.refresh();
+      expect(element.innerHTML.match(/class="map-legend-group-title"/g)).toHaveLength(1);
+      expect(element.innerHTML).toContain(">Land use<");
+      expect(element.innerHTML).not.toContain(">October 7th<");
+      mounted.dispose();
+    }
   });
 });

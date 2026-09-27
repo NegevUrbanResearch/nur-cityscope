@@ -6,9 +6,26 @@ const SNAP_DISTANCE_PX = 28;
 const SNAP_GAP_PX = 12;
 const ROTATION_SNAP_DEG = 8;
 
-export const LEGEND_LAYOUT_DEFAULT = Object.freeze({ leftPct: 68, topPct: 18, widthPct: 20, heightPct: 32, fontPx: 16, rotateDeg: 0, dwellSeconds: 8 });
+export const LEGEND_LAYOUT_DEFAULT = Object.freeze({ leftPct: 26, topPct: 84, widthPct: 48, heightPct: 14, fontPx: 16, rotateDeg: 0, dwellSeconds: 8 });
 const numberOr = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+export function isLegacyPortraitLegendLayout(layout) {
+  const src = layout && typeof layout === "object" ? layout : {};
+  return numberOr(src.widthPct, NaN) === 20 && numberOr(src.heightPct, NaN) === 32;
+}
+
+export function remigratePortraitLayout(raw, { viewport, clockBounds, spanKey, projectionConfig, fallback } = {}) {
+  if (!isLegacyPortraitLegendLayout(raw)) return clampLegendLayout(raw, fallback);
+  const placed = chooseLegendInitialLayout({ spanKey, viewport, clockBounds, projectionConfig });
+  const src = raw && typeof raw === "object" ? raw : {};
+  return clampLegendLayout({
+    ...placed,
+    fontPx: numberOr(src.fontPx, placed.fontPx),
+    dwellSeconds: numberOr(src.dwellSeconds, placed.dwellSeconds),
+    rotateDeg: numberOr(src.rotateDeg, placed.rotateDeg),
+  }, placed);
+}
 
 export function clampLegendLayout(raw, fallback = LEGEND_LAYOUT_DEFAULT) {
   const src = raw && typeof raw === "object" ? raw : {};
@@ -133,8 +150,22 @@ const panel = { width: viewport.width * width / 100, height: viewport.height * h
 const exclusion = overlapPixels(legendSpanKey(spanKey), projectionConfig, viewport);
   const fits = (left, top) => left >= 0 && top >= 0 && left + panel.width <= viewport.width && top + panel.height <= viewport.height && !(exclusion && overlaps(left, left + panel.width, exclusion.left, exclusion.right) && overlaps(top, top + panel.height, exclusion.top, exclusion.bottom));
   const candidates = [];
-if (clockBounds) candidates.push([clockBounds.right + 24, clockBounds.top], [clockBounds.left - 24 - panel.width, clockBounds.top], [clockBounds.left, clockBounds.bottom + 24]);
-candidates.push([viewport.width - panel.width - 20, 20], [20, 20], [viewport.width - panel.width - 20, viewport.height - panel.height - 20], [20, viewport.height - panel.height - 20]);
+  candidates.push(
+    [(viewport.width - panel.width) / 2, viewport.height - panel.height - 20],
+    [viewport.width - panel.width - 20, viewport.height - panel.height - 20],
+    [20, viewport.height - panel.height - 20],
+  );
+  if (clockBounds) {
+    candidates.push(
+      [clockBounds.right + 24, clockBounds.top],
+      [clockBounds.left - 24 - panel.width, clockBounds.top],
+      [clockBounds.left, clockBounds.bottom + 24],
+    );
+  }
+  candidates.push(
+    [viewport.width - panel.width - 20, 20],
+    [20, 20],
+  );
 const chosen = candidates.find(([left, top]) => fits(left, top));
   return clampLegendLayout(chosen ? { ...LEGEND_LAYOUT_DEFAULT, leftPct: chosen[0] / viewport.width * 100, topPct: chosen[1] / viewport.height * 100 } : LEGEND_LAYOUT_DEFAULT, LEGEND_LAYOUT_DEFAULT);
 }
@@ -196,9 +227,21 @@ h.style.cssText = `position:absolute;width:12px;height:12px;margin:-6px;${positi
 editor.appendChild(h);
 return h;
 });
-  const saved = settingsForSpan(dataContext, key);
-const initialViewport = parentViewport(parent);
-let layout = clampLegendLayout(saved || chooseLegendInitialLayout({ spanKey: key, viewport: initialViewport, clockBounds: clockBoundsInParent(clockElement, parent), projectionConfig: getProjectionConfig?.() }), LEGEND_LAYOUT_DEFAULT);
+  const savedRaw = settingsForSpan(dataContext, key);
+  const initialViewport = parentViewport(parent);
+  const initialClockBounds = clockBoundsInParent(clockElement, parent);
+  const initialProjectionConfig = getProjectionConfig?.();
+  const remigrateArgs = {
+    viewport: initialViewport,
+    clockBounds: initialClockBounds,
+    spanKey: key,
+    projectionConfig: initialProjectionConfig,
+  };
+  let layout = remigratePortraitLayout(savedRaw, {
+    ...remigrateArgs,
+    fallback: savedRaw ? LEGEND_LAYOUT_DEFAULT : chooseLegendInitialLayout(remigrateArgs),
+  });
+  const remigratedSaved = isLegacyPortraitLegendLayout(savedRaw);
 let visible = false;
 let drag = null;
 let queuedSettings = null;
@@ -383,9 +426,18 @@ apply();
 void save();
 };
   const applyServerSettings = (next) => { if (drag || pendingSave) queuedSettings = next;
-else { layout = clampLegendLayout(next, layout);
-confirmed = { ...layout };
-apply();
+else {
+  const remigrating = isLegacyPortraitLegendLayout(next);
+  layout = remigratePortraitLayout(next, {
+    viewport: parentViewport(parent),
+    clockBounds: clockBoundsInParent(clockElement, parent),
+    spanKey: key,
+    projectionConfig: getProjectionConfig?.(),
+    fallback: layout,
+  });
+  confirmed = { ...layout };
+  apply();
+  if (remigrating) void save();
 } };
   element.addEventListener("pointerdown", pointerDown);
 editor.addEventListener("pointerdown", pointerDown);
@@ -395,7 +447,7 @@ window.addEventListener("pointercancel", pointerCancel);
 controls.querySelector("[data-legend-font]").addEventListener("change", onFontChange);
 controls.querySelector("[data-legend-dwell]").addEventListener("change", onDwellChange);
 if (key === "right") element.style.display = "none";
-if (!saved) {
+if (!savedRaw || remigratedSaved) {
   const bounds = layoutPixelBounds(layout, initialViewport);
   const exclusion = overlapPixels(key, getProjectionConfig?.(), initialViewport);
   const outside = bounds.left < 0 || bounds.top < 0 || bounds.right > initialViewport.width || bounds.bottom > initialViewport.height;
@@ -403,6 +455,7 @@ if (!saved) {
   if (outside || excluded) warning("No automatic legend placement fits; place it manually.");
 }
 apply();
+if (remigratedSaved) void save();
   return { setVisible, dispose() { disposed = true;
 if (drag) { layout = drag.start;
 drag = null;
