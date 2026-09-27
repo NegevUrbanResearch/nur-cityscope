@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test, vi } from "vitest";
+import { NLI_PLAYABLE_IDS } from "../../frontend/src/shared/nli-investigation-beats.js";
+import * as catalog from "../../frontend/src/remote/nli-staff-script.js";
 import {
   NARRATIVES,
   HOME_SHOW_SHORTCUTS,
@@ -89,29 +91,84 @@ test("Free control no longer duplicates identity and wall", () => {
 });
 
 describe("NLI staff run of show", () => {
-  test("follows the nine-stage sequence and branches into existing narratives", () => {
-    expect(SHOW.steps).toHaveLength(9);
+  test("follows the eight-stage sequence, starts at the opening minutes, and returns Home", () => {
+    expect(SHOW.steps).toHaveLength(8);
+    expect(SHOW.steps[0].id).toBe("opening-minutes");
+    expect(SHOW.steps.map((step) => step.id)).not.toContain("opening");
+    expect(SHOW.steps.map((step) => step.id)).not.toContain("timeline-complete");
     const branches = SHOW.steps.flatMap((step) => step.branch || []);
     expect(branches).toEqual(["segev", "nova", "sderot", "shura", "hostages"]);
     for (const id of branches) {
       expect(NARRATIVES.some((narrative) => narrative.id === id)).toBe(true);
     }
-    expect(SHOW.steps[8].cue).toBe(SHOW.steps[0].cue);
+    expect(SHOW.steps.at(-1).id).toBe("back-to-start");
+    expect(SHOW.steps.at(-1).cue).toBe(catalog.HOME_CUE);
+    expect(SHOW.title).toEqual({ he: "רצף ההקרנה המלא", en: "Full projection sequence" });
+  });
+
+  test("Home enables the six geographic layers and leaves the investigation off", () => {
+    expect(catalog.HOME_LAYER_IDS).toEqual([
+      "projector_base.שמות_יישובים",
+      "projector_base.Locations_Lines",
+      "projector_base.ישובים",
+      "nli.ציר_232",
+      "projector_base.SEA",
+      "gaza.Gaza_Roads",
+    ]);
+    expect(catalog.HOME_CUE).toEqual({
+      narrative: null,
+      layers: catalog.HOME_LAYER_IDS,
+      clock: "idle",
+      escape: {},
+    });
+    expect(catalog.HOME_LAYER_IDS).not.toEqual(FOCUS_LAYER_IDS);
+    expect(catalog.HOME_LAYER_IDS).not.toEqual(TIMELINE_LAYER_IDS);
+    expect(SCENES.find((scene) => scene.id === "open").cue).toBe(catalog.HOME_CUE);
   });
 
   test("opening shows SEA and Gaza roads; the identity database hides Gaza roads", () => {
     expect(FOCUS_LAYER_IDS).toContain("nli.narrative_polygon");
     expect(OPENING_LAYER_IDS).toContain("nli.narrative_polygon");
     expect(OPENING_LAYER_IDS).toEqual(expect.arrayContaining(["projector_base.SEA", "gaza.Gaza_Roads"]));
-    const identity = SHOW.steps[6].cue.layers;
+    const identity = SHOW.steps.find((step) => step.id === SHOW_STEP_IDS.IDENTITY).cue.layers;
     expect(identity).toContain("nli.people");
     expect(identity).not.toContain("gaza.Gaza_Roads");
   });
 
   test("the opening minutes stop at 06:41 and the rest of the day starts at 06:42", () => {
-    expect(SHOW.steps[1].cue.clock).toEqual({ to: 401 });
-    expect(SHOW.steps[3].cue.clock).toEqual({ from: 402 });
-    expect(SHOW.steps[3].clock).toBe("06:42");
+    const minutes = SHOW.steps.find((step) => step.id === "opening-minutes");
+    const rest = SHOW.steps.find((step) => step.id === "rest-of-day");
+    expect(minutes.cue.clock).toEqual({ to: 401 });
+    expect(minutes.note).toEqual({
+      he: "ציר זמן 6:29–6:41, עד שעת ההתחלה של האירועים של משפחת שגב.",
+      en: "Timeline 06:29–06:41, up to the start of the Segev family events.",
+    });
+    expect(rest.cue.clock).toEqual({ from: 402 });
+    expect(rest.clock).toBe("06:42");
+    expect(rest.note).toEqual({
+      he: "ציר הזמן ממשיך מ־6:42 ועד סוף היום.",
+      en: "The timeline runs from 06:42 to the end of the day.",
+    });
+  });
+
+  test("the direct timeline shares the first two show steps and ends on the full story", () => {
+    expect(SCRIPTS.slice(0, 2).map((script) => script.id)).toEqual(["show", "timeline"]);
+    expect(NARRATIVES.map((script) => script.id)).not.toContain("timeline");
+    expect(catalog.TIMELINE).toMatchObject({
+      id: "timeline",
+      narrative: null,
+      title: { he: "ציר הזמן", en: "The timeline" },
+    });
+    expect(catalog.TIMELINE.steps).toHaveLength(3);
+    expect(catalog.TIMELINE.steps[0]).toBe(SHOW.steps.find((step) => step.id === "opening-minutes"));
+    expect(catalog.TIMELINE.steps[1]).toBe(SHOW.steps.find((step) => step.id === "rest-of-day"));
+    expect(catalog.TIMELINE.steps[2]).toEqual({
+      id: "timeline-complete",
+      title: { he: "ציר הזמן המלא", en: "The full timeline" },
+      cue: { narrative: null, layers: TIMELINE_LAYER_IDS, clock: "idle", escape: {} },
+      kit: [],
+    });
+    expect(catalog.TIMELINE.steps[2].kit).not.toEqual(expect.arrayContaining(["timeline", "presentation"]));
   });
 
   test("free control offers a looping timeline preset and the layers sheet", () => {
@@ -139,7 +196,7 @@ describe("NLI staff run of show", () => {
     const expected = [
       ["segev", "manual", "stay"],
       ["nova_mor", "manual", "stay"],
-      ["nova_memorial", "manual", "stay"],
+      ["nova_memorial", "auto", "stay"],
       ["sderot", "manual", "stay"],
       ["shura", "auto", "resume"],
       ["hostages", "manual", "next"],
@@ -160,23 +217,89 @@ describe("NLI staff run of show", () => {
     const sderot = NARRATIVES.find((narrative) => narrative.id === "sderot");
     const shura = NARRATIVES.find((narrative) => narrative.id === "shura");
     const shuraPresentation = shura.steps.find((step) => step.presentation);
-    expect(sderot.steps.find((step) => step.presentation).presentation.segmentId).toBe("sderot");
-    expect(sderot.steps.find((step) => step.presentation).gis.en).toContain("17–21");
+    expect(sderot.steps).toHaveLength(1);
+    expect(sderot.steps[0].presentation).toEqual({ segmentId: "sderot", open: "manual", onClose: "stay" });
+    expect(sderot.steps[0].cue).toEqual({ layers: FOCUS_LAYER_IDS, clock: "idle" });
+    expect(sderot.steps[0].kit).toEqual(["presentation"]);
     expect(shura.steps).toHaveLength(1);
     expect(shuraPresentation.cue).toEqual({ layers: TIMELINE_LAYER_IDS, clock: "idle" });
     expect(shuraPresentation.presentation).toEqual({ segmentId: "shura", open: "auto", onClose: "resume" });
   });
 
-  test("every step declares known kits and bilingual copy", () => {
+  test("every step declares known kits and bilingual titles without map cards", () => {
     for (const { step } of allSteps()) {
+      expect(Array.isArray(step.kit)).toBe(true);
       for (const kit of step.kit) expect(KITS.has(kit)).toBe(true);
-      for (const key of ["title", "gis", "model"]) {
-        expect(step[key].he).toBeTruthy();
-        expect(step[key].en).toBeTruthy();
+      expect(step.title.he).toBeTruthy();
+      expect(step.title.en).toBeTruthy();
+      expect(step).not.toHaveProperty("gis");
+      expect(step).not.toHaveProperty("model");
+      if (step.note) {
+        expect(step.note.he).toBeTruthy();
+        expect(step.note.en).toBeTruthy();
       }
       if (step.kit.includes("archive")) expect(step.personQuery).toBeTruthy();
       if (step.kit.includes("branch")) expect(step.branch?.length).toBeGreaterThan(0);
     }
+    for (const step of SHOW.steps.filter((item) => item.branch)) {
+      expect(step.kit).toEqual([]);
+    }
+  });
+
+  test("Segev is one manual idle step and Hostages keeps four idle geographic steps", () => {
+    const segev = NARRATIVES.find((narrative) => narrative.id === "segev");
+    const hostages = NARRATIVES.find((narrative) => narrative.id === "hostages");
+    expect(segev.steps).toEqual([
+      {
+        clock: "06:41",
+        title: { he: "הבית בבארי", en: "The house in Be'eri" },
+        cue: { layers: FOCUS_LAYER_IDS, clock: "idle" },
+        kit: ["presentation"],
+        presentation: { segmentId: "segev", open: "manual", onClose: "stay" },
+      },
+    ]);
+    expect(hostages.title).toEqual({ he: "חיים פרי וחטופים", en: "Haim Peri and hostages" });
+    expect(hostages.steps).toHaveLength(4);
+    expect(hostages.steps.map((step) => step.cue.clock)).toEqual(["idle", "idle", "idle", "idle"]);
+    expect(hostages.steps[1].presentation).toEqual({ segmentId: "hostages", open: "manual", onClose: "next" });
+    for (const step of hostages.steps) {
+      expect(step.note?.he ?? "").not.toContain("צריך לראות");
+      expect(step.note?.en ?? "").not.toContain("Determine which presentation");
+    }
+  });
+
+  test("Nova follows the ended escape and automatic memorial table", () => {
+    const nova = NARRATIVES.find((narrative) => narrative.id === "nova");
+    const novaLayers = [...FOCUS_LAYER_IDS, ...NLI_PLAYABLE_IDS];
+    const [site, compounds, routes, mor, memorial] = nova.steps;
+    expect(nova.steps).toHaveLength(5);
+    expect(site.cue).toEqual({
+      layers: [...FOCUS_LAYER_IDS, "land_use.שטחים_פתוחים"],
+      clock: "idle",
+      escape: {},
+    });
+    expect(site.kit).toEqual([]);
+    expect(compounds.cue).toEqual({ layers: novaLayers, clock: {}, escape: {} });
+    expect(compounds.kit).toEqual(["timeline"]);
+    expect(routes.cue).toEqual({ layers: novaLayers, clock: "ended", escape: { individual: true } });
+    expect(routes.kit).toEqual(["escape"]);
+    expect(routes.escapeKinds).toEqual(["individual"]);
+    expect(routes.note.en).toContain("Mor Levy");
+    expect(mor.cue).toEqual({ layers: novaLayers, clock: "ended", escape: { mor: true } });
+    expect(mor.kit).toEqual(["escape", "presentation"]);
+    expect(mor.escapeKinds).toEqual(["mor"]);
+    expect(mor.presentation).toEqual({ segmentId: "nova_mor", open: "manual", onClose: "stay" });
+    expect(mor).not.toHaveProperty("personQuery");
+    expect(mor.kit).not.toContain("archive");
+    expect(mor.note.he).toContain("מור");
+    expect(memorial.cue).toEqual({
+      layers: [...FOCUS_LAYER_IDS, "nli.people"],
+      clock: "ended",
+      escape: { settled: true },
+    });
+    expect(memorial.kit).toEqual(["presentation"]);
+    expect(memorial.presentation).toEqual({ segmentId: "nova_memorial", open: "auto", onClose: "stay" });
+    expect(memorial).not.toHaveProperty("escapeKinds");
   });
 
   test.skipIf(!fs.existsSync(path.join(MANIFEST_ROOT, "nli/manifest.json")))(
