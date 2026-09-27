@@ -63,6 +63,8 @@ describe("nli-investigation-theme", () => {
       alarmRadiusStops: [[1, 4], [7, 8], [26, 14], [77, 19]],
       personZoom: 16,
       highlightMinZoom: 13,
+      dimOpacity: 0.08,
+      dimTextOpacity: 0.18,
       highlightOpacityTransitionMs: 400,
       highlightFillOpacity: 0.05,
       highlightLineColor: "rgba(255,255,255,0.35)",

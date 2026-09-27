@@ -42,6 +42,8 @@ export const NLI_VISUAL_TOKENS = Object.freeze({
   completedFlowPatternSteps: 4,
   personZoom: 16,
   highlightMinZoom: 13,
+  dimOpacity: 0.08,
+  dimTextOpacity: 0.18,
   highlightOpacityTransitionMs: 400,
   highlightFillOpacity: 0.05,
   highlightLineColor: "rgba(255,255,255,0.35)",

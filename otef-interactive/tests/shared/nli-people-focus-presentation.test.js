@@ -19,17 +19,17 @@ function createPeopleMap(paints, layers) {
 
 describe("peopleFocusOpacityExpression", () => {
   it("returns the base when no pid is selected", () => {
-    expect(PEOPLE_FOCUS_DIM).toBe(0.18);
+    expect(PEOPLE_FOCUS_DIM).toBe(0.08);
     expect(peopleFocusOpacityExpression("", captivity)).toEqual(captivity);
     expect(peopleFocusOpacityExpression(null, 1)).toBe(1);
   });
 
-  it("wraps a pid case and dims others by 0.18 without lifting captivity 0", () => {
+  it("wraps a pid case and dims others by dimOpacity without lifting captivity 0", () => {
     expect(peopleFocusOpacityExpression("11", captivity)).toEqual([
       "case",
       ["==", ["to-string", ["get", "pid"]], "11"],
       captivity,
-      ["*", captivity, 0.18],
+      ["*", captivity, 0.08],
     ]);
   });
 });
@@ -55,6 +55,10 @@ describe("applyPeopleFocusDim", () => {
     };
     applyPeopleFocusDim(map, "11");
     expect(paints.get("nli__people__circle:circle-opacity")[0]).toBe("case");
+    expect(paints.get("nli__people__circle:circle-opacity-transition")).toEqual({
+      duration: 400,
+      delay: 0,
+    });
     expect(paints.get("other:circle-opacity")).toBe(1);
     clearPeopleFocusDim(map);
     expect(paints.get("nli__people__circle:circle-opacity")).toEqual(captivity);
@@ -70,7 +74,7 @@ describe("applyPeopleFocusDim", () => {
       "case",
       ["==", ["to-string", ["get", "pid"]], "11"],
       captivity,
-      ["*", captivity, 0.18],
+      ["*", captivity, 0.08],
     ];
     const map = createPeopleMap(paints, layers);
     applyPeopleFocusDim(map, 11);

@@ -600,10 +600,10 @@ describe("syncInvestigationTimelineToMap", () => {
     expect(map.getSource("nli-investigation-settlement-impact")).toBeFalsy();
     expect(map.getLayer("nli-investigation-settlement-impact-outline")).toBeFalsy();
     expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity")).toEqual(
-      ["case", ["==", ["get", "OBJECTID"], 19], 1, 0.28],
+      ["case", ["==", ["get", "OBJECTID"], 19], 1, 0.08],
     );
     expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toEqual(
-      ["case", ["==", ["get", "cityname"], "בארי"], 1, 0.35],
+      ["case", ["==", ["get", "cityname"], "בארי"], 1, 0.18],
     );
 
     await syncInvestigationTimelineToMap(map, idleNliClock(), hidden, { ...deps, narrativeFocus: null });
@@ -2622,6 +2622,7 @@ describe("syncInvestigationTimelineToMap", () => {
   const YISHUVIM_FILL_ID = "projector_base__ישובים__fill__0";
   const YISHUVIM_LINE_ID = "projector_base__ישובים__line__0";
   const SHEMOT_LABEL_ID = "projector_base__שמות_יישובים__labels";
+  const SHEMOT_LEADER_ID = "projector_base__שמות_יישובים__leader";
   const LOCATIONS_LINE_ID = "projector_base__Locations_Lines__line__0";
   const DOTTED_ORIENTATION_IDS = [
     "projector_base.ישובים",
@@ -2635,6 +2636,7 @@ describe("syncInvestigationTimelineToMap", () => {
     layers.push(
       { id: YISHUVIM_FILL_ID, type: "fill", source: "projector_base.ישובים" },
       { id: YISHUVIM_LINE_ID, type: "line", source: "projector_base.ישובים" },
+      { id: SHEMOT_LEADER_ID, type: "line", source: "projector_base.שמות_יישובים" },
       { id: SHEMOT_LABEL_ID, type: "symbol", source: "projector_base.שמות_יישובים" },
       { id: LOCATIONS_LINE_ID, type: "line", source: "projector_base.Locations_Lines" },
     );
@@ -2669,15 +2671,21 @@ describe("syncInvestigationTimelineToMap", () => {
       orientationDeps(),
     );
 
-    expect(map.setPaintProperty).toHaveBeenCalledWith(YISHUVIM_FILL_ID, "fill-opacity", 0.28);
-    expect(map.setPaintProperty).toHaveBeenCalledWith(YISHUVIM_LINE_ID, "line-opacity", 0.28);
-    expect(map.setPaintProperty).toHaveBeenCalledWith(LOCATIONS_LINE_ID, "line-opacity", 0.28);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(YISHUVIM_FILL_ID, "fill-opacity", 0.08);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(YISHUVIM_LINE_ID, "line-opacity", 0.08);
+    const leaderCall = [...map.setPaintProperty.mock.calls]
+      .reverse()
+      .find(([id, key]) => id === SHEMOT_LEADER_ID && key === "line-opacity");
+    expect(leaderCall?.[2]).toEqual(
+      ["case", ["in", ["get", "cityname"], ["literal", ["עיר א"]]], 1, 0.18],
+    );
+    expect(map.setPaintProperty).toHaveBeenCalledWith(LOCATIONS_LINE_ID, "line-opacity", 0.08);
     const textCall = [...map.setPaintProperty.mock.calls]
       .reverse()
       .find(([id, key]) => id === SHEMOT_LABEL_ID && key === "text-opacity");
     expect(textCall).toBeDefined();
     const expression = JSON.stringify(textCall[2]);
-    expect(expression).toContain("0.35");
+    expect(expression).toContain("0.18");
     expect(expression).toContain("1");
     expect(expression).toContain("עיר א");
     expect(dottedOrientationPaintCalls(map)).toEqual([]);
@@ -2694,6 +2702,7 @@ describe("syncInvestigationTimelineToMap", () => {
 
     expect(map.setPaintProperty).toHaveBeenCalledWith(YISHUVIM_FILL_ID, "fill-opacity", 1);
     expect(map.setPaintProperty).toHaveBeenCalledWith(YISHUVIM_LINE_ID, "line-opacity", 1);
+    expect(map.setPaintProperty).toHaveBeenCalledWith(SHEMOT_LEADER_ID, "line-opacity", 1);
     expect(map.setPaintProperty).toHaveBeenCalledWith(LOCATIONS_LINE_ID, "line-opacity", 1);
     expect(map.setPaintProperty).toHaveBeenCalledWith(SHEMOT_LABEL_ID, "text-opacity", 1);
     const textCalls = map.setPaintProperty.mock.calls.filter(
@@ -2701,6 +2710,26 @@ describe("syncInvestigationTimelineToMap", () => {
     );
     expect(textCalls.every(([, , value]) => value === 1)).toBe(true);
     expect(dottedOrientationPaintCalls(map)).toEqual([]);
+    disposeInvestigationTimelineForMap(map);
+  });
+
+  it("Identity people scene dims settlements, callout leaders, and names while idle", async () => {
+    const map = makeOrientationMap();
+    await syncInvestigationTimelineToMap(map, idleNliClock(), [{
+      id: "nli",
+      layers: [
+        { id: "people", enabled: true },
+        { id: "people_names", enabled: false },
+        { id: "investigation_polygons", enabled: false },
+        { id: "lines", enabled: false },
+      ],
+    }], orientationDeps());
+
+    expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity")).toBe(0.08);
+    expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity")).toBe(0.08);
+    expect(map.getPaintProperty(SHEMOT_LEADER_ID, "line-opacity")).toBe(0.18);
+    expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity")).toBe(0.18);
+    expect(map.getPaintProperty(LOCATIONS_LINE_ID, "line-opacity")).toBe(0.08);
     disposeInvestigationTimelineForMap(map);
   });
 
@@ -2717,7 +2746,7 @@ describe("syncInvestigationTimelineToMap", () => {
     });
     setEscapeImpactOrientationIds(map, ["19", "100"]);
     expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
-      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.35]);
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.18]);
     expect(JSON.stringify(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))).not.toMatch(/רעים/);
     disposeInvestigationTimelineForMap(map);
   });
@@ -2737,7 +2766,7 @@ describe("syncInvestigationTimelineToMap", () => {
     });
     setEscapeImpactOrientationIds(nova, ["19"]);
     expect(nova.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
-      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.35]);
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה", "עיר א"]]], 1, 0.18]);
     disposeInvestigationTimelineForMap(nova);
 
     const sderot = makeOrientationMap();
@@ -2748,7 +2777,7 @@ describe("syncInvestigationTimelineToMap", () => {
     });
     setEscapeImpactOrientationIds(sderot, ["19"]);
     expect(sderot.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
-      .toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.35]);
+      .toEqual(["case", ["==", ["get", "cityname"], "שדרות"], 1, 0.18]);
     disposeInvestigationTimelineForMap(sderot);
 
     const flagged = makeOrientationMap();
@@ -2759,7 +2788,7 @@ describe("syncInvestigationTimelineToMap", () => {
     });
     setEscapeImpactOrientationIds(flagged, ["19"]);
     expect(flagged.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
-      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["שדרות", "עיר א"]]], 1, 0.35]);
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["שדרות", "עיר א"]]], 1, 0.18]);
     disposeInvestigationTimelineForMap(flagged);
   });
 
@@ -2771,11 +2800,11 @@ describe("syncInvestigationTimelineToMap", () => {
       displayProfile: "projection",
     });
     expect(map.getPaintProperty(SHEMOT_LABEL_ID, "text-opacity"))
-      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה"]]], 1, 0.35]);
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["נובה"]]], 1, 0.18]);
     expect(map.getPaintProperty(YISHUVIM_FILL_ID, "fill-opacity"))
-      .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.28]);
+      .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.08]);
     expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity"))
-      .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.28]);
+      .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.08]);
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
     disposeInvestigationTimelineForMap(map);
   });
@@ -2956,7 +2985,7 @@ describe("syncInvestigationTimelineToMap", () => {
       });
       expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
       expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity"))
-        .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.28]);
+        .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.08]);
       expect(map.getLayer("nli-nova-gis-callout-leader")).toBeFalsy();
       disposeInvestigationTimelineForMap(map);
     }
@@ -2985,7 +3014,7 @@ describe("syncInvestigationTimelineToMap", () => {
     }));
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
     expect(map.getPaintProperty(YISHUVIM_LINE_ID, "line-opacity"))
-      .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.28]);
+      .toEqual(["case", ["==", ["get", "OBJECTID"], 43], 1, 0.08]);
     disposeInvestigationTimelineForMap(map);
   });
 
@@ -3028,16 +3057,16 @@ describe("syncInvestigationTimelineToMap", () => {
     const at500 = { ...playing, positionMs: timelineBeatDurationMs(492), phase: "paused", seekKind: "none" };
     await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), novaPolyDeps([]));
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.08]]);
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
     await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), novaPolyDeps(["polygon:99"]));
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["99"]]], 0.55, ["*", 0.55, 0.28]]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["99"]]], 0.55, ["*", 0.55, 0.08]]);
     await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), novaPolyDeps(["polygon:100"]));
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
     await syncInvestigationTimelineToMap(map, at500, polygonOnlyGroups(), novaPolyDeps([]));
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.08]]);
     expect(map.getLayer("nli-nova-site-outline")).toBeFalsy();
     disposeInvestigationTimelineForMap(map);
   });
@@ -3080,7 +3109,7 @@ describe("syncInvestigationTimelineToMap", () => {
       now: () => 0,
     }));
     const paint = map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity");
-    expect(JSON.stringify(paint)).not.toContain("0.28");
+    expect(JSON.stringify(paint)).not.toContain("0.08");
     expect(paint === 0.55 || JSON.stringify(paint).includes("0.55")).toBe(true);
     disposeInvestigationTimelineForMap(map);
   });
@@ -3121,9 +3150,9 @@ describe("syncInvestigationTimelineToMap", () => {
       now: () => 0,
     }));
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["1"]]], 0.55, ["*", 0.55, 0.28]]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["1"]]], 0.55, ["*", 0.55, 0.08]]);
     expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.08]);
     await syncInvestigationTimelineToMap(map, at400, bothGroups(), withProcessedPolygons({
       featuresById: {
         [INVESTIGATION_POLYGONS_FULL_ID]: [poly1],
@@ -3136,9 +3165,9 @@ describe("syncInvestigationTimelineToMap", () => {
       now: () => 0,
     }));
     expect(map.getPaintProperty("nli-investigation-polygon-category-fill-battle", "fill-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.28]]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 0.55, ["*", 0.55, 0.08]]);
     expect(map.getPaintProperty("nli-investigation-line-completed-carrier-line", "line-opacity"))
-      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["1"]]], 1, 0.28]);
+      .toEqual(["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["1"]]], 1, 0.08]);
     disposeInvestigationTimelineForMap(map);
   });
 
@@ -3155,8 +3184,8 @@ describe("syncInvestigationTimelineToMap", () => {
       id: "nli",
       layers: [{ id: "lines", enabled: true }],
     }];
-    const faded = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.28];
-    const lit = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["9"]]], 1, 0.28];
+    const faded = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]], 1, 0.08];
+    const lit = ["case", ["in", ["to-string", ["get", "OBJECTID"]], ["literal", ["9"]]], 1, 0.08];
     await syncInvestigationTimelineToMap(map, at400, lineGroups, {
       featuresById: { [INVESTIGATION_LINES_FULL_ID]: [line9] },
       narrativeFocus: { id: "nova" },

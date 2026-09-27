@@ -288,7 +288,7 @@ describe("investigation polygon renderer", () => {
         "case",
         ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
         reveal,
-        ["*", reveal, 0.28],
+        ["*", reveal, 0.08],
       ]);
   });
 
@@ -711,7 +711,7 @@ describe("investigation polygon renderer", () => {
       "case",
       ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
       0.5,
-      ["*", 0.5, 0.28],
+      ["*", 0.5, 0.08],
     ]);
   });
 
@@ -752,7 +752,7 @@ describe("investigation polygon renderer", () => {
       "case",
       ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
       0.6,
-      ["*", 0.6, 0.28],
+      ["*", 0.6, 0.08],
     ]);
   });
 
@@ -867,7 +867,7 @@ describe("investigation polygon renderer", () => {
         "case",
         ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
         opacity,
-        ["*", opacity, 0.28],
+        ["*", opacity, 0.08],
       ]);
     }
   });
@@ -993,7 +993,7 @@ describe("investigation polygon renderer", () => {
         "case",
         ["in", ["to-string", ["get", "OBJECTID"]], ["literal", []]],
         0.55,
-        ["*", 0.55, 0.28],
+        ["*", 0.55, 0.08],
       ]);
     }
   });

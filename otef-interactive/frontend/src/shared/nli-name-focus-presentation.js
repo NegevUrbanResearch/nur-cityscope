@@ -1,5 +1,7 @@
-const DIM = 0.18;
-import { refreshMemorialSettlementFocus, setMemorialSettlementFocus } from './nli-settlement-orientation.js';
+import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
+import { refreshMemorialSettlementFocus, setMemorialSettlementFocus } from "./nli-settlement-orientation.js";
+
+const DIM = NLI_VISUAL_TOKENS.dimTextOpacity;
 
 export function getRelevantPlaceGroup(field, pid, selectedGroup) {
   if (selectedGroup) return selectedGroup;

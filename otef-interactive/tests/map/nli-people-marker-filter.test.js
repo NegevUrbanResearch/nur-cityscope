@@ -8,6 +8,7 @@ import {
   houseOutlineFilterForNarrative,
   peopleFilterForNarrative,
   peopleLegendClassVisible,
+  peopleMarkersAreShown,
   KIDNAP_SURVIVOR_STATUS,
   EXCLUDE_SURVIVOR_FILTER,
   HOSTAGES_PEOPLE_FILTER,
@@ -25,6 +26,12 @@ function createMap(layers) {
 }
 
 describe("narrative people marker filter", () => {
+  test("peopleMarkersAreShown follows the nli.people chip", () => {
+    expect(peopleMarkersAreShown([{ id: "nli", layers: [{ id: "people", enabled: true }] }])).toBe(true);
+    expect(peopleMarkersAreShown([{ id: "nli", layers: [{ id: "people", enabled: false }] }])).toBe(false);
+    expect(peopleMarkersAreShown([{ id: "nli", layers: [{ id: "people_names", enabled: true }] }])).toBe(false);
+  });
+
   test("general, segev, and sderot exclude kidnap survivors", () => {
     expect(KIDNAP_SURVIVOR_STATUS).toBe("Kidnap survivor");
     expect(peopleFilterForNarrative(null)).toEqual(EXCLUDE_SURVIVOR_FILTER);

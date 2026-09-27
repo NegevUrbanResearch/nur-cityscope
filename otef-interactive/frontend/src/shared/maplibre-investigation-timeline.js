@@ -63,6 +63,7 @@ import {
   collectOrientationTargets,
 } from "./nli-settlement-orientation.js";
 import { shouldIncludeNarrativeSettlementOutline } from "./nli-nova-escape-impact.js";
+import { peopleMarkersAreShown } from "../map/nli-people-marker-filter.js";
 import { syncPersonHaloPaint } from "../map/maplibre-person-selection.js";
 import { syncTimelineBaseLayerVisibility } from "../map/maplibre-layer-manager.js";
 
@@ -619,6 +620,7 @@ function clearOrientationTargets(state) {
 
 function applyOrientationVisuals(map, state, outlineIds = []) {
   const focus = state.narrativeFocus;
+  const peopleScene = state.peopleMarkersShown === true && !focus;
   state.lastOrientationOutlineIds = Array.isArray(outlineIds) ? outlineIds : [];
   const impactIds = Array.isArray(state.escapeImpactOutlineIds) ? state.escapeImpactOutlineIds : [];
   const merged = [...new Set(
@@ -638,7 +640,7 @@ function applyOrientationVisuals(map, state, outlineIds = []) {
     ),
     layers: state.orientationLayers,
     shemotSourceId: state.shemotSourceId,
-    mode: focus ? "narrative" : undefined,
+    mode: focus || peopleScene ? "narrative" : undefined,
     focusCityname: focus?.focusSettlement,
     focusOutlineObjectId: focus?.focusSettlementOutlineId,
     keepFocusLabelWithAchieved: focus?.keepFocusLabelWithAchieved === true,
@@ -906,6 +908,7 @@ function createTimelineState(map, deps = {}) {
     alarmStructuralRowsBuilds: 0,
     orientationLayers: [],
     shemotSourceId: null,
+    peopleMarkersShown: false,
     narrativeFocus: deps.narrativeFocus || null,
     escapeImpactOutlineIds: [],
     lastOrientationOutlineIds: [],
@@ -1155,6 +1158,7 @@ export async function syncInvestigationTimelineToMap(map, clockInput, layerGroup
   const syncRequest = beginTimelineSyncRequest(map, clock);
   const nowFn = typeof deps.now === "function" ? deps.now : state.now || (() => Date.now());
   state.now = nowFn;
+  state.peopleMarkersShown = peopleMarkersAreShown(visibilityGroups);
   state.motionMode = deps.motionMode === "reduced" ? "reduced" : "full";
   state.displayProfile = displayProfileFromDeps(deps, state.displayProfile);
   state.rendererDeps = deps;

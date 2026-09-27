@@ -1,20 +1,28 @@
 /**
  * GIS/projection settlement orientation: dim pack ישובים + Locations_Lines
  * during play/pause, and light שמות_יישובים labels whose cityname joins an
- * achieved sidecar outline. Paint targets IR-mangled MapLibre layer ids.
+ * achieved sidecar outline. שמות callout `__leader` lines follow the same
+ * opacity as the names. Paint targets IR-mangled MapLibre layer ids.
  */
+
+import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 
 const YISHUVIM_LAYER_PREFIX = "projector_base__ישובים";
 const SHEMOT_LAYER_PREFIX = "projector_base__שמות_יישובים";
 const LOCATIONS_LAYER_PREFIX = "projector_base__Locations_Lines";
 const SHEMOT_SOURCE_ID = "projector_base.שמות_יישובים";
 const KIBBUTZ_PREFIX = /^קיבוץ /;
-const PLAY_OPACITY = 0.28;
-const DIM_TEXT_OPACITY = 0.35;
+const PLAY_OPACITY = NLI_VISUAL_TOKENS.dimOpacity;
+const DIM_TEXT_OPACITY = NLI_VISUAL_TOKENS.dimTextOpacity;
 const FULL_OPACITY = 1;
-const MEMORIAL_OPACITY = 0.18;
+const MEMORIAL_OPACITY = NLI_VISUAL_TOKENS.dimOpacity;
+const MEMORIAL_TEXT_OPACITY = NLI_VISUAL_TOKENS.dimTextOpacity;
 const MEMORIAL_TRANSITION = { duration: 350, delay: 0 };
 const IMMEDIATE_TRANSITION = { duration: 0, delay: 0 };
+const ORIENTATION_TRANSITION = {
+  duration: NLI_VISUAL_TOKENS.highlightOpacityTransitionMs,
+  delay: 0,
+};
 const paintStates = new WeakMap();
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -55,16 +63,18 @@ function paintTarget(map, target) {
   }
   const entry = rememberTarget(map, target);
   const memorial = state.memorial;
-  const focused = target.role === "label" && memorial?.placeName
-    ? ["case", ["==", ["get", "cityname"], memorial.placeName], FULL_OPACITY, MEMORIAL_OPACITY]
-    : MEMORIAL_OPACITY;
+  const isName = target.role === "label" || target.role === "leader";
+  const memorialDim = isName ? MEMORIAL_TEXT_OPACITY : MEMORIAL_OPACITY;
+  const focused = isName && memorial?.placeName
+    ? ["case", ["==", ["get", "cityname"], memorial.placeName], FULL_OPACITY, memorialDim]
+    : memorialDim;
   const strength = memorial?.strength ?? 0;
   const value = memorial === null ? entry.value : strength === 1 ? focused
     : typeof entry.value === 'number' && typeof focused === 'number'
       ? entry.value * (1 - strength) + focused * strength
       : ['+', ['*', entry.value, 1 - strength], ['*', focused, strength]];
   const transitionKey = `${target.property}-transition`;
-  const transition = memorial === null ? entry.transition ?? null
+  const transition = memorial === null ? entry.transition ?? ORIENTATION_TRANSITION
     : strength === 1 ? MEMORIAL_TRANSITION : IMMEDIATE_TRANSITION;
   if (!equal(map.getPaintProperty?.(target.id, transitionKey) ?? null, transition)) {
     setPaint(map, target.id, transitionKey, transition);
@@ -224,6 +234,7 @@ export function collectOrientationTargets(map) {
     if (id.startsWith(SHEMOT_LAYER_PREFIX)) {
       if (layer.source) shemotSourceId = layer.source;
       if (layer.type === "symbol") layers.push({ id, property: "text-opacity", role: "label" });
+      else if (layer.type === "line") layers.push({ id, property: "line-opacity", role: "leader" });
       continue;
     }
     if (id.startsWith(YISHUVIM_LAYER_PREFIX)) {
@@ -325,7 +336,7 @@ export function applySettlementOrientationPaint(map, {
         : [],
   );
   const leaderOpacity = leaderIds.length
-    ? ["case", ["in", ["get", "OBJECTID"], ["literal", leaderIds]], FULL_OPACITY, DIM_TEXT_OPACITY]
+    ? ["case", ["in", ["get", "OBJECTID"], ["literal", leaderIds]], FULL_OPACITY, PLAY_OPACITY]
     : null;
 
   for (const target of targets) {
@@ -335,13 +346,12 @@ export function applySettlementOrientationPaint(map, {
       continue;
     }
     if (mode === "narrative" && target.role === "location-line" && paintState(map).memorial === null) {
-      if (!leaderOpacity && !dimAllYeshuvs) continue;
       const entry = rememberTarget(map, target);
-      entry.value = leaderOpacity ?? DIM_TEXT_OPACITY;
+      entry.value = leaderOpacity ?? PLAY_OPACITY;
       paintTarget(map, target);
       continue;
     }
-    const value = target.role === "label"
+    const value = target.role === "label" || target.role === "leader"
       ? textOpacity
       : target.role === "geom"
         ? geomPaint

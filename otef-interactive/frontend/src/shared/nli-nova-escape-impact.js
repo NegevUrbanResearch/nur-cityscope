@@ -1,4 +1,5 @@
 import { NLI_NARRATIVES } from "./nli-narratives.js";
+import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
 import { buildRouteSettlementCollisionIndex } from "./nli-route-settlement-collisions.js";
 
 export const NOVA_ESCAPE_IMPACT_LAYER_ID = "nli-nova-escape-impact-outline";
@@ -307,7 +308,7 @@ export function aliasNovaSiteOutlineToYeshuv(outlineIds, settlementFeaturesByOut
   return result;
 }
 
-export const NOVA_PARALLEL_DIM_OPACITY = 0.28;
+export const NOVA_PARALLEL_DIM_OPACITY = NLI_VISUAL_TOKENS.dimOpacity;
 export const NOVA_PARALLEL_IMPACT_KIND_POLYGON = "polygon";
 export const NOVA_PARALLEL_IMPACT_KIND_LINE = "line";
 

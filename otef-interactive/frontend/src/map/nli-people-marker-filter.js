@@ -74,6 +74,18 @@ function applyNarrativeSourceFilter(map, sourceId, filter) {
   return updated;
 }
 
+function asGroupList(layerGroups) {
+  if (Array.isArray(layerGroups)) return layerGroups;
+  if (layerGroups && typeof layerGroups === "object") return Object.values(layerGroups);
+  return [];
+}
+
+/** True when the nli.people chip is enabled (Identity / people-as-points scenes). */
+export function peopleMarkersAreShown(layerGroups) {
+  return asGroupList(layerGroups).some((group) => group?.id === "nli"
+    && (group.layers || []).some((layer) => layer?.id === "people" && layer.enabled === true));
+}
+
 export function applyNarrativePeopleFilter(map, narrativeId) {
   return applyNarrativeSourceFilter(map, "nli.people", peopleFilterForNarrative(narrativeId));
 }

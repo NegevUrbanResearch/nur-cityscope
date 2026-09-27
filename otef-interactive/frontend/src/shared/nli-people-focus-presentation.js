@@ -1,4 +1,10 @@
-export const PEOPLE_FOCUS_DIM = 0.18;
+import { NLI_VISUAL_TOKENS } from "./nli-investigation-theme.js";
+
+export const PEOPLE_FOCUS_DIM = NLI_VISUAL_TOKENS.dimOpacity;
+const PEOPLE_FOCUS_TRANSITION = Object.freeze({
+  duration: NLI_VISUAL_TOKENS.highlightOpacityTransitionMs,
+  delay: 0,
+});
 
 const originals = new WeakMap();
 
@@ -62,6 +68,7 @@ export function applyPeopleFocusDim(map, selectedPid) {
       const key = `${layer.id}:${property}`;
       if (!state.has(key)) state.set(key, unwrapPeopleFocusCase(map.getPaintProperty(layer.id, property)));
       const base = state.get(key);
+      map.setPaintProperty(layer.id, `${property}-transition`, PEOPLE_FOCUS_TRANSITION);
       map.setPaintProperty(layer.id, property, peopleFocusOpacityExpression(pid, base ?? 1));
     }
   }
@@ -75,7 +82,10 @@ export function clearPeopleFocusDim(map) {
     const sep = key.lastIndexOf(":");
     const id = key.slice(0, sep);
     const property = key.slice(sep + 1);
-    if (map.getLayer?.(id)) map.setPaintProperty(id, property, value);
+    if (map.getLayer?.(id)) {
+      map.setPaintProperty(id, `${property}-transition`, PEOPLE_FOCUS_TRANSITION);
+      map.setPaintProperty(id, property, value);
+    }
   }
   originals.delete(map);
 }

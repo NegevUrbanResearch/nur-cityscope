@@ -997,9 +997,9 @@ describe("Nova escape overlay coordinator", () => {
     await coordinator.sync({ id: "nova" }, { individual: true, overlap: false });
     coordinator.setEscapeImpactIds(["19", "100"]);
     expect(map.getPaintProperty("projector_base__שמות_יישובים__labels", "text-opacity"))
-      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.35]);
+      .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.18]);
     expect(map.getPaintProperty("projector_base__Locations_Lines__line__0", "line-opacity"))
-      .toEqual(["case", ["in", ["get", "OBJECTID"], ["literal", [77]]], 1, 0.35]);
+      .toEqual(["case", ["in", ["get", "OBJECTID"], ["literal", [77]]], 1, 0.08]);
     expect(JSON.stringify(map.getPaintProperty("projector_base__שמות_יישובים__labels", "text-opacity")))
       .not.toMatch(/רעים/);
     expect(JSON.stringify(map.getPaintProperty("projector_base__Locations_Lines__line__0", "line-opacity")))
@@ -1091,7 +1091,7 @@ describe("Nova escape overlay coordinator", () => {
         "line-opacity",
       );
       expect(JSON.stringify(paint)).toContain("232");
-      expect(JSON.stringify(paint)).toContain("0.28");
+      expect(JSON.stringify(paint)).toContain("0.08");
       disposeInvestigationTimelineForMap(map);
       coordinator.dispose();
       expect(onParallelImpactIdsChanged).toHaveBeenLastCalledWith([]);
@@ -1386,9 +1386,9 @@ function expectSettledMemorial(map) {
   expect(features[0].geometry).toEqual(memorialGeometry);
   expect(features[0].properties.outlineObjectId).toBe(18);
   expect(map.getPaintProperty("projector_base__שמות_יישובים__labels", "text-opacity"))
-    .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.35]);
+    .toEqual(["case", ["in", ["get", "cityname"], ["literal", ["בארי"]]], 1, 0.18]);
   expect(map.getPaintProperty("projector_base__Locations_Lines__line__0", "line-opacity"))
-    .toEqual(["case", ["in", ["get", "OBJECTID"], ["literal", [77]]], 1, 0.35]);
+    .toEqual(["case", ["in", ["get", "OBJECTID"], ["literal", [77]]], 1, 0.08]);
   expect(map.getLayer("nli-nova-escape-individual")).toBeFalsy();
   expect(map.getLayer("nli-nova-escape-overlap")).toBeFalsy();
   expect(map.pendingAnimationFrameCount()).toBe(0);

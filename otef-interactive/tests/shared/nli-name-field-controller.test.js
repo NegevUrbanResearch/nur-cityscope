@@ -256,16 +256,16 @@ describe("createNliNameFieldController", () => {
     enable(d); await vi.advanceTimersByTimeAsync(650);
     expect(adapter.getOpacity()).toBeCloseTo(1, 1);
     d.emit('personSelection', { personId: 'p-1', datasetVersion: 'v1' });
-    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.18);
+    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.08);
     disable(d); await vi.advanceTimersByTimeAsync(300);
     expect(adapter.getOpacity()).toBeCloseTo(0.5, 1);
     expect(d.map.getLayer('nli-name-field-connector-line')).toBeFalsy();
-    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBeGreaterThan(0.18);
+    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBeGreaterThan(0.08);
     expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBeLessThan(0.8);
     enable(d); expect(adapter.getOpacity()).toBeCloseTo(0.5, 1);
     await vi.advanceTimersByTimeAsync(650);
     expect(adapter.getOpacity()).toBeCloseTo(1, 1);
-    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.18);
+    expect(d.map.getPaintProperty(settlement, 'text-opacity')).toBe(0.08);
     expect(adapter.prepare).toHaveBeenCalledTimes(1);
     d.controller.dispose();
   });
@@ -404,7 +404,7 @@ describe("createNliNameFieldController", () => {
     d.map.addLayer({ id, type: 'symbol', paint: { 'text-opacity': 0.8 } });
     d.map.setPaintProperty(id, 'text-opacity', 0.8);
     d.map.emit('styledata');
-    expect(d.map.getPaintProperty(id, 'text-opacity')).toBe(0.18);
+    expect(d.map.getPaintProperty(id, 'text-opacity')).toBe(0.08);
     d.controller.dispose();
     expect(d.map.getPaintProperty(id, 'text-opacity')).toBe(0.8);
     expect(d.map.listenerCount('styledata')).toBe(0);
@@ -803,7 +803,7 @@ describe("createNliNameFieldController", () => {
     expect(d.map.getLayer("nli-name-place-outline-line")).toBeFalsy();
     expect(d.map.getLayer('nli-name-field-labels').paint['text-color']).toBe('#ffffff');
     expect(d.map.getPaintProperty('nli-name-field-labels', 'text-opacity')).toEqual([
-      'case', ['==', ['get', 'group_id'], 'nova'], 1, 0.18,
+      'case', ['==', ['get', 'group_id'], 'nova'], 1, 0.08,
     ]);
     expect(JSON.parse(d.map._dataset.nliNameField).selectedGroup).toBe('nova');
     d.emit('personSelection', { personId: null, datasetVersion: null, revision: 1 });
